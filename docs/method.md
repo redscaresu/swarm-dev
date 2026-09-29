@@ -13,6 +13,13 @@ at every level runs in its own herdr pane so it can be watched.
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them.
 
+`/swarm` runs the chain after the HLD: `swarm.sh next` reads the board and names the next step,
+`/swarm` does it and loops, stopping only at an approval, a draft HLD, an `operator` or `lead`
+story, or a `later` epic. The board is the only state, so a run can stop anywhere and the next
+`/swarm` continues. Building comes first (a conductor still working, then an active epic's ready
+stories, then one-offs), then planning (an active epic with no stories, then an agreed HLD with
+no epics).
+
 A story the swarm must not build says so by its `kind`: `lead` (real cloud or credentials; the
 lead runs it) or `operator` (a decision or a hand step that is the user's). An open question for
 the user is an `operator` story, so the board's **Waiting on you** view lists it. An epic is done

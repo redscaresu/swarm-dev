@@ -22,7 +22,9 @@ If `swarm.sh` is missing, the user runs `claude plugin marketplace add redscares
 § Quick start, step 3. Ask the user for the contents of `.claude/swarm/brief.md` (their commit
 trailers, where credentials live, commands that must not run); do not invent them.
 
-**Run the chain, one level at a time, and let the user approve each:**
+**Run the chain with `/swarm`.** It reads the board with `swarm.sh next`, does the next step, and
+loops until the user must decide; run it again after they do. The steps it takes, which you can
+also run one by one, and which each wait for the user's approval:
 
 | Step | You run | It produces |
 |---|---|---|
@@ -31,7 +33,7 @@ trailers, where credentials live, commands that must not run); do not invent the
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval |
 | Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds and merges the epic |
 
-Useful while it runs: `swarm.sh policy <role>` (model and effort for a role), `swarm.sh watch`
+Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh watch`
 (returns when a story PR needs the lead), `herdr agent read <name> --source recent-unwrapped`
 (what an agent is doing).
 
@@ -59,10 +61,13 @@ Before you open a PR:
 
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
-shellcheck bin/swarm.sh scripts/pre-commit
+shellcheck bin/swarm.sh scripts/pre-commit tests/*.sh
+bash tests/next_test.sh
 claude plugin validate .
 ```
 
 `bin/swarm.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
-the PR otherwise. CI (shellcheck, plugin-validate, gitleaks, zizmor) is required on `main`.
+the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`. Bump `version` in
+`.claude-plugin/plugin.json` in any PR that changes what a user installs: `claude plugin update`
+fetches nothing while the version is unchanged.

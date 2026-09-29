@@ -14,6 +14,10 @@ and replies with that path. Put each prompt below in `.swarm/briefs/<name>.md`, 
     swarm.sh agent scope-$1 <name> "$PWD" <role> .swarm/briefs/<name>.md
     swarm.sh wait <name>        # run in the background, one per agent
 
+**Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
+its output file. If it exists, parses as JSON and is newer than `docs/epics/$1.md`, reuse it and do not
+start that agent again; an older one belongs to a previous plan, so start the agent.
+
 Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; read it first.
 Read-only — write nothing except your output file, never commit, never touch real cloud or
 credentials. Cite evidence as file:line. Keep free text short.*

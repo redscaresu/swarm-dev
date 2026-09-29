@@ -7,6 +7,7 @@
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <tab>                                    close <tab>, <tab>-2, ... and forget them
+#   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all merged
 #   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
 #
@@ -241,6 +242,103 @@ start_conductor() {
   echo "workspace ${hld} (${ws})"
 }
 
+# fm <file> <key> — the first front-matter value for <key>, or nothing.
+fm() { sed -n "s/^$2: *//p" "$1" | head -1; }
+
+# board <dir> — the item files in docs/<dir>/, never the README.
+board() {
+  local f
+  for f in "${REPO_ROOT}/docs/$1"/*.md; do
+    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] && echo "${f}"
+  done
+  return 0
+}
+
+# epic_has_stories <epic> — true when any story names <epic>.
+epic_has_stories() {
+  local s
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "$1" ]] && return 0
+  done < <(board stories)
+  return 1
+}
+
+# next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
+# pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
+#   wait <agent>      a conductor exists: still working, or finished with its report unread
+#   conduct <epic>    an active epic has a story an agent can build
+#   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
+#   story <slug>      a ready story outside any epic
+#   plan-epic <epic>  an active epic has no stories yet
+#   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
+#   hld <hld>         an HLD is still a draft
+#   gate              only the user can move the board: operator and lead stories, blocked
+#                     stories, later stories and epics
+#   done              nothing open; start the next HLD with /hld <title>
+next_step() {
+  local f slug epic kind story_epic repo buildable="" waiting=""
+  if [[ "${HERDR_ENV:-}" == 1 ]]; then
+    # Any status: a finished conductor still holds a report to read before its tab is closed.
+    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-')),'')" 2>/dev/null || true)
+    [[ -z "${slug}" ]] || { echo "wait ${slug}"; echo "the conductor ${slug} is running or has a report to read"; return; }
+  fi
+  # Stories an agent can build: ready, and neither lead nor operator. "<epic> <slug>" per line.
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == ready ]] || continue
+    kind=$(fm "${f}" kind)
+    [[ "${kind}" == lead || "${kind}" == operator ]] && continue
+    buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
+  done < <(board stories)
+  # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
+  while read -r story_epic slug; do
+    [[ -n "${story_epic}" && -z "${slug}" ]] || continue
+    repo=$(fm "${REPO_ROOT}/docs/stories/${story_epic}.md" repo); repo="${repo:-$(basename "${REPO_ROOT}")}"
+    [[ -d "$(dirname "${REPO_ROOT}")/${repo}-wt/${story_epic}" ]] || continue
+    echo "resume ${story_epic}"; echo "${story_epic} has already started: wait for its agent, then review its PR"; return
+  done <<< "${buildable}"
+  # An active epic's stories first: finish what is started before anything new.
+  while read -r story_epic slug; do
+    [[ -n "${slug}" && "$(fm "${REPO_ROOT}/docs/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
+    echo "conduct ${story_epic}"; echo "${slug} is ready in the active epic ${story_epic}"; return
+  done <<< "${buildable}"
+  while read -r story_epic slug; do
+    # A one-off: `read` puts the lone slug in story_epic.
+    [[ -n "${story_epic}" && -z "${slug}" ]] || continue
+    echo "story ${story_epic}"; echo "${story_epic} is ready and belongs to no epic"; return
+  done <<< "${buildable}"
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == active ]] || continue
+    epic=$(basename "${f}" .md)
+    epic_has_stories "${epic}" && continue
+    echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return
+  done < <(board epics)
+  while IFS= read -r f; do
+    slug=$(basename "${f}" .md)
+    case "$(fm "${f}" status)" in
+      agreed)
+        if [[ $(awk '/^## Epics/{e=1;next} /^## /{e=0} e && /^[-*] /{n++} END{print n+0}' "${f}") -eq 0 ]]; then
+          echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has no epics yet"; return
+        fi ;;
+      draft) echo "hld ${slug}"; echo "the HLD ${slug} is still a draft"; return ;;
+    esac
+  done < <(board hld)
+  while IFS= read -r f; do
+    kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
+    case "$(fm "${f}" status)" in
+      ready) [[ "${kind}" == lead || "${kind}" == operator ]] && waiting+="  ${kind}: ${slug}"$'\n' ;;
+      blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
+      later) waiting+="  later story: ${slug}"$'\n' ;;
+    esac
+  done < <(board stories)
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == later ]] && waiting+="  later epic: $(basename "${f}" .md)"$'\n'
+  done < <(board epics)
+  if [[ -n "${waiting}" ]]; then
+    echo "gate"; echo "only you can move the board now:"; printf '%s' "${waiting}"; return
+  fi
+  echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
+}
+
 # unblock — a merged story's file is deleted, so a blocked story whose every blocked_by slug has no
 # story or epic file left, and names no operator step, is ready. Prints each story it flips.
 unblock() {
@@ -307,13 +405,29 @@ watch_prs() {
   done
 }
 
-# close_tabs <label> — close every tab this script opened under <label>, and its state.
+# tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters
+# (agent_name), tab labels do not, so `next` can hand back a name that is not the label. The first
+# state file whose agent name matches wins: the base tab sorts before its "-2", "-3" overflow.
+tab_label() {
+  local want state
+  want="$(agent_name "$1")"
+  for state in "${STATE_DIR}"/*; do
+    [[ -f "${state}" && "$(agent_name "$(basename "${state}")")" == "${want}" ]] || continue
+    basename "${state}"; return
+  done
+  echo "$1"
+}
+
+# close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
+# in another workspace (a conductor's is its HLD's): its first pane id, "<workspace>:<pane>", says which.
 close_tabs() {
-  local label="$1" state tab_label id
+  local label state tab_label id ws
+  label="$(tab_label "$1")"
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
     tab_label="$(basename "${state}")"
-    id=$(herdr tab list --workspace "${HERDR_WORKSPACE_ID}" | python3 -c "
+    ws="$(head -1 "${state}")"; ws="${ws%%:*}"; ws="${ws:-${HERDR_WORKSPACE_ID}}"
+    id=$(herdr tab list --workspace "${ws}" | python3 -c "
 import json,sys
 for t in json.load(sys.stdin)['result']['tabs']:
     if t.get('label') == sys.argv[1]: print(t['tab_id'])" "${tab_label}")
@@ -335,11 +449,13 @@ main() {
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_tabs "${1:?tab}" ;;
     unblock) unblock ;;
+    next)   next_step ;;
     watch)  watch_prs "$@" ;;
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
+    _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
-    *) sed -n '2,14p' "$0"; exit 2 ;;
+    *) sed -n '2,15p' "$0"; exit 2 ;;
   esac
 }
 
