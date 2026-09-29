@@ -7,6 +7,7 @@
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <tab>                                    close <tab>, <tab>-2, ... and forget them
+#   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all merged
 #   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
@@ -117,7 +118,83 @@ start_agent() {
     sleep 3
   done
   deliver_prompt "${name}" "${prompt_file}"
+  record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
+}
+
+# AGENTS_LOG: one line per agent started (date, role, name, kind, model, effort, session), so
+# `cost` can attribute every token to a role. Beside state/, not in it: state/ holds tab records.
+AGENTS_LOG="${REPO_ROOT}/.swarm/agents.tsv"
+
+# session_for_pane <pane> — the Claude session id herdr reports for the agent in <pane>, or nothing.
+session_for_pane() {
+  herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
+}
+
+record_agent() {
+  local role="$1" name="$2" kind="$3" model="$4" effort="$5" pane="$6" session
+  session="$(session_for_pane "${pane}")"
+  mkdir -p "$(dirname "${AGENTS_LOG}")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session:--}" >> "${AGENTS_LOG}"
+}
+
+# cost [since] — tokens and estimated cost per role, for every agent this project's swarm started
+# (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
+# session logs, deduplicated by message id; codex agents are listed but not priced (not logged here).
+cost_report() {
+  local lead=""
+  [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
+  [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" <<'PY'
+import glob, json, os, sys
+log, since, lead, projects = sys.argv[1:5]
+# ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
+# cache writes assume the 1-hour cache at 2x input. Update when prices change.
+PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
+agents = []
+if os.path.exists(log):
+    for line in open(log):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 7 and f[0] >= since:
+            agents.append({"role": f[1], "kind": f[3], "session": f[6]})
+if lead:
+    agents.append({"role": "lead", "kind": "claude", "session": lead})
+rows, seen = {}, set()
+for a in agents:
+    r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
+    r["agents"] += 1
+    paths = glob.glob(os.path.join(projects, "*", a["session"] + ".jsonl")) if a["session"] != "-" else []
+    if a["kind"] != "claude" or not paths:
+        r["unpriced"] += 1
+        continue
+    for line in open(paths[0], errors="ignore"):
+        try:
+            m = json.loads(line).get("message") or {}
+        except ValueError:
+            continue
+        u, mid = m.get("usage"), m.get("id")
+        if not u or not mid or mid in seen:
+            continue
+        seen.add(mid)
+        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
+        model = m.get("model", "?")
+        r["models"].add(model)
+        r["tok"] = [x + y for x, y in zip(r["tok"], t)]
+        price = next((v for k, v in PRICES.items() if k in model), None)
+        if price:
+            r["usd"] += sum(x * p for x, p in zip(t, price)) / 1e6
+def n(x):
+    return f"{x/1e6:.1f}M" if x >= 1e6 else f"{x/1e3:.0f}k"
+print("| role | agents | model | input | cache write | cache read | output | est. $ |")
+print("|---|---|---|---|---|---|---|---|")
+tot = [0, 0, 0, 0]; usd = 0.0
+for role, r in sorted(rows.items(), key=lambda kv: -kv[1]["usd"]):
+    tot = [x + y for x, y in zip(tot, r["tok"])]; usd += r["usd"]
+    note = f" ({r['unpriced']} not in the logs)" if r["unpriced"] else ""
+    print(f"| {role} | {r['agents']}{note} | {', '.join(sorted(r['models'])) or '-'} | " + " | ".join(n(x) for x in r["tok"]) + f" | {r['usd']:.2f} |")
+print(f"| **total** | {sum(r['agents'] for r in rows.values())} | | " + " | ".join(n(x) for x in tot) + f" | {usd:.2f} |")
+print("\nList prices; on a subscription this is plan usage, not a bill. Codex agents are not priced.")
+PY
 }
 
 # deliver_prompt <name> <prompt-file> — submit the brief and confirm the agent acted on it.
@@ -450,12 +527,13 @@ main() {
     close)  require_herdr; close_tabs "${1:?tab}" ;;
     unblock) unblock ;;
     next)   next_step ;;
+    cost)   cost_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
-    *) sed -n '2,15p' "$0"; exit 2 ;;
+    *) sed -n '2,16p' "$0"; exit 2 ;;
   esac
 }
 

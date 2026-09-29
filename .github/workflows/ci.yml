@@ -29,8 +29,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: swarm.sh next against throwaway boards
-        run: bash tests/next_test.sh
+      - name: Run every tests/*_test.sh
+        run: for t in tests/*_test.sh; do echo "== ${t}"; bash "${t}" || exit 1; done
 
   plugin-validate:
     runs-on: ubuntu-latest
