@@ -3,10 +3,19 @@
 [![CI](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/redscaresu/swarm-dev/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/swarm-dev)
 
-A way of building software with a swarm of Claude Code agents that you can watch: a high-level
-design (HLD) is written with you, split into epics, each epic scoped into one-PR stories that
-skeptics and a second model family try to refute, and the surviving stories are built in
-parallel, each agent in its own herdr pane.
+Build software with a team of Claude Code agents you can watch. You write the design with one
+agent; the rest plan it, argue with the plan, build it in parallel and merge it, each in its own
+terminal pane. You step in only where a decision is yours.
+
+You type two things:
+
+```
+/hld <title>    write the design with an agent
+/swarm          do everything after that; after each decision of yours, run it
+                again and it picks up where it left off
+```
+
+## How it works
 
 ```
   you ──▶ /hld <title>
@@ -46,46 +55,45 @@ parallel, each agent in its own herdr pane.
                                   a workspace per HLD, a tab per story
 ```
 
-```
-/hld <title>            co-write the HLD with the most capable model; a reviewer attacks it
-/swarm                  run everything after that, resuming wherever it stopped
-```
+**Words used here**
 
-`/swarm` does these for you, one at a time, and stops where you must decide:
+- **HLD** (high-level design): one document saying what you are building and why. Everything else
+  comes from it.
+- **Epic**: a goal bigger than one pull request, with a **Done when** that could fail.
+- **Story**: one pull request's worth of work. Its `kind` says who does it: an agent (`code`,
+  `docs`, `chore`, `verify`), you (`operator`), or your own session because it touches real cloud
+  or credentials (`lead`).
+- **Board**: those files in `docs/hld/`, `docs/epics/` and `docs/stories/`, viewed in Obsidian.
+- **Conductor**: a fresh agent that builds one epic's stories and merges them.
+- **Pane**: a terminal in [herdr](https://herdr.dev). Every agent gets one, so you can watch any of
+  them at any time.
 
-```
-/plan-hld <hld>         split the agreed HLD into epics (a swarm; you approve)
-/plan-epic <epic>       scope an epic into stories (a swarm; you approve)
-swarm.sh conduct <epic> a fresh conductor builds and merges the epic's stories
-```
+## Why this way
 
-How and why it works: [`docs/method.md`](docs/method.md).
-
-## What is different
-
-- **Every agent is visible.** Each runs in its own herdr pane: a workspace per HLD, a tab per
-  story. Nothing runs as a hidden subagent.
-- **Stories are attacked before they are built.** Every story faces a skeptic, and the whole plan
-  faces codex (a different model family) and a critic, before you approve it.
-- **Model and effort follow the role**, in one table (`policy()` in `bin/swarm.sh`): the most
-  capable model for design, Opus for judgment and code, Sonnet for reading and running.
-- **The board is files in git.** One file per HLD, epic and story, with front matter; no shared
-  board file, and decisions that are yours are `kind: operator` stories on it.
+- **You can see every agent.** Each one runs in its own pane: a herdr workspace per HLD, a tab per
+  story. Nothing works out of sight.
+- **Plans are attacked before anything is built.** Each story faces a skeptic that tries to refute
+  it, and the whole plan faces a critic and codex, a model from another company that shares fewer
+  blind spots. You see what they found before you approve.
+- **The right model for each job.** The most capable model for the design, Opus for judgment and
+  code, Sonnet for reading and running tests. The table is in [`docs/method.md`](docs/method.md).
+- **Nothing is lost when you stop.** The plan lives in files in git, not in a chat, so `/swarm`
+  always knows where things stand.
 
 ## Quick start
 
-### 1. Prerequisites
+### 1. Install the prerequisites
 
-| Tool | Why | Check |
+| Tool | What it is for | Check it works |
 |---|---|---|
 | [Claude Code](https://claude.com/claude-code) | runs every agent | `claude --version` |
 | [herdr](https://herdr.dev) | the panes every agent runs in | `herdr --version` |
-| [GitHub CLI](https://cli.github.com), logged in | PRs, checks, merges | `gh auth status` |
-| [codex CLI](https://github.com/openai/codex), logged in | the cross-model review | `codex --version` |
+| [GitHub CLI](https://cli.github.com), logged in | pull requests, checks, merges | `gh auth status` |
+| [codex CLI](https://github.com/openai/codex), logged in | the second-opinion review | `codex --version` |
+| [Obsidian](https://obsidian.md) 1.9 or later | seeing the board | Settings → About |
 | `git`, `python3`, `bash` | the script itself | `git --version && python3 --version` |
-| [Obsidian](https://obsidian.md) 1.9 or later | the board: stories, epics and HLDs as tables | Settings → About |
 
-The project must be a git repository with a GitHub `origin`.
+Your project must be a git repository with its `origin` on GitHub.
 
 ### 2. Install the plugin
 
@@ -94,79 +102,101 @@ claude plugin marketplace add redscaresu/swarm-dev
 claude plugin install swarm-dev@swarm-dev
 ```
 
-Restart Claude Code afterwards: `swarm.sh` is put on the Bash tool's `PATH` when a session starts.
-The commands arrive as `/hld`, `/plan-hld` and `/plan-epic` (also `/swarm-dev:<name>`).
+Then restart Claude Code, so the commands and `swarm.sh` are loaded.
 
 ### 3. Set up your project
 
-From the project's root:
+From your project's root:
 
 ```bash
 git clone --depth 1 https://github.com/redscaresu/swarm-dev /tmp/swarm-dev
 mkdir -p docs .claude/swarm
-cp -Rn /tmp/swarm-dev/templates/docs/. docs/     # board formats, Obsidian views and link settings
+cp -Rn /tmp/swarm-dev/templates/docs/. docs/
 grep -qx '.swarm/' .gitignore || echo '.swarm/' >> .gitignore
 grep -qx 'docs/.obsidian/\*' .gitignore || printf '%s\n' 'docs/.obsidian/*' '!docs/.obsidian/app.json' >> .gitignore
-$EDITOR .claude/swarm/brief.md                   # your rules for every builder (see below)
 ```
 
-`.claude/swarm/brief.md` is appended to every builder's brief. Put there what is specific to your
-project: commit and PR trailers, where credentials live and must not be read, commands that must
-not run. Commit it (if `.claude/` is gitignored, add `!.claude/swarm/`). Then name your shared
-files in `AGENTS.md` (root config, schemas, CI scripts), so no two stories in one wave edit them.
+This adds the board's formats and Obsidian views to `docs/`, and keeps the agents' working files
+(`.swarm/`) and your personal Obsidian layout out of git.
 
-### The board in Obsidian
+Then write `.claude/swarm/brief.md`: the rules every building agent gets for your project. For
+example:
 
-The board is plain files in `docs/`; Obsidian is how you see it: what is ready, what is blocked,
-and what waits on you.
-
-1. In Obsidian, **Open folder as vault** and pick the project's `docs/` folder.
-2. Check that **Bases** is on under Settings → Core plugins (it is by default).
-3. Open `Board.base`. Its views: **Board** (stories by status), **By epic**, **Epics**,
-   **Waiting on you** (`operator` stories) and **Lead-run** (`lead` stories).
-   `hld/HLDs.base` lists the HLDs by status.
-
-`docs/.obsidian/app.json` is the one Obsidian file to commit: it makes Obsidian write standard
-relative markdown links, never `[[wikilinks]]`, so links work on GitHub and a link checker can
-follow them. The rest of `.obsidian/` is per-user UI state, kept out of git by the `.gitignore`
-lines above. Do not use spaces in file names: Obsidian writes them as `%20` in links.
-
-### 4. Run it
-
-Open herdr in the project, start `claude` in a pane, and start the first design:
-
-```
-/hld Add rate limiting to the API    # co-write the design in a new pane; say when it is ready
+```markdown
+Never read ~/.aws or any .env file. Never run `make deploy`.
+End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>".
+Run `make test` before opening a pull request.
 ```
 
-From then on, one command runs the whole chain and picks up wherever it stopped:
+Commit it (if `.claude/` is in your `.gitignore`, add `!.claude/swarm/`). Finally, list your shared
+files in `AGENTS.md` (root config, schemas, CI scripts) so no two agents edit them at once.
+
+### 4. Open the board in Obsidian
+
+In Obsidian, choose **Open folder as vault** and pick your project's `docs/` folder. Open
+`Board.base`: its views show stories by status and by epic, the epics, **Waiting on you** (your
+`operator` stories) and **Lead-run** (steps your own session runs). `hld/HLDs.base` lists the
+designs. If the views do not render, turn on **Bases** under Settings → Core plugins.
+
+### 5. Write your first HLD
+
+Open herdr in your project, start `claude` in a pane, and run:
+
+```
+/hld Add rate limiting to the API
+```
+
+1. A new pane opens with a co-author. **Talk to it there**: it reads your code, asks you the
+   questions that decide the design, and writes your answers into
+   `docs/hld/YYYY-MM-DD-add-rate-limiting-to-the-api.md`.
+2. When the draft says what you mean, **go back to your first pane and say it is ready**. A
+   reviewer attacks it; fix what it finds, with the co-author.
+3. **Tell your first pane the HLD is agreed.** It marks it agreed and opens a pull request for it.
+
+Stopped halfway? Run `/hld` with the same title and it carries on from the file. The full
+walkthrough, and what makes a good HLD: [`docs/method.md` § Writing the HLD](docs/method.md#writing-the-hld).
+
+### 6. Run the rest
 
 ```
 /swarm
 ```
 
-It reads the board, does the next step (plan the epics, scope an epic into stories, hand an epic
-to a conductor, build a one-off story) and loops. It stops only where you must decide: agreeing
-an HLD, approving epics or stories, an `operator` story, or a `later` epic to start. Answer, then
-run `/swarm` again. `swarm.sh next` shows the next step without doing it.
+It plans the epics, scopes each into stories, and hands each epic to a conductor, which opens a
+herdr workspace named after your HLD with one tab per story. Watch any pane, or the board in
+Obsidian. `/swarm` stops whenever a decision is yours; make it, then run `/swarm` again.
 
-Each conductor runs in a herdr workspace named after the HLD, with its own tab and one tab per
-story. The individual commands (`/plan-hld`, `/plan-epic`, `swarm.sh conduct <epic>`) still work
-on their own.
+## When `/swarm` stops for you
 
-## For agents
+| It shows you | What to do |
+|---|---|
+| a draft HLD | finish it with the co-author, then say it is ready, then agreed |
+| proposed epics or stories, with what the skeptics found | approve them, or say what to change |
+| an `operator` story | do what its **Done when** says (a decision or a step by hand) |
+| a `lead` story | it touches real cloud or credentials: tell your session to run it |
+| a `blocked` story | nothing, usually: it clears itself when what it waits on merges |
+| a `later` story or epic | set it `ready` (a story) or `active` (an epic) when you want it started |
 
-Read [`AGENTS.md`](AGENTS.md): how to set a project up, run the chain, and the rules that are not
-negotiable.
+`swarm.sh next` shows what `/swarm` would do next, without doing it.
 
-## Security
+## Cost
 
-Agents run with your local `claude`, `codex`, `gh` and `git` authentication; what they may and may
-not do is in [`SECURITY.md`](SECURITY.md), which is also where to report a vulnerability. CI runs
-shellcheck, gitleaks, zizmor on the workflows and OpenSSF Scorecard; every action is pinned to a
-commit SHA. Secrets are stopped at three layers: `make hooks` installs a gitleaks pre-commit hook,
-the CI gitleaks job scans the full history and is a required check on `main`, and GitHub secret
-scanning with push protection is on.
+Every agent is a full Claude Code session, so a swarm uses far more tokens than one chat. Scoping
+one epic starts about ten agents; each story gets one builder. To keep it down, each epic gets a
+fresh conductor instead of one long session that grows, and cheaper models do the reading and
+running. On a subscription this counts against your plan's limits.
+
+## Safety
+
+Agents act with your own `claude`, `codex`, `gh` and `git` logins. Builders work in separate git
+worktrees and never merge: a conductor (or your session, for a one-off story) merges, and only
+when every check is green. No agent is given a story that needs real cloud, credentials or your
+judgment. [`SECURITY.md`](SECURITY.md) has the details and how to report a vulnerability.
+
+## For agents, and contributing
+
+Agents: read [`AGENTS.md`](AGENTS.md), which says how to check the setup, run the chain, and the
+rules that are not negotiable. To work on swarm-dev itself, see its § Working on this repository.
 
 ## License
 

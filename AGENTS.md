@@ -52,7 +52,8 @@ Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.
 
 ```
 bin/swarm.sh          the only script: panes, story builds, conductors, the model policy
-commands/             /hld, /plan-hld, /plan-epic (Markdown the plugin loads)
+commands/             /hld, /plan-hld, /plan-epic, /swarm (Markdown the plugin loads)
+tests/                next_test.sh: swarm.sh next against throwaway boards
 docs/method.md        the method; change it when behaviour changes
 templates/docs/       what a project copies: the board formats and Obsidian views
 .claude-plugin/       plugin and marketplace manifests
@@ -66,6 +67,10 @@ shellcheck bin/swarm.sh scripts/pre-commit tests/*.sh
 bash tests/next_test.sh
 claude plugin validate .
 ```
+
+Secrets are stopped at three layers: the pre-commit hook, the CI gitleaks job over the full
+history (required on `main`), and GitHub push protection. Keep template links as markdown links,
+never `[[wikilinks]]`.
 
 `bin/swarm.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
