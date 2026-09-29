@@ -9,6 +9,44 @@ skeptics and a second model family try to refute, and the surviving stories are 
 parallel, each agent in its own herdr pane.
 
 ```
+  you ──▶ /hld <title>
+          ┌──────────────────────────────────────────────┐
+          │ HLD: co-written with you (Fable)             │
+          │ a reviewer attacks the draft                 │
+          └──────────────────────┬───────────────────────┘
+                                 │  ◆ you agree the HLD
+  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─│─ ─ /swarm runs all below; resumes where it stopped
+                                 ▼
+          ┌──────────────────────────────────────────────┐
+          │ /plan-hld: surveys → lead → skeptics         │
+          │            + codex + critic                  │
+          └──────────────────────┬───────────────────────┘
+                                 │  ◆ you approve the epics
+                                 ▼
+          ┌──────────────────────────────────────────────┐
+          │ /plan-epic (each epic): surveys → lead       │
+          │            → skeptic per story + codex       │
+          │            + critic                          │
+          └──────────────────────┬───────────────────────┘
+                                 │  ◆ you approve the stories
+                                 ▼
+          ┌──────────────────────────────────────────────┐
+          │ conductor (one per epic, a fresh session)    │
+          │  ├─ story A ─ builder, own worktree ─▶ PR    │
+          │  ├─ story B ─ builder, own worktree ─▶ PR    │
+          │  └─ story C ─ builder, own worktree ─▶ PR    │
+          │ each PR: codex review, CI green, then merge  │
+          └──────────────────────┬───────────────────────┘
+                                 │  epic done
+                                 ▼
+                        next epic, or ◆ you: operator stories,
+                        lead-run steps, what to start next
+
+  ◆ = the loop stops for you      every agent runs in its own herdr pane:
+                                  a workspace per HLD, a tab per story
+```
+
+```
 /hld <title>            co-write the HLD with the most capable model; a reviewer attacks it
 /swarm                  run everything after that, resuming wherever it stopped
 ```
