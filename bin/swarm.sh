@@ -265,7 +265,7 @@ epic_has_stories() {
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
-#   wait <agent>      a conductor is still working
+#   wait <agent>      a conductor exists: still working, or finished with its report unread
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
@@ -278,8 +278,9 @@ epic_has_stories() {
 next_step() {
   local f slug epic kind story_epic repo buildable="" waiting=""
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
-    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and a.get('agent_status') in ('working','blocked')),'')" 2>/dev/null || true)
-    [[ -z "${slug}" ]] || { echo "wait ${slug}"; echo "the conductor ${slug} is still working"; return; }
+    # Any status: a finished conductor still holds a report to read before its tab is closed.
+    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-')),'')" 2>/dev/null || true)
+    [[ -z "${slug}" ]] || { echo "wait ${slug}"; echo "the conductor ${slug} is running or has a report to read"; return; }
   fi
   # Stories an agent can build: ready, and neither lead nor operator. "<epic> <slug>" per line.
   while IFS= read -r f; do
@@ -403,13 +404,15 @@ watch_prs() {
   done
 }
 
-# close_tabs <label> — close every tab this script opened under <label>, and its state.
+# close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
+# in another workspace (a conductor's is its HLD's): its first pane id, "<workspace>:<pane>", says which.
 close_tabs() {
-  local label="$1" state tab_label id
+  local label="$1" state tab_label id ws
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
     tab_label="$(basename "${state}")"
-    id=$(herdr tab list --workspace "${HERDR_WORKSPACE_ID}" | python3 -c "
+    ws="$(head -1 "${state}")"; ws="${ws%%:*}"; ws="${ws:-${HERDR_WORKSPACE_ID}}"
+    id=$(herdr tab list --workspace "${ws}" | python3 -c "
 import json,sys
 for t in json.load(sys.stdin)['result']['tabs']:
     if t.get('label') == sys.argv[1]: print(t['tab_id'])" "${tab_label}")
