@@ -153,7 +153,7 @@ Open herdr in your project, start `claude` in a pane, and run:
    reviewer attacks it; fix what it finds, with the co-author.
 3. **Tell your first pane the HLD is agreed.** It marks it agreed and opens a pull request for it.
 
-Stopped halfway? Run `/hld` with the same title and it carries on from the file. The full
+Stopped halfway? Run `/hld` on its own and it carries on with the draft in progress. The full
 walkthrough, and what makes a good HLD: [`docs/method.md` § Writing the HLD](docs/method.md#writing-the-hld).
 
 ### 6. Run the rest
