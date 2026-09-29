@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # The only dependencies here are the pinned GitHub Actions. Grouped into one
+  # PR; auto-merge is off, so every bump gets a review.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"

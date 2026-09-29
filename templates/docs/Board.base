@@ -1,0 +1,78 @@
+filters:
+  and:
+    - file.ext == "md"
+    - file.name != "README"
+properties:
+  note.status:
+    displayName: Status
+  note.epic:
+    displayName: Epic
+  note.hld:
+    displayName: HLD
+  note.depends_on:
+    displayName: Depends on
+  note.kind:
+    displayName: Kind
+  note.blocked_by:
+    displayName: Blocked by
+views:
+  - type: table
+    name: Board
+    filters:
+      and:
+        - file.inFolder("stories")
+    groupBy:
+      property: status
+      direction: ASC
+    order:
+      - file.name
+      - epic
+      - depends_on
+    columnSize:
+      file.name: 252
+  - type: table
+    name: By epic
+    filters:
+      and:
+        - file.inFolder("stories")
+    groupBy:
+      property: epic
+      direction: ASC
+    order:
+      - file.name
+      - status
+      - depends_on
+  - type: table
+    name: Epics
+    filters:
+      and:
+        - file.inFolder("epics")
+    groupBy:
+      property: status
+      direction: ASC
+    order:
+      - file.name
+      - hld
+      - depends_on
+    columnSize:
+      file.name: 280
+  - type: table
+    name: Waiting on you
+    filters:
+      and:
+        - file.inFolder("stories")
+        - kind == "operator"
+    order:
+      - file.name
+      - status
+      - epic
+  - type: table
+    name: Lead-run
+    filters:
+      and:
+        - file.inFolder("stories")
+        - kind == "lead"
+    order:
+      - file.name
+      - status
+      - blocked_by

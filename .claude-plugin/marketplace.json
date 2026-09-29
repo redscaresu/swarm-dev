@@ -1,0 +1,14 @@
+{
+  "name": "swarm-dev",
+  "description": "A visible Claude Code swarm: HLD → epics → stories → parallel builds in herdr panes",
+  "owner": {
+    "name": "redscaresu"
+  },
+  "plugins": [
+    {
+      "name": "swarm-dev",
+      "source": "./",
+      "description": "HLD → epics → stories → parallel builds in visible herdr panes"
+    }
+  ]
+}

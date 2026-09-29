@@ -1,0 +1,93 @@
+# The method
+
+Work is planned top-down, the user approves each level before the next is made, and every agent
+at every level runs in its own herdr pane so it can be watched.
+
+## The planning chain
+
+1. **HLD**: `/hld <title>` opens a pane on the most capable model, where the user writes
+   `docs/hld/YYYY-MM-DD-<slug>.md` with it. A reviewer attacks the draft before it is `agreed`.
+2. **Epics**: `/plan-hld <hld>` runs a swarm that splits the HLD into epics, each with a
+   **Done when** that could fail. Skeptics and codex check for gaps and overlaps.
+3. **Stories**: `/plan-epic <epic>` runs a swarm that splits each epic into one-PR stories.
+4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
+   `ready` stories in parallel panes and merges them.
+
+A story the swarm must not build says so by its `kind`: `lead` (real cloud or credentials; the
+lead runs it) or `operator` (a decision or a hand step that is the user's). An open question for
+the user is an `operator` story, so the board's **Waiting on you** view lists it. An epic is done
+when its last story's PR deletes the epic file and marks it done in the HLD's `## Epics`.
+
+The session that runs the chain supervises, reviews and merges; it does not do the agents' work.
+
+## The board
+
+The board is files in git: `docs/hld/`, `docs/epics/` and `docs/stories/`, one file per item, with
+front matter the scripts read. There is no shared board file to conflict on; the PR that finishes a
+story deletes its file, and the PR is the record. `templates/docs/` holds the READMEs that define
+each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
+
+## Model and effort
+
+Every agent's model and effort come from its role, set in one place: `policy()` in
+`bin/swarm.sh` (`swarm.sh policy <role>` prints it). Spend on judgment, save on reading:
+
+- **Design is Fable.** The HLD is co-written at `high`, because the user waits on every turn, and
+  attacked at `xhigh` before it is agreed. Splitting an HLD into epics shapes all the work below
+  it, so it runs on Fable at `xhigh`.
+- **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
+  critic run at `high`, because a skeptic is the only gate a story passes before it is built.
+- **Reading and running is Sonnet.** Surveys read and cite at `high`, since they feed the lead;
+  verification, docs and chores run at `medium`.
+- **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`.
+- **Codex is the cross-model check**, read-only, because a different model family shares fewer
+  blind spots with the one that wrote the plan.
+- **Below the design level, Fable is escalation only**: a story that failed twice, or an epic whose
+  contradictions no one can reconcile.
+- **The conductor is Opus at `high`, one fresh session per epic**, on the standard context window,
+  never 1M. A conductor re-reads its whole context every turn: on the project this came from, one
+  long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M
+  context). The board carries the state, so a new conductor costs little.
+
+## Scoping an epic
+
+An epic (`docs/epics/<slug>.md`: goal, **Done when**, out of scope, constraints) becomes stories
+with `/plan-epic <slug>`: three surveys (where it lands, what constrains it, what overlaps it), one
+lead decomposition into one-PR stories with `kind`, `touches` and `depends_on`, a skeptic per story
+(capped at five, the rest logged) and a codex pass, then a critic. Agents write their answers to
+`.swarm/<epic>/`. The user sees refuted stories and contradictions first and approves before any
+story file is written. About ten agents per run, so scope deliberately.
+
+## Building
+
+`swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
+stops and reports; the session it was started from stays free. It runs in a herdr workspace named
+for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named
+`conduct-<epic>`. Each story it starts gets its own tab, named for the story. Run one conductor at a
+time: `watch` reports every story PR, and shared files are the lead's alone.
+
+**Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
+file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
+
+```bash
+swarm.sh story <slug>      # worktree on story/<slug>, a tab, the agent, its brief
+swarm.sh wait <slug>       # in the background: returns when it settles
+swarm.sh watch             # in the background: returns when a story PR needs the lead
+```
+
+`wait` returns when an agent goes idle, which can be early. `watch` is what the lead waits on: it
+exits when a story PR's checks finish, when it conflicts with main, when its head has had no checks
+for 10 minutes, or when an agent is blocked on a prompt.
+
+The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
+codex loop, reply with the PR URL when CI is green), then the project's own rules from
+`.claude/swarm/brief.md`. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
+is doing.
+
+**Merge one at a time.** After each merge, merge `main` into every other open wave branch before
+trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
+
+**Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
+
+**Clean up.** After each merge, `git worktree remove ../<repo>-wt/<slug>`, then
+`git worktree prune`, and `swarm.sh close <slug>` closes the story's tab.
