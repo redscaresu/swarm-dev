@@ -1,5 +1,8 @@
 # swarm-dev
 
+[![CI](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/redscaresu/swarm-dev/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/swarm-dev)
+
 A way of building software with a swarm of Claude Code agents that you can watch: a high-level
 design (HLD) is written with you, split into epics, each epic scoped into one-PR stories that
 skeptics and a second model family try to refute, and the surviving stories are built in
@@ -50,6 +53,13 @@ The commands arrive as `/hld`, `/plan-hld` and `/plan-epic` (also `/swarm-dev:<n
 4. Say in `AGENTS.md` which files are shared, so no two stories in one wave edit them.
 
 Then start with `/hld <title>` inside herdr.
+
+## Security
+
+Agents run with your local `claude`, `codex`, `gh` and `git` authentication; what they may and may
+not do is in [`SECURITY.md`](SECURITY.md), which is also where to report a vulnerability. CI runs
+shellcheck, gitleaks, zizmor on the workflows and OpenSSF Scorecard; every action is pinned to a
+commit SHA.
 
 ## License
 

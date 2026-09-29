@@ -1,2 +1,8 @@
 # swarm.sh pane records, briefs and agent outputs, when run inside this repo.
 .swarm/
+
+# Local secrets and environments.
+.env
+.env.*
+.venv/
+.DS_Store

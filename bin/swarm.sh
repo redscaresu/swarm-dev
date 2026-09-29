@@ -81,7 +81,7 @@ next_pane() {
           | json "d['result']['root_pane']['pane_id']")
       else
         # 2x2: 2nd splits the first to the right, 3rd splits the first down, 4th splits the second down.
-        panes=($(cat "${state}"))
+        read -r -a panes <<< "$(tr '\n' ' ' < "${state}")"
         case ${count} in
           1) pane=$(herdr pane split "${panes[0]}" --direction right --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
           2) pane=$(herdr pane split "${panes[0]}" --direction down  --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
@@ -125,8 +125,8 @@ start_agent() {
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), retries once, and fails loudly rather than reporting success.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" attempt status
-  for attempt in 1 2; do
+  local name="$1" prompt_file="$2" status
+  for _ in 1 2; do
     status=$(herdr agent prompt "${name}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
       --timeout 60000 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
     case "${status}" in
@@ -270,7 +270,9 @@ watch_prs() {
   local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending owner
   owner=$(gh repo view "$(git -C "${REPO_ROOT}" remote get-url origin)" --json owner -q .owner.login) || die "no GitHub origin for ${REPO_ROOT}"
   # Default: this repo plus every sibling a story names (repo: <name>), so a new sibling needs no edit here.
-  [[ ${#repos[@]} -gt 0 ]] || repos=("$(basename "${REPO_ROOT}")" $(sed -n 's/^repo: *//p' "${REPO_ROOT}"/docs/stories/*.md 2>/dev/null | sort -u))
+  if [[ ${#repos[@]} -eq 0 ]]; then
+    read -r -a repos <<< "$(basename "${REPO_ROOT}") $(sed -n 's/^repo: *//p' "${REPO_ROOT}"/docs/stories/*.md 2>/dev/null | sort -u | tr '\n' ' ')"
+  fi
   local uniq=() r
   for r in "${repos[@]}"; do [[ " ${uniq[*]-} " == *" ${r} "* ]] || uniq+=("${r}"); done
   repos=("${uniq[@]}")
