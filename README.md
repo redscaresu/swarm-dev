@@ -186,6 +186,10 @@ one epic starts about ten agents; each story gets one builder. To keep it down, 
 fresh conductor instead of one long session that grows, and cheaper models do the reading and
 running. On a subscription this counts against your plan's limits.
 
+`swarm.sh cost` shows where the tokens went: a table per role (conductor, code, skeptic, survey,
+and your own session as `lead`), with tokens and an estimated cost at list prices, from Claude
+Code's own logs. `swarm.sh cost 2026-10-01` counts only agents started since that date.
+
 ## Safety
 
 Agents act with your own `claude`, `codex`, `gh` and `git` logins. Builders work in separate git

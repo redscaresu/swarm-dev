@@ -34,7 +34,8 @@ also run one by one, and which each wait for the user's approval:
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval |
 | Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds and merges the epic |
 
-Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh watch`
+Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
+(tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh watch`
 (returns when a story PR needs the lead), `herdr agent read <name> --source recent-unwrapped`
 (what an agent is doing).
 
@@ -53,7 +54,7 @@ Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.
 ```
 bin/swarm.sh          the only script: panes, story builds, conductors, the model policy
 commands/             /hld, /plan-hld, /plan-epic, /swarm (Markdown the plugin loads)
-tests/                next_test.sh: swarm.sh next against throwaway boards
+tests/                *_test.sh: next against throwaway boards, cost against a log fixture
 docs/method.md        the method; change it when behaviour changes
 templates/docs/       what a project copies: the board formats and Obsidian views
 .claude-plugin/       plugin and marketplace manifests
@@ -64,7 +65,7 @@ Before you open a PR:
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh scripts/pre-commit tests/*.sh
-bash tests/next_test.sh
+for t in tests/*_test.sh; do bash "$t"; done
 claude plugin validate .
 ```
 
