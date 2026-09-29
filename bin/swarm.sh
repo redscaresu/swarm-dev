@@ -405,10 +405,24 @@ watch_prs() {
   done
 }
 
+# tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters
+# (agent_name), tab labels do not, so `next` can hand back a name that is not the label. The first
+# state file whose agent name matches wins: the base tab sorts before its "-2", "-3" overflow.
+tab_label() {
+  local want state
+  want="$(agent_name "$1")"
+  for state in "${STATE_DIR}"/*; do
+    [[ -f "${state}" && "$(agent_name "$(basename "${state}")")" == "${want}" ]] || continue
+    basename "${state}"; return
+  done
+  echo "$1"
+}
+
 # close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
 # in another workspace (a conductor's is its HLD's): its first pane id, "<workspace>:<pane>", says which.
 close_tabs() {
-  local label="$1" state tab_label id ws
+  local label state tab_label id ws
+  label="$(tab_label "$1")"
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
     tab_label="$(basename "${state}")"
@@ -438,6 +452,7 @@ main() {
     next)   next_step ;;
     watch)  watch_prs "$@" ;;
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
+    _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
     *) sed -n '2,15p' "$0"; exit 2 ;;

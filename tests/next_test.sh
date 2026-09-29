@@ -76,5 +76,17 @@ expect "stories before planning" "conduct e2" \
   "item epics/e2.md 'status: active'" \
   "item stories/a.md 'status: ready' 'epic: e2'"
 
+# A long conductor's agent name is cut at 32 characters; close must still find its full tab label.
+long="conduct-aws-layer3-claim-sweep-reap"
+dir="$(mktemp -d)"
+(cd "${dir}" && git init -q && mkdir -p .swarm/state && touch ".swarm/state/${long}" ".swarm/state/${long}-2" .swarm/state/short)
+short_name="$(cd "${dir}" && bash "${SWARM}" _name "${long}")"
+for pair in "${short_name}:${long}" "${long}:${long}" "short:short" "unknown:unknown"; do
+  got="$(cd "${dir}" && bash "${SWARM}" _label "${pair%%:*}")"
+  if [[ "${got}" == "${pair#*:}" ]]; then echo "ok   tab label for ${pair%%:*}"; else
+    echo "FAIL tab label for ${pair%%:*}: want '${pair#*:}', got '${got}'"; fails=$((fails + 1)); fi
+done
+rm -rf "${dir}"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
