@@ -59,7 +59,9 @@ Then start with `/hld <title>` inside herdr.
 Agents run with your local `claude`, `codex`, `gh` and `git` authentication; what they may and may
 not do is in [`SECURITY.md`](SECURITY.md), which is also where to report a vulnerability. CI runs
 shellcheck, gitleaks, zizmor on the workflows and OpenSSF Scorecard; every action is pinned to a
-commit SHA.
+commit SHA. Secrets are stopped at three layers: `make hooks` installs a gitleaks pre-commit hook,
+the CI gitleaks job scans the full history and is a required check on `main`, and GitHub secret
+scanning with push protection is on.
 
 ## License
 

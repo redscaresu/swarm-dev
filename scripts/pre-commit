@@ -1,0 +1,9 @@
+#!/bin/sh
+# swarm-dev pre-commit hook: scan staged changes for secrets.
+# Install with `make hooks`. Bypassable with --no-verify; the CI gitleaks
+# job (a required check on main) is the load-bearing backstop.
+set -e
+
+echo "Scanning for secrets (gitleaks)..."
+gitleaks protect --staged --no-banner --config .gitleaks.toml
+echo "No secrets detected."
