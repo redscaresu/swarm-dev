@@ -289,7 +289,12 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 \`kind: lead\` story (real cloud, credentials) or a \`kind: operator\` one is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds (delete the epic file in the last PR) or
-when nothing ready is left, and reply with what merged, what is left, and what waits on the user.
+when nothing ready is left.
+
+Your last act, after everything else: write your report (what merged, what is left, what waits on
+the user) to ${REPO_ROOT}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
+treats that file as the only sign you have finished: being idle while you wait on your own
+background work is not.
 EOF
 }
 
@@ -305,6 +310,10 @@ hld_workspace() {
   echo "${ws}"
 }
 
+# conductor_report <agent> — where a conductor writes its report as its last act. The agent name
+# may be cut at 32 characters, so it is resolved to the full tab label (conduct-<epic>) first.
+conductor_report() { echo "${REPO_ROOT}/.swarm/$(tab_label "$1").report.md"; }
+
 start_conductor() {
   local epic="$1" epic_file="${REPO_ROOT}/docs/epics/$1.md" hld prompt ws placeholder
   [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
@@ -313,6 +322,7 @@ start_conductor() {
   [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
   prompt="${REPO_ROOT}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
+  rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
   HERDR_WORKSPACE_ID="${ws}" start_agent "conduct-${epic}" "conduct-${epic}" "${REPO_ROOT}" conduct "${prompt}"
   [[ -z "${placeholder}" ]] || herdr tab close "${placeholder}" >/dev/null
@@ -342,7 +352,8 @@ epic_has_stories() {
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
-#   wait <agent>      a conductor exists: still working, or finished with its report unread
+#   collect <agent>   a conductor has written its report: read it, then close its tab
+#   wait <agent>      a conductor exists and has not reported (idle between its own steps counts)
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
@@ -355,9 +366,16 @@ epic_has_stories() {
 next_step() {
   local f slug epic kind story_epic repo buildable="" waiting=""
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
-    # Any status: a finished conductor still holds a report to read before its tab is closed.
+    # Any status: idle is not finished. Only the conductor's report file says it is done.
     slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-')),'')" 2>/dev/null || true)
-    [[ -z "${slug}" ]] || { echo "wait ${slug}"; echo "the conductor ${slug} is running or has a report to read"; return; }
+    if [[ -n "${slug}" ]]; then
+      if [[ -f "$(conductor_report "${slug}")" ]]; then
+        echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
+      else
+        echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
+      fi
+      return
+    fi
   fi
   # Stories an agent can build: ready, and neither lead nor operator. "<epic> <slug>" per line.
   while IFS= read -r f; do

@@ -11,9 +11,13 @@ Repeat until a step below says stop:
 1. Run `swarm.sh unblock` (it readies stories whose blockers have merged), then `swarm.sh next`.
    Its first line is the step, the rest is why. Tell the user both in one line.
 2. Do the step:
-   - `wait <agent>`: a conductor is working, or finished with its report unread. Run `swarm.sh wait <agent>` in the background. When it
-     returns, read its report (`herdr agent read <agent> --source recent-unwrapped`), relay what
-     merged and what is left, then `swarm.sh close <agent>`.
+   - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background. It
+     returns whenever the conductor goes idle, which it also does while waiting on its own
+     background work, so when it returns just go back to 1: `next` says `collect` only once the
+     conductor has written its report. Never close a conductor that has not reported.
+   - `collect <agent>`: the conductor has finished. Read its report
+     (`.swarm/<tab label>.report.md`, where the label is `conduct-<epic>`), relay what merged, what
+     is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
    - `resume <slug>`: a one-off that an earlier run started. If `herdr agent list` shows `<slug>`
      working, `swarm.sh wait <slug>` in the background first. Then find its PR
