@@ -83,6 +83,7 @@ How and why it works: [`docs/method.md`](docs/method.md).
 | [GitHub CLI](https://cli.github.com), logged in | PRs, checks, merges | `gh auth status` |
 | [codex CLI](https://github.com/openai/codex), logged in | the cross-model review | `codex --version` |
 | `git`, `python3`, `bash` | the script itself | `git --version && python3 --version` |
+| [Obsidian](https://obsidian.md) 1.9 or later | the board: stories, epics and HLDs as tables | Settings → About |
 
 The project must be a git repository with a GitHub `origin`.
 
@@ -103,8 +104,9 @@ From the project's root:
 ```bash
 git clone --depth 1 https://github.com/redscaresu/swarm-dev /tmp/swarm-dev
 mkdir -p docs .claude/swarm
-cp -Rn /tmp/swarm-dev/templates/docs/. docs/     # HLD, epic and story formats, and the board views
+cp -Rn /tmp/swarm-dev/templates/docs/. docs/     # board formats, Obsidian views and link settings
 grep -qx '.swarm/' .gitignore || echo '.swarm/' >> .gitignore
+grep -qx 'docs/.obsidian/\*' .gitignore || printf '%s\n' 'docs/.obsidian/*' '!docs/.obsidian/app.json' >> .gitignore
 $EDITOR .claude/swarm/brief.md                   # your rules for every builder (see below)
 ```
 
@@ -112,7 +114,22 @@ $EDITOR .claude/swarm/brief.md                   # your rules for every builder 
 project: commit and PR trailers, where credentials live and must not be read, commands that must
 not run. Commit it (if `.claude/` is gitignored, add `!.claude/swarm/`). Then name your shared
 files in `AGENTS.md` (root config, schemas, CI scripts), so no two stories in one wave edit them.
-The `.base` files are optional [Obsidian](https://obsidian.md) views of the board.
+
+### The board in Obsidian
+
+The board is plain files in `docs/`; Obsidian is how you see it: what is ready, what is blocked,
+and what waits on you.
+
+1. In Obsidian, **Open folder as vault** and pick the project's `docs/` folder.
+2. Check that **Bases** is on under Settings → Core plugins (it is by default).
+3. Open `Board.base`. Its views: **Board** (stories by status), **By epic**, **Epics**,
+   **Waiting on you** (`operator` stories) and **Lead-run** (`lead` stories).
+   `hld/HLDs.base` lists the HLDs by status.
+
+`docs/.obsidian/app.json` is the one Obsidian file to commit: it makes Obsidian write standard
+relative markdown links, never `[[wikilinks]]`, so links work on GitHub and a link checker can
+follow them. The rest of `.obsidian/` is per-user UI state, kept out of git by the `.gitignore`
+lines above. Do not use spaces in file names: Obsidian writes them as `%20` in links.
 
 ### 4. Run it
 
