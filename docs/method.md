@@ -58,8 +58,10 @@ and fail, because each epic's **Done when** comes from them; **Non-goals**, whic
 decomposition from growing; **Rollout**, which becomes the order of the epics; and **Open
 questions**, which must be answered or explicitly deferred before the HLD is agreed.
 
-**Stopping and resuming.** The HLD is a file, so nothing is lost if you stop: run `/hld` with the
-same title (or `/swarm`, which sees the draft) and a new co-author picks it up from the file. To
+**Stopping and resuming.** The HLD is a file, so nothing is lost if you stop: run `/hld` on its own
+(or `/swarm`, which sees the draft) and a new co-author picks up the draft in progress from the
+file; if there are several, it asks which. With no draft at all, it tells you where the chain
+stands instead. To
 replace a design later, write a new HLD and set the old one `status: superseded`.
 
 ## The board

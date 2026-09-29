@@ -1,9 +1,17 @@
 ---
 description: Start or resume a high-level design (docs/hld/) co-written with the user on the most capable model, in its own herdr pane
-argument-hint: "<title>  e.g. Firewalled by default"
+argument-hint: "[title]  e.g. Firewalled by default; none resumes the draft in progress"
 ---
 
 Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr, say so and stop.
+
+0. **No title given: pick up where things left off.** List the draft HLDs
+   (`grep -l '^status: draft$' docs/hld/*.md`, never the README).
+   - One draft: resume it (step 1, with its title from the file's `title:`).
+   - Several: list them with their titles and ask which; do not guess.
+   - None: there is no design in progress. Run `swarm.sh next` and tell the user where the chain
+     stands (for example "`conduct policy-correctness`: a ready story in an active epic") and that
+     `/swarm` continues it. Offer to start a new design if they give a title. Then stop.
 
 1. If an HLD with this title exists in `docs/hld/`, resume it. Otherwise create
    `docs/hld/<today>-<slug>.md` (today from `date +%F`; slug: lowercase, words joined by `-`) from
