@@ -22,7 +22,9 @@ expect() {
     echo "# Stories" > docs/stories/README.md   # READMEs are never items
     for step in "$@"; do eval "${step}"; done
   )
-  got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | head -1)"
+  # The whole output, then its first line: `| head -1` can close the pipe while next is still
+  # printing a gate's list, and the broken pipe fails the run under pipefail.
+  got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; got="${got%%$'\n'*}"
   if [[ "${got}" == "${want}" ]]; then
     echo "ok   ${name}"
   else
