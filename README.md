@@ -28,31 +28,65 @@ How and why it works: [`docs/method.md`](docs/method.md).
 - **The board is files in git.** One file per HLD, epic and story, with front matter; no shared
   board file, and decisions that are yours are `kind: operator` stories on it.
 
-## Requirements
+## Quick start
 
-[Claude Code](https://claude.com/claude-code), [herdr](https://herdr.dev), `gh` (authenticated),
-`git`, `python3`, and the [codex CLI](https://github.com/openai/codex) for the cross-model check.
+### 1. Prerequisites
 
-## Install
+| Tool | Why | Check |
+|---|---|---|
+| [Claude Code](https://claude.com/claude-code) | runs every agent | `claude --version` |
+| [herdr](https://herdr.dev) | the panes every agent runs in | `herdr --version` |
+| [GitHub CLI](https://cli.github.com), logged in | PRs, checks, merges | `gh auth status` |
+| [codex CLI](https://github.com/openai/codex), logged in | the cross-model review | `codex --version` |
+| `git`, `python3`, `bash` | the script itself | `git --version && python3 --version` |
+
+The project must be a git repository with a GitHub `origin`.
+
+### 2. Install the plugin
 
 ```bash
 claude plugin marketplace add redscaresu/swarm-dev
 claude plugin install swarm-dev@swarm-dev
 ```
 
-The commands arrive as `/hld`, `/plan-hld` and `/plan-epic` (also `/swarm-dev:<name>`), and
-`swarm.sh` is on the Bash tool's `PATH` while the plugin is enabled.
+Restart Claude Code afterwards: `swarm.sh` is put on the Bash tool's `PATH` when a session starts.
+The commands arrive as `/hld`, `/plan-hld` and `/plan-epic` (also `/swarm-dev:<name>`).
 
-## Set up a project
+### 3. Set up your project
 
-1. Copy `templates/docs/` into the project's `docs/`: the READMEs define the HLD, epic and story
-   formats, and the `.base` files are Obsidian views of the board (optional).
-2. Add `.swarm/` to `.gitignore`; it holds pane records, briefs and agent outputs.
-3. Write `.claude/swarm/brief.md`: the project's rules every builder gets after the standard ones
-   (commit trailers, where credentials live and must not be read, ADR conventions).
-4. Say in `AGENTS.md` which files are shared, so no two stories in one wave edit them.
+From the project's root:
 
-Then start with `/hld <title>` inside herdr.
+```bash
+git clone --depth 1 https://github.com/redscaresu/swarm-dev /tmp/swarm-dev
+mkdir -p docs .claude/swarm
+cp -Rn /tmp/swarm-dev/templates/docs/. docs/     # HLD, epic and story formats, and the board views
+grep -qx '.swarm/' .gitignore || echo '.swarm/' >> .gitignore
+$EDITOR .claude/swarm/brief.md                   # your rules for every builder (see below)
+```
+
+`.claude/swarm/brief.md` is appended to every builder's brief. Put there what is specific to your
+project: commit and PR trailers, where credentials live and must not be read, commands that must
+not run. Commit it (if `.claude/` is gitignored, add `!.claude/swarm/`). Then name your shared
+files in `AGENTS.md` (root config, schemas, CI scripts), so no two stories in one wave edit them.
+The `.base` files are optional [Obsidian](https://obsidian.md) views of the board.
+
+### 4. Run it
+
+Open herdr in the project, start `claude` in a pane, and:
+
+```
+/hld Add rate limiting to the API    # co-write the design in a new pane; say when it is ready
+/plan-hld 2026-09-29-add-rate-limiting-to-the-api
+/plan-epic <epic-slug>               # you approve the stories before any file is written
+```
+
+Then build an epic from a Claude session in herdr: ask it to run `swarm.sh conduct <epic-slug>`.
+A new herdr workspace named after the HLD appears, with the conductor's tab and one tab per story.
+
+## For agents
+
+Read [`AGENTS.md`](AGENTS.md): how to set a project up, run the chain, and the rules that are not
+negotiable.
 
 ## Security
 
