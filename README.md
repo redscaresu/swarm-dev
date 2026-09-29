@@ -83,6 +83,7 @@ How and why it works: [`docs/method.md`](docs/method.md).
 | [GitHub CLI](https://cli.github.com), logged in | PRs, checks, merges | `gh auth status` |
 | [codex CLI](https://github.com/openai/codex), logged in | the cross-model review | `codex --version` |
 | `git`, `python3`, `bash` | the script itself | `git --version && python3 --version` |
+| [Obsidian](https://obsidian.md) 1.9 or later | the board: stories, epics and HLDs as tables | Settings → About |
 
 The project must be a git repository with a GitHub `origin`.
 
@@ -114,10 +115,10 @@ project: commit and PR trailers, where credentials live and must not be read, co
 not run. Commit it (if `.claude/` is gitignored, add `!.claude/swarm/`). Then name your shared
 files in `AGENTS.md` (root config, schemas, CI scripts), so no two stories in one wave edit them.
 
-### The board in Obsidian (optional)
+### The board in Obsidian
 
-The board is plain files, so any editor works; [Obsidian](https://obsidian.md) 1.9 or later shows
-it as tables.
+The board is plain files in `docs/`; Obsidian is how you see it: what is ready, what is blocked,
+and what waits on you.
 
 1. In Obsidian, **Open folder as vault** and pick the project's `docs/` folder.
 2. Check that **Bases** is on under Settings → Core plugins (it is by default).
