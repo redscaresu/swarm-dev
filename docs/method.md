@@ -108,7 +108,9 @@ story file is written. About ten agents per run, so scope deliberately.
 ## Building
 
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
-stops and reports; the session it was started from stays free. It runs in a herdr workspace named
+stops and reports; the session it was started from stays free. Its last act is writing that report
+to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm`
+knows it has finished: a conductor is idle whenever it waits on its own background work. It runs in a herdr workspace named
 for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named
 `conduct-<epic>`. Each story it starts gets its own tab, named for the story. Run one conductor at a
 time: `watch` reports every story PR, and shared files are the lead's alone.
