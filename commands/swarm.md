@@ -29,7 +29,7 @@ Repeat until a step below says stop:
      pane (the title is in the file), tell the user which pane to work in, and stop.
    - `gate`: show the list `next` printed and, for each item, what the user must do (an operator
      story: its **Done when**; a lead story: that you will run it once they approve; a blocked
-     story: what blocks it; a later epic: set it `active` to start it). Stop.
+     story: what blocks it; a later story or epic: set it `ready` or `active` to start it). Stop.
    - `done`: say so, suggest `/hld <title>` for the next piece of work, and stop.
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.

@@ -273,7 +273,7 @@ epic_has_stories() {
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
 #   gate              only the user can move the board: operator and lead stories, blocked
-#                     stories, later epics
+#                     stories, later stories and epics
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
   local f slug epic kind story_epic repo buildable="" waiting=""
@@ -327,6 +327,7 @@ next_step() {
     case "$(fm "${f}" status)" in
       ready) [[ "${kind}" == lead || "${kind}" == operator ]] && waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
+      later) waiting+="  later story: ${slug}"$'\n' ;;
     esac
   done < <(board stories)
   while IFS= read -r f; do

@@ -66,6 +66,8 @@ expect "lead story is a gate" "gate" \
 expect "ready story in a later epic waits" "gate" \
   "item epics/e1.md 'status: later'" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"
+expect "only later stories left is a gate, not done" "gate" \
+  "item stories/a.md 'status: later' 'kind: code'"
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
 expect "stories before planning" "conduct e2" \
