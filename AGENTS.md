@@ -19,7 +19,8 @@ If `swarm.sh` is missing, the user runs `claude plugin marketplace add redscares
 `claude plugin install swarm-dev@swarm-dev`, then restarts Claude Code.
 
 **Set the project up** if `docs/stories/README.md` does not exist: follow the README's
-§ Quick start, step 3. Ask the user for the contents of `.claude/swarm/brief.md` (their commit
+§ Quick start, step 3 (it includes the Obsidian link settings; keep links as markdown links,
+never `[[wikilinks]]`). Ask the user for the contents of `.claude/swarm/brief.md` (their commit
 trailers, where credentials live, commands that must not run); do not invent them.
 
 **Run the chain with `/swarm`.** It reads the board with `swarm.sh next`, does the next step, and
