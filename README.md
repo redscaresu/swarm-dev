@@ -133,11 +133,22 @@ lines above. Do not use spaces in file names: Obsidian writes them as `%20` in l
 
 ### 4. Run it
 
-Open herdr in the project, start `claude` in a pane, and start the first design:
+Open herdr in the project, start `claude` in a pane, and start with the design. The HLD is the one
+stage you write by hand, with an agent:
 
 ```
-/hld Add rate limiting to the API    # co-write the design in a new pane; say when it is ready
+/hld Add rate limiting to the API
 ```
+
+1. A new pane opens (tab `hld`) with a co-author. **Talk to it there**: it reads the code, asks you
+   the questions that decide the design, and writes the answers into
+   `docs/hld/YYYY-MM-DD-add-rate-limiting-to-the-api.md`.
+2. When the draft says what you mean, **go back to your session and say it is ready**. A reviewer
+   attacks it; revise with the co-author until you are satisfied.
+3. **Tell your session the HLD is agreed.** It marks it `agreed` and opens a PR for it.
+
+Stopped halfway? Run `/hld` with the same title and it picks up from the file. The full walkthrough,
+and what a good HLD contains: [`docs/method.md` § Writing the HLD](docs/method.md#writing-the-hld).
 
 From then on, one command runs the whole chain and picks up wherever it stopped:
 

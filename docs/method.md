@@ -6,7 +6,8 @@ at every level runs in its own herdr pane so it can be watched.
 ## The planning chain
 
 1. **HLD**: `/hld <title>` opens a pane on the most capable model, where the user writes
-   `docs/hld/YYYY-MM-DD-<slug>.md` with it. A reviewer attacks the draft before it is `agreed`.
+   `docs/hld/YYYY-MM-DD-<slug>.md` with it. A reviewer attacks the draft before it is `agreed`
+   (§ Writing the HLD).
 2. **Epics**: `/plan-hld <hld>` runs a swarm that splits the HLD into epics, each with a
    **Done when** that could fail. Skeptics and codex check for gaps and overlaps.
 3. **Stories**: `/plan-epic <epic>` runs a swarm that splits each epic into one-PR stories.
@@ -26,6 +27,40 @@ the user is an `operator` story, so the board's **Waiting on you** view lists it
 when its last story's PR deletes the epic file and marks it done in the HLD's `## Epics`.
 
 The session that runs the chain supervises, reviews and merges; it does not do the agents' work.
+
+## Writing the HLD
+
+Everything starts here, and it is the one stage you do by hand: the HLD decides what every epic,
+story and line of code after it is for, so it is written with you, not for you.
+
+1. **Start it.** In your Claude session, inside herdr: `/hld <title>`, for example
+   `/hld Add rate limiting to the API`. This creates `docs/hld/YYYY-MM-DD-<slug>.md` from the
+   template with `status: draft`, and opens a new pane (tab `hld`) with a co-author on the most
+   capable model. Your session only supervises from here.
+2. **Write it in the co-author's pane.** Switch to that pane and talk to it there. It reads the
+   code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the design, one
+   or two at a time, and writes your answers into the file section by section, citing evidence.
+   It does not invent requirements, commit, or change `status`.
+3. **Say it is ready.** When the draft says what you mean, go back to your session and say so. A
+   reviewer (the most capable model, at `xhigh` effort) attacks it: goals that cannot be
+   verified, a design that contradicts an ADR or a safety rule, missing alternatives, unnamed
+   risks, open questions that would block splitting it into epics. Its findings come back to you
+   and the co-author; revise in the pane until you are satisfied.
+4. **Agree it.** Tell your session the HLD is agreed. It sets `status: agreed`, opens a PR for the
+   HLD (reviewed like any other change), and closes the co-author's pane. Only you can agree an
+   HLD; no agent changes its status.
+5. **Hand over.** Run `/swarm`. It sees an agreed HLD with no epics and starts `/plan-hld`.
+
+**What a good HLD has.** The template's sections: Problem (with evidence), Goals, Non-goals,
+Current state, Design, Alternatives, Risks and safety, Rollout, Open questions, and Epics (filled
+in later by `/plan-hld`). The ones that matter most downstream: **Goals** that could be checked
+and fail, because each epic's **Done when** comes from them; **Non-goals**, which keep the
+decomposition from growing; **Rollout**, which becomes the order of the epics; and **Open
+questions**, which must be answered or explicitly deferred before the HLD is agreed.
+
+**Stopping and resuming.** The HLD is a file, so nothing is lost if you stop: run `/hld` with the
+same title (or `/swarm`, which sees the draft) and a new co-author picks it up from the file. To
+replace a design later, write a new HLD and set the old one `status: superseded`.
 
 ## The board
 
