@@ -10,6 +10,12 @@ parallel, each agent in its own herdr pane.
 
 ```
 /hld <title>            co-write the HLD with the most capable model; a reviewer attacks it
+/swarm                  run everything after that, resuming wherever it stopped
+```
+
+`/swarm` does these for you, one at a time, and stops where you must decide:
+
+```
 /plan-hld <hld>         split the agreed HLD into epics (a swarm; you approve)
 /plan-epic <epic>       scope an epic into stories (a swarm; you approve)
 swarm.sh conduct <epic> a fresh conductor builds and merges the epic's stories
@@ -72,16 +78,26 @@ The `.base` files are optional [Obsidian](https://obsidian.md) views of the boar
 
 ### 4. Run it
 
-Open herdr in the project, start `claude` in a pane, and:
+Open herdr in the project, start `claude` in a pane, and start the first design:
 
 ```
 /hld Add rate limiting to the API    # co-write the design in a new pane; say when it is ready
-/plan-hld 2026-09-29-add-rate-limiting-to-the-api
-/plan-epic <epic-slug>               # you approve the stories before any file is written
 ```
 
-Then build an epic from a Claude session in herdr: ask it to run `swarm.sh conduct <epic-slug>`.
-A new herdr workspace named after the HLD appears, with the conductor's tab and one tab per story.
+From then on, one command runs the whole chain and picks up wherever it stopped:
+
+```
+/swarm
+```
+
+It reads the board, does the next step (plan the epics, scope an epic into stories, hand an epic
+to a conductor, build a one-off story) and loops. It stops only where you must decide: agreeing
+an HLD, approving epics or stories, an `operator` story, or a `later` epic to start. Answer, then
+run `/swarm` again. `swarm.sh next` shows the next step without doing it.
+
+Each conductor runs in a herdr workspace named after the HLD, with its own tab and one tab per
+story. The individual commands (`/plan-hld`, `/plan-epic`, `swarm.sh conduct <epic>`) still work
+on their own.
 
 ## For agents
 

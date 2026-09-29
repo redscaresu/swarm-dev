@@ -7,6 +7,7 @@
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <tab>                                    close <tab>, <tab>-2, ... and forget them
+#   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all merged
 #   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
 #
@@ -241,6 +242,90 @@ start_conductor() {
   echo "workspace ${hld} (${ws})"
 }
 
+# fm <file> <key> — the first front-matter value for <key>, or nothing.
+fm() { sed -n "s/^$2: *//p" "$1" | head -1; }
+
+# board <dir> — the item files in docs/<dir>/, never the README.
+board() {
+  local f
+  for f in "${REPO_ROOT}/docs/$1"/*.md; do
+    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] && echo "${f}"
+  done
+  return 0
+}
+
+# epic_has_stories <epic> — true when any story names <epic>.
+epic_has_stories() {
+  local s
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "$1" ]] && return 0
+  done < <(board stories)
+  return 1
+}
+
+# next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
+# pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
+#   wait <agent>      a conductor is still working
+#   conduct <epic>    an active epic has a story an agent can build
+#   story <slug>      a ready story outside any epic
+#   plan-epic <epic>  an active epic has no stories yet
+#   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
+#   hld <hld>         an HLD is still a draft
+#   gate              only the user can move the board: operator and lead stories, later epics
+#   done              nothing open; start the next HLD with /hld <title>
+next_step() {
+  local f slug epic kind story_epic buildable="" waiting=""
+  if [[ "${HERDR_ENV:-}" == 1 ]]; then
+    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and a.get('agent_status') in ('working','blocked')),'')" 2>/dev/null || true)
+    [[ -z "${slug}" ]] || { echo "wait ${slug}"; echo "the conductor ${slug} is still working"; return; }
+  fi
+  # Stories an agent can build: ready, and neither lead nor operator. "<epic> <slug>" per line.
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == ready ]] || continue
+    kind=$(fm "${f}" kind)
+    [[ "${kind}" == lead || "${kind}" == operator ]] && continue
+    buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
+  done < <(board stories)
+  # An active epic's stories first: finish what is started before anything new.
+  while read -r story_epic slug; do
+    [[ -n "${slug}" && "$(fm "${REPO_ROOT}/docs/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
+    echo "conduct ${story_epic}"; echo "${slug} is ready in the active epic ${story_epic}"; return
+  done <<< "${buildable}"
+  while read -r story_epic slug; do
+    # A one-off: `read` puts the lone slug in story_epic.
+    [[ -n "${story_epic}" && -z "${slug}" ]] || continue
+    echo "story ${story_epic}"; echo "${story_epic} is ready and belongs to no epic"; return
+  done <<< "${buildable}"
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == active ]] || continue
+    epic=$(basename "${f}" .md)
+    epic_has_stories "${epic}" && continue
+    echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return
+  done < <(board epics)
+  while IFS= read -r f; do
+    slug=$(basename "${f}" .md)
+    case "$(fm "${f}" status)" in
+      agreed)
+        if [[ $(awk '/^## Epics/{e=1;next} /^## /{e=0} e && /^[-*] /{n++} END{print n+0}' "${f}") -eq 0 ]]; then
+          echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has no epics yet"; return
+        fi ;;
+      draft) echo "hld ${slug}"; echo "the HLD ${slug} is still a draft"; return ;;
+    esac
+  done < <(board hld)
+  while IFS= read -r f; do
+    kind=$(fm "${f}" kind)
+    [[ ( "${kind}" == lead || "${kind}" == operator ) && "$(fm "${f}" status)" != later ]] \
+      && waiting+="  ${kind}: $(basename "${f}" .md) ($(fm "${f}" status))"$'\n'
+  done < <(board stories)
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == later ]] && waiting+="  later epic: $(basename "${f}" .md)"$'\n'
+  done < <(board epics)
+  if [[ -n "${waiting}" ]]; then
+    echo "gate"; echo "only you can move the board now:"; printf '%s' "${waiting}"; return
+  fi
+  echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
+}
+
 # unblock — a merged story's file is deleted, so a blocked story whose every blocked_by slug has no
 # story or epic file left, and names no operator step, is ready. Prints each story it flips.
 unblock() {
@@ -335,11 +420,12 @@ main() {
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_tabs "${1:?tab}" ;;
     unblock) unblock ;;
+    next)   next_step ;;
     watch)  watch_prs "$@" ;;
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
-    *) sed -n '2,14p' "$0"; exit 2 ;;
+    *) sed -n '2,15p' "$0"; exit 2 ;;
   esac
 }
 

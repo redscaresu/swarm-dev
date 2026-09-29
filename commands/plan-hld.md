@@ -10,6 +10,10 @@ path. Briefs go in `.swarm/briefs/<name>.md`; start each with
 `swarm.sh agent plan-$1 <name> "$PWD" <role> <brief>` and supervise with
 `swarm.sh wait <name>` in the background.
 
+**Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
+its output file. If it exists, parses as JSON and is newer than `docs/hld/$1.md`, reuse it and do not
+start that agent again; an older one belongs to a previous plan, so start the agent.
+
 Every brief begins: *You are decomposing the agreed HLD docs/hld/$1.md; read it first. Read-only —
 write nothing but your output file, never commit, never touch real cloud or credentials. Cite
 evidence as file:line. Keep free text short.*
