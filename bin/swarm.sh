@@ -267,14 +267,16 @@ epic_has_stories() {
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
 #   wait <agent>      a conductor is still working
 #   conduct <epic>    an active epic has a story an agent can build
+#   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
-#   gate              only the user can move the board: operator and lead stories, later epics
+#   gate              only the user can move the board: operator and lead stories, blocked
+#                     stories, later epics
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
-  local f slug epic kind story_epic buildable="" waiting=""
+  local f slug epic kind story_epic repo buildable="" waiting=""
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and a.get('agent_status') in ('working','blocked')),'')" 2>/dev/null || true)
     [[ -z "${slug}" ]] || { echo "wait ${slug}"; echo "the conductor ${slug} is still working"; return; }
@@ -286,6 +288,13 @@ next_step() {
     [[ "${kind}" == lead || "${kind}" == operator ]] && continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
+  # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
+  while read -r story_epic slug; do
+    [[ -n "${story_epic}" && -z "${slug}" ]] || continue
+    repo=$(fm "${REPO_ROOT}/docs/stories/${story_epic}.md" repo); repo="${repo:-$(basename "${REPO_ROOT}")}"
+    [[ -d "$(dirname "${REPO_ROOT}")/${repo}-wt/${story_epic}" ]] || continue
+    echo "resume ${story_epic}"; echo "${story_epic} has already started: wait for its agent, then review its PR"; return
+  done <<< "${buildable}"
   # An active epic's stories first: finish what is started before anything new.
   while read -r story_epic slug; do
     [[ -n "${slug}" && "$(fm "${REPO_ROOT}/docs/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
@@ -313,9 +322,11 @@ next_step() {
     esac
   done < <(board hld)
   while IFS= read -r f; do
-    kind=$(fm "${f}" kind)
-    [[ ( "${kind}" == lead || "${kind}" == operator ) && "$(fm "${f}" status)" != later ]] \
-      && waiting+="  ${kind}: $(basename "${f}" .md) ($(fm "${f}" status))"$'\n'
+    kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
+    case "$(fm "${f}" status)" in
+      ready) [[ "${kind}" == lead || "${kind}" == operator ]] && waiting+="  ${kind}: ${slug}"$'\n' ;;
+      blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
+    esac
   done < <(board stories)
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == later ]] && waiting+="  later epic: $(basename "${f}" .md)"$'\n'

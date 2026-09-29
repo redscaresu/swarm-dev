@@ -28,7 +28,7 @@ expect() {
   else
     echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1))
   fi
-  rm -rf "${dir}"
+  rm -rf "${dir}" "${dir}-wt"
 }
 
 expect "empty board" "done"
@@ -49,6 +49,13 @@ expect "active epic before a one-off" "conduct e1" \
   "item stories/b.md 'status: ready' 'kind: code' 'epic: e1'"
 expect "one-off story" "story a" \
   "item stories/a.md 'status: ready'"
+expect "blocked code story is a gate, not done" "gate" \
+  "item epics/e1.md 'status: active'" \
+  "item stories/a.md 'status: blocked' 'kind: code' 'epic: e1' 'blocked_by: [b]'"
+# shellcheck disable=SC2016 # the setup is eval'd inside the fixture, so $PWD is the fixture's
+expect "started one-off resumes" "resume a" \
+  "item stories/a.md 'status: ready'" \
+  'mkdir -p "../$(basename "$PWD")-wt/a"'
 expect "blocked story is not built" "gate" \
   "item epics/e1.md 'status: active'" \
   "item stories/a.md 'status: blocked' 'kind: lead' 'epic: e1'"
