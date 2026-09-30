@@ -2,6 +2,10 @@
 description: Run the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
 ---
 
+The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
+`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+is inside it.
+
 Drive the chain end to end, picking up wherever the board says it stands. Requires herdr
 (`HERDR_ENV=1`); if not inside herdr, say so and stop. Read `${CLAUDE_PLUGIN_ROOT}/docs/method.md`
 first if you have not this session.
@@ -21,10 +25,12 @@ Repeat until a step below says stop:
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
    - `resume <slug>`: a one-off that an earlier run started. If `herdr agent list` shows `<slug>`
      working, `swarm.sh wait <slug>` in the background first. Then find its PR
-     (`gh pr list --head story/<slug>`) and review and merge it as for `story`. If there is no
+     (`gh pr list --head story/<slug>`, run in the story's repo: the project, or
+     `swarm.sh config repos_dir`/`<repo:>` when the story names one) and review and merge it as for `story`. If there is no
      agent and no PR, the build died: tell the user, and stop.
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, review its PR, and merge it
-     only when every check on its head is green (method.md § Building); then `swarm.sh unblock`
+     only when every check on its head is green (method.md § Building); then, if the story is
+     still open on the board, `swarm.sh finish <slug>`; then `swarm.sh unblock`
      and `swarm.sh close <slug>`.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
