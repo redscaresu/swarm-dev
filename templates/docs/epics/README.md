@@ -1,11 +1,14 @@
 # Epics
 
 An epic is a goal bigger than one PR. It is scoped into stories (`docs/stories/`), each one PR,
-and the epic is done when its last story merges; that PR deletes the epic file too.
+and the epic is done when its last story merges; that PR deletes the epic file too. An epic in
+`review` waits for a human to merge the PRs on its `prs:` line. `check:` is optional: a command every
+story's builder runs from its worktree, and makes pass, before opening its PR.
 
 ```
 ---
-status: active | later
+status: active | later | review
+check: make test
 ---
 
 # <Goal, as a sentence>

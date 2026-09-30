@@ -11,6 +11,9 @@
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
+#   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
+#   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
+#   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
 #   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #
@@ -61,7 +64,10 @@ CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
 CFG_base_branches=""    # empty: origin's default branch
 CFG_finished=delete
-CONFIG_KEYS="board_dir repos_dir base_branches finished"
+CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
+CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
+CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -86,6 +92,12 @@ load_config() {
         [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches: not branch names: ${value}" ;;
       finished)
         [[ "${value}" == delete || "${value}" == mark ]] || die "${where}: finished must be delete or mark, not '${value}'" ;;
+      merge)
+        [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
+      review_bot)
+        [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
+      sign_commits)
+        [[ "${value}" == true || "${value}" == false ]] || die "${where}: sign_commits must be true or false, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -248,8 +260,11 @@ start_agent() {
       herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         -s read-only -c "model_reasoning_effort=\"${effort}\"" >/dev/null && break
     else
+      # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
+      local guard=()
+      [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
       herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
-        --model "${model}" --effort "${effort}" --permission-mode auto >/dev/null && break
+        --model "${model}" --effort "${effort}" --permission-mode auto ${guard[@]+"${guard[@]}"} >/dev/null && break
     fi
     [[ ${try} -eq 2 ]] && die "${name}: herdr could not start the agent in pane ${pane}"
     sleep 3
@@ -352,9 +367,40 @@ deliver_prompt() {
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
 }
 
+# The merge, signing and review rules, shared by the briefs.
+merge_rule() {
+  if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
+  else echo "Never merge (the lead merges)."; fi
+}
+sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
+sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
+review_bot_rule() {
+  [[ "${CFG_review_bot}" == auto ]] || return 0
+  printf '\n\nThen run the PR review bot of the repo as %s/docs/review.md says, and clear its findings the same way.' "${SWARM_HOME}"
+}
+conduct_merge_rule() {
+  if [[ "${CFG_merge}" == human ]]; then
+    cat <<'RULE'
+Never merge a PR, by any route: not `gh pr merge`, not `gh api`, not the web page. A human merges.
+When a story's PR is green and reviewed, run `swarm.sh review <slug> <PR URL>` and
+`swarm.sh close <slug>`, then carry on with stories that do not wait on it. A story that does wait
+stays blocked until the human merges and `/swarm` reconciles the board. When every story left
+in the epic is in review and the epic's **Done when** will hold once they merge, run
+`swarm.sh review <epic> <every PR URL still waiting>`: the epic leaves the board once they all merge.
+RULE
+  else
+    cat <<'RULE'
+Merge a PR only when it is green, then run `swarm.sh unblock` and `swarm.sh close <slug>` to close
+that story's tab. If a merged story is still open on the board once you have pulled (its file is
+there and not `status: done`), run `swarm.sh finish <slug>` first. When the epic's **Done when**
+holds, take the epic off the board with `swarm.sh finish <epic>`.
+RULE
+  fi
+}
+
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" story_ref cleanup rel
+  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check extra=""
   if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in this repo: the PR takes the story off it.
     rel="${BOARD#"${PROJECT_DIR}/"}/stories"
@@ -374,7 +420,7 @@ Implement ${story_ref}. Its **Done when** is the acceptance.
 
 Title your commit and PR with a plain description of the change.
 
-Rules: read AGENTS.md first. ${cleanup} Never merge (the lead merges). Never touch real cloud or
+Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. Open the PR against \`${base}\`. Run \`codex exec review --base origin/${base}\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. If codex reports a usage limit, do not wait for it to reset: carry on without it
@@ -383,6 +429,11 @@ CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides 
 the tests and push: a conflicted PR runs no checks and waits forever. When CI is green, reply with
 the PR URL, what changed in three lines, and the codex findings, then stop.
 EOF
+  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
+  check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
+  [[ -z "${check}" ]] || extra+="Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
+  [[ "${CFG_sign_commits}" != true ]] || extra+="$(sign_rule)"$'\n'
+  [[ -z "${extra}" ]] || printf '%s' "${extra}"
   if [[ -f "${PROJECT_BRIEF}" ]]; then
     echo
     cat "${PROJECT_BRIEF}"
@@ -421,15 +472,20 @@ is one), ${SWARM_HOME}/docs/method.md and the epic first.
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
 start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch\` in the background, review each PR, merge it only when its head is green, then run
-\`swarm.sh unblock\` and \`swarm.sh close <slug>\` to close that story's tab. If a merged story is
-still open on the board once you have pulled (its file is there and not \`status: done\`), run
-\`swarm.sh finish <slug>\` first. Each story's base branch is in its brief, .swarm/briefs/<slug>.md.
+\`swarm.sh watch\` in the background, and review each PR. Each story's base branch is in its brief,
+.swarm/briefs/<slug>.md.
+
+A PR is green only when every check on its head has passed and you have triaged the output of
+\`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
+conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
+PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
+never dismiss an alert.$(review_bot_rule)
+
+$(conduct_merge_rule)$(sign_rule_if_on)
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 \`kind: lead\` story (real cloud, credentials) or a \`kind: operator\` one is not yours to run; list it
-for the user. Stop when the epic's **Done when** holds (take the epic off the board: \`swarm.sh finish ${epic}\`) or
-when nothing ready is left.
+for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
 the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
@@ -501,7 +557,7 @@ epic_has_stories() {
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
 #   gate              only the user can move the board: operator and lead stories, blocked
-#                     stories, later stories and epics
+#                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
   local f slug epic kind story_epic src buildable="" waiting=""
@@ -563,10 +619,14 @@ next_step() {
       ready) [[ "${kind}" == lead || "${kind}" == operator ]] && waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
+      review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board stories)
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == later ]] && waiting+="  later epic: $(basename "${f}" .md)"$'\n'
+    case "$(fm "${f}" status)" in
+      later) waiting+="  later epic: $(basename "${f}" .md)"$'\n' ;;
+      review) waiting+="  awaiting your merge: epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
+    esac
   done < <(board epics)
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s' "${waiting}"; return
@@ -613,6 +673,122 @@ finish_item() {
     return
   done
   die "no story or epic '${slug}' in ${BOARD}"
+}
+
+# item_file <slug> — the story or epic file for <slug>.
+item_file() {
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "bad slug '$1'"
+  if [[ -f "${BOARD}/stories/$1.md" ]]; then echo "${BOARD}/stories/$1.md"
+  elif [[ -f "${BOARD}/epics/$1.md" ]]; then echo "${BOARD}/epics/$1.md"
+  else die "no story or epic '$1' in ${BOARD}"; fi
+}
+
+# set_status <file> <status> [prs] — set the first status line; replace the prs line with [prs], or
+# drop it when [prs] is empty.
+set_status() {
+  awk -v st="$2" -v prs="${3:-}" '
+    /^prs: / { next }
+    !d && /^status: / { print "status: " st; if (prs != "") print "prs: " prs; d = 1; next }
+    { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
+# review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge.
+mark_review() {
+  local f url
+  f="$(item_file "${1:?slug}")"; shift
+  [[ $# -gt 0 ]] || die "review: name the PR URLs"
+  for url in "$@"; do
+    [[ "${url}" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+$ ]] || die "review: not a PR URL: ${url}"
+  done
+  set_status "${f}" review "$*"
+  echo "review: $(basename "${f}" .md) $*"
+}
+
+# reconcile — for each item in review: finish it once every PR it lists has merged; send it back to
+# ready, saying which, if any closed without merging; otherwise leave it waiting.
+reconcile() {
+  local f slug url state closed waiting urls merged=() merged_prs=()
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == review ]] || continue
+    slug="$(basename "${f}" .md)"
+    read -r -a urls <<< "$(fm "${f}" prs)"
+    if [[ ${#urls[@]} -eq 0 ]]; then echo "in review with no prs: line: ${slug}"; continue; fi
+    closed=""; waiting=0
+    for url in "${urls[@]}"; do
+      if ! state="$(gh pr view "${url}" --json state | json "d['state']")"; then
+        echo "cannot read ${url}; ${slug} stays in review"; waiting=1; continue
+      fi
+      case "${state}" in
+        MERGED) ;;
+        CLOSED) closed+=" ${url}" ;;
+        *) waiting=1 ;;
+      esac
+    done
+    if [[ -n "${closed}" ]]; then
+      set_status "${f}" ready
+      echo "back to ready: ${slug} (closed without merging:${closed})"
+    elif [[ ${waiting} -eq 0 ]]; then
+      merged+=("${slug}"); merged_prs+=("${urls[*]}")
+    fi
+  done < <(board stories; board epics)
+  [[ ${#merged[@]} -gt 0 ]] || return 0
+  local i
+  if [[ ${BOARD_IN_REPO} == 1 ]]; then
+    # The board is in the project repo, and a merged PR may itself have taken the item off it. Our
+    # review edit would block that pull, so undo it first, and redo it if the pull fails.
+    for slug in "${merged[@]}"; do
+      f="$(item_file "${slug}")"
+      if git -C "${PROJECT_DIR}" ls-files --error-unmatch "${f}" >/dev/null 2>&1; then
+        git -C "${PROJECT_DIR}" checkout -q HEAD -- "${f}"
+      fi
+    done
+    if ! git -C "${PROJECT_DIR}" pull -q --ff-only; then
+      for i in "${!merged[@]}"; do set_status "$(item_file "${merged[i]}")" review "${merged_prs[i]}"; done
+      die "reconcile: cannot pull ${PROJECT_DIR}; pull it by hand, then run reconcile again"
+    fi
+  fi
+  for slug in "${merged[@]}"; do
+    f="${BOARD}/stories/${slug}.md"; [[ -f "${f}" ]] || f="${BOARD}/epics/${slug}.md"
+    [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]] || { echo "merged: ${slug}"; continue; }
+    finish_item "${slug}"
+  done
+}
+
+# findings <repo> <pr> — what a green check can hide: the notes (annotations) on every check run of
+# the PR's head, whatever its conclusion, and the PR's open code-scanning alerts.
+findings() {
+  local src full sha
+  src="$(repo_dir "${1:?repo}")" || die "findings: ${src}"
+  [[ "${2:?pr}" =~ ^[0-9]+$ ]] || die "findings: not a PR number: $2"
+  full="$(gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner | json "d['nameWithOwner']")" \
+    || die "no GitHub origin for ${src}"
+  sha="$(gh api "repos/${full}/pulls/$2" | json "d['head']['sha']")" || die "cannot read ${full}#$2"
+  echo "${full}#$2 at ${sha:0:7}"
+  local id name
+  while IFS=$'\t' read -r id name; do
+    [[ -n "${id}" ]] || continue
+    gh api "repos/${full}/check-runs/${id}/annotations?per_page=100" | python3 -c '
+import json, sys
+for a in json.load(sys.stdin):
+    msg = (a.get("message") or "").splitlines() or [""]
+    print("  check %s: %s %s:%s %s" % (sys.argv[1], a.get("annotation_level"), a.get("path"), a.get("start_line"), msg[0]))' "${name}"
+  done < <(gh api "repos/${full}/commits/${sha}/check-runs?per_page=100" | python3 -c '
+import json, sys
+for c in json.load(sys.stdin)["check_runs"]:
+    if c["output"].get("annotations_count"):
+        print("%s\t%s (%s)" % (c["id"], c["name"], c.get("conclusion")))')
+  local alerts
+  if alerts="$(gh api "repos/${full}/code-scanning/alerts?ref=refs/pull/$2/merge&state=open&per_page=100" 2>/dev/null)"; then
+    python3 -c '
+import json, sys
+for a in json.load(sys.stdin):
+    r, inst = a["rule"], a["most_recent_instance"]
+    loc, msg = inst["location"], (inst["message"]["text"].splitlines() or [""])[0]
+    sev = r.get("security_severity_level") or r.get("severity")
+    print("  alert #%s %s %s %s:%s %s" % (a["number"], sev, r.get("id"), loc.get("path"), loc.get("start_line"), msg))' <<< "${alerts}"
+  else
+    echo "  code scanning: not available on ${full}"
+  fi
 }
 
 # watch [repo...] — block until a story/* PR in these repos needs the lead, print one line saying
@@ -715,13 +891,16 @@ main() {
     cost)   cost_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
+    review) mark_review "$@" ;;
+    reconcile) reconcile ;;
+    findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
-    *) sed -n '2,21p' "$0"; exit 2 ;;
+    *) sed -n '2,24p' "$0"; exit 2 ;;
   esac
 }
 
