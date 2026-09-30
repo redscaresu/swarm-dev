@@ -41,14 +41,14 @@ story and line of code after it is for, so it is written with you, not for you.
    code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the design, one
    or two at a time, and writes your answers into the file section by section, citing evidence.
    It does not invent requirements, commit, or change `status`.
-3. **Say it is ready.** When the draft says what you mean, go back to your session and say so. A
-   reviewer (the most capable model, at `xhigh` effort) attacks it: goals that cannot be
-   verified, a design that contradicts an ADR or a safety rule, missing alternatives, unnamed
-   risks, open questions that would block splitting it into epics. Its findings come back to you
-   and the co-author; revise in the pane until you are satisfied.
-4. **Agree it.** Tell your session the HLD is agreed. It sets `status: agreed`, opens a PR for the
-   HLD (reviewed like any other change), and closes the co-author's pane. Only you can agree an
-   HLD; no agent changes its status.
+3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the most capable model, at
+   `xhigh` effort) starts on its own and attacks the draft: goals that cannot be verified, a
+   design that contradicts an ADR or a safety rule, missing alternatives, unnamed risks, open
+   questions that would block splitting it into epics. Its findings arrive in the co-author's
+   pane; go through them there and revise until you are satisfied. You never switch tabs.
+4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: agreed`,
+   opens a PR for the HLD (reviewed like any other change), and closes the co-author's pane. Only
+   you can agree an HLD; no agent changes its status.
 5. **Hand over.** Run `/swarm`. It sees an agreed HLD with no epics and starts `/plan-hld`.
 
 **What a good HLD has.** The template's sections: Problem (with evidence), Goals, Non-goals,
