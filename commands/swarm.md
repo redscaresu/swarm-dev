@@ -29,8 +29,9 @@ Repeat until a step below says stop:
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.
-   - `hld <hld>`: the HLD is a draft, and only the user can write it. Follow `/hld` to resume its
-     pane (the title is in the file), tell the user which pane to work in, and stop.
+   - `hld <hld>`: the HLD is a draft, and only the user can write it. Follow `/hld` to resume it
+     (the title is in the file): the user works in the co-author's pane, and the review and the
+     agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
    - `gate`: show the list `next` printed and, for each item, what the user must do (an operator
      story: its **Done when**; a lead story: that you will run it once they approve; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it). Stop.

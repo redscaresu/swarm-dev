@@ -149,9 +149,10 @@ Open herdr in your project, start `claude` in a pane, and run:
 1. A new pane opens with a co-author. **Talk to it there**: it reads your code, asks you the
    questions that decide the design, and writes your answers into
    `docs/hld/YYYY-MM-DD-add-rate-limiting-to-the-api.md`.
-2. When the draft says what you mean, **go back to your first pane and say it is ready**. A
-   reviewer attacks it; fix what it finds, with the co-author.
-3. **Tell your first pane the HLD is agreed.** It marks it agreed and opens a pull request for it.
+2. When the draft says what you mean, **tell the co-author it is ready**. A reviewer starts on its
+   own and its findings arrive in the same pane; fix what it finds, with the co-author.
+3. **Tell the co-author you agree it.** Your first pane, waiting in the background, marks it agreed
+   and opens a pull request for it. You never have to switch panes.
 
 Stopped halfway? Run `/hld` on its own and it carries on with the draft in progress. The full
 walkthrough, and what makes a good HLD: [`docs/method.md` § Writing the HLD](docs/method.md#writing-the-hld).
@@ -170,7 +171,7 @@ Obsidian. `/swarm` stops whenever a decision is yours; make it, then run `/swarm
 
 | It shows you | What to do |
 |---|---|
-| a draft HLD | finish it with the co-author, then say it is ready, then agreed |
+| a draft HLD | finish it with the co-author, in its pane: say it is ready, go through the review, then agree it |
 | proposed epics or stories, with what the skeptics found | approve them, or say what to change |
 | an `operator` story | do what its **Done when** says (a decision or a step by hand) |
 | a `lead` story | it touches real cloud or credentials: tell your session to run it |
