@@ -2,11 +2,12 @@
 
 Open work, one file per item. A file's front matter says whether it can be picked up:
 
-    status: ready | blocked | later
+    status: ready | blocked | later | review
 
 `ready` stories are the queue, and each one is written to be handed to an agent as its brief:
 what to change, and **Done when** — the acceptance. The PR that finishes a story deletes its
-file; the PR is the record. List them with `grep -H '^status:' docs/stories/*.md`.
+file; the PR is the record. A story in `review` has a PR that is green and reviewed and waits for
+a human to merge it; its `prs:` line lists the PR URLs. List them with `grep -H '^status:' docs/stories/*.md`.
 
 `kind` (code | docs | chore | verify | lead | operator) and `risk: high` choose who builds it
 and with which model (swarm-dev `docs/method.md` § Model and effort); `lead` and `operator` stories are

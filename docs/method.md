@@ -84,6 +84,9 @@ prints every setting and where it came from.
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main` |
 | `finished` | `delete` | `mark` keeps a finished item on the board as `status: done` |
+| `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
+| `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
+| `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -149,9 +152,24 @@ exits when a story PR's checks finish, when it conflicts with its base, when its
 for 10 minutes, or when an agent is blocked on a prompt.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop, reply with the PR URL when CI is green), then the project's own rules from
+codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one
+(the builder runs it before opening the PR), then the project's own rules from
 `.claude/swarm/brief.md`. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
+
+**Green means more than green checks.** A check can pass and still carry a failure note (a
+code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
+every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
+the PR with a reason; none is silenced or dismissed.
+
+**Merging.** With `merge = human` (the default) no agent merges: each agent starts unable to run
+`gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead
+runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
+`prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
+in review and its **Done when** will hold once they merge, the conductor puts the epic in review
+too, with every PR still waiting. You merge on GitHub; the next `/swarm` runs `swarm.sh reconcile`,
+which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
+closed unmerged. With `merge = agent` the conductor merges instead:
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.

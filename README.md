@@ -44,7 +44,8 @@ You type two things:
           │  ├─ story A ─ builder, own worktree ─▶ PR    │
           │  ├─ story B ─ builder, own worktree ─▶ PR    │
           │  └─ story C ─ builder, own worktree ─▶ PR    │
-          │ each PR: codex review, CI green, then merge  │
+          │ each PR: codex review, CI green, then ◆ you  │
+          │ merge it (or, if you choose, the conductor)  │
           └──────────────────────┬───────────────────────┘
                                  │  epic done
                                  ▼
@@ -128,8 +129,9 @@ End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>".
 Run `make test` before opening a pull request.
 ```
 
-To keep the board somewhere else, branch from `dev` where a repo has one, or keep finished items
-on the board, add `.claude/swarm/config` ([`docs/method.md` § Configuring a
+To keep the board somewhere else, branch from `dev` where a repo has one, keep finished items
+on the board, let the conductor merge, sign every commit or run your PR review bot, add
+`.claude/swarm/config` ([`docs/method.md` § Configuring a
 project](docs/method.md#configuring-a-project)). For example:
 
 ```
@@ -185,6 +187,7 @@ Obsidian. `/swarm` stops whenever a decision is yours; make it, then run `/swarm
 | proposed epics or stories, with what the skeptics found | approve them, or say what to change |
 | an `operator` story | do what its **Done when** says (a decision or a step by hand) |
 | a `lead` story | it touches real cloud or credentials: tell your session to run it |
+| a PR awaiting your merge | merge it on GitHub, or close it to send its story back to `ready` |
 | a `blocked` story | nothing, usually: it clears itself when what it waits on merges |
 | a `later` story or epic | set it `ready` (a story) or `active` (an epic) when you want it started |
 
@@ -204,8 +207,9 @@ Code's own logs. `swarm.sh cost 2026-10-01` counts only agents started since tha
 ## Safety
 
 Agents act with your own `claude`, `codex`, `gh` and `git` logins. Builders work in separate git
-worktrees and never merge: a conductor (or your session, for a one-off story) merges, and only
-when every check is green. No agent is given a story that needs real cloud, credentials or your
+worktrees and never merge. By default no agent merges at all: each green, reviewed PR waits for
+you. With `merge = agent` a conductor (or your session, for a one-off story) merges, and only when
+every check is green. No agent is given a story that needs real cloud, credentials or your
 judgment. [`SECURITY.md`](SECURITY.md) has the details and how to report a vulnerability.
 
 ## For agents, and contributing

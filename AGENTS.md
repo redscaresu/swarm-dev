@@ -32,7 +32,7 @@ also run one by one, and which each wait for the user's approval:
 | Design | `/hld <title>` | `docs/hld/YYYY-MM-DD-<slug>.md`, co-written in its own pane |
 | Epics | `/plan-hld <hld-file-name>` | `docs/epics/<slug>.md` per epic, after approval |
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval |
-| Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds and merges the epic |
+| Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds the epic, and merges it only with `merge = agent` |
 
 Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
 (tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh watch`
@@ -43,7 +43,8 @@ Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.
 
 - You supervise; the agents do the work. Do not write an HLD, epic or story plan yourself when a
   command exists for it.
-- Never merge a PR whose checks are not all green on its head commit.
+- Never merge a PR whose checks are not all green on its head commit. With `merge = human` (the
+  default), never merge at all: `swarm.sh review <slug> <PR URL>` hands it to the user.
 - Never hand a `kind: lead` story (real cloud, credentials) or a `kind: operator` story (the user's
   decision or hand step) to an agent. List them for the user.
 - One conductor at a time, and only the lead edits the shared files `AGENTS.md` names.
