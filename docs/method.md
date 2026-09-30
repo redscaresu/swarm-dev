@@ -87,6 +87,7 @@ prints every setting and where it came from.
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
 | `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
+| `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -134,15 +135,17 @@ story file is written. About ten agents per run, so scope deliberately.
 stops and reports; the session it was started from stays free. Its last act is writing that report
 to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm`
 knows it has finished: a conductor is idle whenever it waits on its own background work. It runs in a herdr workspace named
-for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named
-`conduct-<epic>`. Each story it starts gets its own tab, named for the story. Run one conductor at a
+for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named for the
+epic, in a pane named `conductor`. Each story it starts gets a pane in that tab, named for the
+story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off story gets a tab of its
+own. Run one conductor at a
 time: `watch` reports every story PR, and shared files are the lead's alone.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
 
 ```bash
-swarm.sh story <slug>      # worktree on story/<slug>, a tab, the agent, its brief
+swarm.sh story <slug>      # worktree on story/<slug>, a pane, the agent, its brief
 swarm.sh wait <slug>       # in the background: returns when it settles
 swarm.sh watch             # in the background: returns when a story PR needs the lead
 ```
@@ -174,7 +177,19 @@ closed unmerged. With `merge = agent` the conductor merges instead:
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
 
+**One PR per epic.** With `pr_per = epic`, the first story of an epic built in a repo creates
+`epic/<epic>` there from the repo's base branch, and adds the repo to the epic's `repos:` line.
+Each story branches from `epic/<epic>`, and its builder pushes `story/<slug>` and opens no PR. The
+conductor reviews each branch, merges it into `epic/<epic>` with `git merge --no-ff`, runs the tests
+and the epic's `check:`, and finishes the story. When the last story is in, it runs codex over the
+whole epic against the base (`swarm.sh base <repo>` prints it) and opens one PR per repo, written
+for a reader who knows nothing of the stories. Those PRs then go through the same green and merge
+rules as any other. If a conductor stops before the PRs, `next` sees an active epic with a
+`repos:` line and no open story, and starts a fresh one, which picks up there. Stories outside any
+epic keep their own PR.
+
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 
 **Clean up.** After each merge, `git worktree remove ../<repo>-wt/<slug>`, then
-`git worktree prune`, and `swarm.sh close <slug>` closes the story's tab.
+`git worktree prune`, and `swarm.sh close <slug>` closes the story's pane (its tab, when it was
+the last pane there). `swarm.sh close conduct-<epic>` closes the epic's tabs.

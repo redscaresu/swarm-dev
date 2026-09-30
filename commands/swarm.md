@@ -22,7 +22,7 @@ Repeat until a step below says stop:
      background work, so when it returns just go back to 1: `next` says `collect` only once the
      conductor has written its report. Never close a conductor that has not reported.
    - `collect <agent>`: the conductor has finished. Read its report
-     (`.swarm/<tab label>.report.md`, where the label is `conduct-<epic>`), relay what merged, what
+     (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
    - `resume <slug>`: a one-off that an earlier run started. If `herdr agent list` shows `<slug>`
