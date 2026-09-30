@@ -68,7 +68,8 @@ item "${b}" epics/e1.md "status: active"
 run review a "${U}/1" >/dev/null
 check "review sets the status and the PRs" "review|${U}/1" \
   "$(sed -n 's/^status: //p' "${b}/stories/a.md")|$(sed -n 's/^prs: //p' "${b}/stories/a.md")"
-check "review refuses what is not a PR URL" "yes" "$(has 'not a PR URL' "$(run review a "https://example.com/x" || true)")"
+check "review refuses what is not a PR URL, and leaves the item alone" "yes|review|${U}/1" \
+  "$(has 'not a PR URL' "$(run review a "https://example.com/x" || true)")|$(sed -n 's/^status: //p' "${b}/stories/a.md")|$(sed -n 's/^prs: //p' "${b}/stories/a.md")"
 
 # --- next: a PR waiting on a human is a gate, and never restarts a conductor.
 out="$(run next)"
@@ -78,12 +79,13 @@ check "the gate names the PR to merge" "yes" "$(has "awaiting your merge: a ${U}
 # --- reconcile: finish when every PR merged; back to ready if one closed; else wait.
 printf '%s\n' "${U}/1 MERGED" "${U}/2 CLOSED" "${U}/3 OPEN" "${U}/4 MERGED" > "${ROOT}/gh/prs"
 item "${b}" stories/c.md "status: review" "kind: code" "prs: ${U}/2"
+echo "prs: a line in the body" >> "${b}/stories/c.md"
 item "${b}" epics/e2.md "status: review" "prs: ${U}/1 ${U}/3"
 item "${b}" epics/e3.md "status: review" "prs: ${U}/1 ${U}/4"
 out="$(run reconcile)"
 check "a merged story is finished" "gone" "$([[ -e "${b}/stories/a.md" ]] && echo there || echo gone)"
-check "a closed PR sends its story back to ready" "ready|" \
-  "$(sed -n 's/^status: //p' "${b}/stories/c.md")|$(sed -n 's/^prs: //p' "${b}/stories/c.md")"
+check "a closed PR sends its story back to ready" "ready" "$(sed -n 's/^status: //p' "${b}/stories/c.md")"
+check "its prs: line goes, and a body line like it stays" "prs: a line in the body" "$(grep '^prs:' "${b}/stories/c.md")"
 check "reconcile says which PR closed" "yes" "$(has "back to ready: c (closed without merging: ${U}/2)" "${out}")"
 check "an epic with one of two PRs merged stays in review" "review" "$(sed -n 's/^status: //p' "${b}/epics/e2.md")"
 check "an epic with both PRs merged is finished" "gone" "$([[ -e "${b}/epics/e3.md" ]] && echo there || echo gone)"
@@ -105,8 +107,8 @@ inrepo review s "${U}/4" >/dev/null
 "${GIT[@]}" -C "${ROOT}/app" commit -q --allow-empty -m "diverged"
 "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
 inrepo reconcile >/dev/null || true
-check "a pull that fails keeps merged items in review" "review|review" \
-  "$(sed -n 's/^status: //p' "${ROOT}/app/docs/stories/r.md")|$(sed -n 's/^status: //p' "${ROOT}/app/docs/stories/s.md")"
+check "a pull that fails keeps merged items in review, with their PRs" "review ${U}/1|review ${U}/4" \
+  "$(sed -n 's/^status: //p;s/^prs: //p' "${ROOT}/app/docs/stories/r.md" | paste -sd' ' -)|$(sed -n 's/^status: //p;s/^prs: //p' "${ROOT}/app/docs/stories/s.md" | paste -sd' ' -)"
 "${GIT[@]}" -C "${ROOT}/app" reset -q --keep HEAD~1
 inrepo reconcile >/dev/null || true
 gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
@@ -122,10 +124,10 @@ start() { # <slug> — start a story with the stubs, and print herdr's agent sta
   (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story "$1" >/dev/null 2>&1)
   grep "^agent start $1 " "${ROOT}/herdr.log"
 }
-check "merge = human (the default) starts agents with gh pr merge disallowed" "yes" \
+check "merge = human (the default) starts a story agent with gh pr merge disallowed" "yes" \
   "$(has '--disallowedTools Bash(gh pr merge:*)' "$(start g1)")"
 echo "merge = agent" > "${p}/.claude/swarm/config"
-check "merge = agent starts agents without the guard" "no" \
+check "merge = agent starts a story agent without the guard" "no" \
   "$(grep -q disallowedTools <<< "$(start g2)" && echo yes || echo no)"
 
 # --- findings: a success check can still carry a failure note (the CodeQL case), and open alerts.

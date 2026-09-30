@@ -159,7 +159,7 @@ is doing.
 
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
-every check run of the PR's head, and its open code-scanning alerts. Each is fixed, or rebutted in
+every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
 the PR with a reason; none is silenced or dismissed.
 
 **Merging.** With `merge = human` (the default) no agent merges: each agent starts unable to run

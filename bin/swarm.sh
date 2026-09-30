@@ -683,12 +683,13 @@ item_file() {
   else die "no story or epic '$1' in ${BOARD}"; fi
 }
 
-# set_status <file> <status> [prs] — set the first status line; replace the prs line with [prs], or
-# drop it when [prs] is empty.
+# set_status <file> <status> [prs] — in the front matter, set the status line and replace the prs
+# line with [prs], or drop it when [prs] is empty.
 set_status() {
   awk -v st="$2" -v prs="${3:-}" '
-    /^prs: / { next }
-    !d && /^status: / { print "status: " st; if (prs != "") print "prs: " prs; d = 1; next }
+    /^---$/ { n++ }
+    n == 1 && /^prs: / { next }
+    n == 1 && !d && /^status: / { print "status: " st; if (prs != "") print "prs: " prs; d = 1; next }
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
@@ -732,17 +733,18 @@ reconcile() {
     fi
   done < <(board stories; board epics)
   [[ ${#merged[@]} -gt 0 ]] || return 0
-  local i
+  local i committed
   if [[ ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in the project repo, and a merged PR may itself have taken the item off it. Our
-    # review edit would block that pull, so undo it first, and redo it if the pull fails.
+    # review edit would block that pull, so undo just that edit first, and redo it if the pull fails.
     for slug in "${merged[@]}"; do
       f="$(item_file "${slug}")"
-      if git -C "${PROJECT_DIR}" ls-files --error-unmatch "${f}" >/dev/null 2>&1; then
-        git -C "${PROJECT_DIR}" checkout -q HEAD -- "${f}"
+      if committed="$(git -C "${PROJECT_DIR}" show "HEAD:${f#"${PROJECT_DIR}"/}" 2>/dev/null)"; then
+        set_status "${f}" "$(sed -n 's/^status: *//p' <<< "${committed}" | head -1)"
       fi
     done
-    if ! git -C "${PROJECT_DIR}" pull -q --ff-only; then
+    if git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null \
+      && ! git -C "${PROJECT_DIR}" pull -q --ff-only; then
       for i in "${!merged[@]}"; do set_status "$(item_file "${merged[i]}")" review "${merged_prs[i]}"; done
       die "reconcile: cannot pull ${PROJECT_DIR}; pull it by hand, then run reconcile again"
     fi
