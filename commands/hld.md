@@ -3,6 +3,10 @@ description: Start or resume a high-level design (docs/hld/) co-written with the
 argument-hint: "[title]  e.g. Firewalled by default; none resumes the draft in progress"
 ---
 
+The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
+`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+is inside it.
+
 Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr, say so and stop.
 
 0. **No title given: pick up where things left off.** List the draft HLDs

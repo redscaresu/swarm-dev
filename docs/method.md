@@ -66,10 +66,30 @@ replace a design later, write a new HLD and set the old one `status: superseded`
 
 ## The board
 
-The board is files in git: `docs/hld/`, `docs/epics/` and `docs/stories/`, one file per item, with
-front matter the scripts read. There is no shared board file to conflict on; the PR that finishes a
-story deletes its file, and the PR is the record. `templates/docs/` holds the READMEs that define
+The board is files: `docs/hld/`, `docs/epics/` and `docs/stories/`, one file per item, with front
+matter the scripts read. There is no shared board file to conflict on; the PR that finishes a story
+deletes its file, and the PR is the record. A project can move the board and change how finished
+items leave it (§ Configuring a project). `templates/docs/` holds the READMEs that define
 each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
+
+## Configuring a project
+
+`.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
+runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
+prints every setting and where it came from.
+
+| Key | Default | What it does |
+|---|---|---|
+| `board_dir` | `docs` | where the board is, relative to the project unless absolute |
+| `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
+| `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main` |
+| `finished` | `delete` | `mark` keeps a finished item on the board as `status: done` |
+
+The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
+`.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
+project need not be a git repo: a board kept in a notes vault works, as long as every story names
+its `repo:`. When the board is not in the story's repo, the builder leaves the story file alone and
+the lead runs `swarm.sh finish <slug>` once the PR merges.
 
 ## Model and effort
 
@@ -125,7 +145,7 @@ swarm.sh watch             # in the background: returns when a story PR needs th
 ```
 
 `wait` returns when an agent goes idle, which can be early. `watch` is what the lead waits on: it
-exits when a story PR's checks finish, when it conflicts with main, when its head has had no checks
+exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, or when an agent is blocked on a prompt.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
@@ -133,7 +153,7 @@ codex loop, reply with the PR URL when CI is green), then the project's own rule
 `.claude/swarm/brief.md`. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
 
-**Merge one at a time.** After each merge, merge `main` into every other open wave branch before
+**Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
 
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.

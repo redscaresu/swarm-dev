@@ -18,7 +18,7 @@ git remote get-url origin       # a GitHub origin; swarm.sh resolves the owner f
 If `swarm.sh` is missing, the user runs `claude plugin marketplace add redscaresu/swarm-dev` and
 `claude plugin install swarm-dev@swarm-dev`, then restarts Claude Code.
 
-**Set the project up** if `docs/stories/README.md` does not exist: follow the README's
+**Set the project up** if `stories/README.md` does not exist in the board (`swarm.sh config board_dir`): follow the README's
 § Quick start, step 3 (it includes the Obsidian link settings; keep links as markdown links,
 never `[[wikilinks]]`). Ask the user for the contents of `.claude/swarm/brief.md` (their commit
 trailers, where credentials live, commands that must not run); do not invent them.

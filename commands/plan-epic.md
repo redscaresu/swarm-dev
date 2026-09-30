@@ -3,6 +3,10 @@ description: Scope an epic (docs/epics/<slug>.md) into adversarially-checked sto
 argument-hint: "<epic-slug>  e.g. firewall-end-to-end"
 ---
 
+The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
+`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+is inside it.
+
 Scope the epic `$1` into stories. Run it as a swarm so the user can watch every agent; do not
 decompose it yourself in one pass. Requires herdr (`HERDR_ENV=1`); if not inside herdr, say so and
 stop. If `$1` is empty, list `docs/epics/*.md` (not the README) and ask which. If the epic does not
@@ -31,7 +35,9 @@ credentials. Cite evidence as file:line. Keep free text short.*
   stories this epic absorbs, blocks or depends on.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the three survey files. Output
-`{stories:[{slug, title, kind, risk, scope, done_when, touches, depends_on}], waves, contradictions}`.
+`{stories:[{slug, title, kind, risk, repo, scope, done_when, touches, depends_on}], waves, contradictions}`.
+`repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
+empty for the project's own repo. It is required when the project is not a git repo.
 One story is one PR; `done_when` must be able to fail; `kind` is code | docs | chore | verify |
 lead (real cloud or credentials) | operator (a human step); `risk: high` for real-cloud, teardown,
 safety or hygiene paths; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
@@ -53,7 +59,7 @@ real-cloud step hidden inside an agent story. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `touches` and waves. Ask before
-writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`,
-`status: ready` or `blocked` with `blocked_by`, `epic: $1`, `depends_on`, `touches`, `risk` when
+writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
+when set, `status: ready` or `blocked` with `blocked_by`, `epic: $1`, `depends_on`, `touches`, `risk` when
 high; body: scope and **Done when**), open a PR through the codex loop, and `swarm.sh close
 scope-$1`. Waves are then built with `swarm.sh story <slug>`.

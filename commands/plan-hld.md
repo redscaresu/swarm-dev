@@ -3,6 +3,10 @@ description: Decompose an agreed HLD (docs/hld/) into epics with a herdr swarm โ
 argument-hint: "<hld-file-name-without-.md>  e.g. 2026-09-27-firewalled-by-default"
 ---
 
+The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
+`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+is inside it.
+
 Decompose `docs/hld/$1.md` into epics. It must be `status: agreed`; if not, say so and stop.
 Requires herdr. Run it as a swarm (`${CLAUDE_PLUGIN_ROOT}/docs/method.md` ยง The planning chain); every agent writes
 its answer as JSON to `.swarm/$1/<name>.json`, the only file it may write, and replies with the

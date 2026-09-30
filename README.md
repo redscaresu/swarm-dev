@@ -128,6 +128,16 @@ End commit messages with "Co-Authored-By: Claude <noreply@anthropic.com>".
 Run `make test` before opening a pull request.
 ```
 
+To keep the board somewhere else, branch from `dev` where a repo has one, or keep finished items
+on the board, add `.claude/swarm/config` ([`docs/method.md` § Configuring a
+project](docs/method.md#configuring-a-project)). For example:
+
+```
+board_dir = ~/notes/board
+base_branches = dev main
+finished = mark
+```
+
 Commit it (if `.claude/` is in your `.gitignore`, add `!.claude/swarm/`). Finally, list your shared
 files in `AGENTS.md` (root config, schemas, CI scripts) so no two agents edit them at once.
 

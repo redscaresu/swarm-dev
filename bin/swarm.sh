@@ -2,19 +2,23 @@
 # swarm.sh — run agents in herdr panes so every one can be watched.
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
-#   swarm.sh story <slug>                                   build one docs/stories/<slug>.md
+#   swarm.sh story <slug>                                   build one <board>/stories/<slug>.md
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <tab>                                    close <tab>, <tab>-2, ... and forget them
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
-#   swarm.sh unblock                                        mark ready every blocked story whose blockers are all merged
+#   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
+#   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
 #   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
+#   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #
-# Run it from anywhere inside the project's git repo (or one of its worktrees); the project is that
-# repo's main checkout. Must run inside herdr (HERDR_ENV=1). A story gets its own tab, named for the story. Tabs hold at
-# most four panes (a 2x2 grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
+# The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
+# .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
+# of the git repo you are in. Settings live in .claude/swarm/config (see config below). Must run
+# inside herdr (HERDR_ENV=1). A story gets its own tab, named for the story. Tabs hold at most four
+# panes (a 2x2 grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
 set -euo pipefail
 
 die() { echo "swarm: $*" >&2; exit 1; }
@@ -22,13 +26,142 @@ die() { echo "swarm: $*" >&2; exit 1; }
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The project's main checkout, even when called from a story worktree.
-GIT_COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || die "not inside a git repository"
-REPO_ROOT="$(dirname "${GIT_COMMON}")"
-STATE_DIR="${REPO_ROOT}/.swarm/state"
+# main_checkout <dir> — <dir> as it sits in its repo's main checkout, so a worktree resolves to the
+# same project as the checkout it came from. Fails when <dir> is not in a git repo.
+main_checkout() {
+  local common top rel
+  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  top="$(git -C "$1" rev-parse --show-toplevel)"
+  rel="${1#"${top}"}"
+  echo "$(dirname "${common}")${rel}"
+}
+
+find_project() {
+  local d
+  if [[ -n "${SWARM_PROJECT:-}" ]]; then
+    (cd "${SWARM_PROJECT}" 2>/dev/null && pwd -P) || die "SWARM_PROJECT ${SWARM_PROJECT} is not a directory"
+    return
+  fi
+  d="$(pwd -P)"
+  while [[ "${d}" != / ]]; do
+    if [[ -f "${d}/.claude/swarm/config" ]]; then
+      main_checkout "${d}" || echo "${d}"
+      return
+    fi
+    d="$(dirname "${d}")"
+  done
+  main_checkout "$(pwd -P)" || die "not in a swarm project: no .claude/swarm/config above here and not in a git repo"
+}
+
+PROJECT_DIR="$(find_project)"
+CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
+
+# Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
+CFG_board_dir=docs
+CFG_repos_dir=""        # empty: the project dir's parent
+CFG_base_branches=""    # empty: origin's default branch
+CFG_finished=delete
+CONFIG_KEYS="board_dir repos_dir base_branches finished"
+for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
+
+# load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
+# code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
+load_config() {
+  local n=0 line key value where
+  [[ -f "${CONFIG_FILE}" ]] || return 0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    n=$((n + 1)); where="${CONFIG_FILE}:${n}"
+    line="${line%%#*}"
+    [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
+    [[ "${line}" =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] \
+      || die "${where}: expected 'key = value'"
+    key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+    [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
+    case "${key}" in
+      board_dir|repos_dir)
+        [[ -n "${value}" ]] || die "${where}: ${key} is empty"
+        # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
+        [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
+      base_branches)
+        [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches: not branch names: ${value}" ;;
+      finished)
+        [[ "${value}" == delete || "${value}" == mark ]] || die "${where}: finished must be delete or mark, not '${value}'" ;;
+      *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
+    esac
+    printf -v "CFG_${key}" '%s' "${value}"
+    printf -v "SRC_${key}" '%s' "${where}"
+  done < "${CONFIG_FILE}"
+}
+load_config
+
+# abs_path <path> — <path>, relative to the project dir unless it is absolute.
+abs_path() { if [[ "$1" == /* ]]; then echo "$1"; else echo "${PROJECT_DIR}/$1"; fi; }
+BOARD="$(abs_path "${CFG_board_dir}")"
+REPOS_DIR="$(dirname "${PROJECT_DIR}")"; [[ -z "${CFG_repos_dir}" ]] || REPOS_DIR="$(abs_path "${CFG_repos_dir}")"
+PROJECT_IS_GIT=0; [[ -e "${PROJECT_DIR}/.git" ]] && PROJECT_IS_GIT=1
+# A builder can change the board in its own PR only when the board is in the project's repo.
+BOARD_IN_REPO=0; [[ ${PROJECT_IS_GIT} == 1 && "${BOARD}/" == "${PROJECT_DIR}/"* ]] && BOARD_IN_REPO=1
+
+STATE_DIR="${PROJECT_DIR}/.swarm/state"
 # Project rules every builder gets after the standard ones: commit trailers, secrets, ADR rules.
-PROJECT_BRIEF="${REPO_ROOT}/.claude/swarm/brief.md"
+PROJECT_BRIEF="${PROJECT_DIR}/.claude/swarm/brief.md"
 PANES_PER_TAB=4
+
+show_config() {
+  local key v
+  if [[ -n "${1:-}" ]]; then
+    case "$1" in
+      board_dir) echo "${BOARD}" ;;
+      repos_dir) echo "${REPOS_DIR}" ;;
+      project) echo "${PROJECT_DIR}" ;;
+      *) [[ " ${CONFIG_KEYS} " == *" $1 "* ]] || die "unknown key '$1' (known: project ${CONFIG_KEYS})"
+         v="CFG_$1"; echo "${!v}" ;;
+    esac
+    return
+  fi
+  echo "project = ${PROJECT_DIR}"
+  for key in ${CONFIG_KEYS}; do
+    v="CFG_${key}"; local s="SRC_${key}"
+    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; esac
+    echo "${key} = ${!v}    (${!s})"
+  done
+}
+
+# repo_dir <name> — where a story's repo is: the project itself when <name> is empty or the
+# project's own name, else <repos_dir>/<name>. Fails, printing why, when there is no such repo.
+repo_dir() {
+  local name="$1" dir
+  if [[ -z "${name}" || ( "${name}" == "$(basename "${PROJECT_DIR}")" && ${PROJECT_IS_GIT} == 1 ) ]]; then
+    [[ ${PROJECT_IS_GIT} == 1 ]] || { echo "no repo: named, and the project ${PROJECT_DIR} is not a git repo"; return 1; }
+    echo "${PROJECT_DIR}"; return
+  fi
+  [[ "${name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "bad repo '${name}'"; return 1; }
+  dir="${REPOS_DIR}/${name}"
+  [[ -e "${dir}/.git" ]] || { echo "no repo at ${dir}"; return 1; }
+  echo "${dir}"
+}
+
+# worktree_for <repo-dir> <slug> — where a story's worktree goes: beside its repo, in <repo>-wt/.
+worktree_for() { echo "$(dirname "$1")/$(basename "$1")-wt/$2"; }
+
+# base_for <repo-dir> — the branch a story starts from and merges into: the first base_branches entry
+# origin has, or origin's default branch when the list is empty. Never a guess.
+base_for() {
+  local src="$1" b head branches
+  git -C "${src}" fetch -q --prune origin || die "${src}: git fetch origin failed"
+  if [[ -n "${CFG_base_branches// /}" ]]; then
+    read -r -a branches <<< "${CFG_base_branches}"
+    for b in "${branches[@]}"; do
+      git -C "${src}" rev-parse -q --verify "refs/remotes/origin/${b}" >/dev/null && { echo "${b}"; return; }
+    done
+    die "${src}: origin has none of base_branches (${CFG_base_branches})"
+  fi
+  head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" \
+    || { git -C "${src}" remote set-head origin --auto >/dev/null 2>&1 \
+         && head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD)"; } \
+    || die "${src}: cannot tell origin's default branch; set base_branches"
+  echo "${head#origin/}"
+}
 
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning).
@@ -124,7 +257,7 @@ start_agent() {
 
 # AGENTS_LOG: one line per agent started (date, role, name, kind, model, effort, session), so
 # `cost` can attribute every token to a role. Beside state/, not in it: state/ holds tab records.
-AGENTS_LOG="${REPO_ROOT}/.swarm/agents.tsv"
+AGENTS_LOG="${PROJECT_DIR}/.swarm/agents.tsv"
 
 # session_for_pane <pane> — the Claude session id herdr reports for the agent in <pane>, or nothing.
 session_for_pane() {
@@ -217,14 +350,20 @@ deliver_prompt() {
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" repo="$2" story_ref cleanup
-  story_ref="docs/stories/${slug}.md"
-  cleanup="Delete docs/stories/${slug}.md in your PR, and nothing else under
-docs/stories/."
-  if [[ -n "${repo}" ]]; then
-    # The story lives in this project, the work in a sibling repo: read it there, leave it for the lead.
-    story_ref="${REPO_ROOT}/docs/stories/${slug}.md (this worktree is ../${repo})"
-    cleanup="Do not touch the story file; the lead deletes it after your PR merges."
+  local slug="$1" src="$2" base="$3" story_ref cleanup rel
+  if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
+    # The board is in this repo: the PR takes the story off it.
+    rel="${BOARD#"${PROJECT_DIR}/"}/stories"
+    story_ref="${rel}/${slug}.md"
+    if [[ "${CFG_finished}" == mark ]]; then
+      cleanup="In your PR, set \`status: done\` in ${rel}/${slug}.md, and change nothing else under ${rel}/."
+    else
+      cleanup="Delete ${rel}/${slug}.md in your PR, and nothing else under ${rel}/."
+    fi
+  else
+    # The board is elsewhere: read the story there, and leave it for the lead.
+    story_ref="${BOARD}/stories/${slug}.md (this worktree is $(basename "${src}"))"
+    cleanup="Do not touch the story file; the lead takes it off the board after your PR merges."
   fi
   cat <<EOF
 Implement ${story_ref}. Its **Done when** is the acceptance.
@@ -232,13 +371,13 @@ Implement ${story_ref}. Its **Done when** is the acceptance.
 Title your commit and PR with a plain description of the change.
 
 Rules: read AGENTS.md first. ${cleanup} Never merge (the lead merges). Never touch real cloud or
-credentials. Run \`codex exec review --base main\` before committing; fix real findings, decline nits
-with a reason, converge on one clean pass, and record the loop in the PR body. If codex reports a
-usage limit, do not wait for it to reset: carry on without it and write "codex skipped: usage limit"
-in the PR body. If \`gh pr view --json mergeable\` says CONFLICTING, merge origin/main into your
-branch, resolve it (keep both sides of any list), re-run the tests and push: a conflicted PR runs no
-checks and waits forever. When CI is green, reply with the PR URL, what changed in three lines, and
-the codex findings, then stop.
+credentials. Open the PR against \`${base}\`. Run \`codex exec review --base origin/${base}\` before
+committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
+loop in the PR body. If codex reports a usage limit, do not wait for it to reset: carry on without it
+and write "codex skipped: usage limit" in the PR body. If \`gh pr view --json mergeable\` says
+CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
+the tests and push: a conflicted PR runs no checks and waits forever. When CI is green, reply with
+the PR URL, what changed in three lines, and the codex findings, then stop.
 EOF
   if [[ -f "${PROJECT_BRIEF}" ]]; then
     echo
@@ -247,7 +386,7 @@ EOF
 }
 
 build_story() {
-  local slug="$1" story="${REPO_ROOT}/docs/stories/$1.md" kind risk repo src role wt branch prompt
+  local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -256,20 +395,15 @@ build_story() {
     operator) die "${slug} is kind: operator — a human step, not an agent's" ;;
   esac
   risk=$(sed -n 's/^risk: *//p' "${story}" | head -1)
-  repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a sibling repo beside this one; empty is this repo
+  repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
   role="${kind}"; [[ "${kind}" == code && "${risk}" == high ]] && role=code-risky
   policy "${role}" >/dev/null
-  src="${REPO_ROOT}"
-  if [[ -n "${repo}" ]]; then
-    [[ "${repo}" =~ ^[a-z0-9-]+$ ]] || die "${slug}: bad repo '${repo}'"
-    src="$(dirname "${REPO_ROOT}")/${repo}"
-    [[ -e "${src}/.git" ]] || die "${slug}: no repo at ${src}"
-  fi
-  branch="story/${slug}"; wt="$(dirname "${REPO_ROOT}")/$(basename "${src}")-wt/${slug}"
-  git -C "${src}" fetch -q origin main
-  git -C "${src}" worktree add -q -b "${branch}" "${wt}" origin/main
-  prompt="${REPO_ROOT}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
-  story_brief "${slug}" "${repo}" > "${prompt}"
+  src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
+  base="$(base_for "${src}")"
+  branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
+  git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"
+  prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
+  story_brief "${slug}" "${src}" "${base}" > "${prompt}"
   start_agent "${slug}" "${slug}" "${wt}" "${role}" "${prompt}"
 }
 
@@ -277,22 +411,24 @@ build_story() {
 conduct_brief() {
   local epic="$1"
   cat <<EOF
-You are the conductor for the epic docs/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there is
-one), ${SWARM_HOME}/docs/method.md and the epic first.
+You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
+is one), ${SWARM_HOME}/docs/method.md and the epic first.
 
-Drive the epic's stories (docs/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
+Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
 start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch\` in the background, review each PR, merge it only when its head is green, then run
-\`swarm.sh unblock\` and \`swarm.sh close <slug>\` to close that story's tab.
+\`swarm.sh unblock\` and \`swarm.sh close <slug>\` to close that story's tab. If a merged story is
+still open on the board once you have pulled (its file is there and not \`status: done\`), run
+\`swarm.sh finish <slug>\` first. Each story's base branch is in its brief, .swarm/briefs/<slug>.md.
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 \`kind: lead\` story (real cloud, credentials) or a \`kind: operator\` one is not yours to run; list it
-for the user. Stop when the epic's **Done when** holds (delete the epic file in the last PR) or
+for the user. Stop when the epic's **Done when** holds (take the epic off the board: \`swarm.sh finish ${epic}\`) or
 when nothing ready is left.
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
-the user) to ${REPO_ROOT}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
+the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
 treats that file as the only sign you have finished: being idle while you wait on your own
 background work is not.
 EOF
@@ -304,7 +440,7 @@ hld_workspace() {
   local label="$1" ws
   ws=$(herdr workspace list | json "next((w['workspace_id'] for w in d['result']['workspaces'] if w.get('label')=='${label}'),'')")
   if [[ -z "${ws}" ]]; then
-    ws=$(herdr workspace create --label "${label}" --cwd "${REPO_ROOT}" --no-focus \
+    ws=$(herdr workspace create --label "${label}" --cwd "${PROJECT_DIR}" --no-focus \
       | json "d['result']['workspace']['workspace_id']+' '+d['result']['tab']['tab_id']")
   fi
   echo "${ws}"
@@ -312,19 +448,19 @@ hld_workspace() {
 
 # conductor_report <agent> — where a conductor writes its report as its last act. The agent name
 # may be cut at 32 characters, so it is resolved to the full tab label (conduct-<epic>) first.
-conductor_report() { echo "${REPO_ROOT}/.swarm/$(tab_label "$1").report.md"; }
+conductor_report() { echo "${PROJECT_DIR}/.swarm/$(tab_label "$1").report.md"; }
 
 start_conductor() {
-  local epic="$1" epic_file="${REPO_ROOT}/docs/epics/$1.md" hld prompt ws placeholder
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder
   [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
-  [[ -f "${epic_file}" ]] || die "no epic docs/epics/${epic}.md"
+  [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
   hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
   [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
-  prompt="${REPO_ROOT}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
+  prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
-  HERDR_WORKSPACE_ID="${ws}" start_agent "conduct-${epic}" "conduct-${epic}" "${REPO_ROOT}" conduct "${prompt}"
+  HERDR_WORKSPACE_ID="${ws}" start_agent "conduct-${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}"
   [[ -z "${placeholder}" ]] || herdr tab close "${placeholder}" >/dev/null
   echo "workspace ${hld} (${ws})"
 }
@@ -332,10 +468,10 @@ start_conductor() {
 # fm <file> <key> — the first front-matter value for <key>, or nothing.
 fm() { sed -n "s/^$2: *//p" "$1" | head -1; }
 
-# board <dir> — the item files in docs/<dir>/, never the README.
+# board <dir> — the item files in <board>/<dir>/, never the README.
 board() {
   local f
-  for f in "${REPO_ROOT}/docs/$1"/*.md; do
+  for f in "${BOARD}/$1"/*.md; do
     [[ -e "${f}" && "$(basename "${f}")" != README.md ]] && echo "${f}"
   done
   return 0
@@ -364,7 +500,7 @@ epic_has_stories() {
 #                     stories, later stories and epics
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
-  local f slug epic kind story_epic repo buildable="" waiting=""
+  local f slug epic kind story_epic src buildable="" waiting=""
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-')),'')" 2>/dev/null || true)
@@ -387,13 +523,13 @@ next_step() {
   # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
   while read -r story_epic slug; do
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
-    repo=$(fm "${REPO_ROOT}/docs/stories/${story_epic}.md" repo); repo="${repo:-$(basename "${REPO_ROOT}")}"
-    [[ -d "$(dirname "${REPO_ROOT}")/${repo}-wt/${story_epic}" ]] || continue
+    src="$(repo_dir "$(fm "${BOARD}/stories/${story_epic}.md" repo)")" || continue
+    [[ -d "$(worktree_for "${src}" "${story_epic}")" ]] || continue
     echo "resume ${story_epic}"; echo "${story_epic} has already started: wait for its agent, then review its PR"; return
   done <<< "${buildable}"
   # An active epic's stories first: finish what is started before anything new.
   while read -r story_epic slug; do
-    [[ -n "${slug}" && "$(fm "${REPO_ROOT}/docs/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
+    [[ -n "${slug}" && "$(fm "${BOARD}/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
     echo "conduct ${story_epic}"; echo "${slug} is ready in the active epic ${story_epic}"; return
   done <<< "${buildable}"
   while read -r story_epic slug; do
@@ -434,11 +570,14 @@ next_step() {
   echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
 }
 
-# unblock — a merged story's file is deleted, so a blocked story whose every blocked_by slug has no
-# story or epic file left, and names no operator step, is ready. Prints each story it flips.
+# open_item <file> — true while a board item is still open: its file exists and is not status: done.
+open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
+
+# unblock — a finished story is deleted or marked done, so a blocked story whose every blocked_by slug
+# is no open story or epic, and names no operator step, is ready. Prints each story it flips.
 unblock() {
   local story slug blockers b open
-  for story in "${REPO_ROOT}"/docs/stories/*.md; do
+  while IFS= read -r story; do
     grep -q '^status: blocked$' "${story}" || continue
     blockers=$(sed -n 's/^blocked_by: *\[\(.*\)\]$/\1/p' "${story}" | tr ',' ' ')
     [[ -n "${blockers// /}" ]] || continue   # blocked for a reason no merge clears
@@ -446,39 +585,63 @@ unblock() {
     for b in ${blockers}; do
       # Open while its story exists, its epic exists, or it is not a plain slug (an operator step such
       # as "operator:planted-leak-proof" is cleared by hand, never by a merge).
-      if [[ -f "${REPO_ROOT}/docs/stories/${b}.md" || -f "${REPO_ROOT}/docs/epics/${b}.md" || ! "${b}" =~ ^[a-z0-9-]+$ ]]; then open=1; fi
+      if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then open=1; fi
     done
     [[ ${open} -eq 0 ]] || continue
     sed -i.bak -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "${story}" && rm -f "${story}.bak"
     echo "ready: $(basename "${story}" .md)"
+  done < <(board stories)
+}
+
+# finish <slug> — take a merged story or epic off the board: delete its file, or with
+# finished = mark set its status to done and keep it.
+finish_item() {
+  local slug="$1" f
+  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "bad slug '${slug}'"
+  for f in "${BOARD}/stories/${slug}.md" "${BOARD}/epics/${slug}.md"; do
+    [[ -f "${f}" ]] || continue
+    if [[ "${CFG_finished}" == mark ]]; then
+      awk '!d && /^status: /{print "status: done"; d=1; next} {print}' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
+      echo "done: ${f}"
+    else
+      rm "${f}"; echo "deleted: ${f}"
+    fi
+    return
   done
+  die "no story or epic '${slug}' in ${BOARD}"
 }
 
 # watch [repo...] — block until a story/* PR in these repos needs the lead, print one line saying
 # which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
-# when it conflicts with main (a conflicted PR runs no checks, so waiting on checks never ends),
+# when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). A herdr agent
 # blocked on a prompt also needs the lead. Each head is reported once (state in .swarm/state).
 watch_prs() {
-  local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending owner
-  owner=$(gh repo view "$(git -C "${REPO_ROOT}" remote get-url origin)" --json owner -q .owner.login) || die "no GitHub origin for ${REPO_ROOT}"
-  # Default: this repo plus every sibling a story names (repo: <name>), so a new sibling needs no edit here.
+  local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending
+  # Default: the project (when it is a repo) plus every repo a story names, so a new repo needs no edit here.
   if [[ ${#repos[@]} -eq 0 ]]; then
-    read -r -a repos <<< "$(basename "${REPO_ROOT}") $(sed -n 's/^repo: *//p' "${REPO_ROOT}"/docs/stories/*.md 2>/dev/null | sort -u | tr '\n' ' ')"
+    local own=""; [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
+    read -r -a repos <<< "${own} $(sed -n 's/^repo: *//p' "${BOARD}"/stories/*.md 2>/dev/null | sort -u | tr '\n' ' ')"
   fi
-  local uniq=() r
-  for r in "${repos[@]}"; do [[ " ${uniq[*]-} " == *" ${r} "* ]] || uniq+=("${r}"); done
-  repos=("${uniq[@]}")
+  # Each repo as owner/name, from its own origin: repos on one board need not share an owner.
+  local full=() r src
+  for r in "${repos[@]}"; do
+    src="$(repo_dir "${r}")" || die "watch ${r}: ${src}"
+    r="$(gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner)" \
+      || die "no GitHub origin for ${src}"
+    [[ " ${full[*]-} " == *" ${r} "* ]] || full+=("${r}")
+  done
+  repos=("${full[@]}")
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   while :; do
     for repo in "${repos[@]}"; do
       while read -r n sha br mergeable age; do
         [[ -n "${n}" ]] || continue
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
-          echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with main"; return 0
+          echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
         grep -qx "done ${sha}" "${seen}" && continue
-        read -r total pending < <(gh api "repos/${owner}/${repo}/commits/${sha}/check-runs" \
+        read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
         if [[ "${total:-0}" -gt 0 && "${pending}" == 0 ]]; then
           echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"; return 0
@@ -486,7 +649,7 @@ watch_prs() {
         if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
-      done < <(gh pr list -R "${owner}/${repo}" --state open --json number,headRefName,headRefOid,mergeable,updatedAt \
+      done < <(gh pr list -R "${repo}" --state open --json number,headRefName,headRefOid,mergeable,updatedAt \
         -q '.[]|select(.headRefName|startswith("story/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
@@ -547,11 +710,14 @@ main() {
     next)   next_step ;;
     cost)   cost_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
+    finish) finish_item "${1:?slug}" ;;
+    config) show_config "${1:-}" ;;
+    _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
-    *) sed -n '2,16p' "$0"; exit 2 ;;
+    *) sed -n '2,21p' "$0"; exit 2 ;;
   esac
 }
 

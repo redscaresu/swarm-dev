@@ -2,6 +2,10 @@
 description: Run the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
 ---
 
+The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
+`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+is inside it.
+
 Drive the chain end to end, picking up wherever the board says it stands. Requires herdr
 (`HERDR_ENV=1`); if not inside herdr, say so and stop. Read `${CLAUDE_PLUGIN_ROOT}/docs/method.md`
 first if you have not this session.
