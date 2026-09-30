@@ -79,14 +79,17 @@ expect "stories before planning" "conduct e2" \
   "item stories/a.md 'status: ready' 'epic: e2'"
 
 # With a conductor in herdr: `wait` until it has written its report, then `collect`. A stub herdr
-# lists the agent; being idle must not count as finished.
-expect_conductor() { # <name> <want> <write the report?>
-  local name="$1" want="$2" dir got
+# lists the agent; being idle must not count as finished. A long epic's agent name is cut at 32
+# characters, and its report is still found under the full epic name.
+expect_conductor() { # <name> <want> <write the report?> [epic]
+  local name="$1" want="$2" epic="${4:-e1}" dir got agent
   dir="$(mktemp -d)"
-  (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm)
-  printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"idle\"}]}}'" > "${dir}/bin/herdr"
+  # An older brief whose epic shares the cut name, as a finished long epic leaves behind.
+  (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch -t 202001010000 ".swarm/briefs/conduct-${epic}-old.md" && touch ".swarm/briefs/conduct-${epic}.md")
+  agent="$(cd "${dir}" && bash "${SWARM}" _name "conduct-${epic}")"; want="${want//AGENT/${agent}}"
+  printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\"}]}}'" > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
-  [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-e1.report.md"
+  [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
   got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
   if [[ "${got}" == "${want}" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1)); fi
@@ -94,6 +97,7 @@ expect_conductor() { # <name> <want> <write the report?>
 }
 expect_conductor "idle conductor without a report is still waited on" "wait conduct-e1" no
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
+expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
 # A long conductor's agent name is cut at 32 characters; close must still find its full tab label.
 long="conduct-aws-layer3-claim-sweep-reap"

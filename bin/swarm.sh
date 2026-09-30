@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
-#   swarm.sh close <tab>                                    close <tab>, <tab>-2, ... and forget them
+#   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
@@ -14,14 +14,16 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
+#   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
+#   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
 # of the git repo you are in. Settings live in .claude/swarm/config (see config below). Must run
-# inside herdr (HERDR_ENV=1). A story gets its own tab, named for the story. Tabs hold at most four
-# panes (a 2x2 grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
+# inside herdr (HERDR_ENV=1). An epic gets a tab named for it: the conductor's pane, then a pane per
+# story, each named. A story outside any epic gets its own tab. Tabs hold at most four panes (a 2x2
+# grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
 set -euo pipefail
 
 die() { echo "swarm: $*" >&2; exit 1; }
@@ -67,7 +69,8 @@ CFG_finished=delete
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
 CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits"
+CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -98,6 +101,8 @@ load_config() {
         [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
       sign_commits)
         [[ "${value}" == true || "${value}" == false ]] || die "${where}: sign_commits must be true or false, not '${value}'" ;;
+      pr_per)
+        [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -220,7 +225,7 @@ require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr
 
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
 next_pane() {
-  local label="$1" cwd="$2" n=1 state panes count pane
+  local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane
   mkdir -p "${STATE_DIR}"
   while :; do
     local tab_label="${label}"; [[ ${n} -gt 1 ]] && tab_label="${label}-${n}"
@@ -232,14 +237,15 @@ next_pane() {
           | json "d['result']['root_pane']['pane_id']")
       else
         # 2x2: 2nd splits the first to the right, 3rd splits the first down, 4th splits the second down.
-        read -r -a panes <<< "$(tr '\n' ' ' < "${state}")"
+        read -r -a panes <<< "$(awk '{ print $1 }' "${state}" | tr '\n' ' ')"
         case ${count} in
           1) pane=$(herdr pane split "${panes[0]}" --direction right --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
           2) pane=$(herdr pane split "${panes[0]}" --direction down  --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
           3) pane=$(herdr pane split "${panes[1]}" --direction down  --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
         esac
       fi
-      echo "${pane}" >> "${state}"
+      [[ -z "${name}" ]] || herdr pane rename "${pane}" "${name}" >/dev/null 2>&1 || true
+      echo "${pane}${name:+ ${name}}" >> "${state}"
       echo "${pane}"
       return
     fi
@@ -248,11 +254,11 @@ next_pane() {
 }
 
 start_agent() {
-  local tab="$1" name cwd="$3" role="$4" prompt_file="$5" kind model effort pane
+  local tab="$1" name cwd="$3" role="$4" prompt_file="$5" pane_name="${6:-$2}" kind model effort pane
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
-  pane=$(next_pane "${tab}" "${cwd}")
+  pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
   local try
   for try in 1 2; do
@@ -400,8 +406,12 @@ RULE
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check extra=""
-  if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
+  local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before
+  if [[ -n "${epic_branch}" ]]; then
+    story_ref="${BOARD}/stories/${slug}.md"
+    [[ ${BOARD_IN_REPO} == 1 && "${src}" == "${PROJECT_DIR}" ]] && story_ref="${BOARD#"${PROJECT_DIR}/"}/stories/${slug}.md"
+    cleanup="Do not touch the story file; the conductor takes it off the board."
+  elif [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in this repo: the PR takes the story off it.
     rel="${BOARD#"${PROJECT_DIR}/"}/stories"
     story_ref="${rel}/${slug}.md"
@@ -415,7 +425,25 @@ story_brief() {
     story_ref="${BOARD}/stories/${slug}.md (this worktree is $(basename "${src}"))"
     cleanup="Do not touch the story file; the lead takes it off the board after your PR merges."
   fi
-  cat <<EOF
+  if [[ -n "${epic_branch}" ]]; then
+    before="reply"
+    cat <<EOF
+Implement ${story_ref}. Its **Done when** is the acceptance.
+
+Title your commit with a plain description of the change.
+
+Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
+credentials. This project opens one PR per epic, so open no PR: commit on your branch,
+story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
+\`codex exec review --base origin/${epic_branch}\` before committing; fix real findings, decline
+nits with a reason, and converge on one clean pass. If codex reports a usage limit, do not wait for
+it to reset: carry on without it and say so. Run the repo's tests and make them pass. When your
+branch is pushed, reply with the branch, what changed in three lines, and the codex findings, then
+stop.
+EOF
+  else
+    before="open the PR"
+    cat <<EOF
 Implement ${story_ref}. Its **Done when** is the acceptance.
 
 Title your commit and PR with a plain description of the change.
@@ -429,9 +457,10 @@ CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides 
 the tests and push: a conflicted PR runs no checks and waits forever. When CI is green, reply with
 the PR URL, what changed in three lines, and the codex findings, then stop.
 EOF
+  fi
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
-  [[ -z "${check}" ]] || extra+="Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
+  [[ -z "${check}" ]] || extra+="Before you ${before}, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
   [[ "${CFG_sign_commits}" != true ]] || extra+="$(sign_rule)"$'\n'
   [[ -z "${extra}" ]] || printf '%s' "${extra}"
   if [[ -f "${PROJECT_BRIEF}" ]]; then
@@ -441,7 +470,7 @@ EOF
 }
 
 build_story() {
-  local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base
+  local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base epic from epic_branch
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -455,11 +484,41 @@ build_story() {
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   base="$(base_for "${src}")"
+  epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
+  if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
+    [[ -f "${BOARD}/epics/${epic}.md" ]] || die "${slug}: no epic ${BOARD}/epics/${epic}.md"
+    epic_branch="$(epic_branch_for "${src}" "${epic}" "${base}")"; from="origin/${epic_branch}"
+    add_epic_repo "${epic}" "${repo:-$(basename "${PROJECT_DIR}")}"
+  fi
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
-  git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"
+  git -C "${src}" worktree add -q -b "${branch}" "${wt}" "${from}"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
-  story_brief "${slug}" "${src}" "${base}" > "${prompt}"
-  start_agent "${slug}" "${slug}" "${wt}" "${role}" "${prompt}"
+  story_brief "${slug}" "${src}" "${base}" "${epic_branch}" > "${prompt}"
+  # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
+  start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
+}
+
+# epic_branch_for <repo-dir> <epic> <base> — epic/<epic>, fetched from origin; pushed there from
+# <base> the first time a story of the epic is built in that repo.
+epic_branch_for() {
+  local src="$1" b="epic/$2"
+  if ! git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" 2>/dev/null; then
+    git -C "${src}" push -q origin "refs/remotes/origin/$3:refs/heads/${b}" || die "${src}: cannot push ${b}"
+    git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}"
+  fi
+  echo "${b}"
+}
+
+# add_epic_repo <epic> <repo> — list <repo> on the epic's repos: line, the repos with an epic
+# branch. It is how a fresh conductor finds the branches, and how `next` sees a stalled epic.
+add_epic_repo() {
+  local f="${BOARD}/epics/$1.md"
+  [[ " $(fm "${f}" repos) " == *" $2 "* ]] && return 0
+  awk -v r="$2" '
+    /^---$/ { n++ }
+    n == 1 && /^repos:/ { print $0 " " r; d = 1; next }
+    n == 2 && !d { print "repos: " r; d = 1 }
+    { print }' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
@@ -469,19 +528,9 @@ conduct_brief() {
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
 
-Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
-§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
-start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch\` in the background, and review each PR. Each story's base branch is in its brief,
-.swarm/briefs/<slug>.md.
-
-A PR is green only when every check on its head has passed and you have triaged the output of
-\`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
-conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
-PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert.$(review_bot_rule)
-
-$(conduct_merge_rule)$(sign_rule_if_on)
+EOF
+  if [[ "${CFG_pr_per}" == epic ]]; then conduct_epic_mode "${epic}"; else conduct_story_mode "${epic}"; fi
+  cat <<EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 \`kind: lead\` story (real cloud, credentials) or a \`kind: operator\` one is not yours to run; list it
@@ -491,6 +540,73 @@ Your last act, after everything else: write your report (what merged, what is le
 the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
 treats that file as the only sign you have finished: being idle while you wait on your own
 background work is not.
+EOF
+}
+
+# The green rule every conductor follows, whatever it opens PRs for.
+green_rule() {
+  cat <<EOF
+A PR is green only when every check on its head has passed and you have triaged the output of
+\`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
+conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
+PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
+never dismiss an alert.$(review_bot_rule)
+EOF
+}
+
+# pr_per = story: a PR per story.
+conduct_story_mode() {
+  local epic="$1"
+  cat <<EOF
+Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
+§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
+start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
+\`swarm.sh watch\` in the background, and review each PR. Each story's base branch is in its brief,
+.swarm/briefs/<slug>.md.
+
+$(green_rule)
+
+$(conduct_merge_rule)$(sign_rule_if_on)
+EOF
+}
+
+# pr_per = epic: stories merge into epic/<epic>, and each repo gets one PR for the whole epic.
+conduct_epic_mode() {
+  local epic="$1" check sign="" merge_step tick='`'
+  check="$(fm "${BOARD}/epics/${epic}.md" check)"
+  [[ -z "${check}" ]] || check=" and the epic check ${tick}${check}${tick}"
+  [[ "${CFG_sign_commits}" != true ]] || sign=" -S"
+  if [[ "${CFG_merge}" == human ]]; then
+    merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
+merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
+  else
+    merge_step="Merge each PR once it is green, then run \`swarm.sh finish ${epic}\`."
+  fi
+  cat <<EOF
+This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story <slug>\`
+starts each builder on story/<slug>, branched from epic/${epic}; builders push their branch and open
+no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) as method.md
+§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
+and wait with \`swarm.sh wait <slug>\` in the background.
+
+When a builder reports, review its branch. Then, one story at a time, merge it into the epic branch
+in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
+\`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
+and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
+\`swarm.sh close <slug>\`, and go on to the next wave.
+
+When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
+line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
+\`codex exec review --base origin/<base>\`, where \`swarm.sh base <repo>\` prints the base. Fix real
+findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
+base, written for a reader who knows nothing of how it was built: what changes and why, with no
+waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
+keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch\` in the
+background.
+
+$(green_rule)
+
+${merge_step}$(sign_rule_if_on)
 EOF
 }
 
@@ -506,9 +622,22 @@ hld_workspace() {
   echo "${ws}"
 }
 
-# conductor_report <agent> — where a conductor writes its report as its last act. The agent name
-# may be cut at 32 characters, so it is resolved to the full tab label (conduct-<epic>) first.
-conductor_report() { echo "${PROJECT_DIR}/.swarm/$(tab_label "$1").report.md"; }
+# conductor_report <agent> — where a conductor writes its report as its last act.
+conductor_report() { echo "${PROJECT_DIR}/.swarm/conduct-$(conduct_epic "$1").report.md"; }
+
+# conduct_epic <agent> — the epic a conductor's agent name is for. The name may be cut at 32
+# characters, so it is matched against the conductors started here (their briefs), which outlive
+# the epic's own file. Two long epics can share a cut name; the newest brief is the one running.
+conduct_epic() {
+  local f e want
+  want="$(agent_name "$1")"
+  # shellcheck disable=SC2012 # newest first; brief names are epic slugs, [a-z0-9-]
+  while IFS= read -r f; do
+    e="$(basename "${f}" .md)"; e="${e#conduct-}"
+    [[ "$(agent_name "conduct-${e}")" == "${want}" ]] && { echo "${e}"; return; }
+  done < <(ls -t "${PROJECT_DIR}/.swarm/briefs"/conduct-*.md 2>/dev/null)
+  echo "${want#conduct-}"
+}
 
 start_conductor() {
   local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder
@@ -520,7 +649,7 @@ start_conductor() {
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
-  HERDR_WORKSPACE_ID="${ws}" start_agent "conduct-${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}"
+  HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
   [[ -z "${placeholder}" ]] || herdr tab close "${placeholder}" >/dev/null
   echo "workspace ${hld} (${ws})"
 }
@@ -537,6 +666,15 @@ board() {
   return 0
 }
 
+# epic_has_open_stories <epic> — true while any story of <epic> is still on the board and not done.
+epic_has_open_stories() {
+  local s
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "$1" ]] && open_item "${s}" && return 0
+  done < <(board stories)
+  return 1
+}
+
 # epic_has_stories <epic> — true when any story names <epic>.
 epic_has_stories() {
   local s
@@ -550,7 +688,8 @@ epic_has_stories() {
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts)
-#   conduct <epic>    an active epic has a story an agent can build
+#   conduct <epic>    an active epic has a story an agent can build, or (pr_per = epic) every story
+#                     merged into its epic branch and no PR yet
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet
@@ -592,6 +731,16 @@ next_step() {
     [[ -n "${slug}" && "$(fm "${BOARD}/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
     echo "conduct ${story_epic}"; echo "${slug} is ready in the active epic ${story_epic}"; return
   done <<< "${buildable}"
+  if [[ "${CFG_pr_per}" == epic ]]; then
+    # Stories went into the epic branch (repos: says where) and none is left, but the epic is still
+    # active, not in review: its conductor stopped before the PRs. A fresh one picks it up there.
+    while IFS= read -r f; do
+      [[ "$(fm "${f}" status)" == active && -n "$(fm "${f}" repos)" ]] || continue
+      epic=$(basename "${f}" .md)
+      epic_has_open_stories "${epic}" && continue
+      echo "conduct ${epic}"; echo "every story of ${epic} is in its epic branch, and the epic has no PR yet"; return
+    done < <(board epics)
+  fi
   while read -r story_epic slug; do
     # A one-off: `read` puts the lone slug in story_epic.
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
@@ -793,7 +942,7 @@ for a in json.load(sys.stdin):
   fi
 }
 
-# watch [repo...] — block until a story/* PR in these repos needs the lead, print one line saying
+# watch [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print one line saying
 # which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). A herdr agent
@@ -832,7 +981,7 @@ watch_prs() {
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
       done < <(gh pr list -R "${repo}" --state open --json number,headRefName,headRefOid,mergeable,updatedAt \
-        -q '.[]|select(.headRefName|startswith("story/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
+        -q '.[]|select(.headRefName|startswith("story/") or startswith("epic/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local blocked
@@ -856,6 +1005,26 @@ tab_label() {
     basename "${state}"; return
   done
   echo "$1"
+}
+
+# close_agent <name> — close what was opened for <name>: its pane, or its tab when that was the
+# tab's last pane. A conductor's name closes its epic's tabs, with any story panes left in them.
+close_agent() {
+  local state pane epic
+  for state in "${STATE_DIR}"/*; do
+    [[ -f "${state}" ]] || continue
+    pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
+    [[ -n "${pane}" ]] || continue
+    if [[ $(wc -l < "${state}") -le 1 ]]; then close_tabs "$(basename "${state}")"; return; fi
+    herdr pane close "${pane}" >/dev/null
+    awk -v p="${pane}" '$1 != p' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
+    echo "closed pane $1"; return
+  done
+  if [[ "$(agent_name "$1")" == conduct-* ]]; then
+    epic="$(conduct_epic "$1")"
+    close_tabs "${epic}"
+  fi
+  close_tabs "$1"
 }
 
 # close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
@@ -887,7 +1056,7 @@ main() {
     agent)  require_herdr; start_agent "$@" ;;
     story)  require_herdr; build_story "${1:?slug}" ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
-    close)  require_herdr; close_tabs "${1:?tab}" ;;
+    close)  require_herdr; close_agent "${1:?name}" ;;
     unblock) unblock ;;
     next)   next_step ;;
     cost)   cost_report "${1:-}" ;;
@@ -897,12 +1066,13 @@ main() {
     reconcile) reconcile ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
+    base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
-    _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" ;;   # layout test hook: a pane, no agent
+    _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
-    *) sed -n '2,24p' "$0"; exit 2 ;;
+    *) sed -n '2,26p' "$0"; exit 2 ;;
   esac
 }
 

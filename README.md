@@ -53,7 +53,7 @@ You type two things:
                         lead-run steps, what to start next
 
   ◆ = the loop stops for you      every agent runs in its own herdr pane:
-                                  a workspace per HLD, a tab per story
+                                  a workspace per HLD, a tab per epic
 ```
 
 **Words used here**
@@ -72,7 +72,7 @@ You type two things:
 ## Why this way
 
 - **You can see every agent.** Each one runs in its own pane: a herdr workspace per HLD, a tab per
-  story. Nothing works out of sight.
+  epic with the conductor and a pane per story. Nothing works out of sight.
 - **Plans are attacked before anything is built.** Each story faces a skeptic that tries to refute
   it, and the whole plan faces a critic and codex, a model from another company that shares fewer
   blind spots. You see what they found before you approve.
@@ -130,7 +130,8 @@ Run `make test` before opening a pull request.
 ```
 
 To keep the board somewhere else, branch from `dev` where a repo has one, keep finished items
-on the board, let the conductor merge, sign every commit or run your PR review bot, add
+on the board, let the conductor merge, sign every commit, run your PR review bot, or open one PR per epic
+instead of one per story, add
 `.claude/swarm/config` ([`docs/method.md` § Configuring a
 project](docs/method.md#configuring-a-project)). For example:
 
@@ -176,7 +177,7 @@ walkthrough, and what makes a good HLD: [`docs/method.md` § Writing the HLD](do
 ```
 
 It plans the epics, scopes each into stories, and hands each epic to a conductor, which opens a
-herdr workspace named after your HLD with one tab per story. Watch any pane, or the board in
+herdr workspace named after your HLD, with a tab per epic and a pane per story. Watch any pane, or the board in
 Obsidian. `/swarm` stops whenever a decision is yours; make it, then run `/swarm` again.
 
 ## When `/swarm` stops for you
