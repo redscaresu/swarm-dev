@@ -120,10 +120,10 @@ base() { # <config line> <repo>
 check "dev main picks dev" "dev" "$(base "base_branches = dev main" svc)"
 check "dev main without dev picks main" "main" "$(base "base_branches = dev main" only-main)"
 check "empty list picks origin's default" "trunk" "$(base "" trunk)"
-# Newer git's fetch restores origin/HEAD by itself; turn that off to take the path older git takes.
-git -C "${ROOT}/repos/trunk" config remote.origin.followRemoteHEAD never
-git -C "${ROOT}/repos/trunk" remote set-head origin -d
-check "origin's default is found with no origin/HEAD" "trunk" "$(base "" trunk)"
+git -C "${ROOT}/trunk.git" symbolic-ref HEAD refs/heads/main
+check "a changed default on origin is seen, not the cached one" "main" "$(base "" trunk)"
+"${GIT[@]}" clone -q --single-branch --branch main "${ROOT}/svc.git" "${ROOT}/repos/single"
+check "a single-branch clone still finds dev on origin" "dev" "$(base "base_branches = dev main" single)"
 check "no listed branch on origin stops" "yes" \
   "$(fails_with 'origin has none of base_branches' base "base_branches = nope" svc)"
 

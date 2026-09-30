@@ -68,7 +68,7 @@ replace a design later, write a new HLD and set the old one `status: superseded`
 
 The board is files: `docs/hld/`, `docs/epics/` and `docs/stories/`, one file per item, with front
 matter the scripts read. There is no shared board file to conflict on; the PR that finishes a story
-deletes its file, and the PR is the record. A project can move the board and change how finished
+deletes its file (or, with `finished = mark`, sets it `status: done`), and the PR is the record. A project can move the board and change how finished
 items leave it (§ Configuring a project). `templates/docs/` holds the READMEs that define
 each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
 

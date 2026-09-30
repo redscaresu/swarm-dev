@@ -97,6 +97,7 @@ load_config
 # abs_path <path> — <path>, relative to the project dir unless it is absolute.
 abs_path() { if [[ "$1" == /* ]]; then echo "$1"; else echo "${PROJECT_DIR}/$1"; fi; }
 BOARD="$(abs_path "${CFG_board_dir}")"
+[[ -d "${BOARD}" ]] && BOARD="$(cd "${BOARD}" && pwd -P)"   # so a board_dir with .. is compared as the real path
 REPOS_DIR="$(dirname "${PROJECT_DIR}")"; [[ -z "${CFG_repos_dir}" ]] || REPOS_DIR="$(abs_path "${CFG_repos_dir}")"
 PROJECT_IS_GIT=0; [[ -e "${PROJECT_DIR}/.git" ]] && PROJECT_IS_GIT=1
 # A builder can change the board in its own PR only when the board is in the project's repo.
@@ -144,23 +145,26 @@ repo_dir() {
 # worktree_for <repo-dir> <slug> — where a story's worktree goes: beside its repo, in <repo>-wt/.
 worktree_for() { echo "$(dirname "$1")/$(basename "$1")-wt/$2"; }
 
-# base_for <repo-dir> — the branch a story starts from and merges into: the first base_branches entry
-# origin has, or origin's default branch when the list is empty. Never a guess.
+# base_for <repo-dir> — the branch a story starts from and merges into, fetched: the first
+# base_branches entry origin has, or origin's default branch when the list is empty. Each is asked
+# of origin itself, not the clone's cached refs, which a single-branch clone or a changed default
+# would get wrong. Never a guess.
 base_for() {
   local src="$1" b head branches
-  git -C "${src}" fetch -q --prune origin || die "${src}: git fetch origin failed"
   if [[ -n "${CFG_base_branches// /}" ]]; then
     read -r -a branches <<< "${CFG_base_branches}"
     for b in "${branches[@]}"; do
-      git -C "${src}" rev-parse -q --verify "refs/remotes/origin/${b}" >/dev/null && { echo "${b}"; return; }
+      git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" 2>/dev/null && { echo "${b}"; return; }
     done
     die "${src}: origin has none of base_branches (${CFG_base_branches})"
   fi
-  head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" \
-    || { git -C "${src}" remote set-head origin --auto >/dev/null 2>&1 \
-         && head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD)"; } \
-    || die "${src}: cannot tell origin's default branch; set base_branches"
-  echo "${head#origin/}"
+  if ! git -C "${src}" remote set-head origin --auto >/dev/null 2>&1 \
+     || ! head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD)"; then
+    die "${src}: cannot tell origin's default branch; set base_branches"
+  fi
+  b="${head#origin/}"
+  git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" || die "${src}: cannot fetch ${b}"
+  echo "${b}"
 }
 
 # The model and effort for each role. This is the one place the policy lives
