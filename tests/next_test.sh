@@ -84,7 +84,8 @@ expect "stories before planning" "conduct e2" \
 expect_conductor() { # <name> <want> <write the report?> [epic]
   local name="$1" want="$2" epic="${4:-e1}" dir got agent
   dir="$(mktemp -d)"
-  (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch ".swarm/briefs/conduct-${epic}.md")
+  # An older brief whose epic shares the cut name, as a finished long epic leaves behind.
+  (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch -t 202001010000 ".swarm/briefs/conduct-${epic}-old.md" && touch ".swarm/briefs/conduct-${epic}.md")
   agent="$(cd "${dir}" && bash "${SWARM}" _name "conduct-${epic}")"; want="${want//AGENT/${agent}}"
   printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\"}]}}'" > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"

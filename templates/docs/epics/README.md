@@ -1,10 +1,11 @@
 # Epics
 
-An epic is a goal bigger than one PR. It is scoped into stories (`docs/stories/`), each one PR,
-and the epic is done when its **Done when** holds and its stories have merged; it then leaves the
+An epic is a goal bigger than one PR. It is scoped into stories (`docs/stories/`), each one PR
+(or, with `pr_per = epic`, one branch merged into the epic's own PR), and the epic is done when its **Done when** holds and its stories have merged; it then leaves the
 board (`swarm.sh finish`). An epic in `review` waits for a human to merge the PRs on its `prs:`
 line, and leaves the board once they have all merged. `check:` is optional: a command every
-story's builder runs from its worktree, and makes pass, before opening its PR. With
+story's builder runs from its worktree, and makes pass, before opening its PR (or pushing its
+branch). With
 `pr_per = epic`, `swarm.sh story` writes `repos:` itself: the repos that have an `epic/<slug>`
 branch, each of which gets one PR for the whole epic.
 

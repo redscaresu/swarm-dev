@@ -14,7 +14,7 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
+#   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #
@@ -601,7 +601,8 @@ line lists every repo with an epic branch), review the whole epic: in each repo'
 findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
 waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
-keeping any structure someone wrote by hand.
+keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch\` in the
+background.
 
 $(green_rule)
 
@@ -626,15 +627,15 @@ conductor_report() { echo "${PROJECT_DIR}/.swarm/conduct-$(conduct_epic "$1").re
 
 # conduct_epic <agent> — the epic a conductor's agent name is for. The name may be cut at 32
 # characters, so it is matched against the conductors started here (their briefs), which outlive
-# the epic's own file.
+# the epic's own file. Two long epics can share a cut name; the newest brief is the one running.
 conduct_epic() {
   local f e want
   want="$(agent_name "$1")"
-  for f in "${PROJECT_DIR}/.swarm/briefs"/conduct-*.md; do
-    [[ -f "${f}" ]] || continue
+  # shellcheck disable=SC2012 # newest first; brief names are epic slugs, [a-z0-9-]
+  while IFS= read -r f; do
     e="$(basename "${f}" .md)"; e="${e#conduct-}"
     [[ "$(agent_name "conduct-${e}")" == "${want}" ]] && { echo "${e}"; return; }
-  done
+  done < <(ls -t "${PROJECT_DIR}/.swarm/briefs"/conduct-*.md 2>/dev/null)
   echo "${want#conduct-}"
 }
 
@@ -941,7 +942,7 @@ for a in json.load(sys.stdin):
   fi
 }
 
-# watch [repo...] — block until a story/* PR in these repos needs the lead, print one line saying
+# watch [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print one line saying
 # which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). A herdr agent
@@ -980,7 +981,7 @@ watch_prs() {
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
       done < <(gh pr list -R "${repo}" --state open --json number,headRefName,headRefOid,mergeable,updatedAt \
-        -q '.[]|select(.headRefName|startswith("story/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
+        -q '.[]|select(.headRefName|startswith("story/") or startswith("epic/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local blocked
