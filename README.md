@@ -96,6 +96,19 @@ You type two things:
 
 Your project must be a git repository with its `origin` on GitHub.
 
+**If you run Claude Code through Microsoft Foundry, Bedrock or Vertex**, a new herdr pane must
+reach it too. Every agent starts as plain `claude` in a fresh shell, so settings you set only in
+the terminal you launched from (an alias that sources a script, say) do not reach it, and the agent
+stops with `Not logged in`. Make `claude` in a herdr pane load them itself, for example in
+`~/.zshrc`:
+
+```bash
+# Subshell: the settings reach only claude, not the pane's shell.
+[[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
+```
+
+Keep any API key that script needs in your OS keychain, not in the script.
+
 ### 2. Install the plugin
 
 ```bash
