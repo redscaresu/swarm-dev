@@ -374,6 +374,34 @@ deliver_prompt() {
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
 }
 
+# API_ERROR_NUDGES: how many times one `wait` re-prompts an agent whose turn died on an API error.
+# Enough to ride out a dropped stream; few enough that a hard error (a bad key) still surfaces.
+API_ERROR_NUDGES=3
+
+# ended_on_api_error <name> — true when the agent's last event (Claude Code marks each with ⏺)
+# is an API error, such as "The response stopped arriving". The agent then sits idle, its work
+# unfinished, and nothing else will wake it.
+ended_on_api_error() {
+  herdr agent read "$1" --source recent-unwrapped 2>/dev/null | grep '⏺' | tail -1 | grep -q '⏺ API Error'
+}
+
+# wait_agent <name> <timeout-ms> — block until the agent settles and print its status. An agent idle
+# after an API error has not settled: tell it to carry on, and wait again.
+wait_agent() {
+  local name="$1" timeout="$2" status nudges=0
+  while :; do
+    status=$(herdr agent wait "${name}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
+    if [[ "${status}" != idle || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
+      break
+    fi
+    nudges=$((nudges + 1))
+    echo "swarm: ${name} stopped on an API error; telling it to carry on (${nudges}/${API_ERROR_NUDGES})" >&2
+    herdr agent prompt "${name}" "Your last turn ended on an API error. Carry on from where you stopped." \
+      --wait --until working --timeout 60000 >/dev/null 2>&1 || true
+  done
+  echo "${status}"
+}
+
 # The merge, signing and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
@@ -1090,7 +1118,7 @@ main() {
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
-    wait)   require_herdr; herdr agent wait "$(agent_name "${1:?name}")" --timeout "${2:-3600000}" | json "d['result']['agent']['agent_status']" ;;
+    wait)   require_herdr; wait_agent "$(agent_name "${1:?name}")" "${2:-3600000}" ;;
     *) sed -n '2,26p' "$0"; exit 2 ;;
   esac
 }
