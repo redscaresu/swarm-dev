@@ -37,8 +37,10 @@ jobs:
             exit 1
           fi
           tag="v${version}"
-          if gh release view "${tag}" --repo "${REPO}" >/dev/null 2>&1; then
-            echo "Release ${tag} already exists; nothing to publish."
+          # Check the tag, not the release: a tag left without a release must not
+          # get a release attached to an older commit.
+          if gh api "repos/${REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists; nothing to publish."
             exit 0
           fi
           gh release create "${tag}" --repo "${REPO}" --target "${SHA}" \
