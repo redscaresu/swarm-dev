@@ -16,7 +16,7 @@ codex agents in herdr panes, and they run with your local `claude`, `codex`,
 `gh` and `git` authentication, in auto permission mode. The standard builder
 brief forbids touching real cloud or credentials and forbids merging; a project
 adds its own rules in `.claude/swarm/brief.md`. Stories that need real cloud,
-credentials or a human (`kind: lead`, or `operator` on older boards) are refused by the
+credentials or a human (`kind: lead`), or that have a kind it does not know, are refused by the
 swarm, not handed to an agent.
 
 A path by which an agent started by swarm-dev could read credentials, merge, or

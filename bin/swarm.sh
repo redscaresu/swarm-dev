@@ -547,14 +547,22 @@ EOF
   fi
 }
 
+# agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
+# lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+agent_kind() {
+  case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
+}
+
 build_story() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base epic from epic_branch
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
   case "${kind}" in
-    # operator: older boards' name for a human step; treated as lead.
-    lead|operator) die "${slug} is kind: ${kind} — real cloud, credentials or a human step; the lead runs it, not a swarm agent" ;;
+    code|docs|chore|verify) ;;
+    lead) die "${slug} is kind: lead — real cloud, credentials or a human step; the lead runs it, not a swarm agent" ;;
+    operator) die "${slug} is kind: operator, which is now kind: lead: change it, and mark the user's step **You:**" ;;
+    *) die "${slug} has kind: ${kind}; an agent builds only code, docs, chore or verify" ;;
   esac
   risk=$(sed -n 's/^risk: *//p' "${story}" | head -1)
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
@@ -611,7 +619,7 @@ EOF
   cat <<EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
-\`kind: lead\` story (real cloud, credentials, a human step), or an older \`kind: operator\` one, is not yours to run; list it
+story whose \`kind\` is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
@@ -792,11 +800,11 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build: ready, and neither lead nor operator (older boards' lead). "<epic> <slug>" per line.
+  # Stories an agent can build: ready, and of a kind an agent builds. "<epic> <slug>" per line.
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == ready ]] || continue
     kind=$(fm "${f}" kind)
-    [[ "${kind}" == lead || "${kind}" == operator ]] && continue
+    agent_kind "${kind}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
   # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
@@ -845,7 +853,7 @@ next_step() {
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
-      ready) [[ "${kind}" == lead || "${kind}" == operator ]] && waiting+="  ${kind}: ${slug}"$'\n' ;;
+      ready) agent_kind "${kind}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
       review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;

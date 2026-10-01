@@ -61,7 +61,9 @@ expect "started one-off resumes" "resume a" \
 expect "blocked story is not built" "gate" \
   "item epics/e1.md 'status: active'" \
   "item stories/a.md 'status: blocked' 'kind: lead' 'epic: e1'"
-expect "operator story is a gate" "gate" \
+expect "unknown kind is a gate, not built" "gate" \
+  "item stories/a.md 'status: ready' 'kind: Lead'"
+expect "old operator kind is a gate, not built" "gate" \
   "item stories/a.md 'status: ready' 'kind: operator'"
 expect "lead story is a gate" "gate" \
   "item stories/a.md 'status: ready' 'kind: lead'"

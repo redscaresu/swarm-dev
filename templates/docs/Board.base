@@ -61,9 +61,7 @@ views:
     filters:
       and:
         - file.inFolder("stories")
-        - or:
-            - kind == "lead"
-            - kind == "operator"
+        - kind == "lead"
     order:
       - file.name
       - status

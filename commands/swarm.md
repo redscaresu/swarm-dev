@@ -55,4 +55,4 @@ Repeat until a step below says stop:
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` (not `gh pr merge`, not `gh api`, not the web page), and never give a `lead` story
-(or an older board's `operator` story) to an agent. Stopping is safe: the next `/swarm` reads the board and continues.
+to an agent. Stopping is safe: the next `/swarm` reads the board and continues.
