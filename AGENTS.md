@@ -78,4 +78,5 @@ never `[[wikilinks]]`.
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`. Bump `version` in
 `.claude-plugin/plugin.json` in any PR that changes what a user installs: `claude plugin update`
-fetches nothing while the version is unchanged.
+fetches nothing while the version is unchanged. Merging a version bump to `main` publishes the release and its
+`v<version>` tag (`.github/workflows/release.yml`); a merge without one publishes nothing.

@@ -1,0 +1,45 @@
+name: Release
+
+# On every push to main, publish a GitHub release for the version in
+# .claude-plugin/plugin.json, unless one already exists. The release creates the
+# tag v<version> on the pushed commit. A merge that does not bump the version
+# publishes nothing.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Two quick merges must not race to create the same release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release for a new version
+        # gh is preinstalled on GitHub's ubuntu runners. Reading plugin.json
+        # through the API at the pushed commit avoids a checkout.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          version="$(gh api "repos/${REPO}/contents/.claude-plugin/plugin.json?ref=${SHA}" \
+            -H 'Accept: application/vnd.github.raw' | jq -r .version)"
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::plugin.json version '${version}' is not MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          tag="v${version}"
+          if gh release view "${tag}" --repo "${REPO}" >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; nothing to publish."
+            exit 0
+          fi
+          gh release create "${tag}" --repo "${REPO}" --target "${SHA}" \
+            --title "${tag}" --generate-notes
