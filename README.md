@@ -61,7 +61,7 @@ You type two things:
 - **HLD** (high-level design): one document saying what you are building and why. Everything else
   comes from it.
 - **Epic**: a goal bigger than one pull request, with a **Done when** that could fail.
-- **Story**: one pull request's worth of work. Its `kind` says who does it: an agent (`code`,
+- **Story**: one pull request's worth of work, or one step by your own session. Its `kind` says who does it: an agent (`code`,
   `docs`, `chore`, `verify`), or your own session (`lead`) because it touches real cloud or
   credentials or needs you; your steps in it are marked **You:**. Planning decides which, up front, and lists your share before you
   approve ([`docs/method.md` § Who does what](docs/method.md#who-does-what)).

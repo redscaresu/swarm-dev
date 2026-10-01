@@ -38,7 +38,7 @@ credentials. Cite evidence as file:line. Keep free text short.*
 `{stories:[{slug, title, kind, risk, repo, scope, done_when, touches, depends_on}], waves, contradictions}`.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
-One story is one PR; `done_when` must be able to fail; `kind` is code | docs | chore | verify |
+One agent story is one PR (a `lead` story may end with no PR, for example an approval); `done_when` must be able to fail; `kind` is code | docs | chore | verify |
 lead (real cloud, credentials, or a step by the user, marked **You:**), by swarm-dev
 `docs/method.md` § Who does what; every step in the epic's **Your part** is in a `lead` story,
 and a merge is never a story of its own; `risk: high` for real-cloud, teardown,

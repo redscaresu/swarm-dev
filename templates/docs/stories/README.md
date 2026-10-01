@@ -4,7 +4,7 @@ Open work, one file per item. A file's front matter says whether it can be picke
 
     status: ready | blocked | later | review
 
-`ready` stories are the queue, and each one is written to be handed to an agent as its brief:
+`ready` stories are the queue. Each one other than a `lead` story is written to be handed to an agent as its brief:
 what to change, and **Done when** — the acceptance. The PR that finishes a story deletes its
 file; the PR is the record. A story in `review` has a PR that is green and reviewed and waits for
 a human to merge it; its `prs:` line lists the PR URLs. List them with `grep -H '^status:' docs/stories/*.md`.
