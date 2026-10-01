@@ -47,7 +47,7 @@ case "$1 $2" in
   "agent prompt")     [ -e "$H/sticky" ] || rm -f "$H/screen"   # a nudge clears the error, unless it is sticky
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
-  "agent list")       echo '{"result":{"agents":[]}}' ;;
+  "agent list")       if [ -e "$H/agents" ]; then cat "$H/agents"; else echo '{"result":{"agents":[]}}'; fi ;;
   "agent wait")       echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent read")       cat "$H/screen" 2>/dev/null ;;
 esac
@@ -102,6 +102,11 @@ run conduct k >/dev/null; run story k1 >/dev/null
 run close k1 >/dev/null; run close conduct-k >/dev/null
 check "with keep_panes, closing a story or a conductor closes nothing and renames the agents" "no|yes|yes" \
   "$(grep -q 'close' "${ROOT}/herdr.log" && echo yes || echo no)|$(has "agent rename k1 k1-done" "$(log)")|$(has "agent rename conduct-k conduct-k-done" "$(log)")"
+echo '{"result":{"agents":[{"name":"conduct-k"}]}}' > "${ROOT}/agents"
+check "a running conductor is waited on" "wait conduct-k" "$(first "$(run next)")"
+echo '{"result":{"agents":[{"name":"conduct-k-done"}]}}' > "${ROOT}/agents"
+check "a conductor kept open after close is not waited on" "no" "$(grep -qE '^(wait|collect) ' <<< "$(run next)" && echo yes || echo no)"
+rm "${ROOT}/agents"
 run story k2 >/dev/null
 check "and the next story gets a pane of its own" "3|k1-done|k2" \
   "$(wc -l < "${p}/.swarm/state/k" | tr -d ' ')|$(awk 'NR == 2 { print $2 }' "${p}/.swarm/state/k")|$(awk 'NR == 3 { print $2 }' "${p}/.swarm/state/k")"

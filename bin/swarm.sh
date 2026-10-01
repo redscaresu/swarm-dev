@@ -782,7 +782,8 @@ next_step() {
   local f slug epic kind story_epic src buildable="" waiting=""
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
-    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-')),'')" 2>/dev/null || true)
+    # A conductor kept open by keep_panes is renamed <name>-done: it is finished, not running.
+    slug=$(herdr agent list 2>/dev/null | json "next((n for n in (a.get('name','') for a in d['result']['agents']) if n.startswith('conduct-') and not n.endswith('-done')),'')" 2>/dev/null || true)
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
