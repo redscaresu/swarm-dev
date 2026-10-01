@@ -42,9 +42,12 @@ case "$1 $2" in
                            { printf "%s{\"tab_id\":\"%s\",\"label\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/tabs" ;;
   "pane split")       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "agent prompt")     if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
+  "agent prompt")     [ -e "$H/sticky" ] || rm -f "$H/screen"   # a nudge clears the error, unless it is sticky
+                      if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent list")       echo '{"result":{"agents":[]}}' ;;
+  "agent wait")       echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent read")       cat "$H/screen" 2>/dev/null ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/herdr"
@@ -128,6 +131,19 @@ check "with no repos: line nothing was built, so it is not stalled" "plan-epic f
 item "${b}" epics/f.md "status: active" "repos: svc"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 check "with pr_per = story the rule does not apply" "plan-epic f" "$(first "$(nx)")"
+
+# --- wait: an agent idle after an API error is told to carry on; any other idle agent is left alone.
+nudges() { grep -c '^agent prompt' "${ROOT}/herdr.log" || true; }
+printf '%s\n' "⏺ I have opened the PR." "⏺ Error: Exit code 1 from make test" > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"
+check "an idle agent whose last event is not an API error is not nudged" "idle|0" "$(run wait a)|$(nudges)"
+printf '%s\n' "⏺ Reviewing the commit." "⏺ API Error: The response stopped arriving." "✻ Crunched for 5m" > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"
+check "an agent stopped by an API error is nudged, then waited on again" "idle|1" "$(run wait a | tail -1)|$(nudges)"
+printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"; touch "${ROOT}/sticky"
+: > "${ROOT}/herdr.log"
+check "an error that does not clear stops after three nudges" "idle|3" "$(run wait a | tail -1)|$(nudges)"
+rm -f "${ROOT}/sticky" "${ROOT}/screen"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
