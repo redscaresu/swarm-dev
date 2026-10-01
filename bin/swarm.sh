@@ -547,14 +547,22 @@ EOF
   fi
 }
 
+# agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
+# lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+agent_kind() {
+  case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
+}
+
 build_story() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base epic from epic_branch
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
   case "${kind}" in
-    lead)     die "${slug} is kind: lead — real cloud or credentials; the lead runs it, not a swarm agent" ;;
-    operator) die "${slug} is kind: operator — a human step, not an agent's" ;;
+    code|docs|chore|verify) ;;
+    lead) die "${slug} is kind: lead — real cloud, credentials or a human step; the lead runs it, not a swarm agent" ;;
+    operator) die "${slug} is kind: operator, which is now kind: lead: change it, and mark the user's step **You:**" ;;
+    *) die "${slug} has kind: ${kind}; an agent builds only code, docs, chore or verify" ;;
   esac
   risk=$(sed -n 's/^risk: *//p' "${story}" | head -1)
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
@@ -611,7 +619,7 @@ EOF
   cat <<EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
-\`kind: lead\` story (real cloud, credentials) or a \`kind: operator\` one is not yours to run; list it
+story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
@@ -775,7 +783,7 @@ epic_has_stories() {
 #   plan-epic <epic>  an active epic has no stories yet
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
-#   gate              only the user can move the board: operator and lead stories, blocked
+#   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
@@ -792,11 +800,11 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build: ready, and neither lead nor operator. "<epic> <slug>" per line.
+  # Stories an agent can build: ready, and of a kind an agent builds. "<epic> <slug>" per line.
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == ready ]] || continue
     kind=$(fm "${f}" kind)
-    [[ "${kind}" == lead || "${kind}" == operator ]] && continue
+    agent_kind "${kind}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
   # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
@@ -845,7 +853,7 @@ next_step() {
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
-      ready) [[ "${kind}" == lead || "${kind}" == operator ]] && waiting+="  ${kind}: ${slug}"$'\n' ;;
+      ready) agent_kind "${kind}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
       review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;
@@ -867,7 +875,7 @@ next_step() {
 open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
 
 # unblock — a finished story is deleted or marked done, so a blocked story whose every blocked_by slug
-# is no open story or epic, and names no operator step, is ready. Prints each story it flips.
+# is no open story or epic, and names no hand step, is ready. Prints each story it flips.
 unblock() {
   local story slug blockers b open
   while IFS= read -r story; do
@@ -876,7 +884,7 @@ unblock() {
     [[ -n "${blockers// /}" ]] || continue   # blocked for a reason no merge clears
     open=0
     for b in ${blockers}; do
-      # Open while its story exists, its epic exists, or it is not a plain slug (an operator step such
+      # Open while its story exists, its epic exists, or it is not a plain slug (a hand step such
       # as "operator:planted-leak-proof" is cleared by hand, never by a merge).
       if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then open=1; fi
     done

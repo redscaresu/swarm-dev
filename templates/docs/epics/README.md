@@ -20,6 +20,7 @@ check: make test
 **Done when:** how we will know the goal is met — observable, not "stories merged".
 **Out of scope:** what this epic will not do.
 **Constraints:** ADRs, safety rules and budgets that bound it.
+**Your part:** the steps you or your own session will do (go-aheads, logins, hand steps), or none.
 ```
 
 A story joins an epic with `epic: <epic-file-name-without-.md>` in its front matter; an epic made

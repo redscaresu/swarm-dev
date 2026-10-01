@@ -45,10 +45,10 @@ Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.
   command exists for it.
 - Never merge a PR whose checks are not all green on its head commit. With `merge = human` (the
   default), never merge at all: `swarm.sh review <slug> <PR URL>` hands it to the user.
-- Never hand a `kind: lead` story (real cloud, credentials) or a `kind: operator` story (the user's
-  decision or hand step) to an agent. List them for the user.
+- Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
+  agent. List them for the user.
 - One conductor at a time, and only the lead edits the shared files `AGENTS.md` names.
-- A question for the user is a `kind: operator` story on the board, not a line in chat.
+- A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
 
 ## Working on this repository
 
