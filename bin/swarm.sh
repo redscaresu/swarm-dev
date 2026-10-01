@@ -264,12 +264,21 @@ json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"; }
 
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
+# prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
+# targets a live pane. Left alone when herdr cannot list its panes.
+prune_dead_panes() {
+  local live
+  live=$(herdr pane list 2>/dev/null | json "' '.join(p['pane_id'] for p in d['result']['panes'])" 2>/dev/null) || return 0
+  awk -v live=" ${live} " 'index(live, " " $1 " ")' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
 next_pane() {
   local label="$1" cwd="$2" name="${3:-}" n=1 state panes count pane
   mkdir -p "${STATE_DIR}"
   while :; do
     local tab_label="${label}"; [[ ${n} -gt 1 ]] && tab_label="${label}-${n}"
     state="${STATE_DIR}/${tab_label}"
+    [[ -f "${state}" ]] && prune_dead_panes "${state}"
     count=0; [[ -f "${state}" ]] && count=$(wc -l < "${state}" | tr -d ' ')
     if [[ ${count} -lt ${PANES_PER_TAB} ]]; then
       if [[ ${count} -eq 0 ]]; then
@@ -284,6 +293,7 @@ next_pane() {
           3) pane=$(herdr pane split "${panes[1]}" --direction down  --cwd "${cwd}" --no-focus | json "d['result']['pane']['pane_id']") ;;
         esac
       fi
+      [[ -n "${pane}" ]] || die "herdr could not open a pane in tab ${tab_label}"
       [[ -z "${name}" ]] || herdr pane rename "${pane}" "${name}" >/dev/null 2>&1 || true
       echo "${pane}${name:+ ${name}}" >> "${state}"
       echo "${pane}"
