@@ -142,5 +142,15 @@ project "${p}" "finished = delete"
 run "${p}" finish z >/dev/null
 check "finish with finished = delete deletes it" "gone" "$([[ -e "${b}/stories/z.md" ]] && echo there || echo gone)"
 
+# --- version: a warning, with the one command to update, only when a newer version is published.
+have="$(python3 -c "import json; print(json.load(open('$(dirname "${SWARM}")/../.claude-plugin/plugin.json'))['version'])")"
+ver() { (cd "${ROOT}" && SWARM_LATEST_URL="$1" bash "${SWARM}" version 2>&1); }
+published() { echo "{\"version\": \"$1\"}" > "${ROOT}/latest.json"; echo "file://${ROOT}/latest.json"; }
+out="$(ver "$(published 99.0.0)")"
+check "a newer version is out: warn, and name the update command" "swarm-dev ${have}|yes|yes" \
+  "$(first "${out}")|$(grep -q "WARNING: swarm-dev 99.0.0 is out" <<< "${out}" && echo yes || echo no)|$(grep -qx '  swarm.sh update' <<< "${out}" && echo yes || echo no)"
+check "the same version: no warning" "swarm-dev ${have}" "$(ver "$(published "${have}")")"
+check "the lookup fails (offline): no warning, no error" "swarm-dev ${have}|0" "$(ver "file://${ROOT}/missing.json")|$?"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

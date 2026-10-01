@@ -118,6 +118,9 @@ claude plugin install swarm-dev@swarm-dev
 
 Then restart Claude Code, so the commands and `swarm.sh` are loaded.
 
+`/swarm` warns you when a newer version is out. To update, run `swarm.sh update`, then restart
+Claude Code.
+
 ### 3. Set up your project
 
 From your project's root:

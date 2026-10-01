@@ -10,6 +10,9 @@ Drive the chain end to end, picking up wherever the board says it stands. Requir
 (`HERDR_ENV=1`); if not inside herdr, say so and stop. Read `${CLAUDE_PLUGIN_ROOT}/docs/method.md`
 first if you have not this session.
 
+First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
+an old version still runs.
+
 Repeat until a step below says stop:
 
 1. Run `swarm.sh reconcile` (it takes off the board what you merged, and puts back to `ready`
