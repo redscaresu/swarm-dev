@@ -70,7 +70,8 @@ CFG_merge=human         # human: no agent merges; a PR that is ready waits on th
 CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per"
+CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -99,8 +100,8 @@ load_config() {
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
       review_bot)
         [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
-      sign_commits)
-        [[ "${value}" == true || "${value}" == false ]] || die "${where}: sign_commits must be true or false, not '${value}'" ;;
+      sign_commits|keep_panes)
+        [[ "${value}" == true || "${value}" == false ]] || die "${where}: ${key} must be true or false, not '${value}'" ;;
       pr_per)
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
@@ -1039,8 +1040,10 @@ tab_label() {
 
 # close_agent <name> — close what was opened for <name>: its pane, or its tab when that was the
 # tab's last pane. A conductor's name closes its epic's tabs, with any story panes left in them.
+# With keep_panes = true, everything stays open to read, and the agent is only retired.
 close_agent() {
   local state pane epic
+  if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; return; fi
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
@@ -1055,6 +1058,20 @@ close_agent() {
     close_tabs "${epic}"
   fi
   close_tabs "$1"
+}
+
+# retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
+# retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
+# its slot in the tab's state under that name, so no later agent is split into it.
+retire_agent() {
+  local name state
+  name="$(agent_name "$1")"
+  herdr agent rename "${name}" "${name:0:27}-done" >/dev/null 2>&1 || true
+  for state in "${STATE_DIR}"/*; do
+    [[ -f "${state}" ]] || continue
+    awk -v n="$1" 'NF > 1 && $2 == n { $2 = n "-done" } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
+  done
+  echo "kept $1 open (keep_panes)"
 }
 
 # close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be

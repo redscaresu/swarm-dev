@@ -87,6 +87,7 @@ prints every setting and where it came from.
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
 | `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
+| `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with

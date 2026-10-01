@@ -91,6 +91,20 @@ run conduct e >/dev/null || true
 rm "${ROOT}/idle"
 check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
 
+# --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
+echo "keep_panes = true" > "${p}/.claude/swarm/config"
+item "${b}" epics/k.md "status: active"
+for s in k1 k2; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: k" "repo: svc"; done
+run conduct k >/dev/null; run story k1 >/dev/null
+: > "${ROOT}/herdr.log"
+run close k1 >/dev/null; run close conduct-k >/dev/null
+check "with keep_panes, closing a story or a conductor closes nothing and renames the agents" "no|yes|yes" \
+  "$(grep -q 'close' "${ROOT}/herdr.log" && echo yes || echo no)|$(has "agent rename k1 k1-done" "$(log)")|$(has "agent rename conduct-k conduct-k-done" "$(log)")"
+run story k2 >/dev/null
+check "and the next story gets a pane of its own" "3|k1-done|k2" \
+  "$(wc -l < "${p}/.swarm/state/k" | tr -d ' ')|$(awk 'NR == 2 { print $2 }' "${p}/.swarm/state/k")|$(awk 'NR == 3 { print $2 }' "${p}/.swarm/state/k")"
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/epics/k.md "${b}"/stories/k?.md
+
 # --- pr_per = epic: a story branches from epic/<epic>, which is made from the base the first time.
 printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
 item "${b}" epics/f.md "status: active" "check: make test"
