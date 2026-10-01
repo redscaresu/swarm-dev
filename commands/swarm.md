@@ -46,7 +46,8 @@ Repeat until a step below says stop:
      (the title is in the file): the user works in the co-author's pane, and the review and the
      agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
-     story: that you will run it once they say go, and its **You:** steps; a blocked
+     story: that you will run it once they say go, and its **You:** steps; a story of any other
+     kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). Stop.
    - `done`: say so, suggest `/hld <title>` for the next piece of work, and stop.

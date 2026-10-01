@@ -50,8 +50,9 @@ A story is `kind: lead`, never an agent's, when it:
   you can reach. That step is a **You:** line in the story. The lead does the rest around it: it
   prepares the PR or the request, and checks the result after.
 
-A merge is never a story of its own: with `merge = human` every merge is yours already. Any other
-`kind` (a typo, or `operator` from older boards) is never built: `swarm.sh` stops and names it.
+A merge is never a story of its own: with `merge = human` every merge is yours already. A `kind`
+that is none of code, docs, chore, verify or lead (a typo, or `operator` from older boards) is
+never built: `swarm.sh` stops and names it.
 
 **Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
 `/plan-epic` turns them into `lead` stories, and its report ends with **What you will do**, so

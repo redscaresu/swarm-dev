@@ -619,7 +619,7 @@ EOF
   cat <<EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
-story whose \`kind\` is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
+story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
