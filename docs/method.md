@@ -36,9 +36,10 @@ not found out while building.
 - **You** agree the HLD, approve the epics and the stories, merge PRs (with `merge = human`), do
   every `operator` story, and say go before each `lead` story.
 - **The lead** is your own Claude Code session, the one you run `/swarm` in. It supervises,
-  reviews, and runs `lead` stories while you watch: they touch real cloud or credentials, so
-  they need your logins and your go-ahead.
-- **Agents** plan, conduct and build everything else, each in its own pane and worktree.
+  reviews, and runs `lead` stories while you watch: they touch real cloud or credentials, or are
+  hard to undo, so they need your logins and your go-ahead.
+- **Agents** plan, conduct and build everything else, each in its own pane; builders also get
+  their own worktree.
 
 Give a story to the lead or to you, never to an agent, when it:
 

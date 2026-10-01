@@ -62,7 +62,8 @@ real-cloud step hidden inside an agent story. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `touches` and waves; then **What you will do**: every `lead`
-and `operator` story, what each needs from the user, and the PRs they will merge. Ask before
+and `operator` story, what each needs from the user, and, with `merge = human`, that the user
+merges the resulting PRs. Ask before
 writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready` or `blocked` with `blocked_by`, `epic: $1`, `depends_on`, `touches`, `risk` when
 high; body: scope and **Done when**; a `lead` story also says what it needs from the user), open a PR through the codex loop, and `swarm.sh close
