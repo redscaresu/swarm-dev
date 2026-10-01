@@ -11,7 +11,8 @@ a human to merge it; its `prs:` line lists the PR URLs. List them with `grep -H 
 
 `kind` (code | docs | chore | verify | lead | operator) and `risk: high` choose who builds it
 and with which model (swarm-dev `docs/method.md` § Model and effort); `lead` and `operator` stories are
-never given to a swarm agent.
+never given to a swarm agent. A `lead` story says what it needs from you; an `operator` story's
+**Done when** says what you do (swarm-dev `docs/method.md` § Who does what).
 
 A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the files it
 `touches`, which is how a wave avoids two agents editing the same file. A story whose work lands

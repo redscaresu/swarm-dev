@@ -63,7 +63,8 @@ You type two things:
 - **Epic**: a goal bigger than one pull request, with a **Done when** that could fail.
 - **Story**: one pull request's worth of work. Its `kind` says who does it: an agent (`code`,
   `docs`, `chore`, `verify`), you (`operator`), or your own session because it touches real cloud
-  or credentials (`lead`).
+  or credentials (`lead`). Planning decides which, up front, and lists your share before you
+  approve ([`docs/method.md` § Who does what](docs/method.md#who-does-what)).
 - **Board**: those files in `docs/hld/`, `docs/epics/` and `docs/stories/`, viewed in Obsidian.
 - **Conductor**: a fresh agent that builds one epic's stories and merges them.
 - **Pane**: a terminal in [herdr](https://herdr.dev). Every agent gets one, so you can watch any of

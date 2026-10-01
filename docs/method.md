@@ -22,11 +22,40 @@ stories, then one-offs), then planning (an active epic with no stories, then an 
 no epics).
 
 A story the swarm must not build says so by its `kind`: `lead` (real cloud or credentials; the
-lead runs it) or `operator` (a decision or a hand step that is the user's). An open question for
+lead runs it) or `operator` (a decision or a hand step that is the user's), § Who does what. An open question for
 the user is an `operator` story, so the board's **Waiting on you** view lists it. An epic is done
 when its last story's PR deletes the epic file and marks it done in the HLD's `## Epics`.
 
 The session that runs the chain supervises, reviews and merges; it does not do the agents' work.
+
+## Who does what
+
+Three parties do the work, and which one does each step is decided when the work is planned,
+not found out while building.
+
+- **You** agree the HLD, approve the epics and the stories, merge PRs (with `merge = human`), do
+  every `operator` story, and say go before each `lead` story.
+- **The lead** is your own Claude Code session, the one you run `/swarm` in. It supervises,
+  reviews, and runs `lead` stories while you watch: they touch real cloud or credentials, so
+  they need your logins and your go-ahead.
+- **Agents** plan, conduct and build everything else, each in its own pane and worktree.
+
+Give a story to the lead or to you, never to an agent, when it:
+
+| The story | `kind` |
+|---|---|
+| changes real cloud, uses credentials, or changes permissions | `lead` |
+| is hard to undo (deletes data, turns something off, a production change) | `lead`, with a go-ahead from you named in its **Done when** |
+| is a decision, or a step only a person can do (a portal click, another team's approval, a network only you can reach) | `operator` |
+
+**Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
+`/plan-epic` turns them into `lead` and `operator` stories, and its report ends with **What you
+will do**, so you see your share of the work before you approve it. A step found during the
+build that needs you is a new `lead` or `operator` story, added to the board, not done quietly.
+
+**Every stop names its exit.** A `lead` story says what it needs from you (a go-ahead, a login, a
+network) in its body. An `operator` story's **Done when** says what you do and how the board
+learns it is done. A status or flag raised for you says who clears it and how.
 
 ## Writing the HLD
 
