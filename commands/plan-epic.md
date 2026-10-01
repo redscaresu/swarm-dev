@@ -39,9 +39,9 @@ credentials. Cite evidence as file:line. Keep free text short.*
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
 One story is one PR; `done_when` must be able to fail; `kind` is code | docs | chore | verify |
-lead (real cloud or credentials) | operator (a human step), by the table in swarm-dev
-`docs/method.md` § Who does what; every step in the epic's **Your part** is a `lead` or
-`operator` story; `risk: high` for real-cloud, teardown,
+lead (real cloud, credentials, or a step by the user, marked **You:**), by swarm-dev
+`docs/method.md` § Who does what; every step in the epic's **Your part** is in a `lead` story,
+and a merge is never a story of its own; `risk: high` for real-cloud, teardown,
 safety or hygiene paths; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
 check files `AGENTS.md` names as shared) in more than one story; reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
@@ -62,9 +62,9 @@ real-cloud step hidden inside an agent story. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `touches` and waves; then **What you will do**: every `lead`
-and `operator` story, what each needs from the user, and, with `merge = human`, that the user
+story, what each needs from the user (its **You:** steps), and, with `merge = human`, that the user
 merges the resulting PRs. Ask before
 writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready` or `blocked` with `blocked_by`, `epic: $1`, `depends_on`, `touches`, `risk` when
-high; body: scope and **Done when**; a `lead` story also says what it needs from the user), open a PR through the codex loop, and `swarm.sh close
+high; body: scope and **Done when**; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR through the codex loop, and `swarm.sh close
 scope-$1`. Waves are then built with `swarm.sh story <slug>`.

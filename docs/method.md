@@ -15,15 +15,15 @@ at every level runs in its own herdr pane so it can be watched.
    `ready` stories in parallel panes and merges them.
 
 `/swarm` runs the chain after the HLD: `swarm.sh next` reads the board and names the next step,
-`/swarm` does it and loops, stopping only at an approval, a draft HLD, an `operator` or `lead`
+`/swarm` does it and loops, stopping only at an approval, a draft HLD, a `lead`
 story, or a `later` epic. The board is the only state, so a run can stop anywhere and the next
 `/swarm` continues. Building comes first (a conductor still working, then an active epic's ready
 stories, then one-offs), then planning (an active epic with no stories, then an agreed HLD with
 no epics).
 
-A story the swarm must not build says so by its `kind`: `lead` (real cloud or credentials; the
-lead runs it) or `operator` (a decision or a hand step that is the user's), § Who does what. An open question for
-the user is an `operator` story, so the board's **Waiting on you** view lists it. An epic is done
+A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
+the user's is marked **You:** in it (§ Who does what). An open question for the user is a `lead`
+story too, so the board's **Waiting on you** view lists it. An epic is done
 when its last story's PR deletes the epic file and marks it done in the HLD's `## Epics`.
 
 The session that runs the chain supervises, reviews and merges; it does not do the agents' work.
@@ -33,30 +33,34 @@ The session that runs the chain supervises, reviews and merges; it does not do t
 Three parties do the work, and which one does each step is decided when the work is planned,
 not found out while building.
 
-- **You** agree the HLD, approve the epics and the stories, merge PRs (with `merge = human`), do
-  every `operator` story, and say go before each `lead` story.
+- **You** agree the HLD, approve the epics and the stories, merge PRs (with `merge = human`), say go
+  before each `lead` story, and do its **You:** steps.
 - **The lead** is your own Claude Code session, the one you run `/swarm` in. It supervises,
   reviews, and runs `lead` stories while you watch: they touch real cloud or credentials, or are
   hard to undo, so they need your logins and your go-ahead.
 - **Agents** plan, conduct and build everything else, each in its own pane; builders also get
   their own worktree.
 
-Give a story to the lead or to you, never to an agent, when it:
+A story is `kind: lead`, never an agent's, when it:
 
-| The story | `kind` |
-|---|---|
-| changes real cloud, uses credentials, or changes permissions | `lead` |
-| is hard to undo (deletes data, turns something off, a production change) | `lead`, with a go-ahead from you named in its **Done when** |
-| is a decision, or a step only a person can do (a portal click, another team's approval, a network only you can reach) | `operator` |
+- changes real cloud, uses credentials, or changes permissions;
+- is hard to undo (deletes data, turns something off, a production change): its **Done when** names
+  your go-ahead;
+- needs a person: a decision, a portal click, another team's approval, a hand PR, a network only
+  you can reach. That step is a **You:** line in the story. The lead does the rest around it: it
+  prepares the PR or the request, and checks the result after.
+
+A merge is never a story of its own: with `merge = human` every merge is yours already. Boards
+written before this have `kind: operator` stories; swarm-dev still treats them as `lead`.
 
 **Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
-`/plan-epic` turns them into `lead` and `operator` stories, and its report ends with **What you
-will do**, so you see your share of the work before you approve it. A step found during the
-build that needs you is a new `lead` or `operator` story, added to the board, not done quietly.
+`/plan-epic` turns them into `lead` stories, and its report ends with **What you will do**, so
+you see your share of the work before you approve it. A step found during the build that needs
+you is a new `lead` story, added to the board, not done quietly.
 
 **Every stop names its exit.** A `lead` story says what it needs from you (a go-ahead, a login, a
-network) in its body. An `operator` story's **Done when** says what you do and how the board
-learns it is done. A status or flag raised for you says who clears it and how.
+network) in its body, and each **You:** step says how the lead learns it is done (you tell it, or
+it sees the merge). A status or flag raised for you says who clears it and how.
 
 ## Writing the HLD
 

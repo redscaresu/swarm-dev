@@ -49,8 +49,8 @@ You type two things:
           └──────────────────────┬───────────────────────┘
                                  │  epic done
                                  ▼
-                        next epic, or ◆ you: operator stories,
-                        lead-run steps, what to start next
+                        next epic, or ◆ you: lead stories (your
+                        go-ahead, your steps), what to start next
 
   ◆ = the loop stops for you      every agent runs in its own herdr pane:
                                   a workspace per HLD, a tab per epic
@@ -62,8 +62,8 @@ You type two things:
   comes from it.
 - **Epic**: a goal bigger than one pull request, with a **Done when** that could fail.
 - **Story**: one pull request's worth of work. Its `kind` says who does it: an agent (`code`,
-  `docs`, `chore`, `verify`), you (`operator`), or your own session because it touches real cloud
-  or credentials (`lead`). Planning decides which, up front, and lists your share before you
+  `docs`, `chore`, `verify`), or your own session (`lead`) because it touches real cloud or
+  credentials or needs you; your steps in it are marked **You:**. Planning decides which, up front, and lists your share before you
   approve ([`docs/method.md` § Who does what](docs/method.md#who-does-what)).
 - **Board**: those files in `docs/hld/`, `docs/epics/` and `docs/stories/`, viewed in Obsidian.
 - **Conductor**: a fresh agent that builds one epic's stories and merges them.
@@ -161,8 +161,8 @@ files in `AGENTS.md` (root config, schemas, CI scripts) so no two agents edit th
 ### 4. Open the board in Obsidian
 
 In Obsidian, choose **Open folder as vault** and pick your project's `docs/` folder. Open
-`Board.base`: its views show stories by status and by epic, the epics, **Waiting on you** (your
-`operator` stories) and **Lead-run** (steps your own session runs). `hld/HLDs.base` lists the
+`Board.base`: its views show stories by status and by epic, the epics, and **Waiting on you** (the
+`lead` stories). `hld/HLDs.base` lists the
 designs. If the views do not render, turn on **Bases** under Settings → Core plugins.
 
 ### 5. Write your first HLD
@@ -201,8 +201,7 @@ whose turn dies on an API error is told to carry on, so a dropped connection doe
 |---|---|
 | a draft HLD | finish it with the co-author, in its pane: say it is ready, go through the review, then agree it |
 | proposed epics or stories, with what the skeptics found | approve them, or say what to change |
-| an `operator` story | do what its **Done when** says (a decision or a step by hand) |
-| a `lead` story | it touches real cloud or credentials: tell your session to run it |
+| a `lead` story | say go, and do its **You:** steps (a decision, a click, a merge) when it reaches them |
 | a PR awaiting your merge | merge it on GitHub, or close it to send its story back to `ready` |
 | a `blocked` story | nothing, usually: it clears itself when what it waits on merges |
 | a `later` story or epic | set it `ready` (a story) or `active` (an epic) when you want it started |
