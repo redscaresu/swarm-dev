@@ -41,7 +41,9 @@ case "$1 $2" in
   "tab list")         awk 'BEGIN { printf "{\"result\":{\"tabs\":[" }
                            { printf "%s{\"tab_id\":\"%s\",\"label\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/tabs" ;;
-  "pane split")       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
+  "pane list")        [ -e "$H/live" ] && cat "$H/live" ;;
+  "pane split")       [ -e "$H/nosplit" ] && { echo '{"error":{"code":"pane_not_found"}}'; exit 1; }
+                      next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "agent prompt")     [ -e "$H/sticky" ] || rm -f "$H/screen"   # a nudge clears the error, unless it is sticky
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
@@ -104,6 +106,22 @@ run story k2 >/dev/null
 check "and the next story gets a pane of its own" "3|k1-done|k2" \
   "$(wc -l < "${p}/.swarm/state/k" | tr -d ' ')|$(awk 'NR == 2 { print $2 }' "${p}/.swarm/state/k")|$(awk 'NR == 3 { print $2 }' "${p}/.swarm/state/k")"
 : > "${p}/.claude/swarm/config"; rm -f "${b}"/epics/k.md "${b}"/stories/k?.md
+
+# --- A pane closed by hand is dropped from the state, so the next agent does not split it.
+item "${b}" epics/d.md "status: active"
+item "${b}" stories/d1.md "status: ready" "kind: code" "epic: d" "repo: svc"
+mkdir -p "${p}/.swarm/state"; echo "w:gone conductor" > "${p}/.swarm/state/d"
+echo '{"result":{"panes":[]}}' > "${ROOT}/live"
+: > "${ROOT}/herdr.log"
+run conduct d >/dev/null
+check "a closed pane is pruned: the conductor opens a fresh tab instead of splitting it" "yes|no|1" \
+  "$(has "--label d " "$(log)")|$(grep -q 'split w:gone' "${ROOT}/herdr.log" && echo yes || echo no)|$(wc -l < "${p}/.swarm/state/d" | tr -d ' ')"
+# A split herdr refuses must not record an empty pane, which would break every later run.
+echo "{\"result\":{\"panes\":[{\"pane_id\":\"$(awk '{ print $1 }' "${p}/.swarm/state/d")\"}]}}" > "${ROOT}/live"
+touch "${ROOT}/nosplit"
+run story d1 >/dev/null || true
+check "a failed split records no pane" "1" "$(wc -l < "${p}/.swarm/state/d" | tr -d ' ')"
+rm -f "${ROOT}/live" "${ROOT}/nosplit" "${b}/epics/d.md" "${b}/stories/d1.md"
 
 # --- pr_per = epic: a story branches from epic/<epic>, which is made from the base the first time.
 printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
