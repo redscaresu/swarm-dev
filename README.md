@@ -96,18 +96,15 @@ You type two things:
 
 Your project must be a git repository with its `origin` on GitHub.
 
-**If you run Claude Code through Microsoft Foundry, Bedrock or Vertex**, a new herdr pane must
-reach it too. Every agent starts as plain `claude` in a fresh shell, so settings you set only in
-the terminal you launched from (an alias that sources a script, say) do not reach it, and the agent
-stops with `Not logged in`. Make `claude` in a herdr pane load them itself, for example in
-`~/.zshrc`:
+**Using Foundry, Bedrock or Vertex?** Agents start as plain `claude` in a new pane, so settings
+you load with an alias never reach them, and they stop with `Not logged in`. Load them in
+`~/.zshrc` instead, for herdr panes only:
 
 ```bash
-# Subshell: the settings reach only claude, not the pane's shell.
 [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
 ```
 
-Keep any API key that script needs in your OS keychain, not in the script.
+Keep the API key in your OS keychain, not in that script.
 
 ### 2. Install the plugin
 
@@ -117,6 +114,9 @@ claude plugin install swarm-dev@swarm-dev
 ```
 
 Then restart Claude Code, so the commands and `swarm.sh` are loaded.
+
+`/swarm` warns you when a newer version is out. To update, run `swarm.sh update` and restart
+Claude Code.
 
 ### 3. Set up your project
 
@@ -143,8 +143,8 @@ Run `make test` before opening a pull request.
 ```
 
 To keep the board somewhere else, branch from `dev` where a repo has one, keep finished items
-on the board, let the conductor merge, sign every commit, run your PR review bot, or open one PR per epic
-instead of one per story, add
+on the board, let the conductor merge, sign every commit, run your PR review bot, open one PR per epic
+instead of one per story, or leave finished agents' panes open to read (`keep_panes = true`), add
 `.claude/swarm/config` ([`docs/method.md` § Configuring a
 project](docs/method.md#configuring-a-project)). For example:
 
@@ -191,7 +191,8 @@ walkthrough, and what makes a good HLD: [`docs/method.md` § Writing the HLD](do
 
 It plans the epics, scopes each into stories, and hands each epic to a conductor, which opens a
 herdr workspace named after your HLD, with a tab per epic and a pane per story. Watch any pane, or the board in
-Obsidian. `/swarm` stops whenever a decision is yours; make it, then run `/swarm` again.
+Obsidian. `/swarm` stops whenever a decision is yours; make it, then run `/swarm` again. An agent
+whose turn dies on an API error is told to carry on, so a dropped connection doesn't stall the run.
 
 ## When `/swarm` stops for you
 
