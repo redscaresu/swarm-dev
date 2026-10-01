@@ -42,7 +42,8 @@ case "$1 $2" in
                            { printf "%s{\"tab_id\":\"%s\",\"label\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/tabs" ;;
   "pane split")       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent prompt")     if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
+                      else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent list")       echo '{"result":{"agents":[]}}' ;;
 esac
 EOF
@@ -67,6 +68,7 @@ item "${b}" stories/o1.md "status: ready" "kind: code" "repo: svc"
 run conduct e >/dev/null
 check "the conductor opens a tab named for the epic" "yes" "$(has "tab create --workspace w --cwd ${p} --label e --no-focus" "$(log)")"
 check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor" "$(log)")"
+check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "a story of the epic splits the conductor's pane, and is named" "yes|yes" \
   "$(has "pane split w:1 --direction right" "$(log)")|$(has "pane rename w:2 s1" "$(log)")"
@@ -80,6 +82,11 @@ check "closing a story closes its pane and leaves the epic's tab" "yes|no|no" \
   "$(has "pane close w:2" "$(log)")|$(grep -q 'tab close' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -q ' s1$' "${p}/.swarm/state/e" && echo yes || echo no)"
 run close conduct-e >/dev/null
 check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5" "$(grep '^tab close' "${ROOT}/herdr.log" | paste -sd'|' -)"
+# A conductor that never takes its brief (an agent not logged in) must not leave the placeholder behind.
+: > "${ROOT}/herdr.log"; touch "${ROOT}/idle"
+run conduct e >/dev/null || true
+rm "${ROOT}/idle"
+check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
 
 # --- pr_per = epic: a story branches from epic/<epic>, which is made from the base the first time.
 printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"

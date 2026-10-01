@@ -649,8 +649,10 @@ start_conductor() {
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
+  # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
+  # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
+  [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
   HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
-  [[ -z "${placeholder}" ]] || herdr tab close "${placeholder}" >/dev/null
   echo "workspace ${hld} (${ws})"
 }
 
