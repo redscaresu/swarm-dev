@@ -17,6 +17,8 @@
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
+#   swarm.sh version                                        the installed version, and a warning when a newer one is out
+#   swarm.sh update                                         update the plugin to the newest version
 #
 # The project is, first match wins: $SWARM_PROJECT; the nearest directory up from here with
 # .claude/swarm/config (mapped to the main checkout when it is in a git worktree); the main checkout
@@ -30,6 +32,43 @@ die() { echo "swarm: $*" >&2; exit 1; }
 
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Where the newest version is published, and the plugin's name in Claude Code. SWARM_LATEST_URL is
+# overridable so the tests need no network.
+LATEST_URL="${SWARM_LATEST_URL:-https://raw.githubusercontent.com/redscaresu/swarm-dev/main/.claude-plugin/plugin.json}"
+PLUGIN=swarm-dev@swarm-dev
+MARKETPLACE=swarm-dev
+
+plugin_version() { python3 -c "import json,sys; print(json.load(sys.stdin)['version'])"; }
+
+# show_version — the installed version; when a newer one is published, a warning and how to update.
+# A failed lookup (offline) is not an error: /swarm must still run.
+show_version() {
+  local have latest
+  have="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")"
+  echo "swarm-dev ${have}"
+  latest="$(curl -fsSL --max-time 5 "${LATEST_URL}" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
+  python3 -c "import sys; v=lambda s: tuple(int(x) for x in s.split('.')); sys.exit(v(sys.argv[2]) <= v(sys.argv[1]))" \
+    "${have}" "${latest}" || return 0
+  cat <<EOF
+WARNING: swarm-dev ${latest} is out; this is ${have}. To update, run:
+  swarm.sh update
+then restart Claude Code so the new version is loaded.
+EOF
+}
+
+# update_plugin — fetch the newest version. Claude Code loads it on its next start.
+update_plugin() {
+  claude plugin marketplace update "${MARKETPLACE}"
+  claude plugin update "${PLUGIN}"
+  echo "Restart Claude Code to load the new version."
+}
+
+# Neither needs a project: they run before one is looked for.
+case "${1:-}" in
+  version) show_version; exit ;;
+  update)  update_plugin; exit ;;
+esac
 
 # main_checkout <dir> — <dir> as it sits in its repo's main checkout, so a worktree resolves to the
 # same project as the checkout it came from. Fails when <dir> is not in a git repo.
