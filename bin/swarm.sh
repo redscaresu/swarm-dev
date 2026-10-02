@@ -9,6 +9,7 @@
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
+#   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
@@ -797,7 +798,8 @@ next_step() {
   local f slug epic kind story_epic src buildable="" waiting=""
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
-    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-')),'')" 2>/dev/null || true)
+    # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
+    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done')),'')" 2>/dev/null || true)
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
@@ -857,6 +859,17 @@ next_step() {
       draft) echo "hld ${slug}"; echo "the HLD ${slug} is still a draft"; return ;;
     esac
   done < <(board hld)
+  waiting="$(waiting_on_user)"
+  if [[ -n "${waiting}" ]]; then
+    echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
+  fi
+  echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
+}
+
+# waiting_on_user — one line per board item only the user can move: lead stories, blocked and later
+# items, and PRs awaiting the user's merge. Shared by next_step's gate and status.
+waiting_on_user() {
+  local f kind slug waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -872,10 +885,7 @@ next_step() {
       review) waiting+="  awaiting your merge: epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)
-  if [[ -n "${waiting}" ]]; then
-    echo "gate"; echo "only you can move the board now:"; printf '%s' "${waiting}"; return
-  fi
-  echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
+  printf '%s' "${waiting%$'\n'}"
 }
 
 # open_item <file> — true while a board item is still open: its file exists and is not status: done.
@@ -1089,6 +1099,74 @@ watch_prs() {
   done
 }
 
+# status [--all] — one summary for the user: the agents that need a look or are working, what is
+# waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
+# --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
+# left out.
+status_report() {
+  local all="${1:-}" agents panes waiting
+  if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
+    python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
+import glob, json, os, sys
+state, agents_json, panes_json, show_all = sys.argv[1:5]
+try:
+    agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
+    live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
+except (ValueError, KeyError):
+    print("Agents\n  (herdr gave no agent list)"); sys.exit(0)
+rows, seen = [], set()
+for path in sorted(glob.glob(os.path.join(state, "*"))):
+    if not os.path.isfile(path) or path.endswith(".tmp"):
+        continue
+    for line in open(path):
+        f = line.split()
+        if not f or f[0] not in live or f[0] in seen:
+            continue
+        seen.add(f[0])
+        pane, name = f[0], (f[1] if len(f) > 1 else "-")
+        a = agents.get(pane)
+        if a is None:
+            what = "EMPTY: no agent started in this pane; close it"
+        else:
+            name = a.get("name") or name
+            st = a.get("agent_status") or "unknown"
+            if st == "working":
+                what = "working"
+            elif st == "blocked":
+                what = f"WAITING on a question: herdr agent read {name}"
+            elif name.endswith("-done") or "-done" in name[-7:]:
+                what = "done (retired)"
+            elif st in ("idle", "done"):
+                what = "idle: finished, or waiting for its next step"
+            else:
+                what = st
+        rows.append((name, what, f"{os.path.basename(path)} {pane}"))
+quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
+shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]
+counts = [f"{len(rows) - len(quiet)} need a look or are working", f"{len(quiet)} idle or done"]
+print("Agents: " + ", ".join(counts) if rows else "Agents: none open")
+width = max((len(r[0]) for r in shown), default=0)
+for name, what, where in shown:
+    print(f"  {name:<{width}}  {what}  [{where}]")
+if quiet and show_all != "--all":
+    print("  (swarm.sh status --all lists them all)")
+PY
+  else
+    echo "Agents: not inside herdr, so their states are not available"
+  fi
+  echo; echo "Waiting on you"
+  waiting="$(waiting_on_user)"
+  if [[ "${all}" != --all ]]; then
+    local blocked
+    blocked=$(grep -c '^  blocked:' <<< "${waiting}" || true)
+    waiting="$(grep -v '^  blocked:' <<< "${waiting}" || true)"
+    [[ "${blocked}" -eq 0 ]] || waiting+="${waiting:+$'\n'}  ${blocked} blocked stories wait on others (swarm.sh status --all lists them)"
+  fi
+  if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
+  echo; echo "Next"
+  next_step | sed 's/^/  /'
+}
+
 # tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters
 # (agent_name), tab labels do not, so `next` can hand back a name that is not the label. The first
 # state file whose agent name matches wins: the base tab sorts before its "-2", "-3" overflow.
@@ -1196,6 +1274,7 @@ main() {
     close)  require_herdr; close_agent "${1:?name}" ;;
     unblock) unblock ;;
     next)   next_step ;;
+    status) status_report "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;

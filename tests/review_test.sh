@@ -48,7 +48,7 @@ cat > "${ROOT}/bin/herdr" <<EOF
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
@@ -58,6 +58,7 @@ case "$1 $2" in
   "agent list")   if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
   "agent rename") if [ -f "$A" ]; then sed -i.bak "s/\"name\":\"$3\"/\"name\":\"$4\"/" "$A"; fi ;;
   "agent start")  if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
+  "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -158,6 +159,25 @@ check "a failed start closes its pane and shows herdr's error" "yes|yes" \
   "$(grep -q '^pane close ' "${ROOT}/herdr.log" && echo yes || echo no)|$(has agent_name_taken "${out}")"
 rm -f "${ROOT}/start-fails"; agent cx codex >/dev/null
 check "codex starts with its update check off" "yes" "$(has 'check_for_update_on_startup=false' "$(grep '^agent start cx ' "${ROOT}/herdr.log")")"
+
+# --- status: each open pane's agent, an empty pane, and what waits on the user.
+mkdir -p "${p}/.swarm/state"
+printf '%s\n' 'w:5 lead' 'w:6 builder' 'w:7 gone' > "${p}/.swarm/state/t"
+printf '%s\n' 'w:8 finished' >> "${p}/.swarm/state/t"
+printf '%s\n' 'w:8 finished' > "${p}/.swarm/state/t-2"
+echo '{"result":{"agents":[{"name":"builder","agent_status":"working","pane_id":"w:6"},{"name":"finished","agent_status":"idle","pane_id":"w:8"}]}}' > "${ROOT}/agents.json"
+echo '{"result":{"panes":[{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:8"}]}}' > "${ROOT}/panes.json"
+item "${b}" stories/ls.md "status: ready" "kind: lead"
+out=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1)
+check "status shows a pane whose agent never started as empty" "yes" \
+  "$(grep -qE '^  lead +EMPTY' <<< "${out}" && echo yes || echo "no, got: ${out}")"
+check "status shows a working agent, and leaves out a pane closed by hand" "yes|no" \
+  "$(grep -qE '^  builder +working' <<< "${out}" && echo yes || echo no)|$(grep -q 'gone' <<< "${out}" && echo yes || echo no)"
+check "status lists a lead story under Waiting on you" "yes" "$(has 'lead: ls' "$(sed -n '/^Waiting on you/,/^Next/p' <<< "${out}")")"
+all=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status --all 2>&1)
+check "status counts an idle agent instead of listing it, and --all lists it" "yes|no|yes" \
+  "$(has '1 idle or done' "${out}")|$(grep -qE '^  finished ' <<< "${out}" && echo yes || echo no)|$(grep -qE '^  finished +idle' <<< "${all}" && echo yes || echo no)"
+rm -f "${ROOT}/agents.json" "${ROOT}/panes.json" "${p}/.swarm/state/t" "${p}/.swarm/state/t-2" "${b}/stories/ls.md"
 
 # --- findings: a success check can still carry a failure note (the CodeQL case), and open alerts.
 echo '{"check_runs":[{"id":1,"name":"CodeQL","conclusion":"success","output":{"annotations_count":1}},{"id":2,"name":"test","conclusion":"success","output":{"annotations_count":0}}]}' > "${ROOT}/gh/runs.json"
