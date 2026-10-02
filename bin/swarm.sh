@@ -327,7 +327,7 @@ start_agent() {
     fi
     if [[ ${try} -eq 2 ]]; then
       # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
-      herdr pane close "${pane}" >/dev/null 2>&1 || true
+      herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
       die "${name}: herdr could not start the agent: ${out}"
     fi
     sleep 3
@@ -1148,9 +1148,15 @@ agent_status() {
 # retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
 # its slot in the tab's state under that name, so no later agent is split into it.
 retire_agent() {
-  local name state
+  local name state new i
   name="$(agent_name "$1")"
-  herdr agent rename "${name}" "${name:0:27}-done" >/dev/null 2>&1 || true
+  # A name reused more than once already has a <name>-done; take the first free suffix.
+  new="${name:0:27}-done"
+  for i in 2 3 4 5 6 7 8 9; do
+    [[ -z "$(agent_status "${new}")" ]] && break
+    new="${name:0:26}-done${i}"
+  done
+  herdr agent rename "${name}" "${new}" >/dev/null 2>&1 || true
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     awk -v n="$1" 'NF > 1 && $2 == n { $2 = n "-done" } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"

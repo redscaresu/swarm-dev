@@ -146,6 +146,10 @@ taken() { echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"$
 taken idle; agent lead lead >/dev/null
 check "a finished agent holding the name is retired before the new one starts" "agent rename lead lead-done|agent start lead" \
   "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
+echo '{"result":{"agents":[{"name":"lead","agent_status":"idle"},{"name":"lead-done","agent_status":"idle"}]}}' > "${ROOT}/agents.json"
+agent lead lead >/dev/null
+check "a name reused a second time retires to the next free -done name" "agent rename lead lead-done2|agent start lead" \
+  "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
 taken working; out=$(agent lead lead)
 check "a working agent holding the name stops the start before any pane opens" "yes|no" \
   "$(has 'still working' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
