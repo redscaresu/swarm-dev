@@ -79,8 +79,8 @@ You type two things:
   blind spots. You see what they found before you approve.
 - **The right model for each job.** The most capable model for the design, Opus for judgment and
   code, Sonnet for reading and running tests. The table is in [`docs/method.md`](docs/method.md).
-- **Nothing is lost when you stop.** The plan lives in files in git, not in a chat, so `/swarm`
-  always knows where things stand.
+- **Nothing is lost when you stop.** The plan lives in files on the board, not in a chat, so
+  `/swarm` always knows where things stand.
 
 ## Quick start
 
@@ -95,7 +95,7 @@ You type two things:
 | [Obsidian](https://obsidian.md) 1.9 or later | seeing the board | Settings → About |
 | `git`, `python3`, `bash` | the script itself | `git --version && python3 --version` |
 
-Your project must be a git repository with its `origin` on GitHub.
+Your code must be in git repositories with `origin` on GitHub. The board can sit in your project's repo (`docs/`, the default) or in a folder that is not a repo, such as a notes vault, as long as every story names its `repo:` ([`docs/method.md` § Configuring a project](docs/method.md#configuring-a-project)).
 
 **Using Foundry, Bedrock or Vertex?** Agents start as plain `claude` in a new pane, so settings
 you load with an alias never reach them, and they stop with `Not logged in`. Load them in
@@ -116,8 +116,18 @@ claude plugin install swarm-dev@swarm-dev
 
 Then restart Claude Code, so the commands and `swarm.sh` are loaded.
 
-`/swarm` warns you when a newer version is out. To update, run `swarm.sh update` and restart
-Claude Code.
+`/swarm` warns you when a newer version is out. To update, ask your Claude session to run
+`swarm.sh update`, or run the same two steps yourself from the Claude Code prompt:
+
+```
+! claude plugin marketplace update swarm-dev
+```
+
+```
+! claude plugin update swarm-dev@swarm-dev
+```
+
+Then restart Claude Code (`claude --continue` picks the conversation back up).
 
 ### 3. Set up your project
 
@@ -145,7 +155,7 @@ Run `make test` before opening a pull request.
 
 To keep the board somewhere else, branch from `dev` where a repo has one, keep finished items
 on the board, let the conductor merge, sign every commit, run your PR review bot, open one PR per epic
-instead of one per story, or leave finished agents' panes open to read (`keep_panes = true`), add
+instead of one per story, or leave finished agents' panes open to read (`keep_panes = true`; a finished agent is renamed `<name>-done`, or `-done2` and so on, when it is closed or when a new agent takes its name), add
 `.claude/swarm/config` ([`docs/method.md` § Configuring a
 project](docs/method.md#configuring-a-project)). For example:
 
@@ -211,7 +221,9 @@ whose turn dies on an API error is told to carry on, so a dropped connection doe
 ## Cost
 
 Every agent is a full Claude Code session, so a swarm uses far more tokens than one chat. Scoping
-one epic starts about ten agents; each story gets one builder. To keep it down, each epic gets a
+one epic starts about ten agents: three surveys, a lead, up to five skeptics, codex and a critic.
+Give it a survey you already have and it starts one survey agent instead of three. Each story gets
+one builder. To keep it down, each epic gets a
 fresh conductor instead of one long session that grows, and cheaper models do the reading and
 running. On a subscription this counts against your plan's limits.
 
