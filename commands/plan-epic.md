@@ -26,7 +26,7 @@ Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; rea
 Read-only — write nothing except your output file, never commit, never touch real cloud or
 credentials. Cite evidence as file:line. Keep free text short.*
 
-**1. Survey** — three agents, role `survey`, in parallel. Output `{summary, facts:[{fact, evidence}]}`.
+**1. Survey** — three agents, role `survey`, in parallel (one, when a survey already exists; see below). Output `{summary, facts:[{fact, evidence}]}`.
 - `survey-lands`: where the change lands — packages, functions, tests, fixtures, golden files,
   and which existing tests must change.
 - `survey-constraints`: the project's ADRs, policies, safety rules and
@@ -34,7 +34,12 @@ credentials. Cite evidence as file:line. Keep free text short.*
 - `survey-overlaps`: `docs/stories/`, `docs/epics/`, open PRs, the last 20 merges; which existing
   stories this epic absorbs, blocks or depends on.
 
-**2. Decompose** — one agent, `lead`, role `lead`, given the three survey files. Output
+When a survey already exists (the user's, yours, or one from an earlier plan for a similar repo),
+start one `survey` agent that checks it against the code and covers only what it misses, and give
+the lead that survey and any earlier plan too. The three surveys mostly repeat each other on a
+one-repo epic; the review in steps 3 and 4 is where the plan's bugs turn up.
+
+**2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
 `{stories:[{slug, title, kind, risk, repo, scope, done_when, touches, depends_on}], waves, contradictions}`.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
@@ -45,7 +50,9 @@ and a merge is never a story of its own; `risk: high` for real-cloud, teardown,
 safety or hygiene paths; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
 check files `AGENTS.md` names as shared) in more than one story; reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
-failed, it says what it could not check.
+failed, it says what it could not check. A check that several stories repeat (a freeze, a pinned
+SHA, an empty deploy queue) is written once, in the epic, under **Checks before every stage**,
+and each story points at it: copied into five stories, one wrong assumption needs five fixes.
 
 **3. Verify** — in parallel:
 - one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked).
@@ -55,6 +62,8 @@ failed, it says what it could not check.
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
 - one `codex`, role `codex` (read-only, a different model family): missing stories, stories too
   big for one PR, `done_when` criteria that could pass on broken work, and overlaps within a wave.
+  Its brief says the review needs no GitHub login: a repo's `AGENTS.md` may ask for
+  `gh auth status` first, which fails inside codex's sandbox, and codex then stops without reviewing.
 
 **4. Critic** — one `critic`, role `critic`: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
