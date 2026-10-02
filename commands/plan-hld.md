@@ -35,7 +35,8 @@ what), or says none; every goal in the HLD belongs to exactly one epic; every di
 3. **Verify** — one `skeptic-<slug>` per epic, role `skeptic` (capped at five; name any unchecked),
    output `{sound, problems:[{why}], fix}`: a gap no epic covers, two epics overlapping, an epic too
    big to scope, a **Done when** that passes on broken work. Plus one `codex`, role `codex`, on the
-   same questions across the whole set.
+   same questions across the whole set; its brief says the review needs no GitHub login, since a
+   `gh auth status` preflight fails inside codex's sandbox and stops it.
 4. **Critic** — one `critic`, role `critic`: an HLD goal, risk or rollout step that no epic owns, or
    a human step missing from an epic's `your_part`.
 
