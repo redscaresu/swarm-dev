@@ -101,6 +101,16 @@ expect_conductor "idle conductor without a report is still waited on" "wait cond
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
+# A retired conductor (keep_panes renames it <name>-done) is finished: next must not wait on it.
+dir="$(mktemp -d)"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin)
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-e1-done\",\"agent_status\":\"idle\"}]}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
+if [[ "${got}" == "done" ]]; then echo "ok   a retired conductor is not waited on"; else
+  echo "FAIL a retired conductor is not waited on: want 'done', got '${got}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+
 # A long conductor's agent name is cut at 32 characters; close must still find its full tab label.
 long="conduct-aws-layer3-claim-sweep-reap"
 dir="$(mktemp -d)"

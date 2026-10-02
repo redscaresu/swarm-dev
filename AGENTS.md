@@ -34,7 +34,7 @@ also run one by one, and which each wait for the user's approval:
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval |
 | Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds the epic, and merges it only with `merge = agent` |
 
-Useful while it runs: `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
+Useful while it runs: `swarm.sh status [--all]` (agents that need a look, including empty panes where a start failed, and what waits on the user; `--all` lists idle agents and blocked stories too), `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
 (tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh watch`
 (returns when a story PR needs the lead), `herdr agent read <name> --source recent-unwrapped`
 (what an agent is doing).
