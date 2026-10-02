@@ -308,21 +308,28 @@ start_agent() {
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
+  free_agent_name "${name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
-  local try
+  local try out
   for try in 1 2; do
     if [[ "${kind}" == codex ]]; then
-      herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
-        -s read-only -c "model_reasoning_effort=\"${effort}\"" >/dev/null && break
+      # No update check: codex's startup prompt to upgrade takes the pane, and the brief then
+      # lands in a bare shell.
+      out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
+        -s read-only -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
       # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
       local guard=()
       [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
-      herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
-        --model "${model}" --effort "${effort}" --permission-mode auto ${guard[@]+"${guard[@]}"} >/dev/null && break
+      out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
+        --model "${model}" --effort "${effort}" --permission-mode auto ${guard[@]+"${guard[@]}"} 2>&1) && break
     fi
-    [[ ${try} -eq 2 ]] && die "${name}: herdr could not start the agent in pane ${pane}"
+    if [[ ${try} -eq 2 ]]; then
+      # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
+      herdr pane close "${pane}" >/dev/null 2>&1 || true
+      die "${name}: herdr could not start the agent: ${out}"
+    fi
     sleep 3
   done
   deliver_prompt "${name}" "${prompt_file}"
@@ -1115,6 +1122,26 @@ close_agent() {
     close_tabs "${epic}"
   fi
   close_tabs "$1"
+}
+
+# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
+# keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
+# `lead`) failed and left an empty pane. Retire a finished holder; refuse a working one. Runs
+# before any pane opens.
+free_agent_name() {
+  local status
+  status=$(agent_status "$1")
+  case "${status}" in
+    "") return 0 ;;
+    working|blocked) die "$1: an agent with this name is still ${status}; wait for it, or use another name" ;;
+  esac
+  retire_agent "$1" >/dev/null
+  [[ -z "$(agent_status "$1")" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
+}
+
+# agent_status <name> — herdr's status for the agent called <name>, or nothing if there is none.
+agent_status() {
+  herdr agent list 2>/dev/null | json "next((a.get('agent_status','') or 'unknown' for a in d['result']['agents'] if a.get('name')=='$1'),'')" 2>/dev/null || true
 }
 
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # review_test.sh — merge = human and the review status: the merge guard on every agent, `review`,
-# `reconcile`, the gate in `next`, and `findings`. gh and herdr are stubs on PATH.
+# `reconcile`, the gate in `next`, and `findings`; also how an agent starts (a name already
+# taken, a failed start, codex's update check). gh and herdr are stubs on PATH.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -46,12 +47,17 @@ cat > "${ROOT}/bin/herdr" <<EOF
 #!/bin/sh
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
+cat >> "${ROOT}/bin/herdr" <<EOF
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"
+EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
-  "agent list")   echo '{"result":{"agents":[]}}' ;;
+  "agent list")   if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
+  "agent rename") if [ -f "$A" ]; then sed -i.bak "s/\"name\":\"$3\"/\"name\":\"$4\"/" "$A"; fi ;;
+  "agent start")  if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -129,6 +135,25 @@ check "merge = human (the default) starts a story agent with gh pr merge disallo
 echo "merge = agent" > "${p}/.claude/swarm/config"
 check "merge = agent starts a story agent without the guard" "no" \
   "$(grep -q disallowedTools <<< "$(start g2)" && echo yes || echo no)"
+
+# --- Starting an agent: a taken name, a failed start, codex's update check.
+echo brief > "${ROOT}/brief.md"
+agent() { # <name> <role> — start one agent with the stubs, and print swarm's output
+  : > "${ROOT}/herdr.log"
+  (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent t "$1" "${p}" "$2" "${ROOT}/brief.md" 2>&1) || true
+}
+taken() { echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"$1\",\"pane_id\":\"w:9\"}]}}" > "${ROOT}/agents.json"; }
+taken idle; agent lead lead >/dev/null
+check "a finished agent holding the name is retired before the new one starts" "agent rename lead lead-done|agent start lead" \
+  "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
+taken working; out=$(agent lead lead)
+check "a working agent holding the name stops the start before any pane opens" "yes|no" \
+  "$(has 'still working' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
+rm -f "${ROOT}/agents.json"; touch "${ROOT}/start-fails"; out=$(agent l2 lead)
+check "a failed start closes its pane and shows herdr's error" "yes|yes" \
+  "$(grep -q '^pane close ' "${ROOT}/herdr.log" && echo yes || echo no)|$(has agent_name_taken "${out}")"
+rm -f "${ROOT}/start-fails"; agent cx codex >/dev/null
+check "codex starts with its update check off" "yes" "$(has 'check_for_update_on_startup=false' "$(grep '^agent start cx ' "${ROOT}/herdr.log")")"
 
 # --- findings: a success check can still carry a failure note (the CodeQL case), and open alerts.
 echo '{"check_runs":[{"id":1,"name":"CodeQL","conclusion":"success","output":{"annotations_count":1}},{"id":2,"name":"test","conclusion":"success","output":{"annotations_count":0}}]}' > "${ROOT}/gh/runs.json"
