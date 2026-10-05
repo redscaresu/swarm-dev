@@ -692,7 +692,7 @@ conduct_story_mode() {
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
 start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch\` in the background, and review each PR. Each story's base branch is in its brief,
+\`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
 
 $(green_rule)
@@ -732,8 +732,8 @@ line lists every repo with an epic branch), review the whole epic: in each repo'
 findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
 waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
-keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch\` in the
-background.
+keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
+in the background.
 
 $(green_rule)
 
@@ -1084,17 +1084,29 @@ for a in json.load(sys.stdin):
   fi
 }
 
-# watch [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print one line saying
-# which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
+# watch [--epic <slug>] [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print
+# one line saying which and why, and exit 0. With --epic, only that epic's PRs count (epic/<slug> and
+# its stories' story/<slug> branches), and the default repos are its stories' repos: a conductor
+# must not wake for another epic's PR on the same board. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). A herdr agent
 # blocked on a prompt also needs the lead. Each head is reported once (state in .swarm/state).
 watch_prs() {
+  local epic="" stories=("${BOARD}"/stories/*.md) epic_heads="" f
+  if [[ "${1:-}" == --epic ]]; then
+    epic="${2:?watch --epic needs an epic slug}"; shift 2
+    [[ -f "${BOARD}/epics/${epic}.md" ]] || die "watch: no epic ${BOARD}/epics/${epic}.md"
+    stories=(); epic_heads="epic/${epic}"
+    for f in "${BOARD}"/stories/*.md; do
+      [[ -f "${f}" && "$(fm "${f}" epic)" == "${epic}" ]] || continue
+      stories+=("${f}"); epic_heads="${epic_heads} story/$(basename "${f}" .md)"
+    done
+  fi
   local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending
   # Default: the project (when it is a repo) plus every repo a story names, so a new repo needs no edit here.
   if [[ ${#repos[@]} -eq 0 ]]; then
     local own=""; [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
-    read -r -a repos <<< "${own} $(sed -n 's/^repo: *//p' "${BOARD}"/stories/*.md 2>/dev/null | sort -u | tr '\n' ' ')"
+    read -r -a repos <<< "${own} $( (( ${#stories[@]} )) && sed -n 's/^repo: *//p' "${stories[@]}" 2>/dev/null | sort -u | tr '\n' ' ')"
   fi
   # Each repo as owner/name, from its own origin: repos on one board need not share an owner.
   local full=() r src
@@ -1110,6 +1122,7 @@ watch_prs() {
     for repo in "${repos[@]}"; do
       while read -r n sha br mergeable age; do
         [[ -n "${n}" ]] || continue
+        [[ -z "${epic_heads}" || " ${epic_heads} " == *" ${br} "* ]] || continue
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi

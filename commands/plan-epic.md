@@ -53,6 +53,9 @@ stories by slug; record every disagreement with the epic under `contradictions`.
 failed, it says what it could not check. A check that several stories repeat (a freeze, a pinned
 SHA, an empty deploy queue) is written once, in the epic, under **Checks before every stage**,
 and each story points at it: copied into five stories, one wrong assumption needs five fixes.
+Code that adds a flag or setting ships with it off, so merging the code changes no behaviour; turning
+it on is a separate `lead` story with its own PR. A PR that both adds code and switches it on cannot
+tell you which of the two broke something, and cannot be rolled back one half at a time.
 
 **3. Verify** — in parallel:
 - one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked).
