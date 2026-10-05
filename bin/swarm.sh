@@ -10,6 +10,7 @@
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
+#   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
@@ -1295,6 +1296,51 @@ retire_agent() {
   echo "kept $1 open (keep_panes)"
 }
 
+# tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
+# (a start that failed) or a retired agent (<name>-done, left open by keep_panes). Lists them; with
+# --yes, closes them and drops them from the tab records. Working, waiting and idle agents are never
+# touched, nor the pane this runs in.
+tidy_panes() {
+  local yes="${1:-}" agents panes closable pane name reason file n=0
+  agents=$(herdr agent list 2>/dev/null) || die "tidy: herdr gave no agent list"
+  panes=$(herdr pane list 2>/dev/null) || die "tidy: herdr gave no pane list"
+  closable=$(python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
+import glob, json, os, re, sys
+state, agents_json, panes_json, me = sys.argv[1:5]
+agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
+live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
+seen = set()
+for path in sorted(glob.glob(os.path.join(state, "*"))):
+    if not os.path.isfile(path) or path.endswith(".tmp"):
+        continue
+    for line in open(path):
+        f = line.split()
+        if not f or f[0] not in live or f[0] == me or f[0] in seen:
+            continue
+        seen.add(f[0])
+        a = agents.get(f[0])
+        name = (a or {}).get("name") or (f[1] if len(f) > 1 else "-")
+        if a is None:
+            reason = "empty: no agent started"
+        elif re.search(r"-done\d*$", name):
+            reason = "retired"
+        else:
+            continue
+        print("\t".join((f[0], name, reason, os.path.basename(path))))
+PY
+) || die "tidy: could not read herdr's lists"
+  if [[ -z "${closable}" ]]; then echo "nothing to tidy"; return 0; fi
+  while IFS=$'\t' read -r pane name reason file; do echo "  ${name}  ${reason}  [${file} ${pane}]"; done <<< "${closable}"
+  if [[ "${yes}" != --yes ]]; then echo "(swarm.sh tidy --yes closes them)"; return 0; fi
+  while IFS=$'\t' read -r pane name reason file; do
+    herdr pane close "${pane}" >/dev/null 2>&1 || { echo "could not close ${pane} (${name})"; continue; }
+    awk -v p="${pane}" '$1 != p' "${STATE_DIR}/${file}" > "${STATE_DIR}/${file}.tmp" && mv "${STATE_DIR}/${file}.tmp" "${STATE_DIR}/${file}"
+    [[ -s "${STATE_DIR}/${file}" ]] || rm -f "${STATE_DIR}/${file}"
+    n=$((n + 1))
+  done <<< "${closable}"
+  echo "closed ${n}"
+}
+
 # close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
 # in another workspace (a conductor's is its HLD's): its first pane id, "<workspace>:<pane>", says which.
 close_tabs() {
@@ -1328,6 +1374,7 @@ main() {
     unblock) unblock ;;
     next)   next_step ;;
     status) status_report "${1:-}" ;;
+    tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
@@ -1342,7 +1389,7 @@ main() {
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; wait_agent "$(agent_name "${1:?name}")" "${2:-3600000}" ;;
-    *) sed -n '2,26p' "$0"; exit 2 ;;
+    *) sed -n '2,27p' "$0"; exit 2 ;;
   esac
 }
 
