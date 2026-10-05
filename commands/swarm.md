@@ -20,8 +20,9 @@ Repeat until a step below says stop:
    merged), then `swarm.sh next`.
    Its first line is the step, the rest is why. Tell the user both in one line.
 2. Do the step:
-   - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background. It
-     returns whenever the conductor goes idle, which it also does while waiting on its own
+   - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background, in
+     the same response that read `next` and before any other work: a side task the user asks
+     for meanwhile must not leave the conductor unwatched. It returns whenever the conductor goes idle, which it also does while waiting on its own
      background work, so when it returns just go back to 1: `next` says `collect` only once the
      conductor has written its report. Never close a conductor that has not reported.
    - `collect <agent>`: the conductor has finished. Read its report
