@@ -7,6 +7,8 @@ set -euo pipefail
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+# No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 fails=0
 GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 U="https://github.com/o/svc/pull"
@@ -33,13 +35,17 @@ cat >> "${ROOT}/bin/gh" <<'EOF'
 case "$1 $2" in
   "pr view") st=$(awk -v u="$3" '$1 == u { print $2 }' "$F/prs"); [ -n "$st" ] || exit 1
              echo "{\"state\":\"$st\"}"; exit 0 ;;
-  "repo view") echo '{"nameWithOwner":"o/svc"}'; exit 0 ;;
+  "repo view") case " $* " in *" -q "*) echo o/svc ;; *) echo '{"nameWithOwner":"o/svc"}' ;; esac; exit 0 ;;
+  "pr list") while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+             jq -r "$q" "$F/prlist.json"; exit 0 ;;
 esac
 case "$2" in
   repos/o/svc/pulls/7) echo '{"head":{"sha":"abc1234def"}}' ;;
   repos/o/svc/commits/abc1234def/check-runs*) cat "$F/runs.json" ;;
   repos/o/svc/check-runs/1/annotations*) cat "$F/annotations.json" ;;
   repos/o/svc/code-scanning/alerts*) cat "$F/alerts.json" ;;
+  repos/o/svc/commits/head*/check-runs) while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+             echo '{"check_runs":[{"status":"completed"}]}' | jq -r "$q" ;;
   *) echo "stub gh: unexpected $*" >&2; exit 1 ;;
 esac
 EOF
@@ -187,6 +193,29 @@ out="$(run findings svc 7)"
 check "findings prints a failure note on a successful check" "yes" \
   "$(has "check CodeQL (success): failure a.py:3 Clear-text logging of sensitive information" "${out}")"
 check "findings prints open code-scanning alerts" "yes" "$(has "alert #5 high py/clear-text-logging a.py:3 This logs a password." "${out}")"
+
+# --- watch --epic: a conductor wakes only for its own epic's PRs. Two epics share a repo; the other
+# epic's PR comes first and has finished its checks too.
+w="${ROOT}/watch"
+mkdir -p "${w}/.claude/swarm" "${ROOT}/wrepos"
+echo "repos_dir = ${ROOT}/wrepos" > "${w}/.claude/swarm/config"
+git init -q "${ROOT}/wrepos/svc" && git -C "${ROOT}/wrepos/svc" remote add origin https://github.com/o/svc
+item "${w}/docs" epics/mine.md "status: active"
+item "${w}/docs" epics/other.md "status: active"
+item "${w}/docs" stories/a.md "status: ready" "kind: code" "epic: mine" "repo: svc"
+item "${w}/docs" stories/b.md "status: ready" "kind: code" "epic: other" "repo: svc"
+cat > "${ROOT}/gh/prlist.json" <<'EOF'
+[{"number": 1, "headRefName": "story/b", "headRefOid": "head1", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
+ {"number": 2, "headRefName": "epic/mine", "headRefOid": "head2", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
+EOF
+check "watch --epic skips another epic's PR in the same repo" "o/svc #2 epic/mine checks finished on head2" \
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+# One PR per epic: the stories are finished (deleted) before the epic PR opens, so only the epic's
+# repos: line still names the repo.
+rm "${w}/docs/stories/a.md" "${w}/.swarm/state/watch-seen"
+printf -- '---\nstatus: active\nrepos: svc\n---\n\n# mine\n' > "${w}/docs/epics/mine.md"
+check "watch --epic finds the repo from the epic's repos: line once its stories are gone" "o/svc #2 epic/mine checks finished on head2" \
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

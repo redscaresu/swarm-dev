@@ -264,6 +264,39 @@ json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"; }
 
+# require_trusted <cwd> — stop unless Claude Code already trusts <cwd>. In an untrusted folder,
+# Claude Code opens its "do you trust this folder?" prompt, and the agent stalls there unseen.
+# Claude Code keys trust on the git root, and for a worktree on its main checkout, so a new story
+# worktree is covered once its repo is trusted. Outside git, a trusted ancestor covers it. Trust
+# lives in ~/.claude.json, which every running session rewrites, so this only reads it; if the
+# file cannot be read, the start goes ahead.
+require_trusted() {
+  local cwd="$1" in_git="" root gitdir common
+  if root=$(git -C "${cwd}" rev-parse --show-toplevel 2>/dev/null); then
+    in_git=git
+    # A linked worktree's git dir differs from the shared one: trust is keyed on the main checkout.
+    # A submodule's are the same (.git/modules/<name>), so it keeps its own top level.
+    gitdir=$(git -C "${cwd}" rev-parse --path-format=absolute --git-dir)
+    common=$(git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir)
+    [[ "${gitdir}" == "${common}" ]] || root="$(dirname "${common}")"
+  else
+    root="$(cd "${cwd}" && pwd -P)"
+  fi
+  python3 - "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${in_git}" <<'PY' \
+    || die "Claude Code does not trust ${root} yet, so the agent would stall on its trust prompt. Run claude in ${root} once, accept the prompt, then try again."
+import json, os, sys
+root, config, in_git = sys.argv[1], sys.argv[2], sys.argv[3] == "git"
+try:
+    projects = json.load(open(config)).get("projects", {})
+except (OSError, ValueError):
+    sys.exit(0)
+paths = [root]
+while not in_git and os.path.dirname(paths[-1]) != paths[-1]:
+    paths.append(os.path.dirname(paths[-1]))
+sys.exit(0 if any(projects.get(p, {}).get("hasTrustDialogAccepted") is True for p in paths) else 1)
+PY
+}
+
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
@@ -309,6 +342,8 @@ start_agent() {
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
+  # Before the pane opens, so a refusal leaves no empty pane behind.
+  if [[ "${kind}" == claude ]]; then require_trusted "${cwd}"; fi
   free_agent_name "${name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -577,6 +612,8 @@ build_story() {
   role="${kind}"; [[ "${kind}" == code && "${risk}" == high ]] && role=code-risky
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
+  # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
+  require_trusted "${src}"
   base="$(base_for "${src}")"
   epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
   if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
@@ -655,7 +692,7 @@ conduct_story_mode() {
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
 start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
-\`swarm.sh watch\` in the background, and review each PR. Each story's base branch is in its brief,
+\`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
 
 $(green_rule)
@@ -695,8 +732,8 @@ line lists every repo with an epic branch), review the whole epic: in each repo'
 findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
 waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
-keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch\` in the
-background.
+keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
+in the background.
 
 $(green_rule)
 
@@ -1047,18 +1084,33 @@ for a in json.load(sys.stdin):
   fi
 }
 
-# watch [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print one line saying
-# which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
+# watch [--epic <slug>] [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print
+# one line saying which and why, and exit 0. With --epic, only that epic's PRs count (epic/<slug> and
+# its stories' story/<slug> branches), and the default repos are its stories' repos plus the epic's
+# repos: line (its stories may already be finished and deleted when the epic PR opens): a conductor
+# must not wake for another epic's PR on the same board. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). A herdr agent
 # blocked on a prompt also needs the lead. Each head is reported once (state in .swarm/state).
 watch_prs() {
+  local epic="" stories=("${BOARD}"/stories/*.md) epic_heads="" epic_repos="" f
+  if [[ "${1:-}" == --epic ]]; then
+    epic="${2:?watch --epic needs an epic slug}"; shift 2
+    [[ -f "${BOARD}/epics/${epic}.md" ]] || die "watch: no epic ${BOARD}/epics/${epic}.md"
+    stories=(); epic_heads="epic/${epic}"; epic_repos="$(fm "${BOARD}/epics/${epic}.md" repos)"
+    for f in "${BOARD}"/stories/*.md; do
+      [[ -f "${f}" && "$(fm "${f}" epic)" == "${epic}" ]] || continue
+      stories+=("${f}"); epic_heads="${epic_heads} story/$(basename "${f}" .md)"
+    done
+  fi
   local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending
   # Default: the project (when it is a repo) plus every repo a story names, so a new repo needs no edit here.
   if [[ ${#repos[@]} -eq 0 ]]; then
     local own=""; [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
-    read -r -a repos <<< "${own} $(sed -n 's/^repo: *//p' "${BOARD}"/stories/*.md 2>/dev/null | sort -u | tr '\n' ' ')"
+    read -r -a repos <<< "${own} ${epic_repos} $( (( ${#stories[@]} )) && sed -n 's/^repo: *//p' "${stories[@]}" 2>/dev/null | sort -u | tr '\n' ' ')"
   fi
+  # With nothing to poll, the loop below would sleep forever.
+  [[ ${#repos[@]} -gt 0 ]] || die "watch: no repo to watch${epic:+ for epic ${epic}}"
   # Each repo as owner/name, from its own origin: repos on one board need not share an owner.
   local full=() r src
   for r in "${repos[@]}"; do
@@ -1073,6 +1125,7 @@ watch_prs() {
     for repo in "${repos[@]}"; do
       while read -r n sha br mergeable age; do
         [[ -n "${n}" ]] || continue
+        [[ -z "${epic_heads}" || " ${epic_heads} " == *" ${br} "* ]] || continue
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
@@ -1286,6 +1339,7 @@ main() {
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
+    _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; wait_agent "$(agent_name "${1:?name}")" "${2:-3600000}" ;;
     *) sed -n '2,26p' "$0"; exit 2 ;;

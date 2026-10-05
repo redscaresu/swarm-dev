@@ -165,6 +165,10 @@ lead decomposition into one-PR stories with `kind`, `touches` and `depends_on`, 
 `.swarm/<epic>/`. The user sees refuted stories and contradictions first and approves before any
 story file is written. About ten agents per run, so scope deliberately.
 
+**Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge
+changes no behaviour; a separate `lead` story turns it on. Bundled, a failure cannot say whether
+the code or the switch broke it, and the rollback has to undo both.
+
 ## Building
 
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then

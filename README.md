@@ -74,6 +74,12 @@ Add `.swarm/` and `docs/.obsidian/*` to `.gitignore` (but keep `!docs/.obsidian/
 every builder must follow, for example "Run `make test` before opening a PR". List shared files
 (root config, schemas, CI scripts) in `AGENTS.md`, so no two agents edit them at once.
 
+**Trust each repo in Claude Code once.** Run `claude` in the repo's main checkout and accept the
+"do you trust this folder?" prompt. Agents build in new git worktrees, and Claude Code checks a
+worktree's trust on its main checkout. Trusting a parent folder such as `~/Work` does not cover a
+repo inside it. `swarm.sh` refuses to start an agent in a repo you have not trusted and names the
+folder, so the agent cannot stall on that prompt.
+
 **4. Change settings, if you want**, in `.claude/swarm/config` (`key = value` per line):
 
 | Setting | Default | Common change |

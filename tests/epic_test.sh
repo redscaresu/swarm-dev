@@ -7,6 +7,8 @@ set -euo pipefail
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+# No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 fails=0
 GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 
@@ -73,6 +75,8 @@ item "${b}" stories/o1.md "status: ready" "kind: code" "repo: svc"
 run conduct e >/dev/null
 check "the conductor opens a tab named for the epic" "yes" "$(has "tab create --workspace w --cwd ${p} --label e --no-focus" "$(log)")"
 check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor" "$(log)")"
+check "the conductor's brief watches only its own epic's PRs" "yes" \
+  "$(grep -q 'swarm.sh watch --epic e`' "${p}/.swarm/briefs/conduct-e.md" && echo yes || echo no)"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "a story of the epic splits the conductor's pane, and is named" "yes|yes" \
@@ -148,6 +152,7 @@ run conduct f >/dev/null
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
+check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "base prints a repo's base" "dev" "$(run base svc)"
 
 # --- next: an active epic whose stories are all in its branch, with no PR yet, gets a conductor.
