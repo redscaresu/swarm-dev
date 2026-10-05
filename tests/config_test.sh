@@ -180,6 +180,10 @@ check "outside git, a trusted ancestor covers a folder" "trusted" "$(trusted "${
 check "a trusted ancestor does not cover a git repo inside it" \
   "swarm: Claude Code does not trust ${t}/repo yet, so the agent would stall on its trust prompt. Run claude in ${t}/repo once, accept the prompt, then try again." \
   "$(trusted "${t}/repo")"
+"${GIT[@]}" init -q "${t}/lib" && "${GIT[@]}" -C "${t}/lib" commit -q --allow-empty -m lib
+"${GIT[@]}" -C "${t}/repo" -c protocol.file.allow=always submodule add -q "${t}/lib" lib 2>/dev/null
+trust "${t}/repo/lib"
+check "a submodule is keyed on its own folder" "trusted" "$(trusted "${t}/repo/lib")"
 rm "${t}/cfg/.claude.json"
 check "no trust file to read: the start goes ahead" "trusted" "$(trusted "${t}/plain")"
 

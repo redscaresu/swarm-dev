@@ -271,14 +271,18 @@ require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr
 # lives in ~/.claude.json, which every running session rewrites, so this only reads it; if the
 # file cannot be read, the start goes ahead.
 require_trusted() {
-  local cwd="$1" common="" root
-  if common=$(git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    root="$(dirname "${common}")"
+  local cwd="$1" in_git="" root gitdir common
+  if root=$(git -C "${cwd}" rev-parse --show-toplevel 2>/dev/null); then
+    in_git=git
+    # A linked worktree's git dir differs from the shared one: trust is keyed on the main checkout.
+    # A submodule's are the same (.git/modules/<name>), so it keeps its own top level.
+    gitdir=$(git -C "${cwd}" rev-parse --path-format=absolute --git-dir)
+    common=$(git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir)
+    [[ "${gitdir}" == "${common}" ]] || root="$(dirname "${common}")"
   else
-    common=""
     root="$(cd "${cwd}" && pwd -P)"
   fi
-  python3 - "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${common:+git}" <<'PY' \
+  python3 - "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${in_git}" <<'PY' \
     || die "Claude Code does not trust ${root} yet, so the agent would stall on its trust prompt. Run claude in ${root} once, accept the prompt, then try again."
 import json, os, sys
 root, config, in_git = sys.argv[1], sys.argv[2], sys.argv[3] == "git"
