@@ -15,6 +15,10 @@ gh auth status                  # PRs, checks and merges go through gh
 git remote get-url origin       # a GitHub origin; swarm.sh resolves the owner from it
 ```
 
+If `swarm.sh` stops with "Claude Code does not trust <folder> yet", ask the user to run `claude` in
+that folder once and accept the trust prompt. Never accept it for them, and never edit
+`~/.claude.json`.
+
 If `swarm.sh` is missing, the user runs `claude plugin marketplace add redscaresu/swarm-dev` and
 `claude plugin install swarm-dev@swarm-dev`, then restarts Claude Code.
 

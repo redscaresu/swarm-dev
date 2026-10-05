@@ -7,6 +7,8 @@ set -euo pipefail
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+# No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 fails=0
 GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 

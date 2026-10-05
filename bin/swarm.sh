@@ -264,6 +264,35 @@ json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"; }
 
+# require_trusted <cwd> — stop unless Claude Code already trusts <cwd>. In an untrusted folder,
+# Claude Code opens its "do you trust this folder?" prompt, and the agent stalls there unseen.
+# Claude Code keys trust on the git root, and for a worktree on its main checkout, so a new story
+# worktree is covered once its repo is trusted. Outside git, a trusted ancestor covers it. Trust
+# lives in ~/.claude.json, which every running session rewrites, so this only reads it; if the
+# file cannot be read, the start goes ahead.
+require_trusted() {
+  local cwd="$1" common="" root
+  if common=$(git -C "${cwd}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    root="$(dirname "${common}")"
+  else
+    common=""
+    root="$(cd "${cwd}" && pwd -P)"
+  fi
+  python3 - "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${common:+git}" <<'PY' \
+    || die "Claude Code does not trust ${root} yet, so the agent would stall on its trust prompt. Run claude in ${root} once, accept the prompt, then try again."
+import json, os, sys
+root, config, in_git = sys.argv[1], sys.argv[2], sys.argv[3] == "git"
+try:
+    projects = json.load(open(config)).get("projects", {})
+except (OSError, ValueError):
+    sys.exit(0)
+paths = [root]
+while not in_git and os.path.dirname(paths[-1]) != paths[-1]:
+    paths.append(os.path.dirname(paths[-1]))
+sys.exit(0 if any(projects.get(p, {}).get("hasTrustDialogAccepted") is True for p in paths) else 1)
+PY
+}
+
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
@@ -309,6 +338,8 @@ start_agent() {
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
+  # Before the pane opens, so a refusal leaves no empty pane behind.
+  if [[ "${kind}" == claude ]]; then require_trusted "${cwd}"; fi
   free_agent_name "${name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -577,6 +608,8 @@ build_story() {
   role="${kind}"; [[ "${kind}" == code && "${risk}" == high ]] && role=code-risky
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
+  # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
+  require_trusted "${src}"
   base="$(base_for "${src}")"
   epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
   if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
@@ -1286,6 +1319,7 @@ main() {
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
+    _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; wait_agent "$(agent_name "${1:?name}")" "${2:-3600000}" ;;
     *) sed -n '2,26p' "$0"; exit 2 ;;

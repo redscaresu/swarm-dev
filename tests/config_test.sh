@@ -7,6 +7,8 @@ set -euo pipefail
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+# No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 fails=0
 GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 
@@ -94,6 +96,11 @@ check "story starts from the first base branch origin has" \
 sed -i.bak 's/^status: later$/status: ready/' "${b}/stories/no-repo.md" && rm -f "${b}/stories/no-repo.md.bak"
 check "a story with no repo: in a non-git project stops" "yes" \
   "$(fails_with 'no repo: named, and the project' story "${p}" no-repo)"
+item "${b}" stories/untrusted.md "status: ready" "kind: code" "repo: svc"
+mkdir -p "${ROOT}/untrusting" && echo '{"projects": {}}' > "${ROOT}/untrusting/.claude.json"
+check "a story in a repo Claude Code does not trust stops, before any worktree" "yes|no worktree" \
+  "$(CLAUDE_CONFIG_DIR="${ROOT}/untrusting" fails_with "does not trust ${ROOT}/repos/svc yet" story "${p}" untrusted)|$([[ -e "${ROOT}/repos/svc-wt/untrusted" ]] && echo worktree || echo no worktree)"
+rm "${b}/stories/untrusted.md"
 
 # --- Finding the project from a subdirectory, a worktree, and $SWARM_PROJECT. The story is only in
 # the main checkout's board, so a run that stops at the worktree's own copy sees none.
@@ -151,6 +158,30 @@ check "a newer version is out: warn, and name the update command" "swarm-dev ${h
   "$(first "${out}")|$(grep -q "WARNING: swarm-dev 99.0.0 is out" <<< "${out}" && echo yes || echo no)|$(grep -qx '  swarm.sh update' <<< "${out}" && echo yes || echo no)"
 check "the same version: no warning" "swarm-dev ${have}" "$(ver "$(published "${have}")")"
 check "the lookup fails (offline): no warning, no error" "swarm-dev ${have}|0" "$(ver "file://${ROOT}/missing.json")|$?"
+
+# --- Folder trust: an agent in a folder Claude Code does not trust stalls on its trust prompt, so
+# the start is refused. Trust is keyed on the git root (a worktree's main checkout); outside git,
+# on the folder or a trusted ancestor.
+t="${ROOT}/trust"
+project "${t}/proj"
+mkdir -p "${t}/cfg" "${t}/plain/sub"
+"${GIT[@]}" init -q "${t}/repo" && "${GIT[@]}" -C "${t}/repo" commit -q --allow-empty -m init
+"${GIT[@]}" -C "${t}/repo" worktree add -q "${t}/repo-wt/story" -b story
+trust() { python3 -c 'import json,sys; print(json.dumps({"projects": {p: {"hasTrustDialogAccepted": True} for p in sys.argv[1:]}}))' "$@" > "${t}/cfg/.claude.json"; }
+trusted() { CLAUDE_CONFIG_DIR="${t}/cfg" run "${t}/proj" _trusted "$1" | tail -1; }
+trust "${t}/repo"
+check "a worktree is trusted through its main checkout" "trusted" "$(trusted "${t}/repo-wt/story")"
+trust "${t}/repo-wt/story"
+check "an untrusted main checkout is refused, and named" \
+  "swarm: Claude Code does not trust ${t}/repo yet, so the agent would stall on its trust prompt. Run claude in ${t}/repo once, accept the prompt, then try again." \
+  "$(trusted "${t}/repo-wt/story")"
+trust "${t}"
+check "outside git, a trusted ancestor covers a folder" "trusted" "$(trusted "${t}/plain/sub")"
+check "a trusted ancestor does not cover a git repo inside it" \
+  "swarm: Claude Code does not trust ${t}/repo yet, so the agent would stall on its trust prompt. Run claude in ${t}/repo once, accept the prompt, then try again." \
+  "$(trusted "${t}/repo")"
+rm "${t}/cfg/.claude.json"
+check "no trust file to read: the start goes ahead" "trusted" "$(trusted "${t}/plain")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
