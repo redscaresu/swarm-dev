@@ -210,6 +210,12 @@ cat > "${ROOT}/gh/prlist.json" <<'EOF'
 EOF
 check "watch --epic skips another epic's PR in the same repo" "o/svc #2 epic/mine checks finished on head2" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+# One PR per epic: the stories are finished (deleted) before the epic PR opens, so only the epic's
+# repos: line still names the repo.
+rm "${w}/docs/stories/a.md" "${w}/.swarm/state/watch-seen"
+printf -- '---\nstatus: active\nrepos: svc\n---\n\n# mine\n' > "${w}/docs/epics/mine.md"
+check "watch --epic finds the repo from the epic's repos: line once its stories are gone" "o/svc #2 epic/mine checks finished on head2" \
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
