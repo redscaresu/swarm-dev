@@ -457,6 +457,7 @@ PY
 deliver_prompt() {
   local name="$1" prompt_file="$2" status
   for _ in 1 2; do
+    dismiss_hook_review "${name}"
     status=$(herdr agent prompt "${name}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
       --timeout 60000 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
     case "${status}" in
@@ -465,6 +466,18 @@ deliver_prompt() {
     sleep 5
   done
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
+}
+
+# dismiss_hook_review <name> — codex opens a review dialog, before it reads anything, for a hook it
+# does not trust yet (herdr installs one, ~/.codex/hooks.json). A brief sent into it is lost while
+# herdr reports the pane blocked, which deliver_prompt took as delivered. Esc closes it and trusts
+# nothing: the hook just does not run in this pane. Trusting a hook is the user's decision, never ours.
+dismiss_hook_review() {
+  herdr agent read "$1" --source recent-unwrapped 2>/dev/null | grep -Eq 'hooks? needs? review before' || return 0
+  herdr agent send-keys "$1" esc >/dev/null 2>&1 || true
+  sleep 1
+  echo "swarm: $1: codex asked to review a hook it does not trust; closed without trusting it (the hook does not run here)." \
+    "To stop this, run codex once, press enter on the dialog to read the hook, and trust it (t) if you recognise it." >&2
 }
 
 # API_ERROR_NUDGES: how many times one `wait` re-prompts an agent whose turn died on an API error.
