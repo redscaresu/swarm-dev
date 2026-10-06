@@ -54,13 +54,14 @@ cat > "${ROOT}/bin/herdr" <<EOF
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; S="${ROOT}/screen"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; S="${ROOT}/screen"; L="${ROOT}/screen-later"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
-  "agent prompt") if [ -f "$S" ]; then st=blocked; else st=working; fi   # a dialog on screen blocks the pane
+  "agent prompt") if [ -f "$L" ]; then mv "$L" "$S"; fi   # a dialog that opens only once the prompt is sent
+                  if [ -f "$S" ]; then st=blocked; else st=working; fi   # a dialog on screen blocks the pane
                   echo "{\"result\":{\"agent\":{\"agent_status\":\"$st\"}}}" ;;
   "agent read")   cat "$S" 2>/dev/null ;;
   "agent send-keys") [ "$4" = esc ] && rm -f "$S" ;;
@@ -171,6 +172,9 @@ check "codex starts with its update check off" "yes" "$(has 'check_for_update_on
 echo "  ⚠ 1 hook needs review before it can run." > "${ROOT}/screen"; out=$(agent cx2 codex)
 check "codex's hook-review dialog is closed with esc before the brief, never trusted" "esc|prompt|no t|yes" \
   "$(grep -E '^agent (send-keys|prompt) cx2' "${ROOT}/herdr.log" | awk '{print ($2 == "send-keys" ? $4 : "prompt")}' | paste -sd'|' -)|$(grep -qE '^agent send-keys cx2 t$' "${ROOT}/herdr.log" && echo t || echo 'no t')|$(has 'trust it (t) if you recognise it' "${out}")"
+echo "  ⚠ 2 hooks need review before it can run." > "${ROOT}/screen-later"; agent cx3 codex >/dev/null
+check "a prompt answered blocked by a dialog that opened late is retried after esc" "prompt|esc|prompt" \
+  "$(grep -E '^agent (send-keys|prompt) cx3' "${ROOT}/herdr.log" | awk '{print ($2 == "send-keys" ? $4 : "prompt")}' | paste -sd'|' -)"
 
 # --- status: each open pane's agent, an empty pane, and what waits on the user.
 mkdir -p "${p}/.swarm/state"

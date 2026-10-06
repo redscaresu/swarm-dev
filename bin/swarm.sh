@@ -461,7 +461,8 @@ deliver_prompt() {
     status=$(herdr agent prompt "${name}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
       --timeout 60000 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
     case "${status}" in
-      working|blocked) return 0 ;;
+      working) return 0 ;;
+      blocked) hook_review_open "${name}" || return 0 ;;   # blocked on the dialog has not read the brief
     esac
     sleep 5
   done
@@ -472,8 +473,13 @@ deliver_prompt() {
 # does not trust yet (herdr installs one, ~/.codex/hooks.json). A brief sent into it is lost while
 # herdr reports the pane blocked, which deliver_prompt took as delivered. Esc closes it and trusts
 # nothing: the hook just does not run in this pane. Trusting a hook is the user's decision, never ours.
+# A prompt answered blocked while the dialog is open was not delivered either, so it is retried.
+hook_review_open() {
+  herdr agent read "$1" --source recent-unwrapped 2>/dev/null | grep -Eq 'hooks? needs? review before'
+}
+
 dismiss_hook_review() {
-  herdr agent read "$1" --source recent-unwrapped 2>/dev/null | grep -Eq 'hooks? needs? review before' || return 0
+  hook_review_open "$1" || return 0
   herdr agent send-keys "$1" esc >/dev/null 2>&1 || true
   sleep 1
   echo "swarm: $1: codex asked to review a hook it does not trust; closed without trusting it (the hook does not run here)." \
