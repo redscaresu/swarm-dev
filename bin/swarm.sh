@@ -1299,9 +1299,11 @@ retire_agent() {
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
 # (a start that failed) or a retired agent (<name>-done, left open by keep_panes). Lists them; with
 # --yes, closes them and drops them from the tab records. Working, waiting and idle agents are never
-# touched, nor the pane this runs in.
+# touched, nor the pane this runs in. Run it when nothing is starting: a pane whose agent is still
+# starting has no agent yet, so it looks empty.
 tidy_panes() {
   local yes="${1:-}" agents panes closable pane name reason file n=0
+  [[ "${yes}" != --yes || -n "${HERDR_PANE_ID:-}" ]] || die "tidy --yes: HERDR_PANE_ID is not set, so this pane could not be kept open"
   agents=$(herdr agent list 2>/dev/null) || die "tidy: herdr gave no agent list"
   panes=$(herdr pane list 2>/dev/null) || die "tidy: herdr gave no pane list"
   closable=$(python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
@@ -1322,7 +1324,7 @@ for path in sorted(glob.glob(os.path.join(state, "*"))):
         name = (a or {}).get("name") or (f[1] if len(f) > 1 else "-")
         if a is None:
             reason = "empty: no agent started"
-        elif re.search(r"-done\d*$", name):
+        elif re.search(r"-done\d*$", name) and a.get("agent_status") not in ("working", "blocked"):
             reason = "retired"
         else:
             continue
@@ -1334,7 +1336,8 @@ PY
   if [[ "${yes}" != --yes ]]; then echo "(swarm.sh tidy --yes closes them)"; return 0; fi
   while IFS=$'\t' read -r pane name reason file; do
     herdr pane close "${pane}" >/dev/null 2>&1 || { echo "could not close ${pane} (${name})"; continue; }
-    awk -v p="${pane}" '$1 != p' "${STATE_DIR}/${file}" > "${STATE_DIR}/${file}.tmp" && mv "${STATE_DIR}/${file}.tmp" "${STATE_DIR}/${file}"
+    { awk -v p="${pane}" '$1 != p' "${STATE_DIR}/${file}" > "${STATE_DIR}/${file}.tmp" && mv "${STATE_DIR}/${file}.tmp" "${STATE_DIR}/${file}"; } \
+      || die "tidy: closed ${pane} but could not update ${STATE_DIR}/${file}"
     [[ -s "${STATE_DIR}/${file}" ]] || rm -f "${STATE_DIR}/${file}"
     n=$((n + 1))
   done <<< "${closable}"

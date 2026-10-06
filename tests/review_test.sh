@@ -220,17 +220,19 @@ check "watch --epic finds the repo from the epic's repos: line once its stories 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.
 for f in agents.json panes.json; do [[ -f "${ROOT}/${f}" ]] && mv "${ROOT}/${f}" "${ROOT}/${f}.keep"; done
 mkdir -p "${p}/.swarm/state"
-printf '%s\n' "w:1 conductor" "w:2 s1" "w:3 s2" "w:4 s3" "w:9 gone" > "${p}/.swarm/state/t"
+printf '%s\n' "w:1 conductor" "w:2 s1" "w:3 s2" "w:4 fix-done" "w:9 gone" > "${p}/.swarm/state/t"
 echo '{"result":{"panes":[{"pane_id":"w:1"},{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:4"}]}}' > "${ROOT}/panes.json"
-echo '{"result":{"agents":[{"pane_id":"w:1","name":"conduct-t","agent_status":"working"},{"pane_id":"w:3","name":"s2-done","agent_status":"idle"},{"pane_id":"w:4","name":"s3","agent_status":"idle"}]}}' > "${ROOT}/agents.json"
+echo '{"result":{"agents":[{"pane_id":"w:1","name":"conduct-t","agent_status":"working"},{"pane_id":"w:3","name":"s2-done","agent_status":"idle"},{"pane_id":"w:4","name":"fix-done","agent_status":"working"}]}}' > "${ROOT}/agents.json"
 tidy() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:0 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tidy "$@" 2>&1); }
 : > "${ROOT}/herdr.log"
 out="$(tidy)"
 check "tidy lists the empty pane and the retired one, and closes nothing" "yes|yes|no|no" \
-  "$(has "s1  empty: no agent started" "${out}")|$(has "s2-done  retired" "${out}")|$(grep -q 'conduct-t\|s3' <<< "${out}" && echo yes || echo no)|$(grep -q 'pane close' "${ROOT}/herdr.log" && echo yes || echo no)"
+  "$(has "s1  empty: no agent started" "${out}")|$(has "s2-done  retired" "${out}")|$(grep -q 'conduct-t\|fix-done' <<< "${out}" && echo yes || echo no)|$(grep -q 'pane close' "${ROOT}/herdr.log" && echo yes || echo no)"
 tidy --yes >/dev/null
-check "tidy --yes closes exactly those two, and keeps the rest on record" "pane close w:2|pane close w:3|w:1 conductor w:4 s3 w:9 gone" \
+check "tidy --yes closes exactly those two, and keeps the rest on record" "pane close w:2|pane close w:3|w:1 conductor w:4 fix-done w:9 gone" \
   "$(grep '^pane close' "${ROOT}/herdr.log" | paste -sd'|' -)|$(tr '\n' ' ' < "${p}/.swarm/state/t" | sed 's/ $//')"
+check "tidy --yes refuses to run without HERDR_PANE_ID" "yes" \
+  "$(has 'HERDR_PANE_ID is not set' "$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tidy --yes 2>&1)")"
 rm -f "${p}/.swarm/state/t" "${ROOT}/panes.json" "${ROOT}/agents.json"
 for f in agents.json panes.json; do [[ -f "${ROOT}/${f}.keep" ]] && mv "${ROOT}/${f}.keep" "${ROOT}/${f}"; done
 
