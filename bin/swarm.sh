@@ -352,9 +352,16 @@ start_agent() {
   for try in 1 2; do
     if [[ "${kind}" == codex ]]; then
       # No update check: codex's startup prompt to upgrade takes the pane, and the brief then
-      # lands in a bare shell.
+      # lands in a bare shell. A planning codex must write its one answer file, and read-only made it
+      # ask the user for every write: it runs workspace-write rooted (-C) at its tab's output dir, so
+      # it reads as before and writes only there. Any other tab stays read-only. Hooks off: codex
+      # opens a review dialog for an untrusted hook (herdr's, ~/.codex/hooks.json) when the brief
+      # starts the session, and the brief is lost behind it. Off trusts nothing; none runs here.
+      local sandbox=(-s read-only) dir
+      dir="$(codex_out_dir "${tab}")"
+      if [[ -n "${dir}" ]]; then mkdir -p "${dir}"; sandbox=(-s workspace-write -C "${dir}"); fi
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
-        -s read-only -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
+        "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
       # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
       local guard=()
@@ -369,9 +376,25 @@ start_agent() {
     fi
     sleep 3
   done
+  if [[ "${kind}" == codex && -n "$(codex_out_dir "${tab}")" ]]; then
+    # Its working directory is the output dir, so say where the brief's relative paths start.
+    local brief="${STATE_DIR}/brief-${name}.md"
+    mkdir -p "${STATE_DIR}"
+    { echo "The project is ${PROJECT_DIR}; every relative path below is relative to it. You can write only in $(codex_out_dir "${tab}")."; echo; cat "${prompt_file}"; } > "${brief}"
+    prompt_file="${brief}"
+  fi
   deliver_prompt "${name}" "${prompt_file}"
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
+}
+
+# codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
+# scope-<epic>, .swarm/<hld> for plan-<hld>; empty for any other tab.
+codex_out_dir() {
+  case "$1" in
+    scope-?*) echo "${PROJECT_DIR}/.swarm/${1#scope-}" ;;
+    plan-?*)  echo "${PROJECT_DIR}/.swarm/${1#plan-}" ;;
+  esac
 }
 
 # AGENTS_LOG: one line per agent started (date, role, name, kind, model, effort, session), so
@@ -457,33 +480,14 @@ PY
 deliver_prompt() {
   local name="$1" prompt_file="$2" status
   for _ in 1 2; do
-    dismiss_hook_review "${name}"
     status=$(herdr agent prompt "${name}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
       --timeout 60000 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
     case "${status}" in
-      working) return 0 ;;
-      blocked) hook_review_open "${name}" || return 0 ;;   # blocked on the dialog has not read the brief
+      working|blocked) return 0 ;;
     esac
     sleep 5
   done
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
-}
-
-# dismiss_hook_review <name> — codex opens a review dialog, before it reads anything, for a hook it
-# does not trust yet (herdr installs one, ~/.codex/hooks.json). A brief sent into it is lost while
-# herdr reports the pane blocked, which deliver_prompt took as delivered. Esc closes it and trusts
-# nothing: the hook just does not run in this pane. Trusting a hook is the user's decision, never ours.
-# A prompt answered blocked while the dialog is open was not delivered either, so it is retried.
-hook_review_open() {
-  herdr agent read "$1" --source recent-unwrapped 2>/dev/null | grep -Eq 'hooks? needs? review before'
-}
-
-dismiss_hook_review() {
-  hook_review_open "$1" || return 0
-  herdr agent send-keys "$1" esc >/dev/null 2>&1 || true
-  sleep 1
-  echo "swarm: $1: codex asked to review a hook it does not trust; closed without trusting it (the hook does not run here)." \
-    "To stop this, run codex once, press enter on the dialog to read the hook, and trust it (t) if you recognise it." >&2
 }
 
 # API_ERROR_NUDGES: how many times one `wait` re-prompts an agent whose turn died on an API error.
