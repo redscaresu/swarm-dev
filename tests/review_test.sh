@@ -165,6 +165,12 @@ check "a failed start closes its pane and shows herdr's error" "yes|yes" \
   "$(grep -q '^pane close ' "${ROOT}/herdr.log" && echo yes || echo no)|$(has agent_name_taken "${out}")"
 rm -f "${ROOT}/start-fails"; agent cx codex >/dev/null
 check "codex starts with its update check off" "yes" "$(has 'check_for_update_on_startup=false' "$(grep '^agent start cx ' "${ROOT}/herdr.log")")"
+check "codex outside a planning tab stays read-only" "yes" "$(has '-s read-only' "$(grep '^agent start cx ' "${ROOT}/herdr.log")")"
+: > "${ROOT}/herdr.log"
+(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cx4 "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
+check "a planning codex writes only in its tab's output dir, told where paths start" "yes|yes|yes" \
+  "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt cx4 ' "${ROOT}/herdr.log")")"
+check "codex starts with hooks off, so no trust dialog can take the brief" "yes" "$(has '-c features.hooks=false' "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")"
 
 # --- status: each open pane's agent, an empty pane, and what waits on the user.
 mkdir -p "${p}/.swarm/state"
@@ -216,6 +222,25 @@ rm "${w}/docs/stories/a.md" "${w}/.swarm/state/watch-seen"
 printf -- '---\nstatus: active\nrepos: svc\n---\n\n# mine\n' > "${w}/docs/epics/mine.md"
 check "watch --epic finds the repo from the epic's repos: line once its stories are gone" "o/svc #2 epic/mine checks finished on head2" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+
+# --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.
+for f in agents.json panes.json; do [[ -f "${ROOT}/${f}" ]] && mv "${ROOT}/${f}" "${ROOT}/${f}.keep"; done
+mkdir -p "${p}/.swarm/state"
+printf '%s\n' "w:1 conductor" "w:2 s1" "w:3 s2" "w:4 fix-done" "w:9 gone" > "${p}/.swarm/state/t"
+echo '{"result":{"panes":[{"pane_id":"w:1"},{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:4"}]}}' > "${ROOT}/panes.json"
+echo '{"result":{"agents":[{"pane_id":"w:1","name":"conduct-t","agent_status":"working"},{"pane_id":"w:3","name":"s2-done","agent_status":"idle"},{"pane_id":"w:4","name":"fix-done","agent_status":"working"}]}}' > "${ROOT}/agents.json"
+tidy() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:0 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tidy "$@" 2>&1); }
+: > "${ROOT}/herdr.log"
+out="$(tidy)"
+check "tidy lists the empty pane and the retired one, and closes nothing" "yes|yes|no|no" \
+  "$(has "s1  empty: no agent started" "${out}")|$(has "s2-done  retired" "${out}")|$(grep -q 'conduct-t\|fix-done' <<< "${out}" && echo yes || echo no)|$(grep -q 'pane close' "${ROOT}/herdr.log" && echo yes || echo no)"
+tidy --yes >/dev/null
+check "tidy --yes closes exactly those two, and keeps the rest on record" "pane close w:2|pane close w:3|w:1 conductor w:4 fix-done w:9 gone" \
+  "$(grep '^pane close' "${ROOT}/herdr.log" | paste -sd'|' -)|$(tr '\n' ' ' < "${p}/.swarm/state/t" | sed 's/ $//')"
+check "tidy --yes refuses to run without HERDR_PANE_ID" "yes" \
+  "$(has 'HERDR_PANE_ID is not set' "$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tidy --yes 2>&1)")"
+rm -f "${p}/.swarm/state/t" "${ROOT}/panes.json" "${ROOT}/agents.json"
+for f in agents.json panes.json; do [[ -f "${ROOT}/${f}.keep" ]] && mv "${ROOT}/${f}.keep" "${ROOT}/${f}"; done
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

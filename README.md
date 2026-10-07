@@ -107,7 +107,8 @@ agree it. Run `/hld` alone to carry on later. Guide:
 **Not sure what's going on?** Run `swarm.sh status`. It lists the agents that need a look: working,
 waiting on a question, or **empty** (an agent that never started, so close that pane). It counts idle
 agents and blocked stories, shows what is waiting on you, and what `/swarm` would do next. Add `--all`
-to list everything.
+to list everything. `swarm.sh tidy` lists the panes it can close (empty ones, and finished agents kept open by
+`keep_panes`); `swarm.sh tidy --yes` closes them. It never touches a working, waiting or idle agent.
 
 **Using Foundry, Bedrock or Vertex?** Agents start as plain `claude` in new panes, so load your
 provider settings in `~/.zshrc` for herdr panes, not in an alias:
