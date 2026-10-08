@@ -141,8 +141,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   it, so it runs on Fable at `xhigh`.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
   critic run at `high`, because a skeptic is the only gate a story passes before it is built.
-- **Reading and running is Sonnet.** Surveys read and cite at `high`, since they feed the lead;
-  verification, docs and chores run at `medium`.
+- **Reading is Sonnet, running is Haiku.** Surveys read and cite at `high`, since they feed the
+  lead, and docs run on Sonnet at `medium`. Verification and chores run on Haiku at `medium`:
+  their result is a command's output or a mechanical diff, checked by the conductor.
 - **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`.
 - **Codex is the cross-model check**, read-only, because a different model family shares fewer
   blind spots with the one that wrote the plan.
