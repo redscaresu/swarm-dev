@@ -244,8 +244,9 @@ policy() {
     codex)      echo "codex default high" ;;   # a different model family, read-only
     code)       echo "claude opus high" ;;
     code-risky) echo "claude opus xhigh" ;;    # Layer 3, teardown, safety or hygiene paths
-    docs|chore) echo "claude sonnet medium" ;;
-    verify)     echo "claude sonnet medium" ;; # run tests or commands and report
+    docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
+    chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
+    verify)     echo "claude haiku medium" ;;  # run tests or commands and report
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
     *) die "unknown role '$1' (hld hld-review hld-lead survey lead skeptic critic codex code code-risky docs chore verify escalate conduct)" ;;
