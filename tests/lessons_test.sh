@@ -71,9 +71,9 @@ check "a non-UTF-8 byte does not break lessons" "yes" "$(has "bytes	1 PR(s)" "$(
 # A PR URL with junk after the number is refused, not counted as a different PR.
 check "a malformed PR URL is refused" "yes" "$(has "must be a PR URL" "$(sw log-finding k https://github.com/o/r/pull/1x2 x || true)")"
 
-# A ruled kind that keeps coming back is reported as recurring: the rule may not be working.
-check "a ruled kind still recurring is reported" "yes" "$(has "recurring vacuous-test" "$(sw lessons)")"
 check "a brief read from the working tree says so" "yes" "$(has "read from the working tree" "$(sw lessons)")"
+check "a future-dated row is not counted" "no" "$(printf '2999-01-01\tfuture\to/r#70\tx\n2999-01-01\tfuture\to/r#71\tx\n2999-01-01\tfuture\to/r#72\tx\n' >> "${dir}/.swarm/findings.tsv"; grep -q "candidate future" <<< "$(sw lessons)" && echo yes || echo no)"
+check "an overlong kind is refused" "yes" "$(has "32 characters at most" "$(sw log-finding "$(printf 'a%.0s' {1..40})" o/r#1 x || true)")"
 
 # A brief over the cap is flagged.
 head -c 5000 /dev/zero | tr '\0' 'x' >> "${dir}/.claude/swarm/brief.md"
@@ -82,6 +82,21 @@ check "a long brief is flagged" "yes" "$(has "long brief" "$(sw lessons)")"
 # Tabs and newlines in a finding cannot break the log's columns.
 sw log-finding tab-test o/r#7 "$(printf 'a\tb\nc')" >/dev/null
 check "a finding's tabs and newlines are flattened" "4" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
+
+# Recurring: with the rule on origin/HEAD since a date, only findings after it count. The findings that
+# made the kind a candidate must not flag the rule as failing the day it lands.
+r="$(mktemp -d)"; G=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
+"${G[@]}" init -q --bare "${r}/origin.git"; "${G[@]}" clone -q "${r}/origin.git" "${r}/p" 2>/dev/null
+mkdir -p "${r}/p/.claude/swarm" "${r}/p/.swarm"; : > "${r}/p/.claude/swarm/config"
+printf 'Prove it. <!-- lesson: vacuous-test -->\n' > "${r}/p/.claude/swarm/brief.md"
+(cd "${r}/p" && "${G[@]}" add -A && GIT_COMMITTER_DATE="2026-01-01T00:00:00" "${G[@]}" commit -q -m rule \
+  && "${G[@]}" push -q origin main && "${G[@]}" remote set-head origin -a >/dev/null)
+rs() { (cd "${r}/p" && env -u SWARM_PROJECT bash "${SWARM}" "$@" 2>&1); }
+for n in 1 2 3; do printf '2025-12-0%s\tvacuous-test\to/r#%s\tbefore the rule\n' "${n}" "${n}" >> "${r}/p/.swarm/findings.tsv"; done
+check "findings from before the rule landed do not make it recurring" "no" "$(grep -q "recurring vacuous-test" <<< "$(rs lessons)" && echo yes || echo no)"
+for n in 4 5 6; do rs log-finding vacuous-test "o/r#${n}" "after the rule" >/dev/null; done
+check "findings after the rule landed make it recurring" "yes" "$(has "recurring vacuous-test: fixed in 3 PRs since its brief rule landed on 2026-01-01" "$(rs lessons)")"
+rm -rf "${r}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

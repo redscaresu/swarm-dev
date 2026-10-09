@@ -427,7 +427,9 @@ BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long 
 # record_finding <kind> <pr-url> <text> — log one fixed finding.
 record_finding() {
   local kind="$1" pr="$2" text="$3"
-  [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "kind '${kind}' must be short kebab-case, like vacuous-test"
+  [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
+    || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
+  text="${text:0:200}"
   [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
@@ -456,6 +458,12 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
+def adopted(kind, path):
+    # The day the kind's rule landed on the default branch, from git; "" when it cannot be told.
+    got = subprocess.run(["git", "-C", project, "log", "--reverse", "--format=%cs", "-S",
+                          f"<!-- lesson: {kind} -->", "origin/HEAD", "--", path], capture_output=True, text=True)
+    return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""  # the first commit
+
 def read_brief():
     # The brief on the default branch, where adopted rules land. git paths are from the repo root,
     # so the project's own prefix is added for a project in a subdirectory of its repo.
@@ -463,22 +471,27 @@ def read_brief():
     path = prefix.stdout.strip() + os.path.relpath(brief, project)
     got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
     if got.returncode == 0:
-        return got.stdout.decode("utf-8", errors="replace"), ""
+        return got.stdout.decode("utf-8", errors="replace"), "", path
     note = "note: no brief on origin/HEAD, so it was read from the working tree (any branch)"
-    return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note
+    return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note, ""
 
-prs, recent = collections.defaultdict(set), collections.defaultdict(set)
+prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
 last, example = {}, {}
 if os.path.exists(log):
     for line in open(log, encoding="utf-8", errors="replace", newline="\n"):
         parts = line.rstrip("\n").split("\t")
-        if len(parts) != 4 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]):
-            continue  # a malformed or hand-edited row must not count, least of all as recent
+        try:
+            ok = len(parts) == 4 and datetime.date.fromisoformat(parts[0]) <= datetime.date.today()
+        except ValueError:
+            ok = False
+        if not ok:
+            continue  # a malformed, impossible or future row must not count, least of all as recent
         day, kind, pr, finding = parts
         prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
+        dated[kind].append((day, pr_key(pr)))
         if day >= cutoff:
             recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
-brief_text, note = read_brief()
+brief_text, note, brief_path = read_brief()
 ruled = set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text))
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
@@ -487,11 +500,16 @@ for kind in sorted(prs, key=lambda k: -len(prs[k])):
         out.append(f"{kind}\t{len(prs[kind])} PR(s)\t{n_recent} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
     elif n_recent >= min_prs and kind not in ruled:
         out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
-    elif n_recent >= min_prs:
-        out.append(f"recurring {kind}: it has a brief rule, yet was fixed in {n_recent} PRs in the last {recent_days} days; "
-                   "if that is since the rule landed, the rule is not working: turn it into a step agents must do, or drop it")
-if len(brief_text.encode()) > max_bytes:
-    out.append(f"long brief: {brief} is {len(brief_text.encode())} bytes, over {max_bytes}; merge or retire rules")
+    else:
+        since = adopted(kind, brief_path) if brief_path else ""
+        after = {pr for day, pr in dated[kind] if since and day > since}
+        if len(after) >= min_prs:
+            out.append(f"recurring {kind}: fixed in {len(after)} PRs since its brief rule landed on {since}; "
+                       "the rule is not working: turn it into a step agents must do, or drop it")
+size = len(brief_text.encode("utf-8", errors="surrogateescape"))
+if size > max_bytes:
+    where = f"origin/HEAD:{brief_path}" if brief_path else brief
+    out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
 print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))
 PY
 }
@@ -675,14 +693,17 @@ EOF
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons).
 finding_rule() {
+  local proj sw
+  proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
   cat <<EOF
 Log each finding that was fixed (not the ones rebutted), from any directory, with:
 
-    SWARM_PROJECT='${PROJECT_DIR}' '${SWARM_HOME}/bin/swarm.sh' log-finding <kind> <PR URL> "<one line>"
+    SWARM_PROJECT=${proj} ${sw} log-finding <kind> <PR URL> "<one line>"
 
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`SWARM_PROJECT='${PROJECT_DIR}' '${SWARM_HOME}/bin/swarm.sh' lessons --all\` already lists when it fits.
+\`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits. With one PR per epic, findings
+count per epic PR, so a kind needs three epics to become a candidate.
 EOF
 }
 conduct_merge_rule() {
@@ -852,16 +873,18 @@ EOF
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
+EOF
+  if [[ -f "${PROJECT_BRIEF}" ]]; then
+    printf '\nThe project'"'"'s rules, which every builder also gets:\n\n'
+    cat "${PROJECT_BRIEF}"
+  fi
+  cat <<EOF
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
 the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
 treats that file as the only sign you have finished: being idle while you wait on your own
 background work is not.
 EOF
-  if [[ -f "${PROJECT_BRIEF}" ]]; then
-    printf '\nThe project'"'"'s rules, which every builder also gets:\n\n'
-    cat "${PROJECT_BRIEF}"
-  fi
 }
 
 # The green rule every conductor follows, whatever it opens PRs for.
