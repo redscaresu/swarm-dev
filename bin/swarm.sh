@@ -427,6 +427,7 @@ BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long 
 # record_finding <kind> <pr-url> <text> — log one fixed finding.
 record_finding() {
   local kind="$1" pr="$2" text="$3"
+  [[ -n "${kind}" && -n "${pr}" && -n "${text// /}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
     || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
   text="${text:0:200}"
@@ -461,7 +462,7 @@ def pr_key(pr):
 def adopted(kind, path):
     # The day the kind's rule landed on the default branch, from git; "" when it cannot be told.
     got = subprocess.run(["git", "-C", project, "log", "--reverse", "--format=%cs", "-S",
-                          f"<!-- lesson: {kind} -->", "origin/HEAD", "--", path], capture_output=True, text=True)
+                          f"<!-- lesson: {kind} -->", "origin/HEAD", "--", f":(top){path}"], capture_output=True, text=True)
     return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""  # the first commit
 
 def read_brief():
@@ -481,12 +482,13 @@ if os.path.exists(log):
     for line in open(log, encoding="utf-8", errors="replace", newline="\n"):
         parts = line.rstrip("\n").split("\t")
         try:
-            ok = len(parts) == 4 and datetime.date.fromisoformat(parts[0]) <= datetime.date.today()
+            when = datetime.date.fromisoformat(parts[0]) if len(parts) == 4 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) else None
         except ValueError:
-            ok = False
-        if not ok:
+            when = None
+        if when is None or when > datetime.date.today():
             continue  # a malformed, impossible or future row must not count, least of all as recent
-        day, kind, pr, finding = parts
+        _, kind, pr, finding = parts
+        day = when.isoformat()
         prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
         dated[kind].append((day, pr_key(pr)))
         if day >= cutoff:
@@ -500,7 +502,7 @@ for kind in sorted(prs, key=lambda k: -len(prs[k])):
         out.append(f"{kind}\t{len(prs[kind])} PR(s)\t{n_recent} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
     elif n_recent >= min_prs and kind not in ruled:
         out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
-    else:
+    elif kind in ruled:
         since = adopted(kind, brief_path) if brief_path else ""
         after = {pr for day, pr in dated[kind] if since and day > since}
         if len(after) >= min_prs:
@@ -702,8 +704,7 @@ Log each finding that was fixed (not the ones rebutted), from any directory, wit
 
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits. With one PR per epic, findings
-count per epic PR, so a kind needs three epics to become a candidate.
+\`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
 EOF
 }
 conduct_merge_rule() {

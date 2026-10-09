@@ -215,7 +215,8 @@ more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candi
 builder's and conductor's brief ends with that file, one rule there reaches every later builder
 and conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
 opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind
-whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. A brief over 4 KB is flagged, and pruning it is your call: a rule that works stops
+whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
+PR of its repo, so findings count per epic per repo. A brief over 4 KB is flagged, and pruning it is your call: a rule that works stops
 its own findings, so quiet is no sign a rule is unneeded. The log is `.swarm/findings.tsv`, local to
 the machine.
 
