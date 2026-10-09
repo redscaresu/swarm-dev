@@ -27,7 +27,17 @@ Repeat until a step below says stop:
      idle on an API error after three nudges, or the wait's timeout (an hour) has passed, not each
      time it idles on its own background work; when it returns, go back to 1. Never
      close a conductor that has not reported.
-   - `collect <agent>`: the conductor has finished. Read its report
+   - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
+     `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first
+     (from the project's repo, `gh pr list --state all --limit 200 --search 'in:title "lesson: <kind>"'
+     --json title,state,closedAt`, keeping only a title exactly `lesson: <kind>`): an open one is pending, and one closed
+     unmerged (its `closedAt`) in the last 90 days means the user declined it; in either case propose
+     nothing. A merged one does not block: `lessons` lists a kind only while the brief has no rule
+     for it, so the rule was since removed. Otherwise
+     draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`) for the project's
+     `.claude/swarm/brief.md` and open it as a PR titled `lesson: <kind>`, never committed silently.
+     For a `long brief`, propose merging or retiring rules as a PR titled exactly `lesson: prune brief`,
+     unless one is open or was closed (its `closedAt`) in the last 90 days; for a `recurring` kind, say so to the user. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
@@ -38,7 +48,8 @@ Repeat until a step below says stop:
      agent and no PR, the build died: tell the user, and stop.
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
-     builder, `codex exec review` plus `/code-review <PR>` when it changes code, with findings
+     builder, `codex exec review` plus `/code-review <PR>` when it changes code (log each fixed
+     finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`), with findings
      sent back through `swarm.sh tell <slug> <file>` until a pass on the latest head finds nothing
      substantive
      (method.md § Building).

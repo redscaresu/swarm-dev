@@ -9,6 +9,8 @@
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
+#   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
+#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs with no brief rule yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
@@ -415,6 +417,110 @@ record_agent() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session:--}" >> "${AGENTS_LOG}"
 }
 
+# The outer loop: every review finding someone fixed is logged by kind, so a kind that keeps coming
+# back across PRs can become a standing rule in the project's brief. Rules are proposed, never written.
+FINDINGS_LOG_NAME="findings.tsv"
+LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs is a candidate rule
+LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
+BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
+
+# record_finding <kind> <pr-url> <text> — log one fixed finding.
+record_finding() {
+  local kind="$1" pr="$2" text="$3"
+  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
+  [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
+    || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
+  text="${text:0:200}"
+  [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
+    || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
+  mkdir -p "${PROJECT_DIR}/.swarm"
+  printf '%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" \
+    >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
+  echo "recorded ${kind}"
+}
+
+# lessons [--all] — kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
+# no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
+# as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
+# declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. There is no staleness check: the log is local while the brief is committed, and a
+# rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
+lessons_report() {
+  [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
+  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
+    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" <<'PY'
+import collections, datetime, os, re, subprocess, sys
+project, log, brief, min_prs, recent_days, max_bytes, flag = sys.argv[1:8]
+min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
+cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
+
+def pr_key(pr):
+    # One PR, however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
+    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
+    return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
+
+def adopted(kind, path):
+    # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
+    # The tag is searched as written in the brief, and the newest commit that changed its count is taken:
+    # the rule is present now, so that commit is its latest addition (a rule pruned and re-added is new).
+    tag = tags.get(kind)
+    if not tag:
+        return ""
+    got = subprocess.run(["git", "-C", project, "log", "--format=%cs", "-S", tag, "origin/HEAD", "--",
+                          f":(top){path}"], capture_output=True, text=True)
+    return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""
+
+def read_brief():
+    # The brief on the default branch, where adopted rules land. git paths are from the repo root,
+    # so the project's own prefix is added for a project in a subdirectory of its repo.
+    prefix = subprocess.run(["git", "-C", project, "rev-parse", "--show-prefix"], capture_output=True, text=True)
+    path = prefix.stdout.strip() + os.path.relpath(brief, project)
+    got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
+    if got.returncode == 0:
+        return got.stdout.decode("utf-8", errors="replace"), "", path
+    note = "note: no brief on origin/HEAD, so it was read from the working tree (any branch)"
+    return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note, ""
+
+prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
+last, example = {}, {}
+if os.path.exists(log):
+    for line in open(log, encoding="utf-8", errors="replace", newline="\n"):
+        parts = line.rstrip("\n").split("\t")
+        try:
+            when = datetime.date.fromisoformat(parts[0]) if len(parts) == 4 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) else None
+        except ValueError:
+            when = None
+        if when is None or when > datetime.date.today():
+            continue  # a malformed, impossible or future row must not count, least of all as recent
+        _, kind, pr, finding = parts
+        day = when.isoformat()
+        prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
+        dated[kind].append((day, pr_key(pr)))
+        if day >= cutoff:
+            recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
+brief_text, note, brief_path = read_brief()
+tags = {m.group(1): m.group(0) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text)}
+ruled = set(tags)
+out = []
+for kind in sorted(prs, key=lambda k: -len(prs[k])):
+    n_recent = len(recent[kind])
+    if flag == "--all":
+        out.append(f"{kind}\t{len(prs[kind])} PR(s)\t{n_recent} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
+    elif n_recent >= min_prs and kind not in ruled:
+        out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
+    elif kind in ruled:
+        since = adopted(kind, brief_path) if brief_path else ""
+        after = {pr for day, pr in dated[kind] if since and day > since}
+        if len(after) >= min_prs:
+            out.append(f"recurring {kind}: fixed in {len(after)} PRs since its brief rule landed on {since}; "
+                       "the rule is not working: turn it into a step agents must do, or drop it")
+size = len(brief_text.encode("utf-8", errors="surrogateescape"))
+if size > max_bytes:
+    where = f"origin/HEAD:{brief_path}" if brief_path else brief
+    out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
+print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))
+PY
+}
+
 # cost [since] — tokens and estimated cost per role, for every agent this project's swarm started
 # (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
 # session logs, deduplicated by message id; codex agents are listed but not priced (not logged here).
@@ -587,6 +693,23 @@ what to decline), wait for it, and review the new head. One pass on the latest h
 substantive is enough; if each pass turns up only new nits, stop after two and rebut them in the PR
 with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
 its latest head has passed.
+
+$(finding_rule)
+EOF
+}
+
+# finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons).
+finding_rule() {
+  local proj sw
+  proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
+  cat <<EOF
+Log each finding that was fixed (not the ones rebutted), from any directory, with:
+
+    SWARM_PROJECT=${proj} ${sw} log-finding <kind> <PR URL> "<one line>"
+
+The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
+denylist, docs-misstate-code, fails-open); reuse one that
+\`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
 EOF
 }
 conduct_merge_rule() {
@@ -756,6 +879,12 @@ EOF
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
+EOF
+  if [[ -f "${PROJECT_BRIEF}" ]]; then
+    printf '\nThe project'"'"'s rules, which every builder also gets:\n\n'
+    cat "${PROJECT_BRIEF}"
+  fi
+  cat <<EOF
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
 the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with the same. The lead
@@ -831,6 +960,8 @@ $(green_rule)
 
 An epic PR that changes code is reviewed only once the /code-review skill (\`/code-review <PR>\`)
 has also passed on it, its real findings fixed on the epic branch and the rest rebutted in the PR.
+
+$(finding_rule)
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1474,6 +1605,8 @@ main() {
     status) status_report "${1:-}" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
+    log-finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
+    lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
     review) mark_review "$@" ;;
