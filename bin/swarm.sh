@@ -546,17 +546,18 @@ tell_agent() {
   local f="$2" name msg status
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
-  status="$(herdr agent wait "${name}" --timeout 5000 2>/dev/null | json "d['result']['agent']['agent_status']" 2>/dev/null || true)"
+  status="$(agent_status "${name}")"
   case "${status}" in
     idle|done) ;;
     working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
     blocked) die "${name} is waiting on a prompt; answer it (herdr agent read ${name}), then tell it" ;;
     *) die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
   esac
-  msg="$(mktemp)"
+  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
+  # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
+  trap "rm -f '${msg}'" EXIT
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
-  deliver_prompt "${name}" "${msg}" || { rm -f "${msg}"; exit 1; }
-  rm -f "${msg}"
+  deliver_prompt "${name}" "${msg}"
   echo "told ${name}"
 }
 
@@ -573,13 +574,12 @@ review_bot_rule() {
 }
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
-# review_rule <base> <code-review> — <base> is what a story is diffed against; <code-review> says
-# where /code-review runs: on each story's PR (pr_per=story), or on the epic's PRs (pr_per=epic,
-# whose stories have no PR of their own, and whose branches /code-review would diff against main).
+# review_rule — for pr_per=story, where each story has its own PR and its builder stays open.
 review_rule() {
   cat <<EOF
-A story is reviewed only when its latest head has passed \`codex exec review --base $1\` in its
-worktree, and, when it changes code (not only docs, board files or a dependency bump), $2. If codex
+A story is reviewed only when its latest head has passed \`codex exec review --base origin/<base>\`
+in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
+/code-review skill on its PR (\`/code-review <PR>\`). If codex
 reports a usage limit, do not wait for it: rely on the other review and your own reading of the
 diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and
@@ -787,7 +787,7 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 
 $(green_rule)
 
-$(review_rule 'origin/<base>' 'the /code-review skill on its PR (/code-review <PR>)')
+$(review_rule)
 
 $(conduct_merge_rule)$(sign_rule_if_on)
 EOF
@@ -812,13 +812,11 @@ no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) a
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
 and wait with \`swarm.sh wait <slug>\` in the background.
 
-When a builder reports, review its branch as the review rule below says, and only once it has
-passed, one story at a time, merge it into the epic branch
+When a builder reports, review its branch. Then, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
 \`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
-and push epic/${epic}. Then run \`swarm.sh finish <slug>\` and \`swarm.sh unblock\`, and go on to
-the next wave. Keep each story's builder open until the epic PRs have passed /code-review, and send
-each of its findings to the builder whose story wrote that code; close the builders then.
+and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
+\`swarm.sh close <slug>\`, and go on to the next wave.
 
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
 line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
@@ -831,7 +829,8 @@ in the background.
 
 $(green_rule)
 
-$(review_rule "origin/epic/${epic}" 'a careful reading of its diff against the epic branch; the /code-review skill (/code-review <PR>) runs on each epic PR before it counts as reviewed')
+An epic PR is reviewed only once the /code-review skill (\`/code-review <PR>\`) has also passed on
+it, its real findings fixed on the epic branch and the rest rebutted in the PR.
 
 ${merge_step}$(sign_rule_if_on)
 EOF

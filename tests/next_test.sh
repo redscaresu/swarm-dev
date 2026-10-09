@@ -181,14 +181,14 @@ done
 rm -rf "${dir}"
 
 # `tell` sends a settled builder the file and exits 0, leaving no temp file behind; it refuses a
-# builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent wait`
-# answers with $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
+# builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent list`
+# reports s1 as $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
 dir="$(mktemp -d)"
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin)
 cat > "${dir}/bin/herdr" <<EOF
 #!/bin/sh
 case "\$1 \$2" in
-  "agent wait") echo "{\"result\":{\"agent\":{\"agent_status\":\"\${TELL_STATUS}\"}}}" ;;
+  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\"}]}}" ;;
   "agent prompt") printf '%s\n' "\$4" >> "${dir}/sent"; echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
 esac
 EOF
