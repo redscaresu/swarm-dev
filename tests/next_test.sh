@@ -101,6 +101,20 @@ expect_conductor "idle conductor without a report is still waited on" "wait cond
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
+# `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
+dir="$(mktemp -d)"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch .swarm/briefs/conduct-e1.md)
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+(sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
+got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1)"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == idle && "${reported}" == yes ]]; then
+  echo "ok   wait on an idle conductor holds until its report"; else
+  echo "FAIL wait on an idle conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+
 # A retired conductor (keep_panes renames it <name>-done) is finished: next must not wait on it.
 dir="$(mktemp -d)"
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin)
