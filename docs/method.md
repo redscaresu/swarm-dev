@@ -208,6 +208,16 @@ reviews pass, so the fixes are made by the agent that wrote the code, with its c
 `pr_per = epic`, stories have no PR: each epic PR gets `/code-review`, fixed on the epic branch. Each builder
 also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
 
+**Learning across epics (the outer loop).** Each finding that review fixed is logged with
+`swarm.sh finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
+(`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
+more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. Since every
+agent's brief ends with that file, one rule there reaches every later builder, skeptic and
+conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
+opens it as a PR for you; it never edits the brief silently. A rule whose kind has not been fixed
+in 90 days is proposed for removal, and a brief over 4 KB is flagged, so the brief stays short
+enough to be read. The log is `.swarm/findings.tsv`.
+
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in

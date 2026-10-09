@@ -38,6 +38,14 @@ whenever a decision is yours.
 Planning lists your steps before you approve anything. Stories your session runs are `kind: lead`,
 and your own steps in them are marked **You:**. More: [`docs/method.md`](docs/method.md).
 
+## Three feedback loops
+
+| Loop | When | What it does |
+|---|---|---|
+| **Inner** | while a builder works | For a code change, the builder proves each new test can fail: it breaks the fix, sees the test fail, and restores it. A test that passes with its fix removed proves nothing. |
+| **Middle** | before a builder is closed | Each PR passes `codex` and, if it changes code, the `/code-review` skill. The conductor sends findings back to the builder that wrote the code (`swarm.sh tell`), which still has its context, and closes it only once a pass is clean. |
+| **Outer** | across epics | Each fixed finding is logged by kind (`swarm.sh finding`). `swarm.sh lessons` names a kind that keeps coming back in 3+ PRs, and `/swarm` proposes a one-line rule for your `.claude/swarm/brief.md`, which every agent reads, as a PR you approve. Rules that stop matching are proposed for removal. |
+
 ## Getting started
 
 **1. Install the tools.** [Claude Code](https://claude.com/claude-code),
@@ -127,6 +135,7 @@ provider settings in `~/.zshrc` for herdr panes, not in an alias:
 | a PR waiting for you | merge it, or close it to send the story back |
 | a `blocked` story | usually nothing: it clears when what it waits on merges |
 | a `later` item | set a story `ready`, or an epic `active`, to start it |
+| a proposed brief rule (a lesson) | merge the PR to adopt it, or close it |
 
 `swarm.sh status` shows this list any time, with the agents that need a look.
 
@@ -146,9 +155,14 @@ Then restart Claude Code (`claude --continue` resumes your conversation).
 
 ## Cost and safety
 
-- **Tokens.** Every agent is a full Claude Code session. Planning one epic starts about ten agents;
-  give the planner an existing survey and it starts one survey agent instead of three. Each agent story
-  gets one builder. `swarm.sh cost` shows where the tokens went.
+- **Tokens.** Every agent is a full Claude Code session, on a model picked by its role: Fable for
+  the design, Opus for planning judgment, building code and conducting, Sonnet for surveys and
+  docs, Haiku for verification and chores (`swarm.sh policy <role>`). Planning one epic starts
+  about ten agents; give the planner an existing survey and it starts one survey agent instead of
+  three. Each agent story gets one builder, and its review rounds go back to that builder.
+  `swarm.sh cost` shows where the tokens went.
+- **Codex limits.** When codex hits its usage limit, nothing waits for the reset: the review goes
+  on with `/code-review` and the conductor's own reading, and the PR says codex was skipped.
 - **Logins.** Agents use your own `claude`, `codex`, `gh` and `git` logins.
 - **Merging.** By default no agent merges: every green, reviewed PR waits for you.
 - **Scope.** No agent gets a story that needs real cloud, credentials or your judgment.

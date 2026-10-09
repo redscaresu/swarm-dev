@@ -9,6 +9,8 @@
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
+#   swarm.sh finding <kind> <pr-url> <text>                 log one review finding that was fixed, by its kind (the outer loop)
+#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs with no brief rule yet, stale rules, a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
@@ -415,6 +417,60 @@ record_agent() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session:--}" >> "${AGENTS_LOG}"
 }
 
+# The outer loop: every review finding someone fixed is logged by kind, so a kind that keeps coming
+# back across PRs can become a standing rule in the project's brief. Rules are proposed, never written.
+FINDINGS_LOG_NAME="findings.tsv"
+LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs is a candidate rule
+LESSON_STALE_DAYS=90       # a brief rule whose kind has not been fixed in this long is proposed for removal
+BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read
+
+# record_finding <kind> <pr-url> <text> — log one fixed finding.
+record_finding() {
+  local kind="$1" pr="$2" text="$3"
+  [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "kind '${kind}' must be short kebab-case, like vacuous-test"
+  [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh finding <kind> <pr-url> <one line>"
+  mkdir -p "${PROJECT_DIR}/.swarm"
+  printf '%s\t%s\t%s\t%s\n' "$(date +%Y-%m-%d)" "${kind}" "${pr//[$'\t\n']/ }" "${text//[$'\t\n']/ }" \
+    >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
+  echo "recorded ${kind}"
+}
+
+# lessons [--all] — kinds fixed in at least LESSON_MIN_PRS distinct PRs that the brief has no rule for
+# (candidates), brief rules whose kind has gone quiet (stale), and a brief that has grown too long.
+# A rule in the brief carries its kind as <!-- lesson: <kind> --> so the two can be matched.
+lessons_report() {
+  python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_DIR}/.claude/swarm/brief.md" \
+    "${LESSON_MIN_PRS}" "${LESSON_STALE_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" <<'PY'
+import collections, datetime, os, re, sys
+log, brief, min_prs, stale_days, max_bytes, flag = sys.argv[1:7]
+min_prs, stale_days, max_bytes = int(min_prs), int(stale_days), int(max_bytes)
+prs, last, examples = collections.defaultdict(set), {}, collections.defaultdict(list)
+if os.path.exists(log):
+    for line in open(log, encoding="utf-8"):
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) != 4:
+            continue
+        day, kind, pr, text = parts
+        prs[kind].add(pr); last[kind] = max(last.get(kind, ""), day); examples[kind].append(text)
+text = open(brief, encoding="utf-8").read() if os.path.exists(brief) else ""
+ruled = set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", text))
+cutoff = (datetime.date.today() - datetime.timedelta(days=stale_days)).isoformat()
+out = []
+for kind in sorted(prs, key=lambda k: -len(prs[k])):
+    n = len(prs[kind])
+    if flag == "--all":
+        out.append(f"{kind}\t{n} PR(s)\t{'ruled' if kind in ruled else ''}")
+    elif n >= min_prs and kind not in ruled:
+        out.append(f"candidate {kind}: fixed in {n} PRs, last {last[kind]}; e.g. {examples[kind][-1]}")
+for kind in sorted(ruled):
+    if last.get(kind, "") < cutoff:
+        out.append(f"stale {kind}: a brief rule, but no fix of this kind since {last.get(kind) or 'it was recorded'}")
+if len(text.encode()) > max_bytes:
+    out.append(f"long brief: {brief} is {len(text.encode())} bytes, over {max_bytes}; merge or retire rules")
+print("\n".join(out) if out else "no lessons: nothing has recurred in enough PRs yet")
+PY
+}
+
 # cost [since] — tokens and estimated cost per role, for every agent this project's swarm started
 # (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
 # session logs, deduplicated by message id; codex agents are listed but not priced (not logged here).
@@ -587,6 +643,18 @@ what to decline), wait for it, and review the new head. One pass on the latest h
 substantive is enough; if each pass turns up only new nits, stop after two and rebut them in the PR
 with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
 its latest head has passed.
+
+$(finding_rule)
+EOF
+}
+
+# finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons).
+finding_rule() {
+  cat <<EOF
+Log each finding that was fixed (not the ones rebutted) with \`${SWARM_HOME}/bin/swarm.sh finding
+<kind> <PR URL> "<one line>"\`. The kind is a short kebab-case name for the class of mistake, not
+this instance (vacuous-test, denylist, docs-misstate-code, fails-open); reuse one that
+\`swarm.sh lessons --all\` already lists when it fits.
 EOF
 }
 conduct_merge_rule() {
@@ -831,6 +899,8 @@ $(green_rule)
 
 An epic PR that changes code is reviewed only once the /code-review skill (\`/code-review <PR>\`)
 has also passed on it, its real findings fixed on the epic branch and the rest rebutted in the PR.
+
+$(finding_rule)
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1474,6 +1544,8 @@ main() {
     status) status_report "${1:-}" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
+    finding) record_finding "${1:-}" "${2:-}" "${3:-}" ;;
+    lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
     review) mark_review "$@" ;;
