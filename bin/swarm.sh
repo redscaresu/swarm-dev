@@ -521,12 +521,14 @@ wait_agent() {
 
 # wait_conductor <agent> <timeout-ms> — a conductor is idle whenever it waits on its own builders,
 # so idle is not settled: wait on until its report exists or it is no longer idle (blocked, gone).
+# <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 wait_conductor() {
-  local name="$1" timeout="$2" status
+  local name="$1" timeout="$2" status deadline=$((SECONDS + $2 / 1000))
   while :; do
     status="$(wait_agent "${name}" "${timeout}")"
     [[ "${status}" == idle && ! -f "$(conductor_report "${name}")" ]] || break
     ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
+    [[ ${SECONDS} -lt ${deadline} ]] || break
     sleep "${SWARM_CONDUCTOR_POLL:-30}"
   done
   echo "${status}"
@@ -1429,7 +1431,7 @@ main() {
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; n="$(agent_name "${1:?name}")"
-            if [[ "${n}" == conduct-* ]]; then wait_conductor "${n}" "${2:-3600000}"
+            if [[ "${n}" == conduct-* && "${n}" != *-done ]]; then wait_conductor "${n}" "${2:-3600000}"
             else wait_agent "${n}" "${2:-3600000}"; fi ;;
     *) sed -n '2,27p' "$0"; exit 2 ;;
   esac

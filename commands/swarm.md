@@ -22,9 +22,10 @@ Repeat until a step below says stop:
 2. Do the step:
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background, in
      the same response that read `next` and before any other work: a side task the user asks
-     for meanwhile must not leave the conductor unwatched. For a conductor it returns only once
-     the conductor has written its report or is no longer idle (blocked on a prompt, or gone), not
-     each time it idles on its own background work; when it returns, go back to 1. Never
+     for meanwhile must not leave the conductor unwatched. For a conductor it returns once
+     the conductor has written its report, is no longer idle (blocked on a prompt, or gone), is
+     idle on an API error after three nudges, or the wait's timeout (an hour) has passed, not each
+     time it idles on its own background work; when it returns, go back to 1. Never
      close a conductor that has not reported.
    - `collect <agent>`: the conductor has finished. Read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
