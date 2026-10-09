@@ -77,6 +77,9 @@ check "the conductor opens a tab named for the epic" "yes" "$(has "tab create --
 check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor" "$(log)")"
 check "the conductor's brief watches only its own epic's PRs" "yes" \
   "$(grep -q 'swarm.sh watch --epic e`' "${p}/.swarm/briefs/conduct-e.md" && echo yes || echo no)"
+cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
+check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
+  "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> <file>" "${cbrief}")|$(has "Never run" "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "a story of the epic splits the conductor's pane, and is named" "yes|yes" \
@@ -141,6 +144,8 @@ check "the epic lists the repo" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md
 brief="$(cat "${p}/.swarm/briefs/f1.md")"
 check "the story brief opens no PR and names the epic branch" "yes|yes|yes" \
   "$(has "open no PR" "${brief}")|$(has "codex exec review --base origin/epic/f" "${brief}")|$(has "Before you reply, also run the epic's check" "${brief}")"
+check "the story brief asks for a mutation and keeps the builder open for review" "yes|yes" \
+  "$(has "prove each new or changed test can fail" "${brief}")|$(has "stay open" "${brief}")"
 # Someone merged into the epic branch: the next story starts from there, and the repo is listed once.
 "${GIT[@]}" -C "${ROOT}/svc" fetch -q origin && "${GIT[@]}" -C "${ROOT}/svc" checkout -q -b m origin/epic/f
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m f1 && "${GIT[@]}" -C "${ROOT}/svc" push -q origin m:epic/f
@@ -153,6 +158,7 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
+check "the one-PR-per-epic conductor also reviews before closing a builder" "yes" "$(has "Never run" "${brief}")"
 check "base prints a repo's base" "dev" "$(run base svc)"
 
 # --- next: an active epic whose stories are all in its branch, with no PR yet, gets a conductor.

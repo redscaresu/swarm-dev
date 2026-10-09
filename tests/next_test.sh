@@ -115,6 +115,18 @@ if [[ "${got}" == idle && "${reported}" == yes ]]; then
   echo "FAIL wait on an idle conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
 rm -f "${dir}/.swarm/conduct-e1.report.md"
 
+# herdr can report a conductor that ended its turn as `done`: that is not settled either.
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"done\"}}}'" > "${dir}/bin/herdr"
+(sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
+got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == "done" && "${reported}" == yes ]]; then
+  echo "ok   wait on a done conductor holds until its report"; else
+  echo "FAIL wait on a done conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}
 got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 2000)"

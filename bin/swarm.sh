@@ -7,6 +7,7 @@
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
+#   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -526,7 +527,7 @@ wait_conductor() {
   local name="$1" status deadline=$((SECONDS + $2 / 1000)) poll
   while :; do
     status="$(wait_agent "${name}" "$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))")"
-    [[ "${status}" == idle && ! -f "$(conductor_report "${name}")" ]] || break
+    [[ "${status}" =~ ^(idle|done)$ && ! -f "$(conductor_report "${name}")" ]] || break
     ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
     [[ ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
@@ -546,6 +547,18 @@ review_bot_rule() {
   [[ "${CFG_review_bot}" == auto ]] || return 0
   printf '\n\nThen run the PR review bot of the repo as %s/docs/review.md says, and clear its findings the same way.' "${SWARM_HOME}"
 }
+# The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
+# context until then, so findings go back to it rather than to a fresh agent that has none.
+review_rule() {
+  cat <<EOF
+A story is reviewed only when its latest head has passed two reviews: \`codex exec review --base
+origin/<base>\` in its worktree, and, when it changes code (not only docs, board files or a dependency
+bump), the \`/code-review <PR>\` skill. Send every real finding to the story's builder with
+\`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and what to decline),
+wait for it, and review the new head again; rebut nits in the PR with a reason. Never run
+\`swarm.sh close <slug>\` on a builder whose story has not passed both reviews.
+EOF
+}
 conduct_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
     cat <<'RULE'
@@ -564,6 +577,11 @@ there and not `status: done`), run `swarm.sh finish <slug>` first. When the epic
 holds, take the epic off the board with `swarm.sh finish <epic>`.
 RULE
   fi
+}
+
+# A test that passes with its fix removed proves nothing; a builder shows each one can fail.
+mutation_rule() {
+  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and note which test failed and how."
 }
 
 # The brief every story builder gets. The story file is the task; these are the rules.
@@ -599,9 +617,9 @@ credentials. This project opens one PR per epic, so open no PR: commit on your b
 story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
 \`codex exec review --base origin/${epic_branch}\` before committing; fix real findings, decline
 nits with a reason, and converge on one clean pass. If codex reports a usage limit, do not wait for
-it to reset: carry on without it and say so. Run the repo's tests and make them pass. When your
-branch is pushed, reply with the branch, what changed in three lines, and the codex findings, then
-stop.
+it to reset: carry on without it and say so. Run the repo's tests and make them pass. $(mutation_rule)
+When your branch is pushed, reply with the branch, what changed in three lines, the codex findings
+and the mutation, then stay open: the conductor may send review findings to fix.
 EOF
   else
     before="open the PR"
@@ -616,8 +634,9 @@ committing; fix real findings, decline nits with a reason, converge on one clean
 loop in the PR body. If codex reports a usage limit, do not wait for it to reset: carry on without it
 and write "codex skipped: usage limit" in the PR body. If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. When CI is green, reply with
-the PR URL, what changed in three lines, and the codex findings, then stop.
+the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
+in the PR body. When CI is green, reply with the PR URL, what changed in three lines, and the codex
+findings, then stay open: the conductor may send review findings to fix on the same PR.
 EOF
   fi
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
@@ -738,6 +757,8 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 
 $(green_rule)
 
+$(review_rule)
+
 $(conduct_merge_rule)$(sign_rule_if_on)
 EOF
 }
@@ -777,6 +798,8 @@ keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh wat
 in the background.
 
 $(green_rule)
+
+$(review_rule)
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1414,6 +1437,10 @@ main() {
     story)  require_herdr; build_story "${1:?slug}" ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" ;;
+    tell)   require_herdr; f="${2:?file}"; [[ -f "${f}" ]] || die "no such file '${f}'"
+            herdr agent prompt "$(agent_name "${1:?slug}")" "$(cat "${f}")" --wait --until working --timeout 60000 >/dev/null \
+              || die "could not reach agent '${1}': is its pane still open?"
+            echo "told $(agent_name "$1")" ;;
     unblock) unblock ;;
     next)   next_step ;;
     status) status_report "${1:-}" ;;
