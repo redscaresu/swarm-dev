@@ -212,11 +212,10 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 `swarm.sh finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. Since every
-agent's brief ends with that file, one rule there reaches every later builder, skeptic and
-conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
-opens it as a PR for you; it never edits the brief silently, and a declined rule is marked
-`<!-- lesson-declined: <kind> -->` so it is not proposed again. Only kinds fixed in the last 90 days
-are candidates. A brief over 4 KB is flagged, and pruning it is your call: a rule that works stops
+builder's and conductor's brief ends with that file, one rule there reaches every later builder
+and conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
+opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind
+whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. A brief over 4 KB is flagged, and pruning it is your call: a rule that works stops
 its own findings, so quiet is no sign a rule is unneeded. The log is `.swarm/findings.tsv`, local to
 the machine.
 

@@ -429,6 +429,8 @@ record_finding() {
   local kind="$1" pr="$2" text="$3"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "kind '${kind}' must be short kebab-case, like vacuous-test"
   [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh finding <kind> <pr-url> <one line>"
+  [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
+    || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
   printf '%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
@@ -442,7 +444,7 @@ record_finding() {
 # rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
 lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
-  python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_DIR}/.claude/swarm/brief.md" \
+  python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" <<'PY'
 import collections, datetime, os, re, sys
 log, brief, min_prs, recent_days, max_bytes, flag = sys.argv[1:7]
@@ -452,24 +454,29 @@ def pr_key(pr):
     # One PR, however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
-prs, last, examples = collections.defaultdict(set), {}, collections.defaultdict(list)
+prs, recent, last, examples, rows = (collections.defaultdict(set), collections.defaultdict(set), {},
+                                     collections.defaultdict(list), [])
 if os.path.exists(log):
-    for line in open(log, encoding="utf-8", newline="\n"):
+    for line in open(log, encoding="utf-8", errors="replace", newline="\n"):
         parts = line.rstrip("\n").split("\t")
         if len(parts) != 4:
             continue
         day, kind, pr, text = parts
-        prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); examples[kind].append(text)
-text = open(brief, encoding="utf-8").read() if os.path.exists(brief) else ""
+        rows.append((day, kind, pr_key(pr), text))
+text = open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""
 ruled = set(re.findall(r"<!--\s*lesson(?:-declined)?:\s*([a-z0-9-]+)\s*-->", text))
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
+for day, kind, pr, txt in rows:
+    prs[kind].add(pr); last[kind] = max(last.get(kind, ""), day); examples[kind].append(txt)
+    if day >= cutoff:
+        recent[kind].add(pr)  # only PRs inside the window count toward a candidate
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
     n = len(prs[kind])
     if flag == "--all":
         out.append(f"{kind}\t{n} PR(s)\t{'ruled' if kind in ruled else ''}")
-    elif n >= min_prs and kind not in ruled and last[kind] >= cutoff:
-        out.append(f"candidate {kind}: fixed in {n} PRs, last {last[kind]}; e.g. {examples[kind][-1]}")
+    elif len(recent[kind]) >= min_prs and kind not in ruled:
+        out.append(f"candidate {kind}: fixed in {len(recent[kind])} PRs in the last {recent_days} days, last {last[kind]}; e.g. {examples[kind][-1]}")
 if len(text.encode()) > max_bytes:
     out.append(f"long brief: {brief} is {len(text.encode())} bytes, over {max_bytes}; merge or retire rules")
 print("\n".join(out) if out else "no lessons: nothing has recurred in enough PRs yet")
@@ -656,10 +663,13 @@ EOF
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons).
 finding_rule() {
   cat <<EOF
-Log each finding that was fixed (not the ones rebutted) with \`SWARM_PROJECT=${PROJECT_DIR}
-${SWARM_HOME}/bin/swarm.sh finding <kind> <PR URL> "<one line>"\` (from any directory). The kind is a short kebab-case name for the class of mistake, not
-this instance (vacuous-test, denylist, docs-misstate-code, fails-open); reuse one that
-\`swarm.sh lessons --all\` already lists when it fits.
+Log each finding that was fixed (not the ones rebutted), from any directory, with:
+
+    SWARM_PROJECT='${PROJECT_DIR}' ${SWARM_HOME}/bin/swarm.sh finding <kind> <PR URL> "<one line>"
+
+The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
+denylist, docs-misstate-code, fails-open); reuse one that
+\`SWARM_PROJECT='${PROJECT_DIR}' ${SWARM_HOME}/bin/swarm.sh lessons --all\` already lists when it fits.
 EOF
 }
 conduct_merge_rule() {
@@ -835,6 +845,10 @@ the user) to ${PROJECT_DIR}/.swarm/conduct-${epic}.report.md, then reply with th
 treats that file as the only sign you have finished: being idle while you wait on your own
 background work is not.
 EOF
+  if [[ -f "${PROJECT_BRIEF}" ]]; then
+    printf '\nThe project'"'"'s rules, which every builder also gets:\n\n'
+    cat "${PROJECT_BRIEF}"
+  fi
 }
 
 # The green rule every conductor follows, whatever it opens PRs for.

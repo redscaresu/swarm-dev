@@ -65,6 +65,7 @@ log() { cat "${ROOT}/herdr.log"; }
 "${GIT[@]}" -C "${ROOT}/svc" push -q origin dev && "${GIT[@]}" -C "${ROOT}/svc" checkout -q main
 p="${ROOT}/proj"; b="${p}/docs"
 mkdir -p "${p}/.claude/swarm"; : > "${p}/.claude/swarm/config"
+printf "A PROJECT RULE every agent reads.\n" > "${p}/.claude/swarm/brief.md"
 run() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 nx() { (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" next 2>&1); }
 
@@ -78,6 +79,7 @@ check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor"
 check "the conductor's brief watches only its own epic's PRs" "yes" \
   "$(grep -q 'swarm.sh watch --epic e`' "${p}/.swarm/briefs/conduct-e.md" && echo yes || echo no)"
 cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
+check "the conductor's brief ends with the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
   "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
