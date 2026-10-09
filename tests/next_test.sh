@@ -101,6 +101,51 @@ expect_conductor "idle conductor without a report is still waited on" "wait cond
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
+# `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
+dir="$(mktemp -d)"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch .swarm/briefs/conduct-e1.md)
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+(sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
+got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == idle && "${reported}" == yes ]]; then
+  echo "ok   wait on an idle conductor holds until its report"; else
+  echo "FAIL wait on an idle conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
+
+# A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
+start=${SECONDS}
+got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 2000)"
+if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
+  echo "ok   wait on a conductor that never reports ends at its timeout"; else
+  echo "FAIL wait on a conductor that never reports ends at its timeout: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+
+# A conductor idle on an API error is stuck: wait returns after wait_agent's nudges, well inside
+# the timeout, instead of polling and nudging again.
+cat > "${dir}/bin/herdr" <<'EOF'
+#!/bin/sh
+case "$1 $2" in
+  "agent read") echo '⏺ API Error: overloaded' ;;
+  *) echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+esac
+EOF
+start=${SECONDS}
+got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000 2>/dev/null)"
+if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
+  echo "ok   wait on a conductor stuck on an API error returns without polling"; else
+  echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+
+# A retired conductor (renamed <name>-done) is not waited on for a report.
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+start=${SECONDS}
+got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1-done 20000)"
+if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
+  echo "ok   wait on a retired conductor returns at once"; else
+  echo "FAIL wait on a retired conductor returns at once: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+
 # A retired conductor (keep_panes renames it <name>-done) is finished: next must not wait on it.
 dir="$(mktemp -d)"
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin)

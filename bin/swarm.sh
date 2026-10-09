@@ -519,6 +519,22 @@ wait_agent() {
   echo "${status}"
 }
 
+# wait_conductor <agent> <timeout-ms> — a conductor is idle whenever it waits on its own builders,
+# so idle is not settled: wait on until its report exists or it is no longer idle (blocked, gone).
+# <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
+wait_conductor() {
+  local name="$1" status deadline=$((SECONDS + $2 / 1000)) poll
+  while :; do
+    status="$(wait_agent "${name}" "$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))")"
+    [[ "${status}" == idle && ! -f "$(conductor_report "${name}")" ]] || break
+    ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
+    [[ ${SECONDS} -lt ${deadline} ]] || break
+    poll="${SWARM_CONDUCTOR_POLL:-30}"; (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
+    sleep "${poll}"
+  done
+  echo "${status}"
+}
+
 # The merge, signing and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
@@ -1415,7 +1431,9 @@ main() {
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
-    wait)   require_herdr; wait_agent "$(agent_name "${1:?name}")" "${2:-3600000}" ;;
+    wait)   require_herdr; n="$(agent_name "${1:?name}")"
+            if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
+            else wait_agent "${n}" "${2:-3600000}"; fi ;;
     *) sed -n '2,27p' "$0"; exit 2 ;;
   esac
 }
