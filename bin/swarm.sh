@@ -509,7 +509,8 @@ wait_agent() {
   local name="$1" timeout="$2" status nudges=0
   while :; do
     status=$(herdr agent wait "${name}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
-    if [[ "${status}" != idle || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
+    # herdr reports an agent whose turn ended as idle or done; both can be an API-error stop.
+    if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
       break
     fi
     nudges=$((nudges + 1))
@@ -520,8 +521,8 @@ wait_agent() {
   echo "${status}"
 }
 
-# wait_conductor <agent> <timeout-ms> — a conductor is idle whenever it waits on its own builders,
-# so idle is not settled: wait on until its report exists or it is no longer idle (blocked, gone).
+# wait_conductor <agent> <timeout-ms> — a conductor is idle (or done) whenever it waits on its own
+# builders, so neither is settled: wait on until its report exists or it is blocked or gone.
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 wait_conductor() {
   local name="$1" status deadline=$((SECONDS + $2 / 1000)) poll
@@ -534,6 +535,17 @@ wait_conductor() {
     sleep "${poll}"
   done
   echo "${status}"
+}
+
+# tell_agent <slug> <file> — send an agent a file's contents, such as review findings, through
+# deliver_prompt (it retries, and counts a permission prompt as taken up). A header line comes first,
+# so findings that begin with '-' are never read as a flag.
+tell_agent() {
+  local f="$2" msg
+  [[ -f "${f}" ]] || die "no such file '${f}'"
+  msg="$(mktemp)"; { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
+  deliver_prompt "$(agent_name "$1")" "${msg}"; rm -f "${msg}"
+  echo "told $(agent_name "$1")"
 }
 
 # The merge, signing and review rules, shared by the briefs.
@@ -549,14 +561,17 @@ review_bot_rule() {
 }
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
+# review_rule <base> <target> — <base> is what the story is diffed against, <target> what
+# /code-review is given: the PR in pr_per=story, the story branch in pr_per=epic (it has no PR).
 review_rule() {
   cat <<EOF
 A story is reviewed only when its latest head has passed two reviews: \`codex exec review --base
-origin/<base>\` in its worktree, and, when it changes code (not only docs, board files or a dependency
-bump), the \`/code-review <PR>\` skill. Send every real finding to the story's builder with
+$1\` in its worktree, and, when it changes code (not only docs, board files or a dependency bump),
+the \`/code-review $2\` skill. Send every real finding to the story's builder with
 \`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and what to decline),
-wait for it, and review the new head again; rebut nits in the PR with a reason. Never run
-\`swarm.sh close <slug>\` on a builder whose story has not passed both reviews.
+wait for it, and review the new head again. Stop once two passes in a row find nothing substantive;
+rebut nits in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on
+its builder, before it has passed both reviews.
 EOF
 }
 conduct_merge_rule() {
@@ -571,7 +586,7 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 RULE
   else
     cat <<'RULE'
-Merge a PR only when it is green, then run `swarm.sh unblock` and `swarm.sh close <slug>` to close
+Merge a PR only when it is green and reviewed, then run `swarm.sh unblock` and `swarm.sh close <slug>` to close
 that story's tab. If a merged story is still open on the board once you have pulled (its file is
 there and not `status: done`), run `swarm.sh finish <slug>` first. When the epic's **Done when**
 holds, take the epic off the board with `swarm.sh finish <epic>`.
@@ -757,7 +772,7 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 
 $(green_rule)
 
-$(review_rule)
+$(review_rule 'origin/<base>' '<PR>')
 
 $(conduct_merge_rule)$(sign_rule_if_on)
 EOF
@@ -799,7 +814,7 @@ in the background.
 
 $(green_rule)
 
-$(review_rule)
+$(review_rule "origin/epic/${epic}" 'story/<slug>')
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1437,10 +1452,7 @@ main() {
     story)  require_herdr; build_story "${1:?slug}" ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" ;;
-    tell)   require_herdr; f="${2:?file}"; [[ -f "${f}" ]] || die "no such file '${f}'"
-            herdr agent prompt "$(agent_name "${1:?slug}")" "$(cat "${f}")" --wait --until working --timeout 60000 >/dev/null \
-              || die "could not reach agent '${1}': is its pane still open?"
-            echo "told $(agent_name "$1")" ;;
+    tell)   require_herdr; tell_agent "${1:?slug}" "${2:?file}" ;;
     unblock) unblock ;;
     next)   next_step ;;
     status) status_report "${1:-}" ;;

@@ -23,7 +23,7 @@ Repeat until a step below says stop:
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background, in
      the same response that read `next` and before any other work: a side task the user asks
      for meanwhile must not leave the conductor unwatched. For a conductor it returns once
-     the conductor has written its report, is no longer idle (blocked on a prompt, or gone), is
+     the conductor has written its report, is neither idle nor done (blocked on a prompt, or gone), is
      idle on an API error after three nudges, or the wait's timeout (an hour) has passed, not each
      time it idles on its own background work; when it returns, go back to 1. Never
      close a conductor that has not reported.
@@ -37,7 +37,10 @@ Repeat until a step below says stop:
      `swarm.sh config repos_dir`/`<repo:>` when the story names one) and handle it as for `story`. If there is no
      agent and no PR, the build died: tell the user, and stop.
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
-     check on its head green, and `swarm.sh findings <repo> <pr>` triaged (method.md § Building).
+     check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
+     builder, `codex exec review` plus `/code-review <PR>` when it changes code, with findings
+     sent back through `swarm.sh tell <slug> <file>` until two passes find nothing substantive
+     (method.md § Building).
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
      `agent`, merge it; then, if the story is still open on the board, `swarm.sh finish <slug>`;
