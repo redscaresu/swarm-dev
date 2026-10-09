@@ -540,12 +540,16 @@ wait_conductor() {
 # tell_agent <slug> <file> — send an agent a file's contents, such as review findings, through
 # deliver_prompt (it retries, and counts a permission prompt as taken up). A header line comes first,
 # so findings that begin with '-' are never read as a flag.
+# It first waits for the agent to settle, so a builder still mid-turn is not counted as told.
 tell_agent() {
-  local f="$2" msg
+  local f="$2" name msg
   [[ -f "${f}" ]] || die "no such file '${f}'"
-  msg="$(mktemp)"; { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
-  deliver_prompt "$(agent_name "$1")" "${msg}"; rm -f "${msg}"
-  echo "told $(agent_name "$1")"
+  name="$(agent_name "$1")"
+  wait_agent "${name}" 3600000 >/dev/null
+  msg="$(mktemp)"; trap 'rm -f "${msg}"' EXIT
+  { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
+  deliver_prompt "${name}" "${msg}"
+  echo "told ${name}"
 }
 
 # The merge, signing and review rules, shared by the briefs.
@@ -561,17 +565,20 @@ review_bot_rule() {
 }
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
-# review_rule <base> <target> — <base> is what the story is diffed against, <target> what
-# /code-review is given: the PR in pr_per=story, the story branch in pr_per=epic (it has no PR).
+# review_rule <base> <code-review> — <base> is what a story is diffed against; <code-review> says
+# where /code-review runs: on each story's PR (pr_per=story), or on the epic's PRs (pr_per=epic,
+# whose stories have no PR of their own, and whose branches /code-review would diff against main).
 review_rule() {
   cat <<EOF
-A story is reviewed only when its latest head has passed two reviews: \`codex exec review --base
-$1\` in its worktree, and, when it changes code (not only docs, board files or a dependency bump),
-the \`/code-review $2\` skill. Send every real finding to the story's builder with
-\`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and what to decline),
-wait for it, and review the new head again. Stop once two passes in a row find nothing substantive;
-rebut nits in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on
-its builder, before it has passed both reviews.
+A story is reviewed only when its latest head has passed \`codex exec review --base $1\` in its
+worktree, and, when it changes code (not only docs, board files or a dependency bump), $2. If codex
+reports a usage limit, do not wait for it: rely on the other review and your own reading of the
+diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
+builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and
+what to decline), wait for it, and review the new head. One pass on the latest head with nothing
+substantive is enough; if each pass turns up only new nits, stop after two and rebut them in the PR
+with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
+its latest head has passed.
 EOF
 }
 conduct_merge_rule() {
@@ -651,7 +658,7 @@ and write "codex skipped: usage limit" in the PR body. If \`gh pr view --json me
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
 in the PR body. When CI is green, reply with the PR URL, what changed in three lines, and the codex
-findings, then stay open: the conductor may send review findings to fix on the same PR.
+findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR.
 EOF
   fi
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
@@ -772,7 +779,7 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 
 $(green_rule)
 
-$(review_rule 'origin/<base>' '<PR>')
+$(review_rule 'origin/<base>' 'the /code-review skill on its PR (/code-review <PR>)')
 
 $(conduct_merge_rule)$(sign_rule_if_on)
 EOF
@@ -788,7 +795,7 @@ conduct_epic_mode() {
     merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
 merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
   else
-    merge_step="Merge each PR once it is green, then run \`swarm.sh finish ${epic}\`."
+    merge_step="Merge each PR once it is green and reviewed, then run \`swarm.sh finish ${epic}\`."
   fi
   cat <<EOF
 This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story <slug>\`
@@ -797,7 +804,8 @@ no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) a
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
 and wait with \`swarm.sh wait <slug>\` in the background.
 
-When a builder reports, review its branch. Then, one story at a time, merge it into the epic branch
+When a builder reports, review its branch as the review rule below says, and only once it has
+passed, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
 \`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
 and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
@@ -814,7 +822,7 @@ in the background.
 
 $(green_rule)
 
-$(review_rule "origin/epic/${epic}" 'story/<slug>')
+$(review_rule "origin/epic/${epic}" 'a careful reading of its diff against the epic branch; the /code-review skill (/code-review <PR>) runs on each epic PR before it counts as reviewed')
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1473,7 +1481,7 @@ main() {
     wait)   require_herdr; n="$(agent_name "${1:?name}")"
             if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
             else wait_agent "${n}" "${2:-3600000}"; fi ;;
-    *) sed -n '2,27p' "$0"; exit 2 ;;
+    *) sed -n '2,28p' "$0"; exit 2 ;;
   esac
 }
 
