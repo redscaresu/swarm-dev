@@ -209,7 +209,7 @@ reviews pass, so the fixes are made by the agent that wrote the code, with its c
 also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
-`swarm.sh finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
+`swarm.sh log-finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. Since every
 builder's and conductor's brief ends with that file, one rule there reaches every later builder

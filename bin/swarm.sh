@@ -9,7 +9,7 @@
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
-#   swarm.sh finding <kind> <pr-url> <text>                 log one review finding that was fixed, by its kind (the outer loop)
+#   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs with no brief rule yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -428,7 +428,7 @@ BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long 
 record_finding() {
   local kind="$1" pr="$2" text="$3"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "kind '${kind}' must be short kebab-case, like vacuous-test"
-  [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh finding <kind> <pr-url> <one line>"
+  [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
@@ -439,8 +439,8 @@ record_finding() {
 
 # lessons [--all] — kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
-# as <!-- lesson: <kind> -->, and a declined one as <!-- lesson-declined: <kind> -->, so neither is
-# proposed again. There is no staleness check: the log is local while the brief is committed, and a
+# as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
+# declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. There is no staleness check: the log is local while the brief is committed, and a
 # rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
 lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
@@ -463,10 +463,19 @@ if os.path.exists(log):
             continue
         day, kind, pr, text = parts
         rows.append((day, kind, pr_key(pr), text))
-text = open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""
-ruled = set(re.findall(r"<!--\s*lesson(?:-declined)?:\s*([a-z0-9-]+)\s*-->", text))
+import subprocess
+project = os.path.dirname(os.path.dirname(os.path.dirname(brief)))
+rel = os.path.relpath(brief, project)
+got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{rel}"], capture_output=True)
+if got.returncode == 0:
+    text = got.stdout.decode("utf-8", errors="replace")
+else:  # no remote default branch to read: fall back to the working tree
+    text = open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""
+ruled = set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", text))
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
 for day, kind, pr, txt in rows:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        continue  # a hand-edited or malformed row must not count as recent forever
     prs[kind].add(pr); last[kind] = max(last.get(kind, ""), day); examples[kind].append(txt)
     if day >= cutoff:
         recent[kind].add(pr)  # only PRs inside the window count toward a candidate
@@ -474,7 +483,7 @@ out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
     n = len(prs[kind])
     if flag == "--all":
-        out.append(f"{kind}\t{n} PR(s)\t{'ruled' if kind in ruled else ''}")
+        out.append(f"{kind}\t{n} PR(s)\t{len(recent[kind])} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
     elif len(recent[kind]) >= min_prs and kind not in ruled:
         out.append(f"candidate {kind}: fixed in {len(recent[kind])} PRs in the last {recent_days} days, last {last[kind]}; e.g. {examples[kind][-1]}")
 if len(text.encode()) > max_bytes:
@@ -665,7 +674,7 @@ finding_rule() {
   cat <<EOF
 Log each finding that was fixed (not the ones rebutted), from any directory, with:
 
-    SWARM_PROJECT='${PROJECT_DIR}' ${SWARM_HOME}/bin/swarm.sh finding <kind> <PR URL> "<one line>"
+    SWARM_PROJECT='${PROJECT_DIR}' ${SWARM_HOME}/bin/swarm.sh log-finding <kind> <PR URL> "<one line>"
 
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
@@ -1563,7 +1572,7 @@ main() {
     status) status_report "${1:-}" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
-    finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
+    log-finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;

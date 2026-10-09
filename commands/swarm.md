@@ -29,7 +29,8 @@ Repeat until a step below says stop:
      close a conductor that has not reported.
    - `collect <agent>`: the conductor has finished. Pull the project's main checkout, then run
      `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first
-     (`gh pr list --state all --search "lesson: <kind> in:title"`): an open one is pending, a closed
+     (`gh pr list --state all --search 'in:title "lesson: <kind>"' --json title,state` and keep only a
+     title exactly `lesson: <kind>`): an open one is pending, a closed
      one means the user declined it, a merged one is adopted; in each case propose nothing. Otherwise
      draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`) for the project's
      `.claude/swarm/brief.md` and open it as a PR titled `lesson: <kind>`, never committed silently.
@@ -45,7 +46,7 @@ Repeat until a step below says stop:
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
      builder, `codex exec review` plus `/code-review <PR>` when it changes code (log each fixed
-     finding with `swarm.sh finding <kind> <PR URL> "<one line>"`), with findings
+     finding with `swarm.sh log-finding <kind> <PR URL> "<one line>"`), with findings
      sent back through `swarm.sh tell <slug> <file>` until a pass on the latest head finds nothing
      substantive
      (method.md § Building).
