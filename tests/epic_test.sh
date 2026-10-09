@@ -159,7 +159,7 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the one-PR-per-epic conductor reviews the story branch against the epic branch" "yes|yes|yes" \
-  "$(has "origin/epic/f\` in its worktree" "${brief}")|$(has "runs on each epic PR before it counts as reviewed" "${brief}")|$(has "never run" "${brief}")"
+  "$(has "codex exec review --base origin/epic/f\`" "${brief}")|$(has "runs on each epic PR before it counts as reviewed" "${brief}")|$(has "never run" "${brief}")"
 check "base prints a repo's base" "dev" "$(run base svc)"
 
 # --- next: an active epic whose stories are all in its branch, with no PR yet, gets a conductor.
