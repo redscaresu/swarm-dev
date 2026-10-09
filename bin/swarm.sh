@@ -526,6 +526,7 @@ wait_conductor() {
   while :; do
     status="$(wait_agent "${name}" "${timeout}")"
     [[ "${status}" == idle && ! -f "$(conductor_report "${name}")" ]] || break
+    ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
     sleep "${SWARM_CONDUCTOR_POLL:-30}"
   done
   echo "${status}"
