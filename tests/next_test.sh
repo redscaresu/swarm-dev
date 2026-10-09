@@ -201,6 +201,10 @@ if [[ "${code}" == 0 && "${sent}" == *"- a finding"* && "${sent}" == "From the c
   echo "ok   tell sends a settled builder the findings and exits 0, leaving no temp file"; else
   echo "FAIL tell sends a settled builder the findings: exit ${code}, sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
 rm -f "${dir}/sent"
+code="$(tellrun "done")"
+if [[ "${code}" == 0 && -f "${dir}/sent" ]]; then echo "ok   tell also sends a builder herdr reports as done"; else
+  echo "FAIL tell also sends a builder herdr reports as done: exit ${code}"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
 for st in working blocked; do
   code="$(tellrun "${st}")"
   if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses a ${st} builder"; else

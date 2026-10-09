@@ -144,8 +144,8 @@ check "the epic lists the repo" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md
 brief="$(cat "${p}/.swarm/briefs/f1.md")"
 check "the story brief opens no PR and names the epic branch" "yes|yes|yes" \
   "$(has "open no PR" "${brief}")|$(has "codex exec review --base origin/epic/f" "${brief}")|$(has "Before you reply, also run the epic's check" "${brief}")"
-check "the story brief asks for a mutation and keeps the builder open for review" "yes|yes" \
-  "$(has "prove each new or changed test can fail" "${brief}")|$(has "stay open" "${brief}")"
+check "the epic story brief asks for a mutation" "yes" \
+  "$(has "prove each new or changed test can fail" "${brief}")"
 # Someone merged into the epic branch: the next story starts from there, and the repo is listed once.
 "${GIT[@]}" -C "${ROOT}/svc" fetch -q origin && "${GIT[@]}" -C "${ROOT}/svc" checkout -q -b m origin/epic/f
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m f1 && "${GIT[@]}" -C "${ROOT}/svc" push -q origin m:epic/f
@@ -159,7 +159,7 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
-  "$(has "An epic PR is reviewed only once the /code-review skill" "${brief}")"
+  "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
 check "base prints a repo's base" "dev" "$(run base svc)"
 
 # --- next: an active epic whose stories are all in its branch, with no PR yet, gets a conductor.

@@ -649,7 +649,7 @@ story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
 nits with a reason, and converge on one clean pass. If codex reports a usage limit, do not wait for
 it to reset: carry on without it and say so. Run the repo's tests and make them pass. $(mutation_rule)
 When your branch is pushed, reply with the branch, what changed in three lines, the codex findings
-and the mutation, then stay open: the conductor may send review findings to fix.
+and the mutation, then stop.
 EOF
   else
     before="open the PR"
@@ -829,8 +829,8 @@ in the background.
 
 $(green_rule)
 
-An epic PR is reviewed only once the /code-review skill (\`/code-review <PR>\`) has also passed on
-it, its real findings fixed on the epic branch and the rest rebutted in the PR.
+An epic PR that changes code is reviewed only once the /code-review skill (\`/code-review <PR>\`)
+has also passed on it, its real findings fixed on the epic branch and the rest rebutted in the PR.
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1489,7 +1489,7 @@ main() {
     wait)   require_herdr; n="$(agent_name "${1:?name}")"
             if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
             else wait_agent "${n}" "${2:-3600000}"; fi ;;
-    *) sed -n '2,25p' "$0"; exit 2 ;;
+    *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
 }
 
