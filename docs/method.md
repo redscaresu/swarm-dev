@@ -214,9 +214,11 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. Since every
 agent's brief ends with that file, one rule there reaches every later builder, skeptic and
 conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
-opens it as a PR for you; it never edits the brief silently. A rule whose kind has not been fixed
-in 90 days is proposed for removal, and a brief over 4 KB is flagged, so the brief stays short
-enough to be read. The log is `.swarm/findings.tsv`.
+opens it as a PR for you; it never edits the brief silently, and a declined rule is marked
+`<!-- lesson-declined: <kind> -->` so it is not proposed again. Only kinds fixed in the last 90 days
+are candidates. A brief over 4 KB is flagged, and pruning it is your call: a rule that works stops
+its own findings, so quiet is no sign a rule is unneeded. The log is `.swarm/findings.tsv`, local to
+the machine.
 
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on

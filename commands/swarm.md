@@ -27,10 +27,12 @@ Repeat until a step below says stop:
      idle on an API error after three nudges, or the wait's timeout (an hour) has passed, not each
      time it idles on its own background work; when it returns, go back to 1. Never
      close a conductor that has not reported.
-   - `collect <agent>`: the conductor has finished. Run `swarm.sh lessons`: for each `candidate`,
-     draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`) for the project's
-     `.claude/swarm/brief.md` and open it as a PR for the user, never committed silently; for each
-     `stale` rule or a `long brief`, propose the removal or merge the same way. Then read its report
+   - `collect <agent>`: the conductor has finished. Run `swarm.sh lessons`: for each `candidate`
+     with no rule PR already open (`gh pr list --search "lesson: <kind>"`), draft one rule (under
+     300 bytes, ending in `<!-- lesson: <kind> -->`) for the project's `.claude/swarm/brief.md` and
+     open it as a PR for the user, titled with `lesson: <kind>`, never committed silently. If the
+     user declines it, add `<!-- lesson-declined: <kind> -->` to the brief so it is not proposed
+     again. For a `long brief`, propose merging or retiring rules the same way. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.

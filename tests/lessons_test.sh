@@ -34,12 +34,26 @@ printf 'Prove each test can fail. <!-- lesson: vacuous-test -->\n' > "${dir}/.cl
 check "a kind the brief already rules is no longer a candidate" "no" \
   "$(grep -q "candidate vacuous-test" <<< "$(sw lessons)" && echo yes || echo no)"
 
-# A rule whose kind was last fixed long ago, or never, is stale.
-printf '2020-01-01\told-kind\tu/9\tlong ago\n' >> "${dir}/.swarm/findings.tsv"
-printf 'Old rule. <!-- lesson: old-kind -->\nNever seen. <!-- lesson: never-seen -->\n' >> "${dir}/.claude/swarm/brief.md"
-out="$(sw lessons)"
-check "a rule whose kind went quiet is stale" "yes|yes" "$(has "stale old-kind" "${out}")|$(has "stale never-seen" "${out}")"
-check "a rule whose kind is still fixed is not stale" "no" "$(grep -q "stale vacuous-test" <<< "${out}" && echo yes || echo no)"
+# A declined kind is never proposed again.
+for pr in u/4 u/5 u/6; do sw finding denylist "${pr}" "a scrub that lists what to remove" >/dev/null; done
+check "denylist is now a candidate" "yes" "$(has "candidate denylist" "$(sw lessons)")"
+printf 'No. <!-- lesson-declined: denylist -->\n' >> "${dir}/.claude/swarm/brief.md"
+check "a declined kind is not proposed again" "no" "$(grep -q "candidate denylist" <<< "$(sw lessons)" && echo yes || echo no)"
+
+# A kind last fixed long ago is not news: no candidate.
+for pr in u/20 u/21 u/22; do printf '2020-01-01\told-kind\t%s\tlong ago\n' "${pr}" >> "${dir}/.swarm/findings.tsv"; done
+check "a kind not fixed recently is not a candidate" "no" "$(grep -q "candidate old-kind" <<< "$(sw lessons)" && echo yes || echo no)"
+
+# One PR written three ways counts once.
+for pr in https://github.com/O/R/pull/12 https://github.com/o/r/pull/12/files o/r#12; do sw finding same-pr "${pr}" "x" >/dev/null; done
+check "one PR written three ways counts once" "yes" "$(has "same-pr	1 PR(s)" "$(sw lessons --all)")"
+
+# Unquoted text is kept whole, and a carriage return cannot split a row.
+sw finding unquoted u/30 several words of text >/dev/null
+check "unquoted text is kept whole" "several words of text" "$(tail -1 "${dir}/.swarm/findings.tsv" | cut -f4)"
+sw finding cr-test "$(printf 'u/31\r')" "$(printf 'a\rb')" >/dev/null
+check "a carriage return is flattened" "4" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
+check "an unknown flag is refused" "yes" "$(has "usage: swarm.sh lessons" "$(sw lessons -a || true)")"
 
 # A brief over the cap is flagged.
 head -c 5000 /dev/zero | tr '\0' 'x' >> "${dir}/.claude/swarm/brief.md"
