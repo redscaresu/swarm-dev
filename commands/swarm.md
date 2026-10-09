@@ -39,7 +39,8 @@ Repeat until a step below says stop:
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
      builder, `codex exec review` plus `/code-review <PR>` when it changes code, with findings
-     sent back through `swarm.sh tell <slug> <file>` until two passes find nothing substantive
+     sent back through `swarm.sh tell <slug> <file>` until a pass on the latest head finds nothing
+     substantive
      (method.md § Building).
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is

@@ -540,15 +540,23 @@ wait_conductor() {
 # tell_agent <slug> <file> — send an agent a file's contents, such as review findings, through
 # deliver_prompt (it retries, and counts a permission prompt as taken up). A header line comes first,
 # so findings that begin with '-' are never read as a flag.
-# It first waits for the agent to settle, so a builder still mid-turn is not counted as told.
+# It refuses an agent that is mid-turn (findings sent then would be counted as taken up at once) or
+# sitting on a permission prompt (the text would land in the dialog), rather than waiting on it.
 tell_agent() {
-  local f="$2" name msg
+  local f="$2" name msg status
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
-  wait_agent "${name}" 3600000 >/dev/null
-  msg="$(mktemp)"; trap 'rm -f "${msg}"' EXIT
+  status="$(herdr agent wait "${name}" --timeout 5000 2>/dev/null | json "d['result']['agent']['agent_status']" 2>/dev/null || true)"
+  case "${status}" in
+    idle|done) ;;
+    working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
+    blocked) die "${name} is waiting on a prompt; answer it (herdr agent read ${name}), then tell it" ;;
+    *) die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
+  esac
+  msg="$(mktemp)"
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
-  deliver_prompt "${name}" "${msg}"
+  deliver_prompt "${name}" "${msg}" || { rm -f "${msg}"; exit 1; }
+  rm -f "${msg}"
   echo "told ${name}"
 }
 
@@ -808,8 +816,9 @@ When a builder reports, review its branch as the review rule below says, and onl
 passed, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
 \`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
-and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
-\`swarm.sh close <slug>\`, and go on to the next wave.
+and push epic/${epic}. Then run \`swarm.sh finish <slug>\` and \`swarm.sh unblock\`, and go on to
+the next wave. Keep each story's builder open until the epic PRs have passed /code-review, and send
+each of its findings to the builder whose story wrote that code; close the builders then.
 
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
 line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
@@ -1481,7 +1490,7 @@ main() {
     wait)   require_herdr; n="$(agent_name "${1:?name}")"
             if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
             else wait_agent "${n}" "${2:-3600000}"; fi ;;
-    *) sed -n '2,28p' "$0"; exit 2 ;;
+    *) sed -n '2,25p' "$0"; exit 2 ;;
   esac
 }
 
