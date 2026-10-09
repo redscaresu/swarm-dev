@@ -115,6 +115,18 @@ if [[ "${got}" == idle && "${reported}" == yes ]]; then
   echo "FAIL wait on an idle conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
 rm -f "${dir}/.swarm/conduct-e1.report.md"
 
+# herdr can report a conductor that ended its turn as `done`: that is not settled either.
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"done\"}}}'" > "${dir}/bin/herdr"
+(sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
+got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == "done" && "${reported}" == yes ]]; then
+  echo "ok   wait on a done conductor holds until its report"; else
+  echo "FAIL wait on a done conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}
 got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 2000)"
@@ -165,6 +177,38 @@ for pair in "${short_name}:${long}" "${long}:${long}" "short:short" "unknown:unk
   got="$(cd "${dir}" && bash "${SWARM}" _label "${pair%%:*}")"
   if [[ "${got}" == "${pair#*:}" ]]; then echo "ok   tab label for ${pair%%:*}"; else
     echo "FAIL tab label for ${pair%%:*}: want '${pair#*:}', got '${got}'"; fails=$((fails + 1)); fi
+done
+rm -rf "${dir}"
+
+# `tell` sends a settled builder the file and exits 0, leaving no temp file behind; it refuses a
+# builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent list`
+# reports s1 as $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
+dir="$(mktemp -d)"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin)
+cat > "${dir}/bin/herdr" <<EOF
+#!/bin/sh
+case "\$1 \$2" in
+  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\"}]}}" ;;
+  "agent prompt") printf '%s\n' "\$4" >> "${dir}/sent"; echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+esac
+EOF
+chmod +x "${dir}/bin/herdr"
+printf -- '- a finding\n' > "${dir}/findings.md"
+tellrun() { (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="$1" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md >/dev/null 2>&1; echo $?); }
+mkdir -p "${dir}/tmp"
+code="$(tellrun idle)"; sent="$(cat "${dir}/sent" 2>/dev/null)"; left="$(ls "${dir}/tmp")"
+if [[ "${code}" == 0 && "${sent}" == *"- a finding"* && "${sent}" == "From the conductor:"* && -z "${left}" ]]; then
+  echo "ok   tell sends a settled builder the findings and exits 0, leaving no temp file"; else
+  echo "FAIL tell sends a settled builder the findings: exit ${code}, sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
+code="$(tellrun "done")"
+if [[ "${code}" == 0 && -f "${dir}/sent" ]]; then echo "ok   tell also sends a builder herdr reports as done"; else
+  echo "FAIL tell also sends a builder herdr reports as done: exit ${code}"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
+for st in working blocked; do
+  code="$(tellrun "${st}")"
+  if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses a ${st} builder"; else
+    echo "FAIL tell refuses a ${st} builder: exit ${code}, sent: $(cat "${dir}/sent" 2>/dev/null)"; fails=$((fails + 1)); fi
 done
 rm -rf "${dir}"
 

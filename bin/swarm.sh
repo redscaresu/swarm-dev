@@ -7,6 +7,7 @@
 #   swarm.sh wait <name> [timeout-ms]                       block until the agent settles
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
+#   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -508,7 +509,8 @@ wait_agent() {
   local name="$1" timeout="$2" status nudges=0
   while :; do
     status=$(herdr agent wait "${name}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
-    if [[ "${status}" != idle || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
+    # herdr reports an agent whose turn ended as idle or done; both can be an API-error stop.
+    if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
       break
     fi
     nudges=$((nudges + 1))
@@ -519,20 +521,44 @@ wait_agent() {
   echo "${status}"
 }
 
-# wait_conductor <agent> <timeout-ms> — a conductor is idle whenever it waits on its own builders,
-# so idle is not settled: wait on until its report exists or it is no longer idle (blocked, gone).
+# wait_conductor <agent> <timeout-ms> — a conductor is idle (or done) whenever it waits on its own
+# builders, so neither is settled: wait on until its report exists or it is blocked or gone.
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 wait_conductor() {
   local name="$1" status deadline=$((SECONDS + $2 / 1000)) poll
   while :; do
     status="$(wait_agent "${name}" "$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))")"
-    [[ "${status}" == idle && ! -f "$(conductor_report "${name}")" ]] || break
+    [[ "${status}" =~ ^(idle|done)$ && ! -f "$(conductor_report "${name}")" ]] || break
     ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
     [[ ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
     sleep "${poll}"
   done
   echo "${status}"
+}
+
+# tell_agent <slug> <file> — send an agent a file's contents, such as review findings, through
+# deliver_prompt (it retries, and counts a permission prompt as taken up). A header line comes first,
+# so findings that begin with '-' are never read as a flag.
+# It refuses an agent that is mid-turn (findings sent then would be counted as taken up at once) or
+# sitting on a permission prompt (the text would land in the dialog), rather than waiting on it.
+tell_agent() {
+  local f="$2" name msg status
+  [[ -f "${f}" ]] || die "no such file '${f}'"
+  name="$(agent_name "$1")"
+  status="$(agent_status "${name}")"
+  case "${status}" in
+    idle|done) ;;
+    working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
+    blocked) die "${name} is waiting on a prompt; answer it (herdr agent read ${name}), then tell it" ;;
+    *) die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
+  esac
+  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
+  # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
+  trap "rm -f '${msg}'" EXIT
+  { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
+  deliver_prompt "${name}" "${msg}"
+  echo "told ${name}"
 }
 
 # The merge, signing and review rules, shared by the briefs.
@@ -546,6 +572,23 @@ review_bot_rule() {
   [[ "${CFG_review_bot}" == auto ]] || return 0
   printf '\n\nThen run the PR review bot of the repo as %s/docs/review.md says, and clear its findings the same way.' "${SWARM_HOME}"
 }
+# The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
+# context until then, so findings go back to it rather than to a fresh agent that has none.
+# review_rule — for pr_per=story, where each story has its own PR and its builder stays open.
+review_rule() {
+  cat <<EOF
+A story is reviewed only when its latest head has passed \`codex exec review --base origin/<base>\`
+in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
+/code-review skill on its PR (\`/code-review <PR>\`). If codex
+reports a usage limit, do not wait for it: rely on the other review and your own reading of the
+diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
+builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and
+what to decline), wait for it, and review the new head. One pass on the latest head with nothing
+substantive is enough; if each pass turns up only new nits, stop after two and rebut them in the PR
+with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
+its latest head has passed.
+EOF
+}
 conduct_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
     cat <<'RULE'
@@ -558,12 +601,17 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 RULE
   else
     cat <<'RULE'
-Merge a PR only when it is green, then run `swarm.sh unblock` and `swarm.sh close <slug>` to close
+Merge a PR only when it is green and reviewed, then run `swarm.sh unblock` and `swarm.sh close <slug>` to close
 that story's tab. If a merged story is still open on the board once you have pulled (its file is
 there and not `status: done`), run `swarm.sh finish <slug>` first. When the epic's **Done when**
 holds, take the epic off the board with `swarm.sh finish <epic>`.
 RULE
   fi
+}
+
+# A test that passes with its fix removed proves nothing; a builder shows each one can fail.
+mutation_rule() {
+  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and note which test failed and how."
 }
 
 # The brief every story builder gets. The story file is the task; these are the rules.
@@ -599,9 +647,9 @@ credentials. This project opens one PR per epic, so open no PR: commit on your b
 story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
 \`codex exec review --base origin/${epic_branch}\` before committing; fix real findings, decline
 nits with a reason, and converge on one clean pass. If codex reports a usage limit, do not wait for
-it to reset: carry on without it and say so. Run the repo's tests and make them pass. When your
-branch is pushed, reply with the branch, what changed in three lines, and the codex findings, then
-stop.
+it to reset: carry on without it and say so. Run the repo's tests and make them pass. $(mutation_rule)
+When your branch is pushed, reply with the branch, what changed in three lines, the codex findings
+and the mutation, then stop.
 EOF
   else
     before="open the PR"
@@ -616,8 +664,9 @@ committing; fix real findings, decline nits with a reason, converge on one clean
 loop in the PR body. If codex reports a usage limit, do not wait for it to reset: carry on without it
 and write "codex skipped: usage limit" in the PR body. If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. When CI is green, reply with
-the PR URL, what changed in three lines, and the codex findings, then stop.
+the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
+in the PR body. When CI is green, reply with the PR URL, what changed in three lines, and the codex
+findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR.
 EOF
   fi
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
@@ -738,6 +787,8 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 
 $(green_rule)
 
+$(review_rule)
+
 $(conduct_merge_rule)$(sign_rule_if_on)
 EOF
 }
@@ -752,7 +803,7 @@ conduct_epic_mode() {
     merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
 merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
   else
-    merge_step="Merge each PR once it is green, then run \`swarm.sh finish ${epic}\`."
+    merge_step="Merge each PR once it is green and reviewed, then run \`swarm.sh finish ${epic}\`."
   fi
   cat <<EOF
 This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story <slug>\`
@@ -777,6 +828,9 @@ keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh wat
 in the background.
 
 $(green_rule)
+
+An epic PR that changes code is reviewed only once the /code-review skill (\`/code-review <PR>\`)
+has also passed on it, its real findings fixed on the epic branch and the rest rebutted in the PR.
 
 ${merge_step}$(sign_rule_if_on)
 EOF
@@ -1414,6 +1468,7 @@ main() {
     story)  require_herdr; build_story "${1:?slug}" ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" ;;
+    tell)   require_herdr; tell_agent "${1:?slug}" "${2:?file}" ;;
     unblock) unblock ;;
     next)   next_step ;;
     status) status_report "${1:-}" ;;
@@ -1434,7 +1489,7 @@ main() {
     wait)   require_herdr; n="$(agent_name "${1:?name}")"
             if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
             else wait_agent "${n}" "${2:-3600000}"; fi ;;
-    *) sed -n '2,27p' "$0"; exit 2 ;;
+    *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
 }
 

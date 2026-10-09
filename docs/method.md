@@ -201,6 +201,13 @@ codex loop, reply with the PR URL when CI is green), the epic's `check:` command
 `.claude/swarm/brief.md`. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
 
+**Review before closing.** A story is reviewed when its latest head has passed codex and, if it
+changes code, the `/code-review` skill. The conductor sends the findings to the story's builder with
+`swarm.sh tell <slug> <file>` and reviews the new head again. It closes a builder only after both
+reviews pass, so the fixes are made by the agent that wrote the code, with its context. With
+`pr_per = epic`, stories have no PR: each epic PR gets `/code-review`, fixed on the epic branch. Each builder
+also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
+
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
