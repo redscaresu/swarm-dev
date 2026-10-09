@@ -429,7 +429,7 @@ record_finding() {
   local kind="$1" pr="$2" text="$3"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "kind '${kind}' must be short kebab-case, like vacuous-test"
   [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
-  [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
+  [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
   printf '%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" \
@@ -444,51 +444,55 @@ record_finding() {
 # rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
 lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
-  python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
+  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" <<'PY'
-import collections, datetime, os, re, sys
-log, brief, min_prs, recent_days, max_bytes, flag = sys.argv[1:7]
+import collections, datetime, os, re, subprocess, sys
+project, log, brief, min_prs, recent_days, max_bytes, flag = sys.argv[1:8]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
+cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
 
 def pr_key(pr):
     # One PR, however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
-prs, recent, last, examples, rows = (collections.defaultdict(set), collections.defaultdict(set), {},
-                                     collections.defaultdict(list), [])
+
+def read_brief():
+    # The brief on the default branch, where adopted rules land. git paths are from the repo root,
+    # so the project's own prefix is added for a project in a subdirectory of its repo.
+    prefix = subprocess.run(["git", "-C", project, "rev-parse", "--show-prefix"], capture_output=True, text=True)
+    path = prefix.stdout.strip() + os.path.relpath(brief, project)
+    got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
+    if got.returncode == 0:
+        return got.stdout.decode("utf-8", errors="replace"), ""
+    note = "note: no brief on origin/HEAD, so it was read from the working tree (any branch)"
+    return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note
+
+prs, recent = collections.defaultdict(set), collections.defaultdict(set)
+last, example = {}, {}
 if os.path.exists(log):
     for line in open(log, encoding="utf-8", errors="replace", newline="\n"):
         parts = line.rstrip("\n").split("\t")
-        if len(parts) != 4:
-            continue
-        day, kind, pr, text = parts
-        rows.append((day, kind, pr_key(pr), text))
-import subprocess
-project = os.path.dirname(os.path.dirname(os.path.dirname(brief)))
-rel = os.path.relpath(brief, project)
-got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{rel}"], capture_output=True)
-if got.returncode == 0:
-    text = got.stdout.decode("utf-8", errors="replace")
-else:  # no remote default branch to read: fall back to the working tree
-    text = open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""
-ruled = set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", text))
-cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
-for day, kind, pr, txt in rows:
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
-        continue  # a hand-edited or malformed row must not count as recent forever
-    prs[kind].add(pr); last[kind] = max(last.get(kind, ""), day); examples[kind].append(txt)
-    if day >= cutoff:
-        recent[kind].add(pr)  # only PRs inside the window count toward a candidate
+        if len(parts) != 4 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]):
+            continue  # a malformed or hand-edited row must not count, least of all as recent
+        day, kind, pr, finding = parts
+        prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
+        if day >= cutoff:
+            recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
+brief_text, note = read_brief()
+ruled = set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text))
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
-    n = len(prs[kind])
+    n_recent = len(recent[kind])
     if flag == "--all":
-        out.append(f"{kind}\t{n} PR(s)\t{len(recent[kind])} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
-    elif len(recent[kind]) >= min_prs and kind not in ruled:
-        out.append(f"candidate {kind}: fixed in {len(recent[kind])} PRs in the last {recent_days} days, last {last[kind]}; e.g. {examples[kind][-1]}")
-if len(text.encode()) > max_bytes:
-    out.append(f"long brief: {brief} is {len(text.encode())} bytes, over {max_bytes}; merge or retire rules")
-print("\n".join(out) if out else "no lessons: nothing has recurred in enough PRs yet")
+        out.append(f"{kind}\t{len(prs[kind])} PR(s)\t{n_recent} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
+    elif n_recent >= min_prs and kind not in ruled:
+        out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
+    elif n_recent >= min_prs:
+        out.append(f"recurring {kind}: it has a brief rule, yet was fixed in {n_recent} PRs in the last {recent_days} days; "
+                   "if that is since the rule landed, the rule is not working: turn it into a step agents must do, or drop it")
+if len(brief_text.encode()) > max_bytes:
+    out.append(f"long brief: {brief} is {len(brief_text.encode())} bytes, over {max_bytes}; merge or retire rules")
+print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))
 PY
 }
 
@@ -674,11 +678,11 @@ finding_rule() {
   cat <<EOF
 Log each finding that was fixed (not the ones rebutted), from any directory, with:
 
-    SWARM_PROJECT='${PROJECT_DIR}' ${SWARM_HOME}/bin/swarm.sh log-finding <kind> <PR URL> "<one line>"
+    SWARM_PROJECT='${PROJECT_DIR}' '${SWARM_HOME}/bin/swarm.sh' log-finding <kind> <PR URL> "<one line>"
 
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`SWARM_PROJECT='${PROJECT_DIR}' ${SWARM_HOME}/bin/swarm.sh lessons --all\` already lists when it fits.
+\`SWARM_PROJECT='${PROJECT_DIR}' '${SWARM_HOME}/bin/swarm.sh' lessons --all\` already lists when it fits.
 EOF
 }
 conduct_merge_rule() {

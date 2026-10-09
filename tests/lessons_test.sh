@@ -53,7 +53,7 @@ check "one PR written three ways counts once" "yes" "$(has "same-pr	1 PR(s)" "$(
 sw log-finding unquoted o/r#30 several words of text >/dev/null
 check "unquoted text is kept whole" "several words of text" "$(tail -1 "${dir}/.swarm/findings.tsv" | cut -f4)"
 sw log-finding cr-test o/r#31 "$(printf 'a\rb\r')" >/dev/null
-check "a carriage return is flattened" "4" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
+check "a carriage return is flattened" "0" "$(grep -c $'\r' "${dir}/.swarm/findings.tsv" || true)"
 check "an unknown flag is refused" "yes" "$(has "usage: swarm.sh lessons" "$(sw lessons -a || true)")"
 
 # A PR must be a URL or owner/repo#N; shorthand that could double-count is refused.
@@ -67,6 +67,13 @@ check "old PRs do not count toward the threshold" "no" "$(grep -q "candidate mix
 # A stray non-UTF-8 byte in the log does not break lessons.
 printf '%s\tbytes\to/r#50\tbad \xff byte\n' "$(date +%F)" >> "${dir}/.swarm/findings.tsv"
 check "a non-UTF-8 byte does not break lessons" "yes" "$(has "bytes	1 PR(s)" "$(sw lessons --all)")"
+
+# A PR URL with junk after the number is refused, not counted as a different PR.
+check "a malformed PR URL is refused" "yes" "$(has "must be a PR URL" "$(sw log-finding k https://github.com/o/r/pull/1x2 x || true)")"
+
+# A ruled kind that keeps coming back is reported as recurring: the rule may not be working.
+check "a ruled kind still recurring is reported" "yes" "$(has "recurring vacuous-test" "$(sw lessons)")"
+check "a brief read from the working tree says so" "yes" "$(has "read from the working tree" "$(sw lessons)")"
 
 # A brief over the cap is flagged.
 head -c 5000 /dev/zero | tr '\0' 'x' >> "${dir}/.claude/swarm/brief.md"

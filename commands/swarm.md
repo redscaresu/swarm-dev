@@ -29,12 +29,13 @@ Repeat until a step below says stop:
      close a conductor that has not reported.
    - `collect <agent>`: the conductor has finished. Pull the project's main checkout, then run
      `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first
-     (`gh pr list --state all --search 'in:title "lesson: <kind>"' --json title,state` and keep only a
-     title exactly `lesson: <kind>`): an open one is pending, a closed
+     (from the project's repo, `gh pr list --state all --limit 200 --search 'in:title "lesson: <kind>"'
+     --json title,state`, keeping only a title exactly `lesson: <kind>`): an open one is pending, a closed
      one means the user declined it, a merged one is adopted; in each case propose nothing. Otherwise
      draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`) for the project's
      `.claude/swarm/brief.md` and open it as a PR titled `lesson: <kind>`, never committed silently.
-     For a `long brief`, propose merging or retiring rules the same way. Then read its report
+     For a `long brief`, propose merging or retiring rules as a PR titled exactly `lesson: prune brief`,
+     unless one is already open; for a `recurring` kind, say so to the user. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
