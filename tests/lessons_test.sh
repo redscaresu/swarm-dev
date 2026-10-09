@@ -75,6 +75,7 @@ check "a brief read from the working tree says so" "yes" "$(has "read from the w
 check "a future-dated row is not counted" "no" "$(printf '2999-01-01\tfuture\to/r#70\tx\n2999-01-01\tfuture\to/r#71\tx\n2999-01-01\tfuture\to/r#72\tx\n' >> "${dir}/.swarm/findings.tsv"; grep -q "candidate future" <<< "$(sw lessons)" && echo yes || echo no)"
 check "a basic-format date is not counted as recent" "no" "$(printf '20260101\tbasic\to/r#80\tx\n20260101\tbasic\to/r#81\tx\n20260101\tbasic\to/r#82\tx\n' >> "${dir}/.swarm/findings.tsv"; grep -q "candidate basic" <<< "$(sw lessons)" && echo yes || echo no)"
 check "a blank finding is refused with the usage" "yes" "$(has "usage: swarm.sh log-finding" "$(sw log-finding k o/r#1 '   ' || true)")"
+check "a whitespace-only finding is refused" "yes" "$(has "usage: swarm.sh log-finding" "$(sw log-finding k o/r#1 "$(printf '\t\n')" || true)")"
 check "an overlong kind is refused" "yes" "$(has "32 characters at most" "$(sw log-finding "$(printf 'a%.0s' {1..40})" o/r#1 x || true)")"
 
 # A brief over the cap is flagged.

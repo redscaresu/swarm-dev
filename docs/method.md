@@ -212,7 +212,7 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 `swarm.sh log-finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. Since every
-builder's and conductor's brief ends with that file, one rule there reaches every later builder
+builder's and conductor's brief includes that file, one rule there reaches every later builder
 and conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
 opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic

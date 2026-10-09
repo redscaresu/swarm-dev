@@ -427,11 +427,10 @@ BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long 
 # record_finding <kind> <pr-url> <text> — log one fixed finding.
 record_finding() {
   local kind="$1" pr="$2" text="$3"
-  [[ -n "${kind}" && -n "${pr}" && -n "${text// /}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
+  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
     || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
   text="${text:0:200}"
-  [[ -n "${pr}" && -n "${text}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
@@ -460,10 +459,15 @@ def pr_key(pr):
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
 def adopted(kind, path):
-    # The day the kind's rule landed on the default branch, from git; "" when it cannot be told.
-    got = subprocess.run(["git", "-C", project, "log", "--reverse", "--format=%cs", "-S",
-                          f"<!-- lesson: {kind} -->", "origin/HEAD", "--", f":(top){path}"], capture_output=True, text=True)
-    return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""  # the first commit
+    # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
+    # The tag is searched as written in the brief, and the newest commit that changed its count is taken:
+    # the rule is present now, so that commit is its latest addition (a rule pruned and re-added is new).
+    tag = tags.get(kind)
+    if not tag:
+        return ""
+    got = subprocess.run(["git", "-C", project, "log", "--format=%cs", "-S", tag, "origin/HEAD", "--",
+                          f":(top){path}"], capture_output=True, text=True)
+    return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""
 
 def read_brief():
     # The brief on the default branch, where adopted rules land. git paths are from the repo root,
@@ -494,7 +498,8 @@ if os.path.exists(log):
         if day >= cutoff:
             recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
 brief_text, note, brief_path = read_brief()
-ruled = set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text))
+tags = {m.group(1): m.group(0) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text)}
+ruled = set(tags)
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
     n_recent = len(recent[kind])
