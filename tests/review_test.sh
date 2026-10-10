@@ -62,7 +62,7 @@ case "$1 $2" in
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent list")   if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
-  "agent rename") if [ -f "$A" ]; then sed -i.bak "s/\"name\":\"$3\"/\"name\":\"$4\"/" "$A"; fi ;;
+  "agent rename") if [ -f "$A" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
   "agent start")  if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
 esac
@@ -150,13 +150,17 @@ agent() { # <name> <role> — start one agent with the stubs, and print swarm's 
   (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent t "$1" "${p}" "$2" "${ROOT}/brief.md" 2>&1) || true
 }
 taken() { echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"$1\",\"pane_id\":\"w:9\"}]}}" > "${ROOT}/agents.json"; }
+mkdir -p "${p}/.swarm/state"; echo "w:9 lead" > "${p}/.swarm/state/own"   # w:9 is this project's pane
 taken idle; agent lead lead >/dev/null
-check "a finished agent holding the name is retired before the new one starts" "agent rename lead lead-done|agent start lead" \
+check "a finished agent holding the name is retired before the new one starts" "agent rename w:9 lead-done|agent start lead" \
   "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
-echo '{"result":{"agents":[{"name":"lead","agent_status":"idle"},{"name":"lead-done","agent_status":"idle"}]}}' > "${ROOT}/agents.json"
+echo '{"result":{"agents":[{"name":"lead","agent_status":"idle","pane_id":"w:9"},{"name":"lead-done","agent_status":"idle","pane_id":"w:8"}]}}' > "${ROOT}/agents.json"
 agent lead lead >/dev/null
-check "a name reused a second time retires to the next free -done name" "agent rename lead lead-done2|agent start lead" \
+check "a name reused a second time retires to the next free -done name" "agent rename w:9 lead-done2|agent start lead" \
   "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
+echo '{"result":{"agents":[{"name":"lead","agent_status":"idle","pane_id":"w:77"}]}}' > "${ROOT}/agents.json"; out=$(agent lead lead)
+check "another project's agent holding the name is refused, never retired, before any pane opens" "yes|no|no" \
+  "$(has "an agent this project did not start" "${out}")|$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
 taken working; out=$(agent lead lead)
 check "a working agent holding the name stops the start before any pane opens" "yes|no" \
   "$(has 'still working' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
@@ -169,7 +173,7 @@ check "codex outside a planning tab stays read-only" "yes" "$(has '-s read-only'
 : > "${ROOT}/herdr.log"
 (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cx4 "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
 check "a planning codex writes only in its tab's output dir, told where paths start" "yes|yes|yes" \
-  "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt cx4 ' "${ROOT}/herdr.log")")"
+  "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt w:' "${ROOT}/herdr.log")")"
 check "codex starts with hooks off, so no trust dialog can take the brief" "yes" "$(has '-c features.hooks=false' "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")"
 
 # --- status: each open pane's agent, an empty pane, and what waits on the user.

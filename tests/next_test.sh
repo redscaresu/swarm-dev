@@ -103,11 +103,27 @@ expect_conductor "idle conductor without a report is still waited on" "wait cond
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
+# The stub lists this project's conductor (and its retired name) in panes the state records, as
+# next_pane does: wait addresses an agent by this project's pane, never by a bare name.
+# shellcheck disable=SC2016 # the stub's $1/$2/$3 are its own arguments, written literally
+stub() { # <status> [api-error]
+  {
+    echo '#!/bin/sh'
+    echo 'case "$1 $2" in'
+    echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"$1\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"$1\",\"pane_id\":\"w:2\"}]}}' ;;"
+    if [ -n "${2:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
+    echo '  "agent wait"|"agent prompt") case "$3" in w:1|w:2) ;; *) echo "{\"error\":\"not this project'"'"'s pane: $3\"}"; exit 1 ;; esac ;;'
+    echo 'esac'
+    echo 'case "$1 $2" in "agent list"|"agent read") ;; *)'
+    echo "  echo '{\"result\":{\"agent\":{\"agent_status\":\"$1\"}}}' ;;"
+    echo 'esac'
+  } > "${dir}/bin/herdr"
+  chmod +x "${dir}/bin/herdr"
+}
 # `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
 dir="$(mktemp -d)"
-(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch .swarm/briefs/conduct-e1.md)
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
-chmod +x "${dir}/bin/herdr"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs .swarm/state && touch .swarm/briefs/conduct-e1.md && printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > .swarm/state/e1)
+stub idle
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
 reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
@@ -118,7 +134,7 @@ if [[ "${got}" == idle && "${reported}" == yes ]]; then
 rm -f "${dir}/.swarm/conduct-e1.report.md"
 
 # herdr can report a conductor that ended its turn as `done`: that is not settled either.
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"done\"}}}'" > "${dir}/bin/herdr"
+stub "done"
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
 reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
@@ -127,7 +143,7 @@ if [[ "${got}" == "done" && "${reported}" == yes ]]; then
   echo "ok   wait on a done conductor holds until its report"; else
   echo "FAIL wait on a done conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
 rm -f "${dir}/.swarm/conduct-e1.report.md"
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+stub idle
 
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}
@@ -138,21 +154,23 @@ if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
 
 # A conductor idle on an API error is stuck: wait returns after wait_agent's nudges, well inside
 # the timeout, instead of polling and nudging again.
-cat > "${dir}/bin/herdr" <<'EOF'
-#!/bin/sh
-case "$1 $2" in
-  "agent read") echo '⏺ API Error: overloaded' ;;
-  *) echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-esac
-EOF
+stub idle api-error
 start=${SECONDS}
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000 2>/dev/null)"
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
   echo "ok   wait on a conductor stuck on an API error returns without polling"; else
   echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
+# A conductor of the same name started by another project is refused, never waited on.
+printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub idle
+got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 3000 2>&1; echo "exit $?")"
+if [[ "${got}" == *"no agent this project started"* && "${got}" == *"exit 1" ]]; then
+  echo "ok   wait refuses another project's conductor of the same name"; else
+  echo "FAIL wait refuses another project's conductor of the same name: got '${got}'"; fails=$((fails + 1)); fi
+printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > "${dir}/.swarm/state/e1"
+
 # A retired conductor (renamed <name>-done) is not waited on for a report.
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+stub idle
 start=${SECONDS}
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1-done 20000)"
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
@@ -197,11 +215,11 @@ rm -rf "${dir}"
 # builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent list`
 # reports s1 as $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
 dir="$(mktemp -d)"
-(cd "${dir}" && git init -q && mkdir -p docs/stories bin)
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state && echo "w:1 s1" > .swarm/state/t)
 cat > "${dir}/bin/herdr" <<EOF
 #!/bin/sh
 case "\$1 \$2" in
-  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\"}]}}" ;;
+  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\",\"pane_id\":\"\${TELL_PANE:-w:1}\"}]}}" ;;
   "agent prompt") printf '%s\n' "\$4" >> "${dir}/sent"; echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
 esac
 EOF
@@ -213,6 +231,15 @@ code="$(tellrun idle)"; sent="$(cat "${dir}/sent" 2>/dev/null)"; left="$(ls "${d
 if [[ "${code}" == 0 && "${sent}" == *"- a finding"* && "${sent}" == "From the conductor:"* && -z "${left}" ]]; then
   echo "ok   tell sends a settled builder the findings and exits 0, leaving no temp file"; else
   echo "FAIL tell sends a settled builder the findings: exit ${code}, sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
+code="$(TELL_PANE=w:77 tellrun idle)"
+if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses another project's agent of the same name"; else
+  echo "FAIL tell refuses another project's agent of the same name: exit ${code}, sent $(cat "${dir}/sent" 2>/dev/null || true)"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
+out="$(cd "${dir}" || exit; HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md 2>&1; true)"
+if [[ "${out}" != *"not one this project started"* && ! -f "${dir}/sent" ]]; then
+  echo "ok   tell never calls this project's own agent of unknown status another project's"; else
+  echo "FAIL tell never calls this project's own agent of unknown status another project's: '${out}'"; fails=$((fails + 1)); fi
 rm -f "${dir}/sent"
 code="$(tellrun "done")"
 if [[ "${code}" == 0 && -f "${dir}/sent" ]]; then echo "ok   tell also sends a builder herdr reports as done"; else

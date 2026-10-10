@@ -277,7 +277,7 @@ agent_name() {
   printf '%s' "${n:0:32}"
 }
 
-json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
@@ -407,7 +407,7 @@ start_agent() {
     { echo "The project is ${PROJECT_DIR}; every relative path below is relative to it. You can write only in $(codex_out_dir "${tab}")."; echo; cat "${prompt_file}"; } > "${brief}"
     prompt_file="${brief}"
   fi
-  deliver_prompt "${name}" "${prompt_file}"
+  deliver_prompt "${name}" "${prompt_file}" "${pane}"
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
@@ -634,9 +634,10 @@ PY
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), retries once, and fails loudly rather than reporting success.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" status
+  local name="$1" prompt_file="$2" status target="${3:-}"
+  [[ -n "${target}" ]] || target="$(own_target "${name}")"
   for _ in 1 2; do
-    status=$(herdr agent prompt "${name}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
+    status=$(herdr agent prompt "${target}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
       --timeout 60000 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
     case "${status}" in
       working|blocked) return 0 ;;
@@ -654,22 +655,25 @@ API_ERROR_NUDGES=3
 # is an API error, such as "The response stopped arriving". The agent then sits idle, its work
 # unfinished, and nothing else will wake it.
 ended_on_api_error() {
-  herdr agent read "$1" --source recent-unwrapped 2>/dev/null | grep '⏺' | tail -1 | grep -q '⏺ API Error'
+  local target
+  target="$(agent_field "$1" pane_id)"; [[ -n "${target}" ]] || return 1
+  herdr agent read "${target}" --source recent-unwrapped 2>/dev/null | grep '⏺' | tail -1 | grep -q '⏺ API Error'
 }
 
 # wait_agent <name> <timeout-ms> — block until the agent settles and print its status. An agent idle
 # after an API error has not settled: tell it to carry on, and wait again.
 wait_agent() {
-  local name="$1" timeout="$2" status nudges=0
+  local name="$1" timeout="$2" status nudges=0 target
+  target="$(own_target "${name}")" || return 1
   while :; do
-    status=$(herdr agent wait "${name}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
+    status=$(herdr agent wait "${target}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
     # herdr reports an agent whose turn ended as idle or done; both can be an API-error stop.
     if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
       break
     fi
     nudges=$((nudges + 1))
     echo "swarm: ${name} stopped on an API error; telling it to carry on (${nudges}/${API_ERROR_NUDGES})" >&2
-    herdr agent prompt "${name}" "Your last turn ended on an API error. Carry on from where you stopped." \
+    herdr agent prompt "${target}" "Your last turn ended on an API error. Carry on from where you stopped." \
       --wait --until working --timeout 60000 >/dev/null 2>&1 || true
   done
   echo "${status}"
@@ -705,7 +709,8 @@ tell_agent() {
     idle|done) ;;
     working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
     blocked) die "${name} is waiting on a prompt; answer it (herdr agent read ${name}), then tell it" ;;
-    *) die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
+    *) [[ -n "${status}" || -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
+       die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
   esac
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
@@ -1114,7 +1119,7 @@ next_step() {
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
     # herdr lists every project's agents: only one in a pane this project opened counts.
-    slug=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in __import__('os').environ.get('SWARM_PANES','').split()),'')" 2>/dev/null || true)
+    slug=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in e.get('SWARM_PANES','').split()),'')" 2>/dev/null || true)
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
@@ -1422,7 +1427,7 @@ watch_prs() {
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local blocked
       # Only agents in panes this project opened: herdr lists every project's.
-      blocked=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name') and a.get('pane_id') in __import__('os').environ.get('SWARM_PANES','').split())" 2>/dev/null || true)
+      blocked=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name') and a.get('pane_id') in e.get('SWARM_PANES','').split())" 2>/dev/null || true)
       if [[ -n "${blocked}" ]] && ! grep -qx "blocked ${blocked}" "${seen}"; then
         echo "blocked ${blocked}" >> "${seen}"; echo "agent(s) blocked on a prompt: ${blocked}"; return 0
       fi
@@ -1536,40 +1541,62 @@ close_agent() {
 
 # free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
 # keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
-# `lead`) failed and left an empty pane. Retire a finished holder; refuse a working one. Runs
-# before any pane opens.
+# `lead`) failed and left an empty pane. Retire a finished holder; refuse a working one. Names are
+# unique across every herdr workspace, so a holder in another project is refused, never retired:
+# it is that project's agent. Runs before any pane opens.
 free_agent_name() {
   local status
   status=$(agent_status "$1")
   case "${status}" in
-    "") return 0 ;;
+    "") [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
+        die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane" ;;
     working|blocked) die "$1: an agent with this name is still ${status}; wait for it, or use another name" ;;
   esac
   retire_agent "$1" >/dev/null
   [[ -z "$(agent_status "$1")" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
 }
 
-# agent_status <name> — herdr's status for the agent called <name>, or nothing if there is none.
-agent_status() {
-  herdr agent list 2>/dev/null | json "next((a.get('agent_status','') or 'unknown' for a in d['result']['agents'] if a.get('name')=='$1'),'')" 2>/dev/null || true
+# agent_field <name> <field> [any] — <field> (agent_status, pane_id) of this project's agent called
+# <name> (its pane is one own_panes recorded), or nothing. With "any", of whichever project's agent
+# holds the name: herdr names are unique across all workspaces.
+agent_field() {
+  herdr agent list 2>/dev/null | SWARM_NAME="$1" SWARM_FIELD="$2" SWARM_ANY="${3:-}" SWARM_PANES="$(own_panes)" json "next((a.get(e['SWARM_FIELD']) or ('unknown' if e['SWARM_FIELD']=='agent_status' else '') for a in d['result']['agents'] if a.get('name')==e['SWARM_NAME'] and (e['SWARM_ANY'] or a.get('pane_id') in e['SWARM_PANES'].split())),'')" 2>/dev/null || true
+}
+
+# agent_status <name> — herdr's status for this project's agent called <name>, or nothing if there is none.
+agent_status() { agent_field "$1" agent_status; }
+
+# own_target <name> — the pane of this project's agent called <name>, to address herdr by: a name
+# alone could reach another project's agent, since herdr names span workspaces.
+own_target() {
+  local pane
+  pane="$(agent_field "$1" pane_id)"
+  [[ -n "${pane}" ]] || die "$1: no agent this project started holds this name now: it has exited or its pane was closed, or another project holds the name, which is never addressed"
+  echo "${pane}"
 }
 
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
 # retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
 # its slot in the tab's state under that name, so no later agent is split into it.
 retire_agent() {
-  local name state new i
+  local name state new i pane
   name="$(agent_name "$1")"
-  # A name reused more than once already has a <name>-done; take the first free suffix.
+  # A name reused more than once already has a <name>-done; take the first free suffix (free in any
+  # project: names are unique across workspaces).
   new="${name:0:27}-done"
   for i in 2 3 4 5 6 7 8 9; do
-    [[ -z "$(agent_status "${new}")" ]] && break
+    [[ -z "$(agent_field "${new}" agent_status any)" ]] && break
     new="${name:0:26}-done${i}"
   done
-  herdr agent rename "${name}" "${new}" >/dev/null 2>&1 || true
+  # By pane, and only this project's: renaming by name would rename another project's agent.
+  pane="$(agent_field "${name}" pane_id)"
+  if [[ -z "${pane}" ]]; then echo "no agent this project started is called $1; nothing to retire"; return 0; fi
+  herdr agent rename "${pane}" "${new}" >/dev/null 2>&1 \
+    || die "$1: herdr could not rename it to ${new}, so its name is not free; close its pane (herdr agent list)"
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
-    awk -v n="$1" 'NF > 1 && $2 == n { $2 = n "-done" } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
+    # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
+    awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
   echo "kept $1 open (keep_panes)"
 }
@@ -1669,6 +1696,7 @@ main() {
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
+    _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
