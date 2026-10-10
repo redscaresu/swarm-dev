@@ -10,7 +10,7 @@
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
-#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs with no brief rule yet, and a long brief
+#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
@@ -115,7 +115,8 @@ CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
 CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes"
+CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -132,6 +133,13 @@ load_config() {
     key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
     [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
     case "${key}" in
+      lessons_file)
+        # Only a file every agent reads: the brief is pasted into each prompt, each brief says to read
+        # AGENTS.md first, and Claude Code loads CLAUDE.md. A rule anywhere else would retire its
+        # candidate without ever reaching an agent.
+        case "${value}" in .claude/swarm/brief.md|AGENTS.md|CLAUDE.md|.claude/CLAUDE.md) ;;
+          *) die "${where}: lessons_file must be one every agent reads: .claude/swarm/brief.md, AGENTS.md, CLAUDE.md or .claude/CLAUDE.md" ;;
+        esac ;;
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
@@ -168,6 +176,9 @@ BOARD_IN_REPO=0; [[ ${PROJECT_IS_GIT} == 1 && "${BOARD}/" == "${PROJECT_DIR}/"* 
 STATE_DIR="${PROJECT_DIR}/.swarm/state"
 # Project rules every builder gets after the standard ones: commit trailers, secrets, ADR rules.
 PROJECT_BRIEF="${PROJECT_DIR}/.claude/swarm/brief.md"
+# Where lesson rules are read from. The briefs paste the brief whole and, from any other
+# lessons_file, only its tagged rule lines (project_rules), never the whole file.
+LESSONS_FILE="$(abs_path "${CFG_lessons_file}")"
 PANES_PER_TAB=4
 
 show_config() {
@@ -176,6 +187,7 @@ show_config() {
     case "$1" in
       board_dir) echo "${BOARD}" ;;
       repos_dir) echo "${REPOS_DIR}" ;;
+      lessons_file) echo "${LESSONS_FILE}" ;;
       project) echo "${PROJECT_DIR}" ;;
       *) [[ " ${CONFIG_KEYS} " == *" $1 "* ]] || die "unknown key '$1' (known: project ${CONFIG_KEYS})"
          v="CFG_$1"; echo "${!v}" ;;
@@ -185,7 +197,7 @@ show_config() {
   echo "project = ${PROJECT_DIR}"
   for key in ${CONFIG_KEYS}; do
     v="CFG_${key}"; local s="SRC_${key}"
-    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; esac
+    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; lessons_file) v=LESSONS_FILE ;; esac
     echo "${key} = ${!v}    (${!s})"
   done
 }
@@ -439,7 +451,8 @@ record_finding() {
   echo "recorded ${kind}"
 }
 
-# lessons [--all] — kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
+# lessons [--all] — the "brief" below is lessons_file (default the brief itself).
+# Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
 # as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
 # declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. A lead's memory
@@ -451,10 +464,12 @@ lessons_report() {
   # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
   local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
-  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
-    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" <<'PY'
+  # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
+  # is long by design and loaded by the agents themselves.
+  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
+    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
-project, log, brief, min_prs, recent_days, max_bytes, flag, memory = sys.argv[1:9]
+project, log, brief, min_prs, recent_days, max_bytes, flag, memory, swarm_brief = sys.argv[1:10]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
 
@@ -463,18 +478,18 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
-def adopted(kind, path):
+def adopted(kind):
     # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
     # The tag is searched as written in the brief, and the newest commit that changed its count is taken:
     # the rule is present now, so that commit is its latest addition (a rule pruned and re-added is new).
-    tag = tags.get(kind)
-    if not tag:
+    tag, path = tags.get(kind, ("", ""))
+    if not tag or not path:
         return ""
     got = subprocess.run(["git", "-C", project, "log", "--format=%cs", "-S", tag, "origin/HEAD", "--",
                           f":(top){path}"], capture_output=True, text=True)
     return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""
 
-def read_brief():
+def read_brief(brief=brief):
     # The brief on the default branch, where adopted rules land. git paths are from the repo root,
     # so the project's own prefix is added for a project in a subdirectory of its repo.
     prefix = subprocess.run(["git", "-C", project, "rev-parse", "--show-prefix"], capture_output=True, text=True)
@@ -482,8 +497,10 @@ def read_brief():
     got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
     if got.returncode == 0:
         return got.stdout.decode("utf-8", errors="replace"), "", path
-    note = "note: no brief on origin/HEAD, so it was read from the working tree (any branch)"
-    return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note, ""
+    if not os.path.exists(brief):
+        return "", "", ""
+    note = f"note: no {os.path.relpath(brief, project)} on origin/HEAD, so it was read from the working tree (any branch)"
+    return open(brief, encoding="utf-8", errors="replace").read(), note, ""
 
 prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
 last, example = {}, {}
@@ -503,7 +520,12 @@ if os.path.exists(log):
         if day >= cutoff:
             recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
 brief_text, note, brief_path = read_brief()
-tags = {m.group(1): m.group(0) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text)}
+# The brief is pasted into every prompt, so a rule it still tags rules its kind too. Each kind keeps
+# its tag as written and the file it is in, for its adoption date.
+cap_text, cap_note, cap_path = (brief_text, "", brief_path) if swarm_brief == brief else read_brief(swarm_brief)
+tags = {}
+for text, path in ((cap_text, cap_path), (brief_text, brief_path)):  # lessons_file wins a kind in both
+    tags.update({m.group(1): (m.group(0), path) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", text)})
 ruled = set(tags)
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
@@ -513,7 +535,7 @@ for kind in sorted(prs, key=lambda k: -len(prs[k])):
     elif n_recent >= min_prs and kind not in ruled:
         out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
     elif kind in ruled:
-        since = adopted(kind, brief_path) if brief_path else ""
+        since = adopted(kind)
         after = {pr for day, pr in dated[kind] if since and day > since}
         if len(after) >= min_prs:
             out.append(f"recurring {kind}: fixed in {len(after)} PRs since its brief rule landed on {since}; "
@@ -527,11 +549,15 @@ for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
     tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
     if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
         out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
-size = len(brief_text.encode("utf-8", errors="surrogateescape"))
+# The cap measures what every prompt carries: the brief, plus lessons_file's tagged lines when it is
+# another file (project_rules pastes those too).
+pasted = "" if swarm_brief == brief else "\n".join(re.findall(r"^.*<!--\s*lesson:\s*[a-z0-9-]+\s*-->.*$", brief_text, re.M))
+size = len((cap_text + pasted).encode("utf-8", errors="surrogateescape"))
 if size > max_bytes:
-    where = f"origin/HEAD:{brief_path}" if brief_path else brief
+    where = (f"origin/HEAD:{cap_path}" if cap_path else swarm_brief) + (" plus lessons_file's rules" if pasted else "")
     out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
-print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))
+notes = list(dict.fromkeys(n for n in (note, cap_note) if n))
+print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + notes))
 PY
 }
 
@@ -811,10 +837,15 @@ EOF
   [[ -z "${check}" ]] || extra+="Before you ${before}, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
   [[ "${CFG_sign_commits}" != true ]] || extra+="$(sign_rule)"$'\n'
   [[ -z "${extra}" ]] || printf '%s' "${extra}"
-  if [[ -f "${PROJECT_BRIEF}" ]]; then
-    echo
-    cat "${PROJECT_BRIEF}"
-  fi
+  local rules; rules="$(project_rules)"
+  [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
+}
+
+# project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
+# builder in another repo's worktree never reads this project's AGENTS.md.
+project_rules() {
+  [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
+  [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
@@ -894,10 +925,8 @@ Stay inside this epic: start no story outside it, and leave the HLD and other ep
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
 EOF
-  if [[ -f "${PROJECT_BRIEF}" ]]; then
-    printf '\nThe project'"'"'s rules, which every builder also gets:\n\n'
-    cat "${PROJECT_BRIEF}"
-  fi
+  local rules; rules="$(project_rules)"
+  [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on

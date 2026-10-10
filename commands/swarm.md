@@ -32,12 +32,13 @@ Repeat until a step below says stop:
      (from the project's repo, `gh pr list --state all --limit 200 --search 'in:title "lesson: <kind>"'
      --json title,state,closedAt`, keeping only a title exactly `lesson: <kind>`): an open one is pending, and one closed
      unmerged (its `closedAt`) in the last 90 days means the user declined it; in either case propose
-     nothing. A merged one does not block: `lessons` lists a kind only while the brief has no rule
+     nothing. A merged one does not block: `lessons` lists a kind only while neither the brief nor `lessons_file` has a rule
      for it, so the rule was since removed. Otherwise
-     draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`; for a candidate from the
+     draft one rule (under 300 bytes, on a single line, ending in `<!-- lesson: <kind> -->`: the briefs
+     paste only the tagged line; for a candidate from the
      lead's memory, from that memory, generalised, with nothing private from it; if the user closes
-     that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the project's
-     `.claude/swarm/brief.md` and open it as a PR titled `lesson: <kind>`, never committed silently.
+     that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the file
+     `swarm.sh config lessons_file` prints (the brief unless the project chose, say, `AGENTS.md`) and open it as a PR titled `lesson: <kind>`, never committed silently.
      For a `long brief`, propose merging or retiring rules as a PR titled exactly `lesson: prune brief`,
      unless one is open or was closed (its `closedAt`) in the last 90 days; for a `recurring` kind, say so to the user. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what

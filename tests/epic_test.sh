@@ -162,6 +162,17 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
+# lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
+printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
+printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
+printf 'A PROJECT RULE every agent reads.' > "${p}/.claude/swarm/brief.md"   # no final newline
+item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
+run story g1 >/dev/null
+check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
+  "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
+check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
+run close g1 >/dev/null; rm -f "${b}/stories/g1.md" "${p}/AGENTS.md"
+grep -v '^lessons_file' "${p}/.claude/swarm/config" > "${p}/cfg.tmp" || true; mv "${p}/cfg.tmp" "${p}/.claude/swarm/config"
 check "base prints a repo's base" "dev" "$(run base svc)"
 
 # --- next: an active epic whose stories are all in its branch, with no PR yet, gets a conductor.
