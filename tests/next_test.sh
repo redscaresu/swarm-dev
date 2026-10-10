@@ -105,6 +105,7 @@ expect_conductor "a long epic's conductor is collected by its report" "collect A
 
 # The stub lists this project's conductor (and its retired name) in panes the state records, as
 # next_pane does: wait addresses an agent by this project's pane, never by a bare name.
+# shellcheck disable=SC2016 # the stub's $1/$2/$3 are its own arguments, written literally
 stub() { # <status> [api-error]
   {
     echo '#!/bin/sh'
@@ -133,7 +134,7 @@ if [[ "${got}" == idle && "${reported}" == yes ]]; then
 rm -f "${dir}/.swarm/conduct-e1.report.md"
 
 # herdr can report a conductor that ended its turn as `done`: that is not settled either.
-stub done
+stub "done"
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
 reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
