@@ -141,8 +141,8 @@ check "a subdirectory project reads the repo root's memory" "yes" \
   "$(has "candidate root-kind" "$(cd "${r}/repo/svc" && CLAUDE_PROJECTS_DIR="${r}/cp" env -u SWARM_PROJECT bash "${SWARM}" lessons 2>&1)")"
 rm -rf "${r}"
 
-# lessons_file: rules read from AGENTS.md, which every agent already loads; it is never pasted into a
-# brief, and the brief's size cap does not apply to it.
+# lessons_file: rules read from AGENTS.md. Only its tagged rule lines are pasted into briefs, so only
+# those count toward the brief's size cap; the rest of AGENTS.md does not.
 r="$(mktemp -d)"
 "${G[@]}" init -q --bare "${r}/origin.git"; "${G[@]}" clone -q "${r}/origin.git" "${r}/p" 2>/dev/null
 mkdir -p "${r}/p/.claude/swarm" "${r}/p/.swarm"; printf 'lessons_file = AGENTS.md\n' > "${r}/p/.claude/swarm/config"
@@ -154,7 +154,7 @@ out="$(rs lessons)"
 check "a rule in lessons_file retires its kind" "no" "$(grep -q "candidate agents-kind" <<< "${out}" && echo yes || echo no)"
 check "a rule the brief still tags rules its kind too" "no" "$(grep -q "candidate brief-kind" <<< "${out}" && echo yes || echo no)"
 check "config prints lessons_file as an absolute path" "yes" "$(has "$(cd "${r}/p" && pwd -P)/AGENTS.md" "$(rs config lessons_file)")"
-check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "long brief" <<< "${out}" && echo yes || echo no)"
+check "lessons_file's untagged text does not count toward the cap" "no" "$(grep -q "long brief" <<< "${out}" && echo yes || echo no)"
 head -c 5000 /dev/zero | tr '\0' 'y' >> "${r}/p/.claude/swarm/brief.md"
 (cd "${r}/p" && "${G[@]}" commit -qam long && "${G[@]}" push -q origin main)
 check "the brief is still capped when lessons_file is elsewhere" "yes" "$(has "long brief: origin/HEAD:.claude/swarm/brief.md" "$(rs lessons)")"

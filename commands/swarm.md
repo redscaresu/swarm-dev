@@ -39,7 +39,8 @@ Repeat until a step below says stop:
      lead's memory, from that memory, generalised, with nothing private from it; if the user closes
      that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the file
      `swarm.sh config lessons_file` prints (the brief unless the project chose, say, `AGENTS.md`) and open it as a PR titled `lesson: <kind>`, never committed silently.
-     For a `long brief`, propose merging or retiring rules as a PR titled exactly `lesson: prune brief`,
+     For a `long brief` (the brief, plus `lessons_file`'s tagged rules when it says so), propose merging or
+     retiring rules in whichever file holds them as a PR titled exactly `lesson: prune brief`,
      unless one is open or was closed (its `closedAt`) in the last 90 days; for a `recurring` kind, say so to the user. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
