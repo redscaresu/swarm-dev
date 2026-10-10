@@ -281,13 +281,10 @@ json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
-# The tab records only: STATE_DIR also holds codex briefs (brief-*.md), watch-seen and .tmp files.
+# Only lines shaped like a tab record ("<pane> [name]", a pane id like w1:p6K) count: STATE_DIR also
+# holds codex briefs, watch-seen and .tmp files, and a list of those to skip would fail open.
 own_panes() {
-  local f
-  for f in "${STATE_DIR}"/*; do
-    [[ -f "${f}" && "${f}" != *.md && "${f}" != *.tmp && "${f##*/}" != watch-seen ]] && awk '{print $1}' "${f}"
-  done 2>/dev/null
-  return 0
+  cat "${STATE_DIR}"/* 2>/dev/null | awk 'NF <= 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ {print $1}'
 }
 
 require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"; }

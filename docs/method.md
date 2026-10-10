@@ -194,7 +194,9 @@ swarm.sh watch             # in the background: returns when a story PR needs th
 
 `wait` returns when an agent goes idle, which can be early. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
-for 10 minutes, or when an agent is blocked on a prompt.
+for 10 minutes, or when an agent is blocked on a prompt. herdr lists every project's agents, so
+`watch`, and `next` when it looks for a running conductor, count only agents in panes this project
+opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one
