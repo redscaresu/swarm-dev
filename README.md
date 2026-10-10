@@ -44,7 +44,7 @@ and your own steps in them are marked **You:**. More: [`docs/method.md`](docs/me
 |---|---|---|
 | **Inner** | while a builder works | For a code change, the builder proves each new test can fail: it breaks the fix, sees the test fail, and restores it. A test that passes with its fix removed proves nothing. |
 | **Middle** | before a builder is closed | Each PR passes `codex` and, if it changes code, the `/code-review` skill. The conductor sends findings back to the builder that wrote the code (`swarm.sh tell`), which still has its context, and closes it at the first pass with nothing substantive: only nits, out-of-scope edge cases, or points already declined. |
-| **Outer** | across epics | Each fixed finding is logged by kind (`swarm.sh log-finding`). `swarm.sh lessons` names a kind that keeps coming back in 3+ PRs, and `/swarm` proposes a one-line rule for your `.claude/swarm/brief.md`, which every builder's and conductor's brief includes, as a PR you approve; a rule PR you close is not proposed again. |
+| **Outer** | across epics | Each fixed finding is logged by kind (`swarm.sh log-finding`). `swarm.sh lessons` names a kind that keeps coming back in 3+ PRs, or a lead memory you tagged `lesson: <kind>` in its frontmatter (builders run in their own worktrees and never see the lead's memory), and `/swarm` proposes a one-line rule for your `.claude/swarm/brief.md`, which every builder's and conductor's brief includes, as a PR you approve; a rule PR you close is not proposed again. |
 
 ## Getting started
 

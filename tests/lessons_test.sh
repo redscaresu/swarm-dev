@@ -78,6 +78,21 @@ check "a blank finding is refused with the usage" "yes" "$(has "usage: swarm.sh 
 check "a whitespace-only finding is refused" "yes" "$(has "usage: swarm.sh log-finding" "$(sw log-finding k o/r#1 "$(printf '\t\n')" || true)")"
 check "an overlong kind is refused" "yes" "$(has "32 characters at most" "$(sw log-finding "$(printf 'a%.0s' {1..40})" o/r#1 x || true)")"
 
+# A lead's memory tagged `lesson: <kind>` in its frontmatter is a candidate until the brief rules it.
+mem="${dir}/memory"; mkdir -p "${mem}"
+printf -- '---\nname: m\nmetadata:\n  type: feedback\n  lesson: mem-kind\n---\nbody\n' > "${mem}/tagged.md"
+printf -- '---\nname: u\n---\nlesson: body-kind\n' > "${mem}/untagged.md"
+printf -- '---\nname: v\nlesson: vacuous-test\n---\n' > "${mem}/ruled.md"
+out="$(SWARM_MEMORY_DIR="${mem}" sw lessons)"
+check "a tagged memory is a candidate" "yes" "$(has "candidate mem-kind: from the lead's memory ${mem}/tagged.md" "${out}")"
+check "a tag in a memory's body is ignored" "no" "$(grep -q "body-kind" <<< "${out}" && echo yes || echo no)"
+check "a memory whose kind the brief rules is not a candidate" "no" "$(grep -q "ruled.md" <<< "${out}" && echo yes || echo no)"
+printf -- '---\nlesson: denylist\n---\n' > "${mem}/dup.md"
+check "a kind already a finding candidate is listed once" "1" "$(SWARM_MEMORY_DIR="${mem}" sw lessons | grep -c "candidate denylist")"
+check "the memory dir defaults to Claude Code's per-project path" "yes" \
+  "$(mkdir -p "${dir}/cp/$(cd "${dir}" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')/memory" && cp "${mem}/tagged.md" "$_/" && has "candidate mem-kind" "$(CLAUDE_PROJECTS_DIR="${dir}/cp" sw lessons)")"
+rm -rf "${mem}" "${dir}/cp"
+
 # A brief over the cap is flagged.
 head -c 5000 /dev/zero | tr '\0' 'x' >> "${dir}/.claude/swarm/brief.md"
 check "a long brief is flagged" "yes" "$(has "long brief" "$(sw lessons)")"

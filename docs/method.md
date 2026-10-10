@@ -213,7 +213,10 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
-more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. Since every
+more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. So is a lead
+memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
+frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
+the builders the same way. Since every
 builder's and conductor's brief includes that file, one rule there reaches every later builder
 and conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
 opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind

@@ -1,6 +1,6 @@
 {
   "name": "swarm-dev",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "HLD → epics → stories → parallel builds: a visible Claude Code swarm in herdr panes, with adversarial scoping and a per-role model policy",
   "author": {
     "name": "redscaresu"

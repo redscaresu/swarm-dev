@@ -442,14 +442,17 @@ record_finding() {
 # lessons [--all] — kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
 # as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
-# declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. There is no staleness check: the log is local while the brief is committed, and a
+# declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. A lead's memory
+# (Claude Code's per-project memory directory, which builders in their own worktrees never see) that
+# carries `lesson: <kind>` in its frontmatter is a candidate too, until the brief rules that kind. There is no staleness check: the log is local while the brief is committed, and a
 # rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
 lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
+  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}/${PROJECT_DIR//[^A-Za-z0-9]/-}/memory}"
   python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
-    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" <<'PY'
-import collections, datetime, os, re, subprocess, sys
-project, log, brief, min_prs, recent_days, max_bytes, flag = sys.argv[1:8]
+    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" <<'PY'
+import collections, datetime, glob, os, re, subprocess, sys
+project, log, brief, min_prs, recent_days, max_bytes, flag, memory = sys.argv[1:9]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
 
@@ -513,6 +516,12 @@ for kind in sorted(prs, key=lambda k: -len(prs[k])):
         if len(after) >= min_prs:
             out.append(f"recurring {kind}: fixed in {len(after)} PRs since its brief rule landed on {since}; "
                        "the rule is not working: turn it into a step agents must do, or drop it")
+for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
+    # Only the frontmatter is read, and only a tagged memory is named: the rest of memory stays private.
+    head = re.match(r"---\n(.*?)\n---", open(path, encoding="utf-8", errors="replace").read(), re.S)
+    tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
+    if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
+        out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
 size = len(brief_text.encode("utf-8", errors="surrogateescape"))
 if size > max_bytes:
     where = f"origin/HEAD:{brief_path}" if brief_path else brief
