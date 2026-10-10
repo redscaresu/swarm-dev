@@ -148,7 +148,7 @@ r="$(mktemp -d)"
 mkdir -p "${r}/p/.claude/swarm" "${r}/p/.swarm"; printf 'lessons_file = AGENTS.md\n' > "${r}/p/.claude/swarm/config"
 { printf 'Prove it. <!-- lesson: agents-kind -->\n'; head -c 5000 /dev/zero | tr '\0' 'x'; echo; } > "${r}/p/AGENTS.md"
 printf 'Prove it. <!-- lesson: brief-kind -->\n' > "${r}/p/.claude/swarm/brief.md"
-(cd "${r}/p" && "${G[@]}" add -A && "${G[@]}" commit -q -m rules && "${G[@]}" push -q origin main && "${G[@]}" remote set-head origin -a >/dev/null)
+(cd "${r}/p" && "${G[@]}" add -A && GIT_COMMITTER_DATE="2026-01-01T00:00:00" "${G[@]}" commit -q -m rules && "${G[@]}" push -q origin main && "${G[@]}" remote set-head origin -a >/dev/null)
 for k in agents-kind brief-kind; do for n in 1 2 3; do rs log-finding "${k}" "o/r#${n}" "x" >/dev/null; done; done
 out="$(rs lessons)"
 check "a rule in lessons_file retires its kind" "no" "$(grep -q "candidate agents-kind" <<< "${out}" && echo yes || echo no)"
@@ -158,6 +158,8 @@ check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "lon
 head -c 5000 /dev/zero | tr '\0' 'y' >> "${r}/p/.claude/swarm/brief.md"
 (cd "${r}/p" && "${G[@]}" commit -qam long && "${G[@]}" push -q origin main)
 check "the brief is still capped when lessons_file is elsewhere" "yes" "$(has "long brief: origin/HEAD:.claude/swarm/brief.md" "$(rs lessons)")"
+for n in 4 5 6; do rs log-finding brief-kind "o/r#${n}" "after the rule" >/dev/null; done
+check "a rule only in the brief still gets its recurring check" "yes" "$(has "recurring brief-kind" "$(rs lessons)")"
 printf 'short\n' > "${r}/p/.claude/swarm/brief.md"
 for n in $(seq 40); do printf 'Rule %s %s <!-- lesson: k%s -->\n' "${n}" "$(head -c 120 /dev/zero | tr '\0' 'z')" "${n}"; done >> "${r}/p/AGENTS.md"
 (cd "${r}/p" && "${G[@]}" commit -qam rules && "${G[@]}" push -q origin main)

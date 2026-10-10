@@ -478,12 +478,12 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
-def adopted(kind, path):
+def adopted(kind):
     # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
     # The tag is searched as written in the brief, and the newest commit that changed its count is taken:
     # the rule is present now, so that commit is its latest addition (a rule pruned and re-added is new).
-    tag = tags.get(kind)
-    if not tag:
+    tag, path = tags.get(kind, ("", ""))
+    if not tag or not path:
         return ""
     got = subprocess.run(["git", "-C", project, "log", "--format=%cs", "-S", tag, "origin/HEAD", "--",
                           f":(top){path}"], capture_output=True, text=True)
@@ -520,11 +520,13 @@ if os.path.exists(log):
         if day >= cutoff:
             recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
 brief_text, note, brief_path = read_brief()
-tags = {m.group(1): m.group(0) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text)}
-# The brief is pasted into every prompt, so a rule it still tags rules its kind too.
+# The brief is pasted into every prompt, so a rule it still tags rules its kind too. Each kind keeps
+# its tag as written and the file it is in, for its adoption date.
 cap_text, cap_note, cap_path = (brief_text, "", brief_path) if swarm_brief == brief else read_brief(swarm_brief)
-# ponytail: a kind ruled only by the brief gets no `recurring` check when lessons_file is elsewhere.
-ruled = set(tags) | set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", cap_text))
+tags = {}
+for text, path in ((cap_text, cap_path), (brief_text, brief_path)):  # lessons_file wins a kind in both
+    tags.update({m.group(1): (m.group(0), path) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", text)})
+ruled = set(tags)
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
     n_recent = len(recent[kind])
@@ -533,7 +535,7 @@ for kind in sorted(prs, key=lambda k: -len(prs[k])):
     elif n_recent >= min_prs and kind not in ruled:
         out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
     elif kind in ruled:
-        since = adopted(kind, brief_path) if brief_path else ""
+        since = adopted(kind)
         after = {pr for day, pr in dated[kind] if since and day > since}
         if len(after) >= min_prs:
             out.append(f"recurring {kind}: fixed in {len(after)} PRs since its brief rule landed on {since}; "
