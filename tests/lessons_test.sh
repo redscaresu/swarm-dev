@@ -154,6 +154,9 @@ out="$(rs lessons)"
 check "a rule in lessons_file retires its kind" "no" "$(grep -q "candidate agents-kind" <<< "${out}" && echo yes || echo no)"
 check "with lessons_file set, a rule only in the brief does not count" "yes" "$(has "candidate brief-kind" "${out}")"
 check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "long brief" <<< "${out}" && echo yes || echo no)"
+head -c 5000 /dev/zero | tr '\0' 'y' >> "${r}/p/.claude/swarm/brief.md"
+(cd "${r}/p" && "${G[@]}" commit -qam long && "${G[@]}" push -q origin main)
+check "the brief is still capped when lessons_file is elsewhere" "yes" "$(has "long brief: origin/HEAD:.claude/swarm/brief.md" "$(rs lessons)")"
 check "an absolute lessons_file is refused" "yes" \
   "$(printf 'lessons_file = /etc/x\n' > "${r}/p/.claude/swarm/config"; has "relative to the project" "$(rs lessons || true)")"
 rm -rf "${r}"

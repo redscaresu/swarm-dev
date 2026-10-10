@@ -458,12 +458,12 @@ lessons_report() {
   # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
   local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
-  # The size cap is the brief's: a lessons_file like AGENTS.md is long by design.
-  local cap=0; [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] && cap="${BRIEF_MAX_BYTES}"
+  # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
+  # is long by design and loaded by the agents themselves.
   python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
-    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${cap}" "${1:-}" "${memory}" <<'PY'
+    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
-project, log, brief, min_prs, recent_days, max_bytes, flag, memory = sys.argv[1:9]
+project, log, brief, min_prs, recent_days, max_bytes, flag, memory, swarm_brief = sys.argv[1:10]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
 
@@ -483,7 +483,7 @@ def adopted(kind, path):
                           f":(top){path}"], capture_output=True, text=True)
     return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""
 
-def read_brief():
+def read_brief(brief=brief):
     # The brief on the default branch, where adopted rules land. git paths are from the repo root,
     # so the project's own prefix is added for a project in a subdirectory of its repo.
     prefix = subprocess.run(["git", "-C", project, "rev-parse", "--show-prefix"], capture_output=True, text=True)
@@ -536,9 +536,10 @@ for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
     tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
     if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
         out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
-size = len(brief_text.encode("utf-8", errors="surrogateescape"))
-if max_bytes and size > max_bytes:
-    where = f"origin/HEAD:{brief_path}" if brief_path else brief
+cap_text, _, cap_path = (brief_text, note, brief_path) if swarm_brief == brief else read_brief(swarm_brief)
+size = len(cap_text.encode("utf-8", errors="surrogateescape"))
+if size > max_bytes:
+    where = f"origin/HEAD:{cap_path}" if cap_path else swarm_brief
     out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
 print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))
 PY
