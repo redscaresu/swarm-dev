@@ -45,8 +45,9 @@ Repeat until a step below says stop:
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
-   - `resume <slug>`: a one-off that an earlier run started. If `herdr agent list` shows `<slug>`
-     working, `swarm.sh wait <slug>` in the background first. Then find its PR
+   - `resume <slug>`: a one-off that an earlier run started. If `swarm.sh status` (this project's
+     agents only; `herdr agent list` shows every project's) shows `<slug>` working, `swarm.sh wait
+     <slug>` in the background first. Then find its PR
      (`gh pr list --head story/<slug>`, run in the story's repo: the project, or
      `swarm.sh config repos_dir`/`<repo:>` when the story names one) and handle it as for `story`. If there is no
      agent and no PR, the build died: tell the user, and stop.

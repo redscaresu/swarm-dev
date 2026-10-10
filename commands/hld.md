@@ -43,7 +43,7 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    questions that block decomposition; cite file:line; write findings only to `D/review.md`) and
    start it: `swarm.sh agent hld hld-review-<slug> "$PWD" hld-review <brief>`. Wait until
    `D/review.md` is written, then hand it to the co-author:
-   `herdr agent prompt "$(swarm.sh _target hld-<slug>)" "The reviewer has finished: read D/review.md, summarise it for the user and go through it together."`
+   `t="$(swarm.sh _target hld-<slug>)" && herdr agent prompt "$t" "The reviewer has finished: read D/review.md, summarise it for the user and go through it together."`
 5. Still in the background: wait until `D/agreed` exists. Then set `status: agreed`, open a PR for
    the HLD through the codex loop, `swarm.sh close hld`, and tell the user the design is agreed and
    that `/swarm` decomposes it next (`/plan-hld <file>`).

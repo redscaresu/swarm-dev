@@ -1571,7 +1571,7 @@ agent_status() { agent_field "$1" agent_status; }
 own_target() {
   local pane
   pane="$(agent_field "$1" pane_id)"
-  [[ -n "${pane}" ]] || die "$1: no agent this project started holds this name (herdr agent list); one in another project is never addressed"
+  [[ -n "${pane}" ]] || die "$1: no agent this project started holds this name now: it has exited or its pane was closed, or another project holds the name, which is never addressed"
   echo "${pane}"
 }
 
