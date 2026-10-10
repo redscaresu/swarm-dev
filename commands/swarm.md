@@ -36,8 +36,8 @@ Repeat until a step below says stop:
      for it, so the rule was since removed. Otherwise
      draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`; for a candidate from the
      lead's memory, from that memory, generalised, with nothing private from it; if the user closes
-     that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the project's
-     `.claude/swarm/brief.md` and open it as a PR titled `lesson: <kind>`, never committed silently.
+     that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the file
+     `swarm.sh config lessons_file` prints (the brief unless the project chose, say, `AGENTS.md`) and open it as a PR titled `lesson: <kind>`, never committed silently.
      For a `long brief`, propose merging or retiring rules as a PR titled exactly `lesson: prune brief`,
      unless one is open or was closed (its `closedAt`) in the last 90 days; for a `recurring` kind, say so to the user. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what

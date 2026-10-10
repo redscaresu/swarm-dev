@@ -10,7 +10,7 @@
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
-#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs with no brief rule yet, and a long brief
+#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
@@ -115,7 +115,8 @@ CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
 CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes"
+CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -132,6 +133,8 @@ load_config() {
     key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
     [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
     case "${key}" in
+      lessons_file)
+        [[ -n "${value}" && "${value}" != /* ]] || die "${where}: lessons_file must be a path relative to the project" ;;
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
@@ -168,6 +171,9 @@ BOARD_IN_REPO=0; [[ ${PROJECT_IS_GIT} == 1 && "${BOARD}/" == "${PROJECT_DIR}/"* 
 STATE_DIR="${PROJECT_DIR}/.swarm/state"
 # Project rules every builder gets after the standard ones: commit trailers, secrets, ADR rules.
 PROJECT_BRIEF="${PROJECT_DIR}/.claude/swarm/brief.md"
+# Where lesson rules are read from. The briefs paste only PROJECT_BRIEF: a lessons_file such as
+# AGENTS.md is one every agent already loads, so it is never pasted a second time.
+LESSONS_FILE="$(abs_path "${CFG_lessons_file}")"
 PANES_PER_TAB=4
 
 show_config() {
@@ -439,7 +445,8 @@ record_finding() {
   echo "recorded ${kind}"
 }
 
-# lessons [--all] — kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
+# lessons [--all] — the "brief" below is lessons_file (default the brief itself).
+# Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
 # as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
 # declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. A lead's memory
@@ -451,8 +458,10 @@ lessons_report() {
   # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
   local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
-  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
-    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" <<'PY'
+  # The size cap is the brief's: a lessons_file like AGENTS.md is long by design.
+  local cap=0; [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] && cap="${BRIEF_MAX_BYTES}"
+  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
+    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${cap}" "${1:-}" "${memory}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
 project, log, brief, min_prs, recent_days, max_bytes, flag, memory = sys.argv[1:9]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
@@ -528,7 +537,7 @@ for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
     if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
         out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
 size = len(brief_text.encode("utf-8", errors="surrogateescape"))
-if size > max_bytes:
+if max_bytes and size > max_bytes:
     where = f"origin/HEAD:{brief_path}" if brief_path else brief
     out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
 print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))

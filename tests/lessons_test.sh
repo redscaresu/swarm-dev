@@ -141,5 +141,22 @@ check "a subdirectory project reads the repo root's memory" "yes" \
   "$(has "candidate root-kind" "$(cd "${r}/repo/svc" && CLAUDE_PROJECTS_DIR="${r}/cp" env -u SWARM_PROJECT bash "${SWARM}" lessons 2>&1)")"
 rm -rf "${r}"
 
+# lessons_file: rules read from AGENTS.md, which every agent already loads; it is never pasted into a
+# brief, and the brief's size cap does not apply to it.
+r="$(mktemp -d)"
+"${G[@]}" init -q --bare "${r}/origin.git"; "${G[@]}" clone -q "${r}/origin.git" "${r}/p" 2>/dev/null
+mkdir -p "${r}/p/.claude/swarm" "${r}/p/.swarm"; printf 'lessons_file = AGENTS.md\n' > "${r}/p/.claude/swarm/config"
+{ printf 'Prove it. <!-- lesson: agents-kind -->\n'; head -c 5000 /dev/zero | tr '\0' 'x'; echo; } > "${r}/p/AGENTS.md"
+printf 'Prove it. <!-- lesson: brief-kind -->\n' > "${r}/p/.claude/swarm/brief.md"
+(cd "${r}/p" && "${G[@]}" add -A && "${G[@]}" commit -q -m rules && "${G[@]}" push -q origin main && "${G[@]}" remote set-head origin -a >/dev/null)
+for k in agents-kind brief-kind; do for n in 1 2 3; do rs log-finding "${k}" "o/r#${n}" "x" >/dev/null; done; done
+out="$(rs lessons)"
+check "a rule in lessons_file retires its kind" "no" "$(grep -q "candidate agents-kind" <<< "${out}" && echo yes || echo no)"
+check "with lessons_file set, a rule only in the brief does not count" "yes" "$(has "candidate brief-kind" "${out}")"
+check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "long brief" <<< "${out}" && echo yes || echo no)"
+check "an absolute lessons_file is refused" "yes" \
+  "$(printf 'lessons_file = /etc/x\n' > "${r}/p/.claude/swarm/config"; has "relative to the project" "$(rs lessons || true)")"
+rm -rf "${r}"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

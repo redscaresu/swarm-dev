@@ -123,6 +123,7 @@ prints every setting and where it came from.
 | `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
+| `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live, relative to the project. `AGENTS.md` is read by every agent (and by you) without being pasted into a brief, so rules about writing code reach interactive sessions too; the brief keeps the swarm-only rules. The 4 KB cap applies only to the brief |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
@@ -213,11 +214,11 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
-more PRs that the project's `.claude/swarm/brief.md` has no rule for is a `candidate`. So is a lead
+more PRs that the project's `lessons_file` (default `.claude/swarm/brief.md`) has no rule for is a `candidate`. So is a lead
 memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
 frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
-the builders the same way. Since every
-builder's and conductor's brief includes that file, one rule there reaches every later builder
+the builders the same way. Every builder and conductor reads that file (the brief is pasted into
+their prompts; `AGENTS.md` they load themselves), so one rule there reaches every later builder
 and conductor. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
 opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
