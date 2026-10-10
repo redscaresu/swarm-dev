@@ -97,7 +97,7 @@ folder, so the agent cannot stall on that prompt.
 | `merge` | `human` | `agent`: the conductor (the agent building an epic) merges green, reviewed PRs |
 | `pr_per` | `story` | `epic`: one PR per epic |
 | `keep_panes` | `false` | `true`: keep finished panes open (renamed `<name>-done`) |
-| `lessons_file` | `.claude/swarm/brief.md` | where lesson rules land, relative to the project; `AGENTS.md` puts them where every agent, and you, already read |
+| `lessons_file` | `.claude/swarm/brief.md` | where lesson rules land: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md` (files every agent reads); `AGENTS.md` puts them where you read them too |
 
 The rest: [`docs/method.md` § Configuring a project](docs/method.md#configuring-a-project).
 `swarm.sh config` shows what is in effect.

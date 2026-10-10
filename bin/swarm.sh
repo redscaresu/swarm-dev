@@ -134,7 +134,12 @@ load_config() {
     [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
     case "${key}" in
       lessons_file)
-        [[ -n "${value}" && "${value}" != /* ]] || die "${where}: lessons_file must be a path relative to the project" ;;
+        # Only a file every agent reads: the brief is pasted into each prompt, each brief says to read
+        # AGENTS.md first, and Claude Code loads CLAUDE.md. A rule anywhere else would retire its
+        # candidate without ever reaching an agent.
+        case "${value}" in .claude/swarm/brief.md|AGENTS.md|CLAUDE.md|.claude/CLAUDE.md) ;;
+          *) die "${where}: lessons_file must be one every agent reads: .claude/swarm/brief.md, AGENTS.md, CLAUDE.md or .claude/CLAUDE.md" ;;
+        esac ;;
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here

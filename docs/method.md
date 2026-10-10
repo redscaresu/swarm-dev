@@ -123,7 +123,7 @@ prints every setting and where it came from.
 | `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
-| `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live, relative to the project. `AGENTS.md` is read by every agent (and by you) without being pasted into a brief, so rules about writing code reach interactive sessions too; the brief keeps the swarm-only rules. The 4 KB cap applies only to the brief |
+| `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). `AGENTS.md` is read by every agent (and by you) without being pasted into a brief, so rules about writing code reach interactive sessions too; the brief keeps the swarm-only rules. The 4 KB cap applies only to the brief |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with

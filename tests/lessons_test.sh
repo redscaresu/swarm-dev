@@ -157,8 +157,8 @@ check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "lon
 head -c 5000 /dev/zero | tr '\0' 'y' >> "${r}/p/.claude/swarm/brief.md"
 (cd "${r}/p" && "${G[@]}" commit -qam long && "${G[@]}" push -q origin main)
 check "the brief is still capped when lessons_file is elsewhere" "yes" "$(has "long brief: origin/HEAD:.claude/swarm/brief.md" "$(rs lessons)")"
-check "an absolute lessons_file is refused" "yes" \
-  "$(printf 'lessons_file = /etc/x\n' > "${r}/p/.claude/swarm/config"; has "relative to the project" "$(rs lessons || true)")"
+check "a lessons_file no agent reads is refused" "yes" \
+  "$(printf 'lessons_file = docs/rules.md\n' > "${r}/p/.claude/swarm/config"; has "must be one every agent reads" "$(rs lessons || true)")"
 rm -rf "${r}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
