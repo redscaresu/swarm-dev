@@ -1105,7 +1105,8 @@ next_step() {
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
-    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done')),'')" 2>/dev/null || true)
+    # herdr lists every project's agents: only a conductor started in this project (its cwd) counts.
+    slug=$(herdr agent list 2>/dev/null | SWARM_DIR="${PROJECT_DIR}" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and __import__('os').path.realpath(a.get('cwd') or '/nonexistent') == __import__('os').path.realpath(__import__('os').environ['SWARM_DIR'])),'')" 2>/dev/null || true)
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
@@ -1412,7 +1413,8 @@ watch_prs() {
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local blocked
-      blocked=$(herdr agent list 2>/dev/null | json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name'))" 2>/dev/null || true)
+      # Only this project's agents (named in its agents log): herdr lists every project's.
+      blocked=$(herdr agent list 2>/dev/null | SWARM_LOG="${AGENTS_LOG}" json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name') in {l.split('\\t')[2] for l in open(__import__('os').environ['SWARM_LOG']) if l.count('\\t') >= 2})" 2>/dev/null || true)
       if [[ -n "${blocked}" ]] && ! grep -qx "blocked ${blocked}" "${seen}"; then
         echo "blocked ${blocked}" >> "${seen}"; echo "agent(s) blocked on a prompt: ${blocked}"; return 0
       fi

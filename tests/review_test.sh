@@ -223,6 +223,14 @@ printf -- '---\nstatus: active\nrepos: svc\n---\n\n# mine\n' > "${w}/docs/epics/
 check "watch --epic finds the repo from the epic's repos: line once its stories are gone" "o/svc #2 epic/mine checks finished on head2" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
 
+# watch reports only this project's agents blocked on a prompt: herdr lists every project's. The PR
+# above is already seen, so the next event is the blocked agents.
+mkdir -p "${w}/.swarm"; printf '2026-01-01\tcode\tmine-builder\tclaude\topus\thigh\t-\n' > "${w}/.swarm/agents.tsv"
+echo '{"result":{"agents":[{"name":"foreign","agent_status":"blocked"},{"name":"mine-builder","agent_status":"blocked"}]}}' > "${ROOT}/agents.json"
+check "watch names only this project's blocked agents" "agent(s) blocked on a prompt: mine-builder" \
+  "$(cd "${w}" && HERDR_ENV=1 env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+rm -f "${ROOT}/agents.json"
+
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.
 for f in agents.json panes.json; do [[ -f "${ROOT}/${f}" ]] && mv "${ROOT}/${f}" "${ROOT}/${f}.keep"; done
 mkdir -p "${p}/.swarm/state"
