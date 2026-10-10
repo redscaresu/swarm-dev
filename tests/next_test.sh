@@ -89,6 +89,7 @@ expect_conductor() { # <name> <want> <write the report?> [epic]
   # An older brief whose epic shares the cut name, as a finished long epic leaves behind.
   (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch -t 202001010000 ".swarm/briefs/conduct-${epic}-old.md" && touch ".swarm/briefs/conduct-${epic}.md")
   agent="$(cd "${dir}" && bash "${SWARM}" _name "conduct-${epic}")"; want="${want//AGENT/${agent}}"
+  printf '2026-01-01\tconduct\t%s\tclaude\topus\thigh\t-\n' "${agent}" > "${dir}/.swarm/agents.tsv"
   # Started in this project: its cwd is the project dir (herdr lists every project's agents).
   printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\",\"cwd\":\"${dir}\"}]}}'" > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
@@ -169,9 +170,17 @@ if [[ "${got}" == "done" ]]; then echo "ok   a retired conductor is not waited o
   echo "FAIL a retired conductor is not waited on: want 'done', got '${got}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
-# Another project's conductor (its cwd is elsewhere) is not this project's: next must not wait on it.
+# Another project's conductor is not this project's: next must not wait on it, whether herdr gives
+# its cwd (elsewhere) or not (then only this project's agents log can tell).
 dir="$(mktemp -d)"
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin)
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-y\",\"agent_status\":\"working\"}]}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
+if [[ "${got}" == "done" ]]; then echo "ok   another project's conductor without a cwd is not waited on"; else
+  echo "FAIL another project's conductor without a cwd is not waited on: want 'done', got '${got}'"; fails=$((fails + 1)); fi
+# The same name in this project's log does not make it ours when herdr says it runs elsewhere.
+mkdir -p "${dir}/.swarm"; printf '2026-01-01\tconduct\tconduct-x\tclaude\topus\thigh\t-\n' > "${dir}/.swarm/agents.tsv"
 printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-x\",\"agent_status\":\"working\",\"cwd\":\"/elsewhere\"}]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
 got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"

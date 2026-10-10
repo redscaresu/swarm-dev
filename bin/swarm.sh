@@ -1105,8 +1105,9 @@ next_step() {
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
-    # herdr lists every project's agents: only a conductor started in this project (its cwd) counts.
-    slug=$(herdr agent list 2>/dev/null | SWARM_DIR="${PROJECT_DIR}" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and __import__('os').path.realpath(a.get('cwd') or '/nonexistent') == __import__('os').path.realpath(__import__('os').environ['SWARM_DIR'])),'')" 2>/dev/null || true)
+    # herdr lists every project's agents: only a conductor this project started (named in its agents
+    # log, and in this project's directory when herdr reports one) counts.
+    slug=$(herdr agent list 2>/dev/null | SWARM_DIR="${PROJECT_DIR}" SWARM_LOG="${AGENTS_LOG}" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a['name'] in {l.split('\\t')[2] for l in open(__import__('os').environ['SWARM_LOG']) if l.count('\\t') >= 2} and (not a.get('cwd') or __import__('os').path.realpath(a['cwd']) == __import__('os').path.realpath(__import__('os').environ['SWARM_DIR']))),'')" 2>/dev/null || true)
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
