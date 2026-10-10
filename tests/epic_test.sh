@@ -50,7 +50,8 @@ case "$1 $2" in
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
-  "agent rename")     [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
+  "agent rename")     [ -e "$H/norename" ] && exit 1
+                      [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
   "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
@@ -123,6 +124,12 @@ run close k1 >/dev/null
 check "with keep_panes, closing never renames another project's agent of the same name" "no" \
   "$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)"
 awk '$2 != "w:99"' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
+# A rename herdr refuses leaves the tab record as it was, and close says the name is not free.
+echo "k3 w:98" >> "${ROOT}/agents"; echo "w:98 k3" > "${p}/.swarm/state/k3"; touch "${ROOT}/norename"
+out="$(run close k3 2>&1 || true)"
+check "with keep_panes, a refused rename keeps the record and says the name is not free" "w:98 k3|yes" \
+  "$(cat "${p}/.swarm/state/k3")|$(has "is not free" "${out}")"
+rm -f "${ROOT}/norename" "${p}/.swarm/state/k3"
 run story k2 >/dev/null
 check "and the next story gets a pane of its own" "3|k1-done|k2" \
   "$(wc -l < "${p}/.swarm/state/k" | tr -d ' ')|$(awk 'NR == 2 { print $2 }' "${p}/.swarm/state/k")|$(awk 'NR == 3 { print $2 }' "${p}/.swarm/state/k")"

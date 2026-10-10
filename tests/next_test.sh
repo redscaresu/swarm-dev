@@ -111,7 +111,10 @@ stub() { # <status> [api-error]
     echo 'case "$1 $2" in'
     echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"$1\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"$1\",\"pane_id\":\"w:2\"}]}}' ;;"
     if [ -n "${2:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
-    echo "  *) echo '{\"result\":{\"agent\":{\"agent_status\":\"$1\"}}}' ;;"
+    echo '  "agent wait"|"agent prompt") case "$3" in w:1|w:2) ;; *) echo "{\"error\":\"not this project'"'"'s pane: $3\"}"; exit 1 ;; esac ;;'
+    echo 'esac'
+    echo 'case "$1 $2" in "agent list"|"agent read") ;; *)'
+    echo "  echo '{\"result\":{\"agent\":{\"agent_status\":\"$1\"}}}' ;;"
     echo 'esac'
   } > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
@@ -156,6 +159,14 @@ got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
   echo "ok   wait on a conductor stuck on an API error returns without polling"; else
   echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+
+# A conductor of the same name started by another project is refused, never waited on.
+printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub idle
+got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 3000 2>&1; echo "exit $?")"
+if [[ "${got}" == *"no agent this project started"* && "${got}" == *"exit 1" ]]; then
+  echo "ok   wait refuses another project's conductor of the same name"; else
+  echo "FAIL wait refuses another project's conductor of the same name: got '${got}'"; fails=$((fails + 1)); fi
+printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > "${dir}/.swarm/state/e1"
 
 # A retired conductor (renamed <name>-done) is not waited on for a report.
 stub idle
@@ -223,6 +234,11 @@ rm -f "${dir}/sent"
 code="$(TELL_PANE=w:77 tellrun idle)"
 if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses another project's agent of the same name"; else
   echo "FAIL tell refuses another project's agent of the same name: exit ${code}, sent $(cat "${dir}/sent" 2>/dev/null || true)"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
+out="$(cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md 2>&1 || true)"
+if [[ "${out}" != *"not one this project started"* && ! -f "${dir}/sent" ]]; then
+  echo "ok   tell never calls this project's own agent of unknown status another project's"; else
+  echo "FAIL tell never calls this project's own agent of unknown status another project's: '${out}'"; fails=$((fails + 1)); fi
 rm -f "${dir}/sent"
 code="$(tellrun "done")"
 if [[ "${code}" == 0 && -f "${dir}/sent" ]]; then echo "ok   tell also sends a builder herdr reports as done"; else

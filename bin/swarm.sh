@@ -664,7 +664,7 @@ ended_on_api_error() {
 # after an API error has not settled: tell it to carry on, and wait again.
 wait_agent() {
   local name="$1" timeout="$2" status nudges=0 target
-  target="$(own_target "${name}")"
+  target="$(own_target "${name}")" || return 1
   while :; do
     status=$(herdr agent wait "${target}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
     # herdr reports an agent whose turn ended as idle or done; both can be an API-error stop.
@@ -709,7 +709,7 @@ tell_agent() {
     idle|done) ;;
     working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
     blocked) die "${name} is waiting on a prompt; answer it (herdr agent read ${name}), then tell it" ;;
-    *) [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
+    *) [[ -n "${status}" || -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
        die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
   esac
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
@@ -1591,7 +1591,8 @@ retire_agent() {
   # By pane, and only this project's: renaming by name would rename another project's agent.
   pane="$(agent_field "${name}" pane_id)"
   if [[ -z "${pane}" ]]; then echo "no agent this project started is called $1; nothing to retire"; return 0; fi
-  herdr agent rename "${pane}" "${new}" >/dev/null 2>&1 || true
+  herdr agent rename "${pane}" "${new}" >/dev/null 2>&1 \
+    || die "$1: herdr could not rename it to ${new}, so its name is not free; close its pane (herdr agent list)"
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
@@ -1695,6 +1696,7 @@ main() {
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
+    _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
