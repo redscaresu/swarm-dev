@@ -160,7 +160,7 @@ check "a name reused a second time retires to the next free -done name" "agent r
   "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
 echo '{"result":{"agents":[{"name":"lead","agent_status":"idle","pane_id":"w:77"}]}}' > "${ROOT}/agents.json"; out=$(agent lead lead)
 check "another project's agent holding the name is refused, never retired, before any pane opens" "yes|no|no" \
-  "$(has "another project's agent holds this name" "${out}")|$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
+  "$(has "an agent this project did not start" "${out}")|$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
 taken working; out=$(agent lead lead)
 check "a working agent holding the name stops the start before any pane opens" "yes|no" \
   "$(has 'still working' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
@@ -173,7 +173,7 @@ check "codex outside a planning tab stays read-only" "yes" "$(has '-s read-only'
 : > "${ROOT}/herdr.log"
 (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent scope-ep cx4 "${p}" codex "${ROOT}/brief.md" >/dev/null 2>&1) || true
 check "a planning codex writes only in its tab's output dir, told where paths start" "yes|yes|yes" \
-  "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt cx4 ' "${ROOT}/herdr.log")")"
+  "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt w:' "${ROOT}/herdr.log")")"
 check "codex starts with hooks off, so no trust dialog can take the brief" "yes" "$(has '-c features.hooks=false' "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")"
 
 # --- status: each open pane's agent, an empty pane, and what waits on the user.

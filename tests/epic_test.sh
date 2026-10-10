@@ -203,6 +203,7 @@ check "with pr_per = story the rule does not apply" "plan-epic f" "$(first "$(nx
 
 # --- wait: an agent idle after an API error is told to carry on; any other idle agent is left alone.
 nudges() { grep -c '^agent prompt' "${ROOT}/herdr.log" || true; }
+echo "a w:50" >> "${ROOT}/agents"; echo "w:50 a" > "${p}/.swarm/state/wait-a"   # this project's agent a, in a pane it recorded
 printf '%s\n' "⏺ I have opened the PR." "⏺ Error: Exit code 1 from make test" > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"
 check "an idle agent whose last event is not an API error is not nudged" "idle|0" "$(run wait a)|$(nudges)"
@@ -213,6 +214,12 @@ printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"; touch "${ROOT
 : > "${ROOT}/herdr.log"
 check "an error that does not clear stops after three nudges" "idle|3" "$(run wait a | tail -1)|$(nudges)"
 rm -f "${ROOT}/sticky" "${ROOT}/screen"
+# The same name held only by another project's agent is never waited on or nudged.
+printf '%s\n' "⏺ API Error: overloaded" > "${ROOT}/screen"; rm -f "${p}/.swarm/state/wait-a"
+: > "${ROOT}/herdr.log"
+check "wait never addresses another project's agent of the same name" "0|0" \
+  "$(grep -c '^agent wait' <<< "$(run wait a >/dev/null 2>&1; cat "${ROOT}/herdr.log")" || true)|$(nudges)"
+rm -f "${ROOT}/screen"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

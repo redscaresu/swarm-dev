@@ -103,11 +103,23 @@ expect_conductor "idle conductor without a report is still waited on" "wait cond
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
+# The stub lists this project's conductor (and its retired name) in panes the state records, as
+# next_pane does: wait addresses an agent by this project's pane, never by a bare name.
+stub() { # <status> [api-error]
+  {
+    echo '#!/bin/sh'
+    echo 'case "$1 $2" in'
+    echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"$1\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"$1\",\"pane_id\":\"w:2\"}]}}' ;;"
+    if [ -n "${2:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
+    echo "  *) echo '{\"result\":{\"agent\":{\"agent_status\":\"$1\"}}}' ;;"
+    echo 'esac'
+  } > "${dir}/bin/herdr"
+  chmod +x "${dir}/bin/herdr"
+}
 # `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
 dir="$(mktemp -d)"
-(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch .swarm/briefs/conduct-e1.md)
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
-chmod +x "${dir}/bin/herdr"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs .swarm/state && touch .swarm/briefs/conduct-e1.md && printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > .swarm/state/e1)
+stub idle
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
 reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
@@ -118,7 +130,7 @@ if [[ "${got}" == idle && "${reported}" == yes ]]; then
 rm -f "${dir}/.swarm/conduct-e1.report.md"
 
 # herdr can report a conductor that ended its turn as `done`: that is not settled either.
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"done\"}}}'" > "${dir}/bin/herdr"
+stub done
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
 reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
@@ -127,7 +139,7 @@ if [[ "${got}" == "done" && "${reported}" == yes ]]; then
   echo "ok   wait on a done conductor holds until its report"; else
   echo "FAIL wait on a done conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
 rm -f "${dir}/.swarm/conduct-e1.report.md"
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+stub idle
 
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}
@@ -138,13 +150,7 @@ if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
 
 # A conductor idle on an API error is stuck: wait returns after wait_agent's nudges, well inside
 # the timeout, instead of polling and nudging again.
-cat > "${dir}/bin/herdr" <<'EOF'
-#!/bin/sh
-case "$1 $2" in
-  "agent read") echo '⏺ API Error: overloaded' ;;
-  *) echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-esac
-EOF
+stub idle api-error
 start=${SECONDS}
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000 2>/dev/null)"
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
@@ -152,7 +158,7 @@ if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
   echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
 # A retired conductor (renamed <name>-done) is not waited on for a report.
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agent\":{\"agent_status\":\"idle\"}}}'" > "${dir}/bin/herdr"
+stub idle
 start=${SECONDS}
 got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1-done 20000)"
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
