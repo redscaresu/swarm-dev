@@ -204,7 +204,9 @@ is doing.
 **Review before closing.** A story is reviewed when its latest head has passed codex and, if it
 changes code, the `/code-review` skill. The conductor sends the findings to the story's builder with
 `swarm.sh tell <slug> <file>` and reviews the new head again. It closes a builder only after both
-reviews pass, so the fixes are made by the agent that wrote the code, with its context. With
+reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
+that finds only nits, edge cases outside the story, or points already declined counts as passing: a
+reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With
 `pr_per = epic`, stories have no PR: each epic PR gets `/code-review`, fixed on the epic branch. Each builder
 also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
 

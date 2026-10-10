@@ -689,9 +689,9 @@ in its worktree, and, when it changes code (not only docs, board files or a depe
 reports a usage limit, do not wait for it: rely on the other review and your own reading of the
 diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and
-what to decline), wait for it, and review the new head. One pass on the latest head with nothing
-substantive is enough; if each pass turns up only new nits, stop after two and rebut them in the PR
-with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
+what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
+with nothing substantive: one that finds only nits, edge cases outside the story, or points already
+declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
 its latest head has passed.
 
 $(finding_rule)
