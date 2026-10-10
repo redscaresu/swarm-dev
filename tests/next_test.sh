@@ -236,7 +236,7 @@ code="$(TELL_PANE=w:77 tellrun idle)"
 if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses another project's agent of the same name"; else
   echo "FAIL tell refuses another project's agent of the same name: exit ${code}, sent $(cat "${dir}/sent" 2>/dev/null || true)"; fails=$((fails + 1)); fi
 rm -f "${dir}/sent"
-out="$(cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md 2>&1 || true)"
+out="$(cd "${dir}" || exit; HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md 2>&1; true)"
 if [[ "${out}" != *"not one this project started"* && ! -f "${dir}/sent" ]]; then
   echo "ok   tell never calls this project's own agent of unknown status another project's"; else
   echo "FAIL tell never calls this project's own agent of unknown status another project's: '${out}'"; fails=$((fails + 1)); fi
