@@ -35,7 +35,8 @@ Repeat until a step below says stop:
      nothing. A merged one does not block: `lessons` lists a kind only while the brief has no rule
      for it, so the rule was since removed. Otherwise
      draft one rule (under 300 bytes, ending in `<!-- lesson: <kind> -->`; for a candidate from the
-     lead's memory, from that memory, generalised, with nothing private from it) for the project's
+     lead's memory, from that memory, generalised, with nothing private from it; if the user closes
+     that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the project's
      `.claude/swarm/brief.md` and open it as a PR titled `lesson: <kind>`, never committed silently.
      For a `long brief`, propose merging or retiring rules as a PR titled exactly `lesson: prune brief`,
      unless one is open or was closed (its `closedAt`) in the last 90 days; for a `recurring` kind, say so to the user. Then read its report

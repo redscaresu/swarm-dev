@@ -448,7 +448,9 @@ record_finding() {
 # rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
 lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
-  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}/${PROJECT_DIR//[^A-Za-z0-9]/-}/memory}"
+  # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
+  local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
+  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
   python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${PROJECT_BRIEF}" \
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
@@ -518,7 +520,10 @@ for kind in sorted(prs, key=lambda k: -len(prs[k])):
                        "the rule is not working: turn it into a step agents must do, or drop it")
 for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
     # Only the frontmatter is read, and only a tagged memory is named: the rest of memory stays private.
-    head = re.match(r"---\n(.*?)\n---", open(path, encoding="utf-8", errors="replace").read(), re.S)
+    try:
+        head = re.match(r"---\n(.*?)\n---", open(path, encoding="utf-8", errors="replace").read(), re.S)
+    except OSError:
+        continue  # an unreadable entry must not cost the rest of the report
     tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
     if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
         out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")

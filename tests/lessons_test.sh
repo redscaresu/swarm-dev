@@ -91,7 +91,11 @@ printf -- '---\nlesson: denylist\n---\n' > "${mem}/dup.md"
 check "a kind already a finding candidate is listed once" "1" "$(SWARM_MEMORY_DIR="${mem}" sw lessons | grep -c "candidate denylist")"
 check "the memory dir defaults to Claude Code's per-project path" "yes" \
   "$(mkdir -p "${dir}/cp/$(cd "${dir}" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')/memory" && cp "${mem}/tagged.md" "$_/" && has "candidate mem-kind" "$(CLAUDE_PROJECTS_DIR="${dir}/cp" sw lessons)")"
-rm -rf "${mem}" "${dir}/cp"
+check "CLAUDE_CONFIG_DIR moves the default memory dir" "yes" \
+  "$(mkdir -p "${dir}/cfg/projects/$(cd "${dir}" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')/memory" && cp "${mem}/tagged.md" "$_/" && has "candidate mem-kind" "$(CLAUDE_CONFIG_DIR="${dir}/cfg" sw lessons)")"
+mkdir "${mem}/dir.md"; ln -s "${dir}/nowhere" "${mem}/dangling.md"
+check "an unreadable memory entry does not break the report" "yes" "$(has "candidate mem-kind" "$(SWARM_MEMORY_DIR="${mem}" sw lessons)")"
+rm -rf "${mem}" "${dir}/cp" "${dir}/cfg"
 
 # A brief over the cap is flagged.
 head -c 5000 /dev/zero | tr '\0' 'x' >> "${dir}/.claude/swarm/brief.md"
@@ -130,6 +134,11 @@ printf 'Prove it. <!-- lesson: sub-kind -->\n' > "${r}/repo/svc/.claude/swarm/br
 for n in 1 2 3; do (cd "${r}/repo/svc" && env -u SWARM_PROJECT bash "${SWARM}" log-finding sub-kind "o/r#${n}" "after" >/dev/null); done
 check "a subdirectory project finds its rule's adoption date" "yes" \
   "$(has "recurring sub-kind: fixed in 3 PRs since its brief rule landed on 2026-01-01" "$(cd "${r}/repo/svc" && env -u SWARM_PROJECT bash "${SWARM}" lessons 2>&1)")"
+# Memory is keyed on the repo root, so a subdirectory project reads the root's memory.
+mkdir -p "${r}/cp/$(cd "${r}/repo" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')/memory"
+printf -- '---\nlesson: root-kind\n---\n' > "${r}/cp/$(cd "${r}/repo" && pwd -P | sed 's/[^A-Za-z0-9]/-/g')/memory/m.md"
+check "a subdirectory project reads the repo root's memory" "yes" \
+  "$(has "candidate root-kind" "$(cd "${r}/repo/svc" && CLAUDE_PROJECTS_DIR="${r}/cp" env -u SWARM_PROJECT bash "${SWARM}" lessons 2>&1)")"
 rm -rf "${r}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
