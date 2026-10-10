@@ -279,6 +279,14 @@ agent_name() {
 
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
+# own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
+# STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
+# Only lines shaped like a tab record ("<pane> [name]", a pane id like w1:p6K) count: STATE_DIR also
+# holds codex briefs, watch-seen and .tmp files, and a list of those to skip would fail open.
+own_panes() {
+  cat "${STATE_DIR}"/* 2>/dev/null | awk 'NF <= 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ {print $1}'
+}
+
 require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"; }
 
 # require_trusted <cwd> — stop unless Claude Code already trusts <cwd>. In an untrusted folder,
@@ -1105,7 +1113,8 @@ next_step() {
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
-    slug=$(herdr agent list 2>/dev/null | json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done')),'')" 2>/dev/null || true)
+    # herdr lists every project's agents: only one in a pane this project opened counts.
+    slug=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in __import__('os').environ.get('SWARM_PANES','').split()),'')" 2>/dev/null || true)
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
@@ -1412,7 +1421,8 @@ watch_prs() {
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local blocked
-      blocked=$(herdr agent list 2>/dev/null | json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name'))" 2>/dev/null || true)
+      # Only agents in panes this project opened: herdr lists every project's.
+      blocked=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name') and a.get('pane_id') in __import__('os').environ.get('SWARM_PANES','').split())" 2>/dev/null || true)
       if [[ -n "${blocked}" ]] && ! grep -qx "blocked ${blocked}" "${seen}"; then
         echo "blocked ${blocked}" >> "${seen}"; echo "agent(s) blocked on a prompt: ${blocked}"; return 0
       fi

@@ -89,7 +89,9 @@ expect_conductor() { # <name> <want> <write the report?> [epic]
   # An older brief whose epic shares the cut name, as a finished long epic leaves behind.
   (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch -t 202001010000 ".swarm/briefs/conduct-${epic}-old.md" && touch ".swarm/briefs/conduct-${epic}.md")
   agent="$(cd "${dir}" && bash "${SWARM}" _name "conduct-${epic}")"; want="${want//AGENT/${agent}}"
-  printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\"}]}}'" > "${dir}/bin/herdr"
+  mkdir -p "${dir}/.swarm/state"; echo "w:7 ${agent}" > "${dir}/.swarm/state/tab"   # its pane, as next_pane records it
+  # Started in this project: in a pane it recorded (herdr lists every project's agents).
+  printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\",\"pane_id\":\"w:7\"}]}}'" > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
   [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
   got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
@@ -166,6 +168,17 @@ chmod +x "${dir}/bin/herdr"
 got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
 if [[ "${got}" == "done" ]]; then echo "ok   a retired conductor is not waited on"; else
   echo "FAIL a retired conductor is not waited on: want 'done', got '${got}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+
+# Another project's conductor runs in a pane this project never opened: next must not wait on it,
+# even when this project once had a conductor of the same name in a pane of its own.
+dir="$(mktemp -d)"
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state && echo "w:1 conduct-x" > .swarm/state/tab)
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-x\",\"agent_status\":\"working\",\"pane_id\":\"w:9\"}]}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
+if [[ "${got}" == "done" ]]; then echo "ok   another project's conductor is not waited on"; else
+  echo "FAIL another project's conductor is not waited on: want 'done', got '${got}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
 # A long conductor's agent name is cut at 32 characters; close must still find its full tab label.
