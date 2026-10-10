@@ -32,7 +32,7 @@ Repeat until a step below says stop:
      (from the project's repo, `gh pr list --state all --limit 200 --search 'in:title "lesson: <kind>"'
      --json title,state,closedAt`, keeping only a title exactly `lesson: <kind>`): an open one is pending, and one closed
      unmerged (its `closedAt`) in the last 90 days means the user declined it; in either case propose
-     nothing. A merged one does not block: `lessons` lists a kind only while the brief has no rule
+     nothing. A merged one does not block: `lessons` lists a kind only while neither the brief nor `lessons_file` has a rule
      for it, so the rule was since removed. Otherwise
      draft one rule (under 300 bytes, on a single line, ending in `<!-- lesson: <kind> -->`: the briefs
      paste only the tagged line; for a candidate from the

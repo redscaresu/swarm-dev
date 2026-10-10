@@ -158,6 +158,12 @@ check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "lon
 head -c 5000 /dev/zero | tr '\0' 'y' >> "${r}/p/.claude/swarm/brief.md"
 (cd "${r}/p" && "${G[@]}" commit -qam long && "${G[@]}" push -q origin main)
 check "the brief is still capped when lessons_file is elsewhere" "yes" "$(has "long brief: origin/HEAD:.claude/swarm/brief.md" "$(rs lessons)")"
+printf 'short\n' > "${r}/p/.claude/swarm/brief.md"
+for n in $(seq 40); do printf 'Rule %s %s <!-- lesson: k%s -->\n' "${n}" "$(head -c 120 /dev/zero | tr '\0' 'z')" "${n}"; done >> "${r}/p/AGENTS.md"
+(cd "${r}/p" && "${G[@]}" commit -qam rules && "${G[@]}" push -q origin main)
+check "lessons_file's pasted rules count toward the cap" "yes" "$(has "plus lessons_file's rules" "$(rs lessons)")"
+(cd "${r}/p" && "${G[@]}" rm -q .claude/swarm/brief.md && "${G[@]}" commit -qm nobrief && "${G[@]}" push -q origin main)
+check "no brief at all prints no working-tree note" "no" "$(grep -q "brief.md on origin/HEAD" <<< "$(rs lessons)" && echo yes || echo no)"
 check "a lessons_file no agent reads is refused" "yes" \
   "$(printf 'lessons_file = docs/rules.md\n' > "${r}/p/.claude/swarm/config"; has "must be one every agent reads" "$(rs lessons || true)")"
 rm -rf "${r}"

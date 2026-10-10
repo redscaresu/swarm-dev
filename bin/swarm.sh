@@ -497,8 +497,10 @@ def read_brief(brief=brief):
     got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
     if got.returncode == 0:
         return got.stdout.decode("utf-8", errors="replace"), "", path
+    if not os.path.exists(brief):
+        return "", "", ""
     note = f"note: no {os.path.relpath(brief, project)} on origin/HEAD, so it was read from the working tree (any branch)"
-    return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note, ""
+    return open(brief, encoding="utf-8", errors="replace").read(), note, ""
 
 prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
 last, example = {}, {}
@@ -520,7 +522,7 @@ if os.path.exists(log):
 brief_text, note, brief_path = read_brief()
 tags = {m.group(1): m.group(0) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text)}
 # The brief is pasted into every prompt, so a rule it still tags rules its kind too.
-cap_text, cap_note, cap_path = read_brief(swarm_brief)
+cap_text, cap_note, cap_path = (brief_text, "", brief_path) if swarm_brief == brief else read_brief(swarm_brief)
 # ponytail: a kind ruled only by the brief gets no `recurring` check when lessons_file is elsewhere.
 ruled = set(tags) | set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", cap_text))
 out = []
@@ -545,9 +547,12 @@ for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
     tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
     if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
         out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
-size = len(cap_text.encode("utf-8", errors="surrogateescape"))
+# The cap measures what every prompt carries: the brief, plus lessons_file's tagged lines when it is
+# another file (project_rules pastes those too).
+pasted = "" if swarm_brief == brief else "\n".join(re.findall(r"^.*<!--\s*lesson:\s*[a-z0-9-]+\s*-->.*$", brief_text, re.M))
+size = len((cap_text + pasted).encode("utf-8", errors="surrogateescape"))
 if size > max_bytes:
-    where = f"origin/HEAD:{cap_path}" if cap_path else swarm_brief
+    where = (f"origin/HEAD:{cap_path}" if cap_path else swarm_brief) + (" plus lessons_file's rules" if pasted else "")
     out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
 notes = list(dict.fromkeys(n for n in (note, cap_note) if n))
 print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + notes))
@@ -837,7 +842,7 @@ EOF
 # project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
 # builder in another repo's worktree never reads this project's AGENTS.md.
 project_rules() {
-  [[ ! -f "${PROJECT_BRIEF}" ]] || cat "${PROJECT_BRIEF}"
+  [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
   [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
