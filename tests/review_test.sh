@@ -225,7 +225,8 @@ check "watch --epic finds the repo from the epic's repos: line once its stories 
 
 # watch reports only this project's agents blocked on a prompt: herdr lists every project's. The PR
 # above is already seen, so the next event is the blocked agents.
-echo "w:5 lead" > "${w}/.swarm/state/tab"   # this project's pane; the other project's 'lead' is in w:6
+mkdir -p "${w}/.swarm/state"; echo "w:5 mine-builder" > "${w}/.swarm/state/tab"   # this project's pane
+printf 'w:6 a brief line\n' > "${w}/.swarm/state/brief-x.md"   # a brief's words are not a pane record
 echo '{"result":{"agents":[{"name":"lead","agent_status":"blocked","pane_id":"w:6"},{"name":"mine-builder","agent_status":"blocked","pane_id":"w:5"}]}}' > "${ROOT}/agents.json"
 check "watch names only this project's blocked agents" "agent(s) blocked on a prompt: mine-builder" \
   "$(cd "${w}" && HERDR_ENV=1 env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
