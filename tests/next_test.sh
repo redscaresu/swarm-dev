@@ -197,11 +197,11 @@ rm -rf "${dir}"
 # builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent list`
 # reports s1 as $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
 dir="$(mktemp -d)"
-(cd "${dir}" && git init -q && mkdir -p docs/stories bin)
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state && echo "w:1 s1" > .swarm/state/t)
 cat > "${dir}/bin/herdr" <<EOF
 #!/bin/sh
 case "\$1 \$2" in
-  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\"}]}}" ;;
+  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\",\"pane_id\":\"\${TELL_PANE:-w:1}\"}]}}" ;;
   "agent prompt") printf '%s\n' "\$4" >> "${dir}/sent"; echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
 esac
 EOF
@@ -213,6 +213,10 @@ code="$(tellrun idle)"; sent="$(cat "${dir}/sent" 2>/dev/null)"; left="$(ls "${d
 if [[ "${code}" == 0 && "${sent}" == *"- a finding"* && "${sent}" == "From the conductor:"* && -z "${left}" ]]; then
   echo "ok   tell sends a settled builder the findings and exits 0, leaving no temp file"; else
   echo "FAIL tell sends a settled builder the findings: exit ${code}, sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
+rm -f "${dir}/sent"
+code="$(TELL_PANE=w:77 tellrun idle)"
+if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses another project's agent of the same name"; else
+  echo "FAIL tell refuses another project's agent of the same name: exit ${code}, sent $(cat "${dir}/sent" 2>/dev/null || true)"; fails=$((fails + 1)); fi
 rm -f "${dir}/sent"
 code="$(tellrun "done")"
 if [[ "${code}" == 0 && -f "${dir}/sent" ]]; then echo "ok   tell also sends a builder herdr reports as done"; else

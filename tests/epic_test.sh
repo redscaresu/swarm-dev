@@ -49,7 +49,11 @@ case "$1 $2" in
   "agent prompt")     [ -e "$H/sticky" ] || rm -f "$H/screen"   # a nudge clears the error, unless it is sticky
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
-  "agent list")       echo '{"result":{"agents":[]}}' ;;
+  "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
+  "agent rename")     [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
+  "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                           END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
   "agent wait")       echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent read")       cat "$H/screen" 2>/dev/null ;;
 esac
@@ -107,10 +111,18 @@ echo "keep_panes = true" > "${p}/.claude/swarm/config"
 item "${b}" epics/k.md "status: active"
 for s in k1 k2; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: k" "repo: svc"; done
 run conduct k >/dev/null; run story k1 >/dev/null
+echo "Ask k1" > "${p}/.swarm/state/brief-x.md"   # a codex brief's prose: never a tab record
 : > "${ROOT}/herdr.log"
 run close k1 >/dev/null; run close conduct-k >/dev/null
-check "with keep_panes, closing a story or a conductor closes nothing and renames the agents" "no|yes|yes" \
-  "$(grep -q 'close' "${ROOT}/herdr.log" && echo yes || echo no)|$(has "agent rename k1 k1-done" "$(log)")|$(has "agent rename conduct-k conduct-k-done" "$(log)")"
+check "with keep_panes, closing a story or a conductor closes nothing and renames the agents by their panes" "no|yes|yes|Ask k1" \
+  "$(grep -q 'close' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^agent rename w:[0-9]+ k1-done$' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^agent rename w:[0-9]+ conduct-k-done$' "${ROOT}/herdr.log" && echo yes || echo no)|$(cat "${p}/.swarm/state/brief-x.md")"
+rm -f "${p}/.swarm/state/brief-x.md"
+# Another project's agent with this project's name is never renamed (herdr names span workspaces).
+echo "k1 w:99" >> "${ROOT}/agents"; : > "${ROOT}/herdr.log"
+run close k1 >/dev/null
+check "with keep_panes, closing never renames another project's agent of the same name" "no" \
+  "$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)"
+awk '$2 != "w:99"' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
 run story k2 >/dev/null
 check "and the next story gets a pane of its own" "3|k1-done|k2" \
   "$(wc -l < "${p}/.swarm/state/k" | tr -d ' ')|$(awk 'NR == 2 { print $2 }' "${p}/.swarm/state/k")|$(awk 'NR == 3 { print $2 }' "${p}/.swarm/state/k")"

@@ -277,7 +277,7 @@ agent_name() {
   printf '%s' "${n:0:32}"
 }
 
-json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
+json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
@@ -1536,40 +1536,51 @@ close_agent() {
 
 # free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
 # keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
-# `lead`) failed and left an empty pane. Retire a finished holder; refuse a working one. Runs
-# before any pane opens.
+# `lead`) failed and left an empty pane. Retire a finished holder; refuse a working one. Names are
+# unique across every herdr workspace, so a holder in another project is refused, never retired:
+# it is that project's agent. Runs before any pane opens.
 free_agent_name() {
   local status
   status=$(agent_status "$1")
   case "${status}" in
-    "") return 0 ;;
+    "") [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
+        die "$1: another project's agent holds this name (herdr agent list); this project never retires it. Wait for it to finish there, or close it" ;;
     working|blocked) die "$1: an agent with this name is still ${status}; wait for it, or use another name" ;;
   esac
   retire_agent "$1" >/dev/null
   [[ -z "$(agent_status "$1")" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
 }
 
-# agent_status <name> — herdr's status for the agent called <name>, or nothing if there is none.
-agent_status() {
-  herdr agent list 2>/dev/null | json "next((a.get('agent_status','') or 'unknown' for a in d['result']['agents'] if a.get('name')=='$1'),'')" 2>/dev/null || true
+# agent_field <name> <field> [any] — <field> (agent_status, pane_id) of this project's agent called
+# <name> (its pane is one own_panes recorded), or nothing. With "any", of whichever project's agent
+# holds the name: herdr names are unique across all workspaces.
+agent_field() {
+  herdr agent list 2>/dev/null | SWARM_NAME="$1" SWARM_FIELD="$2" SWARM_ANY="${3:-}" SWARM_PANES="$(own_panes)" json "next((a.get(e['SWARM_FIELD']) or ('unknown' if e['SWARM_FIELD']=='agent_status' else '') for a in d['result']['agents'] if a.get('name')==e['SWARM_NAME'] and (e['SWARM_ANY'] or a.get('pane_id') in e['SWARM_PANES'].split())),'')" 2>/dev/null || true
 }
+
+# agent_status <name> — herdr's status for this project's agent called <name>, or nothing if there is none.
+agent_status() { agent_field "$1" agent_status; }
 
 # retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
 # retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
 # its slot in the tab's state under that name, so no later agent is split into it.
 retire_agent() {
-  local name state new i
+  local name state new i pane
   name="$(agent_name "$1")"
-  # A name reused more than once already has a <name>-done; take the first free suffix.
+  # A name reused more than once already has a <name>-done; take the first free suffix (free in any
+  # project: names are unique across workspaces).
   new="${name:0:27}-done"
   for i in 2 3 4 5 6 7 8 9; do
-    [[ -z "$(agent_status "${new}")" ]] && break
+    [[ -z "$(agent_field "${new}" agent_status any)" ]] && break
     new="${name:0:26}-done${i}"
   done
-  herdr agent rename "${name}" "${new}" >/dev/null 2>&1 || true
+  # By pane, and only this project's: renaming by name would rename another project's agent.
+  pane="$(agent_field "${name}" pane_id)"
+  [[ -z "${pane}" ]] || herdr agent rename "${pane}" "${new}" >/dev/null 2>&1 || true
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
-    awk -v n="$1" 'NF > 1 && $2 == n { $2 = n "-done" } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
+    # Tab records only ("<pane> <name>"): STATE_DIR also holds codex briefs, whose prose must not change.
+    awk -v n="$1" 'NF == 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ && $2 == n { $2 = n "-done" } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
   echo "kept $1 open (keep_panes)"
 }
