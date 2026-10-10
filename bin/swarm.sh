@@ -176,8 +176,8 @@ BOARD_IN_REPO=0; [[ ${PROJECT_IS_GIT} == 1 && "${BOARD}/" == "${PROJECT_DIR}/"* 
 STATE_DIR="${PROJECT_DIR}/.swarm/state"
 # Project rules every builder gets after the standard ones: commit trailers, secrets, ADR rules.
 PROJECT_BRIEF="${PROJECT_DIR}/.claude/swarm/brief.md"
-# Where lesson rules are read from. The briefs paste only PROJECT_BRIEF: a lessons_file such as
-# AGENTS.md is one every agent already loads, so it is never pasted a second time.
+# Where lesson rules are read from. The briefs paste the brief whole and, from any other
+# lessons_file, only its tagged rule lines (project_rules), never the whole file.
 LESSONS_FILE="$(abs_path "${CFG_lessons_file}")"
 PANES_PER_TAB=4
 
@@ -826,10 +826,15 @@ EOF
   [[ -z "${check}" ]] || extra+="Before you ${before}, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
   [[ "${CFG_sign_commits}" != true ]] || extra+="$(sign_rule)"$'\n'
   [[ -z "${extra}" ]] || printf '%s' "${extra}"
-  if [[ -f "${PROJECT_BRIEF}" ]]; then
-    echo
-    cat "${PROJECT_BRIEF}"
-  fi
+  local rules; rules="$(project_rules)"
+  [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
+}
+
+# project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
+# builder in another repo's worktree never reads this project's AGENTS.md.
+project_rules() {
+  [[ ! -f "${PROJECT_BRIEF}" ]] || cat "${PROJECT_BRIEF}"
+  [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -h -- '<!--[[:space:]]*lesson:' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
@@ -909,10 +914,8 @@ Stay inside this epic: start no story outside it, and leave the HLD and other ep
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
 EOF
-  if [[ -f "${PROJECT_BRIEF}" ]]; then
-    printf '\nThe project'"'"'s rules, which every builder also gets:\n\n'
-    cat "${PROJECT_BRIEF}"
-  fi
+  local rules; rules="$(project_rules)"
+  [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF
 
 Your last act, after everything else: write your report (what merged, what is left, what waits on
