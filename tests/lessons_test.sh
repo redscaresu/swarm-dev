@@ -152,7 +152,8 @@ printf 'Prove it. <!-- lesson: brief-kind -->\n' > "${r}/p/.claude/swarm/brief.m
 for k in agents-kind brief-kind; do for n in 1 2 3; do rs log-finding "${k}" "o/r#${n}" "x" >/dev/null; done; done
 out="$(rs lessons)"
 check "a rule in lessons_file retires its kind" "no" "$(grep -q "candidate agents-kind" <<< "${out}" && echo yes || echo no)"
-check "with lessons_file set, a rule only in the brief does not count" "yes" "$(has "candidate brief-kind" "${out}")"
+check "a rule the brief still tags rules its kind too" "no" "$(grep -q "candidate brief-kind" <<< "${out}" && echo yes || echo no)"
+check "config prints lessons_file as an absolute path" "yes" "$(has "$(cd "${r}/p" && pwd -P)/AGENTS.md" "$(rs config lessons_file)")"
 check "the brief's size cap does not apply to lessons_file" "no" "$(grep -q "long brief" <<< "${out}" && echo yes || echo no)"
 head -c 5000 /dev/zero | tr '\0' 'y' >> "${r}/p/.claude/swarm/brief.md"
 (cd "${r}/p" && "${G[@]}" commit -qam long && "${G[@]}" push -q origin main)

@@ -187,6 +187,7 @@ show_config() {
     case "$1" in
       board_dir) echo "${BOARD}" ;;
       repos_dir) echo "${REPOS_DIR}" ;;
+      lessons_file) echo "${LESSONS_FILE}" ;;
       project) echo "${PROJECT_DIR}" ;;
       *) [[ " ${CONFIG_KEYS} " == *" $1 "* ]] || die "unknown key '$1' (known: project ${CONFIG_KEYS})"
          v="CFG_$1"; echo "${!v}" ;;
@@ -196,7 +197,7 @@ show_config() {
   echo "project = ${PROJECT_DIR}"
   for key in ${CONFIG_KEYS}; do
     v="CFG_${key}"; local s="SRC_${key}"
-    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; esac
+    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; lessons_file) v=LESSONS_FILE ;; esac
     echo "${key} = ${!v}    (${!s})"
   done
 }
@@ -496,7 +497,7 @@ def read_brief(brief=brief):
     got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
     if got.returncode == 0:
         return got.stdout.decode("utf-8", errors="replace"), "", path
-    note = "note: no brief on origin/HEAD, so it was read from the working tree (any branch)"
+    note = f"note: no {os.path.relpath(brief, project)} on origin/HEAD, so it was read from the working tree (any branch)"
     return (open(brief, encoding="utf-8", errors="replace").read() if os.path.exists(brief) else ""), note, ""
 
 prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
@@ -518,7 +519,10 @@ if os.path.exists(log):
             recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
 brief_text, note, brief_path = read_brief()
 tags = {m.group(1): m.group(0) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", brief_text)}
-ruled = set(tags)
+# The brief is pasted into every prompt, so a rule it still tags rules its kind too.
+cap_text, cap_note, cap_path = read_brief(swarm_brief)
+# ponytail: a kind ruled only by the brief gets no `recurring` check when lessons_file is elsewhere.
+ruled = set(tags) | set(re.findall(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", cap_text))
 out = []
 for kind in sorted(prs, key=lambda k: -len(prs[k])):
     n_recent = len(recent[kind])
@@ -541,12 +545,12 @@ for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
     tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
     if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
         out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
-cap_text, _, cap_path = (brief_text, note, brief_path) if swarm_brief == brief else read_brief(swarm_brief)
 size = len(cap_text.encode("utf-8", errors="surrogateescape"))
 if size > max_bytes:
     where = f"origin/HEAD:{cap_path}" if cap_path else swarm_brief
     out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
-print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + ([note] if note else [])))
+notes = list(dict.fromkeys(n for n in (note, cap_note) if n))
+print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + notes))
 PY
 }
 
@@ -834,7 +838,7 @@ EOF
 # builder in another repo's worktree never reads this project's AGENTS.md.
 project_rules() {
   [[ ! -f "${PROJECT_BRIEF}" ]] || cat "${PROJECT_BRIEF}"
-  [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -h -- '<!--[[:space:]]*lesson:' "${LESSONS_FILE}" 2>/dev/null || true
+  [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
