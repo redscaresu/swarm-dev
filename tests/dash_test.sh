@@ -4,7 +4,8 @@
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+tmp="$(mktemp -d)" && [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 fails=0
 P="${ROOT}/proj"

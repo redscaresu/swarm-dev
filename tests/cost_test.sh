@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-dir="$(mktemp -d)"
+dir="$(mktemp -d)" && [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
 mkdir -p "${dir}/repo/.swarm" "${dir}/projects/p"
 git -C "${dir}/repo" init -q

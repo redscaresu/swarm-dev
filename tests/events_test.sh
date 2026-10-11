@@ -5,7 +5,8 @@
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+tmp="$(mktemp -d)" && [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+ROOT="$(cd "${tmp}" && pwd -P)"
 P="${ROOT}/proj"; LOG="${P}/.swarm/events.tsv"
 trap 'chmod -R u+w "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
