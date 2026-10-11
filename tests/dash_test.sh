@@ -54,7 +54,7 @@ chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr"
 snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
 before="$(snapshot)"
 
-out="$(cd "${P}" && HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 for panel in "swarm-dev " "pipeline" "agents" "ladder" "waiting on you" "recent"; do
   check "panel ${panel}" has "─ ${panel}" "${out}"
 done
@@ -81,10 +81,10 @@ check "the status line has one line per group" grep -qE '^planning +survey: \[so
 check "a run off a terminal has no ANSI escapes" lacks $'\033' "${out}"
 check "no line is wider than the default 100" python3 -c 'import sys; sys.exit(any(len(l) > 100 for l in sys.stdin.read().splitlines()))' <<< "${out}"
 
-out="$(cd "${P}" && HERDR_ENV=1 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a failing herdr degrades: agents unavailable" has "agents unavailable" "${out}"
 check "a failing herdr still prints the board" has "ready 2  blocked 1" "${out}"
-out="$(cd "${P}" && env -u HERDR_ENV bash "${SWARM}" dash 2>&1 || true)"
+out="$(cd "${P}" || exit 1; env -u HERDR_ENV bash "${SWARM}" dash 2>&1 || true)"
 check "outside herdr: agents unavailable, board shown" grep -q "agents unavailable" <<< "${out}"
 
 # --watch redraws until stopped, clearing the screen, and shows the cursor again on the way out.
