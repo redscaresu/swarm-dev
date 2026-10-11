@@ -5,7 +5,9 @@
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"

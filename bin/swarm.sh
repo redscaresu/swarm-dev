@@ -13,6 +13,7 @@
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
+#   swarm.sh dash [--watch [seconds]]                      a read-only dashboard: board, agents, ladder, recent events; --watch redraws
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
@@ -33,7 +34,19 @@
 # grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
 set -euo pipefail
 
-die() { echo "swarm: $*" >&2; exit 1; }
+# die <message> — stop. Inside a logged command (main), a die at the command's own level (not in a
+# nested $(...), which may be tolerated) also records its first line as the command's outcome.
+die() {
+  echo "swarm: $*" >&2
+  if [[ -n "${DIE_FILE}" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]]; then
+    local m="$*"
+    { printf '%s\n' "${m%%$'\n'*}" > "${DIE_FILE}"; } 2>/dev/null || true
+  fi
+  exit 1
+}
+# Set only by main, in the subshell a logged command runs in; never taken from the environment.
+DIE_FILE=""
+DIE_LEVEL=-1
 
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -242,11 +255,10 @@ base_for() {
 }
 
 # The model and effort for each role. This is the one place the policy lives
-# (docs/method.md § Model and effort explains the reasoning).
-#   design:    hld, hld-review, hld-lead
-#   planning:  survey, lead, skeptic, critic, codex
-#   building:  code, code-risky, docs, chore, verify
-#   conducting: conduct
+# (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
+# knows, by group: the usage message and `dash` read it.
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,docs,chore,verify,escalate conducting:conduct"
+roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -264,7 +276,7 @@ policy() {
     verify)     echo "claude haiku medium" ;;  # run tests or commands and report
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
-    *) die "unknown role '$1' (hld hld-review hld-lead survey lead skeptic critic codex code code-risky docs chore verify escalate conduct)" ;;
+    *) die "unknown role '$1' ($(roles))" ;;
   esac
 }
 
@@ -278,6 +290,39 @@ agent_name() {
 }
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
+
+# PANES_PY: the one reader of this project's panes, shared by status, tidy and dash (each python
+# exec's it from $SWARM_PANES_PY), so the three views agree.
+#   pane_records(state, keep) yields (tab label, pane, recorded name) for each pane in keep (own_panes
+#     and still live), from the tab records in STATE_DIR, skipping *.tmp; a pane's first record wins.
+#   agent_state(a, name) -> (state, needs_a_look), where a is herdr's agent in the pane (None for an
+#     empty pane): EMPTY (a start that failed), WAITING (blocked on a prompt), working, retired
+#     (renamed <name>-done by retire_agent), or herdr's own status.
+PANES_PY='
+import glob, os, re
+def pane_records(state, keep):
+    seen = set()
+    for path in sorted(glob.glob(os.path.join(state, "*"))):
+        if not os.path.isfile(path) or path.endswith(".tmp"):
+            continue
+        for line in open(path, errors="replace"):
+            f = line.split()
+            if not f or f[0] not in keep or f[0] in seen:
+                continue
+            seen.add(f[0])
+            yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
+def agent_state(a, name):
+    if a is None:
+        return "EMPTY", True
+    st = a.get("agent_status") or "unknown"
+    if st == "blocked":
+        return "WAITING", True
+    if st == "working":
+        return "working", False
+    if re.search(r"-done\d*$", name):
+        return "retired", False
+    return st, False
+'
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
@@ -435,6 +480,18 @@ record_agent() {
   session="$(session_for_pane "${pane}")"
   mkdir -p "$(dirname "${AGENTS_LOG}")"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session:--}" >> "${AGENTS_LOG}"
+}
+
+# EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,
+# target, the actor's herdr pane, outcome). Names and paths only, never a brief's or a message's contents.
+EVENTS_LOG="${PROJECT_DIR}/.swarm/events.tsv"
+
+# record_event <command> <target> [outcome] — append one line. A log that cannot be written never
+# fails the command it records.
+record_event() {
+  local x fields=()
+  for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:--}" "${HERDR_PANE_ID:--}" "${3:-ok}"; do fields+=("${x//[$'\t\n\r']/ }"); done
+  { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null || true
 }
 
 # The outer loop: every review finding someone fixed is logged by kind, so a kind that keeps coming
@@ -1227,6 +1284,7 @@ unblock() {
     done
     [[ ${open} -eq 0 ]] || continue
     sed -i.bak -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "${story}" && rm -f "${story}.bak"
+    record_event unblock "$(basename "${story}" .md)"
     echo "ready: $(basename "${story}" .md)"
   done < <(board stories)
 }
@@ -1301,6 +1359,7 @@ reconcile() {
     done
     if [[ -n "${closed}" ]]; then
       set_status "${f}" ready
+      record_event reconcile "${slug}" "ok (reopened)"
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
       merged+=("${slug}"); merged_prs+=("${urls[*]}")
@@ -1325,8 +1384,9 @@ reconcile() {
   fi
   for slug in "${merged[@]}"; do
     f="${BOARD}/stories/${slug}.md"; [[ -f "${f}" ]] || f="${BOARD}/epics/${slug}.md"
-    [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]] || { echo "merged: ${slug}"; continue; }
+    [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]] || { record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"; continue; }
     finish_item "${slug}"
+    record_event reconcile "${slug}" "ok (finished)"
   done
 }
 
@@ -1443,41 +1503,27 @@ watch_prs() {
 status_report() {
   local all="${1:-}" agents panes waiting
   if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
-    python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
-import glob, json, os, sys
+    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
+import json, os, sys
+exec(os.environ["SWARM_PANES_PY"])
 state, agents_json, panes_json, show_all = sys.argv[1:5]
 try:
     agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
 except (ValueError, KeyError):
     print("Agents\n  (herdr gave no agent list)"); sys.exit(0)
-rows, seen = [], set()
-for path in sorted(glob.glob(os.path.join(state, "*"))):
-    if not os.path.isfile(path) or path.endswith(".tmp"):
-        continue
-    for line in open(path):
-        f = line.split()
-        if not f or f[0] not in live or f[0] in seen:
-            continue
-        seen.add(f[0])
-        pane, name = f[0], (f[1] if len(f) > 1 else "-")
+rows = []
+for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & live):
         a = agents.get(pane)
-        if a is None:
-            what = "EMPTY: no agent started in this pane; close it"
-        else:
+        if a is not None:
             name = a.get("name") or name
-            st = a.get("agent_status") or "unknown"
-            if st == "working":
-                what = "working"
-            elif st == "blocked":
-                what = f"WAITING on a question: herdr agent read {name}"
-            elif name.endswith("-done") or "-done" in name[-7:]:
-                what = "done (retired)"
-            elif st in ("idle", "done"):
-                what = "idle: finished, or waiting for its next step"
-            else:
-                what = st
-        rows.append((name, what, f"{os.path.basename(path)} {pane}"))
+        st, _ = agent_state(a, name)
+        what = {"EMPTY": "EMPTY: no agent started in this pane; close it",
+                "WAITING": f"WAITING on a question: herdr agent read {name}",
+                "retired": "done (retired)",
+                "idle": "idle: finished, or waiting for its next step",
+                "done": "idle: finished, or waiting for its next step"}.get(st, st)
+        rows.append((name, what, f"{tab} {pane}"))
 quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
 shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]
 counts = [f"{len(rows) - len(quiet)} need a look or are working", f"{len(quiet)} idle or done"]
@@ -1502,6 +1548,223 @@ PY
   if [[ -n "${waiting}" ]]; then printf '%s\n' "${waiting}"; else echo "  nothing"; fi
   echo; echo "Next"
   next_step | sed 's/^/  /'
+}
+
+# dash [--watch [seconds]] — a read-only dashboard: the header, the board's pipeline, this project's
+# agents by workspace and tab, the model ladder, what waits on you, recent events and a status line.
+# It never writes the board, state or logs, and never opens or closes a pane. --watch redraws every
+# N seconds (default 5) until Ctrl-C. Colour only on a terminal with NO_COLOR unset.
+dash() {
+  local every=""
+  case "${1:-}" in
+    "") ;;
+    --watch) every="${2:-5}"; [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
+    *) die "usage: swarm.sh dash [--watch [seconds]]" ;;
+  esac
+  local cols=100 color=0 frame
+  if [[ -t 1 ]]; then
+    cols="$(tput cols 2>/dev/null || echo 100)"
+    [[ -n "${NO_COLOR+x}" ]] || color=1
+  fi
+  if [[ -z "${every}" ]]; then DASH_COLS="${cols}" DASH_COLOR="${color}" dash_render; return; fi
+  # Hide the cursor while redrawing; show it again however the loop ends.
+  trap 'printf "\033[?25h"' EXIT
+  trap 'exit 0' INT TERM
+  printf '\033[?25l'
+  while :; do
+    [[ ! -t 1 ]] || cols="$(tput cols 2>/dev/null || echo 100)"
+    # A failed render shows its error in the frame and the loop carries on: a watch must not die quietly.
+    frame="$(DASH_COLS="${cols}" DASH_COLOR="${color}" dash_render 2>&1)" || frame+=$'\n'"(dash: this render failed; retrying in ${every}s)"
+    printf '\033[H\033[2J%s\n' "${frame}"
+    sleep "${every}"
+  done
+}
+
+# dash_render — gather what the dashboard shows (read-only), then lay it out in python.
+dash_render() {
+  local agents="" panes="" workspaces="" board="" policies="" merges="" f d r ref=""
+  if [[ "${HERDR_ENV:-}" == 1 ]]; then
+    { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)" \
+      && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
+  fi
+  # One line per item: dir, slug, status, prs, its agent name, and (an epic) its conductor's.
+  for d in hld epics stories; do
+    while IFS= read -r f; do
+      r="$(basename "${f}" .md)"
+      board+="${d}"$'\t'"${r}"$'\t'"$(fm "${f}" status)"$'\t'"$(fm "${f}" prs)"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\n'
+    done < <(board "${d}")
+  done
+  # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
+  for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
+  if [[ ${PROJECT_IS_GIT} == 1 ]]; then
+    # The base branch as last fetched: dash never fetches.
+    for r in ${CFG_base_branches} HEAD; do
+      ref="origin/${r}"; git -C "${PROJECT_DIR}" rev-parse -q --verify "${ref}" >/dev/null && break; ref=""
+    done
+    merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 8 --format='%cI%x09%an%x09%s' "${ref:-HEAD}" 2>/dev/null || true)"
+  fi
+  DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
+  DASH_MERGE="${CFG_merge}" DASH_NEXT="$(next_step | head -1)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_GROUPS="${ROLE_GROUPS}" DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" \
+  DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
+  SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" \
+  DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
+    python3 - <<'PY'
+import collections, datetime, glob, json, os, re
+E = os.environ
+exec(E["SWARM_PANES_PY"])
+W = max(int(E.get("DASH_COLS") or 100), 60)
+COLOR = E.get("DASH_COLOR") == "1"
+STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1"}
+STATUS_STYLE = {"working": "ok", "idle": "dim", "done": "dim", "retired": "dim", "EMPTY": "bad", "WAITING": "bad"}
+
+def paint(t, s):
+    return f"\033[{STYLE[s]}m{t}\033[0m" if COLOR and s and t else t
+
+def fit(segs, n):
+    # Truncate, never wrap: plain lengths are measured before any colour is added.
+    out, left = [], n
+    for t, s in segs:
+        if left <= 0:
+            break
+        if len(t) > left:
+            t = t[:left - 1] + "…"
+        out.append(paint(t, s)); left -= len(t)
+    return "".join(out) + " " * left
+
+def box(title, rows):
+    print("┌─ " + paint(title, "h") + " " + "─" * max(W - len(title) - 5, 0) + "┐")
+    for r in rows or [[("(none)", "dim")]]:
+        print("│ " + fit([(r, "")] if isinstance(r, str) else r, W - 4) + " │")
+    print("└" + "─" * (W - 2) + "┘")
+
+def read_tsv(path, n):
+    try:
+        return [f for f in (l.rstrip("\n").split("\t") for l in open(path, encoding="utf-8", errors="replace")) if len(f) == n]
+    except OSError:
+        return []
+
+def lines(key):
+    return [l for l in E.get(key, "").splitlines() if l.strip()]
+
+# Header
+box(f"swarm-dev {E['DASH_VERSION']}", [
+    [("project ", "dim"), (E["DASH_PROJECT"], "b")],
+    [("merge   ", "dim"), (E["DASH_MERGE"], "")],
+    [("next    ", "dim"), (E["DASH_NEXT"], "warn")]])
+
+# Pipeline
+board = [l.split("\t") for l in lines("DASH_BOARD")]
+def counts(d, order):
+    c = collections.Counter(b[2] or "?" for b in board if b[0] == d)
+    keys = order + sorted(k for k in c if k not in order)
+    return [(f"{k} {c[k]}  ", "" if c[k] else "dim") for k in keys]
+box("pipeline", [[("HLDs     ", "dim")] + counts("hld", ["draft", "agreed", "superseded"]),
+                 [("epics    ", "dim")] + counts("epics", ["active", "later", "review"]),
+                 [("stories  ", "dim")] + counts("stories", ["ready", "blocked", "review", "later"])])
+
+# Agents: this project's panes (its tab records), grouped by workspace, then tab.
+rows = []
+try:
+    agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
+    live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
+    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
+except (ValueError, KeyError, TypeError):
+    agents = None
+if agents is None:
+    rows = [[("agents unavailable: not inside herdr, or herdr gave no list", "dim")]]
+else:
+    by_session, by_name = {}, {}
+    for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
+        by_name[f[2]] = by_session[f[6]] = f
+    prs = {}
+    for b in board:
+        if b[3]:
+            prs[b[4]] = b[3]
+            if b[0] == "epics":
+                prs[b[5]] = b[3]
+    tree = collections.OrderedDict()
+    for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & live):
+            ws = ws_label.get(pane.split(":")[0], pane.split(":")[0])
+            tab = tree.setdefault(ws, collections.OrderedDict()).setdefault(label, [])
+            try:
+                a = agents.get(pane)
+                name = (a or {}).get("name") or recorded
+                base = re.sub(r"-done\d*$", "", name)
+                rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
+                st, look = agent_state(a, name)
+                tab.append((name, rec[1] if rec else "?", (f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?", st, look, prs.get(base, "")))
+            except Exception as err:  # one odd agent record must not cost the whole panel
+                tab.append((recorded, "?", "?", f"unreadable: {type(err).__name__}", True, ""))
+    width = min(max((len(x[0]) for t in tree.values() for v in t.values() for x in v), default=0), 30)
+    for ws, tabs in tree.items():
+        rows.append([(ws, "b")])
+        for i, (tab, items) in enumerate(tabs.items()):
+            last_tab = i == len(tabs) - 1
+            rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
+            for j, (name, role, me, st, look, pr) in enumerate(items):
+                stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
+                n = name if len(name) <= width else name[:width - 1] + "…"
+                rows.append([(stem, "dim"), ("! " if look else "  ", "bad"), (f"{n:<{width}}  ", ""), (f"{role:<10} ", "dim"),
+                             (f"{me:<13} ", ""), ("[", ""), (st, STATUS_STYLE.get(st, "")), ("]", ""), (f"  {pr}" if pr else "", "dim")])
+    if not rows:
+        rows = [[("no agents open in this project's panes", "dim")]]
+box("agents", rows)
+
+# Ladder: each role's model and effort, from policy.
+policy = [l.split() for l in lines("DASH_POLICY")]
+def me(p):
+    return f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}"
+cell = 30
+per = max(1, (W - 4) // cell)
+ladder = [f"{p[0]:<11}→ {me(p)}" for p in policy]
+box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)])
+
+# Waiting on you
+box("waiting on you", [l.strip() for l in lines("DASH_WAITING")] or [[("nothing", "dim")]])
+
+# Recent: merges on the base branch, fixed findings, agents started, and the events log; newest first.
+def when(s):
+    # A date alone (agents.tsv, findings.tsv) sorts as the end of that local day, after the day's timed events.
+    try:
+        if len(s) == 10:
+            return datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(), s[5:]
+        t = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return t, t.astimezone().strftime("%m-%d %H:%M")
+    except ValueError:
+        return None, s
+events = []
+for l in lines("DASH_MERGES"):
+    f = l.split("\t", 2)
+    if len(f) == 3:
+        events.append((f[0], f[1], f[2], "merge"))
+for f in read_tsv(E["DASH_FINDINGS"], 4):
+    m = re.search(r"(\d+)\D*$", f[2])
+    events.append((f[0], "review", f"{f[3]} (#{m.group(1) if m else f[2]})", f[1]))
+for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
+    events.append((f[0], "swarm", f"started {f[2]} ({f[4] if f[3] == 'claude' else f[3]} {f[5]})", f[1]))
+for f in read_tsv(E["DASH_EVENTS"], 5):
+    events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"), "ok" if f[4].startswith("ok") else "failed"))
+timed = [(when(e[0]), e) for e in events]
+dated = sorted((x for x in timed if x[0][0]), key=lambda x: x[0][0], reverse=True)[:8]
+rec = []
+for (_, shown), (_, actor, text, tag) in dated:
+    a = actor if len(actor) <= 14 else actor[:13] + "…"
+    room = W - 4 - 13 - 16 - len(tag) - 4
+    t = text if len(text) <= room else text[:max(room - 1, 0)] + "…"
+    rec.append([(f"{shown:<11}  ", "dim"), (f"{a:<14}  ", ""), (t.ljust(max(room, 0)), ""), ("  [", ""), (tag, "bad" if tag == "failed" else "warn"), ("]", "")])
+box("recent", rec)
+
+# Status line: one line per role group.
+pol = {p[0]: p for p in policy}
+for g in E["DASH_GROUPS"].split():
+    name, rs = g.split(":", 1)
+    segs = [(f"{name:<11}", "dim")]
+    for r in rs.split(","):
+        if r in pol:
+            segs += [(f"{r}: ", ""), (f"[{me(pol[r]).replace(' · ', ' ')}]", "h"), ("  ", "")]
+    print(fit(segs, W).rstrip())
+PY
 }
 
 # tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters
@@ -1611,29 +1874,18 @@ tidy_panes() {
   [[ "${yes}" != --yes || -n "${HERDR_PANE_ID:-}" ]] || die "tidy --yes: HERDR_PANE_ID is not set, so this pane could not be kept open"
   agents=$(herdr agent list 2>/dev/null) || die "tidy: herdr gave no agent list"
   panes=$(herdr pane list 2>/dev/null) || die "tidy: herdr gave no pane list"
-  closable=$(python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
-import glob, json, os, re, sys
+  closable=$(SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
+import json, os, sys
+exec(os.environ["SWARM_PANES_PY"])
 state, agents_json, panes_json, me = sys.argv[1:5]
 agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
 live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
-seen = set()
-for path in sorted(glob.glob(os.path.join(state, "*"))):
-    if not os.path.isfile(path) or path.endswith(".tmp"):
-        continue
-    for line in open(path):
-        f = line.split()
-        if not f or f[0] not in live or f[0] == me or f[0] in seen:
-            continue
-        seen.add(f[0])
-        a = agents.get(f[0])
-        name = (a or {}).get("name") or (f[1] if len(f) > 1 else "-")
-        if a is None:
-            reason = "empty: no agent started"
-        elif re.search(r"-done\d*$", name) and a.get("agent_status") not in ("working", "blocked"):
-            reason = "retired"
-        else:
-            continue
-        print("\t".join((f[0], name, reason, os.path.basename(path))))
+for tab, pane, recorded in pane_records(state, (set(os.environ["SWARM_OWN"].split()) & live) - {me}):
+    a = agents.get(pane)
+    name = (a or {}).get("name") or recorded
+    reason = {"EMPTY": "empty: no agent started", "retired": "retired"}.get(agent_state(a, name)[0])
+    if reason:
+        print("\t".join((pane, name, reason, tab)))
 PY
 ) || die "tidy: could not read herdr's lists"
   if [[ -z "${closable}" ]]; then echo "nothing to tidy"; return 0; fi
@@ -1671,7 +1923,8 @@ for t in json.load(sys.stdin)['result']['tabs']:
 # Everything runs from main, called on the last line with `exit` beside it: bash reads a
 # script as it executes, so a `git pull` that rewrites this file during a long `wait` would
 # otherwise make it resume reading the new file mid-line.
-main() {
+# dispatch <command> [args] — run one command.
+dispatch() {
   cmd="${1:-}"; shift || true
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
@@ -1683,6 +1936,7 @@ main() {
     unblock) unblock ;;
     next)   next_step ;;
     status) status_report "${1:-}" ;;
+    dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
     log-finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
@@ -1705,6 +1959,76 @@ main() {
             else wait_agent "${n}" "${2:-3600000}"; fi ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
+}
+
+# READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
+# all the time (wait, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
+# Every other command is logged (fail closed: a new command is logged until it is named here), and so
+# is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
+READ_ONLY_COMMANDS="dash status next config policy cost lessons findings wait watch base _base _name _target _label _trusted _pane"
+
+# is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
+is_command() {
+  awk -v want="$1" '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit 1 }
+    d && match($0, /^    [a-z_|-]+\)/) { n = split(substr($0, 5, RLENGTH - 5), a, "|"); for (i = 1; i <= n; i++) if (a[i] == want) exit 0 }' "$0"
+}
+
+# kill_tree <pid> — TERM a process and everything under it, children first, so nothing is orphaned.
+# shellcheck disable=SC2317,SC2329 # called from main_signal
+kill_tree() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "${c}"; done
+  kill -TERM "$1" 2>/dev/null || true
+}
+
+# main_signal <INT|TERM|HUP> — stop the logged command at once (it runs in the background, so this
+# trap runs as soon as the signal lands), log it as interrupted, remove the temp file, and die of the
+# same signal, so the exit status stays 128+N.
+# shellcheck disable=SC2317,SC2329 # invoked by the signal traps
+main_signal() {
+  [[ -z "${EV_CHILD:-}" ]] || kill_tree "${EV_CHILD}"
+  record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  trap - "$1"
+  kill -"$1" "$$"
+}
+
+# main <command> [args] — dispatch, and log each command that is not read-only to EVENTS_LOG with its
+# outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
+# A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
+# message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
+# log one line per item themselves.
+main() {
+  local rc why
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_ERR=/dev/null; EV_CHILD=""
+  if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
+     || ! is_command "${EV_CMD}"; then
+    dispatch "$@"; return
+  fi
+  case "${EV_CMD}" in
+    agent) [[ -z "${3:-}" ]] || EV_TARGET="$(agent_name "$3")" ;;
+    log-finding) EV_TARGET="${2:-} ${3:-}"; EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
+    reconcile|unblock) EV_TARGET=+ ;;
+    tidy) EV_TARGET=- ;;
+    *) EV_TARGET="${2:-}" ;;
+  esac
+  EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
+  trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
+  # In the background, with stdin kept, so `wait` returns the moment a signal lands.
+  set +e
+  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; set -e; dispatch "$@") <&0 &
+  EV_CHILD=$!
+  wait "${EV_CHILD}"; rc=$?
+  set -e
+  trap - INT TERM HUP
+  if [[ ${rc} -ne 0 ]]; then
+    why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
+    record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
+  elif [[ "${EV_TARGET}" != + ]]; then
+    record_event "${EV_CMD}" "${EV_TARGET}"
+  fi
+  [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
+  return "${rc}"
 }
 
 main "$@"; exit

@@ -198,6 +198,24 @@ for 10 minutes, or when an agent is blocked on a prompt. herdr lists every proje
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
+**Watching it.** `swarm.sh status` lists the agents that need a look (blocked on a prompt, or an
+empty pane where a start failed), what waits on you, and the next step. `swarm.sh dash` shows the
+same on one screen, with the board's counts, this project's agents by workspace and tab (role,
+model and effort, herdr status, the story's PR), the model ladder and the recent events;
+`dash --watch [seconds]` redraws it. Both only read: they never change the board, the state or the
+logs, and never open or close a pane.
+
+**The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,
+the command, its target, the herdr pane that ran it, and how it ended: `ok`, `interrupted`, the first
+line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
+message a caller may have handled (it still reaches the terminal). Only the read-only commands are
+exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
+`cost`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
+`tidy` without `--yes`), so a new command is logged until someone names it read-only. `reconcile`
+and `unblock` write a line per item they move. The log is local to the machine and append-only,
+holds names and paths but never a brief's or a message's contents, and a write that fails never
+fails the command.
+
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from

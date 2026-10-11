@@ -88,6 +88,8 @@ That's all you need. Optional extras:
   **Bases** under Core plugins.
 - **Check on it** with `swarm.sh status`: the agents that need a look, what waits on you, and what
   `/swarm` does next. `swarm.sh tidy --yes` closes panes that hold nothing to read.
+- **Watch it** on one screen with `swarm.sh dash`, or `swarm.sh dash --watch` to keep it open:
+  see [Watching the swarm](#watching-the-swarm).
 - **On Foundry, Bedrock or Vertex**, agents start as plain `claude` in new panes, so load your
   provider settings in `~/.zshrc` for herdr panes, not in an alias:
 
@@ -108,6 +110,65 @@ That's all you need. Optional extras:
 | a proposed brief rule (a lesson) | merge the PR to adopt it, or close it |
 
 `swarm.sh status` shows this list any time, with the agents that need a look.
+
+## Watching the swarm
+
+`swarm.sh dash` prints one screen of what the swarm is doing; `swarm.sh dash --watch [seconds]`
+redraws it every few seconds (5 by default) until Ctrl-C. It only reads: it never changes the
+board, the state or the logs, and never opens or closes a pane. Its panels:
+
+- **Header**: the project, the swarm-dev version, the `merge` mode and what `/swarm` does next.
+- **Pipeline**: how many HLDs, epics and stories are in each status.
+- **Agents**: this project's agents, by herdr workspace and tab (a conductor's tab is its epic),
+  each with its role, model and effort, its status, and its story's PR. `!` marks one that needs a
+  look: waiting on a prompt, or an empty pane where a start failed.
+- **Ladder**: the model and effort each role runs on.
+- **Waiting on you**: the same list as `swarm.sh status`.
+- **Recent**: the last eight events, newest first: merges on the base branch, review findings
+  fixed, agents started, and lines from the audit log.
+- **Status line**: one line per group of roles, with each role's model and effort.
+
+Outside herdr it still shows the board and says the agents are unavailable. It fits the terminal's
+width and uses colour only on a terminal, unless `NO_COLOR` is set. Trimmed, from a real project:
+
+```text
+┌─ swarm-dev 0.11.0 ───────────────────────────────────────────────────────────┐
+│ project /Users/you/src/infrafactory                                          │
+│ merge   human                                                                │
+│ next    wait conduct-fakeaws-rehearsal-instan                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ pipeline ───────────────────────────────────────────────────────────────────┐
+│ HLDs     draft 0  agreed 2  superseded 1                                     │
+│ epics    active 12  later 2  review 0                                        │
+│ stories  ready 2  blocked 9  review 0  later 7                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ agents ─────────────────────────────────────────────────────────────────────┐
+│ 2026-09-30-import-production-state-into-the-mocks                            │
+│  ├─ fakeaws-loaded-identity                                                  │
+│  │  ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high   [idle]       │
+│  │  └─   fakeaws-identity-iam-sts        code-risky opus·xhigh  [working]    │
+│  └─ fakeaws-rehearsal-instance                                               │
+│     ├─   conduct-fakeaws-rehearsal-ins…  conduct    opus·high   [idle]       │
+│     └─   fakeaws-request-log             code-risky opus·xhigh  [working]    │
+│ infrafactory                                                                 │
+│  ├─ hld                                                                      │
+│  │  └─ ! -                               ?          ?           [EMPTY]      │
+│  ├─ scope-aws-web-live-on-real-aws                                           │
+│  │  └─   critic-done                     critic     opus·high   [retired]    │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ waiting on you ─────────────────────────────────────────────────────────────┐
+│ later epic: aws-web-stack-load-balancer                                      │
+│ later epic: larger-estate                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+design     hld: [fable high]  hld-review: [fable xhigh]  hld-lead: [fable xhigh]
+```
+
+`.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per
+command, with the time, the target, the pane that ran it and how it ended (`ok`, `interrupted`, the
+error that stopped it, or `failed (exit N)`). Every command writes it except the read-only ones
+(`dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, `wait`, `watch`,
+`base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
+holds names and paths, never the contents of a brief or a message.
 
 ## Updating
 

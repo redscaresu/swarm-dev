@@ -16,7 +16,8 @@ item() {
 # expect <name> <first line of `next`> <setup...> — build a board with the setup, check next.
 expect() {
   local name="$1" want="$2" dir got; shift 2
-  dir="$(mktemp -d)"
+  dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+  [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
   (
     cd "${dir}" && git init -q && mkdir -p docs/stories docs/epics docs/hld
     echo "# Stories" > docs/stories/README.md   # READMEs are never items
@@ -85,7 +86,8 @@ expect "stories before planning" "conduct e2" \
 # characters, and its report is still found under the full epic name.
 expect_conductor() { # <name> <want> <write the report?> [epic]
   local name="$1" want="$2" epic="${4:-e1}" dir got agent
-  dir="$(mktemp -d)"
+  dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+  [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
   # An older brief whose epic shares the cut name, as a finished long epic leaves behind.
   (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs && touch -t 202001010000 ".swarm/briefs/conduct-${epic}-old.md" && touch ".swarm/briefs/conduct-${epic}.md")
   agent="$(cd "${dir}" && bash "${SWARM}" _name "conduct-${epic}")"; want="${want//AGENT/${agent}}"
@@ -121,7 +123,8 @@ stub() { # <status> [api-error]
   chmod +x "${dir}/bin/herdr"
 }
 # `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
-dir="$(mktemp -d)"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs .swarm/state && touch .swarm/briefs/conduct-e1.md && printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > .swarm/state/e1)
 stub idle
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
@@ -179,7 +182,8 @@ if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
 rm -rf "${dir}"
 
 # A retired conductor (keep_panes renames it <name>-done) is finished: next must not wait on it.
-dir="$(mktemp -d)"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin)
 printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-e1-done\",\"agent_status\":\"idle\"}]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
@@ -190,7 +194,8 @@ rm -rf "${dir}"
 
 # Another project's conductor runs in a pane this project never opened: next must not wait on it,
 # even when this project once had a conductor of the same name in a pane of its own.
-dir="$(mktemp -d)"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state && echo "w:1 conduct-x" > .swarm/state/tab)
 printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-x\",\"agent_status\":\"working\",\"pane_id\":\"w:9\"}]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
@@ -201,7 +206,8 @@ rm -rf "${dir}"
 
 # A long conductor's agent name is cut at 32 characters; close must still find its full tab label.
 long="conduct-aws-layer3-claim-sweep-reap"
-dir="$(mktemp -d)"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p .swarm/state && touch ".swarm/state/${long}" ".swarm/state/${long}-2" .swarm/state/short)
 short_name="$(cd "${dir}" && bash "${SWARM}" _name "${long}")"
 for pair in "${short_name}:${long}" "${long}:${long}" "short:short" "unknown:unknown"; do
@@ -214,7 +220,8 @@ rm -rf "${dir}"
 # `tell` sends a settled builder the file and exits 0, leaving no temp file behind; it refuses a
 # builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent list`
 # reports s1 as $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
-dir="$(mktemp -d)"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state && echo "w:1 s1" > .swarm/state/t)
 cat > "${dir}/bin/herdr" <<EOF
 #!/bin/sh
