@@ -48,83 +48,52 @@ and your own steps in them are marked **You:**. More: [`docs/method.md`](docs/me
 
 ## Getting started
 
-**1. Install the tools.** [Claude Code](https://claude.com/claude-code),
-[herdr](https://herdr.dev) (the panes), the [GitHub CLI](https://cli.github.com) and the
-[codex CLI](https://github.com/openai/codex) (both logged in), [Obsidian](https://obsidian.md) 1.9+
-(to see the board), plus `git`, `python3` and `bash`. Your code must be in git repos with `origin` on
-GitHub.
+**1. Install the tools.** [Claude Code](https://claude.com/claude-code), [herdr](https://herdr.dev)
+(the panes), the [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex),
+both logged in, plus `git`, `python3` and `bash`. Your code lives in git repos with `origin` on GitHub.
 
 **2. Install the plugin**, then restart Claude Code:
 
 ```bash
-claude plugin marketplace add redscaresu/swarm-dev
+claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
 ```
 
-```bash
-claude plugin install swarm-dev@swarm-dev
-```
-
-**3. Set up your project.** From its root, copy in the board templates:
+**3. Add the board to your project.** From the project's root:
 
 ```bash
 git clone --depth 1 https://github.com/redscaresu/swarm-dev /tmp/swarm-dev
+mkdir -p docs && cp -Rn /tmp/swarm-dev/templates/docs/. docs/
+printf '.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json\n' >> .gitignore
 ```
 
-```bash
-mkdir -p docs .claude/swarm
-```
+Then run `claude` once in the repo and accept the "do you trust this folder?" prompt. Agents work in
+git worktrees of that repo, and an untrusted repo would leave them stuck on that prompt, so
+`swarm.sh` refuses to start until you have.
 
-```bash
-cp -Rn /tmp/swarm-dev/templates/docs/. docs/
-```
+**4. Run it.** Inside herdr, start `claude` and write a design with `/hld Add rate limiting to the API`.
+Talk to the co-author in its pane, say when the draft is ready, fix what the reviewer finds, and say you
+agree it. Then run `/swarm`, and run it again each time it stops for you.
 
-Add `.swarm/` and `docs/.obsidian/*` to `.gitignore` (but keep `!docs/.obsidian/app.json`). Write `.claude/swarm/brief.md` with the rules
-every builder must follow, for example "Run `make test` before opening a PR". List shared files
-(root config, schemas, CI scripts) in `AGENTS.md`, so no two agents edit them at once.
+That's all you need. Optional extras:
 
-**Trust each repo in Claude Code once.** Run `claude` in the repo's main checkout and accept the
-"do you trust this folder?" prompt. Agents build in new git worktrees, and Claude Code checks a
-worktree's trust on its main checkout. Trusting a parent folder such as `~/Work` does not cover a
-repo inside it. `swarm.sh` refuses to start an agent in a repo you have not trusted and names the
-folder, so the agent cannot stall on that prompt.
+- **Rules for every builder**, such as "Run `make test` before opening a PR": put them in
+  `.claude/swarm/brief.md`. List shared files (root config, schemas, CI scripts) in `AGENTS.md`, so no
+  two stories edit them at once.
+- **Settings** go in `.claude/swarm/config`, one `key = value` per line. The common ones are
+  `merge = agent` (the conductor merges green, reviewed PRs), `base_branches = dev main`,
+  `pr_per = epic` and `lessons_file = AGENTS.md`. `swarm.sh config` shows what's in effect; all of them
+  are in [`docs/method.md` § Configuring a project](docs/method.md#configuring-a-project).
+- **See the board** in [Obsidian](https://obsidian.md) 1.9+: open the board folder as a vault, then
+  `Board.base`. **Waiting on you** lists your `lead` stories. If the views don't show, turn on
+  **Bases** under Core plugins.
+- **Check on it** with `swarm.sh status`: the agents that need a look, what waits on you, and what
+  `/swarm` does next. `swarm.sh tidy --yes` closes panes that hold nothing to read.
+- **On Foundry, Bedrock or Vertex**, agents start as plain `claude` in new panes, so load your
+  provider settings in `~/.zshrc` for herdr panes, not in an alias:
 
-**4. Change settings, if you want**, in `.claude/swarm/config` (`key = value` per line):
-
-| Setting | Default | Common change |
-|---|---|---|
-| `board_dir` | `docs` | a board elsewhere, even outside git, if every story names its `repo:` |
-| `base_branches` | origin's default | `dev main`: branch from `dev` where it exists |
-| `merge` | `human` | `agent`: the conductor (the agent building an epic) merges green, reviewed PRs |
-| `pr_per` | `story` | `epic`: one PR per epic |
-| `keep_panes` | `false` | `true`: keep finished panes open (renamed `<name>-done`) |
-| `lessons_file` | `.claude/swarm/brief.md` | where lesson rules land: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md` (files every agent reads); `AGENTS.md` puts them where you read them too |
-
-The rest: [`docs/method.md` § Configuring a project](docs/method.md#configuring-a-project).
-`swarm.sh config` shows what is in effect.
-
-**5. Open the board.** In Obsidian, open your board folder as a vault, then `Board.base`. The
-**Waiting on you** view lists your `lead` stories. If the views don't show, turn on **Bases** under
-Core plugins.
-
-**6. Write a design.** In herdr, start `claude` and run `/hld Add rate limiting to the API`. Talk to
-the co-author in its pane. Say when the draft is ready, fix what the reviewer finds, then say you
-agree it. Run `/hld` alone to carry on later. Guide:
-[`docs/method.md` § Writing the HLD](docs/method.md#writing-the-hld).
-
-**7. Run `/swarm`.** Watch any pane, or the board. `swarm.sh next` shows what it would do next.
-
-**Not sure what's going on?** Run `swarm.sh status`. It lists the agents that need a look: working,
-waiting on a question, or **empty** (an agent that never started, so close that pane). It counts idle
-agents and blocked stories, shows what is waiting on you, and what `/swarm` would do next. Add `--all`
-to list everything. `swarm.sh tidy` lists the panes it can close (empty ones, and finished agents kept open by
-`keep_panes`); `swarm.sh tidy --yes` closes them. It never touches a working, waiting or idle agent.
-
-**Using Foundry, Bedrock or Vertex?** Agents start as plain `claude` in new panes, so load your
-provider settings in `~/.zshrc` for herdr panes, not in an alias:
-
-```bash
-[[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
-```
+  ```bash
+  [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
+  ```
 
 ## When `/swarm` stops for you
 
