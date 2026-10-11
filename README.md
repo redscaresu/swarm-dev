@@ -62,7 +62,7 @@ claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swar
 
 ```bash
 git clone --depth 1 https://github.com/redscaresu/swarm-dev /tmp/swarm-dev
-mkdir -p docs && cp -Rn /tmp/swarm-dev/templates/docs/. docs/
+mkdir -p docs .claude/swarm && cp -Rn /tmp/swarm-dev/templates/docs/. docs/
 printf '.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json\n' >> .gitignore
 ```
 
