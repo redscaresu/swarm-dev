@@ -1914,7 +1914,8 @@ close_tabs() {
 import json,sys
 for t in json.load(sys.stdin)['result']['tabs']:
     if t.get('label') == sys.argv[1]: print(t['tab_id'])" "${tab_label}")
-    [[ -n "${id}" ]] && herdr tab close "${id}" >/dev/null
+    # Two tabs can carry one label (a run that reopened it); close each, one id per call.
+    while read -r t; do [[ -z "${t}" ]] || herdr tab close "${t}" >/dev/null; done <<< "${id}"
     rm -f "${state}"
     echo "closed ${tab_label}"
   done
