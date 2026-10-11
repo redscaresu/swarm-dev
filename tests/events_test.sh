@@ -5,7 +5,8 @@
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
-tmp="$(mktemp -d)" && [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 P="${ROOT}/proj"; LOG="${P}/.swarm/events.tsv"
 trap 'chmod -R u+w "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
@@ -40,7 +41,9 @@ case "$1 $2" in
   "tab list") echo '{"result":{"tabs":[]}}' ;;
 esac
 STUB
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
+mkdir -p "${ROOT}/nobin" "${ROOT}/slow"
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/herdr"; cp "${ROOT}/nobin/herdr" "${ROOT}/nobin/gh"
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/nobin/gh"
 echo "w:1 s1" > "${P}/.swarm/state/t1"
 
 run() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" >/dev/null 2>&1); }
@@ -80,7 +83,50 @@ appends "finish" 1 finish s1 ok finish s1
 appends "log-finding" 1 log-finding "vacuous-test ${U}/9" ok log-finding vacuous-test "${U}/9" "a line"
 appends "a failed story" 1 story nope "no story" story nope
 appends "a failed conduct" 1 conduct nope "no epic" conduct nope
-appends "a failed agent" 1 agent n1 "no prompt file" agent t n1 "${P}" code "${P}/missing.md"
+appends "a failed agent, logged by its agent name" 1 agent n1-x "no prompt file" agent t "N1 x" "${P}" code "${P}/missing.md"
+appends "log-finding with no arguments" 1 log-finding - "usage" log-finding
+appends "a die a caller tolerated never names a later failure" 1 _tolerated bogus "failed (exit 1)" _tolerated bogus
+appends "a tolerated die never names a failure that fires no ERR trap" 1 _tolerated bogus "failed (exit 1)" _tolerated bogus expand
+appends "a die in a command substitution that ended the command is its outcome" 1 review nope "no story or epic 'nope'" review nope "${U}/9"
+
+# DIE_FILE is main's own: one set in the environment is never written.
+(cd "${P}" && DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" policy bogus >/dev/null 2>&1 || true)
+(cd "${P}" && DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story nope >/dev/null 2>&1 || true)
+check "a DIE_FILE from the environment is never written" test ! -e "${ROOT}/planted"
+
+# A signal: logged as interrupted, the temp file removed, and the exit status still 128+N. The
+# stub's `agent wait` sleeps; the command runs in its own process group, which gets the signal.
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase "$1 $2" in "agent wait") exec sleep 30 ;; esac\nexec "%s" "$@"\n' "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
+chmod +x "${ROOT}/slow/herdr"; mkdir -p "${ROOT}/sigtmp"; echo "w:1 s1" > "${P}/.swarm/state/t1"
+was="$(lines)"
+set -m
+(cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me TMPDIR="${ROOT}/sigtmp" PATH="${ROOT}/slow:${ROOT}/bin:${PATH}" exec bash "${SWARM}" wait s1 >/dev/null 2>&1) &
+pid=$!
+set +m
+for _ in 1 2 3 4 5 6 7 8 9 10; do ls "${ROOT}/sigtmp"/swarm-die.* >/dev/null 2>&1 && break; sleep 0.5; done
+sleep 1; kill -TERM -- "-${pid}" || true; code=0; { wait "${pid}"; } 2>/dev/null || code=$?
+check "a TERM keeps exit status 143" test "${code}" -eq 143
+check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\twait\ts1\tw:me\tinterrupted\$'"
+check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
+
+# Every dispatch arm is read-only (READ_ONLY_COMMANDS, logs nothing) or logged (one line), read off
+# the case statement, so a new command can never slip past the log. reconcile and unblock log per
+# item (above). A bare project, no herdr: every arm stops at once.
+Q="${ROOT}/bare"; mkdir -p "${Q}/.claude/swarm" "${Q}/docs/stories" "${Q}/docs/epics" "${Q}/docs/hld"; : > "${Q}/.claude/swarm/config"
+ro=" $(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}") "
+arms="$(awk '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit } d && match($0, /^    [a-z_|-]+\)/) { a = substr($0, 5, RLENGTH - 5); gsub(/\|/, " ", a); print a }' "${SWARM}" | tr ' ' '\n')"
+check "the case statement's arms were read" test "$(wc -l <<< "${arms}")" -gt 20
+for arm in ${arms}; do
+  [[ "${arm}" == reconcile || "${arm}" == unblock ]] && continue
+  args=(); [[ "${arm}" == tidy ]] && args=(--yes)
+  n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
+  before="$(LOG="${Q}/.swarm/events.tsv" lines)"
+  (cd "${Q}" && env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "${arm}" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1 || true)
+  after="$(LOG="${Q}/.swarm/events.tsv" lines)"
+  what="read-only, not logged"; [[ ${n} == 0 ]] || what="logged"
+  check "arm ${arm}: ${what}" test "$((after - before))" -eq "${n}"
+done
 appends "next logs nothing" 0 - - - next
 appends "status logs nothing" 0 - - - status
 

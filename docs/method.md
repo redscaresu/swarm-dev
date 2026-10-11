@@ -205,12 +205,14 @@ model and effort, herdr status, the story's PR), the model ladder and the recent
 `dash --watch [seconds]` redraws it. Both only read: they never change the board, the state or the
 logs, and never open or close a pane.
 
-**The audit log.** Every `swarm.sh` command that changes something (`agent`, `story`, `conduct`,
-`close`, `tell`, `review`, `finish`, `reconcile`, `unblock`, `tidy --yes`, `log-finding`) appends
-one line to `.swarm/events.tsv`: the time, the command, its target, the herdr pane that ran it,
-and `ok` or the first line of the error that stopped it. `reconcile` and `unblock` write a line per
-item they move. The log is local to the machine and append-only, holds names and paths but never a
-brief's or a message's contents, and a write that fails never fails the command.
+**The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,
+the command, its target, the herdr pane that ran it, and `ok`, `interrupted`, or the first line of the
+error that stopped it. Only the read-only commands are exempt (`READ_ONLY_COMMANDS` in
+`bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, and
+`tidy` without `--yes`), so a new command is logged until someone names it read-only. `reconcile`
+and `unblock` write a line per item they move. The log is local to the machine and append-only,
+holds names and paths but never a brief's or a message's contents, and a write that fails never
+fails the command.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one

@@ -132,40 +132,42 @@ Outside herdr it still shows the board and says the agents are unavailable. It f
 width and uses colour only on a terminal, unless `NO_COLOR` is set. Trimmed, from a real project:
 
 ```text
-┌─ swarm-dev 0.11.0 ───────────────────────────────────────────────────────┐
-│ project /Users/you/src/infrafactory                                      │
-│ merge   human                                                            │
-│ next    wait conduct-fakeaws-loaded-identity                             │
-└──────────────────────────────────────────────────────────────────────────┘
-┌─ pipeline ───────────────────────────────────────────────────────────────┐
-│ HLDs     draft 0  agreed 2  superseded 1                                 │
-│ epics    active 12  later 2  review 0                                    │
-│ stories  ready 1  blocked 11  review 1  later 7                          │
-└──────────────────────────────────────────────────────────────────────────┘
-┌─ agents ─────────────────────────────────────────────────────────────────┐
-│ 2026-09-30-import-production-state-into-the-mocks                        │
-│  └─ fakeaws-loaded-identity                                              │
-│     ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high    [done]  │
-│     └─   fakeaws-identity-store-and-fl…  code-risky opus·xhigh   [done]  │
-│ infrafactory                                                             │
-│  ├─ hld                                                                  │
-│  │  └─ ! -                               ?          ?            [EMPTY] │
-│  └─ scope-fakeaws-rehearsal-instance                                     │
-│     ├─   survey-fri                      survey     sonnet·high  [idle]  │
-│     └─   lead-fri                        lead       opus·xhigh   [idle]  │
-└──────────────────────────────────────────────────────────────────────────┘
-┌─ waiting on you ─────────────────────────────────────────────────────────┐
-│ awaiting your merge: fakeaws-arn-builders-take-account <PR URL>          │
-│ blocked: fakeaws-request-log (by [fakeaws-identity-store-and-flag])      │
-└──────────────────────────────────────────────────────────────────────────┘
-planning   survey: [sonnet high]  lead: [opus xhigh]  skeptic: [opus high]
-building   code: [opus high]  code-risky: [opus xhigh]  docs: [sonnet medium]
+┌─ swarm-dev 0.11.0 ───────────────────────────────────────────────────────────┐
+│ project /Users/you/src/infrafactory                                          │
+│ merge   human                                                                │
+│ next    wait conduct-fakeaws-rehearsal-instan                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ pipeline ───────────────────────────────────────────────────────────────────┐
+│ HLDs     draft 0  agreed 2  superseded 1                                     │
+│ epics    active 12  later 2  review 0                                        │
+│ stories  ready 2  blocked 9  review 0  later 7                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ agents ─────────────────────────────────────────────────────────────────────┐
+│ 2026-09-30-import-production-state-into-the-mocks                            │
+│  ├─ fakeaws-loaded-identity                                                  │
+│  │  ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high   [idle]       │
+│  │  └─   fakeaws-identity-iam-sts        code-risky opus·xhigh  [working]    │
+│  └─ fakeaws-rehearsal-instance                                               │
+│     ├─   conduct-fakeaws-rehearsal-ins…  conduct    opus·high   [idle]       │
+│     └─   fakeaws-request-log             code-risky opus·xhigh  [working]    │
+│ infrafactory                                                                 │
+│  ├─ hld                                                                      │
+│  │  └─ ! -                               ?          ?           [EMPTY]      │
+│  ├─ scope-aws-web-live-on-real-aws                                           │
+│  │  └─   critic-done                     critic     opus·high   [retired]    │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌─ waiting on you ─────────────────────────────────────────────────────────────┐
+│ later epic: aws-web-stack-load-balancer                                      │
+│ later epic: larger-estate                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+design     hld: [fable high]  hld-review: [fable xhigh]  hld-lead: [fable xhigh]
 ```
 
-`.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` changed: one line per
-`agent`, `story`, `conduct`, `close`, `tell`, `review`, `finish`, `tidy --yes` and `log-finding`,
-and per item `reconcile` or `unblock` moves, with the time, the target, the pane that ran it and
-whether it worked. It holds names and paths, never the contents of a brief or a message.
+`.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per
+command, with the time, the target, the pane that ran it and whether it worked (or `interrupted`).
+Every command writes it except the read-only ones (`dash`, `status`, `next`, `config`, `policy`,
+`cost`, `lessons`, `findings`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line
+per item they move. It holds names and paths, never the contents of a brief or a message.
 
 ## Updating
 
