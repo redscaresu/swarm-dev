@@ -127,9 +127,11 @@ state or the logs, and never opens or closes a pane. What it shows:
 - **Agents**: this project's agents, by herdr workspace and tab (a conductor's tab is its epic),
   each with its role, model and effort, its status, and its story's PR. `!` marks one that needs a
   look: waiting on a prompt, or an empty pane where a start failed. A conductor that wrote its
-  report, not yet collected, shows `[reported]`.
+  report, not yet collected, shows `[reported]`. A story's builder that has shown working for
+  `stall_minutes` (30 by default) with no commit, PR update or swarm action shows `[stalled?]`.
 - **Waiting on you**: only what needs you: PRs awaiting your merge (with their checks, ✔ green,
-  ✘ red or ● running, and `behind` or `dirty` against the base), `lead` stories and draft HLDs.
+  ✘ red or ● running, and `behind` or `dirty` against the base), `lead` stories, draft HLDs and
+  stalled builders.
   Blocked and later items are one count line; `swarm.sh status --all` lists them.
 - **Ladder**: the model and effort each role runs on.
 - **Recent**: newest first, the swarm's own actions (the audit log), merges on the base branch, and

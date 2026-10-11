@@ -44,6 +44,8 @@ item stories/ask.md 'status: ready' 'kind: lead'
 printf 'w1:p1 conductor\nw1:p2 s-one\nw1:p3 s-gone\nw1:p4 old\nw1:p5 odd\n' > "${P}/.swarm/state/e1"
 # e2's conductor wrote its report and went idle: [reported], not [idle].
 printf 'w1:p8 conduct-e2\n' > "${P}/.swarm/state/e2"
+# s-three's builder is working; with no sign of life on record it is never stalled (the stall block below).
+printf 'w1:p9 s-three\n' > "${P}/.swarm/state/s-three"
 echo "# report" > "${P}/.swarm/conduct-e2.report.md"
 # A codex brief in state/ is prose, not a tab record (own_panes' rule): its pane must not show.
 printf 'w1:p6 is where the brief says to look\n' > "${P}/.swarm/state/brief-x.md"
@@ -63,18 +65,26 @@ printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\tr
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"}]}}' ;;
+  "agent wait") echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}'; exit 1 ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
 STUB
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/herdr"
 # gh: PR 7's checks are green and its branch is behind the base.
-cat > "${ROOT}/bin/gh" <<'STUB'
+# PR 8 was updated at the time in pr8.updated.
+cat > "${ROOT}/bin/gh" <<STUB
 #!/bin/sh
-[ "$1 $2 $3" = "pr view https://github.com/o/r/pull/7" ] || exit 1
-echo '{"mergeStateStatus":"BEHIND","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]}'
+U8="${ROOT}/pr8.updated"
+STUB
+cat >> "${ROOT}/bin/gh" <<'STUB'
+case "$1 $2 $3" in
+  "pr view https://github.com/o/r/pull/7") echo '{"mergeStateStatus":"BEHIND","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/r/pull/8") if [ "$6" = -q ]; then cat "$U8"; else echo "{\"updatedAt\":\"$(cat "$U8")\"}"; fi ;;
+  *) exit 1 ;;
+esac
 STUB
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/gh"
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nobin/gh"
@@ -218,6 +228,30 @@ check "--watch keeps going after a failed render" test "${alive}" == yes
 check "--watch refuses a bad interval" bash -c "cd '${P}' && ! bash '${SWARM}' dash --watch 0 2>/dev/null"
 
 check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${before}"
+
+# --- Stalls. s-three's builder is working, and its story was started 2 hours ago with nothing since:
+# no worktree commit, no PR. After the snapshot, since a stall's age changes every minute.
+ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
+printf '%s\tstory\ts-three\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
+out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a builder working 2 hours with no sign of life is stalled?" grep -qE '! s-three .*\[stalled\?\]' <<< "${out}"
+check "a stalled builder waits on you" grep -qE 'stalled\? s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
+mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/config"
+out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "stall_minutes sets the threshold" lacks "stalled?" "${out}"
+rm "${P}/.claude/swarm/config"
+# wait: herdr's wait keeps timing out; the stall check between steps ends it, with exit code 3.
+waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS=1000 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait s-three 5000 2>&1); }
+if out="$(waitfor)"; then rc=0; else rc=$?; fi
+check "wait returns on a stall with exit code 3" test "${rc}" -eq 3
+check "wait says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
+# A PR updated a minute ago is a sign of life: neither dash nor wait calls it stalled.
+ago 1 > "${ROOT}/pr8.updated"
+echo "prs: https://github.com/o/r/pull/8" >> "${P}/docs/stories/s-three.md"
+out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a recent PR update is not a stall in dash" lacks "stalled?" "${out}"
+if out="$(waitfor)"; then rc=0; else rc=$?; fi
+check "a recent PR update is not a stall in wait" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

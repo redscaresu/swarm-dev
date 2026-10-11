@@ -130,6 +130,29 @@ gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
 check "the PR's own delete is pulled, and finish takes off what it left" "gone|gone|$(git -C "${ROOT}/app.git" rev-parse main)" \
   "$(gone "${ROOT}/app/docs/stories/r.md")|$(gone "${ROOT}/app/docs/stories/s.md")|$(git -C "${ROOT}/app" rev-parse HEAD)"
 
+# --- A board edit in the main checkout that is already the base's does not stop the pull; one that
+# differs still does, and is named. The base gets a new story t and an edit to u.
+item "${ROOT}/app/docs" stories/u.md "status: ready" "kind: code"
+item "${ROOT}/app/docs" stories/v.md "status: ready" "kind: code"
+"${GIT[@]}" -C "${ROOT}/app" add docs && "${GIT[@]}" -C "${ROOT}/app" commit -q -m "u v" && "${GIT[@]}" -C "${ROOT}/app" push -q origin main
+"${GIT[@]}" -C "${ROOT}/pr" pull -q --ff-only
+item "${ROOT}/pr/docs" stories/t.md "status: ready" "kind: code"
+item "${ROOT}/pr/docs" stories/u.md "status: blocked" "kind: code" "blocked_by: [t]"
+"${GIT[@]}" -C "${ROOT}/pr" add docs && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "plan t" && "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
+cp "${ROOT}/pr/docs/stories/t.md" "${ROOT}/pr/docs/stories/u.md" "${ROOT}/app/docs/stories/"   # the same edits, by hand
+inrepo review v "${U}/1" >/dev/null
+out="$(inrepo reconcile || true)"
+check "board edits identical to the base are put back, and the pull goes through" "$(git -C "${ROOT}/app.git" rev-parse main)|gone|" \
+  "$(git -C "${ROOT}/app" rev-parse HEAD)|$(gone "${ROOT}/app/docs/stories/v.md")|$(git -C "${ROOT}/app" status --porcelain -- docs/stories/t.md docs/stories/u.md)"
+check "reconcile says which edits it put back" "yes" "$(has "docs/stories/u.md was already the base's" "${out}")"
+"${GIT[@]}" -C "${ROOT}/pr" pull -q --ff-only && echo "status: ready" >> "${ROOT}/pr/docs/stories/t.md"
+"${GIT[@]}" -C "${ROOT}/pr" add docs && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "edit t" && "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
+echo "a local note" >> "${ROOT}/app/docs/stories/t.md"
+item "${ROOT}/app/docs" stories/x2.md "status: ready" "kind: code"
+inrepo review x2 "${U}/1" >/dev/null
+out="$(inrepo reconcile || true)"
+check "a differing board edit still stops the pull, and is named" "yes" "$(has "docs/stories/t.md" "$(grep 'cannot pull' <<< "${out}")")"
+
 # --- The merge guard: every Claude agent starts unable to run gh pr merge, unless merge = agent.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
