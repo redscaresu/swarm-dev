@@ -88,6 +88,8 @@ That's all you need. Optional extras:
   **Bases** under Core plugins.
 - **Check on it** with `swarm.sh status`: the agents that need a look, what waits on you, and what
   `/swarm` does next. `swarm.sh tidy --yes` closes panes that hold nothing to read.
+- **Watch it** on one screen with `swarm.sh dash`, or `swarm.sh dash --watch` to keep it open:
+  see [Watching the swarm](#watching-the-swarm).
 - **On Foundry, Bedrock or Vertex**, agents start as plain `claude` in new panes, so load your
   provider settings in `~/.zshrc` for herdr panes, not in an alias:
 
@@ -108,6 +110,62 @@ That's all you need. Optional extras:
 | a proposed brief rule (a lesson) | merge the PR to adopt it, or close it |
 
 `swarm.sh status` shows this list any time, with the agents that need a look.
+
+## Watching the swarm
+
+`swarm.sh dash` prints one screen of what the swarm is doing; `swarm.sh dash --watch [seconds]`
+redraws it every few seconds (5 by default) until Ctrl-C. It only reads: it never changes the
+board, the state or the logs, and never opens or closes a pane. Its panels:
+
+- **Header**: the project, the swarm-dev version, the `merge` mode and what `/swarm` does next.
+- **Pipeline**: how many HLDs, epics and stories are in each status.
+- **Agents**: this project's agents, by herdr workspace and tab (a conductor's tab is its epic),
+  each with its role, model and effort, its status, and its story's PR. `!` marks one that needs a
+  look: waiting on a prompt, or an empty pane where a start failed.
+- **Ladder**: the model and effort each role runs on.
+- **Waiting on you**: the same list as `swarm.sh status`.
+- **Recent**: the last eight events, newest first: merges on the base branch, review findings
+  fixed, agents started, and lines from the audit log.
+- **Status line**: one line per group of roles, with each role's model and effort.
+
+Outside herdr it still shows the board and says the agents are unavailable. It fits the terminal's
+width and uses colour only on a terminal, unless `NO_COLOR` is set. Trimmed, from a real project:
+
+```text
+┌─ swarm-dev 0.11.0 ───────────────────────────────────────────────────────┐
+│ project /Users/you/src/infrafactory                                      │
+│ merge   human                                                            │
+│ next    wait conduct-fakeaws-loaded-identity                             │
+└──────────────────────────────────────────────────────────────────────────┘
+┌─ pipeline ───────────────────────────────────────────────────────────────┐
+│ HLDs     draft 0  agreed 2  superseded 1                                 │
+│ epics    active 12  later 2  review 0                                    │
+│ stories  ready 1  blocked 11  review 1  later 7                          │
+└──────────────────────────────────────────────────────────────────────────┘
+┌─ agents ─────────────────────────────────────────────────────────────────┐
+│ 2026-09-30-import-production-state-into-the-mocks                        │
+│  └─ fakeaws-loaded-identity                                              │
+│     ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high    [done]  │
+│     └─   fakeaws-identity-store-and-fl…  code-risky opus·xhigh   [done]  │
+│ infrafactory                                                             │
+│  ├─ hld                                                                  │
+│  │  └─ ! -                               ?          ?            [EMPTY] │
+│  └─ scope-fakeaws-rehearsal-instance                                     │
+│     ├─   survey-fri                      survey     sonnet·high  [idle]  │
+│     └─   lead-fri                        lead       opus·xhigh   [idle]  │
+└──────────────────────────────────────────────────────────────────────────┘
+┌─ waiting on you ─────────────────────────────────────────────────────────┐
+│ awaiting your merge: fakeaws-arn-builders-take-account <PR URL>          │
+│ blocked: fakeaws-request-log (by [fakeaws-identity-store-and-flag])      │
+└──────────────────────────────────────────────────────────────────────────┘
+planning   survey: [sonnet high]  lead: [opus xhigh]  skeptic: [opus high]
+building   code: [opus high]  code-risky: [opus xhigh]  docs: [sonnet medium]
+```
+
+`.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` changed: one line per
+`agent`, `story`, `conduct`, `close`, `tell`, `review`, `finish`, `tidy --yes` and `log-finding`,
+and per item `reconcile` or `unblock` moves, with the time, the target, the pane that ran it and
+whether it worked. It holds names and paths, never the contents of a brief or a message.
 
 ## Updating
 

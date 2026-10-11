@@ -38,7 +38,7 @@ also run one by one, and which each wait for the user's approval:
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval |
 | Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds the epic, and merges it only with `merge = agent` |
 
-Useful while it runs: `swarm.sh status [--all]` (agents that need a look, including empty panes where a start failed, and what waits on the user; `--all` lists idle agents and blocked stories too), `swarm.sh tidy [--yes]` (close empty panes and retired agents' panes; lists them first), `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
+Useful while it runs: `swarm.sh status [--all]` (agents that need a look, including empty panes where a start failed, and what waits on the user; `--all` lists idle agents and blocked stories too), `swarm.sh dash [--watch [seconds]]` (the board, agents, model ladder and recent events on one read-only screen), `swarm.sh tidy [--yes]` (close empty panes and retired agents' panes; lists them first), `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
 (tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh tell <slug> <file>`
 (send a builder review findings), `swarm.sh log-finding <kind> <pr> <text>` and `swarm.sh lessons [--all]` (the outer
 loop: log fixed findings by kind; list kinds recurring in 3+ PRs with no brief rule yet), `swarm.sh watch`
