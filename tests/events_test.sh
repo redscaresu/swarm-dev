@@ -85,38 +85,59 @@ appends "a failed story" 1 story nope "no story" story nope
 appends "a failed conduct" 1 conduct nope "no epic" conduct nope
 appends "a failed agent, logged by its agent name" 1 agent n1-x "no prompt file" agent t "N1 x" "${P}" code "${P}/missing.md"
 appends "log-finding with no arguments" 1 log-finding - "usage" log-finding
-appends "a die a caller tolerated never names a later failure" 1 _tolerated bogus "failed (exit 1)" _tolerated bogus
-appends "a tolerated die never names a failure that fires no ERR trap" 1 _tolerated bogus "failed (exit 1)" _tolerated bogus expand
-appends "a die in a command substitution that ended the command is its outcome" 1 review nope "no story or epic 'nope'" review nope "${U}/9"
+# A die inside a nested $(...) (item_file, here) gives only its exit status: a caller could have
+# tolerated it, so its message is never taken as the outcome.
+appends "a die in a nested substitution gives failed (exit N)" 1 review nope "failed (exit 1)" review nope "${U}/9"
+appends "an unknown command logs nothing" 0 - - - bogus
+appends "--help logs nothing" 0 - - - --help
+appends "-h logs nothing" 0 - - - -h
 
-# DIE_FILE is main's own: one set in the environment is never written.
-(cd "${P}" || exit 1; DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" policy bogus >/dev/null 2>&1) || true
-(cd "${P}" || exit 1; DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story nope >/dev/null 2>&1) || true
+# DIE_FILE and DIE_LEVEL are main's own: ones set in the environment are never used.
+(cd "${P}" || exit 1; DIE_FILE="${ROOT}/planted" DIE_LEVEL=0 SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" policy bogus >/dev/null 2>&1) || true
+(cd "${P}" || exit 1; DIE_FILE="${ROOT}/planted" DIE_LEVEL=0 SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story nope >/dev/null 2>&1) || true
 check "a DIE_FILE from the environment is never written" test ! -e "${ROOT}/planted"
 
-# A signal: logged as interrupted, the temp file removed, and the exit status still 128+N. The
-# stub's `agent wait` sleeps; the command runs in its own process group, which gets the signal.
+# Signals, sent to swarm.sh's pid alone (no process group), must stop it at once. A logged command
+# (tell, its stubbed prompt hanging) is logged as interrupted, leaves no temp file, and keeps the
+# exit status 128+N. A read-only one (wait, its stubbed wait hanging) just stops.
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\ncase "$1 $2" in "agent wait") exec sleep 30 ;; esac\nexec "%s" "$@"\n' "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
+printf '#!/bin/sh\ncase "$1 $2" in "agent prompt") exec sleep 37 ;; "agent wait") exec sleep 38 ;; esac\nexec "%s" "$@"\n' "${ROOT}/bin/herdr" > "${ROOT}/slow/herdr"
 chmod +x "${ROOT}/slow/herdr"; mkdir -p "${ROOT}/sigtmp"; echo "w:1 s1" > "${P}/.swarm/state/t1"
+# term_pid <swarm args...> — start it, TERM its pid once it is under way, and print "<exit> <seconds>".
+term_pid() {
+  local pid code=0 t0
+  (cd "${P}" || exit 1; HERDR_ENV=1 HERDR_PANE_ID=w:me TMPDIR="${ROOT}/sigtmp" PATH="${ROOT}/slow:${ROOT}/bin:${PATH}" exec bash "${SWARM}" "$@" >/dev/null 2>&1) &
+  pid=$!
+  sleep 2; t0=${SECONDS}; kill -TERM "${pid}" || true
+  { wait "${pid}"; } 2>/dev/null || code=$?
+  echo "${code} $((SECONDS - t0))"
+}
 was="$(lines)"
-set -m
-(cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me TMPDIR="${ROOT}/sigtmp" PATH="${ROOT}/slow:${ROOT}/bin:${PATH}" exec bash "${SWARM}" wait s1 >/dev/null 2>&1) &
-pid=$!
-set +m
-for _ in 1 2 3 4 5 6 7 8 9 10; do ls "${ROOT}/sigtmp"/swarm-die.* >/dev/null 2>&1 && break; sleep 0.5; done
-sleep 1; kill -TERM -- "-${pid}" || true; code=0; { wait "${pid}"; } 2>/dev/null || code=$?
-check "a TERM keeps exit status 143" test "${code}" -eq 143
-check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\twait\ts1\tw:me\tinterrupted\$'"
+read -r code took <<< "$(term_pid tell s1 findings.md)"
+check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
+check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\ttell\ts1\tw:me\tinterrupted\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
+sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37' >/dev/null"
+read -r code took <<< "$(term_pid wait s1)"
+check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 
-# Every dispatch arm is read-only (READ_ONLY_COMMANDS, logs nothing) or logged (one line), read off
-# the case statement, so a new command can never slip past the log. reconcile and unblock log per
-# item (above). A bare project, no herdr: every arm stops at once.
+# The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
+# that changes state (story, say) cannot be declared read-only without this test changing too.
+RO_EXPECTED="base cost config dash findings lessons next policy status wait watch _base _label _name _pane _target _trusted"
+ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
+check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
+  test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"
+
+# Every dispatch arm, read off the case statement, is read-only (logs nothing) or logged (one line),
+# so a new command can never slip past the log. reconcile and unblock log per item (above). A bare
+# project, no herdr: every arm stops at once.
 Q="${ROOT}/bare"; mkdir -p "${Q}/.claude/swarm" "${Q}/docs/stories" "${Q}/docs/epics" "${Q}/docs/hld"; : > "${Q}/.claude/swarm/config"
-ro=" $(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}") "
+ro=" ${RO_EXPECTED} "
 arms="$(awk '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit } d && match($0, /^    [a-z_|-]+\)/) { a = substr($0, 5, RLENGTH - 5); gsub(/\|/, " ", a); print a }' "${SWARM}" | tr ' ' '\n')"
 check "the case statement's arms were read" test "$(wc -l <<< "${arms}")" -gt 20
+for arm in ${RO_EXPECTED}; do
+  check "read-only ${arm} is a command" grep -qx -- "${arm}" <<< "${arms}"
+done
 for arm in ${arms}; do
   [[ "${arm}" == reconcile || "${arm}" == unblock ]] && continue
   args=(); [[ "${arm}" == tidy ]] && args=(--yes)

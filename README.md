@@ -164,10 +164,11 @@ design     hld: [fable high]  hld-review: [fable xhigh]  hld-lead: [fable xhigh]
 ```
 
 `.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per
-command, with the time, the target, the pane that ran it and whether it worked (or `interrupted`).
-Every command writes it except the read-only ones (`dash`, `status`, `next`, `config`, `policy`,
-`cost`, `lessons`, `findings`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line
-per item they move. It holds names and paths, never the contents of a brief or a message.
+command, with the time, the target, the pane that ran it and how it ended (`ok`, `interrupted`, the
+error that stopped it, or `failed (exit N)`). Every command writes it except the read-only ones
+(`dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, `wait`, `watch`,
+`base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
+holds names and paths, never the contents of a brief or a message.
 
 ## Updating
 

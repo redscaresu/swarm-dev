@@ -34,18 +34,19 @@
 # grid); a fifth agent opens "<tab>-2", and so on, so no pane gets too small to follow.
 set -euo pipefail
 
-# die <message> — stop. Inside a logged command (main), the message's first line is also recorded,
-# with the subshell level it died at, so main can tell whether this die is what ended the command.
+# die <message> — stop. Inside a logged command (main), a die at the command's own level (not in a
+# nested $(...), which may be tolerated) also records its first line as the command's outcome.
 die() {
   echo "swarm: $*" >&2
-  if [[ -n "${DIE_FILE}" ]]; then
+  if [[ -n "${DIE_FILE}" && "${BASH_SUBSHELL}" == "${DIE_LEVEL}" ]]; then
     local m="$*"
-    { printf '%s\t%s\n' "${BASH_SUBSHELL}" "${m%%$'\n'*}" > "${DIE_FILE}"; } 2>/dev/null || true
+    { printf '%s\n' "${m%%$'\n'*}" > "${DIE_FILE}"; } 2>/dev/null || true
   fi
   exit 1
 }
 # Set only by main, in the subshell a logged command runs in; never taken from the environment.
 DIE_FILE=""
+DIE_LEVEL=-1
 
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -290,12 +291,26 @@ agent_name() {
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
-# AGENT_STATE_PY: the one rule for what a pane this project opened holds, shared by status, tidy and
-# dash (each python exec's it). agent_state(a, name) -> (state, needs_a_look), where a is herdr's
-# agent in the pane (None for an empty pane): EMPTY (a start that failed), WAITING (blocked on a
-# prompt), working, retired (renamed <name>-done by retire_agent), or herdr's own status.
-AGENT_STATE_PY='
-import re
+# PANES_PY: the one reader of this project's panes, shared by status, tidy and dash (each python
+# exec's it from $SWARM_PANES_PY), so the three views agree.
+#   pane_records(state, keep) yields (tab label, pane, recorded name) for each pane in keep (own_panes
+#     and still live), from the tab records in STATE_DIR, skipping *.tmp; a pane's first record wins.
+#   agent_state(a, name) -> (state, needs_a_look), where a is herdr's agent in the pane (None for an
+#     empty pane): EMPTY (a start that failed), WAITING (blocked on a prompt), working, retired
+#     (renamed <name>-done by retire_agent), or herdr's own status.
+PANES_PY='
+import glob, os, re
+def pane_records(state, keep):
+    seen = set()
+    for path in sorted(glob.glob(os.path.join(state, "*"))):
+        if not os.path.isfile(path) or path.endswith(".tmp"):
+            continue
+        for line in open(path, errors="replace"):
+            f = line.split()
+            if not f or f[0] not in keep or f[0] in seen:
+                continue
+            seen.add(f[0])
+            yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
 def agent_state(a, name):
     if a is None:
         return "EMPTY", True
@@ -1488,25 +1503,17 @@ watch_prs() {
 status_report() {
   local all="${1:-}" agents panes waiting
   if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
-    SWARM_AGENT_STATE_PY="${AGENT_STATE_PY}" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
-import glob, json, os, sys
-exec(os.environ["SWARM_AGENT_STATE_PY"])
+    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
+import json, os, sys
+exec(os.environ["SWARM_PANES_PY"])
 state, agents_json, panes_json, show_all = sys.argv[1:5]
 try:
     agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
 except (ValueError, KeyError):
     print("Agents\n  (herdr gave no agent list)"); sys.exit(0)
-rows, seen = [], set()
-for path in sorted(glob.glob(os.path.join(state, "*"))):
-    if not os.path.isfile(path) or path.endswith(".tmp"):
-        continue
-    for line in open(path):
-        f = line.split()
-        if not f or f[0] not in live or f[0] in seen:
-            continue
-        seen.add(f[0])
-        pane, name = f[0], (f[1] if len(f) > 1 else "-")
+rows = []
+for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & live):
         a = agents.get(pane)
         if a is not None:
             name = a.get("name") or name
@@ -1516,7 +1523,7 @@ for path in sorted(glob.glob(os.path.join(state, "*"))):
                 "retired": "done (retired)",
                 "idle": "idle: finished, or waiting for its next step",
                 "done": "idle: finished, or waiting for its next step"}.get(st, st)
-        rows.append((name, what, f"{os.path.basename(path)} {pane}"))
+        rows.append((name, what, f"{tab} {pane}"))
 quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
 shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]
 counts = [f"{len(rows) - len(quiet)} need a look or are working", f"{len(quiet)} idle or done"]
@@ -1600,12 +1607,12 @@ dash_render() {
   DASH_MERGE="${CFG_merge}" DASH_NEXT="$(next_step | head -1)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_GROUPS="${ROLE_GROUPS}" DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
-  DASH_OWN="$(own_panes)" SWARM_AGENT_STATE_PY="${AGENT_STATE_PY}" \
+  SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
     python3 - <<'PY'
 import collections, datetime, glob, json, os, re
 E = os.environ
-exec(E["SWARM_AGENT_STATE_PY"])
+exec(E["SWARM_PANES_PY"])
 W = max(int(E.get("DASH_COLS") or 100), 60)
 COLOR = E.get("DASH_COLOR") == "1"
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1"}
@@ -1676,27 +1683,19 @@ else:
             prs[b[4]] = b[3]
             if b[0] == "epics":
                 prs[b[5]] = b[3]
-    own = set(E.get("DASH_OWN", "").split()) & live   # own_panes: the panes this project opened
-    tree, seen = collections.OrderedDict(), set()
-    for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "*"))):
-        if not os.path.isfile(path):
-            continue
-        for line in open(path, errors="replace"):
-            f = line.split()
-            if not f or f[0] not in own or f[0] in seen:
-                continue
-            seen.add(f[0])
-            ws = ws_label.get(f[0].split(":")[0], f[0].split(":")[0])
-            tab = tree.setdefault(ws, collections.OrderedDict()).setdefault(os.path.basename(path), [])
+    tree = collections.OrderedDict()
+    for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & live):
+            ws = ws_label.get(pane.split(":")[0], pane.split(":")[0])
+            tab = tree.setdefault(ws, collections.OrderedDict()).setdefault(label, [])
             try:
-                a = agents.get(f[0])
-                name = (a or {}).get("name") or (f[1] if len(f) > 1 else "-")
+                a = agents.get(pane)
+                name = (a or {}).get("name") or recorded
                 base = re.sub(r"-done\d*$", "", name)
                 rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
                 st, look = agent_state(a, name)
                 tab.append((name, rec[1] if rec else "?", (f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?", st, look, prs.get(base, "")))
             except Exception as err:  # one odd agent record must not cost the whole panel
-                tab.append((f[1] if len(f) > 1 else f[0], "?", "?", f"unreadable: {type(err).__name__}", True, ""))
+                tab.append((recorded, "?", "?", f"unreadable: {type(err).__name__}", True, ""))
     width = min(max((len(x[0]) for t in tree.values() for v in t.values() for x in v), default=0), 30)
     for ws, tabs in tree.items():
         rows.append([(ws, "b")])
@@ -1875,27 +1874,18 @@ tidy_panes() {
   [[ "${yes}" != --yes || -n "${HERDR_PANE_ID:-}" ]] || die "tidy --yes: HERDR_PANE_ID is not set, so this pane could not be kept open"
   agents=$(herdr agent list 2>/dev/null) || die "tidy: herdr gave no agent list"
   panes=$(herdr pane list 2>/dev/null) || die "tidy: herdr gave no pane list"
-  closable=$(SWARM_AGENT_STATE_PY="${AGENT_STATE_PY}" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
-import glob, json, os, sys
-exec(os.environ["SWARM_AGENT_STATE_PY"])
+  closable=$(SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
+import json, os, sys
+exec(os.environ["SWARM_PANES_PY"])
 state, agents_json, panes_json, me = sys.argv[1:5]
 agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
 live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
-seen = set()
-for path in sorted(glob.glob(os.path.join(state, "*"))):
-    if not os.path.isfile(path) or path.endswith(".tmp"):
-        continue
-    for line in open(path):
-        f = line.split()
-        if not f or f[0] not in live or f[0] == me or f[0] in seen:
-            continue
-        seen.add(f[0])
-        a = agents.get(f[0])
-        name = (a or {}).get("name") or (f[1] if len(f) > 1 else "-")
-        reason = {"EMPTY": "empty: no agent started", "retired": "retired"}.get(agent_state(a, name)[0])
-        if not reason:
-            continue
-        print("\t".join((f[0], name, reason, os.path.basename(path))))
+for tab, pane, recorded in pane_records(state, (set(os.environ["SWARM_OWN"].split()) & live) - {me}):
+    a = agents.get(pane)
+    name = (a or {}).get("name") or recorded
+    reason = {"EMPTY": "empty: no agent started", "retired": "retired"}.get(agent_state(a, name)[0])
+    if reason:
+        print("\t".join((pane, name, reason, tab)))
 PY
 ) || die "tidy: could not read herdr's lists"
   if [[ -z "${closable}" ]]; then echo "nothing to tidy"; return 0; fi
@@ -1963,8 +1953,6 @@ dispatch() {
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
-    _tolerated) v="$(policy "${1:?role}" 2>/dev/null)" || true   # test hook: a die its caller tolerates, then a failure of its own:
-                if [[ -n "${2:-}" ]]; then : "${v:?no policy}"; fi; [[ -n "${v}" ]] ;;   # with a 2nd arg, one that fires no ERR trap
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; n="$(agent_name "${1:?name}")"
             if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
@@ -1973,34 +1961,32 @@ dispatch() {
   esac
 }
 
-# READ_ONLY_COMMANDS change nothing, so they are not logged. Every other command is (fail closed: a
-# new command is logged until it is named here), and so is tidy --yes; tidy alone only lists.
-READ_ONLY_COMMANDS="dash status next config policy cost lessons findings help _name _target _label _trusted"
+# READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
+# all the time (wait, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
+# Every other command is logged (fail closed: a new command is logged until it is named here), and so
+# is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
+READ_ONLY_COMMANDS="dash status next config policy cost lessons findings wait watch base _base _name _target _label _trusted _pane"
 
-# die_propagated <failed command> — the ERR trap in main's subshell. A die in a nested shell ($(...)) ended the command
-# only if the very next failure is one level up, on the command substitution that ran it: then its
-# message moves up a level. Any other failure means a caller tolerated that die, and its message is
-# dropped, so it never names a later, unrelated failure.
-# shellcheck disable=SC2317,SC2329 # invoked by the ERR trap
-die_propagated() {
-  local lvl msg
-  [[ -s "${DIE_FILE}" ]] || return 0
-  IFS=$'\t' read -r lvl msg < "${DIE_FILE}" || return 0
-  [[ "${lvl}" -gt "${BASH_SUBSHELL}" ]] || return 0
-  # shellcheck disable=SC2016 # a literal $( in the failed command's text
-  if [[ "${lvl}" -eq $((BASH_SUBSHELL + 1)) && "$1" == *'$('* ]]; then
-    printf '%s\t%s\n' "${BASH_SUBSHELL}" "${msg}" > "${DIE_FILE}"
-  else
-    : > "${DIE_FILE}"
-  fi
+# is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
+is_command() {
+  awk -v want="$1" '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit 1 }
+    d && match($0, /^    [a-z_|-]+\)/) { n = split(substr($0, 5, RLENGTH - 5), a, "|"); for (i = 1; i <= n; i++) if (a[i] == want) exit 0 }' "$0"
 }
 
-# main_signal <INT|TERM|HUP> — log the logged command as interrupted, remove the temp file, and die
-# of the same signal, so the exit status stays 128+N.
-# ponytail: bash runs this only once the command's subshell has ended, so a TERM sent to this pid alone
-# waits for it; Ctrl-C and a closed terminal signal the whole process group, which ends it at once.
+# kill_tree <pid> — TERM a process and everything under it, children first, so nothing is orphaned.
+# shellcheck disable=SC2317,SC2329 # called from main_signal
+kill_tree() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "${c}"; done
+  kill -TERM "$1" 2>/dev/null || true
+}
+
+# main_signal <INT|TERM|HUP> — stop the logged command at once (it runs in the background, so this
+# trap runs as soon as the signal lands), log it as interrupted, remove the temp file, and die of the
+# same signal, so the exit status stays 128+N.
 # shellcheck disable=SC2317,SC2329 # invoked by the signal traps
 main_signal() {
+  [[ -z "${EV_CHILD:-}" ]] || kill_tree "${EV_CHILD}"
   record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   trap - "$1"
@@ -2008,12 +1994,15 @@ main_signal() {
 }
 
 # main <command> [args] — dispatch, and log each command that is not read-only to EVENTS_LOG with its
-# outcome: ok, or the first line of the die that ended it. reconcile and unblock log one line per item
-# themselves. The command runs in a subshell so its die is caught and logged, not lost.
+# outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
+# A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
+# message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
+# log one line per item themselves.
 main() {
-  local rc lvl why level=$((BASH_SUBSHELL + 1))
-  EV_CMD="${1:-}"; EV_TARGET=""; EV_ERR=/dev/null
-  if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]]; then
+  local rc why
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_ERR=/dev/null; EV_CHILD=""
+  if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
+     || ! is_command "${EV_CMD}"; then
     dispatch "$@"; return
   fi
   case "${EV_CMD}" in
@@ -2021,19 +2010,19 @@ main() {
     log-finding) EV_TARGET="${2:-} ${3:-}"; EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     tidy) EV_TARGET=- ;;
-    watch) EV_TARGET="${*:2}" ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
+  # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
-  (set -eE; DIE_FILE="${EV_ERR}"; trap 'die_propagated "${BASH_COMMAND}"' ERR; dispatch "$@")
-  rc=$?
+  (DIE_FILE="${EV_ERR}"; DIE_LEVEL="${BASH_SUBSHELL}"; set -e; dispatch "$@") <&0 &
+  EV_CHILD=$!
+  wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
   if [[ ${rc} -ne 0 ]]; then
-    why=""; IFS=$'\t' read -r lvl why < "${EV_ERR}" 2>/dev/null || true
-    [[ "${lvl:-}" == "${level}" ]] || why=""
+    why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}"

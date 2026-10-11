@@ -206,9 +206,11 @@ model and effort, herdr status, the story's PR), the model ladder and the recent
 logs, and never open or close a pane.
 
 **The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,
-the command, its target, the herdr pane that ran it, and `ok`, `interrupted`, or the first line of the
-error that stopped it. Only the read-only commands are exempt (`READ_ONLY_COMMANDS` in
-`bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, and
+the command, its target, the herdr pane that ran it, and how it ended: `ok`, `interrupted`, the first
+line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
+message a caller may have handled (it still reaches the terminal). Only the read-only commands are
+exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
+`cost`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. `reconcile`
 and `unblock` write a line per item they move. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
