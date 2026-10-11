@@ -117,7 +117,7 @@ read -r code took <<< "$(term_pid tell s1 findings.md)"
 check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\ttell\ts1\tw:me\tinterrupted\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
-sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 37' >/dev/null"
+sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 3[7]' >/dev/null"
 read -r code took <<< "$(term_pid wait s1)"
 check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
 
