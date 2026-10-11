@@ -201,9 +201,10 @@ opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 **Watching it.** `swarm.sh status` lists the agents that need a look (blocked on a prompt, or an
 empty pane where a start failed), what waits on you, and the next step. `swarm.sh dash` shows the
 same on one screen, with the board's counts, this project's agents by workspace and tab (role,
-model and effort, herdr status, the story's PR), the model ladder and the recent events;
-`dash --watch [seconds]` redraws it. Both only read: they never change the board, the state or the
-logs, and never open or close a pane.
+model and effort, herdr status or `reported`, the story's PR), the PRs awaiting the user with their
+checks, the model ladder, today's cost and the recent events; `dash --watch [seconds]` redraws it in
+place until `q`. Both only read: they never change the board, the state or the logs, and never open
+or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 **The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,
 the command, its target, the herdr pane that ran it, and how it ended: `ok`, `interrupted`, the first

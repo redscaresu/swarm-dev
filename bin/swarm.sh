@@ -13,7 +13,7 @@
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
-#   swarm.sh dash [--watch [seconds]]                      a read-only dashboard: board, agents, ladder, recent events; --watch redraws
+#   swarm.sh dash [--watch [seconds]]                      a read-only dashboard: board, agents, ladder, recent events; --watch redraws in place, q quits
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
@@ -1550,40 +1550,107 @@ PY
   next_step | sed 's/^/  /'
 }
 
-# dash [--watch [seconds]] — a read-only dashboard: the header, the board's pipeline, this project's
-# agents by workspace and tab, the model ladder, what waits on you, recent events and a status line.
-# It never writes the board, state or logs, and never opens or closes a pane. --watch redraws every
-# N seconds (default 5) until Ctrl-C. Colour only on a terminal with NO_COLOR unset.
+# dash [--watch [seconds]] — a read-only dashboard: a header line, the board's pipeline, this
+# project's agents by workspace and tab, what waits on you, the model ladder and recent events. It
+# never writes the board, state or logs, and never opens or closes a pane. --watch rebuilds it every
+# N seconds (default 2) and repaints in place; q quits. Colour only on a terminal with NO_COLOR unset.
 dash() {
-  local every=""
+  local every="" tty=0
   case "${1:-}" in
     "") ;;
-    --watch) every="${2:-5}"; [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
+    --watch) every="${2:-2}"; [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
     *) die "usage: swarm.sh dash [--watch [seconds]]" ;;
   esac
-  local cols=100 color=0 frame
+  DASH_COLOR=0
   if [[ -t 1 ]]; then
-    cols="$(tput cols 2>/dev/null || echo 100)"
-    [[ -n "${NO_COLOR+x}" ]] || color=1
+    tty=1
+    [[ -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
   fi
-  if [[ -z "${every}" ]]; then DASH_COLS="${cols}" DASH_COLOR="${color}" dash_render; return; fi
-  # Hide the cursor while redrawing; show it again however the loop ends.
-  trap 'printf "\033[?25h"' EXIT
-  trap 'exit 0' INT TERM
-  printf '\033[?25l'
+  dash_size
+  if [[ -z "${every}" ]]; then dash_slow; dash_render; return; fi
+  dash_watch "${every}" "${tty}"
+}
+
+# dash_size — the terminal's columns and lines into DASH_W and DASH_H. Measured here, never in the
+# render's $(...), where there is no terminal (tput answers 80 there): stty on /dev/tty, then tput
+# on a terminal, then COLUMNS and LINES, then 100 columns and an unknown height (0).
+dash_size() {
+  local s="" c="" r=""
+  s="$( { stty size </dev/tty; } 2>/dev/null)" || s=""
+  r="${s% *}"; c="${s#* }"
+  if [[ ! "${c}" =~ ^[1-9][0-9]*$ ]]; then
+    c=""; r=""
+    if [[ -t 1 ]]; then c="$(tput cols 2>/dev/null)" || c=""; r="$(tput lines 2>/dev/null)" || r=""; fi
+  fi
+  [[ "${c}" =~ ^[1-9][0-9]*$ ]] || c="${COLUMNS:-}"
+  [[ "${c}" =~ ^[1-9][0-9]*$ ]] || c=100
+  [[ "${r}" =~ ^[1-9][0-9]*$ ]] || r="${LINES:-}"
+  [[ "${r}" =~ ^[1-9][0-9]*$ ]] || r=0
+  DASH_W="${c}"; DASH_H="${r}"
+}
+
+# dash_slow — the fields too slow for every frame, refreshed at most once a minute by --watch: each
+# review item's PR checks and merge state (one gh pr view per PR; left out when gh fails), and today's
+# estimated cost, the total line of cost_report.
+dash_slow() {
+  local f url j
+  DASH_PRSTATE=""
+  if command -v gh >/dev/null 2>&1; then
+    for url in $( { board stories; board epics; } | while IFS= read -r f; do
+        [[ "$(fm "${f}" status)" == review ]] && fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u); do
+      j="$(gh pr view "${url}" --json statusCheckRollup,mergeStateStatus 2>/dev/null | tr -d '\n\t')" || continue
+      DASH_PRSTATE+="${url}"$'\t'"${j}"$'\n'
+    done
+  fi
+  DASH_COST="$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p')" || DASH_COST=""
+  DASH_SLOW_AT="${SECONDS}"
+}
+
+# dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
+# when only the clock moved, just the header line is rewritten. On a terminal it draws on the
+# alternate screen with the cursor hidden, re-measures every frame, reads q (quit) and r (redraw)
+# without blocking, and redraws within a second of a resize (bash 3.2's read -t is not cut short by
+# SIGWINCH, so it waits in one-second steps). Off a terminal it prints each changed frame, plain.
+dash_watch() {
+  local every="$1" tty="$2" tpl="" frame last="" key i winch=0
+  if [[ ${tty} == 1 ]]; then
+    trap 'printf "\033[?25h\033[?1049l"' EXIT
+    printf '\033[?1049h\033[?25l'
+  fi
+  trap 'exit 0' INT TERM HUP
+  trap 'winch=1' WINCH
+  DASH_SLOW_AT=-60
   while :; do
-    [[ ! -t 1 ]] || cols="$(tput cols 2>/dev/null || echo 100)"
+    [[ ${tty} == 0 ]] || dash_size
+    (( SECONDS - DASH_SLOW_AT < 60 )) || dash_slow
     # A failed render shows its error in the frame and the loop carries on: a watch must not die quietly.
-    frame="$(DASH_COLS="${cols}" DASH_COLOR="${color}" dash_render 2>&1)" || frame+=$'\n'"(dash: this render failed; retrying in ${every}s)"
-    printf '\033[H\033[2J%s\n' "${frame}"
-    sleep "${every}"
+    tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_render 2>&1)" || tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
+    frame="${tpl//HH:MM:SS/$(date +%H:%M:%S)}"
+    if [[ ${tty} == 0 ]]; then
+      [[ "${tpl}" == "${last}" ]] || printf '%s\n\n' "${frame}"
+    elif [[ "${tpl}" != "${last}" ]]; then
+      printf '\033[H%s\033[K\033[J' "${frame//$'\n'/$'\033[K\n'}"
+    else
+      printf '\033[H%s\033[K' "${frame%%$'\n'*}"
+    fi
+    last="${tpl}"; winch=0
+    for ((i = 0; i < every; i++)); do
+      if [[ ${tty} == 1 ]]; then
+        key=""; read -rsn1 -t 1 key </dev/tty || true
+        case "${key}" in q|Q) exit 0 ;; r|R) last=""; break ;; esac
+      else
+        sleep 1
+      fi
+      [[ ${winch} == 0 ]] || { last=""; break; }
+    done
   done
 }
 
-# dash_render — gather what the dashboard shows (read-only), then lay it out in python.
+# dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
+# DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads.
 dash_render() {
-  local agents="" panes="" workspaces="" board="" policies="" merges="" f d r ref=""
-  if [[ "${HERDR_ENV:-}" == 1 ]]; then
+  local agents="" panes="" workspaces="" board="" policies="" merges="" drift=0 f d r ref=""
+  if command -v herdr >/dev/null 2>&1; then
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)" \
       && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
   fi
@@ -1601,42 +1668,47 @@ dash_render() {
     for r in ${CFG_base_branches} HEAD; do
       ref="origin/${r}"; git -C "${PROJECT_DIR}" rev-parse -q --verify "${ref}" >/dev/null && break; ref=""
     done
-    merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 8 --format='%cI%x09%an%x09%s' "${ref:-HEAD}" 2>/dev/null || true)"
+    merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 40 --format='%cI%x09%an%x09%s' "${ref:-HEAD}" 2>/dev/null || true)"
+    # Uncommitted board edits in the main checkout; no optional locks, so status writes no index.
+    drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" status --porcelain --untracked-files=all -- "${BOARD}" 2>/dev/null | grep -c . || true)"
   fi
   DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_NEXT="$(next_step | head -1)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_GROUPS="${ROLE_GROUPS}" DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" \
+  DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
-  SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" \
+  SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
+  DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
     python3 - <<'PY'
-import collections, datetime, glob, json, os, re
+import collections, datetime, itertools, json, os, re
 E = os.environ
 exec(E["SWARM_PANES_PY"])
 W = max(int(E.get("DASH_COLS") or 100), 60)
+H = int(E.get("DASH_LINES") or 0)
 COLOR = E.get("DASH_COLOR") == "1"
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1"}
-STATUS_STYLE = {"working": "ok", "idle": "dim", "done": "dim", "retired": "dim", "EMPTY": "bad", "WAITING": "bad"}
+STATUS_STYLE = {"working": "ok", "idle": "dim", "done": "dim", "retired": "dim", "reported": "warn", "EMPTY": "bad", "WAITING": "bad"}
+out = []
 
 def paint(t, s):
     return f"\033[{STYLE[s]}m{t}\033[0m" if COLOR and s and t else t
 
 def fit(segs, n):
     # Truncate, never wrap: plain lengths are measured before any colour is added.
-    out, left = [], n
+    res, left = [], n
     for t, s in segs:
         if left <= 0:
             break
         if len(t) > left:
             t = t[:left - 1] + "…"
-        out.append(paint(t, s)); left -= len(t)
-    return "".join(out) + " " * left
+        res.append(paint(t, s)); left -= len(t)
+    return "".join(res) + " " * left
 
-def box(title, rows):
-    print("┌─ " + paint(title, "h") + " " + "─" * max(W - len(title) - 5, 0) + "┐")
+def box(title, rows, w):
+    res = ["┌─ " + paint(title, "h") + " " + "─" * max(w - len(title) - 5, 0) + "┐"]
     for r in rows or [[("(none)", "dim")]]:
-        print("│ " + fit([(r, "")] if isinstance(r, str) else r, W - 4) + " │")
-    print("└" + "─" * (W - 2) + "┘")
+        res.append("│ " + fit([(r, "")] if isinstance(r, str) else r, w - 4) + " │")
+    return res + ["└" + "─" * (w - 2) + "┘"]
 
 def read_tsv(path, n):
     try:
@@ -1647,21 +1719,28 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# Header
-box(f"swarm-dev {E['DASH_VERSION']}", [
-    [("project ", "dim"), (E["DASH_PROJECT"], "b")],
-    [("merge   ", "dim"), (E["DASH_MERGE"], "")],
-    [("next    ", "dim"), (E["DASH_NEXT"], "warn")]])
+# Header: one line, the clock at the right.
+right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
+if E.get("DASH_KEYS") == "1":
+    right += "  q quit"
+head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
+        ("  merge ", "dim"), (E["DASH_MERGE"], "")]
+if E.get("DASH_COST"):
+    head += [("  today ", "dim"), (f"${E['DASH_COST']}", "")]
+head += [("  next ", "dim"), (E["DASH_NEXT"], "warn")]
+out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 
-# Pipeline
+# Pipeline: one line; then board edits the main checkout has not committed.
 board = [l.split("\t") for l in lines("DASH_BOARD")]
 def counts(d, order):
     c = collections.Counter(b[2] or "?" for b in board if b[0] == d)
-    keys = order + sorted(k for k in c if k not in order)
-    return [(f"{k} {c[k]}  ", "" if c[k] else "dim") for k in keys]
-box("pipeline", [[("HLDs     ", "dim")] + counts("hld", ["draft", "agreed", "superseded"]),
-                 [("epics    ", "dim")] + counts("epics", ["active", "later", "review"]),
-                 [("stories  ", "dim")] + counts("stories", ["ready", "blocked", "review", "later"])])
+    return [(f" {k} {c[k]}", "") for k in order + sorted(k for k in c if k not in order) if c[k]] or [(" none", "dim")]
+out.append(fit([("HLDs", "dim")] + counts("hld", ["draft", "agreed", "superseded"]) + [("  ·  epics", "dim")]
+               + counts("epics", ["active", "later", "review"]) + [("  ·  stories", "dim")]
+               + counts("stories", ["ready", "blocked", "review", "later"]), W))
+drift = int(E.get("DASH_DRIFT") or 0)
+if drift:
+    out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
 
 # Agents: this project's panes (its tab records), grouped by workspace, then tab.
 rows = []
@@ -1672,17 +1751,23 @@ try:
 except (ValueError, KeyError, TypeError):
     agents = None
 if agents is None:
-    rows = [[("agents unavailable: not inside herdr, or herdr gave no list", "dim")]]
+    rows = [[("agents unavailable: herdr is not on PATH, or gave no list", "dim")]]
 else:
     by_session, by_name = {}, {}
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
         by_name[f[2]] = by_session[f[6]] = f
-    prs = {}
+    prs, epic_of = {}, {}
     for b in board:
+        if b[0] == "epics":
+            epic_of[b[5]] = b[1]
         if b[3]:
             prs[b[4]] = b[3]
             if b[0] == "epics":
                 prs[b[5]] = b[3]
+    def reported(base):
+        # A conductor that wrote its report, which the lead has not collected yet.
+        epic = epic_of.get(base) or (base[len("conduct-"):] if base.startswith("conduct-") else "")
+        return bool(epic) and os.path.exists(os.path.join(E["DASH_PROJECT"], ".swarm", f"conduct-{epic}.report.md"))
     tree = collections.OrderedDict()
     for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & live):
             ws = ws_label.get(pane.split(":")[0], pane.split(":")[0])
@@ -1693,6 +1778,8 @@ else:
                 base = re.sub(r"-done\d*$", "", name)
                 rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
                 st, look = agent_state(a, name)
+                if st in ("idle", "done") and reported(base):
+                    st = "reported"
                 tab.append((name, rec[1] if rec else "?", (f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?", st, look, prs.get(base, "")))
             except Exception as err:  # one odd agent record must not cost the whole panel
                 tab.append((recorded, "?", "?", f"unreadable: {type(err).__name__}", True, ""))
@@ -1709,23 +1796,53 @@ else:
                              (f"{me:<13} ", ""), ("[", ""), (st, STATUS_STYLE.get(st, "")), ("]", ""), (f"  {pr}" if pr else "", "dim")])
     if not rows:
         rows = [[("no agents open in this project's panes", "dim")]]
-box("agents", rows)
+out += box("agents", rows, W)
+
+# Waiting on you: only what needs the user; blocked and later items are one count line.
+PRS = {}
+for l in lines("DASH_PRSTATE"):
+    url, _, j = l.partition("\t")
+    try:
+        PRS[url] = json.loads(j)
+    except ValueError:
+        pass
+FAILED = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")
+def pr_short(m):
+    s = PRS.get(m.group(0))
+    if not isinstance(s, dict):
+        return m.group(0)
+    roll = s.get("statusCheckRollup") or []
+    bad = any((c.get("conclusion") or c.get("state") or "").upper() in FAILED for c in roll)
+    running = any((c.get("status") or "COMPLETED").upper() != "COMPLETED" or (c.get("state") or "").upper() in ("PENDING", "EXPECTED") for c in roll)
+    ci = "✘" if bad else "●" if running else "✔" if roll else "no checks"
+    behind = {"BEHIND": " behind", "DIRTY": " dirty"}.get((s.get("mergeStateStatus") or "").upper(), "")
+    return f"{m.group(2)}#{m.group(3)} {ci}{behind}"
+need, blocked, later = [], 0, 0
+for l in lines("DASH_WAITING"):
+    l = l.strip()
+    if l.startswith("blocked:"):
+        blocked += 1
+    elif l.startswith("later "):
+        later += 1
+    else:
+        need.append(re.sub(r"https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)", pr_short, l))
+need += [f"draft HLD: {b[1]}" for b in board if b[0] == "hld" and b[2] == "draft"]
+wait_rows = need or [[("nothing", "dim")]]
+if blocked or later:
+    wait_rows.append([(f"blocked {blocked} · later {later} (swarm.sh status --all lists them)", "dim")])
+out += box("waiting on you", wait_rows, W)
 
 # Ladder: each role's model and effort, from policy.
 policy = [l.split() for l in lines("DASH_POLICY")]
-def me(p):
-    return f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}"
-cell = 30
-per = max(1, (W - 4) // cell)
-ladder = [f"{p[0]:<11}→ {me(p)}" for p in policy]
-box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)])
+ladder = [f"{p[0]:<11}→ {p[2] if p[1] == 'claude' else p[1]} · {p[3]}" for p in policy]
+def ladder_box(w, cell=30):
+    per = max(1, (w - 4) // cell)
+    return box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)], w)
 
-# Waiting on you
-box("waiting on you", [l.strip() for l in lines("DASH_WAITING")] or [[("nothing", "dim")]])
-
-# Recent: merges on the base branch, fixed findings, agents started, and the events log; newest first.
+# Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
+# Findings are one row per PR and day, and at most a third of the rows, so they never crowd out the rest.
 def when(s):
-    # A date alone (agents.tsv, findings.tsv) sorts as the end of that local day, after the day's timed events.
+    # A date alone (findings.tsv) sorts as the end of that local day, after the day's timed events.
     try:
         if len(s) == 10:
             return datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(), s[5:]
@@ -1737,33 +1854,46 @@ events = []
 for l in lines("DASH_MERGES"):
     f = l.split("\t", 2)
     if len(f) == 3:
-        events.append((f[0], f[1], f[2], "merge"))
+        m = re.match(r"Merge pull request #(\d+) from [^/\s]+/(\S+)", f[2])
+        events.append((f[0], f[1], f"merged #{m.group(1)} {m.group(2)}" if m else f[2], "merge"))
+found = collections.OrderedDict()
 for f in read_tsv(E["DASH_FINDINGS"], 4):
     m = re.search(r"(\d+)\D*$", f[2])
-    events.append((f[0], "review", f"{f[3]} (#{m.group(1) if m else f[2]})", f[1]))
-for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
-    events.append((f[0], "swarm", f"started {f[2]} ({f[4] if f[3] == 'claude' else f[3]} {f[5]})", f[1]))
+    found.setdefault((f[0], m.group(1) if m else f[2]), []).append(f)
+for (day, pr), fs in found.items():
+    text = fs[0][3] if len(fs) == 1 else f"{len(fs)} findings: " + "; ".join(x[3] for x in fs)
+    events.append((day, "review", f"{text} (#{pr})", fs[0][1] if len(fs) == 1 else "findings"))
 for f in read_tsv(E["DASH_EVENTS"], 5):
     events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"), "ok" if f[4].startswith("ok") else "failed"))
-timed = [(when(e[0]), e) for e in events]
-dated = sorted((x for x in timed if x[0][0]), key=lambda x: x[0][0], reverse=True)[:8]
-rec = []
-for (_, shown), (_, actor, text, tag) in dated:
-    a = actor if len(actor) <= 14 else actor[:13] + "…"
-    room = W - 4 - 13 - 16 - len(tag) - 4
-    t = text if len(text) <= room else text[:max(room - 1, 0)] + "…"
-    rec.append([(f"{shown:<11}  ", "dim"), (f"{a:<14}  ", ""), (t.ljust(max(room, 0)), ""), ("  [", ""), (tag, "bad" if tag == "failed" else "warn"), ("]", "")])
-box("recent", rec)
+dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
+def recent_box(w, n):
+    rec, reviews = [], 0
+    for (_, shown), (_, actor, text, tag) in dated:
+        if len(rec) >= n:
+            break
+        if actor == "review":
+            reviews += 1
+            if reviews > max(1, n // 3):
+                continue
+        a = actor if len(actor) <= 14 else actor[:13] + "…"
+        room = max(w - 4 - 13 - 16 - len(tag) - 4, 0)
+        t = text if len(text) <= room else text[:max(room - 1, 0)] + "…"
+        rec.append([(f"{shown:<11}  ", "dim"), (f"{a:<14}  ", ""), (t.ljust(room), ""), ("  [", ""), (tag, "bad" if tag == "failed" else "warn"), ("]", "")])
+    return box("recent", rec, w)
 
-# Status line: one line per role group.
-pol = {p[0]: p for p in policy}
-for g in E["DASH_GROUPS"].split():
-    name, rs = g.split(":", 1)
-    segs = [(f"{name:<11}", "dim")]
-    for r in rs.split(","):
-        if r in pol:
-            segs += [(f"{r}: ", ""), (f"[{me(pol[r]).replace(' · ', ' ')}]", "h"), ("  ", "")]
-    print(fit(segs, W).rstrip())
+# Ladder and recent side by side from 140 columns, stacked below; recent fills the height left.
+if W >= 140:
+    lw = 64
+    lad = ladder_box(lw)
+    rec = recent_box(W - lw - 1, max(5, H - len(out) - 2) if H else max(8, len(lad) - 2))
+    for a, b in itertools.zip_longest(lad, rec, fillvalue=None):
+        out.append((a or " " * lw) + " " + (b or ""))
+else:
+    out += ladder_box(W)
+    out += recent_box(W, max(5, H - len(out) - 2) if H else 8)
+if E.get("DASH_KEYS") == "1" and H:
+    out = out[:H]   # a watched frame never scrolls the screen
+print("\n".join(l.rstrip() for l in out))
 PY
 }
 
