@@ -1981,7 +1981,7 @@ READ_ONLY_COMMANDS="dash status next config policy cost lessons findings help _n
 # only if the very next failure is one level up, on the command substitution that ran it: then its
 # message moves up a level. Any other failure means a caller tolerated that die, and its message is
 # dropped, so it never names a later, unrelated failure.
-# shellcheck disable=SC2329 # invoked by the ERR trap
+# shellcheck disable=SC2317,SC2329 # invoked by the ERR trap
 die_propagated() {
   local lvl msg
   [[ -s "${DIE_FILE}" ]] || return 0
@@ -1999,7 +1999,7 @@ die_propagated() {
 # of the same signal, so the exit status stays 128+N.
 # ponytail: bash runs this only once the command's subshell has ended, so a TERM sent to this pid alone
 # waits for it; Ctrl-C and a closed terminal signal the whole process group, which ends it at once.
-# shellcheck disable=SC2329 # invoked by the signal traps
+# shellcheck disable=SC2317,SC2329 # invoked by the signal traps
 main_signal() {
   record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"

@@ -90,8 +90,8 @@ appends "a tolerated die never names a failure that fires no ERR trap" 1 _tolera
 appends "a die in a command substitution that ended the command is its outcome" 1 review nope "no story or epic 'nope'" review nope "${U}/9"
 
 # DIE_FILE is main's own: one set in the environment is never written.
-(cd "${P}" && DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" policy bogus >/dev/null 2>&1 || true)
-(cd "${P}" && DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story nope >/dev/null 2>&1 || true)
+(cd "${P}" || exit 1; DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" policy bogus >/dev/null 2>&1) || true
+(cd "${P}" || exit 1; DIE_FILE="${ROOT}/planted" SWARM_DIE_FILE="${ROOT}/planted" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story nope >/dev/null 2>&1) || true
 check "a DIE_FILE from the environment is never written" test ! -e "${ROOT}/planted"
 
 # A signal: logged as interrupted, the temp file removed, and the exit status still 128+N. The
@@ -122,7 +122,7 @@ for arm in ${arms}; do
   args=(); [[ "${arm}" == tidy ]] && args=(--yes)
   n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
   before="$(LOG="${Q}/.swarm/events.tsv" lines)"
-  (cd "${Q}" && env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "${arm}" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1 || true)
+  (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "${arm}" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1) || true
   after="$(LOG="${Q}/.swarm/events.tsv" lines)"
   what="read-only, not logged"; [[ ${n} == 0 ]] || what="logged"
   check "arm ${arm}: ${what}" test "$((after - before))" -eq "${n}"
