@@ -194,7 +194,6 @@ check "--watch enters the alternate screen and hides the cursor" test "${w:0:14}
 check "--watch shows the cursor and leaves the alternate screen on exit" test "${w: -14}" == $'\033[?25h\033[?1049l'
 check "--watch homes the cursor and clears below the frame" has $'\033[K\033[J' "${w}"
 check "--watch draws an unchanged frame once" test "$(frames <<< "${text}")" -eq 1
-[ "$(frames <<< "${text}")" -eq 1 ] || { echo "DEBUG"; cat -v "${ROOT}/pty.out" | tr '\033' '~' | head -c 20000; }
 check "--watch rewrites the header line while nothing changes" test "$(grep -o $'\033\\[H' <<< "${w}" | wc -l | tr -d ' ')" -ge 3
 check "--watch measures the terminal with stty (120 columns)" grep -qE '^└─{118}┘$' <<< "${text}"
 # At --watch 30, a resize at 2 seconds redraws at once, at the new width, before the q at 4.

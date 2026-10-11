@@ -1672,8 +1672,10 @@ dash_render() {
     # Uncommitted board edits in the main checkout; no optional locks, so status writes no index.
     drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" status --porcelain --untracked-files=all -- "${BOARD}" 2>/dev/null | grep -c . || true)"
   fi
+  # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
+  # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
   DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
-  DASH_MERGE="${CFG_merge}" DASH_NEXT="$(next_step | head -1)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_MERGE="${CFG_merge}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
