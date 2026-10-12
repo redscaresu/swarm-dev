@@ -1,0 +1,260 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "How the swarm builds a design",
+    "quality_profile": "showcase",
+    "output": "docs/assets/swarm-flow.html"
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You"
+    },
+    {
+      "id": "lead",
+      "label": "Lead session (/swarm)"
+    },
+    {
+      "id": "plan",
+      "label": "Planning swarms"
+    },
+    {
+      "id": "build",
+      "label": "Conductor, builders, review"
+    }
+  ],
+  "phases": [
+    {
+      "id": "design",
+      "label": "Design",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "planning",
+      "label": "Plan",
+      "fromCol": 1,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "building",
+      "label": "Build + review",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "hld",
+    "swarm",
+    "planhld",
+    "planepic",
+    "approve",
+    "board",
+    "conduct",
+    "builders",
+    "review"
+  ],
+  "nodes": [
+    {
+      "id": "hld",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "label": "/hld",
+      "sublabel": "write it with a co-author",
+      "width": 140
+    },
+    {
+      "id": "approve",
+      "lane": "you",
+      "col": 2,
+      "type": "security",
+      "label": "Approve",
+      "sublabel": "the epics, then the stories",
+      "width": 140
+    },
+    {
+      "id": "leadstory",
+      "lane": "you",
+      "col": 3,
+      "type": "security",
+      "label": "Lead stories",
+      "sublabel": "say go; do the You: steps",
+      "width": 140
+    },
+    {
+      "id": "merge",
+      "lane": "you",
+      "col": 5,
+      "type": "security",
+      "label": "Merge",
+      "sublabel": "merge = human (default)",
+      "width": 140
+    },
+    {
+      "id": "swarm",
+      "lane": "lead",
+      "col": 1,
+      "type": "backend",
+      "label": "/swarm",
+      "sublabel": "swarm.sh next picks a step",
+      "width": 140
+    },
+    {
+      "id": "board",
+      "lane": "lead",
+      "col": 3,
+      "type": "database",
+      "label": "The board",
+      "sublabel": "docs/: hld, epics, stories",
+      "width": 140
+    },
+    {
+      "id": "reconcile",
+      "lane": "lead",
+      "col": 4,
+      "type": "backend",
+      "label": "reconcile + unblock",
+      "sublabel": "finish what merged",
+      "width": 140
+    },
+    {
+      "id": "planhld",
+      "lane": "plan",
+      "col": 1,
+      "type": "messagebus",
+      "label": "/plan-hld",
+      "sublabel": "the HLD into epics",
+      "width": 140
+    },
+    {
+      "id": "planepic",
+      "lane": "plan",
+      "col": 2,
+      "type": "messagebus",
+      "label": "/plan-epic",
+      "sublabel": "lead, skeptics, codex, critic",
+      "width": 140
+    },
+    {
+      "id": "conduct",
+      "lane": "build",
+      "col": 3,
+      "type": "backend",
+      "label": "swarm.sh conduct",
+      "sublabel": "a conductor per epic",
+      "width": 140
+    },
+    {
+      "id": "builders",
+      "lane": "build",
+      "col": 4,
+      "type": "backend",
+      "label": "Builders",
+      "sublabel": "one per story, own pane",
+      "width": 140
+    },
+    {
+      "id": "review",
+      "lane": "build",
+      "col": 5,
+      "type": "security",
+      "label": "PR review",
+      "sublabel": "codex + /code-review",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "hld-agreed",
+      "from": "hld",
+      "to": "swarm",
+      "label": "agreed",
+      "variant": "emphasis"
+    },
+    {
+      "id": "swarm-plan",
+      "from": "swarm",
+      "to": "planhld"
+    },
+    {
+      "id": "epics",
+      "from": "planhld",
+      "to": "planepic",
+      "label": "epics"
+    },
+    {
+      "id": "stories",
+      "from": "planepic",
+      "to": "approve",
+      "label": "stories"
+    },
+    {
+      "id": "written",
+      "from": "approve",
+      "to": "board",
+      "label": "written"
+    },
+    {
+      "id": "kind-lead",
+      "from": "board",
+      "to": "leadstory",
+      "label": "kind: lead",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "ready",
+      "from": "board",
+      "to": "conduct",
+      "label": "ready"
+    },
+    {
+      "id": "wave",
+      "from": "conduct",
+      "to": "builders",
+      "label": "wave"
+    },
+    {
+      "id": "pr",
+      "from": "builders",
+      "to": "review",
+      "label": "PR"
+    },
+    {
+      "id": "findings",
+      "from": "review",
+      "to": "builders",
+      "label": "findings (tell)",
+      "role": "return",
+      "variant": "dashed",
+      "route": "bottom-channel",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "id": "green",
+      "from": "review",
+      "to": "merge",
+      "label": "green + reviewed",
+      "variant": "emphasis"
+    },
+    {
+      "id": "merged",
+      "from": "merge",
+      "to": "reconcile",
+      "label": "merged"
+    },
+    {
+      "id": "next",
+      "from": "reconcile",
+      "to": "board",
+      "label": "next stories ready",
+      "role": "return",
+      "variant": "dashed"
+    }
+  ]
+}
