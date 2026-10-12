@@ -124,7 +124,7 @@ prints every setting and where it came from.
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
-| `stall_minutes` | `30` | a story's builder that herdr shows working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `dash` marks it and lists it under waiting on you, and `wait --stall` returns on it |
+| `stall_minutes` | `30` | a story's builder that herdr shows working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `dash` marks it `!` and lists it under needs you, and `wait --stall` returns on it |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
@@ -204,10 +204,14 @@ opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
 **Watching it.** `swarm.sh status` lists the agents that need a look (blocked on a prompt, or an
 empty pane where a start failed), what waits on you, and the next step. `swarm.sh dash` shows the
-same on one screen, with the board's counts, this project's agents by workspace and tab (role,
-model and effort, herdr status or `reported`, the story's PR), the PRs awaiting the user with their
-checks, stalled builders, the model ladder, today's cost and the recent events; `dash --watch [seconds]` redraws it in
-place until `q`. Both only read: they never change the board, the state or the logs, and never open
+same on one screen, for a person to scan: a summary line, then what needs the user first (PRs to
+merge with their checks, `lead` stories, agents waiting on a prompt, empty panes, stalled builders,
+draft HLDs), each active epic with a bar of its finished stories (finished story files are deleted,
+so they are counted from the base branch's history) and its live agents and open PRs beneath it,
+and the recent events with how long ago; idle agents and blocked or later items are counts. One
+status vocabulary runs through it (● working, ◐ review, ✓ done, ✗ failing, ⏸ blocked, ! needs you).
+`--tree` shows the agents by workspace and tab and `--ladder` the model per role; `dash --watch
+[seconds]` redraws it in place until `q`, with `t` and `l` toggling the two. Both only read: they never change the board, the state or the logs, and never open
 or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 **The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,

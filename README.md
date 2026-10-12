@@ -115,70 +115,75 @@ That's all you need. Optional extras:
 
 `swarm.sh dash` prints one screen of what the swarm is doing; `swarm.sh dash --watch [seconds]`
 keeps it open and redraws it in place every 2 seconds (or the seconds you give), repainting only
-when something changed. Press `q` to quit (Ctrl-C works too) and `r` to redraw; resizing the
+when something changed. Press `q` to quit (Ctrl-C works too), `r` to redraw, `t` to switch to the
+agents by herdr workspace and tab and back, and `l` to show the model per role; resizing the
 terminal redraws it at the new size. It works in any terminal, inside herdr or not: it only reads,
 so it asks herdr for the agents whenever `herdr` is on your PATH. It never changes the board, the
-state or the logs, and never opens or closes a pane. What it shows:
+state or the logs, and never opens or closes a pane. Top to bottom:
 
-- **Header**: one line with the project, the swarm-dev version, the `merge` mode, today's estimated
-  cost (`swarm.sh cost` for today), what `/swarm` does next, and the time of the last refresh.
-- **Pipeline**: one line of how many HLDs, epics and stories are in each status, and a warning when
-  the main checkout has board edits not committed yet.
-- **Agents**: this project's agents, by herdr workspace and tab (a conductor's tab is its epic),
-  each with its role, model and effort, its status, and its story's PR. `!` marks one that needs a
-  look: waiting on a prompt, or an empty pane where a start failed. A conductor that wrote its
-  report, not yet collected, shows `[reported]`. A story's builder that has shown working for
-  `stall_minutes` (30 by default) with no commit, PR update or swarm action shows `[stalled?]`.
-- **Waiting on you**: only what needs you: PRs awaiting your merge (with their checks, ✔ green,
-  ✘ red or ● running, and `behind` or `dirty` against the base), `lead` stories, draft HLDs and
-  stalled builders.
-  Blocked and later items are one count line; `swarm.sh status --all` lists them.
-- **Ladder**: the model and effort each role runs on.
-- **Recent**: newest first, the swarm's own actions (the audit log), merges on the base branch, and
-  review findings fixed (one row per PR and day). It fills the rest of the screen.
+- **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm` does next, and the
+  time of the last refresh. Under it, one summary line: epics active, agents working, PRs green and
+  waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today); then a
+  warning when the main checkout has board edits not committed yet.
+- **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
+  whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
+  on a prompt, `close` an empty pane, `look at` a stalled builder (working for `stall_minutes`, 30
+  by default, with no commit, PR update or swarm action), `agree` a draft HLD. When nothing does,
+  it is one line.
+- **Epics**: one row per active epic, with a bar of its finished stories out of all of them (a
+  finished story's file is deleted, so finished ones are counted from the base branch's history:
+  deleted story files whose front matter named the epic) and how many open stories are in each
+  status. Under it, its live agents (role, model and effort, status) and its open PRs. Idle and
+  retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
+  epics with no open story share one line. Blocked and later items are one count line under it;
+  `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
+  workspace and tab instead.
+- **Recent**: newest first, with how long ago: merges on the base branch (⇡), review findings
+  fixed (✎, one row per PR and day), agents, conductors and builders started (▶), and the swarm's
+  other actions (·); a failed one is ✗. It fills the rest of the screen.
+- **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on.
+- **Legend**: one status vocabulary throughout: ● working, ◐ review or CI running, ✓ done or green,
+  ✗ failing, ⏸ blocked, ! needs you.
 
-It fits the terminal: it truncates rather than wraps, and from 140 columns it puts the ladder and
-recent side by side. Colour only on a terminal, unless `NO_COLOR` is set. If herdr is missing or
-gives no answer, it still shows the board and says the agents are unavailable. Trimmed to 100
+It fits the terminal: it truncates with … rather than wraps, under 100 columns it drops the role,
+model and actor columns, and from 140 columns a shown ladder sits beside recent. Colour only on a
+terminal, unless `NO_COLOR` is set; the symbols carry the same meaning in plain text. If herdr is
+missing or gives no answer, it still shows the board and says the agents are unavailable. At 100
 columns, from a real project:
 
 ```text
-infrafactory  swarm-dev 0.12.0  merge human  today $108.48  next wait conduct-fakeaws-load… 00:22:53
-HLDs agreed 2 superseded 1  ·  epics active 12 later 2  ·  stories ready 4 blocked 18 later 7
-┌─ agents ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ 2026-09-30-import-production-state-into-the-mocks                                                │
-│  ├─ fakeaws-loaded-identity                                                                      │
-│  │  ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high     [done]                         │
-│  │  └─   fakeaws-identity-other-servic…  code       opus·high     [working]                      │
-│  └─ prod-read-seam                                                                               │
-│     ├─   conduct-prod-read-seam          conduct    opus·high     [done]                         │
-│     ├─   prod-read-seam-wall             code-risky opus·xhigh    [working]                      │
-│     └─   prod-read-seam-credentials      code-risky opus·xhigh    [done]                         │
-│ infrafactory                                                                                     │
-│  └─ scope-fakeaws-rehearsal-instance                                                             │
-│     └─   lead-fri                        lead       opus·xhigh    [idle]                         │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─ waiting on you ─────────────────────────────────────────────────────────────────────────────────┐
-│ nothing                                                                                          │
-│ blocked 18 · later 9 (swarm.sh status --all lists them)                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─ ladder ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ hld        → fable · high     hld-review → fable · xhigh    hld-lead   → fable · xhigh           │
-│ survey     → sonnet · high    lead       → opus · xhigh     skeptic    → opus · high             │
-│ critic     → opus · high      codex      → codex · high     code       → opus · high             │
-│ code-risky → opus · xhigh     docs       → sonnet · medium  chore      → haiku · medium          │
-│ verify     → haiku · medium   escalate   → fable · xhigh    conduct    → opus · high             │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌─ recent ─────────────────────────────────────────────────────────────────────────────────────────┐
-│ 10-12 00:15  wX:p2           tell fakeaws-identity-other-services                           [ok] │
-│ 10-12 00:06  wX:p5           story prod-read-seam-credentials                               [ok] │
-│ 10-12 00:06  wX:p5           story prod-read-seam-wall                                      [ok] │
-│ 10-12 00:06  w1:p5W          conduct prod-read-seam                                         [ok] │
-│ 10-12 00:06  w1:p5W          close conduct-prod-read-seam                                   [ok] │
-│ 10-12 00:05  redscaresu      merged #468 board/wave-after-adr-0041                       [merge] │
-│ 10-12 00:04  redscaresu      merged #406 board/ui-e2e-run-mode-noise                     [merge] │
-│ 10-11        review          2 findings: tofu helper ran with no deadline, so a key…  [findings] │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+infrafactory  swarm-dev 0.13.0  merge human  next collect conduct-rehearsal-prepare-gate    11:01:16
+9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $383.14 today
+board: 4 uncommitted edits in the main checkout (reconcile pulls first)
+╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ! run lead story prod-read-seam-reader-user: create the read-only reader user and its key file   │
+│ ! merge infrafactory#517 (✓ green)  rehearsal-prepare-first-init                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
+│ ! prod-read-seam          ██████████░░ 12/15  1 ready · 2 blocked                                │
+│ ● fakeaws-data-sources    █████░░░░░░░  5/11  1 ready · 5 blocked                                │
+│   ● conduct-fakeaws-data-sources    conduct    opus·high    working                              │
+│   ✓ fakeaws-filters-instances-eni…  code       opus·high    idle                                 │
+│ ◐ rehearsal-prepare-gate  ████████░░░░  7/10  1 review · 2 blocked                               │
+│   ✓ conduct-rehearsal-prepare-gate  conduct    opus·high    reported                             │
+│   ✓ infrafactory#517                green  rehearsal-prepare-first-init                          │
+│   no epic                                                                                        │
+│   ● dash-pretty                     code       opus·high    working                              │
+│   ✓ fakeaws-kms-store-follows-lif…  code-risky opus·xhigh   idle                                 │
+│ ✓ 6 active epics with no open story: fakeaws-loader, rehearsal-against-the-copy, rehearsal-pass… │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+⏸ 10 blocked · 9 later  (swarm.sh status --all lists them)
+╭─ recent ─────────────────────────────────────────────────────────────────────────────────────────╮
+│   today  ✎ 4 findings: /mock/reset and /mock/restore changed the identity witho…        findings │
+│   today  ✎ 2 findings: credential file checked with Lstat then re-opened by pat…        findings │
+│  1m ago  · close rehearsal-prepare-first-init                                              wY:p2 │
+│  1m ago  · review rehearsal-prepare-first-init                                             wY:p2 │
+│  1m ago  · log-finding vacuous-test https://github.com/redscaresu/fakeaws/pull/…           wY:p4 │
+│  1m ago  · log-finding colliding-synthetic-key https://github.com/redscaresu/fa…           wY:p4 │
+│  1m ago  · log-finding colliding-synthetic-key https://github.com/redscaresu/fa…           wY:p4 │
+│  4m ago  · tell fakeaws-filters-instances-enis-addresses-keys                              wY:p4 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+● working   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you
 ```
 
 `.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per
