@@ -21,18 +21,30 @@ run stops whenever a decision is yours.
   cloud, credentials, anything hard to undo. Your own steps in them are marked **You:**.
 - **Agents** plan, conduct and build everything else. Each builder gets a worktree and a pane, proves
   its tests can fail, and fixes the review findings (codex + `/code-review`) on its own PR.
-- Fixed findings are logged by kind; one that keeps coming back becomes a one-line rule PR for every
-  later builder (`swarm.sh lessons`).
+
+**Two learning loops.**
+
+| Loop | What happens |
+|---|---|
+| Inner (one PR) | codex and `/code-review` review the PR; the lead sends findings back with `swarm.sh tell`; the builder fixes and pushes, until a pass on the latest head finds nothing substantive. Each fixed finding is logged with `swarm.sh log-finding <kind>`. |
+| Outer (across PRs) | `swarm.sh lessons` turns a kind fixed in 3+ PRs in 90 days, or a lead memory tagged `lesson: <kind>`, into a one-line rule PR titled `lesson: <kind>` for the brief or `lessons_file`, so later builders get it. You merge or decline it; a rule you declined is not proposed again for 90 days. |
 
 Full detail: [`docs/method.md`](docs/method.md). Diagram source:
 [`docs/assets/swarm-flow.workflow.json`](docs/assets/swarm-flow.workflow.json) (made with
 [Archify](https://github.com/tt-a1i/archify)).
 
+## Requirements
+
+- **Required:** [Claude Code](https://claude.com/claude-code); [herdr](https://herdr.dev), the
+  terminal multiplexer every agent runs in (`/hld`, `/plan-epic` and `/swarm` stop outside it); the
+  [GitHub CLI](https://cli.github.com) and [codex CLI](https://github.com/openai/codex), both logged
+  in; `git`, `python3` and `bash`.
+- **Optional:** [Obsidian](https://obsidian.md), to view `docs/` as a vault through `Board.base` and
+  `HLDs.base`. The board is plain Markdown with front matter, so nothing needs Obsidian.
+
 ## Getting started
 
-1. Install [Claude Code](https://claude.com/claude-code), [herdr](https://herdr.dev), the
-   [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex) (both
-   logged in), plus `git`, `python3` and `bash`.
+1. Install the requirements above.
 2. Install the plugin, then restart Claude Code:
 
    ```bash
@@ -61,8 +73,7 @@ Full detail: [`docs/method.md`](docs/method.md). Diagram source:
 | `swarm.sh cost` | Where the tokens went. |
 
 **Optional:** builder rules in `.claude/swarm/brief.md`; settings such as `merge = agent` in
-`.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)); the board as an
-[Obsidian](https://obsidian.md) Base (`Board.base`). On Foundry, Bedrock or Vertex, load your
+`.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
 provider settings in `~/.zshrc` for herdr panes, not in an alias:
 
 ```bash
