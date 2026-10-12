@@ -153,6 +153,13 @@ check "an open depends_on keeps a story blocked" "" "$(run "${p}" unblock)"
 run "${p}" finish gap >/dev/null
 check "it unblocks once depends_on is finished too" "ready: read-set" "$(run "${p}" unblock)"
 rm "${b}/stories/read-set.md" "${b}/stories/gap.md"
+# Blocked only by depends_on, with quoted slugs (YAML allows both kinds).
+item "${b}" stories/gap2.md "status: ready" "kind: code"
+item "${b}" stories/only-deps.md "status: blocked" "kind: code" "blocked_by: []" "depends_on: [\"gap2\", 'x']"
+check "a story blocked only by depends_on waits for it" "" "$(run "${p}" unblock)"
+run "${p}" finish gap2 >/dev/null
+check "a story blocked only by depends_on, with quoted slugs, unblocks once they finish" "ready: only-deps" "$(run "${p}" unblock)"
+rm "${b}/stories/only-deps.md"
 rm "${b}/stories/y.md"
 check "a done story is neither built nor a gate" "done" "$(first "$(run "${p}" next)")"
 item "${b}" stories/z.md "status: ready" "kind: code"

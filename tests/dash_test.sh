@@ -32,7 +32,10 @@ printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/stty"
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/tput"
 chmod +x "${ROOT}/size/stty" "${ROOT}/size/tput"
 REALPATH="${PATH}"
-export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
+export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
+mkdir -p "${TMPDIR}"
+# fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
+fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }
 git -C "${P}" init -q
 item hld/2026-01-01-x.md 'status: agreed'
 item epics/e1.md 'status: active' 'hld: 2026-01-01-x'
@@ -41,11 +44,15 @@ item stories/s-one.md 'status: review' 'epic: e1' 'prs: https://github.com/o/r/p
 item stories/s-two.md 'status: blocked' 'epic: e1' 'blocked_by: [s-one]'
 item stories/s-three.md 'status: ready' 'epic: e1'
 item stories/ask.md 'status: ready' 'kind: lead'
+# Two slugs whose agent names are the same 32 characters: the done one must never be the builder's.
+# Its PR is never asked about either: dash skips done items.
+item stories/aaaaaaaaaa-bbbbbbbbbb-cccccccccc-1.md 'status: done' 'prs: https://github.com/o/r/pull/9'
+item stories/aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2.md 'status: ready' 'kind: code'
 printf 'w1:p1 conductor\nw1:p2 s-one\nw1:p3 s-gone\nw1:p4 old\nw1:p5 odd\n' > "${P}/.swarm/state/e1"
 # e2's conductor wrote its report and went idle: [reported], not [idle].
 printf 'w1:p8 conduct-e2\n' > "${P}/.swarm/state/e2"
 # s-three's builder is working; with no sign of life on record it is never stalled (the stall block below).
-printf 'w1:p9 s-three\n' > "${P}/.swarm/state/s-three"
+printf 'w1:p9 s-three\nw1:p10 aaaaaaaaaa-bbbbbbbbbb-cccccccccc\n' > "${P}/.swarm/state/s-three"
 echo "# report" > "${P}/.swarm/conduct-e2.report.md"
 # A codex brief in state/ is prose, not a tab record (own_panes' rule): its pane must not show.
 printf 'w1:p6 is where the brief says to look\n' > "${P}/.swarm/state/brief-x.md"
@@ -65,9 +72,11 @@ printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\tr
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"}]}}' ;;
-  "agent wait") echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}'; exit 1 ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"}]}}' ;;
+  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"; echo "herdr: a notice on stderr" >&2
+    if [ -f "${WAIT_OK:-/nonexistent}" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; exit 0; fi
+    echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -80,6 +89,7 @@ cat > "${ROOT}/bin/gh" <<STUB
 U8="${ROOT}/pr8.updated"
 STUB
 cat >> "${ROOT}/bin/gh" <<'STUB'
+echo "$*" >> "${U8%/*}/gh.log"
 case "$1 $2 $3" in
   "pr view https://github.com/o/r/pull/7") echo '{"mergeStateStatus":"BEHIND","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]}' ;;
   "pr view https://github.com/o/r/pull/8") if [ "$6" = -q ]; then cat "$U8"; else echo "{\"updatedAt\":\"$(cat "$U8")\"}"; fi ;;
@@ -94,25 +104,25 @@ G=(git -C "${P}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=fa
 "${G[@]}" add docs && "${G[@]}" commit -qm board
 "${G[@]}" checkout -qb story/s-zero && "${G[@]}" commit -q --allow-empty -m work
 "${G[@]}" checkout -q - && "${G[@]}" merge -q --no-ff -m "Merge pull request #9 from o/story/s-zero" story/s-zero
-clean="$(cd "${P}" || exit 1; PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+fresh; clean="$(cd "${P}" || exit 1; PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a committed board shows no drift line" lacks "board:" "${clean}"
 echo "more" >> "${P}/docs/stories/s-three.md"
 
 snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
 before="$(snapshot)"
 
-out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 for panel in "agents" "ladder" "waiting on you" "recent"; do
   check "panel ${panel}" has "─ ${panel}" "${out}"
 done
 check "the header is one line: project, version, merge, cost, next, clock" grep -qE '^proj  swarm-dev [0-9.]+  merge human  today [$]24\.00  next wait conduct-e1 +[0-9]{2}:[0-9]{2}:[0-9]{2}$' <<< "$(head -1 <<< "${out}")"
-check "the pipeline is one line" grep -qE '^HLDs agreed 1  ·  epics active 1 later 1  ·  stories ready 2 blocked 1 review 1$' <<< "$(sed -n 2p <<< "${out}")"
+check "the pipeline is one line" grep -qE '^HLDs agreed 1  ·  epics active 1 later 1  ·  stories ready 3 blocked 1 review 1 done 1$' <<< "$(sed -n 2p <<< "${out}")"
 check "an uncommitted board edit is one line under the pipeline" has "board: 1 uncommitted edit in the main checkout (reconcile pulls first)" "$(sed -n 3p <<< "${out}")"
 check "a conductor that wrote its report shows reported" grep -qE 'conduct-e2 .*\[reported\]' <<< "${out}"
 check "agents are grouped by workspace" has "2026-01-01-x" "${out}"
 check "agents are grouped by tab" has "├─ e1" "${out}"
 check "the conductor shows role, model and status" grep -qE 'conduct-e1 +conduct +opus·high +\[working\]' <<< "${out}"
-check "a blocked agent needs a look, with its PR" grep -qE '! s-one +code +opus·high +\[WAITING\] +https://github.com/o/r/pull/7' <<< "${out}"
+check "a blocked agent needs a look, with its PR" grep -qE '! s-one +code +opus·high +\[WAITING\] +https://github.com' <<< "${out}"
 check "an empty pane needs a look" grep -qE '! s-gone .*\[EMPTY\]' <<< "${out}"
 check "a retired agent shows as retired" grep -qE 'old-done .*\[retired\]' <<< "${out}"
 check "an odd agent record marks its row, not the panel" grep -qE '! odd .*\[unreadable: AttributeError\]' <<< "${out}"
@@ -137,16 +147,28 @@ widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().sp
 check "the default width is 100" test "$(widest <<< "${out}")" -eq 100
 check "below 140 columns the ladder and recent are stacked" lacks "┐ ┌─ recent" "${out}"
 
-out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "COLUMNS sets the width when stty and tput cannot" test "$(widest <<< "${out}")" -eq 160
 check "from 140 columns the ladder and recent sit side by side" grep -qE '─ ladder ─+┐ ┌─ recent' <<< "${out}"
 check "outside a herdr pane, a herdr that answers still shows the agents" grep -qE 'conduct-e1 +conduct +opus·high +\[working\]' <<< "${out}"
 
-out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a failing herdr degrades: agents unavailable" has "agents unavailable" "${out}"
-check "a failing herdr still prints the board" has "ready 2 blocked 1" "${out}"
+check "a failing herdr still prints the board" has "ready 3 blocked 1" "${out}"
 check "a failing gh leaves the PR URL" has "awaiting your merge: s-one https://github.com/o/r/pull/7" "${out}"
-out="$(cd "${P}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "dash never asks gh about a done item's PR" lacks "pull/9" "$(cat "${ROOT}/gh.log")"
+# The gh and cost cache lasts a minute and serves a one-shot dash too: a failing gh is not asked.
+fresh; (cd "${P}" && PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash >/dev/null 2>&1) || true
+out="$(cd "${P}" || exit 1; PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a one-shot dash reuses the cached PR state" has "awaiting your merge: s-one r#7 ✔ behind" "${out}"
+# gh gets 5 seconds a PR: one that hangs is left out, and dash still draws.
+mkdir -p "${ROOT}/slowgh"
+printf '#!/bin/sh\nexec sleep 60\n' > "${ROOT}/slowgh/gh"; chmod +x "${ROOT}/slowgh/gh"
+fresh; t0=$(date +%s)
+out="$(cd "${P}" || exit 1; PATH="${ROOT}/slowgh:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a hanging gh is cut off after 5 seconds" test $(( $(date +%s) - t0 )) -lt 15
+check "a hanging gh leaves the PR URL" has "awaiting your merge: s-one https://github.com/o/r/pull/7" "${out}"
+fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "outside herdr with no working herdr: agents unavailable" has "agents unavailable" "${out}"
 
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
@@ -190,8 +212,8 @@ while status is None:
 open(out_path, "wb").write(out)
 sys.exit(os.waitstatus_to_exitcode(status))
 PY
-ptywatch() { # <out> <seconds> <resize-at> <q-at>
-  (cd "${P}" && env -u HERDR_ENV PATH="${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
+ptywatch() { # <out> <seconds> <resize-at> <q-at>; PTY_BIN puts another stub dir first on PATH
+  (cd "${P}" && env -u HERDR_ENV PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
 }
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '┌─ agents' | wc -l | tr -d ' '; }
@@ -211,6 +233,15 @@ ptywatch "${ROOT}/pty2.out" 30 2 4 || true
 text="$(plain "${ROOT}/pty2.out")"
 check "--watch redraws at once on SIGWINCH" test "$(frames <<< "${text}")" -eq 2
 check "--watch re-measures on SIGWINCH (150 columns, two columns)" grep -qE '─ ladder ─+┐ ┌─ recent ─+┐$' <<< "${text}"
+# A failed render with a long error is cut to the terminal's 30 lines, and its last line is the error.
+mkdir -p "${ROOT}/longpy"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then seq 1 100 >&2; exit 1; fi\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/longpy/python3"
+chmod +x "${ROOT}/longpy/python3"
+PTY_BIN="${ROOT}/longpy" ptywatch "${ROOT}/pty3.out" 30 0 3 || true
+text="$(plain "${ROOT}/pty3.out")"
+check "a failed render is cut to the terminal's height" test "$(wc -l <<< "${text}" | tr -d ' ')" -le 30
+check "a cut failed render keeps its error line" grep -q '^(dash: this render failed; retrying in 30s)' <<< "${text}"
 # A render that fails shows its error in the frame, and the watch keeps going.
 mkdir -p "${ROOT}/badpy"
 # shellcheck disable=SC2016 # the stub's own shell expands these
@@ -233,25 +264,43 @@ check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${
 # no worktree commit, no PR. After the snapshot, since a stall's age changes every minute.
 ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 printf '%s\tstory\ts-three\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
-out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled?" grep -qE '! s-three .*\[stalled\?\]' <<< "${out}"
 check "a stalled builder waits on you" grep -qE 'stalled\? s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
 mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/config"
-out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "stalled?" "${out}"
 rm "${P}/.claude/swarm/config"
-# wait: herdr's wait keeps timing out; the stall check between steps ends it, with exit code 3.
-waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS=1000 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait s-three 5000 2>&1); }
-if out="$(waitfor)"; then rc=0; else rc=$?; fi
-check "wait returns on a stall with exit code 3" test "${rc}" -eq 3
-check "wait says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
-# A PR updated a minute ago is a sign of life: neither dash nor wait calls it stalled.
+# wait keeps its old contract: herdr's wait times out, and a bare wait fails at once, no stall check.
+waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS=1000 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
+long_ago() { SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) waitfor "$@"; }
+if out="$(WAIT_LOG="${ROOT}/wait.log" waitfor s-three 5000)"; then rc=0; else rc=$?; fi
+check "a bare wait on a stalled builder is the old wait: no stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
+check "a bare wait is one herdr wait for the whole timeout, no polling" test "$(cat "${ROOT}/wait.log")" == "agent wait w1:p9 --timeout 5000"
+# wait --stall counts from when the wait began: started now, 2 hours of silence before it do not count.
+if out="$(waitfor --stall s-three 5000)"; then rc=0; else rc=$?; fi
+check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
+# Begun 2 hours ago (the test hook), it returns on the stall with exit code 3.
+if out="$(long_ago --stall s-three 5000)"; then rc=0; else rc=$?; fi
+check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
+check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
+# herdr's stderr never reaches the JSON parse: the stub writes a notice there on every wait.
+touch "${ROOT}/wait.ok"
+if out="$(WAIT_OK="${ROOT}/wait.ok" waitfor --stall s-three 5000)"; then rc=0; else rc=$?; fi
+check "wait --stall reads herdr's status with a notice on stderr" test "${rc}:${out}" == "0:idle"
+# Two stories share an agent name's 32 characters; the builder is the one not done.
+printf '%s\tstory\taaaaaaaaaa-bbbbbbbbbb-cccccccccc-2\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "dash maps a cut agent name to the story not done" grep -qE 'stalled\? aaaaaaaaaa-bbbbbbbbbb-cccccccccc: working 1(19|20|21) min' <<< "${out}"
+if out="$(long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 5000)"; then rc=0; else rc=$?; fi
+check "wait maps a cut agent name to the story not done" test "${rc}" -eq 3
+# A PR updated a minute ago is a sign of life: neither dash nor wait --stall calls it stalled.
 ago 1 > "${ROOT}/pr8.updated"
 echo "prs: https://github.com/o/r/pull/8" >> "${P}/docs/stories/s-three.md"
-out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a recent PR update is not a stall in dash" lacks "stalled?" "${out}"
-if out="$(waitfor)"; then rc=0; else rc=$?; fi
-check "a recent PR update is not a stall in wait" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a recent PR update is not a stall in dash" lacks "stalled? s-three" "${out}"
+if out="$(long_ago --stall s-three 5000)"; then rc=0; else rc=$?; fi
+check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

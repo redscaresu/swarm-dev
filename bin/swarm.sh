@@ -4,7 +4,7 @@
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story <slug>                                   build one <board>/stories/<slug>.md
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
-#   swarm.sh wait <name> [timeout-ms]                       block until the agent settles; exit 3 when a builder stalls
+#   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
@@ -327,35 +327,45 @@ def agent_state(a, name):
     return st, False
 '
 
-# STALL_PY: the one stall rule, shared by dash and wait (each python exec's it from $SWARM_STALL_PY).
-# herdr gives no time an agent entered its state, so a builder's last sign of life stands in for it.
-#   stall_age(events, slug, name, signs) -> minutes since the newest of: the story's (or agent's)
-#     last line in events.tsv (started, findings sent ...) and each of signs, which are epoch seconds
-#     (its worktree's last commit) or ISO times (its PR's updatedAt); None when there is no sign.
+# STALL_PY: the one stall rule and agent-to-story mapping, shared by dash and `wait --stall` (each
+# python exec's it from $SWARM_STALL_PY). herdr gives no time an agent entered its state, so a
+# builder's last sign of life stands in for it.
+#   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
+#     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
+#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
+#   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
+#     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
+#     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 STALL_PY='
-import datetime, time
-def stall_age(events, slug, name, signs):
-    seen = []
-    def stamp(x):
+import datetime, re, time
+def story_for(name, stories):
+    base = re.sub(r"-done\d*$", "", name)
+    hits = [s for s in stories if s[1] == base]
+    hits.sort(key=lambda s: s[2] == "done")
+    return hits[0][0] if hits else None
+def epoch(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
         try:
-            seen.append(float(x))
-        except (TypeError, ValueError):
-            try:
-                seen.append(datetime.datetime.fromisoformat(str(x).replace("Z", "+00:00")).timestamp())
-            except ValueError:
-                pass
-    for x in signs:
-        if x:
-            stamp(x)
+            return datetime.datetime.fromisoformat(str(x).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+def last_seen(events):
+    seen = {}
     try:
         for l in open(events, encoding="utf-8", errors="replace"):
             f = l.rstrip("\n").split("\t")
-            if len(f) == 5 and f[2] in (slug, name):
-                stamp(f[0])
+            t = epoch(f[0]) if len(f) == 5 else None
+            if t is not None and t > seen.get(f[2], 0):
+                seen[f[2]] = t
     except OSError:
         pass
-    return int((time.time() - max(seen)) // 60) if seen else None
+    return seen
+def stall_age(seen, slug, name, signs):
+    ts = [t for t in [seen.get(slug), seen.get(name)] + [epoch(x) for x in signs if x] if t is not None]
+    return int((time.time() - max(ts)) // 60) if ts else None
 '
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
@@ -759,62 +769,94 @@ story_commit_time() {
   git -C "$(worktree_for "${src}" "$1")" log -1 --format=%ct 2>/dev/null || true
 }
 
-# agent_stalled <name> — when <name> is a story's builder that shows no sign of life for
-# stall_minutes (STALL_PY), print how many minutes and succeed. Its PRs are asked for their
-# updatedAt only once the rest already looks stalled, so gh is rarely called.
-agent_stalled() {
-  local f slug="" url age prs=()
+# story_rows — one "slug<TAB>agent name<TAB>status<TAB>prs" line per story, for STALL_PY's story_for.
+story_rows() {
+  local f r
   while IFS= read -r f; do
-    [[ "$(agent_name "$(basename "${f}" .md)")" == "$1" ]] && { slug="$(basename "${f}" .md)"; break; }
+    r="$(basename "${f}" .md)"
+    printf '%s\t%s\t%s\t%s\n' "${r}" "$(agent_name "${r}")" "$(fm "${f}" status)" "$(fm "${f}" prs)"
   done < <(board stories)
-  [[ -n "${slug}" ]] || return 1
-  stall() { SWARM_STALL_PY="${STALL_PY}" python3 - "${EVENTS_LOG}" "${slug}" "$1" "${@:2}" <<'PY'
+}
+
+# stall_py <mode> <args...> — run STALL_PY: `story <name>` prints the agent's story (story_for, over
+# story_rows); `age <slug> <name> <sign>...` prints stall_age, or nothing.
+stall_py() {
+  local rows=""
+  [[ "$1" != story ]] || rows="$(story_rows)"
+  SWARM_STALL_PY="${STALL_PY}" SWARM_STORY_ROWS="${rows}" python3 - "${EVENTS_LOG}" "$@" <<'PY'
 import os, sys
 exec(os.environ["SWARM_STALL_PY"])
-a = stall_age(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:])
-print("" if a is None else a)
+events, mode, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+if mode == "story":
+    rows = [l.split("\t") for l in os.environ["SWARM_STORY_ROWS"].splitlines() if l.count("\t") >= 2]
+    print(story_for(args[0], rows) or "")
+else:
+    a = stall_age(last_seen(events), args[0], args[1], args[2:])
+    print("" if a is None else a)
 PY
-  }
-  age="$(stall "$1" "$(story_commit_time "${slug}")")"
+}
+
+# agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
+# stall_minutes (STALL_PY), counting <since> (epoch: when the wait began) as one, print how many
+# minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
+# stalled, so gh is rarely called.
+agent_stalled() {
+  local slug url age ct prs=()
+  slug="$(stall_py story "$1")"
+  [[ -n "${slug}" ]] || return 1
+  ct="$(story_commit_time "${slug}")"
+  age="$(stall_py age "${slug}" "$1" "$2" "${ct}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done
-  age="$(stall "$1" "$(story_commit_time "${slug}")" "${prs[@]+"${prs[@]}"}")"
+  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   echo "${age}"
 }
 
-# STALL_POLL_MS: how often a wait checks whether the agent it waits on has stalled.
+# STALL_POLL_MS: how often `wait --stall` checks whether the agent it waits on has stalled.
 STALL_POLL_MS="${SWARM_STALL_POLL_MS:-60000}"
-# WAIT_STALLED: the exit code of `wait` when it returns because the agent stalled.
+# WAIT_STALLED: the exit code of `wait --stall` when it returns because the agent stalled.
 WAIT_STALLED=3
 
-# settle <target> <name> <timeout-ms> — herdr agent wait, in STALL_POLL_MS steps; between steps, an
-# agent that has stalled (agent_stalled) ends the wait with "stalled: ...". A herdr failure other
-# than a step's timeout, and the last step, fail as one unbroken wait does.
+# settle <target> <name> <timeout-ms> <since> — for `wait --stall`: herdr agent wait in
+# STALL_POLL_MS steps; between steps, an agent stalled since <since> (agent_stalled) ends the wait
+# with "stalled: ...". herdr's stderr goes to a file, read only to tell a step's timeout from a real
+# failure; a real failure, and the last step, fail as one unbroken wait does.
 settle() {
-  local target="$1" name="$2" left="$3" out min
+  local target="$1" name="$2" left="$3" since="$4" out err min
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
-    if out="$(herdr agent wait "${target}" --timeout "${STALL_POLL_MS}" 2>&1)"; then
-      json "d['result']['agent']['agent_status']" <<< "${out}"; return
+    if out="$(herdr agent wait "${target}" --timeout "${STALL_POLL_MS}" 2>"${err}")"; then
+      rm -f "${err}"; json "d['result']['agent']['agent_status']" <<< "${out}"; return
     fi
-    [[ "${out}" == *'"timeout"'* ]] || break
+    grep -q '"timeout"' "${err}" || break
     left=$((left - STALL_POLL_MS))
-    if min="$(agent_stalled "${name}")"; then echo "stalled: working ${min} min with no commit or PR update"; return; fi
+    if min="$(agent_stalled "${name}" "${since}")"; then
+      rm -f "${err}"; echo "stalled: working ${min} min with no commit or PR update"; return
+    fi
   done
+  rm -f "${err}"
   herdr agent wait "${target}" --timeout "${left}" | json "d['result']['agent']['agent_status']"
 }
 
-# wait_agent <name> <timeout-ms> — block until the agent settles and print its status, or until a
-# builder stalls (settle): then print "stalled: ..." and return WAIT_STALLED. An agent idle after
-# an API error has not settled: tell it to carry on, and wait again.
+# wait_agent <name> <timeout-ms> [--stall] — block until the agent settles and print its status. An
+# agent idle after an API error has not settled: tell it to carry on, and wait again. With --stall, a
+# builder that shows no sign of life for stall_minutes after the wait began also ends it (settle):
+# it prints "stalled: ..." and returns WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the
+# wait began, for tests.
 wait_agent() {
-  local name="$1" timeout="$2" status nudges=0 target
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since
+  since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
-    status="$(settle "${target}" "${name}" "${timeout}")"
-    if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
+    if [[ -n "${stall}" ]]; then
+      status="$(settle "${target}" "${name}" "${timeout}" "${since}")"
+      if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
+    else
+      status=$(herdr agent wait "${target}" --timeout "${timeout}" | json "d['result']['agent']['agent_status']")
+    fi
     # herdr reports an agent whose turn ended as idle or done; both can be an API-error stop.
     if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
       break
@@ -1360,15 +1402,15 @@ waiting_on_user() {
 open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
 
 # unblock — a finished story is deleted or marked done, so a blocked story whose every blocked_by and
-# depends_on slug is no open story or epic, and names no hand step, is ready. Prints each story it flips.
+# depends_on slug (either list may be empty) is no open story or epic, and names no hand step, is
+# ready. Prints each story it flips.
 unblock() {
   local story slug blockers b open
   while IFS= read -r story; do
     grep -q '^status: blocked$' "${story}" || continue
-    blockers=$(sed -n 's/^blocked_by: *\[\(.*\)\]$/\1/p' "${story}" | tr ',' ' ')
+    # Both lists count: blocked_by may name only some of what the story waits on. YAML quotes go.
+    blockers=$(sed -n -e 's/^blocked_by: *\[\(.*\)\]$/\1/p' -e 's/^depends_on: *\[\(.*\)\]$/\1/p' "${story}" | tr ',\n' '  ' | tr -d "\"'")
     [[ -n "${blockers// /}" ]] || continue   # blocked for a reason no merge clears
-    # depends_on counts too: blocked_by may name only some of what the story waits on.
-    blockers+=" $(sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' "${story}" | tr ',' ' ')"
     open=0
     for b in ${blockers}; do
       # Open while its story exists, its epic exists, or it is not a plain slug (a hand step such
@@ -1469,10 +1511,9 @@ reconcile() {
         set_status "${f}" "$(sed -n 's/^status: *//p' <<< "${committed}" | head -1)"
       fi
     done
-    if git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null \
-      && ! { drop_board_edits_on_base && git -C "${PROJECT_DIR}" pull -q --ff-only; }; then
+    if git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null && ! pull_board_repo; then
       for i in "${!merged[@]}"; do set_status "$(item_file "${merged[i]}")" review "${merged_prs[i]}"; done
-      die "reconcile: cannot pull ${PROJECT_DIR}$(board_edits_named); pull it by hand, then run reconcile again"
+      die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
     fi
   fi
   for slug in "${merged[@]}"; do
@@ -1483,32 +1524,58 @@ reconcile() {
   done
 }
 
-# drop_board_edits_on_base — fetch, then put back each board file the main checkout changed (or added)
-# whose content is already the upstream branch's, so the pull that brings it is not stopped by it.
-# An edit that differs is left alone, and still stops the pull.
-drop_board_edits_on_base() {
-  local line path
-  git -C "${PROJECT_DIR}" fetch -q || return 1
+# pull_board_repo — pull the main checkout fast-forward, never losing an edit. It stops, touching
+# nothing, when the pull cannot fast-forward (local commits) or a tracked file outside the board is
+# changed. Otherwise it backs up, then puts back, each unstaged board edit (` M`, or `??` untracked)
+# whose bytes are already the upstream branch's, so the pull that brings the same content is not
+# stopped by it; a staged or differing edit is left alone. If the pull still fails, every file is
+# restored from the backup in STATE_DIR/reconcile-backup/. On failure PULL_WHY says why.
+PULL_WHY=""
+pull_board_repo() {
+  local line path rel bak changed put=()
+  git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch"; return 1; }
+  if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
+    PULL_WHY="it has commits the base does not ($(git -C "${PROJECT_DIR}" log --format=%h '@{upstream}..HEAD' | paste -sd' ' -)), so it cannot fast-forward"
+    return 1
+  fi
+  rel="${BOARD#"${PROJECT_DIR}"/}/"
+  changed="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no | cut -c4- | awk -v b="${rel}" 'index($0, b) != 1' | paste -sd' ' -)"
+  [[ -z "${changed}" ]] || { PULL_WHY="files outside the board are changed: ${changed}"; return 1; }
   while IFS= read -r line; do
     path="${line:3}"
-    [[ "${path}" != *" -> "* ]] || continue   # a rename is never the base's content
-    if git -C "${PROJECT_DIR}" cat-file -e "@{upstream}:${path}" 2>/dev/null; then
-      [[ -f "${PROJECT_DIR}/${path}" ]] || continue
-      git -C "${PROJECT_DIR}" show "@{upstream}:${path}" | cmp -s - "${PROJECT_DIR}/${path}" || continue
-    elif [[ -e "${PROJECT_DIR}/${path}" ]]; then
-      continue   # here, and not on the base
-    fi
-    if [[ "${line:0:2}" == "??" ]]; then rm -f "${PROJECT_DIR}/${path}"; else git -C "${PROJECT_DIR}" checkout -q -- "${path}"; fi
-    echo "reconcile: ${path} was already the base's; put it back before the pull"
+    [[ "${line:0:2}" == " M" || "${line:0:2}" == "??" ]] || continue   # staged, deleted or renamed: left alone
+    git -C "${PROJECT_DIR}" cat-file -e "@{upstream}:${path}" 2>/dev/null || continue
+    git -C "${PROJECT_DIR}" show "@{upstream}:${path}" | cmp -s - "${PROJECT_DIR}/${path}" || continue
+    put+=("${path}")
   done < <(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=all -- "${BOARD}")
+  bak="${STATE_DIR}/reconcile-backup/$(date +%Y%m%dT%H%M%S)-$$"
+  for path in "${put[@]+"${put[@]}"}"; do
+    if ! { mkdir -p "$(dirname "${bak}/${path}")" && cp -p "${PROJECT_DIR}/${path}" "${bak}/${path}"; }; then
+      PULL_WHY="cannot back up ${path}"; return 1
+    fi
+  done
+  for path in "${put[@]+"${put[@]}"}"; do
+    if git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${path}" >/dev/null 2>&1; then
+      git -C "${PROJECT_DIR}" checkout -q -- "${path}"
+    else
+      rm -f "${PROJECT_DIR}/${path}"
+    fi
+    echo "reconcile: ${path} was already the base's; put it back before the pull (backup in ${bak})"
+  done
+  if ! git -C "${PROJECT_DIR}" pull -q --ff-only; then
+    for path in "${put[@]+"${put[@]}"}"; do cp -p "${bak}/${path}" "${PROJECT_DIR}/${path}"; done
+    PULL_WHY="the pull failed, and every board edit is as it was$(board_edits_named)"
+    return 1
+  fi
+  rm -rf "${bak}"; rmdir "${STATE_DIR}/reconcile-backup" 2>/dev/null || true
 }
 
-# board_edits_named — ": <board files> differ from the base" for the board files the main checkout
-# still has changed, or nothing when there are none.
+# board_edits_named — "; board files changed here: <files>" for the board files the main checkout
+# has changed, or nothing when there are none.
 board_edits_named() {
   local files
   files="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=all -- "${BOARD}" | cut -c4- | paste -sd' ' -)"
-  [[ -z "${files}" ]] || echo ": ${files} differ from the base"
+  [[ -z "${files}" ]] || echo "; board files changed here: ${files}"
 }
 
 # findings <repo> <pr> — what a green check can hide: the notes (annotations) on every check run of
@@ -1710,21 +1777,37 @@ dash_size() {
   DASH_W="${c}"; DASH_H="${r}"
 }
 
-# dash_slow — the fields too slow for every frame, refreshed at most once a minute by --watch: each
-# board PR's checks, merge state and last update (one gh pr view per PR; left out when gh fails), and
-# today's estimated cost, the total line of cost_report.
+# dash_slow — the fields too slow for every frame, cached for a minute in a file under $TMPDIR (never
+# under .swarm), so a one-shot dash reuses it too: today's estimated cost (the total line of
+# cost_report) and each open board item's PR checks, merge state and last update, one gh pr view per
+# PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL).
 dash_slow() {
-  local f url j
-  DASH_PRSTATE=""
-  if command -v gh >/dev/null 2>&1; then
-    for url in $( { board stories; board epics; } | while IFS= read -r f; do fm "${f}" prs; done \
-        | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u); do
-      j="$(gh pr view "${url}" --json statusCheckRollup,mergeStateStatus,updatedAt 2>/dev/null | tr -d '\n\t')" || continue
-      DASH_PRSTATE+="${url}"$'\t'"${j}"$'\n'
-    done
+  local cache f urls
+  cache="${TMPDIR:-/tmp}/swarm-dash-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
+    urls="$( { board stories; board epics; } | while IFS= read -r f; do
+        [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
+    {
+      printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
+      # shellcheck disable=SC2086 # one URL per word
+      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}" ]]; then python3 - ${urls} <<'PY'
+import os, signal, subprocess, sys
+for url in sys.argv[1:]:
+    p = subprocess.Popen(["gh", "pr", "view", url, "--json", "statusCheckRollup,mergeStateStatus,updatedAt"],
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+    try:
+        out, _ = p.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL); p.communicate()
+        continue
+    if p.returncode == 0:
+        print(url + "\t" + out.replace("\n", "").replace("\t", ""))
+PY
+      fi
+    } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
   fi
-  DASH_COST="$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p')" || DASH_COST=""
-  DASH_SLOW_AT="${SECONDS}"
+  DASH_COST="$(awk -F'\t' '$1 == "cost" { print $2 }' "${cache}" 2>/dev/null || true)"
+  DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
@@ -1740,12 +1823,15 @@ dash_watch() {
   fi
   trap 'exit 0' INT TERM HUP
   trap 'winch=1' WINCH
-  DASH_SLOW_AT=-60
   while :; do
     [[ ${tty} == 0 ]] || dash_size
-    (( SECONDS - DASH_SLOW_AT < 60 )) || dash_slow
+    dash_slow   # the cache file decides whether this asks gh again
     # A failed render shows its error in the frame and the loop carries on: a watch must not die quietly.
-    tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_render 2>&1)" || tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
+    if ! tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_render 2>&1)"; then
+      # Keep the error line on screen: cut the rest to one line short of the terminal's height.
+      [[ ${tty} == 0 || ${DASH_H} -lt 2 ]] || tpl="$(head -n $((DASH_H - 1)) <<< "${tpl}")"
+      tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
+    fi
     frame="${tpl//HH:MM:SS/$(date +%H:%M:%S)}"
     if [[ ${tty} == 0 ]]; then
       [[ "${tpl}" == "${last}" ]] || printf '%s\n\n' "${frame}"
@@ -1782,10 +1868,22 @@ dash_render() {
       board+="${d}"$'\t'"${r}"$'\t'"$(fm "${f}" status)"$'\t'"$(fm "${f}" prs)"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\n'
     done < <(board "${d}")
   done
-  # Each story's last commit in its worktree, for the stall rule.
-  while IFS= read -r f; do
-    r="$(basename "${f}" .md)"; commits+="${r}"$'\t'"$(story_commit_time "${r}")"$'\n'
-  done < <(board stories)
+  # The last worktree commit of each working builder's story (STALL_PY's story_for), for the stall rule.
+  while IFS= read -r r; do
+    [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_commit_time "${r}")"$'\n'
+  done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
+    | SWARM_STALL_PY="${STALL_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" python3 -c '
+import json, os, sys
+exec(os.environ["SWARM_STALL_PY"])
+rows = [l.rstrip("\n").split("\t") for l in sys.stdin]
+own = set(os.environ["SWARM_OWN"].split())
+try:
+    agents = json.loads(os.environ["DASH_AGENTS"])["result"]["agents"]
+except (ValueError, KeyError, TypeError):
+    agents = []
+for a in agents:
+    if isinstance(a, dict) and a.get("agent_status") == "working" and a.get("pane_id") in own and a.get("name"):
+        print(story_for(a["name"], rows) or "")' 2>/dev/null || true)
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then
@@ -1883,7 +1981,9 @@ URL = re.compile(r"https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
 # Agents: this project's panes (its tab records), grouped by workspace, then tab. A story's builder
 # that is working with no sign of life for stall_minutes (STALL_PY) is stalled? and waits on you.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
-story_of = {b[4]: b for b in board if b[0] == "stories"}
+story_rows = [(b[1], b[4], b[2]) for b in board if b[0] == "stories"]
+story_by_slug = {b[1]: b for b in board if b[0] == "stories"}
+seen = last_seen(E["DASH_EVENTS"])
 stalled = []
 rows = []
 try:
@@ -1922,10 +2022,11 @@ else:
                 st, look = agent_state(a, name)
                 if st in ("idle", "done") and reported(base):
                     st = "reported"
-                if st == "working" and base in story_of:
-                    b = story_of[base]
-                    signs = [commit_of.get(b[1], "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
-                    age = stall_age(E["DASH_EVENTS"], b[1], base, signs)
+                slug = story_for(name, story_rows) if st == "working" else None
+                if slug:
+                    b = story_by_slug[slug]
+                    signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
+                    age = stall_age(seen, slug, base, signs)
                     if age is not None and age >= int(E["DASH_STALL_MIN"]):
                         st, look = "stalled?", True
                         stalled.append(f"stalled? {name}: working {age} min with no commit or PR update")
@@ -2227,9 +2328,10 @@ dispatch() {
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
-    wait)   require_herdr; n="$(agent_name "${1:?name}")"
+    wait)   require_herdr; stall=""; if [[ "${1:-}" == --stall ]]; then stall=--stall; shift; fi
+            n="$(agent_name "${1:?name}")"
             if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
-            else wait_agent "${n}" "${2:-3600000}"; fi ;;
+            else wait_agent "${n}" "${2:-3600000}" "${stall}"; fi ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
 }
