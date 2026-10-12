@@ -135,7 +135,8 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
   front matter named the epic, once per slug, when any deletion closed the story: its own PR's
   merge (the commit names `story/<slug>`), its own work (a squash merge: the commit also changes a
-  file off the board that is not a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
+  file that is neither the board's own, its `stories/`, `epics/`, `Board.base` and `README.md`, nor
+  a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
   the swarm's logged `finish`, or a last status of `done` or `review` or a `prs:` line. A story
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. Idle and
@@ -160,35 +161,35 @@ set; the symbols carry the same meaning in plain text. If herdr is missing or gi
 still shows the board and says the agents are unavailable. At 100 columns, from a real project:
 
 ```text
-infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:29:02
-9 epics active · 3 agents working · 0 PRs green, waiting · 0 stalled · $423.95 today
-board: 1 uncommitted edit in the main checkout (reconcile pulls first)
+infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:48:02
+9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $427.69 today
+board: 2 uncommitted edits in the main checkout (reconcile pulls first)
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ! merge fakeaws#71 (✓ green)  fakeaws-subnet-overlap-refused                                     │
 │ ! run lead story prod-read-seam-reader-user: create the read-only reader user and its key file   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! prod-read-seam          ██████████░░ 12/15  1 ready · 2 blocked                                │
-│ ● fakeaws-data-sources    █████████░░░  8/11  1 ready · 2 blocked                                │
-│   ● fakeaws-subnet-overlap-refused  code       opus·high    working                              │
 │ ● rehearsal-prepare-gate  ██████████░░  8/10  1 ready · 1 blocked                                │
 │   ● conduct-rehearsal-prepare-gate  conduct    opus·high    working                              │
 │   ✓ rehearsal-prepare-second-init   code-risky opus·xhigh   idle                                 │
+│ ◐ fakeaws-data-sources    █████████░░░  8/11  1 review · 2 blocked                               │
+│   ✓ conduct-fakeaws-data-sources    conduct    opus·high    reported                             │
+│   ✓ fakeaws#71                      green  fakeaws-subnet-overlap-refused                        │
 │   no epic                                                                                        │
 │   ● dash-pretty                     code       opus·high    working                              │
-│   ✓ learning-router-one-table       code-risky opus·xhigh   idle                                 │
 │ ✓ 6 active epics with no open story: fakeaws-loader, rehearsal-against-the-copy, rehearsal-pass… │
-│ +1 idle  (--tree lists them)                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ⏸ 6 blocked · 9 later  (swarm.sh status --all lists them)
 ╭─ recent ─────────────────────────────────────────────────────────────────────────────────────────╮
 │     today  ✎ 4 findings: /mock/reset and /mock/restore changed the identity wit…        findings │
 │     today  ✎ 2 findings: credential file checked with Lstat then re-opened by p…        findings │
-│    1m ago  · log-finding dropped-signal https://github.com/redscaresu/infrafact…           wZ:p2 │
-│    1m ago  · log-finding unverified-against-real-tool https://github.com/redsca…           wZ:p2 │
-│    1m ago  · log-finding unescaped-path-arg https://github.com/redscaresu/infra…           wZ:p2 │
-│    1m ago  ⇡ merged #524 board/subnet-ready                                           redscaresu │
-│    8m ago  · tell dash-pretty                                                             w1:p5W │
-│    9m ago  ▶ story fakeaws-subnet-overlap-refused                                          wZ:p8 │
+│    4m ago  · close learning-router-one-table                                              w1:p5W │
+│    4m ago  ⇡ merged #521 story/learning-router-one-table                              redscaresu │
+│    4m ago  · tell dash-pretty                                                             w1:p5W │
+│    5m ago  · log-finding state-duplication https://github.com/redscaresu/infraf…           wZ:p2 │
+│    5m ago  · close fakeaws-subnet-overlap-refused                                          wZ:p8 │
+│    5m ago  · review fakeaws-subnet-overlap-refused                                         wZ:p8 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you
 ? unknown

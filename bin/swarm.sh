@@ -1841,9 +1841,10 @@ PY
 # from the parent's tree by one git cat-file --batch, its keys from the front matter only. A slug is
 # counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
 # added again): it is open. It counts when any of its deletions closed the story: the deleting commit
-# names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file outside
-# the board that is not a repo-root *.md, and its subject names no board/, close/ or epic/ branch: a
-# squash-merged story PR), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
+# names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file that is
+# not the board's own (its stories/, epics/, Board.base and README.md) nor a repo-root *.md, and its
+# subject names no board/, close/ or epic/ branch: a squash-merged story PR, whose work may sit beside
+# the board, as docs/operations.md does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
 # the deleted file's last status was done or review (reconcile finishes only items in review) or it
 # listed prs. A re-scope (a board/ PR, or a commit that edits only the board and root notes such as
 # STATUS.md) has none of these, so it counts as nothing.
@@ -1880,6 +1881,7 @@ except OSError:
     pass
 stories = prefix + "stories/"
 BOOKKEEPING = re.compile(r"(^|[\s/])(board|close|epic)/")   # a board, close or epic branch, never a story's own work
+BOARD_OWN = tuple(prefix + f for f in ("stories/", "epics/", "Board.base", "README.md"))   # the board's own files
 tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
 log = git(["log", "--first-parent", "--diff-merges=first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
 todo = []   # (slug, cat-file spec, closed by its commit), newest first
@@ -1888,7 +1890,7 @@ for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
     commit, _, subject = head.partition("\t")
     paths = [c.partition("\t")[2] for c in changes.splitlines() if "\t" in c]
     work = not BOOKKEEPING.search(subject) and any(
-        not p.startswith(prefix) and ("/" in p or not p.endswith(".md")) for p in paths)
+        not p.startswith(BOARD_OWN) and ("/" in p or not p.endswith(".md")) for p in paths)
     for c in changes.splitlines():
         st, _, path = c.partition("\t")
         if st != "D" or not path.startswith(stories) or not path.endswith(".md") or "/" in path[len(stories):]:
