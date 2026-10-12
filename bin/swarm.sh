@@ -1841,10 +1841,12 @@ PY
 # from the parent's tree by one git cat-file --batch, its keys from the front matter only. A slug is
 # counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
 # added again): it is open. It counts when any of its deletions closed the story: the deleting commit
-# names story/<slug> (its own PR's merge), the swarm finished it (finish, or reconcile "finished",
-# in events.tsv), or the deleted file's last status was done or review (reconcile finishes only items
-# in review) or it listed prs. A re-scope deletes a story with none of these, so it counts as nothing,
-# whatever else its commit changes; so does a squash merge the swarm did not log.
+# names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file outside
+# the board that is not a repo-root *.md, and its subject names no board/, close/ or epic/ branch: a
+# squash-merged story PR), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
+# the deleted file's last status was done or review (reconcile finishes only items in review) or it
+# listed prs. A re-scope (a board/ PR, or a commit that edits only the board and root notes such as
+# STATUS.md) has none of these, so it counts as nothing.
 dash_finished() {
   local prefix
   prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
@@ -1877,19 +1879,23 @@ try:
 except OSError:
     pass
 stories = prefix + "stories/"
+BOOKKEEPING = re.compile(r"(^|[\s/])(board|close|epic)/")   # a board, close or epic branch, never a story's own work
 tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
-log = git(["log", "--first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
+log = git(["log", "--first-parent", "--diff-merges=first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
 todo = []   # (slug, cat-file spec, closed by its commit), newest first
 for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
     head, _, changes = chunk.partition("\n")
     commit, _, subject = head.partition("\t")
+    paths = [c.partition("\t")[2] for c in changes.splitlines() if "\t" in c]
+    work = not BOOKKEEPING.search(subject) and any(
+        not p.startswith(prefix) and ("/" in p or not p.endswith(".md")) for p in paths)
     for c in changes.splitlines():
         st, _, path = c.partition("\t")
         if st != "D" or not path.startswith(stories) or not path.endswith(".md") or "/" in path[len(stories):]:
             continue
         slug = path[len(stories):-3]
         if slug != "README" and not os.path.exists(os.path.join(board, "stories", slug + ".md")):
-            own = re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or slug in finished_here
+            own = re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or work or slug in finished_here
             todo.append((slug, f"{commit}^1:{path}", bool(own)))
 out = git(["cat-file", "--batch"], "".join(t[1] + "\n" for t in todo).encode()) if todo else b""
 count, done, pos = collections.Counter(), set(), 0

@@ -373,7 +373,7 @@ qitem epics/x.md 'status: active'
 qitem epics/y.md 'status: active'
 qitem stories/y-wait.md 'status: blocked' 'epic: y' 'blocked_by: [x-b]'
 qitem stories/y-then.md 'status: later' 'epic: y'
-for s in x-merged x-big x-fin x-again x-gone x-scope x-twice; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
+for s in x-merged x-big x-fin x-again x-gone x-scope x-scope2 x-twice x-squash; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
 qitem stories/x-own.md 'status: ready' 'epic: x' 'prs: https://github.com/o/r/pull/5'
 qitem stories/x-rev.md 'status: review' 'epic: x' 'prs: https://github.com/o/r/pull/1'
 # epic: x in the body, not the front matter: never x's, open or finished.
@@ -391,8 +391,13 @@ echo 1 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-own.md docs/stories/x-bod
 # split the commit: commits are split on NUL.
 "${GQ[@]}" checkout -qb story/x-merged && "${GQ[@]}" rm -q docs/stories/x-merged.md && "${GQ[@]}" commit -qm "close x-merged"
 "${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #2 from o/story/x-merged @@ x" story/x-merged
-# A re-scope that also edits a file at the repo root (infrafactory #409): not a finish.
-echo "re-scoped" >> "${Q}/STATUS.md"; "${GQ[@]}" rm -q docs/stories/x-scope.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "Merge pull request #3 from o/board/lead-not-operator"
+# A story PR squash-merged: its code and its board deletion in one commit, status still ready, no
+# prs. Its own work, so it counts.
+echo 4 > "${Q}/src/b"; "${GQ[@]}" rm -q docs/stories/x-squash.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "Ship x-squash (#8)"
+# Re-scopes never count. A board/ PR, even one that changes code too:
+echo 5 > "${Q}/src/b"; "${GQ[@]}" rm -q docs/stories/x-scope.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "Merge pull request #3 from o/board/lead-not-operator"
+# and a commit whose only change off the board is a root note (infrafactory #409 edited STATUS.md).
+echo "re-scoped" >> "${Q}/STATUS.md"; "${GQ[@]}" rm -q docs/stories/x-scope2.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "tidy the board"
 # Board-only: a story in review taken off (reconcile's finish) counts; one the swarm logged as
 # finished counts; a split (x-big into x-b and x-c in one board commit) does not.
 "${GQ[@]}" rm -q docs/stories/x-rev.md docs/stories/x-fin.md && "${GQ[@]}" commit -qm "board: finished"
@@ -422,8 +427,8 @@ printf '%s\tk1\thttps://github.com/o/r/pull/3\tone from yesterday\n%s\tk2\thttps
 printf '%s\ttell\tlate-two-days-ago\tw1:p1\tok\n%s\ttell\tearly-yesterday\tw1:p1\tok\n' "$(at 2 23:59:00)" "$(at 1 00:01:00)" >> "${Q}/.swarm/events.tsv"
 qdash() { fresh; (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" "$@" bash "${SWARM}" dash 2>&1 || true); }
 out="$(qdash env)"
-# Finished: x-own, x-merged, x-rev, x-fin, x-twice. Open: x-b, x-c, x-again, x-gone, x-crlf.
-XROW='^│ ○ x +█{6}░{6}  5/10  5 ready +│$'
+# Finished: x-own, x-merged, x-squash, x-rev, x-fin, x-twice. Open: x-b, x-c, x-again, x-gone, x-crlf.
+XROW='^│ ○ x +█{7}░{5}  6/11  5 ready +│$'
 check "progress counts only deletions that closed a story, once each" grep -qE "${XROW}" <<< "${out}"
 check "an epic with ready stories and nothing running is ○ ready" grep -qE '^│ ○ x ' <<< "${out}"
 check "an epic whose remaining stories are all blocked or later is ⏸" grep -qE '^│ ⏸ y +░{12}  0/2   1 blocked · 1 later +│$' <<< "${out}"
@@ -444,7 +449,7 @@ git -C "${R}" update-ref refs/remotes/origin/main HEAD && git -C "${R}" symbolic
 echo "board_dir = ../rboard/docs" > "${R}/.claude/swarm/config"
 cp -R "${Q}/." "${B}" && rm -rf "${B}/.swarm" && git -C "${B}" update-ref -d refs/remotes/origin/main && git -C "${B}" symbolic-ref --delete refs/remotes/origin/HEAD
 out="$(fresh; cd "${R}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "a board in its own repo counts from that repo's history" grep -qE '^│ ○ x +█{5}░{7}  4/9   5 ready +│$' <<< "${out}"
+check "a board in its own repo counts from that repo's history" grep -qE '^│ ○ x +█{6}░{6}  5/10  5 ready +│$' <<< "${out}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
