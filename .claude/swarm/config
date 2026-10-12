@@ -1,0 +1,4 @@
+# swarm-dev builds itself: the board lives in board/, apart from the user docs in docs/.
+board_dir = board
+# Lesson rules land in AGENTS.md, which every agent (and you) already reads.
+lessons_file = AGENTS.md

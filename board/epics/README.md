@@ -1,0 +1,29 @@
+# Epics
+
+An epic is a goal bigger than one PR. It is scoped into stories (`docs/stories/`), each one PR
+(or, with `pr_per = epic`, one branch merged into the epic's own PR), and the epic is done when its **Done when** holds and its stories have merged; it then leaves the
+board (`swarm.sh finish`). An epic in `review` waits for a human to merge the PRs on its `prs:`
+line, and leaves the board once they have all merged. `check:` is optional: a command every
+story's builder runs from its worktree, and makes pass, before opening its PR (or pushing its
+branch). With
+`pr_per = epic`, `swarm.sh story` writes `repos:` itself: the repos that have an `epic/<slug>`
+branch, each of which gets one PR for the whole epic.
+
+```
+---
+status: active | later | review
+check: make test
+---
+
+# <Goal, as a sentence>
+
+**Done when:** how we will know the goal is met — observable, not "stories merged".
+**Out of scope:** what this epic will not do.
+**Constraints:** ADRs, safety rules and budgets that bound it.
+**Your part:** the steps you or your own session will do (go-aheads, logins, hand steps), or none.
+```
+
+A story joins an epic with `epic: <epic-file-name-without-.md>` in its front matter; an epic made
+from an HLD links back with `hld: <hld-file-name-without-.md>`. Scope a new
+epic with `/plan-epic <slug>` (swarm-dev `docs/method.md` § Scoping an epic). In Obsidian,
+`docs/Board.base` shows the board by status and by epic, and the epics themselves.

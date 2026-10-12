@@ -6,3 +6,5 @@
 .env.*
 .venv/
 .DS_Store
+board/.obsidian/*
+!board/.obsidian/app.json
