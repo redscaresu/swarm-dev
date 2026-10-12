@@ -3,9 +3,9 @@
 [![CI](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/redscaresu/swarm-dev/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/swarm-dev)
 
-**A team of Claude Code agents that builds software while you watch.** You write a design with one
-agent; others plan it, attack the plan and build it in parallel, each in its own terminal pane. The
-run stops whenever a decision is yours.
+swarm-dev runs a team of Claude Code agents that build software while you watch. You write a design
+with one agent. Others plan it, try to break the plan, and build it in parallel, each in its own
+terminal pane. The run stops whenever a decision is yours.
 
 ![swarm.sh dash --watch on a demo project](docs/assets/dash.gif)
 
@@ -16,31 +16,33 @@ run stops whenever a decision is yours.
   <img alt="How the swarm builds a design: /hld, /swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
-- **You** agree the design, approve the epics and stories, merge, and do the steps only a person can.
-- **Your Claude session (the lead)** runs `/swarm`, supervises, and runs `kind: lead` stories: real
-  cloud, credentials, anything hard to undo. Your own steps in them are marked **You:**.
-- **Agents** plan, conduct and build everything else. Each builder gets a worktree and a pane, proves
-  its tests can fail, and fixes the review findings (codex + `/code-review`) on its own PR.
+You agree the design, approve the epics and stories, merge PRs, and do the steps only a person can.
+Your own Claude session is the lead: it runs `/swarm`, keeps an eye on the agents, and handles
+`kind: lead` stories, which cover real cloud, credentials and anything hard to undo. Your steps in
+those stories are marked **You:**. Agents plan, conduct and build the rest. Each builder gets its
+own worktree and pane, shows that its tests can fail, and fixes the review findings (codex and
+`/code-review`) on its own PR.
 
-**Two learning loops.**
+Two loops feed what reviews find back into the work:
 
 | Loop | What happens |
 |---|---|
-| Inner (one PR) | codex and `/code-review` review the PR; the lead sends findings back with `swarm.sh tell`; the builder fixes and pushes, until a pass on the latest head finds nothing substantive. Each fixed finding is logged with `swarm.sh log-finding <kind>`. |
-| Outer (across PRs) | `swarm.sh lessons` turns a kind fixed in 3+ PRs in 90 days, or a lead memory tagged `lesson: <kind>`, into a one-line rule PR titled `lesson: <kind>` for the brief or `lessons_file`, so later builders get it. You merge or decline it; a rule you declined is not proposed again for 90 days. |
+| Inner (one PR) | codex and `/code-review` review the PR, the lead sends findings back with `swarm.sh tell`, and the builder fixes and pushes. This repeats until a pass on the latest head finds nothing substantive. Each fixed finding is logged with `swarm.sh log-finding <kind>`. |
+| Outer (across PRs) | When a kind of finding has been fixed in 3 or more PRs within 90 days, or the lead has a memory tagged `lesson: <kind>`, `swarm.sh lessons` turns it into a one-line rule PR titled `lesson: <kind>` for the brief or `lessons_file`. Later builders read that rule. You merge or close it, and a rule you closed is not proposed again for 90 days. |
 
-Full detail: [`docs/method.md`](docs/method.md). Diagram source:
-[`docs/assets/swarm-flow.workflow.json`](docs/assets/swarm-flow.workflow.json) (made with
-[Archify](https://github.com/tt-a1i/archify)).
+The full method is in [`docs/method.md`](docs/method.md). The diagram's source is
+[`docs/assets/swarm-flow.workflow.json`](docs/assets/swarm-flow.workflow.json), made with
+[Archify](https://github.com/tt-a1i/archify).
 
 ## Requirements
 
-- **Required:** [Claude Code](https://claude.com/claude-code); [herdr](https://herdr.dev), the
-  terminal multiplexer every agent runs in (`/hld`, `/plan-epic` and `/swarm` stop outside it); the
-  [GitHub CLI](https://cli.github.com) and [codex CLI](https://github.com/openai/codex), both logged
-  in; `git`, `python3` and `bash`.
-- **Optional:** [Obsidian](https://obsidian.md), to view `docs/` as a vault through `Board.base` and
-  `HLDs.base`. The board is plain Markdown with front matter, so nothing needs Obsidian.
+You need [Claude Code](https://claude.com/claude-code), [herdr](https://herdr.dev), the
+[GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), with both
+CLIs logged in, plus `git`, `python3` and `bash`. herdr is the terminal multiplexer every agent runs
+in, and `/hld`, `/plan-epic` and `/swarm` stop outside it.
+
+[Obsidian](https://obsidian.md) is optional. It shows `docs/` as a vault through `Board.base` and
+`HLDs.base`, but the board is plain Markdown with front matter and works without it.
 
 ![The board in Obsidian, grouped by status](docs/assets/board.png)
 
@@ -61,22 +63,23 @@ Full detail: [`docs/method.md`](docs/method.md). Diagram source:
    printf '.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json\n' >> .gitignore
    ```
 
-   Run `claude` once in the repo and accept "do you trust this folder?": agents work in worktrees
-   of it, and `swarm.sh` refuses to start until it is trusted.
+   Run `claude` once in the repo and accept "do you trust this folder?". Agents work in worktrees
+   of the repo, and `swarm.sh` won't start until it is trusted.
 4. Inside herdr, run `claude`, then `/hld Add rate limiting to the API`. Agree the design with the
-   co-author, then run `/swarm`, and run it again each time it stops for you.
+   co-author, then run `/swarm`. Run it again each time it stops for you.
 
 | Command | What it does |
 |---|---|
 | `/hld <title>` | Write the design with a co-author agent. |
-| `/swarm` | Everything after that; stops when a decision is yours. |
-| `swarm.sh status` | Agents that need a look, what waits on you, what runs next. |
-| `swarm.sh dash --watch` | The live dashboard above ([details](docs/dash.md)). |
-| `swarm.sh cost` | Where the tokens went. |
+| `/swarm` | Run everything after the design, stopping when a decision is yours. |
+| `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
+| `swarm.sh cost` | Show where the tokens went. |
 
-**Optional:** builder rules in `.claude/swarm/brief.md`; settings such as `merge = agent` in
-`.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
-provider settings in `~/.zshrc` for herdr panes, not in an alias:
+You can also put builder rules in `.claude/swarm/brief.md` and settings such as `merge = agent` in
+`.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock
+or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't
+reach them:
 
 ```bash
 [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
@@ -95,16 +98,16 @@ provider settings in `~/.zshrc` for herdr panes, not in an alias:
 
 ## Cost and safety
 
-- Every agent is a full Claude Code session on a model picked by its role (`swarm.sh policy <role>`);
-  planning one epic starts about ten agents.
-- Agents use your own `claude`, `codex`, `gh` and `git` logins, never real cloud or credentials.
-- By default no agent merges: every green, reviewed PR waits for you.
-- When codex hits its usage limit, review goes on with `/code-review` and the PR says so.
+Every agent is a full Claude Code session, on a model chosen by its role (`swarm.sh policy <role>`).
+Planning one epic starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git`
+logins and never touch real cloud or credentials. By default no agent merges, so every green,
+reviewed PR waits for you. When codex hits its usage limit, review continues with `/code-review`
+and the PR says so.
 
-Updating: `/swarm` tells you when a version is out; run `! claude plugin marketplace update swarm-dev`
-then `! claude plugin update swarm-dev@swarm-dev`, and restart. Security: [`SECURITY.md`](SECURITY.md).
-Working on swarm-dev itself: [`AGENTS.md`](AGENTS.md). The dashboard demo is
-[`scripts/demo-dash.sh`](scripts/demo-dash.sh).
+`/swarm` tells you when a new version is out. To update, run
+`! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,
+and restart. See [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on
+swarm-dev itself, and [`scripts/demo-dash.sh`](scripts/demo-dash.sh) for the dashboard demo.
 
 ## License
 
