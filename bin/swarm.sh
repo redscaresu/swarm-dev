@@ -13,7 +13,7 @@
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
-#   swarm.sh dash [--watch [seconds]]                      a read-only dashboard: board, agents, ladder, recent events; --watch redraws in place, q quits
+#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree]  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
@@ -1738,17 +1738,27 @@ PY
   next_step | sed 's/^/  /'
 }
 
-# dash [--watch [seconds]] — a read-only dashboard: a header line, the board's pipeline, this
-# project's agents by workspace and tab, what waits on you, the model ladder and recent events. It
-# never writes the board, state or logs, and never opens or closes a pane. --watch rebuilds it every
-# N seconds (default 2) and repaints in place; q quits. Colour only on a terminal with NO_COLOR unset.
+# dash [--watch [seconds]] [--ladder] [--tree] — a read-only dashboard: a header and a summary
+# line, what needs you, each active epic's progress with its live agents and open PRs, and the recent
+# events. --ladder adds the model per role; --tree shows the agents by herdr workspace and tab in
+# place of the epics. It never writes the board, state or logs, and never opens or closes a pane.
+# --watch rebuilds it every N seconds (default 2) and repaints in place; q quits, t and l toggle the
+# tree and the ladder. Colour only on a terminal with NO_COLOR unset.
 dash() {
   local every="" tty=0
-  case "${1:-}" in
-    "") ;;
-    --watch) every="${2:-2}"; [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
-    *) die "usage: swarm.sh dash [--watch [seconds]]" ;;
-  esac
+  DASH_LADDER=0; DASH_TREE=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --watch)
+        every=2
+        if [[ -n "${2:-}" && "$2" != --* ]]; then every="$2"; shift; fi
+        [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
+      --ladder) DASH_LADDER=1 ;;
+      --tree) DASH_TREE=1 ;;
+      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree]" ;;
+    esac
+    shift
+  done
   DASH_COLOR=0
   if [[ -t 1 ]]; then
     tty=1
@@ -1777,18 +1787,31 @@ dash_size() {
   DASH_W="${c}"; DASH_H="${r}"
 }
 
+# dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
+# (origin/<base>; dash never fetches), else HEAD.
+dash_base_ref() {
+  local r
+  for r in ${CFG_base_branches} HEAD; do
+    git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify "origin/${r}" >/dev/null 2>&1 && { echo "origin/${r}"; return; }
+  done
+  echo HEAD
+}
+
 # dash_slow — the fields too slow for every frame, cached for a minute in a file under $TMPDIR (never
 # under .swarm), so a one-shot dash reuses it too: today's estimated cost (the total line of
-# cost_report) and each open board item's PR checks, merge state and last update, one gh pr view per
-# PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL).
+# cost_report), each open board item's PR checks, merge state and last update, one gh pr view per
+# PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), and how
+# many stories of each epic finished (dash_finished).
 dash_slow() {
   local cache f urls
-  cache="${TMPDIR:-/tmp}/swarm-dash-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  # -2: the cache gained finished-story lines; a name of its own, so an older swarm.sh's cache is never read.
+  cache="${TMPDIR:-/tmp}/swarm-dash-2-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
   if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
     urls="$( { board stories; board epics; } | while IFS= read -r f; do
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
     {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
+      dash_finished
       # shellcheck disable=SC2086 # one URL per word
       if command -v gh >/dev/null 2>&1 && [[ -n "${urls}" ]]; then python3 - ${urls} <<'PY'
 import os, signal, subprocess, sys
@@ -1807,14 +1830,99 @@ PY
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
   fi
   DASH_COST="$(awk -F'\t' '$1 == "cost" { print $2 }' "${cache}" 2>/dev/null || true)"
+  DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
+}
+
+# dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
+# board is not in git). A finished story's file is deleted, so these are the story files deleted on
+# the first-parent history of that repo's base branch and HEAD: one git log, names only, commits split
+# on NUL (no diff text, so diff.noprefix or color settings cannot change it), each deleted file read
+# from the parent's tree by one git cat-file --batch, its keys from the front matter only. A slug is
+# counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
+# added again): it is open. It counts when any of its deletions closed the story: the deleting commit
+# names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file that is
+# not the board's own (its stories/, epics/, Board.base and README.md) nor a repo-root *.md, and its
+# subject names no board/, close/ or epic/ branch: a squash-merged story PR, whose work may sit beside
+# the board, as docs/operations.md does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
+# the deleted file's last status was done or review (reconcile finishes only items in review) or it
+# listed prs. A re-scope (a board/ PR, or a commit that edits only the board and root notes such as
+# STATUS.md) has none of these, so it counts as nothing.
+dash_finished() {
+  local prefix
+  prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
+  python3 - "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" <<'PY' 2>/dev/null || true
+import collections, os, re, subprocess, sys
+board, prefix, ref, events = sys.argv[1:5]
+def git(args, data=None):
+    return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
+                          capture_output=True, check=True).stdout
+KEY = re.compile(r"([A-Za-z_]+): *(.*)$")
+def front(text):
+    # The front matter's keys, as dash_fields reads them: only after a leading ---, up to the next;
+    # a key's first line wins, an empty value too; CRLF tolerated.
+    keys, lines = {}, [l.rstrip("\r") for l in text.split("\n")]
+    if lines[0] != "---":
+        return keys
+    for l in lines[1:]:
+        if l == "---":
+            break
+        m = KEY.match(l)
+        if m and m.group(1) not in keys:
+            keys[m.group(1)] = m.group(2)
+    return keys
+finished_here = set()
+try:
+    for l in open(events, encoding="utf-8", errors="replace"):
+        f = l.rstrip("\n").split("\t")
+        if len(f) == 5 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and "finished" in f[4])):
+            finished_here.add(f[2])
+except OSError:
+    pass
+stories = prefix + "stories/"
+BOOKKEEPING = re.compile(r"(^|[\s/])(board|close|epic)/")   # a board, close or epic branch, never a story's own work
+BOARD_OWN = tuple(prefix + f for f in ("stories/", "epics/", "Board.base", "README.md"))   # the board's own files
+tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
+log = git(["log", "--first-parent", "--diff-merges=first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
+todo = []   # (slug, cat-file spec, closed by its commit), newest first
+for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
+    head, _, changes = chunk.partition("\n")
+    commit, _, subject = head.partition("\t")
+    paths = [c.partition("\t")[2] for c in changes.splitlines() if "\t" in c]
+    work = not BOOKKEEPING.search(subject) and any(
+        not p.startswith(BOARD_OWN) and ("/" in p or not p.endswith(".md")) for p in paths)
+    for c in changes.splitlines():
+        st, _, path = c.partition("\t")
+        if st != "D" or not path.startswith(stories) or not path.endswith(".md") or "/" in path[len(stories):]:
+            continue
+        slug = path[len(stories):-3]
+        if slug != "README" and not os.path.exists(os.path.join(board, "stories", slug + ".md")):
+            own = re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or work or slug in finished_here
+            todo.append((slug, f"{commit}^1:{path}", bool(own)))
+out = git(["cat-file", "--batch"], "".join(t[1] + "\n" for t in todo).encode()) if todo else b""
+count, done, pos = collections.Counter(), set(), 0
+for slug, _, own in todo:
+    nl = out.index(b"\n", pos)
+    head, pos = out[pos:nl], nl + 1
+    if head.endswith(b" missing"):
+        continue
+    size = int(head.rsplit(b" ", 1)[1])
+    fm = front(out[pos:pos + size].decode("utf-8", "replace"))
+    pos += size + 1
+    if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
+        done.add(slug)
+        count[fm["epic"]] += 1
+for epic, n in sorted(count.items()):
+    print(f"finished\t{epic}\t{n}")
+PY
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
 # when only the clock moved, just the header line is rewritten. On a terminal it draws on the
-# alternate screen with the cursor hidden, re-measures every frame, reads q (quit) and r (redraw)
-# without blocking, and redraws within a second of a resize (bash 3.2's read -t is not cut short by
-# SIGWINCH, so it waits in one-second steps). Off a terminal it prints each changed frame, plain.
+# alternate screen with the cursor hidden, re-measures every frame, reads q (quit), r (redraw), t
+# (the tree) and l (the ladder) without blocking, and redraws within a second of a resize (bash
+# 3.2's read -t is not cut short by SIGWINCH, so it waits in one-second steps). Off a terminal it
+# prints each changed frame, plain.
 dash_watch() {
   local every="$1" tty="$2" tpl="" frame last="" key i winch=0
   if [[ ${tty} == 1 ]]; then
@@ -1844,7 +1952,12 @@ dash_watch() {
     for ((i = 0; i < every; i++)); do
       if [[ ${tty} == 1 ]]; then
         key=""; read -rsn1 -t 1 key </dev/tty || true
-        case "${key}" in q|Q) exit 0 ;; r|R) last=""; break ;; esac
+        case "${key}" in
+          q|Q) exit 0 ;;
+          r|R) last=""; break ;;
+          t|T) DASH_TREE=$((1 - DASH_TREE)); last=""; break ;;
+          l|L) DASH_LADDER=$((1 - DASH_LADDER)); last=""; break ;;
+        esac
       else
         sleep 1
       fi
@@ -1853,19 +1966,35 @@ dash_watch() {
   done
 }
 
+# dash_fields <file> — a board item's status, prs, epic, kind and title (its first "# " heading),
+# tab-separated, in one fork. The keys are read from the front matter only (a leading ---, up to the
+# next; CRLF tolerated), by fm's rule: a key's first line wins, an empty value too. dash_finished's
+# front() reads them the same way.
+dash_fields() {
+  awk '{ sub(/\r$/, "") }
+    NR == 1 && $0 == "---" { n = 1; next }
+    n == 1 && $0 == "---" { n = 2; next }
+    n == 1 && !hs && sub(/^status: */, "") { hs = 1; s = $0; next }
+    n == 1 && !hp && sub(/^prs: */, "") { hp = 1; p = $0; next }
+    n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
+    n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
+    n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
+    END { printf "%s\t%s\t%s\t%s\t%s", s, p, e, k, t }' "$1"
+}
+
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
 # DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads.
 dash_render() {
-  local agents="" panes="" workspaces="" board="" policies="" merges="" drift=0 commits="" f d r ref=""
+  local agents="" panes="" workspaces="" board="" policies="" merges="" drift=0 commits="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)" \
       && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
   fi
-  # One line per item: dir, slug, status, prs, its agent name, and (an epic) its conductor's.
+  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title.
   for d in hld epics stories; do
     while IFS= read -r f; do
-      r="$(basename "${f}" .md)"
-      board+="${d}"$'\t'"${r}"$'\t'"$(fm "${f}" status)"$'\t'"$(fm "${f}" prs)"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\n'
+      r="$(basename "${f}" .md)"; x="$(dash_fields "${f}")"
+      board+="${d}"$'\t'"${r}"$'\t'"${x%%$'\t'*}"$'\t'"$(cut -f2 <<< "${x}")"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\t'"$(cut -f3- <<< "${x}")"$'\n'
     done < <(board "${d}")
   done
   # The last worktree commit of each working builder's story (STALL_PY's story_for), for the stall rule.
@@ -1887,11 +2016,7 @@ for a in agents:
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then
-    # The base branch as last fetched: dash never fetches.
-    for r in ${CFG_base_branches} HEAD; do
-      ref="origin/${r}"; git -C "${PROJECT_DIR}" rev-parse -q --verify "${ref}" >/dev/null && break; ref=""
-    done
-    merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 40 --format='%cI%x09%an%x09%s' "${ref:-HEAD}" 2>/dev/null || true)"
+    merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 40 --format='%cI%x09%an%x09%s' "$(dash_base_ref)" 2>/dev/null || true)"
     # Uncommitted board edits in the main checkout; no optional locks, so status writes no index.
     drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" status --porcelain --untracked-files=all -- "${BOARD}" 2>/dev/null | grep -c . || true)"
   fi
@@ -1903,22 +2028,34 @@ for a in agents:
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
+  DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
     python3 - <<'PY'
-import collections, datetime, itertools, json, os, re
+import collections, datetime, itertools, json, os, re, time
 E = os.environ
 exec(E["SWARM_PANES_PY"])
 exec(E["SWARM_STALL_PY"])
-W = max(int(E.get("DASH_COLS") or 100), 60)
+W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
+NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
 COLOR = E.get("DASH_COLOR") == "1"
-STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1"}
-STATUS_STYLE = {"stalled?": "bad", "working": "ok", "idle": "dim", "done": "dim", "retired": "dim", "reported": "warn", "EMPTY": "bad", "WAITING": "bad"}
+KEYS = E.get("DASH_KEYS") == "1"
+STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
+# One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
+SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
+       "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you", "? unknown"]
 out = []
 
 def paint(t, s):
     return f"\033[{STYLE[s]}m{t}\033[0m" if COLOR and s and t else t
+
+def sym(k):
+    return SYM[k][0] + " ", SYM[k][1]
+
+def cut(t, n):
+    return t if len(t) <= n else t[:max(n - 1, 0)] + "…"
 
 def fit(segs, n):
     # Truncate, never wrap: plain lengths are measured before any colour is added.
@@ -1926,16 +2063,27 @@ def fit(segs, n):
     for t, s in segs:
         if left <= 0:
             break
-        if len(t) > left:
-            t = t[:left - 1] + "…"
+        t = cut(t, left)
         res.append(paint(t, s)); left -= len(t)
     return "".join(res) + " " * left
 
-def box(title, rows, w):
-    res = ["┌─ " + paint(title, "h") + " " + "─" * max(w - len(title) - 5, 0) + "┐"]
+def wrap(segs, n, indent=2):
+    # Word-wrap styled segments into lines of at most n, the later lines indented; only a single
+    # word longer than a line is cut (by fit).
+    lines, cur, used = [], [], 0
+    for t, s in segs:
+        for w in re.findall(r"\s*\S+\s*|\s+", t):
+            if cur and used + len(w.rstrip()) > n:
+                lines.append(cur[:-1] + [(cur[-1][0].rstrip(), cur[-1][1])])
+                cur, used, w = [(" " * indent, "")], indent, w.lstrip()
+            cur.append((w, s)); used += len(w)
+    return lines + [cur] if cur else lines
+
+def box(title, rows, w, style="h"):
+    res = ["╭─ " + paint(title, style) + " " + "─" * max(w - len(title) - 5, 0) + "╮"]
     for r in rows or [[("(none)", "dim")]]:
         res.append("│ " + fit([(r, "")] if isinstance(r, str) else r, w - 4) + " │")
-    return res + ["└" + "─" * (w - 2) + "┘"]
+    return res + ["╰" + "─" * (w - 2) + "╯"]
 
 def read_tsv(path, n):
     try:
@@ -1946,28 +2094,17 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# Header: one line, the clock at the right.
-right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
-if E.get("DASH_KEYS") == "1":
-    right += "  q quit"
-head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
-        ("  merge ", "dim"), (E["DASH_MERGE"], "")]
-if E.get("DASH_COST"):
-    head += [("  today ", "dim"), (f"${E['DASH_COST']}", "")]
-head += [("  next ", "dim"), (E["DASH_NEXT"], "warn")]
-out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
-
-# Pipeline: one line; then board edits the main checkout has not committed.
-board = [l.split("\t") for l in lines("DASH_BOARD")]
-def counts(d, order):
-    c = collections.Counter(b[2] or "?" for b in board if b[0] == d)
-    return [(f" {k} {c[k]}", "") for k in order + sorted(k for k in c if k not in order) if c[k]] or [(" none", "dim")]
-out.append(fit([("HLDs", "dim")] + counts("hld", ["draft", "agreed", "superseded"]) + [("  ·  epics", "dim")]
-               + counts("epics", ["active", "later", "review"]) + [("  ·  stories", "dim")]
-               + counts("stories", ["ready", "blocked", "review", "later"]), W))
-drift = int(E.get("DASH_DRIFT") or 0)
-if drift:
-    out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
+# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title.
+board = [(l.split("\t") + [""] * 9)[:9] for l in lines("DASH_BOARD")]
+stories = [b for b in board if b[0] == "stories"]
+story_rows = [(b[1], b[4], b[2]) for b in stories]
+story_by_slug = {b[1]: b for b in stories}
+epics = collections.OrderedDict((b[1], b) for b in board if b[0] == "epics")
+epic_of = {b[5]: b[1] for b in epics.values()}
+finished = collections.Counter()
+for l in lines("DASH_FINISHED"):
+    e, _, n = l.partition("\t")
+    finished[e] += int(n) if n.isdigit() else 0
 
 PRS = {}
 for l in lines("DASH_PRSTATE"):
@@ -1977,123 +2114,237 @@ for l in lines("DASH_PRSTATE"):
     except ValueError:
         pass
 URL = re.compile(r"https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
+FAILED = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")
 
-# Agents: this project's panes (its tab records), grouped by workspace, then tab. A story's builder
-# that is working with no sign of life for stall_minutes (STALL_PY) is stalled? and waits on you.
+def pr_state(url):
+    # (vocabulary key, words) for a PR's checks and merge state; None when gh gave nothing.
+    s = PRS.get(url)
+    if not isinstance(s, dict):
+        return None
+    roll = s.get("statusCheckRollup") or []
+    bad = any((c.get("conclusion") or c.get("state") or "").upper() in FAILED for c in roll)
+    running = any((c.get("status") or "COMPLETED").upper() != "COMPLETED" or (c.get("state") or "").upper() in ("PENDING", "EXPECTED") for c in roll)
+    k, words = ("failed", "failing") if bad else ("review", "CI running") if running else ("done", "green") if roll else ("review", "no checks")
+    behind = {"BEHIND": " · behind", "DIRTY": " · conflicts"}.get((s.get("mergeStateStatus") or "").upper(), "")
+    return k, words + behind
+
+def pr_ref(m):
+    return f"{m.group(2)}#{m.group(3)}"
+
+# Agents: this project's panes (its tab records). A story's builder that is working with no sign of
+# life for stall_minutes (STALL_PY) is stalled, and needs you.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
-story_rows = [(b[1], b[4], b[2]) for b in board if b[0] == "stories"]
-story_by_slug = {b[1]: b for b in board if b[0] == "stories"}
 seen = last_seen(E["DASH_EVENTS"])
-stalled = []
-rows = []
+recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
     ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
 except (ValueError, KeyError, TypeError):
     agents = None
-if agents is None:
-    rows = [[("agents unavailable: herdr is not on PATH, or gave no list", "dim")]]
-else:
+
+def reported(base):
+    # A conductor that wrote its report, which the lead has not collected yet.
+    epic = epic_of.get(base) or (base[len("conduct-"):] if base.startswith("conduct-") else "")
+    return bool(epic) and os.path.exists(os.path.join(E["DASH_PROJECT"], ".swarm", f"conduct-{epic}.report.md"))
+
+def epic_for(base, slug, tab):
+    if base in epic_of:
+        return epic_of[base]
+    if slug:
+        return story_by_slug[slug][6] or None
+    if tab in epics:
+        return tab
+    return (story_by_slug.get(tab) or [""] * 9)[6] or None
+
+if agents is not None:
     by_session, by_name = {}, {}
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
         by_name[f[2]] = by_session[f[6]] = f
-    prs, epic_of = {}, {}
-    for b in board:
-        if b[0] == "epics":
-            epic_of[b[5]] = b[1]
-        if b[3]:
-            prs[b[4]] = b[3]
-            if b[0] == "epics":
-                prs[b[5]] = b[3]
-    def reported(base):
-        # A conductor that wrote its report, which the lead has not collected yet.
-        epic = epic_of.get(base) or (base[len("conduct-"):] if base.startswith("conduct-") else "")
-        return bool(epic) and os.path.exists(os.path.join(E["DASH_PROJECT"], ".swarm", f"conduct-{epic}.report.md"))
-    tree = collections.OrderedDict()
     for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & live):
-            ws = ws_label.get(pane.split(":")[0], pane.split(":")[0])
-            tab = tree.setdefault(ws, collections.OrderedDict()).setdefault(label, [])
-            try:
-                a = agents.get(pane)
-                name = (a or {}).get("name") or recorded
-                base = re.sub(r"-done\d*$", "", name)
-                rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
-                st, look = agent_state(a, name)
-                if st in ("idle", "done") and reported(base):
-                    st = "reported"
-                slug = story_for(name, story_rows) if st == "working" else None
-                if slug:
-                    b = story_by_slug[slug]
-                    signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
-                    age = stall_age(seen, slug, base, signs)
-                    if age is not None and age >= int(E["DASH_STALL_MIN"]):
-                        st, look = "stalled?", True
-                        stalled.append(f"stalled? {name}: working {age} min with no commit or PR update")
-                tab.append((name, rec[1] if rec else "?", (f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?", st, look, prs.get(base, "")))
-            except Exception as err:  # one odd agent record must not cost the whole panel
-                tab.append((recorded, "?", "?", f"unreadable: {type(err).__name__}", True, ""))
-    width = min(max((len(x[0]) for t in tree.values() for v in t.values() for x in v), default=0), 30)
+        r = {"ws": ws_label.get(pane.split(":")[0], pane.split(":")[0]), "tab": label, "name": recorded, "role": "?",
+             "model": "?", "look": True, "slug": None, "epic": epic_for("", None, label)}
+        try:
+            a = agents.get(pane)
+            name = (a or {}).get("name") or recorded
+            base = re.sub(r"-done\d*$", "", name)
+            rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
+            st, look = agent_state(a, name)
+            if st in ("idle", "done") and reported(base):
+                st = "reported"
+            slug = story_for(name, story_rows)
+            words = {"EMPTY": "empty pane", "WAITING": "waiting on a prompt", "done": "idle"}.get(st, st)
+            if st == "working" and slug:
+                b = story_by_slug[slug]
+                signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
+                age = stall_age(seen, slug, base, signs)
+                if age is not None and age >= int(E["DASH_STALL_MIN"]):
+                    st, look, words = "stalled", True, f"stalled {age}m"
+                    stalled.append((name, age))
+            r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
+                     look=look, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
+                     open=bool(slug) and story_by_slug[slug][2] != "done")
+        except Exception as err:  # one odd agent record must not cost the whole panel
+            r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
+        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
+        recs.append(r)
+
+# Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
+shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
+idle = len(recs) - len(shown)
+
+# Needs you: only what you act on, each as a short action.
+need, blocked, later, green, need_slugs = [], 0, 0, 0, set()
+bang = [sym("look")]
+for l in lines("DASH_WAITING"):
+    l = l.strip()
+    if l.startswith("blocked:"):
+        blocked += 1
+        continue
+    if l.startswith("later "):
+        later += 1
+        continue
+    m = re.match(r"awaiting your merge: (epic )?(\S+) ?(.*)$", l)
+    if m:
+        what = ("epic " if m.group(1) else "") + m.group(2)
+        urls = list(URL.finditer(m.group(3)))
+        if not urls:
+            need.append(bang + [(f"merge {what}: no PR on its file", "")])
+        for u in urls:
+            st = pr_state(u.group(0))
+            if st is None:
+                need.append(bang + [(f"merge {what}: ", ""), (u.group(0), "dim")])
+                continue
+            green += st[0] == "done"
+            need.append(bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")])
+        continue
+    m = re.match(r"(\S+): (\S+)$", l)
+    if m:
+        need_slugs.add(m.group(2))
+        title = (story_by_slug.get(m.group(2)) or [""] * 9)[8]
+        title = f": {title[:1].lower()}{title[1:]}" if title and title != m.group(2) else ""
+        need.append(bang + [(f"run {m.group(1)} story {m.group(2)}{title}", "")])
+    else:
+        need.append(bang + [(l, "")])
+for r in recs:
+    if r["state"] == "WAITING":
+        need.append(bang + [(f"answer {r['name']}: ", ""), (f"herdr agent read {r['name']}", "dim")])
+    elif r["state"] == "EMPTY":
+        need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
+need += [bang + [(f"look at {n}: working {age} min with no commit or PR update", "")] for n, age in stalled]
+need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
+
+# Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
+# its live agents and open PRs beneath it.
+groups = collections.OrderedDict((s, []) for s, b in epics.items() if b[2] == "active")
+for r in shown:
+    groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
+name_w = min(max((len(r["name"]) for r in shown), default=0), 30 if not NARROW else max(12, (W - 20) // 2))
+
+def agent_row(r):
+    row = [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")]
+    if not NARROW:
+        row += [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", "dim")]
+    return row + [(r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim")]
+
+def epic_label(slug):
+    return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
+
+def epic_rows(slug, members):
+    if not slug:
+        return [[("  ", ""), ("no epic", "dim")]] + [agent_row(r) for r in members]
+    mine = [b for b in stories if b[6] == slug]
+    done = finished[slug] + sum(b[2] == "done" for b in mine)
+    left = collections.Counter(b[2] or "?" for b in mine if b[2] != "done")
+    total = done + sum(left.values())
+    prs = [(m, b[1]) for b in mine + [epics[slug]] if b[2] != "done" for m in URL.finditer(b[3])]
+    states = [pr_state(m.group(0)) for m, _ in prs]
+    k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or any(b[1] in need_slugs for b in mine)
+         else "working" if any(r["state"] == "working" for r in members)
+         else "review" if prs or left["review"] else "done" if not left else "ready" if left["ready"]
+         else "blocked" if set(left) <= {"blocked", "later"} else "unknown")
+    bar_w = 6 if NARROW else 12
+    fill = round(bar_w * done / total) if total else 0
+    order = ["review", "ready", "blocked", "later"]
+    counts = " · ".join(f"{left[s]} {s}" for s in order + sorted(s for s in left if s not in order) if left[s])
+    rows = [[sym(k), (f"{cut(epic_label(slug), epic_w):<{epic_w}}  ", "b"), ("█" * fill, "ok"), ("░" * (bar_w - fill), "dim"),
+             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or ("" if total else "no stories on the board or in git"), "dim")]]
+    rows += [agent_row(r) for r in members]
+    for (m, owner), st in zip(prs, states):
+        k = st[0] if st else "review"
+        rows.append([("  ", ""), sym(k), (f"{cut(pr_ref(m), name_w):<{name_w}}  ", ""), (st[1] if st else "checks unknown", SYM[k][1]),
+                     (f"  {owner}", "dim")])
+    return rows
+
+def rank(item):
+    # Epics that need you, then working ones, then the rest; agents with no epic last.
+    slug, members = item
+    if not slug:
+        return 3
+    if any(r["look"] for r in members) or any(b[6] == slug and b[1] in need_slugs for b in stories):
+        return 0
+    return 1 if any(r["state"] == "working" for r in members) else 2
+
+# An active epic with no open story and no agent shown is one line for them all.
+quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
+groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
+epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), W // 3)
+epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
+if quiet:
+    epic_view.append([sym("done"), (f"{len(quiet)} active epic{'' if len(quiet) == 1 else 's'} with no open story: {', '.join(quiet)}", "dim")])
+if agents is None:
+    epic_view.append([("agents unavailable: herdr is not on PATH, or gave no list", "dim")])
+if idle:
+    epic_view.append([(f"+{idle} idle", "dim"), ("  (t shows the tree)" if KEYS else "  (--tree lists them)", "dim")])
+
+# The tree (t, or --tree): every agent of this project's panes, by herdr workspace, then tab.
+def tree_view():
+    if agents is None:
+        return [[("agents unavailable: herdr is not on PATH, or gave no list", "dim")]]
+    tree = collections.OrderedDict()
+    for r in recs:
+        tree.setdefault(r["ws"], collections.OrderedDict()).setdefault(r["tab"], []).append(r)
+    width = min(max((len(r["name"]) for r in recs), default=0), 30)
+    rows = []
     for ws, tabs in tree.items():
         rows.append([(ws, "b")])
         for i, (tab, items) in enumerate(tabs.items()):
             last_tab = i == len(tabs) - 1
             rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
-            for j, (name, role, me, st, look, pr) in enumerate(items):
+            for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
-                n = name if len(name) <= width else name[:width - 1] + "…"
-                rows.append([(stem, "dim"), ("! " if look else "  ", "bad"), (f"{n:<{width}}  ", ""), (f"{role:<10} ", "dim"),
-                             (f"{me:<13} ", ""), ("[", ""), (st, STATUS_STYLE.get(st, "")), ("]", ""), (f"  {pr}" if pr else "", "dim")])
-    if not rows:
-        rows = [[("no agents open in this project's panes", "dim")]]
-out += box("agents", rows, W)
-
-# Waiting on you: only what needs the user; blocked and later items are one count line.
-FAILED = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")
-def pr_short(m):
-    s = PRS.get(m.group(0))
-    if not isinstance(s, dict):
-        return m.group(0)
-    roll = s.get("statusCheckRollup") or []
-    bad = any((c.get("conclusion") or c.get("state") or "").upper() in FAILED for c in roll)
-    running = any((c.get("status") or "COMPLETED").upper() != "COMPLETED" or (c.get("state") or "").upper() in ("PENDING", "EXPECTED") for c in roll)
-    ci = "✘" if bad else "●" if running else "✔" if roll else "no checks"
-    behind = {"BEHIND": " behind", "DIRTY": " dirty"}.get((s.get("mergeStateStatus") or "").upper(), "")
-    return f"{m.group(2)}#{m.group(3)} {ci}{behind}"
-need, blocked, later = [], 0, 0
-for l in lines("DASH_WAITING"):
-    l = l.strip()
-    if l.startswith("blocked:"):
-        blocked += 1
-    elif l.startswith("later "):
-        later += 1
-    else:
-        need.append(URL.sub(pr_short, l))
-need += [f"draft HLD: {b[1]}" for b in board if b[0] == "hld" and b[2] == "draft"] + stalled
-wait_rows = need or [[("nothing", "dim")]]
-if blocked or later:
-    wait_rows.append([(f"blocked {blocked} · later {later} (swarm.sh status --all lists them)", "dim")])
-out += box("waiting on you", wait_rows, W)
-
-# Ladder: each role's model and effort, from policy.
-policy = [l.split() for l in lines("DASH_POLICY")]
-ladder = [f"{p[0]:<11}→ {p[2] if p[1] == 'claude' else p[1]} · {p[3]}" for p in policy]
-def ladder_box(w, cell=30):
-    per = max(1, (w - 4) // cell)
-    return box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)], w)
+                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")]
+                if not NARROW:
+                    row += [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", "dim")]
+                rows.append(row + [(r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"), (f"  {r['prs']}" if r["prs"] else "", "dim")])
+    return rows or [[("no agents open in this project's panes", "dim")]]
 
 # Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
 # Findings are one row per PR and day, and at most a third of the rows, so they never crowd out the rest.
+NOW = time.time()
+TODAY = datetime.date.today()
+
 def when(s):
-    # A date alone (findings.tsv) sorts as the end of that local day, after the day's timed events.
+    # (sort time, relative time). A date alone (findings.tsv) sorts as the end of that local day,
+    # after the day's timed events, and reads in calendar days: today, yesterday, Nd ago.
     try:
         if len(s) == 10:
-            return datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(), s[5:]
+            days = (TODAY - datetime.date.fromisoformat(s)).days
+            return (datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(),
+                    "today" if days <= 0 else "yesterday" if days == 1 else f"{days}d ago")
         t = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return t, t.astimezone().strftime("%m-%d %H:%M")
+        if t.tzinfo is None:
+            t = t.astimezone()
+        secs = max(int(NOW - t.timestamp()), 0)
+        if secs < 86400:
+            return t, "now" if secs < 60 else f"{secs // 60}m ago" if secs < 3600 else f"{secs // 3600}h ago"
+        days = (TODAY - t.astimezone().date()).days   # a day or more: calendar days, as for a date
+        return t, "yesterday" if days <= 1 else f"{days}d ago"
     except ValueError:
         return None, s
-events = []
+
+STARTS = ("agent", "conduct", "story")
+events = []   # (time, actor, text, icon key)
 for l in lines("DASH_MERGES"):
     f = l.split("\t", 2)
     if len(f) == 3:
@@ -2105,37 +2356,91 @@ for f in read_tsv(E["DASH_FINDINGS"], 4):
     found.setdefault((f[0], m.group(1) if m else f[2]), []).append(f)
 for (day, pr), fs in found.items():
     text = fs[0][3] if len(fs) == 1 else f"{len(fs)} findings: " + "; ".join(x[3] for x in fs)
-    events.append((day, "review", f"{text} (#{pr})", fs[0][1] if len(fs) == 1 else "findings"))
+    events.append((day, fs[0][1] if len(fs) == 1 else "findings", f"{text} (#{pr})", "finding"))
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"), "ok" if f[4].startswith("ok") else "failed"))
+    ok = f[4].startswith("ok")
+    events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"), "failed" if not ok else "start" if f[1] in STARTS else "action"))
+ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad")}
 dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
+
 def recent_box(w, n):
-    rec, reviews = [], 0
-    for (_, shown), (_, actor, text, tag) in dated:
+    rec, findings = [], 0
+    actor_w = 0 if w < 100 else 14
+    for (_, ago), (_, actor, text, kind) in dated:
         if len(rec) >= n:
             break
-        if actor == "review":
-            reviews += 1
-            if reviews > max(1, n // 3):
+        if kind == "finding":
+            findings += 1
+            if findings > max(1, n // 3):
                 continue
-        a = actor if len(actor) <= 14 else actor[:13] + "…"
-        room = max(w - 4 - 13 - 16 - len(tag) - 4, 0)
-        t = text if len(text) <= room else text[:max(room - 1, 0)] + "…"
-        rec.append([(f"{shown:<11}  ", "dim"), (f"{a:<14}  ", ""), (t.ljust(room), ""), ("  [", ""), (tag, "bad" if tag == "failed" else "warn"), ("]", "")])
+        room = max(w - 4 - 11 - 2 - (actor_w + 2 if actor_w else 0), 0)
+        row = [(f"{ago:>9}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
+        if actor_w:
+            row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
+        rec.append(row)
     return box("recent", rec, w)
 
-# Ladder and recent side by side from 140 columns, stacked below; recent fills the height left.
-if W >= 140:
+def ladder_box(w, cell=30):
+    policy = [l.split() for l in lines("DASH_POLICY")]
+    ladder = [f"{p[0]:<11}→ {p[2] if p[1] == 'claude' else p[1]} · {p[3]}" for p in policy]
+    per = max(1, (w - 4) // cell)
+    return box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)], w)
+
+# Layout. Header: one line, the clock at the right; then the summary line.
+right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
+head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
+        ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
+if sum(len(t) for t, _ in head) > W - len(right) - 1:
+    head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
+out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
+n_active = sum(b[2] == "active" for b in epics.values())
+n_working = sum(r["state"] == "working" for r in recs)
+summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
+           (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
+if E.get("DASH_COST"):
+    summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
+out.append(fit(summary, W))
+drift = int(E.get("DASH_DRIFT") or 0)
+if drift:
+    out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
+
+out += box("needs you", [l for r in need for l in wrap(r, W - 4)], W, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], W)]
+if E.get("DASH_TREE") == "1":
+    out += box("agents by workspace and tab", tree_view(), W)
+elif epic_view:
+    out += box("epics", epic_view, W)
+if blocked or later:
+    out.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], W))
+
+# The legend, packed onto as few lines as the width allows.
+legend, cur = [], ""
+for item in LEGEND + (["q quit · t tree · l ladder · r redraw"] if KEYS else []):
+    if cur and len(cur) + 3 + len(item) > W:
+        legend.append(cur); cur = item
+    else:
+        cur = f"{cur}   {item}" if cur else item
+legend.append(cur)
+
+# Recent fills the height left; from 140 columns a shown ladder sits beside it.
+ladder = E.get("DASH_LADDER") == "1"
+if ladder and W < 140:
+    out += ladder_box(W)
+# A watched frame drops what does not fit, never the legend; a one-shot dash shows at least 5 rows.
+room = H - len(out) - 2 - len(legend) if H else 8
+if not KEYS:
+    room = max(5, room)
+if ladder and W >= 140:
     lw = 64
     lad = ladder_box(lw)
-    rec = recent_box(W - lw - 1, max(5, H - len(out) - 2) if H else max(8, len(lad) - 2))
-    for a, b in itertools.zip_longest(lad, rec, fillvalue=None):
-        out.append((a or " " * lw) + " " + (b or ""))
-else:
-    out += ladder_box(W)
-    out += recent_box(W, max(5, H - len(out) - 2) if H else 8)
-if E.get("DASH_KEYS") == "1" and H:
-    out = out[:H]   # a watched frame never scrolls the screen
+    rec = recent_box(W - lw - 1, max(room, len(lad) - 2))
+    out += [(a or " " * lw) + " " + (b or "") for a, b in itertools.zip_longest(lad, rec, fillvalue=None)]
+elif room > 0:
+    out += recent_box(W, room)
+if KEYS and H:
+    out = out[:max(H - len(legend), 0)]   # a watched frame never scrolls the screen
+out += [fit([(cut(l, W), "dim")], W) for l in legend]
+if KEYS and H:
+    out = out[:H]
 print("\n".join(l.rstrip() for l in out))
 PY
 }
