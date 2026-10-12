@@ -207,9 +207,10 @@ empty pane where a start failed), what waits on you, and the next step. `swarm.s
 same on one screen, for a person to scan: a summary line, then what needs the user first (PRs to
 merge with their checks, `lead` stories, agents waiting on a prompt, empty panes, stalled builders,
 draft HLDs), each active epic with a bar of its finished stories (finished story files are deleted,
-so they are counted from the base branch's history) and its live agents and open PRs beneath it,
+so they are counted from history: a deletion counts once per slug, and only when it closed the story,
+never a re-scope) and its live agents and open PRs beneath it,
 and the recent events with how long ago; idle agents and blocked or later items are counts. One
-status vocabulary runs through it (● working, ◐ review, ✓ done, ✗ failing, ⏸ blocked, ! needs you).
+status vocabulary runs through it (● working, ○ ready, ◐ review, ✓ done, ✗ failing, ⏸ blocked, ! needs you, ? unknown).
 `--tree` shows the agents by workspace and tab and `--ladder` the model per role; `dash --watch
 [seconds]` redraws it in place until `q`, with `t` and `l` toggling the two. Both only read: they never change the board, the state or the logs, and never open
 or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.

@@ -51,7 +51,7 @@ item stories/s-old.md 'status: review' 'epic: e1'
 # Its PR is never asked about either: dash skips done items.
 item stories/aaaaaaaaaa-bbbbbbbbbb-cccccccccc-1.md 'status: done' 'prs: https://github.com/o/r/pull/9'
 item stories/aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2.md 'status: ready' 'kind: code'
-printf 'w1:p1 conductor\nw1:p2 s-one\nw1:p3 s-gone\nw1:p4 old\nw1:p5 odd\n' > "${P}/.swarm/state/e1"
+printf 'w1:p1 conductor\nw1:p2 s-one\nw1:p3 s-gone\nw1:p4 old\nw1:p5 odd\nw1:p11 s-two\n' > "${P}/.swarm/state/e1"
 # e2's conductor wrote its report and went idle: [reported], not [idle].
 printf 'w1:p8 conduct-e2\n' > "${P}/.swarm/state/e2"
 # s-three's builder is working; with no sign of life on record it is never stalled (the stall block below).
@@ -76,8 +76,8 @@ printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\tr
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"}]}}' ;;
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"; echo "herdr: a notice on stderr" >&2
     if [ -f "${WAIT_OK:-/nonexistent}" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; exit 0; fi
     echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
@@ -154,10 +154,11 @@ check "another project's agent is not shown" lacks "foreign" "${out}"
 recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
 check "recent lists the newest first, with its icon and a relative time" grep -qE '^│ +[0-9]+d ago  ⇡ merged #9 story/s-zero ' <<< "$(sed -n 2p <<< "${recent}")"
 check "recent shows an older action in days" grep -qE '^│ +[0-9]+d ago  · review s-one ' <<< "${recent}"
+check "an agent in a state dash does not know shows ? and the word" grep -qE '^│   \? s-two +\? +\? +starting +│$' <<< "${epicp}"
 check "recent lists a finding" grep -qE '✎ a test that could not fail \(#7\)' <<< "${recent}"
 check "recent folds a PR's findings for a day into one row" has "5 findings: finding 1; finding 2" "${recent}"
-check "recent's time and icon columns line up" test "$(sed '1d;$d' <<< "${recent}" | grep -cvE '^│ [ 0-9a-z]{7}  . ')" -eq 0
-check "the legend is the last line" test "$(tail -1 <<< "${out}")" == "● working   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you"
+check "recent's time and icon columns line up" test "$(sed '1d;$d' <<< "${recent}" | grep -cvE '^│ [ 0-9a-z]{9}  . ')" -eq 0
+check "the legend is the last lines" test "$(tail -2 <<< "${out}" | paste -sd' ' -)" == "● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you ? unknown"
 check "boxes have rounded corners" grep -qE '^╰─+╯$' <<< "${out}"
 check "a run off a terminal has no ANSI escapes" lacks $'\033' "${out}"
 widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().splitlines()))'; }
@@ -176,6 +177,12 @@ fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bi
 check "COLUMNS sets the width when stty and tput cannot" test "$(widest <<< "${out}")" -eq 160
 check "from 140 columns the ladder and recent sit side by side" grep -qE '─ ladder ─+╮ ╭─ recent' <<< "${out}"
 check "outside a herdr pane, a herdr that answers still shows the agents" grep -qE '● conduct-e1 +conduct +opus·high +working' <<< "${out}"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=50 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "at 50 columns no line is wider than the terminal" test "$(widest <<< "${out}")" -le 50
+check "at 50 columns the header drops version and merge mode, keeping next" grep -qE '^proj  next wait conduct-e1 +[0-9:]{8}$' <<< "$(head -1 <<< "${out}")"
+joined="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}" | sed -e 's/^│ //' -e 's/ *│$//' | paste -sd' ' - | tr -s ' ')"
+check "at 50 columns a needs-you action wraps, not cut" has "! run lead story ask: create the read-only IAM user !" "${joined}"
+check "at 50 columns a wrapped needs-you line is indented under its action" grep -qE '^│   [a-z]' <<< "$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 for cols in 79 60 45; do
   fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS="${cols}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"
   check "at ${cols} columns no line is wider than the terminal" test "$(widest <<< "${out}")" -le "${cols}"
@@ -316,8 +323,8 @@ fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
 check "the summary counts the stall" has " · 1 stalled · " "$(sed -n 2p <<< "${out}")"
-check "recent shows a start minutes ago, newest first" grep -qE '^│  4m ago  ▶ conduct e1 ' <<< "$(sed -n '/^╭─ recent/{n;p;}' <<< "${out}")"
-check "recent shows hours ago" grep -qE '^│  2h ago  ▶ story s-three ' <<< "${out}"
+check "recent shows a start minutes ago, newest first" grep -qE '^│    4m ago  ▶ conduct e1 ' <<< "$(sed -n '/^╭─ recent/{n;p;}' <<< "${out}")"
+check "recent shows hours ago" grep -qE '^│    2h ago  ▶ story s-three ' <<< "${out}"
 mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/config"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
@@ -347,11 +354,65 @@ if out="$(long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 5000)"; then rc=0;
 check "wait maps a cut agent name to the story not done" test "${rc}" -eq 3
 # A PR updated a minute ago is a sign of life: neither dash nor wait --stall calls it stalled.
 ago 1 > "${ROOT}/pr8.updated"
-echo "prs: https://github.com/o/r/pull/8" >> "${P}/docs/stories/s-three.md"
+# Into the front matter: dash reads keys there only.
+awk 'NR > 1 && /^---$/ && !d { print "prs: https://github.com/o/r/pull/8"; d = 1 } { print }' "${P}/docs/stories/s-three.md" > "${ROOT}/s3" && mv "${ROOT}/s3" "${P}/docs/stories/s-three.md"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a recent PR update is not a stall in dash" lacks "look at s-three" "${out}"
 if out="$(long_ago --stall s-three 5000)"; then rc=0; else rc=$?; fi
 check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
+
+# --- An epic's progress from history, in a project of its own (Q), with no herdr. Each story file
+# below names epic x, and is deleted in a different way; only a deletion that closed its story counts.
+Q="${ROOT}/q"
+qitem() { P="${Q}" item "$@"; }
+GQ=(git -C "${Q}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
+mkdir -p "${Q}/.swarm/state" "${Q}/src"
+git -C "${Q}" init -q -b main
+echo .swarm/ > "${Q}/.gitignore"
+qitem epics/x.md 'status: active'
+qitem epics/y.md 'status: active'
+qitem stories/y-wait.md 'status: blocked' 'epic: y' 'blocked_by: [x-b]'
+qitem stories/y-then.md 'status: later' 'epic: y'
+for s in x-own x-merged x-big x-fin x-again x-gone; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
+qitem stories/x-rev.md 'status: review' 'epic: x' 'prs: https://github.com/o/r/pull/1'
+# epic: x in the body, not the front matter: never x's, open or finished.
+qitem stories/x-body.md 'status: ready' 'kind: code'
+qitem stories/y-loose.md 'status: ready' 'kind: code'
+echo "epic: x" >> "${Q}/docs/stories/x-body.md"; echo "epic: x" >> "${Q}/docs/stories/y-loose.md"
+"${GQ[@]}" add -A && "${GQ[@]}" commit -qm board
+# Its own work: the deletion lands with code (a squash merge looks like this). Counts.
+echo 1 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-own.md docs/stories/x-body.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-own"
+# Its own PR merge, the board file deleted on story/x-merged. Counts.
+"${GQ[@]}" checkout -qb story/x-merged && "${GQ[@]}" rm -q docs/stories/x-merged.md && "${GQ[@]}" commit -qm "close x-merged"
+"${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #2 from o/story/x-merged" story/x-merged
+# Board-only: a story in review taken off (reconcile's finish) counts; one the swarm logged as
+# finished counts; a split (x-big into x-b and x-c in one board commit) does not.
+"${GQ[@]}" rm -q docs/stories/x-rev.md docs/stories/x-fin.md && "${GQ[@]}" commit -qm "board: finished"
+printf '2026-10-01T10:00:00Z\tfinish\tx-fin\tw1:p1\tok\n' > "${Q}/.swarm/events.tsv"
+"${GQ[@]}" rm -q docs/stories/x-big.md; qitem stories/x-b.md 'status: ready' 'epic: x'; qitem stories/x-c.md 'status: ready' 'epic: x'
+"${GQ[@]}" add -A && "${GQ[@]}" commit -qm "split x-big"
+# Deleted with code, then added again: open, counted once.
+echo 2 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-again.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-again"
+qitem stories/x-again.md 'status: ready' 'epic: x'; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "x-again again"
+# Deleted on origin/main, which this checkout has not pulled: open here, not also finished.
+echo 3 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-gone.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-gone"
+git -C "${Q}" update-ref refs/remotes/origin/main HEAD
+git -C "${Q}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+git -C "${Q}" reset -q --hard HEAD~1
+# Findings dated yesterday and three days ago read in calendar days.
+day() { python3 -c 'import datetime, sys; print(datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])))' "$1"; }
+printf '%s\tk1\thttps://github.com/o/r/pull/3\tone from yesterday\n%s\tk2\thttps://github.com/o/r/pull/4\tone from three days ago\n' "$(day 1)" "$(day 3)" > "${Q}/.swarm/findings.tsv"
+qdash() { fresh; (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" "$@" bash "${SWARM}" dash 2>&1 || true); }
+out="$(qdash env)"
+# Finished: x-own, x-merged, x-rev, x-fin. Open: x-b, x-c, x-again, x-gone.
+check "progress counts only deletions that closed a story, once each" grep -qE '^│ ○ x +█{6}░{6}  4/8   4 ready +│$' <<< "${out}"
+check "an epic with ready stories and nothing running is ○ ready" grep -qE '^│ ○ x ' <<< "${out}"
+check "an epic whose remaining stories are all blocked or later is ⏸" grep -qE '^│ ⏸ y +░{12}  0/2   1 blocked · 1 later +│$' <<< "${out}"
+check "the legend names ○ ready" has "○ ready" "$(tail -2 <<< "${out}")"
+check "a date-only entry from yesterday reads yesterday" grep -qE '^│ yesterday  ✎ one from yesterday' <<< "${out}"
+check "a date-only entry three days old reads 3d ago" grep -qE '^│ +3d ago  ✎ one from three days ago' <<< "${out}"
+out="$(qdash env GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_CONFIG_KEY_1=color.ui GIT_CONFIG_VALUE_1=always GIT_CONFIG_KEY_2=diff.mnemonicPrefix GIT_CONFIG_VALUE_2=true)"
+check "progress holds under diff.noprefix and color.ui=always" grep -qE '^│ ○ x +█{6}░{6}  4/8   4 ready +│$' <<< "${out}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

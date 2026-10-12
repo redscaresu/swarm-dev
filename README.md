@@ -130,60 +130,67 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   on a prompt, `close` an empty pane, `look at` a stalled builder (working for `stall_minutes`, 30
   by default, with no commit, PR update or swarm action), `agree` a draft HLD. When nothing does,
   it is one line.
-- **Epics**: one row per active epic, with a bar of its finished stories out of all of them (a
-  finished story's file is deleted, so finished ones are counted from the base branch's history:
-  deleted story files whose front matter named the epic) and how many open stories are in each
-  status. Under it, its live agents (role, model and effort, status) and its open PRs. Idle and
+- **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
+  many open stories are in each status. A finished story's file is deleted, so finished ones are
+  counted from history: story files deleted on the base branch (and on HEAD) whose front matter
+  named the epic, once per slug, and only where the deletion closed the story (its own PR merge or
+  work, the swarm's `finish`, or a last status of `done` or `review`); a story still on the board
+  here is open, and a re-scope that only edits the board counts as nothing. The row's symbol is ○
+  when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
   epics with no open story share one line. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead.
-- **Recent**: newest first, with how long ago: merges on the base branch (⇡), review findings
+- **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
+  days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
   fixed (✎, one row per PR and day), agents, conductors and builders started (▶), and the swarm's
   other actions (·); a failed one is ✗. It fills the rest of the screen.
 - **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on.
-- **Legend**: one status vocabulary throughout: ● working, ◐ review or CI running, ✓ done or green,
-  ✗ failing, ⏸ blocked, ! needs you.
+- **Legend**: one status vocabulary throughout: ● working, ○ ready, ◐ review or CI running, ✓ done
+  or green, ✗ failing, ⏸ blocked, ! needs you, and ? for an agent state dash does not know (with
+  herdr's word for it).
 
-It fits the terminal: it truncates with … rather than wraps, under 100 columns it drops the role,
-model and actor columns, and from 140 columns a shown ladder sits beside recent. Colour only on a
-terminal, unless `NO_COLOR` is set; the symbols carry the same meaning in plain text. If herdr is
-missing or gives no answer, it still shows the board and says the agents are unavailable. At 100
-columns, from a real project:
+It fits the terminal: it truncates with … rather than wraps, except that a needs-you action wraps
+onto an indented line so it is never cut. Under 100 columns it drops the role, model and actor
+columns, and when the header does not fit, its version and merge mode go before what comes next.
+From 140 columns a shown ladder sits beside recent. Colour only on a terminal, unless `NO_COLOR` is
+set; the symbols carry the same meaning in plain text. If herdr is missing or gives no answer, it
+still shows the board and says the agents are unavailable. At 100 columns, from a real project:
 
 ```text
-infrafactory  swarm-dev 0.13.0  merge human  next collect conduct-rehearsal-prepare-gate    11:01:16
-9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $383.14 today
-board: 4 uncommitted edits in the main checkout (reconcile pulls first)
+infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       11:43:15
+9 epics active · 5 agents working · 0 PRs green, waiting · 0 stalled · $402.98 today
+board: 7 uncommitted edits in the main checkout (reconcile pulls first)
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! run lead story prod-read-seam-reader-user: create the read-only reader user and its key file   │
-│ ! merge infrafactory#517 (✓ green)  rehearsal-prepare-first-init                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! prod-read-seam          ██████████░░ 12/15  1 ready · 2 blocked                                │
-│ ● fakeaws-data-sources    █████░░░░░░░  5/11  1 ready · 5 blocked                                │
+│ ● fakeaws-data-sources    ██████░░░░░░  5/10  1 ready · 4 blocked                                │
 │   ● conduct-fakeaws-data-sources    conduct    opus·high    working                              │
-│   ✓ fakeaws-filters-instances-eni…  code       opus·high    idle                                 │
-│ ◐ rehearsal-prepare-gate  ████████░░░░  7/10  1 review · 2 blocked                               │
-│   ✓ conduct-rehearsal-prepare-gate  conduct    opus·high    reported                             │
-│   ✓ infrafactory#517                green  rehearsal-prepare-first-init                          │
+│   ● fakeaws-images-owner-name-fil…  code       opus·high    working                              │
+│ ● rehearsal-prepare-gate  ██████████░░  8/10  1 ready · 1 blocked                                │
+│   ● rehearsal-prepare-second-init   code-risky opus·xhigh   working                              │
 │   no epic                                                                                        │
 │   ● dash-pretty                     code       opus·high    working                              │
 │   ✓ fakeaws-kms-store-follows-lif…  code-risky opus·xhigh   idle                                 │
+│   ● learning-router-one-table       code-risky opus·xhigh   working                              │
 │ ✓ 6 active epics with no open story: fakeaws-loader, rehearsal-against-the-copy, rehearsal-pass… │
+│ +1 idle  (--tree lists them)                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-⏸ 10 blocked · 9 later  (swarm.sh status --all lists them)
+⏸ 8 blocked · 9 later  (swarm.sh status --all lists them)
 ╭─ recent ─────────────────────────────────────────────────────────────────────────────────────────╮
-│   today  ✎ 4 findings: /mock/reset and /mock/restore changed the identity witho…        findings │
-│   today  ✎ 2 findings: credential file checked with Lstat then re-opened by pat…        findings │
-│  1m ago  · close rehearsal-prepare-first-init                                              wY:p2 │
-│  1m ago  · review rehearsal-prepare-first-init                                             wY:p2 │
-│  1m ago  · log-finding vacuous-test https://github.com/redscaresu/fakeaws/pull/…           wY:p4 │
-│  1m ago  · log-finding colliding-synthetic-key https://github.com/redscaresu/fa…           wY:p4 │
-│  1m ago  · log-finding colliding-synthetic-key https://github.com/redscaresu/fa…           wY:p4 │
-│  4m ago  · tell fakeaws-filters-instances-enis-addresses-keys                              wY:p4 │
+│     today  ✎ 4 findings: /mock/reset and /mock/restore changed the identity wit…        findings │
+│     today  ✎ 2 findings: credential file checked with Lstat then re-opened by p…        findings │
+│       now  · review fakeaws-images-owner-name-filters                                      wZ:p3 │
+│    5m ago  · log-finding docs-misstate-code https://github.com/redscaresu/fakea…           wZ:p3 │
+│    5m ago  · log-finding wire-format-drift https://github.com/redscaresu/fakeaw…           wZ:p3 │
+│    7m ago  · tell fakeaws-images-owner-name-filters                                        wZ:p3 │
+│   14m ago  ▶ story fakeaws-images-owner-name-filters                                       wZ:p3 │
+│   15m ago  ▶ story rehearsal-prepare-second-init                                           wZ:p2 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-● working   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you
+● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you
+? unknown
 ```
 
 `.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per

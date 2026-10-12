@@ -1800,8 +1800,7 @@ dash_base_ref() {
 # under .swarm), so a one-shot dash reuses it too: today's estimated cost (the total line of
 # cost_report), each open board item's PR checks, merge state and last update, one gh pr view per
 # PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), and how
-# many stories of each epic finished: a finished story's file is deleted, so these are the story
-# files deleted on the base branch whose last front matter named the epic.
+# many stories of each epic finished (dash_finished).
 dash_slow() {
   local cache f urls
   # -2: the cache gained finished-story lines; a name of its own, so an older swarm.sh's cache is never read.
@@ -1811,11 +1810,7 @@ dash_slow() {
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
     {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
-      if [[ ${PROJECT_IS_GIT} == 1 ]]; then
-        git -C "${BOARD}" log --diff-filter=D --format= -p "$(dash_base_ref)" -- stories 2>/dev/null \
-          | awk '/^--- a\// { f = $2 } /^-epic: / { print f "\t" $2 }' | sort -u | cut -f2 | sort | uniq -c \
-          | awk '{ print "finished\t" $2 "\t" $1 }' || true
-      fi
+      [[ ${PROJECT_IS_GIT} == 1 ]] && dash_finished || true
       # shellcheck disable=SC2086 # one URL per word
       if command -v gh >/dev/null 2>&1 && [[ -n "${urls}" ]]; then python3 - ${urls} <<'PY'
 import os, signal, subprocess, sys
@@ -1836,6 +1831,82 @@ PY
   DASH_COST="$(awk -F'\t' '$1 == "cost" { print $2 }' "${cache}" 2>/dev/null || true)"
   DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
+}
+
+# dash_finished — "finished<TAB>epic<TAB>count" per epic. A finished story's file is deleted, so
+# these are the story files deleted on the first-parent history of the base branch and of HEAD
+# (one git log, names only, so no diff config such as diff.noprefix or color.diff can change it), read
+# in the parent's tree (one git cat-file --batch). A slug counts once, at its newest deletion, and
+# not at all while its file is on the board here (an unpulled checkout, or a slug added again): it is
+# open. A deletion counts only when it closed the story: the deleting commit is the story's own work
+# (its subject names story/<slug>, or it also changes files outside the board, as a squash merge
+# does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or its last status
+# was done or review (reconcile finishes only items in review). A re-scope that deletes a story in a
+# board-only commit counts as nothing. The epic is read from the front matter only.
+dash_finished() {
+  local prefix
+  prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
+  python3 - "${BOARD}" "${prefix}" "$(dash_base_ref)" "${EVENTS_LOG}" <<'PY' 2>/dev/null || true
+import collections, os, re, subprocess, sys
+board, prefix, ref, events = sys.argv[1:5]
+def git(args, data=None):
+    return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
+                          capture_output=True, check=True).stdout
+def front(text):
+    # The front matter's keys, the first line of each winning (fm's rule, an empty value too).
+    keys, lines = {}, text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return keys
+    for l in lines[1:]:
+        if l.strip() == "---":
+            break
+        k, sep, v = l.partition(":")
+        if sep and k not in keys:
+            keys[k] = v.strip()
+    return keys
+finished_here = set()
+try:
+    for l in open(events, encoding="utf-8", errors="replace"):
+        f = l.rstrip("\n").split("\t")
+        if len(f) == 5 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and "finished" in f[4])):
+            finished_here.add(f[2])
+except OSError:
+    pass
+stories = prefix + "stories/"
+tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
+log = git(["log", "--first-parent", "--no-color", "--no-renames", "--name-status", "--format=@@%H%x09%s"] + tips + ["--"]).decode("utf-8", "replace")
+seen, todo = set(), []
+for chunk in log.split("@@")[1:]:
+    head, *changes = chunk.splitlines()
+    commit, _, subject = head.partition("\t")
+    paths = [c.split("\t") for c in changes if "\t" in c]
+    outside = any(not p.startswith(prefix) for c in paths for p in c[1:])
+    for c in paths:
+        if c[0] != "D" or not c[1].startswith(stories) or not c[1].endswith(".md") or "/" in c[1][len(stories):]:
+            continue
+        slug = c[1][len(stories):-3]
+        if slug == "README" or slug in seen:
+            continue
+        seen.add(slug)
+        if not os.path.exists(os.path.join(board, "stories", slug + ".md")):
+            own = outside or re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or slug in finished_here
+            todo.append((f"{commit}^1:{c[1]}", bool(own)))
+out = git(["cat-file", "--batch"], "".join(t[0] + "\n" for t in todo).encode()) if todo else b""
+count, pos = collections.Counter(), 0
+for _, own in todo:
+    nl = out.index(b"\n", pos)
+    head = out[pos:nl].split()
+    pos = nl + 1
+    if len(head) != 3:
+        continue   # missing
+    size = int(head[2])
+    fm = front(out[pos:pos + size].decode("utf-8", "replace"))
+    pos += size + 1
+    if fm.get("epic") and (own or fm.get("status") in ("done", "review")):
+        count[fm["epic"]] += 1
+for epic, n in sorted(count.items()):
+    print(f"finished\t{epic}\t{n}")
+PY
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
@@ -1888,11 +1959,16 @@ dash_watch() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind and title (its first "# " heading),
-# tab-separated, by fm's rule (a key's first line wins), in one fork.
+# tab-separated, in one fork. The keys are read from the front matter only (up to its closing ---),
+# by fm's rule: a key's first line wins, an empty value too.
 dash_fields() {
-  awk '!s && sub(/^status: */, "") { s = $0; next } !p && sub(/^prs: */, "") { p = $0; next }
-    !e && sub(/^epic: */, "") { e = $0; next } !k && sub(/^kind: */, "") { k = $0; next }
-    !t && sub(/^# /, "") { t = $0 } END { printf "%s\t%s\t%s\t%s\t%s", s, p, e, k, t }' "$1"
+  awk '/^---$/ { n++; next }
+    n == 1 && !hs && sub(/^status: */, "") { hs = 1; s = $0; next }
+    n == 1 && !hp && sub(/^prs: */, "") { hp = 1; p = $0; next }
+    n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
+    n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
+    n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
+    END { printf "%s\t%s\t%s\t%s\t%s", s, p, e, k, t }' "$1"
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -1956,9 +2032,9 @@ COLOR = E.get("DASH_COLOR") == "1"
 KEYS = E.get("DASH_KEYS") == "1"
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
-SYM = {"working": ("●", "ok"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
-       "blocked": ("⏸", "grey"), "look": ("!", "bad")}
-LEGEND = ["● working", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you"]
+SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
+       "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you", "? unknown"]
 out = []
 
 def paint(t, s):
@@ -1979,6 +2055,18 @@ def fit(segs, n):
         t = cut(t, left)
         res.append(paint(t, s)); left -= len(t)
     return "".join(res) + " " * left
+
+def wrap(segs, n, indent=2):
+    # Word-wrap styled segments into lines of at most n, the later lines indented; only a single
+    # word longer than a line is cut (by fit).
+    lines, cur, used = [], [], 0
+    for t, s in segs:
+        for w in re.findall(r"\s*\S+\s*|\s+", t):
+            if cur and used + len(w.rstrip()) > n:
+                lines.append(cur[:-1] + [(cur[-1][0].rstrip(), cur[-1][1])])
+                cur, used, w = [(" " * indent, "")], indent, w.lstrip()
+            cur.append((w, s)); used += len(w)
+    return lines + [cur] if cur else lines
 
 def box(title, rows, w, style="h"):
     res = ["╭─ " + paint(title, style) + " " + "─" * max(w - len(title) - 5, 0) + "╮"]
@@ -2087,7 +2175,7 @@ if agents is not None:
                      open=bool(slug) and story_by_slug[slug][2] != "done")
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
-        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "blocked")
+        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
         recs.append(r)
 
 # Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
@@ -2162,7 +2250,8 @@ def epic_rows(slug, members):
     states = [pr_state(m.group(0)) for m, _ in prs]
     k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or any(b[1] in need_slugs for b in mine)
          else "working" if any(r["state"] == "working" for r in members)
-         else "review" if prs or left["review"] else "done" if not left else "blocked")
+         else "review" if prs or left["review"] else "done" if not left else "ready" if left["ready"]
+         else "blocked" if set(left) <= {"blocked", "later"} else "unknown")
     bar_w = 6 if NARROW else 12
     fill = round(bar_w * done / total) if total else 0
     order = ["review", "ready", "blocked", "later"]
@@ -2226,11 +2315,13 @@ TODAY = datetime.date.today()
 
 def when(s):
     # (sort time, relative time). A date alone (findings.tsv) sorts as the end of that local day,
-    # after the day's timed events, and reads in days.
+    # after the day's timed events, and reads in calendar days: today, yesterday, Nd ago.
     try:
-        if len(s) == 10 and datetime.date.fromisoformat(s) >= TODAY:
-            return datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(), "today"
-        t = datetime.datetime.fromisoformat(s + "T23:59:59" if len(s) == 10 else s.replace("Z", "+00:00"))
+        if len(s) == 10:
+            days = (TODAY - datetime.date.fromisoformat(s)).days
+            return (datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(),
+                    "today" if days <= 0 else "yesterday" if days == 1 else f"{days}d ago")
+        t = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
         if t.tzinfo is None:
             t = t.astimezone()
         secs = max(int(NOW - t.timestamp()), 0)
@@ -2268,8 +2359,8 @@ def recent_box(w, n):
             findings += 1
             if findings > max(1, n // 3):
                 continue
-        room = max(w - 4 - 9 - 2 - (actor_w + 2 if actor_w else 0), 0)
-        row = [(f"{ago:>7}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
+        room = max(w - 4 - 11 - 2 - (actor_w + 2 if actor_w else 0), 0)
+        row = [(f"{ago:>9}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
         if actor_w:
             row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
         rec.append(row)
@@ -2285,6 +2376,8 @@ def ladder_box(w, cell=30):
 right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
 head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
         ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
+if sum(len(t) for t, _ in head) > W - len(right) - 1:
+    head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] == "working" for r in recs)
@@ -2297,7 +2390,7 @@ drift = int(E.get("DASH_DRIFT") or 0)
 if drift:
     out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
 
-out += box("needs you", need, W, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], W)]
+out += box("needs you", [l for r in need for l in wrap(r, W - 4)], W, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], W)]
 if E.get("DASH_TREE") == "1":
     out += box("agents by workspace and tab", tree_view(), W)
 elif epic_view:
