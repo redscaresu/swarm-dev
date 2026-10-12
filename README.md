@@ -132,10 +132,11 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   it is one line.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
   many open stories are in each status. A finished story's file is deleted, so finished ones are
-  counted from history: story files deleted on the base branch (and on HEAD) whose front matter
-  named the epic, once per slug, and only where the deletion closed the story (its own PR merge or
-  work, the swarm's `finish`, or a last status of `done` or `review`); a story still on the board
-  here is open, and a re-scope that only edits the board counts as nothing. The row's symbol is ○
+  counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
+  front matter named the epic, once per slug, when any deletion closed the story: its own PR's
+  merge (the commit names `story/<slug>`), the swarm's logged `finish`, or a last status of `done`
+  or `review` or a `prs:` line. A story still on the board here is open; a re-scope counts as
+  nothing, whatever else its commit changes, and so does a squash merge the swarm did not log. The row's symbol is ○
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
   epics with no open story share one line. Blocked and later items are one count line under it;
@@ -158,36 +159,34 @@ set; the symbols carry the same meaning in plain text. If herdr is missing or gi
 still shows the board and says the agents are unavailable. At 100 columns, from a real project:
 
 ```text
-infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       11:43:15
-9 epics active · 5 agents working · 0 PRs green, waiting · 0 stalled · $402.98 today
-board: 7 uncommitted edits in the main checkout (reconcile pulls first)
+infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:09:12
+9 epics active · 3 agents working · 0 PRs green, waiting · 0 stalled · $417.17 today
+board: 1 uncommitted edit in the main checkout (reconcile pulls first)
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! run lead story prod-read-seam-reader-user: create the read-only reader user and its key file   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! prod-read-seam          ██████████░░ 12/15  1 ready · 2 blocked                                │
-│ ● fakeaws-data-sources    ██████░░░░░░  5/10  1 ready · 4 blocked                                │
-│   ● conduct-fakeaws-data-sources    conduct    opus·high    working                              │
-│   ● fakeaws-images-owner-name-fil…  code       opus·high    working                              │
+│ ● fakeaws-data-sources    ████████░░░░  7/11  1 ready · 3 blocked                                │
+│   ● fakeaws-describe-availability…  code-risky opus·xhigh   working                              │
 │ ● rehearsal-prepare-gate  ██████████░░  8/10  1 ready · 1 blocked                                │
 │   ● rehearsal-prepare-second-init   code-risky opus·xhigh   working                              │
 │   no epic                                                                                        │
 │   ● dash-pretty                     code       opus·high    working                              │
-│   ✓ fakeaws-kms-store-follows-lif…  code-risky opus·xhigh   idle                                 │
-│   ● learning-router-one-table       code-risky opus·xhigh   working                              │
+│   ✓ learning-router-one-table       code-risky opus·xhigh   idle                                 │
 │ ✓ 6 active epics with no open story: fakeaws-loader, rehearsal-against-the-copy, rehearsal-pass… │
-│ +1 idle  (--tree lists them)                                                                     │
+│ +2 idle  (--tree lists them)                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-⏸ 8 blocked · 9 later  (swarm.sh status --all lists them)
+⏸ 7 blocked · 9 later  (swarm.sh status --all lists them)
 ╭─ recent ─────────────────────────────────────────────────────────────────────────────────────────╮
 │     today  ✎ 4 findings: /mock/reset and /mock/restore changed the identity wit…        findings │
 │     today  ✎ 2 findings: credential file checked with Lstat then re-opened by p…        findings │
-│       now  · review fakeaws-images-owner-name-filters                                      wZ:p3 │
-│    5m ago  · log-finding docs-misstate-code https://github.com/redscaresu/fakea…           wZ:p3 │
-│    5m ago  · log-finding wire-format-drift https://github.com/redscaresu/fakeaw…           wZ:p3 │
-│    7m ago  · tell fakeaws-images-owner-name-filters                                        wZ:p3 │
-│   14m ago  ▶ story fakeaws-images-owner-name-filters                                       wZ:p3 │
-│   15m ago  ▶ story rehearsal-prepare-second-init                                           wZ:p2 │
+│       now  ✗ tell rehearsal-prepare-second-init: rehearsal-prepare-second-init …           wZ:p2 │
+│    1m ago  ⇡ merged #523 board/az-ready                                               redscaresu │
+│    2m ago  · tell fakeaws-describe-availability-zones                                      wZ:p6 │
+│    7m ago  · tell rehearsal-prepare-second-init                                            wZ:p2 │
+│   11m ago  · close fakeaws-kms-store-follows-lifecycle                                    w1:p5W │
+│   12m ago  · tell dash-pretty                                                             w1:p5W │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you
 ? unknown

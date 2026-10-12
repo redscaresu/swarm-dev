@@ -368,51 +368,83 @@ qitem() { P="${Q}" item "$@"; }
 GQ=(git -C "${Q}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
 mkdir -p "${Q}/.swarm/state" "${Q}/src"
 git -C "${Q}" init -q -b main
-echo .swarm/ > "${Q}/.gitignore"
+echo .swarm/ > "${Q}/.gitignore"; echo "status" > "${Q}/STATUS.md"
 qitem epics/x.md 'status: active'
 qitem epics/y.md 'status: active'
 qitem stories/y-wait.md 'status: blocked' 'epic: y' 'blocked_by: [x-b]'
 qitem stories/y-then.md 'status: later' 'epic: y'
-for s in x-own x-merged x-big x-fin x-again x-gone; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
+for s in x-merged x-big x-fin x-again x-gone x-scope x-twice; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
+qitem stories/x-own.md 'status: ready' 'epic: x' 'prs: https://github.com/o/r/pull/5'
 qitem stories/x-rev.md 'status: review' 'epic: x' 'prs: https://github.com/o/r/pull/1'
 # epic: x in the body, not the front matter: never x's, open or finished.
 qitem stories/x-body.md 'status: ready' 'kind: code'
 qitem stories/y-loose.md 'status: ready' 'kind: code'
 echo "epic: x" >> "${Q}/docs/stories/x-body.md"; echo "epic: x" >> "${Q}/docs/stories/y-loose.md"
+# A front matter only counts on the first line: this file's later --- block is body.
+printf '# late\n\n---\nepic: x\n---\n' > "${Q}/docs/stories/y-late.md"
+# CRLF line endings: still x's, and ready.
+printf -- '---\r\nstatus: ready\r\nepic: x\r\n---\r\n\r\n# crlf\r\n' > "${Q}/docs/stories/x-crlf.md"
 "${GQ[@]}" add -A && "${GQ[@]}" commit -qm board
-# Its own work: the deletion lands with code (a squash merge looks like this). Counts.
+# A story that listed its PR, deleted with its code (a squash merge looks like this). Counts.
 echo 1 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-own.md docs/stories/x-body.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-own"
-# Its own PR merge, the board file deleted on story/x-merged. Counts.
+# Its own PR merge, the board file deleted on story/x-merged. Counts. "@@" in the subject must not
+# split the commit: commits are split on NUL.
 "${GQ[@]}" checkout -qb story/x-merged && "${GQ[@]}" rm -q docs/stories/x-merged.md && "${GQ[@]}" commit -qm "close x-merged"
-"${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #2 from o/story/x-merged" story/x-merged
+"${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #2 from o/story/x-merged @@ x" story/x-merged
+# A re-scope that also edits a file at the repo root (infrafactory #409): not a finish.
+echo "re-scoped" >> "${Q}/STATUS.md"; "${GQ[@]}" rm -q docs/stories/x-scope.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "Merge pull request #3 from o/board/lead-not-operator"
 # Board-only: a story in review taken off (reconcile's finish) counts; one the swarm logged as
 # finished counts; a split (x-big into x-b and x-c in one board commit) does not.
 "${GQ[@]}" rm -q docs/stories/x-rev.md docs/stories/x-fin.md && "${GQ[@]}" commit -qm "board: finished"
 printf '2026-10-01T10:00:00Z\tfinish\tx-fin\tw1:p1\tok\n' > "${Q}/.swarm/events.tsv"
 "${GQ[@]}" rm -q docs/stories/x-big.md; qitem stories/x-b.md 'status: ready' 'epic: x'; qitem stories/x-c.md 'status: ready' 'epic: x'
 "${GQ[@]}" add -A && "${GQ[@]}" commit -qm "split x-big"
-# Deleted with code, then added again: open, counted once.
-echo 2 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-again.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-again"
+# Closed by its own PR, added again, then re-scoped away: closed once, so it counts once.
+"${GQ[@]}" checkout -qb story/x-twice && "${GQ[@]}" rm -q docs/stories/x-twice.md && "${GQ[@]}" commit -qm "close x-twice"
+"${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #4 from o/story/x-twice" story/x-twice
+qitem stories/x-twice.md 'status: ready' 'epic: x'; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "x-twice again"
+"${GQ[@]}" rm -q docs/stories/x-twice.md && "${GQ[@]}" commit -qm "drop x-twice"
+# Deleted by its own PR, then added again: open, not also finished.
+"${GQ[@]}" checkout -qb story/x-again && "${GQ[@]}" rm -q docs/stories/x-again.md && "${GQ[@]}" commit -qm "close x-again"
+"${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #6 from o/story/x-again" story/x-again
 qitem stories/x-again.md 'status: ready' 'epic: x'; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "x-again again"
-# Deleted on origin/main, which this checkout has not pulled: open here, not also finished.
-echo 3 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-gone.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-gone"
+# Closed on origin/main, which this checkout has not pulled: open here, not also finished.
+"${GQ[@]}" checkout -qb story/x-gone && "${GQ[@]}" rm -q docs/stories/x-gone.md && "${GQ[@]}" commit -qm "close x-gone"
+"${GQ[@]}" checkout -q main && "${GQ[@]}" merge -q --no-ff -m "Merge pull request #7 from o/story/x-gone" story/x-gone
 git -C "${Q}" update-ref refs/remotes/origin/main HEAD
 git -C "${Q}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 git -C "${Q}" reset -q --hard HEAD~1
-# Findings dated yesterday and three days ago read in calendar days.
+# Findings dated yesterday and three days ago, and timed events late two days ago and early
+# yesterday, all read in calendar days.
 day() { python3 -c 'import datetime, sys; print(datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])))' "$1"; }
+at() { python3 -c 'import datetime, sys; d = datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])); print(datetime.datetime.combine(d, datetime.time.fromisoformat(sys.argv[2])).astimezone().isoformat())' "$1" "$2"; }
 printf '%s\tk1\thttps://github.com/o/r/pull/3\tone from yesterday\n%s\tk2\thttps://github.com/o/r/pull/4\tone from three days ago\n' "$(day 1)" "$(day 3)" > "${Q}/.swarm/findings.tsv"
+printf '%s\ttell\tlate-two-days-ago\tw1:p1\tok\n%s\ttell\tearly-yesterday\tw1:p1\tok\n' "$(at 2 23:59:00)" "$(at 1 00:01:00)" >> "${Q}/.swarm/events.tsv"
 qdash() { fresh; (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" "$@" bash "${SWARM}" dash 2>&1 || true); }
 out="$(qdash env)"
-# Finished: x-own, x-merged, x-rev, x-fin. Open: x-b, x-c, x-again, x-gone.
-check "progress counts only deletions that closed a story, once each" grep -qE '^│ ○ x +█{6}░{6}  4/8   4 ready +│$' <<< "${out}"
+# Finished: x-own, x-merged, x-rev, x-fin, x-twice. Open: x-b, x-c, x-again, x-gone, x-crlf.
+XROW='^│ ○ x +█{6}░{6}  5/10  5 ready +│$'
+check "progress counts only deletions that closed a story, once each" grep -qE "${XROW}" <<< "${out}"
 check "an epic with ready stories and nothing running is ○ ready" grep -qE '^│ ○ x ' <<< "${out}"
 check "an epic whose remaining stories are all blocked or later is ⏸" grep -qE '^│ ⏸ y +░{12}  0/2   1 blocked · 1 later +│$' <<< "${out}"
 check "the legend names ○ ready" has "○ ready" "$(tail -2 <<< "${out}")"
 check "a date-only entry from yesterday reads yesterday" grep -qE '^│ yesterday  ✎ one from yesterday' <<< "${out}"
 check "a date-only entry three days old reads 3d ago" grep -qE '^│ +3d ago  ✎ one from three days ago' <<< "${out}"
+check "a timed event late two days ago reads 2d ago" grep -qE '^│ +2d ago  · tell late-two-days-ago' <<< "${out}"
+check "a timed event over a day ago, early yesterday, reads yesterday" grep -qE '^│ yesterday  · tell early-yesterday|^│ +[0-9]+h ago  · tell early-yesterday' <<< "${out}"
 out="$(qdash env GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_CONFIG_KEY_1=color.ui GIT_CONFIG_VALUE_1=always GIT_CONFIG_KEY_2=diff.mnemonicPrefix GIT_CONFIG_VALUE_2=true)"
-check "progress holds under diff.noprefix and color.ui=always" grep -qE '^│ ○ x +█{6}░{6}  4/8   4 ready +│$' <<< "${out}"
+check "progress holds under diff.noprefix and color.ui=always" grep -qE "${XROW}" <<< "${out}"
+# The board in a repo of its own (board_dir), with no origin, while the project has origin/main: the
+# base ref is resolved in the board's repo, which falls back to its HEAD (x-gone stays open). The
+# project's events.tsv has no finish of x-fin, so x-fin does not count here.
+R="${ROOT}/r"; B="${ROOT}/rboard"
+mkdir -p "${R}/.claude/swarm" "${R}/.swarm"
+git -C "${R}" init -q -b main && git -C "${R}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m init
+git -C "${R}" update-ref refs/remotes/origin/main HEAD && git -C "${R}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+echo "board_dir = ../rboard/docs" > "${R}/.claude/swarm/config"
+cp -R "${Q}/." "${B}" && rm -rf "${B}/.swarm" && git -C "${B}" update-ref -d refs/remotes/origin/main && git -C "${B}" symbolic-ref --delete refs/remotes/origin/HEAD
+out="$(fresh; cd "${R}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a board in its own repo counts from that repo's history" grep -qE '^│ ○ x +█{5}░{7}  4/9   5 ready +│$' <<< "${out}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

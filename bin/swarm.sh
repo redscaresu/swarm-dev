@@ -1787,11 +1787,12 @@ dash_size() {
   DASH_W="${c}"; DASH_H="${r}"
 }
 
-# dash_base_ref — the base branch as last fetched (origin/<base>; dash never fetches), else HEAD.
+# dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
+# (origin/<base>; dash never fetches), else HEAD.
 dash_base_ref() {
   local r
   for r in ${CFG_base_branches} HEAD; do
-    git -C "${PROJECT_DIR}" rev-parse -q --verify "origin/${r}" >/dev/null 2>&1 && { echo "origin/${r}"; return; }
+    git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify "origin/${r}" >/dev/null 2>&1 && { echo "origin/${r}"; return; }
   done
   echo HEAD
 }
@@ -1810,7 +1811,7 @@ dash_slow() {
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
     {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
-      [[ ${PROJECT_IS_GIT} == 1 ]] && dash_finished || true
+      dash_finished
       # shellcheck disable=SC2086 # one URL per word
       if command -v gh >/dev/null 2>&1 && [[ -n "${urls}" ]]; then python3 - ${urls} <<'PY'
 import os, signal, subprocess, sys
@@ -1833,36 +1834,39 @@ PY
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
 }
 
-# dash_finished — "finished<TAB>epic<TAB>count" per epic. A finished story's file is deleted, so
-# these are the story files deleted on the first-parent history of the base branch and of HEAD
-# (one git log, names only, so no diff config such as diff.noprefix or color.diff can change it), read
-# in the parent's tree (one git cat-file --batch). A slug counts once, at its newest deletion, and
-# not at all while its file is on the board here (an unpulled checkout, or a slug added again): it is
-# open. A deletion counts only when it closed the story: the deleting commit is the story's own work
-# (its subject names story/<slug>, or it also changes files outside the board, as a squash merge
-# does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or its last status
-# was done or review (reconcile finishes only items in review). A re-scope that deletes a story in a
-# board-only commit counts as nothing. The epic is read from the front matter only.
+# dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
+# board is not in git). A finished story's file is deleted, so these are the story files deleted on
+# the first-parent history of that repo's base branch and HEAD: one git log, names only, commits split
+# on NUL (no diff text, so diff.noprefix or color settings cannot change it), each deleted file read
+# from the parent's tree by one git cat-file --batch, its keys from the front matter only. A slug is
+# counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
+# added again): it is open. It counts when any of its deletions closed the story: the deleting commit
+# names story/<slug> (its own PR's merge), the swarm finished it (finish, or reconcile "finished",
+# in events.tsv), or the deleted file's last status was done or review (reconcile finishes only items
+# in review) or it listed prs. A re-scope deletes a story with none of these, so it counts as nothing,
+# whatever else its commit changes; so does a squash merge the swarm did not log.
 dash_finished() {
   local prefix
   prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
-  python3 - "${BOARD}" "${prefix}" "$(dash_base_ref)" "${EVENTS_LOG}" <<'PY' 2>/dev/null || true
+  python3 - "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" <<'PY' 2>/dev/null || true
 import collections, os, re, subprocess, sys
 board, prefix, ref, events = sys.argv[1:5]
 def git(args, data=None):
     return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
                           capture_output=True, check=True).stdout
+KEY = re.compile(r"([A-Za-z_]+): *(.*)$")
 def front(text):
-    # The front matter's keys, the first line of each winning (fm's rule, an empty value too).
-    keys, lines = {}, text.splitlines()
-    if not lines or lines[0].strip() != "---":
+    # The front matter's keys, as dash_fields reads them: only after a leading ---, up to the next;
+    # a key's first line wins, an empty value too; CRLF tolerated.
+    keys, lines = {}, [l.rstrip("\r") for l in text.split("\n")]
+    if lines[0] != "---":
         return keys
     for l in lines[1:]:
-        if l.strip() == "---":
+        if l == "---":
             break
-        k, sep, v = l.partition(":")
-        if sep and k not in keys:
-            keys[k] = v.strip()
+        m = KEY.match(l)
+        if m and m.group(1) not in keys:
+            keys[m.group(1)] = m.group(2)
     return keys
 finished_here = set()
 try:
@@ -1874,35 +1878,31 @@ except OSError:
     pass
 stories = prefix + "stories/"
 tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
-log = git(["log", "--first-parent", "--no-color", "--no-renames", "--name-status", "--format=@@%H%x09%s"] + tips + ["--"]).decode("utf-8", "replace")
-seen, todo = set(), []
-for chunk in log.split("@@")[1:]:
-    head, *changes = chunk.splitlines()
+log = git(["log", "--first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
+todo = []   # (slug, cat-file spec, closed by its commit), newest first
+for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
+    head, _, changes = chunk.partition("\n")
     commit, _, subject = head.partition("\t")
-    paths = [c.split("\t") for c in changes if "\t" in c]
-    outside = any(not p.startswith(prefix) for c in paths for p in c[1:])
-    for c in paths:
-        if c[0] != "D" or not c[1].startswith(stories) or not c[1].endswith(".md") or "/" in c[1][len(stories):]:
+    for c in changes.splitlines():
+        st, _, path = c.partition("\t")
+        if st != "D" or not path.startswith(stories) or not path.endswith(".md") or "/" in path[len(stories):]:
             continue
-        slug = c[1][len(stories):-3]
-        if slug == "README" or slug in seen:
-            continue
-        seen.add(slug)
-        if not os.path.exists(os.path.join(board, "stories", slug + ".md")):
-            own = outside or re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or slug in finished_here
-            todo.append((f"{commit}^1:{c[1]}", bool(own)))
-out = git(["cat-file", "--batch"], "".join(t[0] + "\n" for t in todo).encode()) if todo else b""
-count, pos = collections.Counter(), 0
-for _, own in todo:
+        slug = path[len(stories):-3]
+        if slug != "README" and not os.path.exists(os.path.join(board, "stories", slug + ".md")):
+            own = re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or slug in finished_here
+            todo.append((slug, f"{commit}^1:{path}", bool(own)))
+out = git(["cat-file", "--batch"], "".join(t[1] + "\n" for t in todo).encode()) if todo else b""
+count, done, pos = collections.Counter(), set(), 0
+for slug, _, own in todo:
     nl = out.index(b"\n", pos)
-    head = out[pos:nl].split()
-    pos = nl + 1
-    if len(head) != 3:
-        continue   # missing
-    size = int(head[2])
+    head, pos = out[pos:nl], nl + 1
+    if head.endswith(b" missing"):
+        continue
+    size = int(head.rsplit(b" ", 1)[1])
     fm = front(out[pos:pos + size].decode("utf-8", "replace"))
     pos += size + 1
-    if fm.get("epic") and (own or fm.get("status") in ("done", "review")):
+    if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
+        done.add(slug)
         count[fm["epic"]] += 1
 for epic, n in sorted(count.items()):
     print(f"finished\t{epic}\t{n}")
@@ -1959,10 +1959,13 @@ dash_watch() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind and title (its first "# " heading),
-# tab-separated, in one fork. The keys are read from the front matter only (up to its closing ---),
-# by fm's rule: a key's first line wins, an empty value too.
+# tab-separated, in one fork. The keys are read from the front matter only (a leading ---, up to the
+# next; CRLF tolerated), by fm's rule: a key's first line wins, an empty value too. dash_finished's
+# front() reads them the same way.
 dash_fields() {
-  awk '/^---$/ { n++; next }
+  awk '{ sub(/\r$/, "") }
+    NR == 1 && $0 == "---" { n = 1; next }
+    n == 1 && $0 == "---" { n = 2; next }
     n == 1 && !hs && sub(/^status: */, "") { hs = 1; s = $0; next }
     n == 1 && !hp && sub(/^prs: */, "") { hp = 1; p = $0; next }
     n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
@@ -2325,7 +2328,10 @@ def when(s):
         if t.tzinfo is None:
             t = t.astimezone()
         secs = max(int(NOW - t.timestamp()), 0)
-        return t, ("now" if secs < 60 else f"{secs // 60}m ago" if secs < 3600 else f"{secs // 3600}h ago" if secs < 86400 else f"{secs // 86400}d ago")
+        if secs < 86400:
+            return t, "now" if secs < 60 else f"{secs // 60}m ago" if secs < 3600 else f"{secs // 3600}h ago"
+        days = (TODAY - t.astimezone().date()).days   # a day or more: calendar days, as for a date
+        return t, "yesterday" if days <= 1 else f"{days}d ago"
     except ValueError:
         return None, s
 
