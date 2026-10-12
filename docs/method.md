@@ -124,6 +124,7 @@ prints every setting and where it came from.
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
+| `stall_minutes` | `30` | a story's builder that herdr shows working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `dash` marks it and lists it under waiting on you, and `wait --stall` returns on it |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
@@ -192,7 +193,10 @@ swarm.sh wait <slug>       # in the background: returns when it settles
 swarm.sh watch             # in the background: returns when a story PR needs the lead
 ```
 
-`wait` returns when an agent goes idle, which can be early. `watch` is what the lead waits on: it
+`wait` returns when an agent goes idle, which can be early. `wait --stall <slug>` also returns, with
+exit code 3 and `stalled: working <N> min with no commit or PR update`, when the builder has shown
+no sign of life (a worktree commit, a PR update, a swarm action on its story) for `stall_minutes`
+since that wait began. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, or when an agent is blocked on a prompt. herdr lists every project's agents, so
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
@@ -201,9 +205,10 @@ opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 **Watching it.** `swarm.sh status` lists the agents that need a look (blocked on a prompt, or an
 empty pane where a start failed), what waits on you, and the next step. `swarm.sh dash` shows the
 same on one screen, with the board's counts, this project's agents by workspace and tab (role,
-model and effort, herdr status, the story's PR), the model ladder and the recent events;
-`dash --watch [seconds]` redraws it. Both only read: they never change the board, the state or the
-logs, and never open or close a pane.
+model and effort, herdr status or `reported`, the story's PR), the PRs awaiting the user with their
+checks, stalled builders, the model ladder, today's cost and the recent events; `dash --watch [seconds]` redraws it in
+place until `q`. Both only read: they never change the board, the state or the logs, and never open
+or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 **The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,
 the command, its target, the herdr pane that ran it, and how it ended: `ok`, `interrupted`, the first
@@ -258,7 +263,12 @@ runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` 
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
 too, with every PR still waiting. You merge on GitHub; the next `/swarm` runs `swarm.sh reconcile`,
 which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
-closed unmerged. With `merge = agent` the conductor merges instead:
+closed unmerged. Before it pulls the board's repo, it puts back any board file the main checkout
+left unstaged with content already the base's, so a hand edit that matches what merged does not
+stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and restores them all if
+the pull still fails. It touches nothing, and stops naming why, when the pull cannot fast-forward or
+a file outside the board is changed; a staged or differing edit is left alone and still stops it. `swarm.sh unblock` then readies a
+blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead:
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.

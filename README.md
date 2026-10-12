@@ -114,53 +114,71 @@ That's all you need. Optional extras:
 ## Watching the swarm
 
 `swarm.sh dash` prints one screen of what the swarm is doing; `swarm.sh dash --watch [seconds]`
-redraws it every few seconds (5 by default) until Ctrl-C. It only reads: it never changes the
-board, the state or the logs, and never opens or closes a pane. Its panels:
+keeps it open and redraws it in place every 2 seconds (or the seconds you give), repainting only
+when something changed. Press `q` to quit (Ctrl-C works too) and `r` to redraw; resizing the
+terminal redraws it at the new size. It works in any terminal, inside herdr or not: it only reads,
+so it asks herdr for the agents whenever `herdr` is on your PATH. It never changes the board, the
+state or the logs, and never opens or closes a pane. What it shows:
 
-- **Header**: the project, the swarm-dev version, the `merge` mode and what `/swarm` does next.
-- **Pipeline**: how many HLDs, epics and stories are in each status.
+- **Header**: one line with the project, the swarm-dev version, the `merge` mode, today's estimated
+  cost (`swarm.sh cost` for today), what `/swarm` does next, and the time of the last refresh.
+- **Pipeline**: one line of how many HLDs, epics and stories are in each status, and a warning when
+  the main checkout has board edits not committed yet.
 - **Agents**: this project's agents, by herdr workspace and tab (a conductor's tab is its epic),
   each with its role, model and effort, its status, and its story's PR. `!` marks one that needs a
-  look: waiting on a prompt, or an empty pane where a start failed.
+  look: waiting on a prompt, or an empty pane where a start failed. A conductor that wrote its
+  report, not yet collected, shows `[reported]`. A story's builder that has shown working for
+  `stall_minutes` (30 by default) with no commit, PR update or swarm action shows `[stalled?]`.
+- **Waiting on you**: only what needs you: PRs awaiting your merge (with their checks, ✔ green,
+  ✘ red or ● running, and `behind` or `dirty` against the base), `lead` stories, draft HLDs and
+  stalled builders.
+  Blocked and later items are one count line; `swarm.sh status --all` lists them.
 - **Ladder**: the model and effort each role runs on.
-- **Waiting on you**: the same list as `swarm.sh status`.
-- **Recent**: the last eight events, newest first: merges on the base branch, review findings
-  fixed, agents started, and lines from the audit log.
-- **Status line**: one line per group of roles, with each role's model and effort.
+- **Recent**: newest first, the swarm's own actions (the audit log), merges on the base branch, and
+  review findings fixed (one row per PR and day). It fills the rest of the screen.
 
-Outside herdr it still shows the board and says the agents are unavailable. It fits the terminal's
-width and uses colour only on a terminal, unless `NO_COLOR` is set. Trimmed, from a real project:
+It fits the terminal: it truncates rather than wraps, and from 140 columns it puts the ladder and
+recent side by side. Colour only on a terminal, unless `NO_COLOR` is set. If herdr is missing or
+gives no answer, it still shows the board and says the agents are unavailable. Trimmed to 100
+columns, from a real project:
 
 ```text
-┌─ swarm-dev 0.11.0 ───────────────────────────────────────────────────────────┐
-│ project /Users/you/src/infrafactory                                          │
-│ merge   human                                                                │
-│ next    wait conduct-fakeaws-rehearsal-instan                                │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌─ pipeline ───────────────────────────────────────────────────────────────────┐
-│ HLDs     draft 0  agreed 2  superseded 1                                     │
-│ epics    active 12  later 2  review 0                                        │
-│ stories  ready 2  blocked 9  review 0  later 7                               │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌─ agents ─────────────────────────────────────────────────────────────────────┐
-│ 2026-09-30-import-production-state-into-the-mocks                            │
-│  ├─ fakeaws-loaded-identity                                                  │
-│  │  ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high   [idle]       │
-│  │  └─   fakeaws-identity-iam-sts        code-risky opus·xhigh  [working]    │
-│  └─ fakeaws-rehearsal-instance                                               │
-│     ├─   conduct-fakeaws-rehearsal-ins…  conduct    opus·high   [idle]       │
-│     └─   fakeaws-request-log             code-risky opus·xhigh  [working]    │
-│ infrafactory                                                                 │
-│  ├─ hld                                                                      │
-│  │  └─ ! -                               ?          ?           [EMPTY]      │
-│  ├─ scope-aws-web-live-on-real-aws                                           │
-│  │  └─   critic-done                     critic     opus·high   [retired]    │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌─ waiting on you ─────────────────────────────────────────────────────────────┐
-│ later epic: aws-web-stack-load-balancer                                      │
-│ later epic: larger-estate                                                    │
-└──────────────────────────────────────────────────────────────────────────────┘
-design     hld: [fable high]  hld-review: [fable xhigh]  hld-lead: [fable xhigh]
+infrafactory  swarm-dev 0.12.0  merge human  today $108.48  next wait conduct-fakeaws-load… 00:22:53
+HLDs agreed 2 superseded 1  ·  epics active 12 later 2  ·  stories ready 4 blocked 18 later 7
+┌─ agents ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ 2026-09-30-import-production-state-into-the-mocks                                                │
+│  ├─ fakeaws-loaded-identity                                                                      │
+│  │  ├─   conduct-fakeaws-loaded-identi…  conduct    opus·high     [done]                         │
+│  │  └─   fakeaws-identity-other-servic…  code       opus·high     [working]                      │
+│  └─ prod-read-seam                                                                               │
+│     ├─   conduct-prod-read-seam          conduct    opus·high     [done]                         │
+│     ├─   prod-read-seam-wall             code-risky opus·xhigh    [working]                      │
+│     └─   prod-read-seam-credentials      code-risky opus·xhigh    [done]                         │
+│ infrafactory                                                                                     │
+│  └─ scope-fakeaws-rehearsal-instance                                                             │
+│     └─   lead-fri                        lead       opus·xhigh    [idle]                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ waiting on you ─────────────────────────────────────────────────────────────────────────────────┐
+│ nothing                                                                                          │
+│ blocked 18 · later 9 (swarm.sh status --all lists them)                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ ladder ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ hld        → fable · high     hld-review → fable · xhigh    hld-lead   → fable · xhigh           │
+│ survey     → sonnet · high    lead       → opus · xhigh     skeptic    → opus · high             │
+│ critic     → opus · high      codex      → codex · high     code       → opus · high             │
+│ code-risky → opus · xhigh     docs       → sonnet · medium  chore      → haiku · medium          │
+│ verify     → haiku · medium   escalate   → fable · xhigh    conduct    → opus · high             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ recent ─────────────────────────────────────────────────────────────────────────────────────────┐
+│ 10-12 00:15  wX:p2           tell fakeaws-identity-other-services                           [ok] │
+│ 10-12 00:06  wX:p5           story prod-read-seam-credentials                               [ok] │
+│ 10-12 00:06  wX:p5           story prod-read-seam-wall                                      [ok] │
+│ 10-12 00:06  w1:p5W          conduct prod-read-seam                                         [ok] │
+│ 10-12 00:06  w1:p5W          close conduct-prod-read-seam                                   [ok] │
+│ 10-12 00:05  redscaresu      merged #468 board/wave-after-adr-0041                       [merge] │
+│ 10-12 00:04  redscaresu      merged #406 board/ui-e2e-run-mode-noise                     [merge] │
+│ 10-11        review          2 findings: tofu helper ran with no deadline, so a key…  [findings] │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 `.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per

@@ -65,6 +65,10 @@ check "bad value names its line" "yes" "$(fails_with 'config:1: finished must be
 project "${p}" "board_dir = \$(touch ${p}/pwned)"
 check "a \$(...) value is refused" "yes" "$(fails_with 'config:1: board_dir: \$ and backticks' run "${p}" config)"
 check "a \$(...) value never runs" "no" "$([[ -e "${p}/pwned" ]] && echo yes || echo no)"
+project "${p}" "stall_minutes = 0"
+check "stall_minutes must be a positive whole number" "yes" "$(fails_with 'config:1: stall_minutes must be' run "${p}" config)"
+project "${p}" "stall_minutes = 45"
+check "stall_minutes is read" "45" "$(run "${p}" config stall_minutes)"
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
@@ -142,6 +146,20 @@ project "${p}" "finished = mark"
 item "${b}" stories/x.md "status: done" "kind: code"
 item "${b}" stories/y.md "status: blocked" "kind: code" "blocked_by: [x]"
 check "a done blocker unblocks" "ready: y" "$(run "${p}" unblock)"
+# depends_on counts as well as blocked_by: a story waits until both lists are finished.
+item "${b}" stories/gap.md "status: ready" "kind: code"
+item "${b}" stories/read-set.md "status: blocked" "kind: code" "blocked_by: [x]" "depends_on: [gap, x]"
+check "an open depends_on keeps a story blocked" "" "$(run "${p}" unblock)"
+run "${p}" finish gap >/dev/null
+check "it unblocks once depends_on is finished too" "ready: read-set" "$(run "${p}" unblock)"
+rm "${b}/stories/read-set.md" "${b}/stories/gap.md"
+# Blocked only by depends_on, with quoted slugs (YAML allows both kinds).
+item "${b}" stories/gap2.md "status: ready" "kind: code"
+item "${b}" stories/only-deps.md "status: blocked" "kind: code" "blocked_by: []" "depends_on: [\"gap2\", 'x']"
+check "a story blocked only by depends_on waits for it" "" "$(run "${p}" unblock)"
+run "${p}" finish gap2 >/dev/null
+check "a story blocked only by depends_on, with quoted slugs, unblocks once they finish" "ready: only-deps" "$(run "${p}" unblock)"
+rm "${b}/stories/only-deps.md"
 rm "${b}/stories/y.md"
 check "a done story is neither built nor a gate" "done" "$(first "$(run "${p}" next)")"
 item "${b}" stories/z.md "status: ready" "kind: code"

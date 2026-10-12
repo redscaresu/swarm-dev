@@ -130,6 +130,75 @@ gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
 check "the PR's own delete is pulled, and finish takes off what it left" "gone|gone|$(git -C "${ROOT}/app.git" rev-parse main)" \
   "$(gone "${ROOT}/app/docs/stories/r.md")|$(gone "${ROOT}/app/docs/stories/s.md")|$(git -C "${ROOT}/app" rev-parse HEAD)"
 
+# --- A board edit in the main checkout that is already the base's does not stop the pull; one that
+# differs still does, and is named. The base gets a new story t and an edit to u.
+item "${ROOT}/app/docs" stories/u.md "status: ready" "kind: code"
+item "${ROOT}/app/docs" stories/v.md "status: ready" "kind: code"
+"${GIT[@]}" -C "${ROOT}/app" add docs && "${GIT[@]}" -C "${ROOT}/app" commit -q -m "u v" && "${GIT[@]}" -C "${ROOT}/app" push -q origin main
+"${GIT[@]}" -C "${ROOT}/pr" pull -q --ff-only
+item "${ROOT}/pr/docs" stories/t.md "status: ready" "kind: code"
+item "${ROOT}/pr/docs" stories/u.md "status: blocked" "kind: code" "blocked_by: [t]"
+"${GIT[@]}" -C "${ROOT}/pr" add docs && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "plan t" && "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
+cp "${ROOT}/pr/docs/stories/t.md" "${ROOT}/pr/docs/stories/u.md" "${ROOT}/app/docs/stories/"   # the same edits, by hand
+inrepo review v "${U}/1" >/dev/null
+out="$(inrepo reconcile || true)"
+check "board edits identical to the base are put back, and the pull goes through" "$(git -C "${ROOT}/app.git" rev-parse main)|gone|" \
+  "$(git -C "${ROOT}/app" rev-parse HEAD)|$(gone "${ROOT}/app/docs/stories/v.md")|$(git -C "${ROOT}/app" status --porcelain -- docs/stories/t.md docs/stories/u.md)"
+check "reconcile says which edits it put back" "yes" "$(has "docs/stories/u.md was already the base's" "${out}")"
+"${GIT[@]}" -C "${ROOT}/pr" pull -q --ff-only && echo "status: ready" >> "${ROOT}/pr/docs/stories/t.md"
+"${GIT[@]}" -C "${ROOT}/pr" add docs && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "edit t" && "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
+echo "a local note" >> "${ROOT}/app/docs/stories/t.md"
+item "${ROOT}/app/docs" stories/x2.md "status: ready" "kind: code"
+inrepo review x2 "${U}/1" >/dev/null
+out="$(inrepo reconcile || true)"
+check "a differing board edit still stops the pull, and is named" "yes" "$(has "docs/stories/t.md" "$(grep 'cannot pull' <<< "${out}")")"
+
+# --- reconcile never loses an edit. setup_app <name>: a bare origin whose board has stories k and m
+# and a tracked README; its main checkout <name> (k in review, its PR merged) and a clone <name>-up,
+# which pushes "the base's" change to m.
+setup_app() {
+  local d="${ROOT}/$1"
+  "${GIT[@]}" init -q --bare "${d}.git"
+  "${GIT[@]}" clone -q "${d}.git" "${d}" 2>/dev/null
+  item "${d}/docs" stories/k.md "status: ready" "kind: code"
+  item "${d}/docs" stories/m.md "status: ready" "kind: code"
+  echo readme > "${d}/README"
+  "${GIT[@]}" -C "${d}" add docs README && "${GIT[@]}" -C "${d}" commit -q -m board && "${GIT[@]}" -C "${d}" push -q origin main
+  "${GIT[@]}" clone -q "${d}.git" "${d}-up"
+  echo "the base's line" >> "${d}-up/docs/stories/m.md"
+  "${GIT[@]}" -C "${d}-up" commit -q -am "edit m" && "${GIT[@]}" -C "${d}-up" push -q origin main
+  (cd "${d}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review k "${U}/1" >/dev/null 2>&1)
+  cp "${d}-up/docs/stories/m.md" "${d}/docs/stories/m.md"   # the same edit to m, by hand, unstaged
+}
+at() { local d="${ROOT}/$1"; shift; (cd "${d}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+same_as_base() { if cmp -s "${ROOT}/$1-up/docs/stories/m.md" "${ROOT}/$1/docs/stories/m.md"; then echo same; else echo differs; fi; }
+# A local commit: the pull cannot fast-forward, so nothing is touched and the edit stays.
+setup_app nf; "${GIT[@]}" -C "${ROOT}/nf" commit -q --allow-empty -m "local"
+out="$(at nf reconcile || true)"
+check "no fast-forward: reconcile stops and says why" "yes" "$(has "cannot fast-forward" "${out}")"
+check "no fast-forward: the board edit survives, unstaged" " M docs/stories/m.md|same" \
+  "$(git -C "${ROOT}/nf" status --porcelain -- docs/stories/m.md)|$(same_as_base nf)"
+# A changed tracked file outside the board: stop, name it, touch nothing.
+setup_app nb; echo changed >> "${ROOT}/nb/README"
+out="$(at nb reconcile || true)"
+check "a changed file outside the board stops reconcile, named" "yes" "$(has "files outside the board are changed: README" "${out}")"
+check "and the board edit survives" " M docs/stories/m.md" "$(git -C "${ROOT}/nb" status --porcelain -- docs/stories/m.md)"
+# A staged edit, even one equal to the base's, is left alone and never claimed.
+setup_app st; "${GIT[@]}" -C "${ROOT}/st" add docs/stories/m.md
+out="$(at st reconcile || true)"
+check "a staged edit is not claimed as put back" "no" "$(if grep -q "m.md was already" <<< "${out}"; then echo yes; else echo no; fi)"
+check "a staged edit keeps its content" "same" "$(same_as_base st)"
+# The pull fails after the put-back (an untracked file the base adds): every edit comes back.
+setup_app pf
+echo "theirs" > "${ROOT}/pf-up/notes.txt"
+"${GIT[@]}" -C "${ROOT}/pf-up" add notes.txt && "${GIT[@]}" -C "${ROOT}/pf-up" commit -q -m notes && "${GIT[@]}" -C "${ROOT}/pf-up" push -q origin main
+echo "mine" > "${ROOT}/pf/notes.txt"
+out="$(at pf reconcile || true)"
+check "a failed pull is reported" "yes" "$(has "the pull failed, and every board edit is as it was" "${out}")"
+check "a failed pull restores the put-back edit from its backup" " M docs/stories/m.md|same" \
+  "$(git -C "${ROOT}/pf" status --porcelain -- docs/stories/m.md)|$(same_as_base pf)"
+check "the merged item stays in review" "review" "$(sed -n 's/^status: //p' "${ROOT}/pf/docs/stories/k.md")"
+
 # --- The merge guard: every Claude agent starts unable to run gh pr merge, unless merge = agent.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
