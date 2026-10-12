@@ -42,6 +42,8 @@ Full detail: [`docs/method.md`](docs/method.md). Diagram source:
 - **Optional:** [Obsidian](https://obsidian.md), to view `docs/` as a vault through `Board.base` and
   `HLDs.base`. The board is plain Markdown with front matter, so nothing needs Obsidian.
 
+![The board in Obsidian, grouped by status](docs/assets/board.png)
+
 ## Getting started
 
 1. Install the requirements above.
