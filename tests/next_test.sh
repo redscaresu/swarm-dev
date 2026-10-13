@@ -110,77 +110,87 @@ expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 
 # The stub lists this project's conductor (and its retired name) in panes the state records, as
-# next_pane does: wait addresses an agent by this project's pane, never by a bare name.
+# next_pane does: wait addresses an agent by this project's pane, never by a bare name. herdr says
+# `done` for both and is never asked for a Claude conductor's state: that is its session's, recorded
+# in agents.tsv (sess-c1) and read from the claude stub's fixture.
 # shellcheck disable=SC2016 # the stub's $1/$2/$3 are its own arguments, written literally
-stub() { # <status> [api-error]
+stub() { # [api-error]
   {
     echo '#!/bin/sh'
     echo 'case "$1 $2" in'
-    echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"$1\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"$1\",\"pane_id\":\"w:2\"}]}}' ;;"
-    if [ -n "${2:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
+    echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"done\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"done\",\"pane_id\":\"w:2\"}]}}' ;;"
+    if [ -n "${1:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
     echo '  "agent wait"|"agent prompt") case "$3" in w:1|w:2) ;; *) echo "{\"error\":\"not this project'"'"'s pane: $3\"}"; exit 1 ;; esac ;;'
     echo 'esac'
     echo 'case "$1 $2" in "agent list"|"agent read") ;; *)'
-    echo "  echo '{\"result\":{\"agent\":{\"agent_status\":\"$1\"}}}' ;;"
+    echo "  echo '{\"result\":{\"agent\":{\"agent_status\":\"done\"}}}' ;;"
     echo 'esac'
   } > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
 }
+session() { # <status> [waitingFor] — the conductor's session, as `claude agents --json` lists it
+  echo "[{\"sessionId\":\"sess-c1\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}}]" > "${dir}/claude.json"
+}
+waitc() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait "$@"); }
 # `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/briefs .swarm/state && touch .swarm/briefs/conduct-e1.md && printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > .swarm/state/e1)
-stub idle
+printf '2026-10-13\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-c1\n' > "${dir}/.swarm/agents.tsv"
+stub; session idle
 (sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
-got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
+got="$(SWARM_CONDUCTOR_POLL=1 waitc conduct-e1 20000)"
 reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
 wait
 if [[ "${got}" == idle && "${reported}" == yes ]]; then
-  echo "ok   wait on an idle conductor holds until its report"; else
-  echo "FAIL wait on an idle conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
+  echo "ok   wait on a conductor whose session is idle holds until its report"; else
+  echo "FAIL wait on a conductor whose session is idle holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
 rm -f "${dir}/.swarm/conduct-e1.report.md"
 
-# herdr can report a conductor that ended its turn as `done`: that is not settled either.
-stub "done"
-(sleep 2; echo report > "${dir}/.swarm/conduct-e1.report.md") &
-got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000)"
-reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
-wait
-if [[ "${got}" == "done" && "${reported}" == yes ]]; then
-  echo "ok   wait on a done conductor holds until its report"; else
-  echo "FAIL wait on a done conductor holds until its report: got '${got}', report there on return: ${reported}"; fails=$((fails + 1)); fi
-rm -f "${dir}/.swarm/conduct-e1.report.md"
-stub idle
+# A conductor waiting on a prompt has settled: wait returns at once and says what it waits on.
+session waiting "permission prompt"; start=${SECONDS}
+got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000)"
+if [[ "${got}" == "waiting: permission prompt" && $((SECONDS - start)) -lt 5 ]]; then
+  echo "ok   wait on a conductor waiting on a prompt returns at once, naming it"; else
+  echo "FAIL wait on a conductor waiting on a prompt returns at once, naming it: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+
+# A conductor whose session has no entry has exited: wait returns gone at once.
+echo '[]' > "${dir}/claude.json"; start=${SECONDS}
+got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000)"
+if [[ "${got}" == gone && $((SECONDS - start)) -lt 5 ]]; then
+  echo "ok   wait on a conductor whose session is gone returns at once"; else
+  echo "FAIL wait on a conductor whose session is gone returns at once: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+session idle
 
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}
-got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 2000)"
+got="$(waitc conduct-e1 2000)"
 if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
   echo "ok   wait on a conductor that never reports ends at its timeout"; else
   echo "FAIL wait on a conductor that never reports ends at its timeout: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
 # A conductor idle on an API error is stuck: wait returns after wait_agent's nudges, well inside
 # the timeout, instead of polling and nudging again.
-stub idle api-error
+stub api-error
 start=${SECONDS}
-got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 20000 2>/dev/null)"
+got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000 2>/dev/null)"
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
   echo "ok   wait on a conductor stuck on an API error returns without polling"; else
   echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
 # A conductor of the same name started by another project is refused, never waited on.
-printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub idle
-got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1 3000 2>&1; echo "exit $?")"
+printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub
+got="$(waitc conduct-e1 3000 2>&1; echo "exit $?")"
 if [[ "${got}" == *"no agent this project started"* && "${got}" == *"exit 1" ]]; then
   echo "ok   wait refuses another project's conductor of the same name"; else
   echo "FAIL wait refuses another project's conductor of the same name: got '${got}'"; fails=$((fails + 1)); fi
 printf 'w:1 conduct-e1\nw:2 conduct-e1-done\n' > "${dir}/.swarm/state/e1"
 
-# A retired conductor (renamed <name>-done) is not waited on for a report.
-stub idle
+# A retired conductor (renamed <name>-done) is not waited on for a report. agents.tsv has no line
+# for that name, so herdr answers for it.
 start=${SECONDS}
-got="$(cd "${dir}" && HERDR_ENV=1 SWARM_CONDUCTOR_POLL=5 PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait conduct-e1-done 20000)"
-if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
+got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1-done 20000)"
+if [[ "${got}" == "done" && $((SECONDS - start)) -lt 5 ]]; then
   echo "ok   wait on a retired conductor returns at once"; else
   echo "FAIL wait on a retired conductor returns at once: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 rm -rf "${dir}"

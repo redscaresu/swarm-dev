@@ -124,7 +124,7 @@ prints every setting and where it came from.
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
-| `stall_minutes` | `30` | a story's builder that herdr shows working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `dash` marks it `!` and lists it under needs you, and `wait --stall` returns on it |
+| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it, and `dash` marks it `!` and lists it under needs you. Working is its Claude session reporting busy for `wait --stall`, and herdr's working for `dash` and for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
@@ -193,10 +193,16 @@ swarm.sh wait <slug>       # in the background: returns when it settles
 swarm.sh watch             # in the background: returns when a story PR needs the lead
 ```
 
-`wait` returns when an agent goes idle, which can be early. `wait --stall <slug>` also returns, with
-exit code 3 and `stalled: working <N> min with no commit or PR update`, when the builder has shown
-no sign of life (a worktree commit, a PR update, a swarm action on its story) for `stall_minutes`
-since that wait began. `watch` is what the lead waits on: it
+`wait` returns when the agent's Claude session reports `idle`, `waiting` (printed with what it
+waits on, such as `waiting: permission prompt`) or `gone` (its session has no entry in `claude agents
+--json`: the process exited), which can be early. herdr's `agent wait` is only the wake-up, in
+STALL_POLL_MS slices (a minute); after each wake or slice `wait` reads the session once, and never
+herdr's word for it. A session Claude Code gives no state for (`unknown`, or the list call failed)
+is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1. A codex
+agent, or one with no recorded session, is waited on through herdr's status. `wait --stall <slug>`
+also returns, with exit code 3 and `stalled: working <N> min with no commit or PR update`, when the
+builder (busy, as above) has shown no sign of life (a worktree commit, a PR update, a swarm action
+on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, or when an agent is blocked on a prompt. herdr lists every project's agents, so
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
