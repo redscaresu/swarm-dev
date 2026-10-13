@@ -1,9 +1,9 @@
 ---
 kind: chore
 status: blocked
-blocked_by: [docs-refresh-0-14]
+blocked_by: [docs-refresh-0-14, render-flow-diagram]
 epic: agent-state-from-the-session
-depends_on: [require-claude, no-herdr-state-for-claude-sessions, docs-refresh-0-14]
+depends_on: [require-claude, no-herdr-state-for-claude-sessions, docs-refresh-0-14, render-flow-diagram]
 touches: [.claude-plugin/plugin.json, README.md, docs/, commands/, bin/swarm.sh (comments only, for stale-wording hits)]
 ---
 
