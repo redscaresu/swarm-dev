@@ -907,28 +907,32 @@ sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 100
 # settle <target> <name> <timeout-ms> [<since>] [wake] — block until the agent settles and print its
 # state. A Claude agent has settled when its session says so (session_state: idle, waiting or gone);
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
-# The session is read before the first wake and once after each; a wake that came early sleeps out
-# the slice. With wake (after a nudge), the read before it never ends the wait. A herdr wait that
-# fails other than by timing out ends it too: settled, or the state and a failure. While the state is
-# unknown it says so once on stderr. At the timeout it prints the last state and fails. With
-# <since>, a busy builder stalled since then (agent_stalled) ends the wait with "stalled: ...".
+# The session is read before the first wake, and once after each wake and the sleep-out of the rest
+# of its slice; every decision is taken on that read. With wake (after a nudge), the read before the
+# first wake never ends the wait. A herdr wait that fails other than by timing out ends it at once:
+# settled, or the state and a failure. While the state is unknown it says so once on stderr. With
+# <since>, a busy builder stalled since then (agent_stalled) ends the wait with "stalled: ...". At
+# the deadline (now plus <timeout-ms>) it prints the last state and fails.
 settle() {
-  local target="$1" name="$2" left="$3" since="${4:-}" wake="${5:-}" state slice t0 err min said="" failed="" rc=0
+  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 slice err min said="" rc=0
   state="$(session_state "${name}")"
-  [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "${left}" "${since}"; return; }
-  err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
+  [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
   while [[ -n "${wake}" || ! "${state}" =~ ${SETTLED} ]]; do
-    wake=""
-    if [[ ${left} -le 0 ]]; then rc=1; break; fi
-    slice=$((left < STALL_POLL_MS ? left : STALL_POLL_MS)); left=$((left - slice)); t0="$(now_ms)"
-    herdr agent wait "${target}" --timeout "${slice}" >/dev/null 2>"${err}" || grep -q '"timeout"' "${err}" || failed=1
+    wake=""; t0="$(now_ms)"
+    if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
+    slice=$((deadline - t0 < STALL_POLL_MS ? deadline - t0 : STALL_POLL_MS))
+    if herdr agent wait "${target}" --timeout "${slice}" >/dev/null 2>"${err}" || grep -q '"timeout"' "${err}"; then
+      sleep_ms $((slice - ($(now_ms) - t0)))
+    else
+      rc=1
+    fi
     state="$(session_state "${name}")"
-    [[ ! "${state}" =~ ${SETTLED} ]] || break
-    if [[ -n "${failed}" ]]; then cat "${err}" >&2; rc=1; break; fi
+    if [[ "${state}" =~ ${SETTLED} ]]; then rc=0; break; fi
+    if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
-    sleep_ms $((slice - ($(now_ms) - t0)))
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit or PR update"; break
     fi

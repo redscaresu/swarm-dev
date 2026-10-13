@@ -341,13 +341,14 @@ rm "${P}/.claude/swarm/config"
 # wait: herdr says done at once (the stub), and s-three's session (sess-today) is busy, so a wait
 # sleeps out each slice and reads the session again; herdr's word is never the answer.
 printf '[{"sessionId":"sess-today","status":"busy"},{"sessionId":"sess-cut","status":"busy"}]' > "${ROOT}/claude.json"
-waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS=1000 CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${ROOT}/claude.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
+waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS="${SWARM_STALL_POLL_MS:-1000}" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${ROOT}/claude.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
 long_ago() { SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) waitfor "$@"; }
 t0=${SECONDS}
 if out="$(WAIT_LOG="${ROOT}/wait.log" CLAUDE_STUB_LOG="${ROOT}/claude.log" waitfor s-three 3000)"; then rc=0; else rc=$?; fi
 took=$((SECONDS - t0))
 check "a bare wait on a busy, stalled builder times out with its state: no stall" test "${rc}:${out}" == "1:busy"
-check "a bare wait polls herdr in slices" test "$(sort -u "${ROOT}/wait.log")|$(wc -l < "${ROOT}/wait.log" | tr -d ' ')" == "agent wait w1:p9 --timeout 1000|3"
+# The last slice is cut to the deadline, so it may be a little short of the others.
+check "a bare wait polls herdr in slices" test "$(awk '$1 $2 $3 == "agentwaitw1:p9" && $4 == "--timeout" && $5 > 0 && $5 <= 1000 { n++ } END { print n, NR }' "${ROOT}/wait.log")" == "3 3"
 check "each slice herdr cut short is slept out, so the wait lasts its timeout" test "${took}" -ge 2
 # Slices are timed in milliseconds: a herdr wait of half a second is slept out to the slice, never
 # rounded to a whole second (a gap of 0.5 s or 1.5 s between wakes).
@@ -362,6 +363,14 @@ check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<<
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
 check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
+# Past stall_minutes, the session turns idle during the first slice's sleep-out (2 s slices, idle at
+# 1 s): the stall check takes the read after the sleep-out, so wait returns idle, not stalled.
+cp "${ROOT}/claude.json" "${ROOT}/claude.json.flip"
+(sleep 1; printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.flip.new"; mv "${ROOT}/claude.json.flip.new" "${ROOT}/claude.json.flip") &
+flip=$!
+if out="$(SWARM_STALL_POLL_MS=2000 CLAUDE_STUB_AGENTS="${ROOT}/claude.json.flip" long_ago --stall s-three 4000)"; then rc=0; else rc=$?; fi
+wait "${flip}"
+check "a builder that turns idle in the sleep-out is idle, not stalled" test "${rc}:${out}" == "0:idle"
 # An idle session has settled, and stalls are not checked.
 printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.idle"
 if out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json.idle" long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
