@@ -28,9 +28,9 @@ Repeat until a step below says stop:
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background, in
      the same response that read `next` and before any other work: a side task the user asks
      for meanwhile must not leave the conductor unwatched. For a conductor it returns once
-     the conductor has written its report, is not idle (its session is waiting on a prompt, or gone), is
-     idle on an API error after three nudges, or the wait's timeout (an hour) has passed, not each
-     time it idles on its own background work; when it returns, go back to 1. Never
+     the conductor has written its report, is not idle (its session is waiting on a prompt, or gone), or
+     the wait's timeout (an hour) has passed, not each time it idles on its own background
+     work. `wait` never nudges a conductor. When it returns, go back to 1. Never
      close a conductor that has not reported.
    - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
      `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first

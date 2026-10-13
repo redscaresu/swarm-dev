@@ -299,18 +299,22 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 # exec's it from $SWARM_PANES_PY), so the three views agree.
 #   pane_records(state, keep) yields (tab label, pane, recorded name) for each pane in keep (own_panes
 #     and still live), from the tab records in STATE_DIR, skipping *.tmp; a pane's first record wins.
-#   agent_state(a, name) -> (state, needs_a_look), where a is herdr's agent in the pane (None for an
-#     empty pane): EMPTY (a start that failed), WAITING (blocked on a prompt), working, retired
-#     (renamed <name>-done by retire_agent), or herdr's own status.
+#   agent_state(a, name, s=None) -> (state, needs_a_look), where a is herdr's agent in the pane (None
+#     for an empty pane) and s is session_state's answer for <name>: EMPTY (a start that failed),
+#     then from the session: working (busy), idle, WAITING (waiting; s[1] says on what), unknown or
+#     gone (both need a look). With no session (s None: codex, none recorded, or a retired
+#     <name>-done, which has no agents.tsv line of its own), herdr's word: WAITING (blocked on a
+#     prompt), working, retired (renamed by retire_agent), or herdr's own status.
 #   session_state(log, name, listing) -> (state, waitingFor) from Claude Code's own list: the newest
 #     agents.tsv (<log>) line for <name>, its session id, then that id's entry in <listing> (the
 #     text of `claude agents --json`, None when the call failed). state is busy, idle, waiting (with
-#     waitingFor, when the entry has it), unknown (the call failed, or a status it does not know) or
-#     gone (no entry for the recorded session, or one with no status: Claude Code lists status only
-#     while the process is alive). None for an agent herdr must answer for: codex, no line, or a
-#     session of '-'.
+#     waitingFor, when the entry has it, on one line and cut to WHY_MAX characters), unknown (the
+#     call failed, or a status it does not know) or gone (no entry for the recorded session, or one
+#     with no status: Claude Code lists status only while the process is alive). None for an agent
+#     herdr must answer for: codex, no line, or a session of '-'.
 PANES_PY='
 import glob, json, os, re
+WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
     for path in sorted(glob.glob(os.path.join(state, "*"))):
@@ -322,9 +326,12 @@ def pane_records(state, keep):
                 continue
             seen.add(f[0])
             yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
-def agent_state(a, name):
+def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True
+    if s is not None:
+        st = {"busy": "working", "waiting": "WAITING"}.get(s[0], s[0])
+        return st, st not in ("working", "idle")
     st = a.get("agent_status") or "unknown"
     if st == "blocked":
         return "WAITING", True
@@ -355,7 +362,8 @@ def session_state(log, name, listing):
     if st is None:
         return "gone", ""
     if st == "waiting":
-        return st, str(e.get("waitingFor") or "")
+        why = " ".join(str(e.get("waitingFor") or "").split())
+        return st, why if len(why) <= WHY_MAX else why[:WHY_MAX - 1] + "…"
     return (st, "") if st in ("busy", "idle") else ("unknown", "")
 '
 
@@ -364,7 +372,8 @@ def session_state(log, name, listing):
 # builder's last sign of life stands in for it.
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
-#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
+#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once;
+#     a `nudge` line is wait's doing, not a sign of life, so it is skipped.
 #   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
 #     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
 #     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
@@ -390,7 +399,7 @@ def last_seen(events):
         for l in open(events, encoding="utf-8", errors="replace"):
             f = l.rstrip("\n").split("\t")
             t = epoch(f[0]) if len(f) == 5 else None
-            if t is not None and t > seen.get(f[2], 0):
+            if t is not None and f[1] != "nudge" and t > seen.get(f[2], 0):
                 seen[f[2]] = t
     except OSError:
         pass
@@ -443,6 +452,58 @@ sys.exit(0 if any(projects.get(p, {}).get("hasTrustDialogAccepted") is True for 
 PY
 }
 
+# MIN_CLAUDE: the oldest Claude Code with both `--session-id` and `claude agents --json`, which every
+# Claude agent's state is read through (pinned by experiment; README's Requirements names it too).
+MIN_CLAUDE=2.1.145
+CLAUDE_CHECKED=""   # set once require_claude passes, so a run checks once
+
+# require_claude — stop unless the installed Claude Code is MIN_CLAUDE or later (`claude --version`
+# prints `2.1.145 (Claude Code)`). When the caller is a Claude session herdr knows (the pane it runs
+# in), that session must also be in Claude Code's own list (require_listed), or the readers would
+# find no agent there. From a plain shell with no session, only the version is checked. Once a
+# check passes, later calls in the same run return at once: `story` checks before its worktree,
+# then start_agent asks again.
+require_claude() {
+  local have session
+  [[ -z "${CLAUDE_CHECKED:-}" ]] || return 0
+  command -v claude >/dev/null || die "Claude Code (claude) is not on PATH; swarm.sh needs ${MIN_CLAUDE} or later."
+  have="$(claude --version 2>/dev/null)" || have=""
+  python3 -c '
+import re, sys
+m = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "${have}" "${MIN_CLAUDE}" \
+    || die "swarm.sh needs Claude Code ${MIN_CLAUDE} or later, and claude --version says '${have%%$'\n'*}'. Update it (claude update), then try again."
+  session="$(session_for_pane "${HERDR_PANE_ID:-}")"
+  [[ -z "${session}" ]] || require_listed "${session}"
+  CLAUDE_CHECKED=1
+}
+
+# require_listed <session> — stop unless <session> is in claude agents --json. A list that cannot be
+# read stops too, and says so (its first error line, or what it printed instead of a JSON list).
+require_listed() {
+  local err list rc=0 why found
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-agents.XXXXXX")" || die "could not make a temporary file to read claude agents --json"
+  list="$(claude_agents "${err}")" || rc=$?
+  why="$(head -1 "${err}")"; rm -f "${err}"
+  [[ ${rc} -eq 0 ]] || die "could not read claude agents --json (${why:-it exited ${rc}}), so this session (${1}) cannot be found in it. Check that the command works here, then try again."
+  found="$(printf '%s' "${list}" | python3 -c '
+import json, sys
+text = sys.stdin.read()
+try:
+    entries = json.loads(text)
+except ValueError:
+    entries = None
+if not isinstance(entries, list):
+    print("empty output" if not text.strip() else "not a JSON list")
+else:
+    print("yes" if any(isinstance(e, dict) and e.get("sessionId") == sys.argv[1] for e in entries) else "no")' "$1")" || found=""
+  case "${found}" in
+    yes) ;;
+    no) die "this session (${1}) is not in claude agents --json: the interactive listing every agent's state is read from is missing. Restart Claude Code on ${MIN_CLAUDE} or later, then try again." ;;
+    *) die "could not read claude agents --json (${found:-python3 could not parse it}), so this session (${1}) cannot be found in it. Check that the command works here, then try again." ;;
+  esac
+}
+
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
@@ -493,6 +554,7 @@ start_agent() {
   local session=-
   if [[ "${kind}" == claude ]]; then
     require_trusted "${cwd}"
+    require_claude
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
   fi
   free_agent_name "${name}"
@@ -557,8 +619,9 @@ session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
 }
 
-# claude_agents — Claude Code's own list of its sessions, as JSON; fails when it cannot be read.
-claude_agents() { claude agents --json 2>/dev/null; }
+# claude_agents [err-file] — Claude Code's own list of its sessions, as JSON; fails when it cannot be
+# read. Its errors go to <err-file>, else nowhere.
+claude_agents() { claude agents --json 2>"${1:-/dev/null}"; }
 
 # session_state <name> — the state Claude Code reports for <name>'s session (PANES_PY's
 # session_state over one claude_agents call, its listing on stdin): busy, idle, waiting[:
@@ -804,17 +867,32 @@ deliver_prompt() {
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
 }
 
-# API_ERROR_NUDGES: how many times one `wait` re-prompts an agent whose turn died on an API error.
-# Enough to ride out a dropped stream; few enough that a hard error (a bad key) still surfaces.
-API_ERROR_NUDGES=3
+# IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
+# PR (its turn died on an API error, or it stopped early): nothing else would wake it. Enough to ride
+# out a dropped stream; few enough that a builder that is truly stuck still comes back to the lead.
+IDLE_NUDGES=3
 
-# ended_on_api_error <name> — true when the agent's last event (Claude Code marks each with ⏺)
-# is an API error, such as "The response stopped arriving". The agent then sits idle, its work
-# unfinished, and nothing else will wake it.
-ended_on_api_error() {
-  local target
-  target="$(agent_field "$1" pane_id)"; [[ -n "${target}" ]] || return 1
-  herdr agent read "${target}" --source recent-unwrapped 2>/dev/null | grep '⏺' | tail -1 | grep -q '⏺ API Error'
+# nudge_reason <name> — when <name> builds a ready code, docs or chore story that has no PR (an
+# epic story with pr_per = epic, as build_story builds it: story/<slug> is not pushed), print why a
+# nudge is sent and succeed. A name with
+# no story (a conductor, hld, a planner) or a verify story is never nudged, and a repo that cannot
+# be resolved, or a gh or git call that fails, counts as having a PR.
+nudge_reason() {
+  local slug f src url n rc=0
+  slug="$(stall_py story "$1")"; [[ -n "${slug}" ]] || return 1
+  f="${BOARD}/stories/${slug}.md"
+  case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
+  [[ "$(fm "${f}" status)" == ready ]] || return 1   # a story being built stays ready until review
+  src="$(repo_dir "$(fm "${f}" repo)")" || return 1
+  if [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]]; then
+    git -C "${src}" ls-remote --exit-code origin "refs/heads/story/${slug}" >/dev/null 2>&1 || rc=$?
+    [[ ${rc} -eq 2 ]] || return 1   # 2: no such branch; 0 is pushed, anything else a failure
+    echo "you are idle and story/${slug} is not pushed"; return
+  fi
+  url="$(git -C "${src}" remote get-url origin 2>/dev/null)" || return 1
+  n="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number -q length 2>/dev/null)" || return 1
+  [[ "${n}" == 0 ]] || return 1
+  echo "you are idle and story/${slug} has no PR"
 }
 
 # story_commit_time <slug> — the epoch time of the last commit in a story's worktree; empty when it
@@ -917,19 +995,22 @@ sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 100
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
-# wake (after a nudge), the read before the first wake never ends the wait.
+# wake (after a nudge), an idle read ends the wait only once a whole slice has passed, unless the
+# session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
 settle() {
-  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0
+  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
-  while [[ -n "${wake}" || ! "${state}" =~ ${SETTLED} ]]; do
-    wake=""; t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
+  [[ -z "${wake}" ]] || hold=$(($(now_ms) + STALL_POLL_MS))
+  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do
+    t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
     if [[ ${end} -gt ${t0} ]]; then
       herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
-    if [[ "${state}" =~ ${SETTLED} ]]; then rc=0; break; fi
+    [[ "${state}" =~ ^(idle|unknown)$ ]] || hold=0
+    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi
     if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
@@ -945,26 +1026,30 @@ settle() {
 }
 
 # wait_agent <name> <timeout-ms> [--stall] — block until the agent settles (settle) and print its
-# state; at the timeout, print the last one and fail. An agent idle after an API error has not
-# settled: tell it to carry on, and wait again. With --stall, a builder that shows no sign of life
+# state; at the timeout, print the last one and fail. A builder whose session is idle before its
+# story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
+# to IDLE_NUDGES times. A nudge herdr could not deliver is neither logged nor counted: wait stops
+# nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake=""
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake="" reason
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
     rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
     [[ ${rc} -eq 0 ]] || { echo "${status}"; return "${rc}"; }
-    # A session whose turn ended is idle; herdr reports a codex agent's as idle or done.
-    if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
-      break
+    # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
+    [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
+    reason="$(nudge_reason "${name}")" || break
+    if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
+      >/dev/null 2>&1; then
+      echo "swarm: ${name}: ${reason}, but the nudge could not be delivered; returning ${status}" >&2; break
     fi
-    nudges=$((nudges + 1)); wake=1   # a read before the next wake may predate the nudge
-    echo "swarm: ${name} stopped on an API error; telling it to carry on (${nudges}/${API_ERROR_NUDGES})" >&2
-    herdr agent prompt "${target}" "Your last turn ended on an API error. Carry on from where you stopped." \
-      --wait --until working --timeout 60000 >/dev/null 2>&1 || true
+    nudges=$((nudges + 1)); wake=1   # settle holds a slice, or until busy, before it takes idle again
+    record_event nudge "${name}"
+    echo "swarm: ${name}: ${reason}; told it to carry on (${nudges}/${IDLE_NUDGES})" >&2
   done
   echo "${status}"
 }
@@ -977,7 +1062,6 @@ wait_conductor() {
   while :; do
     rc=0; status="$(wait_agent "${name}" "$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))")" || rc=$?
     [[ "${status}" =~ ^(idle|done)$ && ! -f "$(conductor_report "${name}")" ]] || break
-    ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
     [[ ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
     sleep "${poll}"
@@ -1176,6 +1260,7 @@ build_story() {
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
+  require_claude
   base="$(base_for "${src}")"
   epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
   if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
@@ -1349,6 +1434,8 @@ start_conductor() {
   [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
   hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
   [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
+  # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
+  require_claude
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
@@ -1788,14 +1875,17 @@ watch_prs() {
 # status [--all] — one summary for the user: the agents that need a look or are working, what is
 # waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
-# left out.
+# left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
+# only for codex, an agent with no session recorded, and a retired one.
 status_report() {
-  local all="${1:-}" agents panes waiting
+  local all="${1:-}" agents panes waiting sessions
   if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
-    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
+    sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
+    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+      python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" <<'PY'
 import json, os, sys
 exec(os.environ["SWARM_PANES_PY"])
-state, agents_json, panes_json, show_all = sys.argv[1:5]
+state, agents_json, panes_json, show_all, log = sys.argv[1:6]
 try:
     agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
@@ -1806,10 +1896,13 @@ for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) 
         a = agents.get(pane)
         if a is not None:
             name = a.get("name") or name
-        st, _ = agent_state(a, name)
+        s = session_state(log, name, os.environ["SWARM_SESSIONS"])
+        st, _ = agent_state(a, name, s)
         what = {"EMPTY": "EMPTY: no agent started in this pane; close it",
-                "WAITING": f"WAITING on a question: herdr agent read {name}",
+                "WAITING": f"WAITING on {(s or ('', ''))[1] or 'a question'}: herdr agent read {name}",
                 "retired": "done (retired)",
+                "unknown": "unknown: no session state" if s else "unknown",
+                "gone": "gone: session ended",
                 "idle": "idle: finished, or waiting for its next step",
                 "done": "idle: finished, or waiting for its next step"}.get(st, st)
         rows.append((name, what, f"{tab} {pane}"))
@@ -2084,13 +2177,16 @@ dash_fields() {
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
-# DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads.
+# DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads. Claude
+# Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
+# session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" board="" policies="" merges="" drift=0 commits="" f d r x
+  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift=0 commits="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)" \
       && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
   fi
+  [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
   # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title.
   for d in hld epics stories; do
     while IFS= read -r f; do
@@ -2102,18 +2198,22 @@ dash_render() {
   while IFS= read -r r; do
     [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_commit_time "${r}")"$'\n'
   done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
-    | SWARM_STALL_PY="${STALL_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" python3 -c '
+    | SWARM_STALL_PY="${STALL_PY}" SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
+      DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" python3 -c '
 import json, os, sys
 exec(os.environ["SWARM_STALL_PY"])
+exec(os.environ["SWARM_PANES_PY"])
+E = os.environ
 rows = [l.rstrip("\n").split("\t") for l in sys.stdin]
-own = set(os.environ["SWARM_OWN"].split())
+own = set(E["SWARM_OWN"].split())
 try:
-    agents = json.loads(os.environ["DASH_AGENTS"])["result"]["agents"]
+    agents = json.loads(E["DASH_AGENTS"])["result"]["agents"]
 except (ValueError, KeyError, TypeError):
     agents = []
 for a in agents:
-    if isinstance(a, dict) and a.get("agent_status") == "working" and a.get("pane_id") in own and a.get("name"):
-        print(story_for(a["name"], rows) or "")' 2>/dev/null || true)
+    n = a.get("name") if isinstance(a, dict) else None
+    if n and a.get("pane_id") in own and agent_state(a, n, session_state(E["DASH_AGENTS_LOG"], n, E["DASH_SESSIONS"]))[0] == "working":
+        print(story_for(n, rows) or "")' 2>/dev/null || true)
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then
@@ -2130,7 +2230,7 @@ for a in agents:
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
-  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" \
+  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
     python3 - <<'PY'
 import collections, datetime, itertools, json, os, re, time
@@ -2146,7 +2246,7 @@ STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": 
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
 SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
        "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
-LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you", "? unknown"]
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
 out = []
 
 def paint(t, s):
@@ -2270,11 +2370,14 @@ if agents is not None:
             name = (a or {}).get("name") or recorded
             base = re.sub(r"-done\d*$", "", name)
             rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
-            st, look = agent_state(a, name)
+            s = session_state(E["DASH_AGENTS_LOG"], name, E["DASH_SESSIONS"])
+            st, look = agent_state(a, name, s)
             if st in ("idle", "done") and reported(base):
                 st = "reported"
             slug = story_for(name, story_rows)
-            words = {"EMPTY": "empty pane", "WAITING": "waiting on a prompt", "done": "idle"}.get(st, st)
+            why = s[1] if s and st == "WAITING" else ""
+            words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle",
+                     "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             if st == "working" and slug:
                 b = story_by_slug[slug]
                 signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
@@ -2283,7 +2386,7 @@ if agents is not None:
                     st, look, words = "stalled", True, f"stalled {age}m"
                     stalled.append((name, age))
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
-                     look=look, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
+                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
                      open=bool(slug) and story_by_slug[slug][2] != "done")
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
@@ -2329,9 +2432,12 @@ for l in lines("DASH_WAITING"):
         need.append(bang + [(l, "")])
 for r in recs:
     if r["state"] == "WAITING":
-        need.append(bang + [(f"answer {r['name']}: ", ""), (f"herdr agent read {r['name']}", "dim")])
+        why = f" (waiting on {r['why']})" if r.get("why") else ""
+        need.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
     elif r["state"] == "EMPTY":
         need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
+    elif r["state"] in ("gone", "unknown") and r["look"]:
+        need.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
 need += [bang + [(f"look at {n}: working {age} min with no commit or PR update", "")] for n, age in stalled]
 need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
 
@@ -2781,6 +2887,7 @@ dispatch() {
 
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
+# The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
 READ_ONLY_COMMANDS="dash status next config policy cost lessons findings wait watch base _base _name _target _label _trusted _pane"

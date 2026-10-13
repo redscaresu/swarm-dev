@@ -36,10 +36,14 @@ The full method is in [`docs/method.md`](docs/method.md). The diagram's source i
 
 ## Requirements
 
-You need [Claude Code](https://claude.com/claude-code), [herdr](https://herdr.dev), the
+You need [Claude Code](https://claude.com/claude-code) 2.1.145 or later, [herdr](https://herdr.dev), the
 [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), with both
 CLIs logged in, plus `git`, `python3` and `bash`. herdr is the terminal multiplexer every agent runs
 in, and `/hld`, `/plan-epic` and `/swarm` stop outside it.
+
+swarm.sh reads each agent's state from `claude agents --json`, which older versions lack, so it
+refuses to start an agent on anything before 2.1.145. It also refuses when the session you run it
+from is missing from that list. In either case, run `claude update` and restart Claude Code.
 
 [Obsidian](https://obsidian.md) is optional. It shows `docs/` as a vault through `Board.base` and
 `HLDs.base`, but the board is plain Markdown with front matter and works without it.
@@ -68,7 +72,7 @@ in, and `/hld`, `/plan-epic` and `/swarm` stop outside it.
 |---|---|
 | `/hld <title>` | Write the design with a co-author agent. |
 | `/swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh status` | Show agents that need a look (from their Claude session: waiting, gone or unknown), what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
 
