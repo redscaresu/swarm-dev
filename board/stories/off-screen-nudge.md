@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [session-reader-and-wait]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [session-reader-and-wait]
 touches: [bin/swarm.sh:ended_on_api_error (deleted), bin/swarm.sh:wait_agent, bin/swarm.sh:wait_conductor, bin/swarm.sh:STALL_PY.last_seen, tests/epic_test.sh (nudge block :213-231), tests/next_test.sh (:158-166), tests/events_test.sh (nudge line), commands/swarm.md:27, docs/method.md (§ Building wait paragraph; § The audit log)]

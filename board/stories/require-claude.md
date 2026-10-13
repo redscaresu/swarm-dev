@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [session-reader-and-wait]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [mint-session-id, session-reader-and-wait]
 touches: [bin/swarm.sh:start_agent (one call), bin/swarm.sh:require_claude (new), tests/config_test.sh (require_claude block), README.md (Requirements)]

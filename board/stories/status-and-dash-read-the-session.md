@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [session-reader-and-wait]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [session-reader-and-wait]
 touches: [bin/swarm.sh:PANES_PY.agent_state, bin/swarm.sh:status_report, bin/swarm.sh:dash_render, tests/dash_test.sh (fixtures :64-82, :125-143), tests/review_test.sh (status block :255-265), scripts/demo-dash.sh, docs/method.md (§ Building, Watching it), docs/dash.md]
