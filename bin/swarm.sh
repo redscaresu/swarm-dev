@@ -316,7 +316,8 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #     transcript (<projects>/*/<session>.jsonl, the file cost finds) is Claude Code's "Login expired ·
 #     Please run /login": an assistant entry whose error field is authentication_failed. A prompt
 #     after it (a resume sent) clears it; Claude Code's own user entries do not (is_prompt: isMeta, a
-#     <task-notification>, "[Request interrupted by user]"). A transcript that cannot be read is not
+#     <task-notification>, "[Request interrupted by user]", a slash command such as /login run in its
+#     pane and its <local-command-stdout>). A transcript that cannot be read is not
 #     expired. Never the pane.
 PANES_PY='
 import glob, json, os, re
@@ -356,7 +357,7 @@ def session_id(log, name):
     except OSError:
         pass
     return line[6] if line and line[3] == "claude" and line[6] not in ("", "-") else None
-AUTOMATED_PROMPTS = ("<task-notification>", "[Request interrupted")
+AUTOMATED_PROMPTS = ("<task-notification>", "[Request interrupted", "<command-name>", "<local-command")
 def is_prompt(d):
     c = (d.get("message") or {}).get("content")
     if isinstance(c, list):
