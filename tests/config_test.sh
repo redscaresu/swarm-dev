@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # config_test.sh — the project config: finding the project, parsing .claude/swarm/config, a board
 # outside the project, repos_dir, base branches, and finished = mark. Fixture remotes are local bare
-# repos; herdr is a stub on PATH.
+# repos; herdr and claude (tests/claude_stub.sh) are stubs on PATH.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -11,6 +11,9 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The claude stub goes first on PATH, so no run here reaches the real claude.
+STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
+export PATH="${STUB_BIN}:${PATH}"
 fails=0
 GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 
@@ -206,6 +209,34 @@ trust "${t}/repo/lib"
 check "a submodule is keyed on its own folder" "trusted" "$(trusted "${t}/repo/lib")"
 rm "${t}/cfg/.claude.json"
 check "no trust file to read: the start goes ahead" "trusted" "$(trusted "${t}/plain")"
+
+# The stub. The version is one the real binary never prints, so a real claude on PATH cannot pass.
+# run_stub runs claude only when the stub is what `claude` resolves to; otherwise it prints a marker
+# that fails the check, so the real binary (which may open a logged-in session) is never run.
+run_stub() { if [[ "$(command -v claude || true)" == "${STUB_BIN}/claude" ]]; then "$@"; else echo "claude is not the stub"; fi; }
+check "claude on PATH is the stub" "${STUB_BIN}/claude" "$(command -v claude || true)"
+export CLAUDE_STUB_VERSION="0.0.1 (Claude Code)"
+check "the stub prints CLAUDE_STUB_VERSION" "0.0.1 (Claude Code)" "$(run_stub claude --version)"
+AGENTS_FIXTURE="${ROOT}/agents.json"
+cat > "${AGENTS_FIXTURE}" <<'JSON'
+[
+  {
+    "pid": 4242,
+    "cwd": "/home/user/repo",
+    "kind": "interactive",
+    "startedAt": 1791256129171,
+    "sessionId": "00000000-0000-4000-8000-000000000001",
+    "name": "repo-ab",
+    "status": "idle"
+  }
+]
+JSON
+export CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
+check "agents --json prints the fixture it is given" "$(cat "${AGENTS_FIXTURE}")" "$(run_stub claude agents --json)"
+check "agents --json prints [] with no fixture" "[]" "$(unset CLAUDE_STUB_AGENTS; run_stub claude agents --json)"
+rc=0; run_stub claude foo >/dev/null 2>&1 || rc=$?
+check "any other call exits 1" "1" "${rc}"
+check "any other call names the call" "claude stub: unexpected call: foo" "$(run_stub claude foo 2>&1 || true)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

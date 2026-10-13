@@ -11,6 +11,9 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 P="${ROOT}/proj"; LOG="${P}/.swarm/events.tsv"
 trap 'chmod -R u+w "${ROOT}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The claude stub goes first on PATH, so no run here reaches the real claude.
+STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
+export PATH="${STUB_BIN}:${PATH}"
 fails=0
 U="https://github.com/o/r/pull"
 
