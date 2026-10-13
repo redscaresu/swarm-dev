@@ -11,6 +11,9 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 fails=0
 P="${ROOT}/proj"
+# The claude stub goes first on PATH, so no run here reaches the real claude.
+STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
+export PATH="${STUB_BIN}:${PATH}"
 
 check() { # <name> <test...>
   local name="$1"; shift
