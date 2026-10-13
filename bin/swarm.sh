@@ -445,13 +445,17 @@ PY
 # MIN_CLAUDE: the oldest Claude Code with both `--session-id` and `claude agents --json`, which every
 # Claude agent's state is read through (pinned by experiment; README's Requirements names it too).
 MIN_CLAUDE=2.1.145
+CLAUDE_CHECKED=""   # set once require_claude passes, so a run checks once
 
 # require_claude — stop unless the installed Claude Code is MIN_CLAUDE or later (`claude --version`
 # prints `2.1.145 (Claude Code)`). When the caller is a Claude session herdr knows (the pane it runs
-# in), that session must also be in Claude Code's own list, or the readers would find no agent
-# there. From a plain shell with no session, only the version is checked.
+# in), that session must also be in Claude Code's own list (require_listed), or the readers would
+# find no agent there. From a plain shell with no session, only the version is checked. Once a
+# check passes, later calls in the same run return at once: `story` checks before its worktree,
+# then start_agent asks again.
 require_claude() {
   local have session
+  [[ -z "${CLAUDE_CHECKED:-}" ]] || return 0
   command -v claude >/dev/null || die "Claude Code (claude) is not on PATH; swarm.sh needs ${MIN_CLAUDE} or later."
   have="$(claude --version 2>/dev/null)" || have=""
   python3 -c '
@@ -460,9 +464,34 @@ m = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", sys.argv[1])
 sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "${have}" "${MIN_CLAUDE}" \
     || die "swarm.sh needs Claude Code ${MIN_CLAUDE} or later, and claude --version says '${have%%$'\n'*}'. Update it (claude update), then try again."
   session="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  [[ -n "${session}" ]] || return 0
-  claude_agents | python3 -c 'import json, sys; sys.exit(0 if any(isinstance(e, dict) and e.get("sessionId") == sys.argv[1] for e in json.load(sys.stdin)) else 1)' "${session}" 2>/dev/null \
-    || die "this session (${session}) is not in claude agents --json: the interactive listing every agent's state is read from is missing. Restart Claude Code on ${MIN_CLAUDE} or later, then try again."
+  [[ -z "${session}" ]] || require_listed "${session}"
+  CLAUDE_CHECKED=1
+}
+
+# require_listed <session> — stop unless <session> is in claude agents --json. A list that cannot be
+# read stops too, and says so (its first error line, or what it printed instead of a JSON list).
+require_listed() {
+  local err list rc=0 why found
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-agents.XXXXXX")" || die "could not make a temporary file to read claude agents --json"
+  list="$(claude_agents "${err}")" || rc=$?
+  why="$(head -1 "${err}")"; rm -f "${err}"
+  [[ ${rc} -eq 0 ]] || die "could not read claude agents --json (${why:-it exited ${rc}}), so this session (${1}) cannot be found in it. Check that the command works here, then try again."
+  found="$(printf '%s' "${list}" | python3 -c '
+import json, sys
+text = sys.stdin.read()
+try:
+    entries = json.loads(text)
+except ValueError:
+    entries = None
+if not isinstance(entries, list):
+    print("empty output" if not text.strip() else "not a JSON list")
+else:
+    print("yes" if any(isinstance(e, dict) and e.get("sessionId") == sys.argv[1] for e in entries) else "no")' "$1")" || found=""
+  case "${found}" in
+    yes) ;;
+    no) die "this session (${1}) is not in claude agents --json: the interactive listing every agent's state is read from is missing. Restart Claude Code on ${MIN_CLAUDE} or later, then try again." ;;
+    *) die "could not read claude agents --json (${found:-python3 could not parse it}), so this session (${1}) cannot be found in it. Check that the command works here, then try again." ;;
+  esac
 }
 
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
@@ -580,8 +609,9 @@ session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
 }
 
-# claude_agents — Claude Code's own list of its sessions, as JSON; fails when it cannot be read.
-claude_agents() { claude agents --json 2>/dev/null; }
+# claude_agents [err-file] — Claude Code's own list of its sessions, as JSON; fails when it cannot be
+# read. Its errors go to <err-file>, else nowhere.
+claude_agents() { claude agents --json 2>"${1:-/dev/null}"; }
 
 # session_state <name> — the state Claude Code reports for <name>'s session (PANES_PY's
 # session_state over one claude_agents call, its listing on stdin): busy, idle, waiting[:

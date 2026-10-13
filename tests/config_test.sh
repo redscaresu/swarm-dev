@@ -277,6 +277,12 @@ check "versions compare as numbers: 2.1.99 is below 2.1.145" "yes" "$(fails_with
 CLAUDE_STUB_VERSION="2.1.145 (Claude Code)" HERDR_CALLER="${caller}" CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
 check "at the minimum, a caller session missing from claude agents --json is refused before any pane" "yes|0" \
   "$(fails_with "this session (${caller_id}) is not in claude agents --json" start)|$(panes)"
+CLAUDE_STUB_AGENTS="${rc}/no-such-file"
+check "a listing that fails is refused as unreadable, with its error, before any pane" "yes|0" \
+  "$(fails_with "could not read claude agents --json (cat: ${rc}/no-such-file: No such file or directory), so this session (${caller_id})" start)|$(panes)"
+CLAUDE_STUB_AGENTS="${rc}/empty.json"; : > "${CLAUDE_STUB_AGENTS}"
+check "a listing that prints nothing is refused as unreadable" "yes" \
+  "$(fails_with "could not read claude agents --json (empty output)" start)"
 CLAUDE_STUB_AGENTS="${rc}/with-caller.json"
 check "at the minimum, a caller session in the list starts" "started" "$(started)"
 HERDR_CALLER="" CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
