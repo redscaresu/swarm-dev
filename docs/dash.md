@@ -77,7 +77,7 @@ board: 2 uncommitted edits in the main checkout (reconcile pulls first)
 │     today  ✎ 2 findings: credential file checked with Lstat then re-opened by p…        findings │
 │    4m ago  · close learning-router-one-table                                              w1:p5W │
 │    4m ago  ⇡ merged #521 story/learning-router-one-table                              redscaresu │
-│    4m ago  · tell dash-pretty                                                             w1:p5W │
+│    4m ago  · tell:findings dash-pretty                                                    w1:p5W │
 │    5m ago  · log-finding state-duplication https://github.com/redscaresu/infraf…           wZ:p2 │
 │    5m ago  · close fakeaws-subnet-overlap-refused                                          wZ:p8 │
 │    5m ago  · review fakeaws-subnet-overlap-refused                                         wZ:p8 │

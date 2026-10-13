@@ -60,7 +60,7 @@ Repeat until a step below says stop:
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
      builder, `codex exec review` plus `/code-review <PR>` when it changes code (log each fixed
      finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`), with findings
-     sent back through `swarm.sh tell <slug> <file>` until a pass on the latest head finds nothing
+     sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing
      substantive
      (method.md § Building).
      Then, if `swarm.sh config merge` is `human` (the default), run

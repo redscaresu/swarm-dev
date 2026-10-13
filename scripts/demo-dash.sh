@@ -84,7 +84,7 @@ printf "%s\t%s\t%s\tclaude\topus\t%s\t%s\n" "$T" conduct conduct-rate-limiting h
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":2000000,"output_tokens":1500000}}}' > "${D}/projects/p/conduct-rate-limiting.jsonl"
 printf '%s\tvacuous-test\thttps://github.com/acme/api/pull/38\ta test that passed with its fix removed\n' "$T" > "${P}/.swarm/findings.tsv"
 event 60 conduct rate-limiting w1:p0; event 58 story rl-token-bucket w1:p1; event 57 story rl-redis-store w1:p1
-event 40 conduct audit-log w1:p0; event 39 story audit-schema w1:p5; event 12 tell rl-token-bucket w1:p1
+event 40 conduct audit-log w1:p0; event 39 story audit-schema w1:p5; event 12 tell:findings rl-token-bucket w1:p1
 event 3 review rl-token-bucket w1:p1
 pr 41 COMPLETED SUCCESS
 agents conduct-rate-limiting:working:w1-p1 rl-token-bucket:idle:w1-p2 rl-redis-store:working:w1-p3 \

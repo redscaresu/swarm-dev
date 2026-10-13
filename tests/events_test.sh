@@ -75,7 +75,10 @@ printf 'SECRET-CONTENT-123 in the findings\n' > "${P}/findings.md"
 
 appends "review" 1 review s1 ok review s1 "${U}/9"
 appends "a failed review" 1 review s1 "review: not a PR URL" review s1 "https://x"$'\t'"y"
-appends "tell" 1 tell s1 ok tell s1 findings.md
+# A tell's kind goes with its command (tell:<kind>), so its target stays the slug, which the stall rule reads.
+appends "tell" 1 tell:findings s1 ok tell s1 findings findings.md
+appends "a tell with no kind" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1
+appends "a tell with an unknown kind" 1 tell:bogus s1 "tell: the kind must be findings, nudge or resume" tell s1 bogus findings.md
 check "tell never logs the file's contents" bash -c "! grep -q SECRET-CONTENT '${LOG}'"
 appends "close" 1 close s1 ok close s1
 appends "tidy --yes" 1 tidy - ok tidy --yes
@@ -117,9 +120,9 @@ term_pid() {
   echo "${code} $((SECONDS - t0))"
 }
 was="$(lines)"
-read -r code took <<< "$(term_pid tell s1 findings.md)"
+read -r code took <<< "$(term_pid tell s1 findings findings.md)"
 check "a TERM to the pid stops a logged command at once, with exit 143" test "${code}" -eq 143 -a "${took}" -le 2
-check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\ttell\ts1\tw:me\tinterrupted\$'"
+check "a TERM is logged as interrupted" bash -c "tail -n +$((was + 1)) '${LOG}' | grep -q \$'^[^\t]*\ttell:findings\ts1\tw:me\tinterrupted\$'"
 check "a TERM leaves no temp file" test -z "$(ls "${ROOT}/sigtmp")"
 sleep 1; check "a TERM leaves nothing of the command running" bash -c "! pgrep -f 'sleep 3[7]' >/dev/null"
 read -r code took <<< "$(term_pid wait s1)"

@@ -216,7 +216,8 @@ PR. `wait` does not read the pane. `wait --stall
 builder (busy, as above) has shown no sign of life (a worktree commit, a PR update, a swarm action
 on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
-for 10 minutes, or when an agent is blocked on a prompt. herdr lists every project's agents, so
+for 10 minutes, or when an agent's session is waiting, and it names what the agent waits for. A codex
+agent, or one with no session recorded, counts as waiting when herdr says it is blocked. herdr lists every project's agents, so
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
@@ -247,7 +248,8 @@ exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `confi
 `cost`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
-lines, because a nudge is not a sign of life. `reconcile` and `unblock` write a line
+lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
+its target, so it still counts as a swarm action on the story. `reconcile` and `unblock` write a line
 per item they move. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command.
@@ -260,7 +262,10 @@ is doing.
 
 **Review before closing.** A story is reviewed when its latest head has passed codex and, if it
 changes code, the `/code-review` skill. The conductor sends the findings to the story's builder with
-`swarm.sh tell <slug> <file>` and reviews the new head again. It closes a builder only after both
+`swarm.sh tell <slug> findings <file>` and reviews the new head again. The kind (`findings`, `nudge`
+or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
+refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
+session is gone or unknown. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With
