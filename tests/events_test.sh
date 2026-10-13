@@ -132,8 +132,9 @@ check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"
 
 # Every dispatch arm, read off the case statement, is read-only (logs nothing) or logged (one line),
-# so a new command can never slip past the log. reconcile and unblock log per item (above). A bare
-# project, no herdr: every arm stops at once.
+# so a new command can never slip past the log. reconcile and unblock log per item (above); init
+# refuses outside a git root before logging, so a refusal writes nothing (init_test.sh checks both).
+# A bare project, no herdr: every arm stops at once.
 Q="${ROOT}/bare"; mkdir -p "${Q}/.claude/swarm" "${Q}/docs/stories" "${Q}/docs/epics" "${Q}/docs/hld"; : > "${Q}/.claude/swarm/config"
 ro=" ${RO_EXPECTED} "
 arms="$(awk '/^dispatch\(\) \{/ { d = 1; next } d && /^  esac/ { exit } d && match($0, /^    [a-z_|-]+\)/) { a = substr($0, 5, RLENGTH - 5); gsub(/\|/, " ", a); print a }' "${SWARM}" | tr ' ' '\n')"
@@ -142,7 +143,7 @@ for arm in ${RO_EXPECTED}; do
   check "read-only ${arm} is a command" grep -qx -- "${arm}" <<< "${arms}"
 done
 for arm in ${arms}; do
-  [[ "${arm}" == reconcile || "${arm}" == unblock ]] && continue
+  [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
   args=(); [[ "${arm}" == tidy ]] && args=(--yes)
   n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
   before="$(LOG="${Q}/.swarm/events.tsv" lines)"

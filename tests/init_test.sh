@@ -59,11 +59,30 @@ check "board_dir = board puts the files in board/" "same|no docs" \
   "$(same "${TEMPLATES}" "${p}/board")|$([[ -e "${p}/docs" ]] && echo docs || echo no docs)"
 check "the .gitignore lines name board/" $'.swarm/\nboard/.obsidian/*\n!board/.obsidian/app.json' "$(cat "${p}/.gitignore")"
 
+# --- board_dir = .: the board is the repo root, so the lines and the listing are relative to it.
+q="${ROOT}/dot"; "${GIT[@]}" init -q "${q}"
+mkdir -p "${q}/.claude/swarm" && echo "board_dir = ." > "${q}/.claude/swarm/config"
+out="$(run "${q}" init || true)"
+check "board_dir = . names the lines without a path" $'.swarm/\n.obsidian/*\n!.obsidian/app.json' "$(cat "${q}/.gitignore")"
+check "board_dir = . lists files relative to the root" "yes" "$(has "${out}" "copied stories/README.md")"
+
+# --- A CRLF .gitignore that has every line already gets none of them again.
+q="${ROOT}/crlf"; "${GIT[@]}" init -q "${q}"
+printf '.swarm/\r\ndocs/.obsidian/*\r\n!docs/.obsidian/app.json\r\n' > "${q}/.gitignore"
+crlf="$(cksum < "${q}/.gitignore")"
+run "${q}" init >/dev/null || true
+check "a CRLF .gitignore with every line is left as it is" "${crlf}" "$(cksum < "${q}/.gitignore")"
+
 # --- Refusals: a subdirectory names the root; outside git names that.
 mkdir -p "${p}/sub"
 out="$(run "${p}/sub" init || true)"
 check "from a subdirectory it refuses, naming the root" "yes" "$(has "${out}" "swarm: init: run it from the root of the git repo, ${p}")"
 check "and writes nothing there" "no" "$([[ -e "${p}/sub/docs" || -e "${p}/sub/board" ]] && echo yes || echo no)"
+# With no config, the project is the subdirectory itself, so a logged refusal would land in it.
+q="${ROOT}/bare"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/sub"
+out="$(run "${q}/sub" init || true)"
+check "from a subdirectory of a repo with no config it refuses" "yes" "$(has "${out}" "swarm: init: run it from the root of the git repo, ${q}")"
+check "and writes nothing at all, not even the log" $'.\n./sub' "$(cd "${q}" && find . -path ./.git -prune -o -print | sort)"
 mkdir -p "${ROOT}/plain"
 out="$(run "${ROOT}/plain" init || true)"
 check "outside git it refuses, saying so" "yes" "$(grep -q 'not in a git repo' <<< "${out}" && echo yes || echo no)"
