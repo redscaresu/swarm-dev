@@ -30,7 +30,7 @@ Read-only: in READ_ONLY_COMMANDS, logs nothing, writes nothing. bash 3.2, JSON v
 - A fixture with three builds (a merged code story whose file was deleted from the board, a docs story still on the board, and a story built twice) prints three rows with the right slug (one name longer than 32 characters), kind, risk, model, effort, cost, tells, findings and attempts 1, 1, 2. Shown red on the old code.
 - With `gh` failing, the run still prints every row with pr and pr_state empty.
 - events_test's read-only check covers `outcomes` (it logs nothing).
-- Run on infrafactory's real `.swarm/`, it prints a row for each of the ~140 builder rows in agents.tsv and none has an empty slug; the PR body shows the counts by role/model/pr_state (no story text).
+- Run on infrafactory's real `.swarm/`, it prints a row for every builder row in agents.tsv (119 on 2026-10-13) and none has an empty slug; the PR body shows the counts by role/model/pr_state (no story text).
 - plugin.json bumped; method § The audit log and the README command list name the command.
 
 **Not in scope:** any routing change, any new logging, a model that learns from the rows.
