@@ -204,7 +204,8 @@ A codex agent, or one with no recorded session, is waited on through herdr's sta
 whose session goes idle before its story has a PR (with `pr_per = epic`, before `story/<slug>` is
 pushed) has stopped early, perhaps on an API error, and nothing else would wake it. `wait` tells it
 why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at
-least a slice apart unless the session turns busy in between. Only code, docs and chore stories are
+least a slice apart unless the session turns busy in between. If herdr cannot deliver a nudge,
+`wait` stops there and returns idle, and logs nothing for it. Only code, docs and chore stories are
 nudged, never a verify story, a conductor or a planner, and a gh or git call that fails counts as a
 PR. `wait` does not read the pane. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit or PR update`, when the

@@ -821,7 +821,7 @@ nudge_reason() {
   [[ "$(fm "${f}" status)" != "done" ]] || return 1
   src="$(repo_dir "$(fm "${f}" repo)")" || return 1
   if [[ "${CFG_pr_per}" == epic ]]; then
-    git -C "${src}" ls-remote --exit-code origin "story/${slug}" >/dev/null 2>&1 || rc=$?
+    git -C "${src}" ls-remote --exit-code origin "refs/heads/story/${slug}" >/dev/null 2>&1 || rc=$?
     [[ ${rc} -eq 2 ]] || return 1   # 2: no such branch; 0 is pushed, anything else a failure
     echo "you are idle and story/${slug} is not pushed"; return
   fi
@@ -964,7 +964,8 @@ settle() {
 # wait_agent <name> <timeout-ms> [--stall] — block until the agent settles (settle) and print its
 # state; at the timeout, print the last one and fail. A builder whose session is idle before its
 # story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
-# to IDLE_NUDGES times. With --stall, a builder that shows no sign of life
+# to IDLE_NUDGES times. A nudge herdr could not deliver is neither logged nor counted: wait stops
+# nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
 wait_agent() {
@@ -978,11 +979,13 @@ wait_agent() {
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
     [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
     reason="$(nudge_reason "${name}")" || break
+    if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
+      >/dev/null 2>&1; then
+      echo "swarm: ${name}: ${reason}, but the nudge could not be delivered; returning ${status}" >&2; break
+    fi
     nudges=$((nudges + 1)); wake=1   # settle holds a slice, or until busy, before it takes idle again
-    echo "swarm: ${name}: ${reason}; telling it to carry on (${nudges}/${IDLE_NUDGES})" >&2
     record_event nudge "${name}"
-    herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
-      >/dev/null 2>&1 || true
+    echo "swarm: ${name}: ${reason}; told it to carry on (${nudges}/${IDLE_NUDGES})" >&2
   done
   echo "${status}"
 }

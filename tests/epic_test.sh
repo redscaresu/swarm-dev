@@ -51,7 +51,8 @@ case "$1 $2" in
   "pane list")        [ -e "$H/live" ] && cat "$H/live" ;;
   "pane split")       [ -e "$H/nosplit" ] && { echo '{"error":{"code":"pane_not_found"}}'; exit 1; }
                       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "agent prompt")     if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
+  "agent prompt")     [ -e "$H/promptfail" ] && { echo '{"error":{"code":"pane_not_found"}}' >&2; exit 1; }
+                      if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename")     [ -e "$H/norename" ] && exit 1
@@ -267,14 +268,23 @@ check "a builder whose gh call fails is not nudged" "idle|0" "$(run wait a | tai
 rm -f "${ROOT}/ghfail"
 item "${b}" stories/a.md "status: ready" "kind: verify" "repo: svc"; : > "${ROOT}/herdr.log"
 check "a verify story's builder is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+# A nudge herdr could not deliver is not logged or counted: wait stops nudging and returns idle.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
+touch "${ROOT}/promptfail"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 20000)"
+check "a nudge that could not be delivered is not logged, and wait returns idle, saying so" "idle|exit 0|1|0|yes" \
+  "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)|$(has "could not be delivered" "$(cat "${ROOT}/wait.err")")"
+rm -f "${ROOT}/promptfail"
 # pr_per = epic: a pushed story/a is the builder's hand-off; until then it is nudged.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "pr_per = epic" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
 "${GIT[@]}" -C "${ROOT}/svc" push -q origin main:refs/heads/story/a; : > "${ROOT}/herdr.log"
 check "epic mode: a builder whose story branch is pushed is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
 "${GIT[@]}" -C "${ROOT}/svc" push -q origin :refs/heads/story/a; : > "${ROOT}/herdr.log"
+# A tag named story/a on origin is not the branch: the story still reads as not pushed.
+"${GIT[@]}" -C "${ROOT}/svc" tag story/a && "${GIT[@]}" -C "${ROOT}/svc" push -q origin refs/tags/story/a
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "epic mode: a builder whose story branch is not pushed is nudged, and told so" "idle|3|yes" \
+check "epic mode: a builder whose story branch is not pushed (only a tag story/a) is nudged, and told so" "idle|3|yes" \
   "${got%%|*}|$(nudges)|$(has "you are idle and story/a is not pushed" "$(log)")"
 rm -f "${ROOT}/screen" "${b}/stories/a.md"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
