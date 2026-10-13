@@ -9,6 +9,7 @@
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
+#   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -696,6 +697,46 @@ record_finding() {
   echo "recorded ${kind}"
 }
 
+# REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
+#   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
+#   session_log(projects, session) is a session's .jsonl under Claude Code's projects dir, or "".
+#   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
+#   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
+REPORT_PY='
+import glob, json, os, re
+# ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
+# cache writes assume the 1-hour cache at 2x input. Update when prices change.
+PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
+
+def pr_key(pr):
+    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
+    return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
+
+def session_log(projects, session):
+    paths = glob.glob(os.path.join(projects, "*", session + ".jsonl")) if session not in ("", "-") else []
+    return paths[0] if paths else ""
+
+def session_usage(path, seen):
+    tok, usd, models = [0, 0, 0, 0], 0.0, set()
+    for line in open(path, errors="ignore"):
+        try:
+            m = json.loads(line).get("message") or {}
+        except (ValueError, AttributeError):
+            continue
+        u, mid = m.get("usage"), m.get("id")
+        if not u or not mid or mid in seen:
+            continue
+        seen.add(mid)
+        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
+        model = m.get("model", "?")
+        models.add(model)
+        tok = [x + y for x, y in zip(tok, t)]
+        price = next((v for k, v in PRICES.items() if k in model), None)
+        if price:
+            usd += sum(x * p for x, p in zip(t, price)) / 1e6
+    return tok, usd, models
+'
+
 # lessons [--all] — the "brief" below is lessons_file (default the brief itself).
 # Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
@@ -711,17 +752,13 @@ lessons_report() {
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
   # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
   # is long by design and loaded by the agents themselves.
-  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
+exec(os.environ["SWARM_REPORT_PY"])
 project, log, brief, min_prs, recent_days, max_bytes, flag, memory, swarm_brief = sys.argv[1:10]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
-
-def pr_key(pr):
-    # One PR, however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
-    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
-    return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
 def adopted(kind):
     # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
@@ -813,12 +850,10 @@ cost_report() {
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" <<'PY'
-import glob, json, os, sys
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" <<'PY'
+import os, sys
+exec(os.environ["SWARM_REPORT_PY"])
 log, since, lead, projects = sys.argv[1:5]
-# ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
-# cache writes assume the 1-hour cache at 2x input. Update when prices change.
-PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
 agents = []
 if os.path.exists(log):
     for line in open(log):
@@ -831,26 +866,14 @@ rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    paths = glob.glob(os.path.join(projects, "*", a["session"] + ".jsonl")) if a["session"] != "-" else []
-    if a["kind"] != "claude" or not paths:
+    path = session_log(projects, a["session"])
+    if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
-    for line in open(paths[0], errors="ignore"):
-        try:
-            m = json.loads(line).get("message") or {}
-        except ValueError:
-            continue
-        u, mid = m.get("usage"), m.get("id")
-        if not u or not mid or mid in seen:
-            continue
-        seen.add(mid)
-        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
-        model = m.get("model", "?")
-        r["models"].add(model)
-        r["tok"] = [x + y for x, y in zip(r["tok"], t)]
-        price = next((v for k, v in PRICES.items() if k in model), None)
-        if price:
-            r["usd"] += sum(x * p for x, p in zip(t, price)) / 1e6
+    tok, usd, models = session_usage(path, seen)
+    r["models"] |= models
+    r["tok"] = [x + y for x, y in zip(r["tok"], tok)]
+    r["usd"] += usd
 def n(x):
     return f"{x/1e6:.1f}M" if x >= 1e6 else f"{x/1e3:.0f}k"
 print("| role | agents | model | input | cache write | cache read | output | est. $ |")
@@ -863,6 +886,101 @@ for role, r in sorted(rows.items(), key=lambda kv: -kv[1]["usd"]):
 print(f"| **total** | {sum(r['agents'] for r in rows.values())} | | " + " | ".join(n(x) for x in tot) + f" | {usd:.2f} |")
 print("\nList prices; on a subscription this is plan usage, not a bill. Codex agents are not priced.")
 PY
+}
+
+# outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
+# already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells and
+# closes it took, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
+# agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
+BUILDER_ROLES="code code-risky docs chore verify escalate"
+outcomes_report() {
+  local since="" rows meta="" slug text kind src pr state
+  [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
+    || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
+  [[ -z "${1:-}" ]] || since="$2"
+  [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  # date, slug, role, model, effort, cost_usd, tokens, tells, closes, attempts
+  rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
+    "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" "${BUILDER_ROLES}" <<'PY'
+import collections, json, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+log, events, since, projects, roles = sys.argv[1:6]
+
+def slug_of(path, name):
+    # A builder runs in <repo>-wt/<slug>; any other cwd (or none logged) leaves the agents.tsv name.
+    for line in open(path, errors="ignore") if path else ():
+        try:
+            cwd = json.loads(line).get("cwd")
+        except (ValueError, AttributeError):
+            continue
+        if cwd:
+            return os.path.basename(cwd.rstrip("/")) if os.path.dirname(cwd.rstrip("/")).endswith("-wt") else name
+    return name
+
+steer = collections.Counter()
+if os.path.exists(events):
+    for line in open(events, errors="ignore"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 5 and f[1] in ("tell", "close"):
+            steer[f[1], f[2]] += 1
+attempts = collections.Counter()
+for line in open(log, errors="ignore"):
+    f = line.rstrip("\n").split("\t")
+    if len(f) != 7 or f[1] not in roles.split():
+        continue
+    day, role, name, _, model, effort, session = f
+    path = session_log(projects, session)
+    slug = slug_of(path, name)
+    attempts[slug] += 1
+    if day < since:
+        continue
+    cost = tokens = ""
+    if path:
+        tok, usd, _ = session_usage(path, set())
+        cost, tokens = f"{usd:.2f}", str(sum(tok))
+    targets = {slug, name}
+    tells, closes = (sum(steer[c, t] for t in targets) for c in ("tell", "close"))
+    print("\t".join([day, slug, role, model, effort, cost, tokens, str(tells), str(closes), str(attempts[slug])]))
+PY
+)"
+  # Per slug: kind, risk and the PR, from the story (on the board, or its last version in git once a
+  # merge deleted it) and gh. A gh that fails leaves the PR empty; it never fails the run.
+  while IFS= read -r slug; do
+    [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+    text="$(story_text "${slug}")"; pr=""; state=""
+    kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
+    if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then
+      IFS=$'\t' read -r pr state <<< "$( (cd "${src}" && gh pr list --head "story/${slug}" --state all --limit 1 \
+        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null || true)"
+    fi
+    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${pr}"$'\t'"${state}"$'\n'
+  done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
+import collections, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 5}
+fixed = collections.Counter()
+if os.path.exists(sys.argv[1]):
+    for line in open(sys.argv[1], errors="ignore"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 4:
+            fixed[pr_key(f[2])] += 1
+print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
+for line in os.environ["SWARM_ROWS"].splitlines():
+    day, slug, role, model, effort, cost, tokens, tells, closes, attempts = line.split("\t")
+    kind, risk, pr, state = meta.get(slug, ("", "", "", ""))
+    print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tells, closes,
+                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
+PY
+}
+
+# story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
+# the board's git history; nothing when neither has it.
+story_text() {
+  local f="${BOARD}/stories/$1.md" c
+  if [[ -f "${f}" ]]; then cat "${f}"; return; fi
+  c="$(git -C "${BOARD}" log --diff-filter=D -1 --format=%H -- "stories/$1.md" 2>/dev/null)" || return 0
+  [[ -z "${c}" ]] || git -C "${BOARD}" show "${c}^:./stories/$1.md" 2>/dev/null || true
 }
 
 # deliver_prompt <name> <prompt-file> — submit the brief and confirm the agent acted on it.
@@ -2290,12 +2408,25 @@ exec(E["SWARM_STALL_PY"])
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
 NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
+WIDE = W >= 140   # two columns: needs you and the epics on the left, recent as a log on the right
+RW = W * 2 // 5 if WIDE else 0
+LW = W - RW - 1 if WIDE else W
 COLOR = E.get("DASH_COLOR") == "1"
 KEYS = E.get("DASH_KEYS") == "1"
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
 SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
        "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
+# A colour per model (256-colour ANSI), the same wherever it shows: its name in that colour, and from
+# 140 columns a label on that colour.
+MODEL_COLOR = {"fable": 213, "opus": 208, "sonnet": 75, "haiku": 114, "codex": 250}
+for m, c in MODEL_COLOR.items():
+    STYLE[m], STYLE[m + "-label"] = f"38;5;{c}", f"38;5;16;48;5;{c}"
+
+def model_style(model, label=False):
+    k = next((m for m in MODEL_COLOR if m in model.lower()), None)
+    return (k + "-label" if label else k) if k else "dim"
+
 LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
 out = []
 
@@ -2386,6 +2517,12 @@ def pr_ref(m):
 # life for stall_minutes (STALL_PY) is stalled, and needs you.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
 seen = last_seen(E["DASH_EVENTS"])
+STARTS = ("agent", "conduct", "story")
+started = {}   # target -> when its newest start (agent, conduct or story) in events.tsv ran
+for f in read_tsv(E["DASH_EVENTS"], 5):
+    t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
+    if t is not None and t > started.get(f[2], 0):
+        started[f[2]] = t
 recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
@@ -2437,7 +2574,8 @@ if agents is not None:
                     stalled.append((name, age))
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
                      look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
-                     open=bool(slug) and story_by_slug[slug][2] != "done")
+                     open=bool(slug) and story_by_slug[slug][2] != "done",
+                     since=started.get(slug) or started.get(epic_of.get(base)) or started.get(base))
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
         r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
@@ -2498,11 +2636,23 @@ for r in shown:
     groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
 name_w = min(max((len(r["name"]) for r in shown), default=0), 30 if not NARROW else max(12, (W - 20) // 2))
 
+def agent_cols(r):
+    # Role and model, then the state; from 140 columns the model is a label in its colour, and a
+    # working agent shows how long since it started.
+    row = []
+    if WIDE:
+        label = f" {r['model']} "
+        row = [(f"{r['role']:<10} ", "dim"), (label, model_style(r["model"], True)), (" " * max(16 - len(label), 1), "")]
+    elif not NARROW:
+        row = [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", model_style(r["model"]))]
+    row.append((r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"))
+    if WIDE and r.get("state") == "working" and r.get("since"):
+        m = max(int(time.time() - r["since"]) // 60, 0)
+        row.append((f"  {m}m" if m < 60 else f"  {m // 60}h{m % 60:02d}m", "dim"))
+    return row
+
 def agent_row(r):
-    row = [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")]
-    if not NARROW:
-        row += [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", "dim")]
-    return row + [(r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim")]
+    return [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")] + agent_cols(r)
 
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
@@ -2545,7 +2695,7 @@ def rank(item):
 # An active epic with no open story and no agent shown is one line for them all.
 quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
-epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), W // 3)
+epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
 if quiet:
     epic_view.append([sym("done"), (f"{len(quiet)} active epic{'' if len(quiet) == 1 else 's'} with no open story: {', '.join(quiet)}", "dim")])
@@ -2570,10 +2720,8 @@ def tree_view():
             rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
             for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
-                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")]
-                if not NARROW:
-                    row += [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", "dim")]
-                rows.append(row + [(r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"), (f"  {r['prs']}" if r["prs"] else "", "dim")])
+                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(r)
+                rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim")])
     return rows or [[("no agents open in this project's panes", "dim")]]
 
 # Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
@@ -2600,7 +2748,6 @@ def when(s):
     except ValueError:
         return None, s
 
-STARTS = ("agent", "conduct", "story")
 events = []   # (time, actor, text, icon key)
 for l in lines("DASH_MERGES"):
     f = l.split("\t", 2)
@@ -2620,18 +2767,24 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
 ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad")}
 dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
 
-def recent_box(w, n):
+def stamp(raw, t):
+    # The log's time column: HH:MM today, the date before; a dated finding of today is "today".
+    t = t.astimezone()
+    return t.strftime("%m-%d") if t.date() != TODAY else "today" if len(raw) == 10 else t.strftime("%H:%M")
+
+def recent_box(w, n, clock=False):
     rec, findings = [], 0
     actor_w = 0 if w < 100 else 14
-    for (_, ago), (_, actor, text, kind) in dated:
+    tw = 5 if clock else 9
+    for (t, ago), (raw, actor, text, kind) in dated:
         if len(rec) >= n:
             break
         if kind == "finding":
             findings += 1
             if findings > max(1, n // 3):
                 continue
-        room = max(w - 4 - 11 - 2 - (actor_w + 2 if actor_w else 0), 0)
-        row = [(f"{ago:>9}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
+        room = max(w - 4 - tw - 2 - 2 - (actor_w + 2 if actor_w else 0), 0)
+        row = [(f"{stamp(raw, t) if clock else ago:>{tw}}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
         if actor_w:
             row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
         rec.append(row)
@@ -2639,14 +2792,18 @@ def recent_box(w, n):
 
 def ladder_box(w, cell=30):
     policy = [l.split() for l in lines("DASH_POLICY")]
-    ladder = [f"{p[0]:<11}→ {p[2] if p[1] == 'claude' else p[1]} · {p[3]}" for p in policy]
+    ladder = [(f"{p[0]:<11}→ ", f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}") for p in policy]
     per = max(1, (w - 4) // cell)
-    return box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)], w)
+    return box("ladder", [[s for role, m in ladder[i:i + per] for s in ((role, ""), (m, model_style(m)), (" " * max(cell - len(role) - len(m), 0), ""))]
+                          for i in range(0, len(ladder), per)], w)
 
-# Layout. Header: one line, the clock at the right; then the summary line.
+# Layout. Header: one line, the clock at the right; then the summary line (from 140 columns, the
+# status bar at the bottom carries it, with the merge mode).
 right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
 head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
         ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
+if WIDE:
+    head = head[:2] + head[4:]
 if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
@@ -2656,46 +2813,60 @@ summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} age
            (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
 if E.get("DASH_COST"):
     summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
-out.append(fit(summary, W))
+if not WIDE:
+    out.append(fit(summary, W))
 drift = int(E.get("DASH_DRIFT") or 0)
 if drift:
     out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
 
-out += box("needs you", [l for r in need for l in wrap(r, W - 4)], W, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], W)]
+# The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
+# left column, LW wide.
+left = box("needs you", [l for r in need for l in wrap(r, LW - 4)], LW, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], LW)]
 if E.get("DASH_TREE") == "1":
-    out += box("agents by workspace and tab", tree_view(), W)
+    left += box("agents by workspace and tab", tree_view(), LW)
 elif epic_view:
-    out += box("epics", epic_view, W)
+    left += box("epics", epic_view, LW)
 if blocked or later:
-    out.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], W))
+    left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
-# The legend, packed onto as few lines as the width allows.
+# The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
+KEYWORDS = "q quit · t tree · l ladder · r redraw"
 legend, cur = [], ""
-for item in LEGEND + (["q quit · t tree · l ladder · r redraw"] if KEYS else []):
+for item in LEGEND + ([KEYWORDS] if KEYS and not WIDE else []):
     if cur and len(cur) + 3 + len(item) > W:
         legend.append(cur); cur = item
     else:
         cur = f"{cur}   {item}" if cur else item
 legend.append(cur)
+foot = [fit([(cut(l, W), "dim")], W) for l in legend]
+if WIDE:
+    foot.append(fit([("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary
+                    + [("   ", ""), (KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")], W))
 
-# Recent fills the height left; from 140 columns a shown ladder sits beside it.
+# Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
+# column; from 140 they are the right column, the ladder on top.
+# A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
 ladder = E.get("DASH_LADDER") == "1"
-if ladder and W < 140:
-    out += ladder_box(W)
-# A watched frame drops what does not fit, never the legend; a one-shot dash shows at least 5 rows.
-room = H - len(out) - 2 - len(legend) if H else 8
-if not KEYS:
-    room = max(5, room)
-if ladder and W >= 140:
-    lw = 64
-    lad = ladder_box(lw)
-    rec = recent_box(W - lw - 1, max(room, len(lad) - 2))
-    out += [(a or " " * lw) + " " + (b or "") for a, b in itertools.zip_longest(lad, rec, fillvalue=None)]
-elif room > 0:
-    out += recent_box(W, room)
+if WIDE:
+    side = ladder_box(RW) if ladder else []
+    room = H - len(out) - len(foot) - len(side) - 2 if H else max(8, len(left) - len(side) - 2)
+    if not KEYS:
+        room = max(5, room)
+    if room > 0:
+        side += recent_box(RW, room, clock=True)
+    out += [(a if a is not None else " " * LW) + " " + (b or "") for a, b in itertools.zip_longest(left, side)]
+else:
+    out += left
+    if ladder:
+        out += ladder_box(W)
+    room = H - len(out) - 2 - len(foot) if H else 8
+    if not KEYS:
+        room = max(5, room)
+    if room > 0:
+        out += recent_box(W, room)
 if KEYS and H:
-    out = out[:max(H - len(legend), 0)]   # a watched frame never scrolls the screen
-out += [fit([(cut(l, W), "dim")], W) for l in legend]
+    out = out[:max(H - len(foot), 0)]   # a watched frame never scrolls the screen
+out += foot
 if KEYS and H:
     out = out[:H]
 print("\n".join(l.rstrip() for l in out))
@@ -2917,6 +3088,7 @@ dispatch() {
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
+    outcomes) outcomes_report "$@" ;;
     log-finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
@@ -2946,7 +3118,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost lessons findings wait watch base _base _name _target _label _trusted _pane"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes lessons findings wait watch base _base _name _target _label _trusted _pane"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {

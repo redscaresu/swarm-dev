@@ -3,7 +3,7 @@
 # Builds a throwaway board in git, stub herdr, gh and claude on PATH, then changes the state every few
 # seconds (a PR merges, a story unblocks, a builder starts, a PR goes green) while the dash watches.
 # Nothing real is read: no herdr, no GitHub, no Claude Code sessions, no ~/.claude.
-#   asciinema rec --window-size 120x34 -c scripts/demo-dash.sh demo.cast && agg demo.cast docs/assets/dash.gif
+#   asciinema rec --window-size 160x30 -c scripts/demo-dash.sh demo.cast && agg demo.cast docs/assets/dash.gif
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -76,37 +76,42 @@ item stories/rotate-staging-key.md "Rotate the staging API key" 'kind: lead' 'st
 merge 190 37 rl-config; merge 140 38 rl-middleware; merge 95 39 audit-events
 
 printf 'w1:p1 conductor\nw1:p2 rl-token-bucket\nw1:p3 rl-redis-store\n' > "${P}/.swarm/state/rate-limiting"
-printf 'w1:p5 conductor\nw1:p6 audit-schema\n' > "${P}/.swarm/state/audit-log"
+printf 'w1:p5 conductor\nw1:p6 audit-schema\nw1:p7 cx-audit-schema\n' > "${P}/.swarm/state/audit-log"
 T="$(date +%F)"
-printf "%s\t%s\t%s\tclaude\topus\t%s\t%s\n" "$T" conduct conduct-rate-limiting high conduct-rate-limiting "$T" code rl-redis-store high rl-redis-store \
-  "$T" code rl-token-bucket high rl-token-bucket "$T" conduct conduct-audit-log high conduct-audit-log \
-  "$T" code-risky audit-schema xhigh audit-schema > "${P}/.swarm/agents.tsv"
+# One model each where it shows, so the dash's colour per model is on screen.
+printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$T" conduct conduct-rate-limiting claude fable high conduct-rate-limiting \
+  "$T" code rl-redis-store claude sonnet medium rl-redis-store "$T" code rl-token-bucket claude sonnet high rl-token-bucket \
+  "$T" conduct conduct-audit-log claude opus high conduct-audit-log "$T" code-risky audit-schema claude opus xhigh audit-schema \
+  "$T" review cx-audit-schema codex gpt high - > "${P}/.swarm/agents.tsv"
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":2000000,"output_tokens":1500000}}}' > "${D}/projects/p/conduct-rate-limiting.jsonl"
 printf '%s\tvacuous-test\thttps://github.com/acme/api/pull/38\ta test that passed with its fix removed\n' "$T" > "${P}/.swarm/findings.tsv"
 event 60 conduct rate-limiting w1:p0; event 58 story rl-token-bucket w1:p1; event 57 story rl-redis-store w1:p1
 event 40 conduct audit-log w1:p0; event 39 story audit-schema w1:p5; event 12 tell:findings rl-token-bucket w1:p1
-event 3 review rl-token-bucket w1:p1
+event 3 review rl-token-bucket w1:p1; event 20 agent cx-audit-schema w1:p5
 pr 41 COMPLETED SUCCESS
 agents conduct-rate-limiting:working:w1-p1 rl-token-bucket:idle:w1-p2 rl-redis-store:working:w1-p3 \
-  conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6
+  conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6 cx-audit-schema:working:w1-p7
 
 # The director: one change every few seconds while the dash watches.
 (
   exec >/dev/null 2>&1
   sleep 4; merge 0 41 rl-token-bucket; event 0 close rl-token-bucket w1:p1; fresh
-  agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6
+  agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6 \
+    cx-audit-schema:working:w1-p7
   sleep 3; sed -i.bak -e 's/^status: blocked/status: ready/' -e '/^blocked_by/d' "${P}/docs/stories/rl-headers.md"; rm -f "${P}"/docs/stories/*.bak
   "${G[@]}" commit -qam "unblock rl-headers"; event 0 unblock rl-headers w1:p1; fresh
   sleep 2; echo 'w1:p4 rl-headers' >> "${P}/.swarm/state/rate-limiting"; event 0 story rl-headers w1:p1
-  printf '%s\tcode\trl-headers\tclaude\topus\thigh\trl-headers\n' "$T" >> "${P}/.swarm/agents.tsv"
-  agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 rl-headers:working:w1-p4 conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6
+  printf '%s\tcode\trl-headers\tclaude\thaiku\tlow\trl-headers\n' "$T" >> "${P}/.swarm/agents.tsv"
+  agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 rl-headers:working:w1-p4 conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6 \
+    cx-audit-schema:working:w1-p7
   sleep 3; pr 42 IN_PROGRESS ""
   python3 - "${P}/docs/stories/audit-schema.md" <<'PY'
 import sys; p = sys.argv[1]; t = open(p).read()
 open(p, "w").write(t.replace("status: ready", "status: review\nprs: https://github.com/acme/api/pull/42"))
 PY
   "${G[@]}" commit -qam "audit-schema in review"; event 0 review audit-schema w1:p5; fresh
-  agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 rl-headers:working:w1-p4 conduct-audit-log:working:w1-p5 audit-schema:idle:w1-p6
+  agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 rl-headers:working:w1-p4 conduct-audit-log:working:w1-p5 audit-schema:idle:w1-p6 \
+    cx-audit-schema:working:w1-p7
   sleep 4; pr 42 COMPLETED SUCCESS
   printf '%s\tdocs-misstate-code\thttps://github.com/acme/api/pull/42\tthe schema comment named a column that was renamed\n' "$T" >> "${P}/.swarm/findings.tsv"; fresh
 ) &

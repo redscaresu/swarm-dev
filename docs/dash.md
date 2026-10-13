@@ -6,12 +6,17 @@ when something changed. Press `q` to quit (Ctrl-C works too), `r` to redraw, `t`
 agents by herdr workspace and tab and back, and `l` to show the model per role; resizing the
 terminal redraws it at the new size. It works in any terminal, inside herdr or not: it only reads,
 so it asks herdr for the agents whenever `herdr` is on your PATH. It never changes the board, the
-state or the logs, and never opens or closes a pane. Top to bottom:
+state or the logs, and never opens or closes a pane.
+
+In a terminal at least 140 columns wide it splits into two columns: needs you and the epics on
+the left, recent as a timestamped log on the right, and a status bar on the last line. Narrower, it
+is one column, top to bottom:
 
 - **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm` does next, and the
   time of the last refresh. Under it, one summary line: epics active, agents working, PRs green and
   waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today); then a
-  warning when the main checkout has board edits not committed yet.
+  warning when the main checkout has board edits not committed yet. From 140 columns the merge
+  mode and the summary move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled builder (working for `stall_minutes`, 30
@@ -30,7 +35,10 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
   the swarm's logged `finish`, or a last status of `done` or `review` or a `prs:` line. A story
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
-  when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. Idle and
+  when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. From
+  140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
+  a working agent shows how long ago it started (its `story`, `conduct` or `agent` line in
+  `events.tsv`). Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
   epics with no open story share one line. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
@@ -38,17 +46,24 @@ state or the logs, and never opens or closes a pane. Top to bottom:
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
   fixed (✎, one row per PR and day), agents, conductors and builders started (▶), and the swarm's
-  other actions (·); a failed one is ✗. It fills the rest of the screen.
+  other actions (·); a failed one is ✗. It fills the rest of the screen. From 140 columns it is
+  the right column, and its time column is the clock instead (`14:05` today, `10-03` before then;
+  a finding dated today reads `today`).
 - **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on.
+  From 140 columns it sits at the top of the right column, above recent.
 - **Legend**: one status vocabulary throughout: ● working, ○ ready, ◐ review or CI running, ✓ done
   or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown), and ?
   for a herdr state dash does not know (with herdr's word for it).
+- **Status bar**, from 140 columns, on the last line: the merge mode, the summary's counts, today's
+  cost and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
 
 It fits the terminal: it truncates with … rather than wraps, except that a needs-you action wraps
 onto an indented line so it is never cut. Under 100 columns it drops the role, model and actor
 columns, and when the header does not fit, its version and merge mode go before what comes next.
-From 140 columns a shown ladder sits beside recent. Colour only on a terminal, unless `NO_COLOR` is
-set; the symbols carry the same meaning in plain text. If herdr is missing or gives no answer, it
+Each model has a colour of its own, the same wherever it appears (agent rows, the tree, the
+ladder): Fable pink, Opus orange, Sonnet blue, Haiku green, codex grey. Colour only on a terminal,
+and none at all when `NO_COLOR` is set or the output goes to a pipe or a file; the symbols carry
+the same meaning in plain text. If herdr is missing or gives no answer, it
 still shows the board and says the agents are unavailable. At 100 columns, from a real project:
 
 ```text

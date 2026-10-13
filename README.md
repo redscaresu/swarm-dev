@@ -7,7 +7,7 @@ swarm-dev runs a team of Claude Code agents that build software while you watch.
 with one agent. Others plan it, try to break the plan, and build it in parallel, each in its own
 terminal pane. The run stops whenever a decision is yours.
 
-![swarm.sh dash --watch on a demo project](docs/assets/dash.gif)
+![swarm.sh dash --watch on a demo project, 160 columns wide: what needs you and the epics on the left, recent on the right](docs/assets/dash.gif)
 
 ## How it works
 
@@ -75,6 +75,7 @@ from is missing from that list. In either case, run `claude update` and restart 
 | `swarm.sh status` | Show agents that need a look (from their Claude session: waiting, gone or unknown), what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
+| `swarm.sh outcomes [--since YYYY-MM-DD]` | Print one TSV row per builder: the story, its kind and risk, the model and effort, cost, tells, findings fixed, the PR and how it ended, and which attempt it was. |
 
 You can also put builder rules in `.claude/swarm/brief.md` and settings such as `merge = agent` in
 `.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock
