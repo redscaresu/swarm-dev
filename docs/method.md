@@ -109,6 +109,10 @@ each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the boa
 
 ## Configuring a project
 
+`swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
+without overwriting a file, creates `.claude/swarm/`, and adds `.swarm/` and the board's Obsidian
+lines to `.gitignore`.
+
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
 runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
 prints every setting and where it came from.

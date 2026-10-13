@@ -22,6 +22,7 @@
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
+#   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
@@ -2679,6 +2680,34 @@ PY
   echo "closed ${n}"
 }
 
+# init_project — set the project up from the installed plugin, from its git root: the board templates
+# (never over a file that exists), .claude/swarm/, and the .gitignore lines. A second run changes nothing.
+init_project() {
+  local top rel f line n=0
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "init: not in a git repo; run it from your project's root"
+  [[ "$(pwd -P)" == "${top}" ]] || die "init: run it from the root of the git repo, ${top}"
+  [[ "${PROJECT_DIR}" == "${top}" ]] || die "init: the project is ${PROJECT_DIR}; run init there"
+  mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
+  rel="${BOARD#"${PROJECT_DIR}/"}"
+  while IFS= read -r f; do
+    if [[ -e "${BOARD}/${f}" ]]; then echo "left   ${rel}/${f} (it exists)"; continue; fi
+    mkdir -p "$(dirname "${BOARD}/${f}")" && cp "${SWARM_HOME}/templates/docs/${f}" "${BOARD}/${f}"
+    echo "copied ${rel}/${f}"; n=$((n + 1))
+  done < <(cd "${SWARM_HOME}/templates/docs" && find . -type f | sed 's|^\./||' | sort)
+  [[ ${n} -gt 0 ]] || echo "copied nothing: the board has every template file"
+  [[ -d .claude/swarm ]] || { mkdir -p .claude/swarm; echo "created .claude/swarm/"; }
+  n=0
+  for line in .swarm/ "${rel}/.obsidian/*" "!${rel}/.obsidian/app.json"; do
+    # A board outside the repo is not the repo's to ignore.
+    [[ "${line}" == .swarm/ || "${BOARD}/" == "${PROJECT_DIR}/"* ]] || continue
+    grep -qxF -- "${line}" .gitignore 2>/dev/null && continue
+    [[ ! -s .gitignore || -z "$(tail -c1 .gitignore)" ]] || echo >> .gitignore
+    echo "${line}" >> .gitignore; echo "added ${line} to .gitignore"; n=$((n + 1))
+  done
+  [[ ${n} -gt 0 ]] || echo ".gitignore already has every line"
+  echo "One step left: run claude once in ${top} and accept the folder trust prompt. Agents won't start until it is trusted."
+}
+
 # close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
 # in another workspace (a conductor's is its HLD's): its first pane id, "<workspace>:<pane>", says which.
 close_tabs() {
@@ -2726,6 +2755,7 @@ dispatch() {
     reconcile) reconcile ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
+    init)   init_project ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug

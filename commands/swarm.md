@@ -10,6 +10,11 @@ Drive the chain end to end, picking up wherever the board says it stands. Requir
 (`HERDR_ENV=1`); if not inside herdr, say so and stop. Read `${CLAUDE_PLUGIN_ROOT}/docs/method.md`
 first if you have not this session.
 
+If `<board>/stories/README.md` does not exist, the project has no board yet. Offer to run
+`swarm.sh init` from the project's git root, and wait for the user's yes before you run it. It adds
+the board, `.claude/swarm/` and the `.gitignore` lines, then tells the user to run `claude` there once
+and accept the folder trust prompt. Only the user can do that, so stop after it.
+
 First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
 an old version still runs.
 
