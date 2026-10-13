@@ -1,8 +1,8 @@
 ---
 kind: code
 status: blocked
-blocked_by: [build-outcomes]
-depends_on: [build-outcomes]
+blocked_by: [build-outcomes, opusplan-spike]
+depends_on: [build-outcomes, opusplan-spike]
 touches: [bin/swarm.sh (policy, ROLE_GROUPS, build_story's role line, CFG_/CONFIG_KEYS/load_config), tests/config_test.sh, tests/epic_test.sh, docs/method.md (§ Model and effort, config table), README.md (Cost and safety)]
 ---
 
@@ -16,9 +16,17 @@ With N > 0, build_story gives role `code-sonnet` to a `kind: code` story without
 `cksum` of its slug mod N is 0. The choice is deterministic, so a rebuild of the same story picks the
 same role and the row in agents.tsv already says which arm a build was in; no new logging.
 
+**Two more arms (user, 2026-10-13), shaped by opusplan-spike's findings:** if the spike shows `opusplan`
+runs unattended, add a role `code-opusplan` (`claude opusplan high`, with whatever approval the spike found)
+and split the sampled share between `code-sonnet` and `code-opusplan` by the same cksum rule (e.g. cksum mod
+2N), so each arm is fixed per slug. If the spike names a subagent-model setting, add a config key
+`builder_subagent_model` (default empty = unchanged) that start_agent passes to building roles only. If a
+lever does not work, leave it out and say so in the PR.
+
 **Done when:**
 - With `sonnet_share = 0`, every role resolves as today (a test over code, code + risk high, docs, chore, verify).
 - With `sonnet_share = 4`, a fixture set of code stories splits by the cksum rule, a `risk: high` story is always code-risky, docs/chore/verify are unchanged, and the started agent's agents.tsv row says `code-sonnet sonnet high`. Shown red on the old code.
+- With the spike's levers present: a sampled story resolves to code-sonnet or code-opusplan by the rule, fixed per slug; with `builder_subagent_model` set, a building role's start carries the setting and a planning or conducting role's does not.
 - A value that is not a non-negative integer is refused by load_config naming the key.
 - The method's config table, § Model and effort and README's Cost and safety describe the key and that it ships off. No plugin.json bump: it ships in the next release story.
 
