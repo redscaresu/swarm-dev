@@ -321,7 +321,14 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #     waitingFor, when the entry has it, on one line and cut to WHY_MAX characters), unknown (the
 #     call failed, or a status it does not know) or gone (no entry for the recorded session, or one
 #     with no status: Claude Code lists status only while the process is alive). None for an agent
-#     herdr must answer for: codex, no line, or a session of '-'.
+#     herdr must answer for: codex, no line, or a session of '-' (session_id's None).
+#   login_expired(log, name, projects) -> True when the last user or assistant entry in <name>'s
+#     transcript (<projects>/*/<session>.jsonl, the file cost finds) is Claude Code's "Login expired ·
+#     Please run /login": an assistant entry whose error field is authentication_failed. A prompt
+#     after it (a resume sent) clears it; Claude Code's own user entries do not (is_prompt: isMeta, a
+#     <task-notification>, "[Request interrupted by user]", a slash command such as /login run in its
+#     pane and its <local-command-stdout>). A transcript that cannot be read is not
+#     expired. Never the pane.
 PANES_PY='
 import glob, json, os, re
 WHY_MAX = 60
@@ -350,7 +357,7 @@ def agent_state(a, name, s=None):
     if re.search(r"-done\d*$", name):
         return "retired", False
     return st, False
-def session_state(log, name, listing):
+def session_id(log, name):
     line = None
     try:
         for l in open(log, encoding="utf-8", errors="replace"):
@@ -359,7 +366,35 @@ def session_state(log, name, listing):
                 line = f
     except OSError:
         pass
-    if not line or line[3] != "claude" or line[6] in ("", "-"):
+    return line[6] if line and line[3] == "claude" and line[6] not in ("", "-") else None
+AUTOMATED_PROMPTS = ("<task-notification>", "[Request interrupted", "<command-name>", "<local-command")
+def is_prompt(d):
+    c = (d.get("message") or {}).get("content")
+    if isinstance(c, list):
+        c = next((x.get("text") for x in c if isinstance(x, dict) and x.get("type") == "text"), "")
+    return not d.get("isMeta") and not str(c or "").startswith(AUTOMATED_PROMPTS)
+def login_expired(log, name, projects):
+    sid, last = session_id(log, name), None
+    for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
+        try:
+            for l in open(path, encoding="utf-8", errors="replace"):
+                if "\"type\":\"assistant\"" not in l and "\"type\":\"user\"" not in l:
+                    continue
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                if not isinstance(d, dict) or d.get("isSidechain"):
+                    continue
+                if d.get("type") == "assistant" or (d.get("type") == "user" and is_prompt(d)):
+                    last = d
+        except OSError:
+            return False
+        break
+    return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
+def session_state(log, name, listing):
+    sid = session_id(log, name)
+    if sid is None:
         return None
     try:
         entries = json.loads(listing) if listing is not None else None
@@ -367,7 +402,7 @@ def session_state(log, name, listing):
         entries = None
     if not isinstance(entries, list):
         return "unknown", ""
-    e = next((x for x in entries if isinstance(x, dict) and x.get("sessionId") == line[6]), None)
+    e = next((x for x in entries if isinstance(x, dict) and x.get("sessionId") == sid), None)
     st = e.get("status") if e is not None else None
     if st is None:
         return "gone", ""
@@ -624,6 +659,10 @@ codex_out_dir() {
   esac
 }
 
+# CLAUDE_PROJECTS: Claude Code's per-project folders (session transcripts, memory), read by cost, outcomes,
+# lessons and wait's login_expired.
+CLAUDE_PROJECTS="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}"
+
 # AGENTS_LOG: one line per agent started (date, role, name, kind, model, effort, session), so
 # `cost` can attribute every token to a role. Beside state/, not in it: state/ holds tab records.
 AGENTS_LOG="${PROJECT_DIR}/.swarm/agents.tsv"
@@ -650,6 +689,15 @@ exec(os.environ["SWARM_PANES_PY"])
 s = session_state(sys.argv[1], sys.argv[2], sys.stdin.read() if os.environ["SWARM_LIST_OK"] else None)
 print("herdr" if s is None else s[0] + (": " + s[1] if s[1] else ""))' "${AGENTS_LOG}" "$1")" || out=""
   echo "${out:-unknown}"
+}
+
+# login_expired <name> — succeed when <name>'s Claude session stopped on an expired login (PANES_PY's
+# login_expired): only the user's /login clears it, so nudging or waiting on it is wasted.
+login_expired() {
+  SWARM_PANES_PY="${PANES_PY}" python3 -c '
+import os, sys
+exec(os.environ["SWARM_PANES_PY"])
+sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
 # record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
@@ -745,7 +793,7 @@ lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
   # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
   local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
-  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
+  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS}/${key//[^A-Za-z0-9]/-}/memory}"
   # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
   # is long by design and loaded by the agents themselves.
   SWARM_REPORT_PY="${REPORT_PY}" python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
@@ -846,7 +894,7 @@ cost_report() {
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" <<'PY'
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
 import os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 log, since, lead, projects = sys.argv[1:5]
@@ -896,7 +944,7 @@ outcomes_report() {
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # date, slug, role, model, effort, cost_usd, tokens, tells, closes, attempts
   rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
-    "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" "${BUILDER_ROLES}" <<'PY'
+    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" <<'PY'
 import collections, json, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 log, events, since, projects, roles = sys.argv[1:6]
@@ -1158,7 +1206,8 @@ settle() {
 # wait_agent <name> <timeout-ms> [--stall] — block until the agent settles (settle) and print its
 # state; at the timeout, print the last one and fail. A builder whose session is idle before its
 # story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
-# to IDLE_NUDGES times. A nudge herdr could not deliver is neither logged nor counted: wait stops
+# to IDLE_NUDGES times. An idle agent whose transcript ends on an expired login (login_expired) is
+# never nudged: wait prints `auth`, with a line on stderr naming it. A nudge herdr could not deliver is neither logged nor counted: wait stops
 # nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
@@ -1170,6 +1219,10 @@ wait_agent() {
     rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
     [[ ${rc} -eq 0 ]] || { echo "${status}"; return "${rc}"; }
+    if [[ "${status}" == idle ]] && login_expired "${name}"; then
+      echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
+      echo auth; return 0
+    fi
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
     [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
     reason="$(nudge_reason "${name}")" || break
@@ -1185,7 +1238,8 @@ wait_agent() {
 }
 
 # wait_conductor <agent> <timeout-ms> — a conductor is idle whenever it waits on its own builders, so
-# idle is not settled: wait on until its report exists or it is waiting on a prompt or gone.
+# idle is not settled: wait on until its report exists, it is waiting on a prompt or gone, or its
+# login expired (wait_agent's auth).
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 wait_conductor() {
   local name="$1" status deadline=$((SECONDS + $2 / 1000)) poll rc
@@ -1483,6 +1537,16 @@ never dismiss an alert.$(review_bot_rule)
 EOF
 }
 
+# auth_rule — what a conductor does when `wait` on a builder prints auth.
+auth_rule() {
+  cat <<EOF
+A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
+/login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
+login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> <file>\`) and wait on it
+again with \`swarm.sh wait <slug>\` in the background.
+EOF
+}
+
 # pr_per = story: a PR per story.
 conduct_story_mode() {
   local epic="$1"
@@ -1492,6 +1556,8 @@ Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge
 start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
+
+$(auth_rule)
 
 $(green_rule)
 
@@ -1519,6 +1585,8 @@ starts each builder on story/<slug>, branched from epic/${epic}; builders push t
 no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
 and wait with \`swarm.sh wait <slug>\` in the background.
+
+$(auth_rule)
 
 When a builder reports, review its branch. Then, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):

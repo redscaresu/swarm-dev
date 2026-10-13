@@ -134,7 +134,7 @@ stub() { # [api-error]
 session() { # <status> [waitingFor] — the conductor's session, as `claude agents --json` lists it
   echo "[{\"sessionId\":\"sess-c1\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}}]" > "${dir}/claude.json"
 }
-waitc() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait "$@"); }
+waitc() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" wait "$@"); }
 # `wait` on a conductor: idle without a report is not settled. It returns once the report lands.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
@@ -164,6 +164,17 @@ if [[ "${got}" == gone && $((SECONDS - start)) -lt 5 ]]; then
   echo "ok   wait on a conductor whose session is gone returns at once"; else
   echo "FAIL wait on a conductor whose session is gone returns at once: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 session idle
+
+# A conductor whose transcript ends on an expired login will not report until the user's /login:
+# wait returns auth at once, naming it. The fixture is a real transcript's shape, ids replaced.
+fixture="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl"
+mkdir -p "${dir}/projects/p"; cp "${fixture}" "${dir}/projects/p/sess-c1.jsonl"; start=${SECONDS}
+got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000 2>"${dir}/wait.err")"
+if [[ "${got}" == auth && $((SECONDS - start)) -lt 5 ]] && grep -q "conduct-e1: its login expired" "${dir}/wait.err"; then
+  echo "ok   wait on a conductor whose login expired returns auth at once, naming it"; else
+  echo "FAIL wait on a conductor whose login expired returns auth at once, naming it: got '${got}' after $((SECONDS - start))s, stderr: $(cat "${dir}/wait.err")"; fails=$((fails + 1)); fi
+# After an ordinary turn (the same transcript without the auth entry) it is waited on, as below.
+grep -v authentication_failed "${fixture}" > "${dir}/projects/p/sess-c1.jsonl"
 
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}

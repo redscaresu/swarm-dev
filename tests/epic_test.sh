@@ -94,6 +94,8 @@ cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
   "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
+check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
+  "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
@@ -191,6 +193,8 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
+check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \
+  "$(has "stopped on an expired login, which only the user's" "${brief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${brief}")"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
 printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
@@ -294,7 +298,48 @@ item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
 check "epic mode: a builder whose story branch is not pushed (only a tag story/a) is nudged, and told so" "idle|3|yes" \
   "${got%%|*}|$(nudges)|$(has "you are idle and story/a is not pushed" "$(log)")"
-rm -f "${ROOT}/screen" "${b}/stories/a.md"
+# The same builder, its transcript ending on an expired login: only the user's /login helps, so wait
+# returns auth at once (a minute's slice), naming it, and never nudges it. The fixture is a real
+# transcript's shape, ids replaced; without its auth entry the last turn is ordinary and the
+# builder is nudged as before. CLAUDE_PROJECTS_DIR is set for these waits only.
+fixture="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl"
+tr_dir="${ROOT}/projects"; tr="${tr_dir}/p/sess-a.jsonl"; mkdir -p "${tr_dir}/p"
+cp "${fixture}" "${tr}"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=60000 waitrc "${ROOT}/wait.err" a 120000)"
+check "an idle builder whose login expired: wait prints auth at once, names it, and does not nudge" "auth|exit 0|yes|0|0|yes" \
+  "${got%|*}|$([[ ${got##*|} -lt 5 ]] && echo yes || echo "no, ${got##*|}s")|$(nudges)|$(nudged)|$(has "a: its login expired" "$(cat "${ROOT}/wait.err")")"
+grep -v authentication_failed "${fixture}" > "${tr}"; : > "${ROOT}/herdr.log"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "an idle builder after an ordinary turn is still nudged" "idle|3" "${got%%|*}|$(nudges)"
+# A resume sent after the /login (a user entry after the auth error) clears it, before the agent
+# has written a new assistant entry: wait does not print auth again.
+{ cat "${fixture}"; printf '%s\n' '{"parentUuid":"00000000-0000-4000-8000-000000000004","isSidechain":false,"type":"user","uuid":"00000000-0000-4000-8000-000000000007","timestamp":"2026-10-13T18:50:00.000Z","message":{"role":"user","content":"Your login is renewed: resume where you stopped."},"userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'; } > "${tr}"
+: > "${ROOT}/herdr.log"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "a user entry after the auth error (a resume) is not auth: the idle builder is nudged" "idle|3" "${got%%|*}|$(nudges)"
+# Claude Code's own user entries after the auth error are not a resume: a queued task notification
+# (shape from a real transcript, ids and text replaced), an isMeta entry, an Esc interrupt, and a
+# slash command run in the pane (/login there; a real /exit pair's shape, its command and output
+# replaced), which Claude Code writes as two user entries that are not isMeta.
+automated=(
+  task-notification '{"parentUuid":"00000000-0000-4000-8000-000000000004","isSidechain":false,"promptId":"00000000-0000-4000-8000-000000000008","type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>bfixture1</task-id>\n<tool-use-id>toolu_fixture</tool-use-id>\n<output-file>/tmp/fixture.output</output-file>\n<status>completed</status>\n<summary>Background command \"Wait on a builder\" completed (exit code 0)</summary>\n</task-notification>"},"uuid":"00000000-0000-4000-8000-000000000009","timestamp":"2026-10-13T16:10:00.000Z","permissionMode":"auto","origin":{"kind":"task-notification","producer":"session-task","runId":"fixture-run"},"promptSource":"system","turnOrigin":"task_notification","queueSkipAttachments":true,"userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+  isMeta '{"parentUuid":"00000000-0000-4000-8000-000000000009","isSidechain":false,"type":"user","message":{"role":"user","content":"A scheduled fixture prompt."},"isMeta":true,"uuid":"00000000-0000-4000-8000-00000000000a","timestamp":"2026-10-13T16:20:00.000Z","promptSource":"system","turnOrigin":"scheduled","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+  interrupted '{"parentUuid":"00000000-0000-4000-8000-00000000000a","isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"uuid":"00000000-0000-4000-8000-00000000000b","timestamp":"2026-10-13T16:30:00.000Z","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+  slash-command '{"parentUuid":"00000000-0000-4000-8000-000000000004","isSidechain":false,"promptId":"00000000-0000-4000-8000-00000000000c","type":"user","message":{"role":"user","content":"<command-name>/login</command-name>\n            <command-message>login</command-message>\n            <command-args></command-args>"},"uuid":"00000000-0000-4000-8000-00000000000d","timestamp":"2026-10-13T16:40:00.000Z","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}
+{"parentUuid":"00000000-0000-4000-8000-00000000000d","isSidechain":false,"promptId":"00000000-0000-4000-8000-00000000000c","type":"user","message":{"role":"user","content":"<local-command-stdout>Login successful</local-command-stdout>"},"uuid":"00000000-0000-4000-8000-00000000000e","timestamp":"2026-10-13T16:40:00.000Z","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+)
+for ((i = 0; i < ${#automated[@]}; i += 2)); do
+  { cat "${fixture}"; printf '%s\n' "${automated[i + 1]}"; } > "${tr}"; : > "${ROOT}/herdr.log"
+  got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+  check "an automated user entry (${automated[i]}) after the auth error is not a resume: still auth" "auth|0" "${got%%|*}|$(nudges)"
+done
+# A transcript that cannot be read is not expired, and wait prints no traceback.
+cp "${fixture}" "${tr}"; chmod 000 "${tr}"; : > "${ROOT}/herdr.log"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 20000)"
+check "an unreadable transcript is not auth, and wait prints no traceback" "idle|3|0" \
+  "${got%%|*}|$(nudges)|$(grep -c Traceback "${ROOT}/wait.err" || true)"
+chmod 600 "${tr}"
+rm -f "${ROOT}/screen" "${b}/stories/a.md" "${tr}"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
 session "${ROOT}/claude.json" sess-a=busy
