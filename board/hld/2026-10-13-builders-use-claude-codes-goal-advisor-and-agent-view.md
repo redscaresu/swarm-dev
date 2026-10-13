@@ -435,8 +435,16 @@ In order; each ships on its own and the next does not depend on the last except 
   the spike shows. Deferred to the goal epic.
 - **The default bound when `goal` is set.** Small; the number comes from the spike (how many goal
   turns a builder that stopped short needs to finish). Deferred to the goal epic.
-- **The minimum Claude Code version.** The docs do not say which release first listed interactive
-  sessions in `claude agents --json`; the first story of the agent-state epic finds it. Deferred.
+- **The minimum Claude Code version: 2.1.145** (answered 2026-10-13 by pin-claude-version and the
+  user). `--version` prints `2.1.145 (Claude Code)`.
+  - 2.1.144: `--help` lists `--session-id`, but `agents --json` fails with `error: unknown option '--json'`.
+  - 2.1.145: `--help` lists `--session-id`; `agents --json` with no sessions prints `[]`. With a
+    logged-in interactive session started as `--session-id 96791fa2-…` in a throwaway
+    CLAUDE_CONFIG_DIR, `agents --json` printed one entry: `pid`, `cwd`, `kind: "interactive"`,
+    `startedAt`, `sessionId` (the id passed), `status: "idle"`. It has no `name` field (2.1.296 adds
+    one), so the reader joins on `sessionId` only.
+  - The bisect over the 538 published versions assumed the feature never disappears once added.
+  - Not captured: a `waitingFor` entry; its shape stays unverified until a reader story captures one.
 
 ## Epics
 
