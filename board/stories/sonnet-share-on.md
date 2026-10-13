@@ -16,7 +16,9 @@ findings fixed, closes per story, cost. The lead posts the comparison for the us
 
 **Phase 2, after the user's phase 1 decision (user, 2026-10-13):** the lead sets
 `builder_subagent_model = haiku` in infrafactory's config (its own PR), so builders' search and test
-subagents run on Haiku. Never with phase 1 still running: changing both at once would hide which change
+subagents run on Haiku. First check that it took: sonnet-share passes the variables through `--settings`
+(herdr cannot pass environment variables), which the spike did not test, so read the first such builder's
+.jsonl and confirm its subagent turns (`parent_tool_use_id` set) show a Haiku `message.model`; if not, stop and file a fix. Never with phase 1 still running: changing both at once would hide which change
 moved the outcomes. After roughly 20 Opus builds with it on, the lead compares their `swarm.sh outcomes`
 rows (cost, tells, findings fixed, attempts) with the Opus builds before the switch, and posts it. The same
 early stop applies: two builds in a row that fail to reach a green, reviewed PR set it back to empty.
