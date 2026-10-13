@@ -439,3 +439,7 @@ In order; each ships on its own and the next does not depend on the last except 
   sessions in `claude agents --json`; the first story of the agent-state epic finds it. Deferred.
 
 ## Epics
+
+- [agent-state-from-the-session](../epics/agent-state-from-the-session.md)
+- [fable-on-call](../epics/fable-on-call.md)
+- [goal-for-builders](../epics/goal-for-builders.md)
