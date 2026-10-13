@@ -13,7 +13,7 @@ fails=0
 P="${ROOT}/proj"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
-export PATH="${STUB_BIN}:${PATH}"
+export PATH="${STUB_BIN}:${PATH}" CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 
 check() { # <name> <test...>
   local name="$1"; shift
@@ -74,13 +74,17 @@ for i in 1 2 3 4 5; do printf '2026-10-04\tkind%s\thttps://github.com/o/r/pull/8
 ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\treview\ts-one\tw1:p1\tok\n' > "${P}/.swarm/events.tsv"
 
+# Claude Code's sessions: the conductor (sess-1) and s-three's builder (sess-today) are busy, and
+# s-one's builder waits on a permission prompt. The wait checks below rewrite this file.
+printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"waiting","waitingFor":"input"},{"sessionId":"sess-today","status":"busy"}]' > "${ROOT}/claude.json"
 # herdr: this project's conductor (working) and builder (blocked), an empty pane (w1:p3), and
-# another project's agent (w9:p1), which must not be shown.
+# another project's agent (w9:p1), which must not be shown. s-three's herdr status is done while its
+# session is busy: the session's word is the one dash shows.
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"}]}}' ;;
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
     [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
     [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
@@ -138,7 +142,7 @@ check "needs you is the first panel" grep -q '^╭─ needs you ─' <<< "$(grep
 needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 check "needs you lists a green PR as a merge" grep -qE '^│ ! merge r#7 \(✓ green · behind\)  s-one +│$' <<< "${needs}"
 check "needs you lists a lead story with its title" has "! run lead story ask: create the read-only IAM user" "${needs}"
-check "needs you lists an agent waiting on a prompt" has "! answer s-one: herdr agent read s-one" "${needs}"
+check "needs you lists an agent waiting on a prompt, with what its session waits for" has "! answer s-one (waiting on input): herdr agent read s-one" "${needs}"
 check "needs you lists an empty pane" has "! close the empty pane s-gone: swarm.sh tidy" "${needs}"
 check "needs you lists only actionable items" test "$(grep -c '^│ ! ' <<< "${needs}")" -eq "$(($(wc -l <<< "${needs}") - 2))"
 check "needs you lists no blocked item" lacks "s-two" "${needs}"
@@ -147,7 +151,7 @@ check "blocked and later are one count line below the epics" grep -qE '^⏸ 1 bl
 epicp="$(sed -n '/^╭─ epics/,/^╰/p' <<< "${out}")"
 check "an epic row shows progress, counting a finished story from git" grep -qE '^│ ! e1 +█{3}░{9}  1/4   1 review · 1 ready · 1 blocked +│$' <<< "${epicp}"
 check "the conductor sits under its epic with role, model and status" grep -qE '^│   ● conduct-e1 +conduct +opus·high +working +│$' <<< "${epicp}"
-check "an agent waiting on a prompt is marked !" grep -qE '^│   ! s-one +code +opus·high +waiting on a prompt' <<< "${epicp}"
+check "an agent waiting on a prompt is marked ! with its waitingFor" grep -qE '^│   ! s-one +code +opus·high +waiting on input' <<< "${epicp}"
 check "an epic's open PR sits under it" grep -qE '^│   ✓ r#7 +green · behind  s-one +│$' <<< "${epicp}"
 check "an empty pane is marked !" grep -qE '! s-gone .*empty pane' <<< "${epicp}"
 check "an odd agent record marks its row, not the panel" grep -qE '! odd .*unreadable: AttributeError' <<< "${epicp}"
@@ -168,7 +172,7 @@ check "an agent in a state dash does not know shows ? and the word" grep -qE '^�
 check "recent lists a finding" grep -qE '✎ a test that could not fail \(#7\)' <<< "${recent}"
 check "recent folds a PR's findings for a day into one row" has "5 findings: finding 1; finding 2" "${recent}"
 check "recent's time and icon columns line up" test "$(sed '1d;$d' <<< "${recent}" | grep -cvE '^│ [ 0-9a-z]{9}  . ')" -eq 0
-check "the legend is the last lines" test "$(tail -2 <<< "${out}" | paste -sd' ' -)" == "● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you ? unknown"
+check "the legend is the last lines" test "$(tail -2 <<< "${out}" | paste -sd' ' -)" == "● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked ! needs you (session gone or unknown)   ? unknown"
 check "boxes have rounded corners" grep -qE '^╰─+╯$' <<< "${out}"
 check "a run off a terminal has no ANSI escapes" lacks $'\033' "${out}"
 widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().splitlines()))'; }
@@ -178,7 +182,7 @@ fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "
 check "--tree groups the agents by workspace" grep -qE '^│ 2026-01-01-x +│$' <<< "${out}"
 check "--tree groups the agents by tab" has "├─ e1" "${out}"
 check "--tree lists a retired agent" grep -qE 'old-done .*retired' <<< "${out}"
-check "--tree shows a story's PR on its builder" grep -qE '! s-one .*waiting on a prompt  https://g' <<< "${out}"
+check "--tree shows a story's PR on its builder" grep -qE '! s-one .*waiting on input  https://g' <<< "${out}"
 check "--ladder maps role to model and effort" has "code-risky → opus · xhigh" "${out}"
 check "--ladder names codex" has "codex      → codex · high" "${out}"
 check "below 140 columns the ladder and recent are stacked" lacks "╮ ╭─ recent" "${out}"
@@ -403,6 +407,34 @@ fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "
 check "a recent PR update is not a stall in dash" lacks "look at s-three" "${out}"
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
+
+# --- Session states, in a project of its own (S) whose panes are w2's: a session with no entry
+# (s-lost) and one in a state not known (s-odd) need a look; a reused name (s-re: the older agent
+# retired to s-re-done, the newer running) shows its newer session; a codex agent (cx) and one with
+# no session recorded (s-dash) show herdr's word. herdr says s-re is RE_HERDR, the opposite of its
+# newer session each time.
+S="${ROOT}/s"; mkdir -p "${S}/.swarm/state"; git -C "${S}" init -q
+printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\n' > "${S}/.swarm/state/t"
+printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' s-re claude re-old s-re claude re-new s-lost claude lost \
+  s-odd claude odd cx codex - s-dash claude - > "${S}/.swarm/agents.tsv"
+sdash() { # <re-old status> <re-new status> <herdr's s-re status> — dash --tree in S
+  printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"}]' "$1" "$2" > "${ROOT}/s.json"
+  fresh; (cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR="$3" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)
+}
+out="$(sdash busy idle working)"
+check "a recorded session with no entry is ! gone" grep -qE '! s-lost .* gone: session ended' <<< "${out}"
+check "a session in a state dash does not know is ! unknown" grep -qE '! s-odd .* unknown: no session state' <<< "${out}"
+check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
+check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
+check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"
+check "a codex agent waiting is in needs you" has "! answer cx: herdr agent read cx" "${out}"
+check "an agent with no session recorded shows herdr's word" grep -qE '● s-dash .* working' <<< "${out}"
+out="$(sdash idle busy idle)"
+check "a reused name shows the newer session (older idle, newer busy)" grep -qE '● s-re +code .* working' <<< "${out}"
+check "a retired pane stays retired when its name's newest session is busy" grep -qE '✓ s-re-done .* retired' <<< "${out}"
+out="$(fresh; cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/no-such-file" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)"
+check "with a claude that cannot list, a recorded session is ! unknown" grep -qE '! s-lost .* unknown: no session state' <<< "${out}"
+check "with a claude that cannot list, an agent with no session keeps herdr's word" grep -qE '● s-dash .* working' <<< "${out}"
 
 # --- An epic's progress from history, in a project of its own (Q), with no herdr. Each story file
 # below names epic x, and is deleted in a different way; only a deletion that closed its story counts.

@@ -124,7 +124,7 @@ prints every setting and where it came from.
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
-| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it, and `dash` marks it `!` and lists it under needs you. Working is its Claude session reporting busy for `wait --stall`, and herdr's working for `dash` and for a codex builder |
+| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it, and `dash` marks it `!` and lists it under needs you. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
@@ -209,15 +209,21 @@ for 10 minutes, or when an agent is blocked on a prompt. herdr lists every proje
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
-**Watching it.** `swarm.sh status` lists the agents that need a look (blocked on a prompt, or an
-empty pane where a start failed), what waits on you, and the next step. `swarm.sh dash` shows the
+**Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an
+empty pane where a start failed, or a session gone or unknown), what waits on you, and the next
+step. A Claude agent's state comes from its own session in `claude agents --json`, read once per
+run: busy is working, idle is idle, waiting is WAITING with what it waits for, and a recorded
+session with no entry in the list (`gone`: the session ended) or no state in it (`unknown`, also
+when there is no `claude` to ask) needs a look. herdr's word stands only for codex agents, agents
+with no session recorded, and retired panes. `swarm.sh dash` shows the
 same on one screen, for a person to scan: a summary line, then what needs the user first (PRs to
-merge with their checks, `lead` stories, agents waiting on a prompt, empty panes, stalled builders,
+merge with their checks, `lead` stories, agents waiting on a prompt (with what their session waits for), empty panes, stalled builders,
 draft HLDs), each active epic with a bar of its finished stories (finished story files are deleted,
 so they are counted from history: a deletion counts once per slug, and only when it closed the story,
 never a re-scope) and its live agents and open PRs beneath it,
 and the recent events with how long ago; idle agents and blocked or later items are counts. One
-status vocabulary runs through it (● working, ○ ready, ◐ review, ✓ done, ✗ failing, ⏸ blocked, ! needs you, ? unknown).
+status vocabulary runs through it (● working, ○ ready, ◐ review, ✓ done, ✗ failing, ⏸ blocked, ! needs you or a
+session gone or unknown, ? a herdr state dash does not know).
 `--tree` shows the agents by workspace and tab and `--ladder` the model per role; `dash --watch
 [seconds]` redraws it in place until `q`, with `t` and `l` toggling the two. Both only read: they never change the board, the state or the logs, and never open
 or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.

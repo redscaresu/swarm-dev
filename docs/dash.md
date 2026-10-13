@@ -14,11 +14,15 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   warning when the main checkout has board edits not committed yet.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
-  on a prompt, `close` an empty pane, `look at` a stalled builder (working for `stall_minutes`, 30
+  on a prompt (with what its session waits for), `close` an empty pane, `look at` a stalled builder (working for `stall_minutes`, 30
   by default, with no commit, PR update or swarm action), `agree` a draft HLD. When nothing does,
   it is one line.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
-  many open stories are in each status. A finished story's file is deleted, so finished ones are
+  many open stories are in each status. An agent's status is its Claude session's (`claude agents
+  --json`, read once a frame): busy is working, idle is idle, waiting shows what it waits for, and a
+  recorded session that is `gone` (it ended) or `unknown` (no state, or no `claude` to ask) is
+  marked `!`. herdr's word stands for codex agents, agents with no session recorded, and retired
+  ones. A finished story's file is deleted, so finished ones are
   counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
   front matter named the epic, once per slug, when any deletion closed the story: its own PR's
   merge (the commit names `story/<slug>`), its own work (a squash merge: the commit also changes a
@@ -37,8 +41,8 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   other actions (·); a failed one is ✗. It fills the rest of the screen.
 - **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on.
 - **Legend**: one status vocabulary throughout: ● working, ○ ready, ◐ review or CI running, ✓ done
-  or green, ✗ failing, ⏸ blocked, ! needs you, and ? for an agent state dash does not know (with
-  herdr's word for it).
+  or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown), and ?
+  for a herdr state dash does not know (with herdr's word for it).
 
 It fits the terminal: it truncates with … rather than wraps, except that a needs-you action wraps
 onto an indented line so it is never cut. Under 100 columns it drops the role, model and actor
@@ -78,8 +82,8 @@ board: 2 uncommitted edits in the main checkout (reconcile pulls first)
 │    5m ago  · close fakeaws-subnet-overlap-refused                                          wZ:p8 │
 │    5m ago  · review fakeaws-subnet-overlap-refused                                         wZ:p8 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you
-? unknown
+● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked
+! needs you (session gone or unknown)   ? unknown
 ```
 
 `.swarm/events.tsv` is the local, append-only audit log of what `swarm.sh` did: one line per

@@ -72,7 +72,7 @@ in, and `/hld`, `/plan-epic` and `/swarm` stop outside it.
 |---|---|
 | `/hld <title>` | Write the design with a co-author agent. |
 | `/swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh status` | Show agents that need a look (from their Claude session: waiting, gone or unknown), what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
 
