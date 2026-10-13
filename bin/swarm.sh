@@ -921,8 +921,9 @@ steer = collections.Counter()
 if os.path.exists(events):
     for line in open(events, errors="ignore"):
         f = line.rstrip("\n").split("\t")
-        if len(f) == 5 and f[1] in ("tell", "close"):
-            steer[f[1], f[2]] += 1
+        # A tell is logged as tell:<kind> (a bare tell in logs from before kinds).
+        if len(f) == 5 and f[1].split(":")[0] in ("tell", "close"):
+            steer[f[1].split(":")[0], f[2]] += 1
 attempts = collections.Counter()
 for line in open(log, errors="ignore"):
     f = line.rstrip("\n").split("\t")
@@ -1205,6 +1206,9 @@ wait_conductor() {
   return "${rc}"
 }
 
+# is_tell_kind <word> — true for a kind tell takes: findings, nudge or resume.
+is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1; }
+
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
 # main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
@@ -1213,10 +1217,7 @@ wait_conductor() {
 # or of unknown state, rather than waiting on it.
 tell_agent() {
   local kind="$2" f="$3" name msg state
-  case "${kind}" in
-    findings|nudge|resume) ;;
-    *) die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)" ;;
-  esac
+  is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
   if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
@@ -2008,11 +2009,13 @@ watch_prs() {
         -q '.[]|select(.headRefName|startswith("story/") or startswith("epic/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
-      local agents now e news="" tmp
+      local agents sessions now e news="" tmp
       # Only agents in panes this project opened: herdr lists every project's. Each one's state is
       # PANES_PY's agent_state: its session's, else herdr's (codex, or no session recorded). One line
-      # per agent waiting, "<name> (<what it waits for>)". A read that fails changes nothing.
-      if agents="$(herdr agent list 2>/dev/null)" && now="$(printf '%s' "${agents}" | SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="$(claude_agents)" \
+      # per agent waiting, "<name> (<what it waits for>)". A read that fails (herdr's list, Claude
+      # Code's, or the reader) changes nothing: a failed Claude list would read every session unknown.
+      if agents="$(herdr agent list 2>/dev/null)" && sessions="$(claude_agents)" \
+        && now="$(printf '%s' "${agents}" | SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
         python3 -c '
 import json, os, sys
 exec(os.environ["SWARM_PANES_PY"])
@@ -3164,7 +3167,9 @@ main() {
     log-finding) EV_TARGET="${2:-} ${3:-}"; EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     tidy) EV_TARGET=- ;;
-    tell) EV_CMD="tell${3:+:$3}"; EV_TARGET="${2:-}" ;;   # the slug, which the stall rule reads; the kind goes with the command
+    # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
+    # old form, tell <slug> <file>, would put a path there).
+    tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null

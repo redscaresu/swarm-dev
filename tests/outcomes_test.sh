@@ -29,11 +29,12 @@ printf '%s\n' \
   $'2026-10-02\tdocs\tdocs-story\tclaude\tsonnet\tmedium\ts2' \
   $'2026-10-03\tcodex\tcodex\tcodex\tdefault\thigh\t-' \
   $'2026-10-04\tescalate\t'"${CUT}"$'\tclaude\tfable\txhigh\ts3' > "${P}/.swarm/agents.tsv"
+# A tell is logged as tell:<kind>; a bare tell is from a log written before kinds. Both count.
 printf '%s\n' \
   $'2026-10-01T10:00:00Z\ttell\t'"${LONG}"$'\tw:1\tok' \
-  $'2026-10-01T11:00:00Z\ttell\t'"${LONG}"$'\tw:1\tok' \
+  $'2026-10-01T11:00:00Z\ttell:findings\t'"${LONG}"$'\tw:1\tok' \
   $'2026-10-01T12:00:00Z\tclose\t'"${CUT}"$'\tw:1\tok' \
-  $'2026-10-02T10:00:00Z\ttell\tdocs-story\tw:1\tok' \
+  $'2026-10-02T10:00:00Z\ttell:nudge\tdocs-story\tw:1\tok' \
   $'2026-10-02T10:00:00Z\treview\tdocs-story\tw:1\tok' \
   $'2026-10-02T10:00:00Z\ttell\tother\tw:1\tok' > "${P}/.swarm/events.tsv"
 printf '%s\n' \
@@ -59,7 +60,7 @@ HEAD=$'date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells\tclo
 R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	1	2	https://github.com/o/r/pull/7	MERGED	1"
 R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	1	0	1	https://github.com/o/r/pull/8	OPEN	1"
 R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	2	1	2	https://github.com/o/r/pull/7	MERGED	2"
-check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells, findings, attempts" \
+check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells (tell:<kind> and bare), findings, attempts" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
 check "--since leaves earlier rows out, and attempts still count them" \
   "$(outcomes "${dir}/bin" --since 2026-10-03)" "$(printf '%s\n' "${HEAD}" "${R3}")"

@@ -78,7 +78,9 @@ appends "a failed review" 1 review s1 "review: not a PR URL" review s1 "https://
 # A tell's kind goes with its command (tell:<kind>), so its target stays the slug, which the stall rule reads.
 appends "tell" 1 tell:findings s1 ok tell s1 findings findings.md
 appends "a tell with no kind" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1
-appends "a tell with an unknown kind" 1 tell:bogus s1 "tell: the kind must be findings, nudge or resume" tell s1 bogus findings.md
+# Only a real kind goes with the command: an unknown one, or the old form's file path, logs plain tell.
+appends "a tell with an unknown kind" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 bogus findings.md
+appends "the old form, tell <slug> <file>" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 /tmp/f.md
 check "tell never logs the file's contents" bash -c "! grep -q SECRET-CONTENT '${LOG}'"
 appends "close" 1 close s1 ok close s1
 appends "tidy --yes" 1 tidy - ok tidy --yes

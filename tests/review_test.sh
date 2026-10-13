@@ -412,14 +412,15 @@ wagents() { # <mine-builder's herdr status> <cx's herdr status>
 wsession() { # <mine-builder's session status> [its waitingFor]; mine-two's session is $TWO (default idle), waiting on $TWO_WHY
   echo "[{\"sessionId\":\"s-mb\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"s-two\",\"status\":\"${TWO:-idle}\"${TWO_WHY:+,\"waitingFor\":\"${TWO_WHY}\"}}]" > "${ROOT}/watch-sessions.json"
 }
-# watchrun — run watch --epic mine for at most 10 seconds and print what it printed, or "(still
-# watching)" once it has read the agents and not returned, so a watch that wrongly polls on fails
-# rather than hangs. It runs as swarm.sh's own pid (exec), so its sleep is its child: swarm.sh is
-# stopped first, so it is not there to report the sleep killed, then the sleep.
+# watchrun — run watch --epic mine for at most 10 seconds (Claude's sessions from $WATCH_SESSIONS, else
+# watch-sessions.json) and print what it printed, or "(still watching)" once it has read the agents
+# and not returned, so a watch that wrongly polls on fails rather than hangs. It runs as swarm.sh's
+# own pid (exec), so its sleep is its child: swarm.sh is stopped first, so it is not there to report
+# the sleep killed, then the sleep.
 watchrun() {
   local pid kids grace=-1
   : > "${ROOT}/herdr.log"
-  (cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/watch-sessions.json" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
+  (cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
   pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     sleep 1
@@ -460,6 +461,9 @@ touch "${ROOT}/list-fails"
 check "watch is quiet on a poll whose herdr read fails" "(still watching)" "$(watchrun)"
 rm -f "${ROOT}/list-fails"
 check "watch does not report a wait twice across a failed read" "(still watching)" "$(watchrun)"
+# So does a failed Claude Code list, which would read every Claude session unknown, so not waiting.
+check "watch is quiet on a poll whose Claude Code list fails" "(still watching)" "$(WATCH_SESSIONS="${ROOT}/no-such-file" watchrun)"
+check "watch does not report a wait twice across a failed Claude Code list" "(still watching)" "$(watchrun)"
 rm -f "${ROOT}/agents.json"
 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.
