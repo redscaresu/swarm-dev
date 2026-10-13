@@ -456,15 +456,17 @@ start_agent() {
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
-  # Before the pane opens, so a refusal leaves no empty pane behind.
-  if [[ "${kind}" == claude ]]; then require_trusted "${cwd}"; fi
+  # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
+  # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
+  local session=-
+  if [[ "${kind}" == claude ]]; then
+    require_trusted "${cwd}"
+    session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
+  fi
   free_agent_name "${name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
-  # A claude agent's session id is minted here, once, so a retry reuses it and agents.tsv holds it
-  # from the start; codex has none to set.
-  local try out session=-
-  if [[ "${kind}" == claude ]]; then session="$(python3 -c 'import uuid; print(uuid.uuid4())')"; fi
+  local try out
   for try in 1 2; do
     if [[ "${kind}" == codex ]]; then
       # No update check: codex's startup prompt to upgrade takes the pane, and the brief then

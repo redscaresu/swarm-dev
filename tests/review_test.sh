@@ -269,6 +269,13 @@ check "a codex start has no --session-id, and its line ends in '-'" "no|-" \
 rm -f "${ROOT}/agents.json"; touch "${ROOT}/prompt-idle"; agent sid3 lead >/dev/null; rm -f "${ROOT}/prompt-idle"
 check "a start whose brief is not taken up still leaves its line, and every line has 7 fields" "yes|$(sid sid3)|0" \
   "$(uuid "$(logged sid3)")|$(logged sid3)|$(awk -F'\t' 'NF != 7' "${tsv}" | wc -l | tr -d ' ')"
+# A python3 that cannot mint the id stops the start, by name, before any pane opens.
+mkdir -p "${ROOT}/nouuid"
+printf '#!/bin/sh\ncase "$*" in *uuid*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "${ROOT}/nouuid/python3"
+chmod +x "${ROOT}/nouuid/python3"; : > "${ROOT}/herdr.log"
+out=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/nouuid:${ROOT}/bin:${PATH}" bash "${SWARM}" agent t sid4 "${p}" lead "${ROOT}/brief.md" 2>&1) || true
+check "a session id that cannot be minted stops the start, named, before any pane opens" "yes|no" \
+  "$(has 'could not mint a session id (python3)' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
 
 # --- status: each open pane's agent, an empty pane, and what waits on the user.
 mkdir -p "${p}/.swarm/state"
