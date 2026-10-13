@@ -314,8 +314,10 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #     herdr must answer for: codex, no line, or a session of '-' (session_id's None).
 #   login_expired(log, name, projects) -> True when the last user or assistant entry in <name>'s
 #     transcript (<projects>/*/<session>.jsonl, the file cost finds) is Claude Code's "Login expired ·
-#     Please run /login": an assistant entry whose error field is authentication_failed. A user entry
-#     after it (a resume sent) clears it; a transcript that cannot be read is not expired. Never the pane.
+#     Please run /login": an assistant entry whose error field is authentication_failed. A prompt
+#     after it (a resume sent) clears it; Claude Code's own user entries do not (is_prompt: isMeta, a
+#     <task-notification>, "[Request interrupted by user]"). A transcript that cannot be read is not
+#     expired. Never the pane.
 PANES_PY='
 import glob, json, os, re
 WHY_MAX = 60
@@ -354,6 +356,12 @@ def session_id(log, name):
     except OSError:
         pass
     return line[6] if line and line[3] == "claude" and line[6] not in ("", "-") else None
+AUTOMATED_PROMPTS = ("<task-notification>", "[Request interrupted")
+def is_prompt(d):
+    c = (d.get("message") or {}).get("content")
+    if isinstance(c, list):
+        c = next((x.get("text") for x in c if isinstance(x, dict) and x.get("type") == "text"), "")
+    return not d.get("isMeta") and not str(c or "").startswith(AUTOMATED_PROMPTS)
 def login_expired(log, name, projects):
     sid, last = session_id(log, name), None
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
@@ -365,7 +373,9 @@ def login_expired(log, name, projects):
                     d = json.loads(l)
                 except ValueError:
                     continue
-                if isinstance(d, dict) and d.get("type") in ("user", "assistant") and not d.get("isSidechain"):
+                if not isinstance(d, dict) or d.get("isSidechain"):
+                    continue
+                if d.get("type") == "assistant" or (d.get("type") == "user" and is_prompt(d)):
                     last = d
         except OSError:
             return False
@@ -1384,7 +1394,8 @@ auth_rule() {
   cat <<EOF
 A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
 /login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
-login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> <file>\`).
+login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> <file>\`) and wait on it
+again with \`swarm.sh wait <slug>\` in the background.
 EOF
 }
 
