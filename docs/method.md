@@ -217,7 +217,7 @@ session with no entry in the list (`gone`: the session ended) or no state in it 
 when there is no `claude` to ask) needs a look. herdr's word stands only for codex agents, agents
 with no session recorded, and retired panes. `swarm.sh dash` shows the
 same on one screen, for a person to scan: a summary line, then what needs the user first (PRs to
-merge with their checks, `lead` stories, agents waiting on a prompt (with what their session waits for), empty panes, stalled builders,
+merge with their checks, `lead` stories, agents waiting on a prompt (with what their session waits for), agents whose session is gone or unknown, empty panes, stalled builders,
 draft HLDs), each active epic with a bar of its finished stories (finished story files are deleted,
 so they are counted from history: a deletion counts once per slug, and only when it closed the story,
 never a re-scope) and its live agents and open PRs beneath it,

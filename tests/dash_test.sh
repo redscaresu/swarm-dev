@@ -144,6 +144,13 @@ check "needs you lists a green PR as a merge" grep -qE '^│ ! merge r#7 \(✓ g
 check "needs you lists a lead story with its title" has "! run lead story ask: create the read-only IAM user" "${needs}"
 check "needs you lists an agent waiting on a prompt, with what its session waits for" has "! answer s-one (waiting on input): herdr agent read s-one" "${needs}"
 check "needs you lists an empty pane" has "! close the empty pane s-gone: swarm.sh tidy" "${needs}"
+# A long waitingFor over three lines is one line in needs you, cut at 60 characters, inside the box.
+printf '%s' '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"waiting","waitingFor":"Allow Bash to run:\n  rm -rf build && make all && make test && make install && echo done\n(y/n)"},{"sessionId":"sess-today","status":"busy"}]' > "${ROOT}/claude-long.json"
+fresh; long="$(cd "${P}" || exit 1; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/claude-long.json" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+longneeds="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${long}")"
+check "a long, multi-line waitingFor is one line, cut with …" has "! answer s-one (waiting on Allow Bash to run: rm -rf build && make all && make test &&…): herdr agent read s-one" \
+  "$(sed -e 's/^│ //' -e 's/ *│$//' <<< "${longneeds}" | paste -sd' ' - | tr -s ' ')"
+check "a long, multi-line waitingFor keeps the needs-you box whole" test "$(sed '1d;$d' <<< "${longneeds}" | grep -cvE '^│ .* │$')" -eq 0
 check "needs you lists only actionable items" test "$(grep -c '^│ ! ' <<< "${needs}")" -eq "$(($(wc -l <<< "${needs}") - 2))"
 check "needs you lists no blocked item" lacks "s-two" "${needs}"
 check "needs you lists no later item" lacks "e2" "${needs}"
@@ -424,6 +431,9 @@ sdash() { # <re-old status> <re-new status> <herdr's s-re status> — dash --tre
 out="$(sdash busy idle working)"
 check "a recorded session with no entry is ! gone" grep -qE '! s-lost .* gone: session ended' <<< "${out}"
 check "a session in a state dash does not know is ! unknown" grep -qE '! s-odd .* unknown: no session state' <<< "${out}"
+needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
+check "needs you lists an agent whose session is gone" has "! look at s-lost: session ended" "${needs}"
+check "needs you lists an agent whose session state is unknown" has "! look at s-odd: no session state" "${needs}"
 check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
 check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
 check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"

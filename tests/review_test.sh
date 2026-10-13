@@ -296,8 +296,8 @@ herdr_agents() { # <re's herdr status>
     re-done idle w:13 re "$1" w:14 cx9 blocked w:15 nosess starting w:16 | sed 's/,$//')"
 }
 echo '{"result":{"panes":[{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:8"},{"pane_id":"w:10"},{"pane_id":"w:11"},{"pane_id":"w:12"},{"pane_id":"w:13"},{"pane_id":"w:14"},{"pane_id":"w:15"},{"pane_id":"w:16"}]}}' > "${ROOT}/panes.json"
-sessions() { # <re's older status> <re's newer status>
-  printf '[{"sessionId":"s-builder","status":"busy"},{"sessionId":"s-finished","status":"idle"},{"sessionId":"s-waiter","status":"waiting","waitingFor":"input"},{"sessionId":"s-odd","status":"compacting"},{"sessionId":"s-re-old","status":"%s"},{"sessionId":"s-re-new","status":"%s"}]\n' "$1" "$2" > "${ROOT}/sessions.json"
+sessions() { # <re's older status> <re's newer status> [waiter's waitingFor, as JSON string text]
+  printf '[{"sessionId":"s-builder","status":"busy"},{"sessionId":"s-finished","status":"idle"},{"sessionId":"s-waiter","status":"waiting","waitingFor":"%s"},{"sessionId":"s-odd","status":"compacting"},{"sessionId":"s-re-old","status":"%s"},{"sessionId":"s-re-new","status":"%s"}]\n' "${3:-input}" "$1" "$2" > "${ROOT}/sessions.json"
 }
 herdr_agents working > "${ROOT}/agents.json"; sessions busy idle
 item "${b}" stories/ls.md "status: ready" "kind: lead"
@@ -318,6 +318,9 @@ check "a reused name shows the newer session (older busy, newer idle), and the r
 herdr_agents idle > "${ROOT}/agents.json"; sessions idle busy
 check "a reused name shows the newer session (older idle, newer busy), and the retired pane retired" "re working|re-done done (retired)" \
   "$(row re "$(status --all)")|$(row re-done "$(status --all)")"
+sessions idle busy 'Allow Bash to run:\n  rm -rf build && make all && make test && make install && echo done\n(y/n)'
+check "status shows a long, multi-line waitingFor on one line, cut with …" "waiter WAITING on Allow Bash to run: rm -rf build && make all && make test &&…: herdr agent read waiter" \
+  "$(row waiter "$(status)")"
 check "a codex agent herdr says is blocked is WAITING" "cx9 WAITING on a question: herdr agent read cx9" "$(row cx9 "${out}")"
 check "an agent with no session recorded shows herdr's word" "nosess starting" "$(row nosess "${out}")"
 check "status with a claude that cannot list shows recorded sessions as unknown" "builder unknown: no session state" \

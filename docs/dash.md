@@ -14,7 +14,7 @@ state or the logs, and never opens or closes a pane. Top to bottom:
   warning when the main checkout has board edits not committed yet.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
-  on a prompt (with what its session waits for), `close` an empty pane, `look at` a stalled builder (working for `stall_minutes`, 30
+  on a prompt (with what its session waits for), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled builder (working for `stall_minutes`, 30
   by default, with no commit, PR update or swarm action), `agree` a draft HLD. When nothing does,
   it is one line.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how

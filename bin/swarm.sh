@@ -307,12 +307,13 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #   session_state(log, name, listing) -> (state, waitingFor) from Claude Code's own list: the newest
 #     agents.tsv (<log>) line for <name>, its session id, then that id's entry in <listing> (the
 #     text of `claude agents --json`, None when the call failed). state is busy, idle, waiting (with
-#     waitingFor, when the entry has it), unknown (the call failed, or a status it does not know) or
-#     gone (no entry for the recorded session, or one with no status: Claude Code lists status only
-#     while the process is alive). None for an agent herdr must answer for: codex, no line, or a
-#     session of '-'.
+#     waitingFor, when the entry has it, on one line and cut to WHY_MAX characters), unknown (the
+#     call failed, or a status it does not know) or gone (no entry for the recorded session, or one
+#     with no status: Claude Code lists status only while the process is alive). None for an agent
+#     herdr must answer for: codex, no line, or a session of '-'.
 PANES_PY='
 import glob, json, os, re
+WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
     for path in sorted(glob.glob(os.path.join(state, "*"))):
@@ -360,7 +361,8 @@ def session_state(log, name, listing):
     if st is None:
         return "gone", ""
     if st == "waiting":
-        return st, str(e.get("waitingFor") or "")
+        why = " ".join(str(e.get("waitingFor") or "").split())
+        return st, why if len(why) <= WHY_MAX else why[:WHY_MAX - 1] + "…"
     return (st, "") if st in ("busy", "idle") else ("unknown", "")
 '
 
@@ -2354,6 +2356,8 @@ for r in recs:
         need.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
     elif r["state"] == "EMPTY":
         need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
+    elif r["state"] in ("gone", "unknown") and r["look"]:
+        need.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
 need += [bang + [(f"look at {n}: working {age} min with no commit or PR update", "")] for n, age in stalled]
 need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
 
