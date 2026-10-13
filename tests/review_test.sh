@@ -59,15 +59,15 @@ cat > "${ROOT}/bin/herdr" <<EOF
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"; L="${ROOT}/list-fails"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") if [ -f "$I" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
-  "agent list")   if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
-  "agent rename") if [ -f "$A" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
+  "agent list")   if [ -f "$L" ]; then exit 1; fi; if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
+  "agent rename") if [ -f "$A" ] && [ ! -f "$N" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
@@ -222,23 +222,65 @@ check "merge = agent starts a story agent without the guard" "no" \
 echo brief > "${ROOT}/brief.md"
 agent() { # <name> <role> — start one agent with the stubs, and print swarm's output
   : > "${ROOT}/herdr.log"
-  (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent t "$1" "${p}" "$2" "${ROOT}/brief.md" 2>&1) || true
+  (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w CLAUDE_STUB_AGENTS="${ROOT}/name-sessions.json" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" agent t "$1" "${p}" "$2" "${ROOT}/brief.md" 2>&1) || true
 }
-taken() { echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"$1\",\"pane_id\":\"w:9\"}]}}" > "${ROOT}/agents.json"; }
+# holder <herdr status> <session status> [waitingFor] — herdr lists lead in this project's pane w:9
+# as <herdr status>, and lead's newest agents.tsv line records the session s-lead, listed by Claude
+# Code as <session status> (`none`: not listed, so gone; `-`: no session recorded, so herdr answers).
+# $OLD is the status of s-old, an older session of the name.
+holder() {
+  local sess=s-lead; [[ "$2" != - ]] || sess=-
+  echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"$1\",\"pane_id\":\"w:9\"}]}}" > "${ROOT}/agents.json"
+  printf '2026-10-13\tlead\tlead\tclaude\topus\thigh\t%s\n' "${sess}" >> "${p}/.swarm/agents.tsv"
+  { printf '[{"sessionId":"s-old","status":"%s"}' "${OLD:-idle}"
+    [[ "$2" == none || "$2" == - ]] || printf ',{"sessionId":"s-lead","status":"%s"%s}' "$2" "${3:+,\"waitingFor\":\"$3\"}"
+    echo ']'; } > "${ROOT}/name-sessions.json"
+}
+old_line() { printf '2026-10-13\tlead\tlead\tclaude\topus\thigh\ts-old\n' >> "${p}/.swarm/agents.tsv"; }
+started() { grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -; }
+paned() { grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no; }
+refuses() { # <name> <want in the output> — the start just run was refused, saying so, before any pane or rename
+  check "$1" "yes|no|no" "$(has "$2" "${out}")|$(paned)|$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)"
+}
 mkdir -p "${p}/.swarm/state"; echo "w:9 lead" > "${p}/.swarm/state/own"   # w:9 is this project's pane
-taken idle; agent lead lead >/dev/null
-check "a finished agent holding the name is retired before the new one starts" "agent rename w:9 lead-done|agent start lead" \
-  "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
+holder working idle; agent lead lead >/dev/null
+check "a holder whose session is idle (herdr: working) is retired, and the start goes on" "agent rename w:9 lead-done|agent start lead" "$(started)"
+holder idle none; agent lead lead >/dev/null
+check "a holder whose session is gone is retired, and the start goes on" "agent rename w:9 lead-done|agent start lead" "$(started)"
+holder idle idle
 echo '{"result":{"agents":[{"name":"lead","agent_status":"idle","pane_id":"w:9"},{"name":"lead-done","agent_status":"idle","pane_id":"w:8"}]}}' > "${ROOT}/agents.json"
 agent lead lead >/dev/null
-check "a name reused a second time retires to the next free -done name" "agent rename w:9 lead-done2|agent start lead" \
-  "$(grep -E '^agent (rename|start) ' "${ROOT}/herdr.log" | awk '{print $1, $2, $3, ($2 == "rename" ? $4 : "")}' | sed 's/ $//' | paste -sd'|' -)"
+check "a name reused a second time retires to the next free -done name" "agent rename w:9 lead-done2|agent start lead" "$(started)"
+holder "done" busy; out=$(agent lead lead)
+refuses "a holder whose session is busy (herdr: done) stops the start before any pane opens" "still working"
+holder idle waiting "permission prompt"; out=$(agent lead lead)
+refuses "a holder whose session is waiting stops the start, naming what it waits for" "waiting on permission prompt"
+holder idle compacting; out=$(agent lead lead)
+refuses "a holder whose session state is unknown stops the start" "(unknown)"
+old_line; OLD=busy holder idle idle; agent lead lead >/dev/null
+check "a reused name reads the newer line (older busy, newer idle): retired" "agent rename w:9 lead-done|agent start lead" "$(started)"
+OLD=busy holder idle idle; old_line; out=$(agent lead lead)
+refuses "a reused name reads the newer line (older idle, newer busy): refused" "still working"
+# herdr's holder decides first: with none here, the name is free, whatever an old session says.
+holder idle busy; echo '{"result":{"agents":[]}}' > "${ROOT}/agents.json"; agent lead lead >/dev/null
+check "an old line whose session is busy, with no herdr holder, lets the start go on" "agent start lead" "$(started)"
 echo '{"result":{"agents":[{"name":"lead","agent_status":"idle","pane_id":"w:77"}]}}' > "${ROOT}/agents.json"; out=$(agent lead lead)
-check "another project's agent holding the name is refused, never retired, before any pane opens" "yes|no|no" \
-  "$(has "an agent this project did not start" "${out}")|$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
-taken working; out=$(agent lead lead)
-check "a working agent holding the name stops the start before any pane opens" "yes|no" \
-  "$(has 'still working' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
+refuses "another project's agent holding the name is refused, never retired, before any pane opens" "an agent this project did not start"
+# No session recorded (as for codex): herdr answers for the holder.
+holder working -; out=$(agent lead lead)
+refuses "a holder with no session that herdr reports working stops the start" "still working"
+holder blocked -; out=$(agent lead lead)
+refuses "a holder with no session that herdr reports blocked stops the start" "waiting on a prompt"
+holder idle -; agent lead lead >/dev/null
+check "a holder with no session that herdr reports idle is retired" "agent rename w:9 lead-done|agent start lead" "$(started)"
+# Only a finished holder is retired: herdr giving no status, or one not known to be finished, refuses.
+holder "" -; out=$(agent lead lead)
+refuses "a holder with no session and no herdr status is refused as unknown, not retired" "herdr gives no state for the agent holding this name (unknown)"
+holder starting -; out=$(agent lead lead)
+refuses "a holder with no session in a herdr state not known to be finished is refused, naming it" "is 'starting', not finished"
+# A rename that leaves the name held: the check after retiring stops the start.
+holder idle idle; touch "${ROOT}/rename-noop"; out=$(agent lead lead); rm -f "${ROOT}/rename-noop"
+check "a name still held after retiring stops the start before any pane opens" "yes|no" "$(has "still taken after retiring" "${out}")|$(paned)"
 rm -f "${ROOT}/agents.json"; touch "${ROOT}/start-fails"; out=$(agent l2 lead)
 check "a failed start closes its pane and shows herdr's error" "yes|yes" \
   "$(grep -q '^pane close ' "${ROOT}/herdr.log" && echo yes || echo no)|$(has agent_name_taken "${out}")"
@@ -361,13 +403,72 @@ printf -- '---\nstatus: active\nrepos: svc\n---\n\n# mine\n' > "${w}/docs/epics/
 check "watch --epic finds the repo from the epic's repos: line once its stories are gone" "o/svc #2 epic/mine checks finished on head2" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
 
-# watch reports only this project's agents blocked on a prompt: herdr lists every project's. The PR
-# above is already seen, so the next event is the blocked agents.
-mkdir -p "${w}/.swarm/state"; echo "w:5 mine-builder" > "${w}/.swarm/state/tab"   # this project's pane
+# watch reports this project's agents whose session is waiting, with what each waits for; herdr
+# lists every project's (lead, in w:6, is another's). A Claude agent's state is its session's (the
+# claude stub), never herdr's; a codex agent (cx) has no session, so herdr answers for it. mine-two is
+# a second Claude agent, idle unless $TWO says otherwise. The PR above is already seen, so the next
+# event is the agents.
+mkdir -p "${w}/.swarm/state"; printf 'w:5 mine-builder\nw:7 cx\nw:8 mine-two\n' > "${w}/.swarm/state/tab"   # this project's panes
 printf 'w:6 a brief line\n' > "${w}/.swarm/state/brief-x.md"   # a brief's words are not a pane record
-echo '{"result":{"agents":[{"name":"lead","agent_status":"blocked","pane_id":"w:6"},{"name":"mine-builder","agent_status":"blocked","pane_id":"w:5"}]}}' > "${ROOT}/agents.json"
-check "watch names only this project's blocked agents" "agent(s) blocked on a prompt: mine-builder" \
-  "$(cd "${w}" && HERDR_ENV=1 env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' mine-builder claude s-mb cx codex - mine-two claude s-two > "${w}/.swarm/agents.tsv"
+wagents() { # <mine-builder's herdr status> <cx's herdr status>
+  echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"blocked\",\"pane_id\":\"w:6\"},{\"name\":\"mine-builder\",\"agent_status\":\"$1\",\"pane_id\":\"w:5\"},{\"name\":\"cx\",\"agent_status\":\"$2\",\"pane_id\":\"w:7\"},{\"name\":\"mine-two\",\"agent_status\":\"idle\",\"pane_id\":\"w:8\"}]}}" > "${ROOT}/agents.json"
+}
+wsession() { # <mine-builder's session status> [its waitingFor]; mine-two's session is $TWO (default idle), waiting on $TWO_WHY
+  echo "[{\"sessionId\":\"s-mb\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"s-two\",\"status\":\"${TWO:-idle}\"${TWO_WHY:+,\"waitingFor\":\"${TWO_WHY}\"}}]" > "${ROOT}/watch-sessions.json"
+}
+# watchrun — run watch --epic mine for at most 10 seconds (Claude's sessions from $WATCH_SESSIONS, else
+# watch-sessions.json) and print what it printed, or "(still watching)" once it has read the agents
+# and not returned, so a watch that wrongly polls on fails rather than hangs. It runs as swarm.sh's
+# own pid (exec), so its sleep is its child: swarm.sh is stopped first, so it is not there to report
+# the sleep killed, then the sleep.
+watchrun() {
+  local pid kids grace=-1
+  : > "${ROOT}/herdr.log"
+  (cd "${w}" && exec env -u SWARM_PROJECT HERDR_ENV=1 CLAUDE_STUB_AGENTS="${WATCH_SESSIONS:-${ROOT}/watch-sessions.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine > "${ROOT}/watch.out" 2>&1) &
+  pid=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    kill -0 "${pid}" 2>/dev/null || break
+    [[ ${grace} -ne 0 ]] || break   # two seconds after it first read the agents
+    if [[ ${grace} -gt 0 ]]; then grace=$((grace - 1)); elif grep -q '^agent list' "${ROOT}/herdr.log"; then grace=2; fi
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    kids="$(pgrep -P "${pid}" || true)"; kill "${pid}" 2>/dev/null || true; { wait "${pid}"; } 2>/dev/null || true
+    for k in ${kids}; do kill "${k}" 2>/dev/null || true; done
+    echo "(still watching)"; return
+  fi
+  { wait "${pid}"; } 2>/dev/null || true
+  cat "${ROOT}/watch.out"
+}
+wagents idle idle; wsession waiting "permission prompt"
+check "watch names this project's agent whose session waits (herdr: idle), with what it waits for" "agent(s) waiting: mine-builder (permission prompt)" "$(watchrun)"
+check "watch does not report the same wait twice in a row" "(still watching)" "$(watchrun)"
+wagents idle blocked; wsession idle
+check "watch names a codex agent herdr reports blocked" "agent(s) waiting: cx" "$(watchrun)"
+# herdr says blocked, but the session is busy: nothing needs the lead, so watch polls on.
+wagents blocked idle; wsession busy
+check "watch does not return on an agent herdr reports blocked whose session is busy" "(still watching)" "$(watchrun)"
+# That poll found nothing waiting, so the wait reported first is forgotten: a builder answered that
+# stops on a second prompt of the same kind is reported again, not left waiting.
+wagents idle idle; wsession waiting "permission prompt"
+check "watch reports the same wait again after a poll with nothing waiting" "agent(s) waiting: mine-builder (permission prompt)" "$(watchrun)"
+# Each agent's wait is its own: mine-two is answered while mine-builder still waits, then waits again
+# on the same text, and is reported again.
+TWO=waiting TWO_WHY="permission prompt" wsession waiting "permission prompt"
+check "watch reports a second agent waiting while the first still waits" "agent(s) waiting: mine-builder (permission prompt), mine-two (permission prompt)" "$(watchrun)"
+wsession waiting "permission prompt"
+check "watch is quiet when one of two waiting agents is answered" "(still watching)" "$(watchrun)"
+TWO=waiting TWO_WHY="permission prompt" wsession waiting "permission prompt"
+check "watch reports an agent that waits again on the same text while another still waits" "agent(s) waiting: mine-builder (permission prompt), mine-two (permission prompt)" "$(watchrun)"
+# A read that fails changes nothing: the waits already reported are not reported again after it.
+touch "${ROOT}/list-fails"
+check "watch is quiet on a poll whose herdr read fails" "(still watching)" "$(watchrun)"
+rm -f "${ROOT}/list-fails"
+check "watch does not report a wait twice across a failed read" "(still watching)" "$(watchrun)"
+# So does a failed Claude Code list, which would read every Claude session unknown, so not waiting.
+check "watch is quiet on a poll whose Claude Code list fails" "(still watching)" "$(WATCH_SESSIONS="${ROOT}/no-such-file" watchrun)"
+check "watch does not report a wait twice across a failed Claude Code list" "(still watching)" "$(watchrun)"
 rm -f "${ROOT}/agents.json"
 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.

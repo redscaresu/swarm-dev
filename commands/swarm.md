@@ -37,7 +37,7 @@ Repeat until a step below says stop:
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
      tell the user to run `/login` and nothing else. Once they say it is done, write a file
      that says "Your login is renewed: resume where you stopped. Send the same to any builder whose
-     wait printed auth." and run `swarm.sh tell <agent> <file>` for each agent whose `wait` printed
+     wait printed auth." and run `swarm.sh tell <agent> resume <file>` for each agent whose `wait` printed
      `auth`, then go back to 1.
    - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
      `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first
@@ -67,7 +67,7 @@ Repeat until a step below says stop:
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
      builder, `codex exec review` plus `/code-review <PR>` when it changes code (log each fixed
      finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`), with findings
-     sent back through `swarm.sh tell <slug> <file>` until a pass on the latest head finds nothing
+     sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing
      substantive
      (method.md § Building).
      Then, if `swarm.sh config merge` is `human` (the default), run

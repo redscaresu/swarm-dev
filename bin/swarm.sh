@@ -7,7 +7,7 @@
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
-#   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
+#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
@@ -417,8 +417,9 @@ def session_state(log, name, listing):
 # builder's last sign of life stands in for it.
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
-#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once;
-#     a `nudge` line is wait's doing, not a sign of life, so it is skipped.
+#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
+#     A nudge is not a sign of life, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are
+#     skipped, and so is any other tell whose outcome is not ok: it never reached the builder.
 #   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
 #     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
 #     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
@@ -444,7 +445,9 @@ def last_seen(events):
         for l in open(events, encoding="utf-8", errors="replace"):
             f = l.rstrip("\n").split("\t")
             t = epoch(f[0]) if len(f) == 5 else None
-            if t is not None and f[1] != "nudge" and t > seen.get(f[2], 0):
+            if t is None or f[1] in ("nudge", "tell:nudge") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+                continue
+            if t > seen.get(f[2], 0):
                 seen[f[2]] = t
     except OSError:
         pass
@@ -690,6 +693,20 @@ s = session_state(sys.argv[1], sys.argv[2], sys.stdin.read() if os.environ["SWAR
 print("herdr" if s is None else s[0] + (": " + s[1] if s[1] else ""))' "${AGENTS_LOG}" "$1")" || out=""
   echo "${out:-unknown}"
 }
+
+# read_state <name> — <name>'s state for a reader that does not wait (tell, free_agent_name):
+# session_state's word for a Claude agent, or `herdr:<herdr's status>` for one herdr answers for
+# (codex, or no session recorded). The one place such a reader takes herdr's status.
+read_state() {
+  local s
+  s="$(session_state "$1")"
+  [[ "${s}" != herdr ]] || s="herdr:$(agent_status "$1")"
+  echo "${s}"
+}
+
+# waiting_for <state> — what a waiting agent waits for (read_state's `waiting: <waitingFor>`), or
+# "a prompt" when its state does not say.
+waiting_for() { local w="${1#waiting: }"; [[ "${w}" != "$1" ]] || w="a prompt"; echo "${w}"; }
 
 # login_expired <name> — succeed when <name>'s Claude session stopped on an expired login (PANES_PY's
 # login_expired): only the user's /login clears it, so nudging or waiting on it is wasted.
@@ -964,8 +981,9 @@ steer = collections.Counter()
 if os.path.exists(events):
     for line in open(events, errors="ignore"):
         f = line.rstrip("\n").split("\t")
-        if len(f) == 5 and f[1] in ("tell", "close"):
-            steer[f[1], f[2]] += 1
+        # A tell is logged as tell:<kind> (a bare tell in logs from before kinds).
+        if len(f) == 5 and f[1].split(":")[0] in ("tell", "close"):
+            steer[f[1].split(":")[0], f[2]] += 1
 attempts = collections.Counter()
 for line in open(log, errors="ignore"):
     f = line.rstrip("\n").split("\t")
@@ -1254,22 +1272,33 @@ wait_conductor() {
   return "${rc}"
 }
 
-# tell_agent <slug> <file> — send an agent a file's contents, such as review findings, through
-# deliver_prompt (it retries, and counts a permission prompt as taken up). A header line comes first,
-# so findings that begin with '-' are never read as a flag.
-# It refuses an agent that is mid-turn (findings sent then would be counted as taken up at once) or
-# sitting on a permission prompt (the text would land in the dialog), rather than waiting on it.
+# is_tell_kind <word> — true for a kind tell takes: findings, nudge or resume.
+is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1; }
+
+# tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
+# retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
+# main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
+# read as a flag. Only an idle agent is told (read_state): it refuses one mid-turn (findings sent then
+# would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
+# or of unknown state, rather than waiting on it.
 tell_agent() {
-  local f="$2" name msg status
+  local kind="$2" f="$3" name msg state
+  is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
-  status="$(agent_status "${name}")"
-  case "${status}" in
-    idle|done) ;;
-    working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
-    blocked) die "${name} is waiting on a prompt; answer it (herdr agent read ${name}), then tell it" ;;
-    *) [[ -n "${status}" || -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
-       die "could not reach ${name} (status '${status:-none}'): is its pane still open?" ;;
+  if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
+    [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
+    die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
+  fi
+  state="$(read_state "${name}")"
+  case "${state}" in
+    idle|herdr:idle|herdr:done) ;;
+    busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
+    waiting*|herdr:blocked) die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it" ;;
+    gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
+    unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
+    herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
+    *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
@@ -1300,7 +1329,7 @@ in its worktree, and, when it changes code (not only docs, board files or a depe
 /code-review skill on its PR (\`/code-review <PR>\`). If codex
 reports a usage limit, do not wait for it: rely on the other review and your own reading of the
 diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
-builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> <file>\` (a file holding the findings and
+builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
 what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
@@ -1542,7 +1571,7 @@ auth_rule() {
   cat <<EOF
 A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
 /login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
-login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> <file>\`) and wait on it
+login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> resume <file>\`) and wait on it
 again with \`swarm.sh wait <slug>\` in the background.
 EOF
 }
@@ -2024,8 +2053,10 @@ for a in json.load(sys.stdin):
 # repos: line (its stories may already be finished and deleted when the epic PR opens): a conductor
 # must not wake for another epic's PR on the same board. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
-# or when its head has had no check at all for WATCH_STALL_SECS (default 600). A herdr agent
-# blocked on a prompt also needs the lead. Each head is reported once (state in .swarm/state).
+# or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
+# project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
+# lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
+# poll finds that agent no longer waiting (state in .swarm/state).
 watch_prs() {
   local epic="" stories=("${BOARD}"/stories/*.md) epic_heads="" epic_repos="" f
   if [[ "${1:-}" == --epic ]]; then
@@ -2076,11 +2107,34 @@ watch_prs() {
         -q '.[]|select(.headRefName|startswith("story/") or startswith("epic/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
-      local blocked
-      # Only agents in panes this project opened: herdr lists every project's.
-      blocked=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "','.join(a['name'] for a in d['result']['agents'] if a.get('agent_status')=='blocked' and a.get('name') and a.get('pane_id') in e.get('SWARM_PANES','').split())" 2>/dev/null || true)
-      if [[ -n "${blocked}" ]] && ! grep -qx "blocked ${blocked}" "${seen}"; then
-        echo "blocked ${blocked}" >> "${seen}"; echo "agent(s) blocked on a prompt: ${blocked}"; return 0
+      local agents sessions now e news="" tmp
+      # Only agents in panes this project opened: herdr lists every project's. Each one's state is
+      # PANES_PY's agent_state: its session's, else herdr's (codex, or no session recorded). One line
+      # per agent waiting, "<name> (<what it waits for>)". A read that fails (herdr's list, Claude
+      # Code's, or the reader) changes nothing: a failed Claude list would read every session unknown.
+      if agents="$(herdr agent list 2>/dev/null)" && sessions="$(claude_agents)" \
+        && now="$(printf '%s' "${agents}" | SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+        python3 -c '
+import json, os, sys
+exec(os.environ["SWARM_PANES_PY"])
+own = set(os.environ["SWARM_OWN"].split())
+for a in json.load(sys.stdin)["result"]["agents"]:
+    name = a.get("name")
+    if name and a.get("pane_id") in own:
+        s = session_state(sys.argv[1], name, os.environ["SWARM_SESSIONS"])
+        if agent_state(a, name, s)[0] == "WAITING":
+            print(name + (f" ({s[1]})" if s and s[1] else ""))' "${AGENTS_LOG}" 2>/dev/null)"; then
+        while IFS= read -r e; do
+          if [[ -n "${e}" ]] && ! grep -qxF "waiting ${e}" "${seen}"; then news=1; fi
+        done <<< "${now}"
+        # seen's waiting lines become exactly the agents waiting now: an agent that stopped waiting is
+        # forgotten at once, so its next wait is reported again, whoever else still waits.
+        if [[ "$(sed -n 's/^waiting //p' "${seen}" | sort)" != "$(sort <<< "${now}")" ]]; then
+          tmp="$(mktemp "${STATE_DIR}/watch-seen.XXXXXX")"
+          { grep -v '^waiting ' "${seen}" || true; [[ -z "${now}" ]] || printf 'waiting %s\n' "${now//$'\n'/$'\n'waiting }"; } > "${tmp}"
+          mv "${tmp}" "${seen}"
+        fi
+        if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
     sleep 60
@@ -2957,19 +3011,28 @@ close_agent() {
 
 # free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
 # keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
-# `lead`) failed and left an empty pane. Retire a finished holder; refuse a working one. Names are
-# unique across every herdr workspace, so a holder in another project is refused, never retired:
-# it is that project's agent. Runs before any pane opens.
+# `lead`) failed and left an empty pane. herdr's holder decides first: with none, the name is free,
+# whatever an old session says. A holder this project started is retired only when it has finished
+# (read_state: idle, its session gone, or herdr's idle or done) and refused in any other state,
+# naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
+# refused, never retired: it is that project's agent. Runs before any pane opens.
 free_agent_name() {
-  local status
-  status=$(agent_status "$1")
-  case "${status}" in
-    "") [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
-        die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane" ;;
-    working|blocked) die "$1: an agent with this name is still ${status}; wait for it, or use another name" ;;
+  local state
+  if [[ -z "$(agent_field "$1" pane_id)" ]]; then
+    [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
+    die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane"
+  fi
+  state="$(read_state "$1")"
+  case "${state}" in
+    idle|gone|herdr:idle|herdr:done) ;;   # finished: the only states retired
+    busy|herdr:working) die "$1: an agent with this name is still working; wait for it, or use another name" ;;
+    waiting*|herdr:blocked) die "$1: an agent with this name is waiting on $(waiting_for "${state}"); answer it (herdr agent read $1), or use another name" ;;
+    unknown) die "$1: Claude Code gives no state for the session holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
+    herdr:unknown) die "$1: herdr gives no state for the agent holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
+    *) die "$1: the agent holding this name is '${state#herdr:}', not finished, so it is not retired; look at it (herdr agent read $1), or use another name" ;;
   esac
   retire_agent "$1" >/dev/null
-  [[ -z "$(agent_status "$1")" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
+  [[ -z "$(agent_field "$1" pane_id)" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
 }
 
 # agent_field <name> <field> [any] — <field> (agent_status, pane_id) of this project's agent called
@@ -3122,7 +3185,7 @@ dispatch() {
     story)  require_herdr; build_story "${1:?slug}" ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" ;;
-    tell)   require_herdr; tell_agent "${1:?slug}" "${2:?file}" ;;
+    tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
     next)   next_step ;;
     status) status_report "${1:-}" ;;
@@ -3191,7 +3254,7 @@ main_signal() {
 # outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
-# log one line per item themselves.
+# log one line per item themselves. A tell's command is tell:<kind>, so its target stays the slug.
 main() {
   local rc why
   [[ "${1:-}" != init ]] || init_check
@@ -3205,6 +3268,9 @@ main() {
     log-finding) EV_TARGET="${2:-} ${3:-}"; EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     tidy) EV_TARGET=- ;;
+    # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
+    # old form, tell <slug> <file>, would put a path there).
+    tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null

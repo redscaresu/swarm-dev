@@ -97,6 +97,7 @@ case "$1 $2" in
       error) echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
       *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
     esac ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -405,6 +406,22 @@ check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with n
 printf '%s\tnudge\ts-three\tw1:p1\tok\n' "$(ago 0)" >> "${P}/.swarm/events.tsv"
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "a nudge line does not lower a builder's stall age" test "${rc}" -eq 3
+# A tell is a swarm action on its story when it reached the builder: its line (tell:<kind>, the slug
+# as its target) lowers the stall age. A tell:nudge is a nudge, as wait's are, and a tell refused
+# (the session busy) never reached the builder: neither lowers it.
+printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.told"
+echo "- a finding" > "${ROOT}/findings.md"; cp "${P}/.swarm/events.tsv" "${ROOT}/events.keep"
+tellstall() { # <session file> <kind> — tell s-three with its session read from <session file>, then
+  # wait --stall on it (its session busy again); print "<told?>:<wait's exit>" and drop the tell's line
+  local told=no rc=0
+  (cd "${P}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="$1" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" tell s-three "$2" "${ROOT}/findings.md" >/dev/null 2>&1) && told=yes
+  long_ago --stall s-three 3000 >/dev/null || rc=$?
+  cp "${ROOT}/events.keep" "${P}/.swarm/events.tsv"
+  echo "${told}:${rc}"
+}
+check "a delivered tell lowers its builder's stall age" test "$(tellstall "${ROOT}/claude.json.told" findings)" == "yes:1"
+check "a tell:nudge does not lower its builder's stall age" test "$(tellstall "${ROOT}/claude.json.told" nudge)" == "yes:3"
+check "a refused tell does not lower its builder's stall age" test "$(tellstall "${ROOT}/claude.json" findings)" == "no:3"
 # Past stall_minutes, the session is busy before the first wake and idle on the read after it: the
 # stall check takes only the read after the wake, so wait returns idle, not stalled.
 cp "${ROOT}/claude.json" "${ROOT}/claude.json.flip"
@@ -566,7 +583,7 @@ git -C "${Q}" reset -q --hard HEAD~1
 day() { python3 -c 'import datetime, sys; print(datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])))' "$1"; }
 at() { python3 -c 'import datetime, sys; d = datetime.date.today() - datetime.timedelta(days=int(sys.argv[1])); print(datetime.datetime.combine(d, datetime.time.fromisoformat(sys.argv[2])).astimezone().isoformat())' "$1" "$2"; }
 printf '%s\tk1\thttps://github.com/o/r/pull/3\tone from yesterday\n%s\tk2\thttps://github.com/o/r/pull/4\tone from three days ago\n' "$(day 1)" "$(day 3)" > "${Q}/.swarm/findings.tsv"
-printf '%s\ttell\tlate-two-days-ago\tw1:p1\tok\n%s\ttell\tearly-yesterday\tw1:p1\tok\n' "$(at 2 23:59:00)" "$(at 1 00:01:00)" >> "${Q}/.swarm/events.tsv"
+printf '%s\ttell:findings\tlate-two-days-ago\tw1:p1\tok\n%s\ttell:nudge\tearly-yesterday\tw1:p1\tok\n' "$(at 2 23:59:00)" "$(at 1 00:01:00)" >> "${Q}/.swarm/events.tsv"
 qdash() { fresh; (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" "$@" bash "${SWARM}" dash 2>&1 || true); }
 out="$(qdash env)"
 # Finished: x-own, x-merged, x-squash, x-ops, x-rev, x-fin, x-twice. Open: x-b, x-c, x-again, x-gone, x-crlf.
@@ -577,8 +594,8 @@ check "an epic whose remaining stories are all blocked or later is ⏸" grep -qE
 check "the legend names ○ ready" has "○ ready" "$(tail -2 <<< "${out}")"
 check "a date-only entry from yesterday reads yesterday" grep -qE '^│ yesterday  ✎ one from yesterday' <<< "${out}"
 check "a date-only entry three days old reads 3d ago" grep -qE '^│ +3d ago  ✎ one from three days ago' <<< "${out}"
-check "a timed event late two days ago reads 2d ago" grep -qE '^│ +2d ago  · tell late-two-days-ago' <<< "${out}"
-check "a timed event over a day ago, early yesterday, reads yesterday" grep -qE '^│ yesterday  · tell early-yesterday|^│ +[0-9]+h ago  · tell early-yesterday' <<< "${out}"
+check "a timed event late two days ago reads 2d ago" grep -qE '^│ +2d ago  · tell:findings late-two-days-ago' <<< "${out}"
+check "a timed event over a day ago, early yesterday, reads yesterday" grep -qE '^│ yesterday  · tell:nudge early-yesterday|^│ +[0-9]+h ago  · tell:nudge early-yesterday' <<< "${out}"
 out="$(qdash env GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_0=diff.noprefix GIT_CONFIG_VALUE_0=true GIT_CONFIG_KEY_1=color.ui GIT_CONFIG_VALUE_1=always GIT_CONFIG_KEY_2=diff.mnemonicPrefix GIT_CONFIG_VALUE_2=true)"
 check "progress holds under diff.noprefix and color.ui=always" grep -qE "${XROW}" <<< "${out}"
 # The board in a repo of its own (board_dir), with no origin, while the project has origin/main: the

@@ -245,9 +245,11 @@ for pair in "${short_name}:${long}" "${long}:${long}" "short:short" "unknown:unk
 done
 rm -rf "${dir}"
 
-# `tell` sends a settled builder the file and exits 0, leaving no temp file behind; it refuses a
-# builder that is mid-turn or on a prompt instead of typing into it. The stub's `agent list`
-# reports s1 as $TELL_STATUS; `agent prompt` logs what it was sent and reports the agent working.
+# `tell <slug> <kind> <file>` sends an idle builder the file and exits 0, leaving no temp file behind.
+# A Claude builder's state is its session's (agents.tsv's newest line for s1, then the claude stub's
+# fixture), never herdr's: it refuses one busy, waiting (naming on what), gone or unknown instead of
+# typing into it. The stub's `agent list` reports s1 as $TELL_STATUS in pane $TELL_PANE; `agent
+# prompt` logs what it was sent and reports the agent working.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state && echo "w:1 s1" > .swarm/state/t)
@@ -260,31 +262,54 @@ esac
 EOF
 chmod +x "${dir}/bin/herdr"
 printf -- '- a finding\n' > "${dir}/findings.md"
-tellrun() { (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="$1" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md >/dev/null 2>&1; echo $?); }
 mkdir -p "${dir}/tmp"
-code="$(tellrun idle)"; sent="$(cat "${dir}/sent" 2>/dev/null)"; left="$(ls "${dir}/tmp")"
-if [[ "${code}" == 0 && "${sent}" == *"- a finding"* && "${sent}" == "From the conductor:"* && -z "${left}" ]]; then
-  echo "ok   tell sends a settled builder the findings and exits 0, leaving no temp file"; else
-  echo "FAIL tell sends a settled builder the findings: exit ${code}, sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
-rm -f "${dir}/sent"
-code="$(TELL_PANE=w:77 tellrun idle)"
-if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses another project's agent of the same name"; else
-  echo "FAIL tell refuses another project's agent of the same name: exit ${code}, sent $(cat "${dir}/sent" 2>/dev/null || true)"; fails=$((fails + 1)); fi
-rm -f "${dir}/sent"
-out="$(cd "${dir}" || exit; HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 findings.md 2>&1; true)"
-if [[ "${out}" != *"not one this project started"* && ! -f "${dir}/sent" ]]; then
-  echo "ok   tell never calls this project's own agent of unknown status another project's"; else
-  echo "FAIL tell never calls this project's own agent of unknown status another project's: '${out}'"; fails=$((fails + 1)); fi
-rm -f "${dir}/sent"
-code="$(tellrun "done")"
-if [[ "${code}" == 0 && -f "${dir}/sent" ]]; then echo "ok   tell also sends a builder herdr reports as done"; else
-  echo "FAIL tell also sends a builder herdr reports as done: exit ${code}"; fails=$((fails + 1)); fi
-rm -f "${dir}/sent"
-for st in working blocked; do
-  code="$(tellrun "${st}")"
-  if [[ "${code}" != 0 && ! -f "${dir}/sent" ]]; then echo "ok   tell refuses a ${st} builder"; else
-    echo "FAIL tell refuses a ${st} builder: exit ${code}, sent: $(cat "${dir}/sent" 2>/dev/null)"; fails=$((fails + 1)); fi
-done
+tsv() { printf '2026-10-13\tcode\ts1\t%s\topus\thigh\t%s\n' "$1" "$2" >> "${dir}/.swarm/agents.tsv"; }
+tsession() { # <status> [waitingFor] — sess-s1's entry; `none` lists no entry for it
+  if [[ "$1" == none ]]; then echo '[]'; else echo "[{\"sessionId\":\"sess-s1\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"sess-old\",\"status\":\"${OLD:-idle}\"}]"; fi > "${dir}/claude.json"
+}
+# tellout <herdr status> <tell args...> — run tell; print its output, then "exit N".
+tellout() {
+  local st="$1"; shift; rm -f "${dir}/sent"
+  (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="${st}" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${dir}/claude.json}" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 "$@" 2>&1; echo "exit $?")
+}
+refused() { # <name> <want in the message> <herdr status> <tell args...>
+  local name="$1" want="$2" out; shift 2
+  out="$(tellout "$@")"
+  if [[ "${out}" == *"${want}"* && "${out}" == *"exit 1" && ! -f "${dir}/sent" ]]; then echo "ok   ${name}"; else
+    echo "FAIL ${name}: got '${out}', sent: $(cat "${dir}/sent" 2>/dev/null)"; fails=$((fails + 1)); fi
+}
+told() { # <name> <herdr status> <tell args...>
+  local name="$1" out sent left; shift
+  out="$(tellout "$@")"; sent="$(cat "${dir}/sent" 2>/dev/null || true)"; left="$(ls "${dir}/tmp")"
+  if [[ "${out}" == *"exit 0" && "${sent}" == "From the conductor:"* && "${sent}" == *"- a finding"* && -z "${left}" ]]; then echo "ok   ${name}"; else
+    echo "FAIL ${name}: got '${out}', sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
+}
+tsv claude sess-s1
+tsession idle; told "tell sends an idle session the findings while herdr says working, and leaves no temp file" working findings findings.md
+tsession busy; refused "tell refuses a busy session while herdr says done: still working" "still working" "done" findings findings.md
+tsession waiting "permission prompt"; refused "tell refuses a waiting session, naming what it waits for" "waiting on permission prompt" idle findings findings.md
+tsession none; refused "tell refuses a session that is gone" "gone" idle findings findings.md
+tsession compacting; refused "tell refuses a session in a state it does not know (unknown)" "(unknown)" idle findings findings.md
+tsession idle
+CLAUDE_STUB_AGENTS="${dir}/no-such-file" refused "tell refuses when Claude Code cannot list its sessions (unknown)" "(unknown)" idle findings findings.md
+for k in nudge resume; do told "tell takes the kind ${k}" idle "${k}" findings.md; done
+refused "tell with no kind fails, listing the three" "findings, nudge or resume, not ''" idle
+refused "the old form, tell <slug> <file>, fails on its kind" "findings, nudge or resume, not 'findings.md'" idle findings.md
+refused "tell with an unknown kind fails, listing the three" "findings, nudge or resume, not 'review'" idle review findings.md
+refused "tell with a kind and no file fails" "no such file ''" idle findings
+TELL_PANE=w:77 refused "tell refuses another project's agent of the same name" "not one this project started" idle findings findings.md
+# A reused name: the older line's session (sess-old) is retired; the newer line's (sess-s1) decides.
+: > "${dir}/.swarm/agents.tsv"; tsv claude sess-old; tsv claude sess-s1
+OLD=busy tsession idle; told "a reused name reads the newer line (older busy, newer idle): told" working findings findings.md
+OLD=idle tsession busy; refused "a reused name reads the newer line (older idle, newer busy): refused" "still working" idle findings findings.md
+# No session recorded ('-', as a codex agent has): herdr answers for it.
+tsv codex -; tsession busy
+told "tell sends an agent with no session that herdr reports as idle" idle findings findings.md
+told "tell also sends one herdr reports as done" "done" findings findings.md
+refused "tell refuses one herdr reports as working" "still working" working findings findings.md
+refused "tell refuses one herdr reports as blocked on a prompt" "waiting on a prompt" blocked findings findings.md
+# herdr giving no status (agent_field reads it as unknown): refused as unknown, never as another project's.
+refused "tell refuses its own agent with no session and no herdr status as unknown" "herdr gives no state for it (unknown)" "" findings findings.md
 rm -rf "${dir}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
