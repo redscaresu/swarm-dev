@@ -81,9 +81,16 @@ cat > "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"}]}}' ;;
   "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"}]}}' ;;
-  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"; echo "herdr: a notice on stderr" >&2
-    if [ -f "${WAIT_OK:-/nonexistent}" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; exit 0; fi
-    echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
+  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
+    [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
+    [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
+    if [ -n "${WAIT_SWAP:-}" ] && [ -e "${WAIT_SWAP}.new" ]; then mv "${WAIT_SWAP}.new" "${WAIT_SWAP}"; fi   # the session changes while herdr waits
+    echo "herdr: a notice on stderr" >&2
+    case "${WAIT_MODE:-done}" in
+      timeout) echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
+      error) echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
+      *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
+    esac ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -332,28 +339,61 @@ mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
 rm "${P}/.claude/swarm/config"
-# wait keeps its old contract: herdr's wait times out, and a bare wait fails at once, no stall check.
-waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS=1000 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
+# wait: herdr says done at once (the stub), and s-three's session (sess-today) is busy, so a wait
+# sleeps out each slice and reads the session again; herdr's word is never the answer.
+printf '[{"sessionId":"sess-today","status":"busy"},{"sessionId":"sess-cut","status":"busy"}]' > "${ROOT}/claude.json"
+waitfor() { (cd "${P}" || exit 1; HERDR_ENV=1 SWARM_STALL_POLL_MS="${SWARM_STALL_POLL_MS:-1000}" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${ROOT}/claude.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>&1); }
 long_ago() { SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) waitfor "$@"; }
-if out="$(WAIT_LOG="${ROOT}/wait.log" waitfor s-three 5000)"; then rc=0; else rc=$?; fi
-check "a bare wait on a stalled builder is the old wait: no stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
-check "a bare wait is one herdr wait for the whole timeout, no polling" test "$(cat "${ROOT}/wait.log")" == "agent wait w1:p9 --timeout 5000"
+t0=${SECONDS}
+if out="$(WAIT_LOG="${ROOT}/wait.log" CLAUDE_STUB_LOG="${ROOT}/claude.log" waitfor s-three 3000)"; then rc=0; else rc=$?; fi
+took=$((SECONDS - t0))
+check "a bare wait on a busy, stalled builder times out with its state: no stall" test "${rc}:${out}" == "1:busy"
+# The last slice is cut to the deadline, so it may be a little short of the others.
+check "a bare wait polls herdr in slices" test "$(awk '$1 $2 $3 == "agentwaitw1:p9" && $4 == "--timeout" && $5 > 0 && $5 <= 1000 { n++ } END { print n, NR }' "${ROOT}/wait.log")" == "3 3"
+check "each slice herdr cut short is slept out, so the wait lasts its timeout" test "${took}" -ge 2
+# Slices are timed in milliseconds: a herdr wait of half a second is slept out to the slice, never
+# rounded to a whole second (a gap of 0.5 s or 1.5 s between wakes).
+WAIT_TIMES="${ROOT}/wait.times" WAIT_SLEEP=0.5 waitfor s-three 3000 >/dev/null || true
+check "each slice lasts its STALL_POLL_MS, timed in milliseconds" test "$(awk 'NR > 1 { g = $1 - p; if (g < 900 || g > 1450) bad = 1 } { p = $1 } END { print NR, (bad ? "off" : "on time") }' "${ROOT}/wait.times")" == "3 on time"
+# One read before the first wake, one after each of the 3, and one at the deadline after the last
+# slice's early wake: herdr wakes at once here, so every slice is slept out.
+check "a 3-slice wait lists Claude's sessions at most 5 times" test "$(grep -c '^agents --json$' "${ROOT}/claude.log")" -le 5
 # wait --stall counts from when the wait began: started now, 2 hours of silence before it do not count.
-if out="$(waitfor --stall s-three 5000)"; then rc=0; else rc=$?; fi
+if out="$(waitfor --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
-# Begun 2 hours ago (the test hook), it returns on the stall with exit code 3.
-if out="$(long_ago --stall s-three 5000)"; then rc=0; else rc=$?; fi
+# Begun 2 hours ago (the test hook), it returns on the stall with exit code 3: herdr says done, but
+# the session is busy, and busy is what the stall rule reads.
+if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
 check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
-# herdr's stderr never reaches the JSON parse: the stub writes a notice there on every wait.
-touch "${ROOT}/wait.ok"
-if out="$(WAIT_OK="${ROOT}/wait.ok" waitfor --stall s-three 5000)"; then rc=0; else rc=$?; fi
-check "wait --stall reads herdr's status with a notice on stderr" test "${rc}:${out}" == "0:idle"
+# Past stall_minutes, the session is busy before the first wake and idle on the read after it: the
+# stall check takes only the read after the wake, so wait returns idle, not stalled.
+cp "${ROOT}/claude.json" "${ROOT}/claude.json.flip"
+printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.flip.new"
+if out="$(WAIT_SWAP="${ROOT}/claude.json.flip" CLAUDE_STUB_AGENTS="${ROOT}/claude.json.flip" long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
+check "a builder idle on the read after the wake is idle, not stalled" test "${rc}:${out}" == "0:idle"
+# An idle session has settled, and stalls are not checked.
+printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.idle"
+if out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json.idle" long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
+check "wait --stall returns an idle session's state" test "${rc}:${out}" == "0:idle"
 # Two stories share an agent name's 32 characters; the builder is the one not done.
 printf '%s\tstory\taaaaaaaaaa-bbbbbbbbbb-cccccccccc-2\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
+# While that builder is a codex agent, herdr answers for it (herdr_wait): herdr's stderr notice never
+# reaches the JSON parse, a step that times out is told from a real failure, and stalls are checked
+# between steps.
+printf '%s\tcode\taaaaaaaaaa-bbbbbbbbbb-cccccccccc\tcodex\tgpt\thigh\t-\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
+if out="$(WAIT_MODE=idle waitfor --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc 3000)"; then rc=0; else rc=$?; fi
+check "a codex agent's wait reads herdr's status with a notice on stderr" test "${rc}:${out}" == "0:idle"
+: > "${ROOT}/wait.log"; WAIT_LOG="${ROOT}/wait.log" WAIT_MODE=timeout waitfor aaaaaaaaaa-bbbbbbbbbb-cccccccccc 3000 >/dev/null || true
+check "a codex agent's step that times out is stepped past" test "$(grep -c . "${ROOT}/wait.log")" -eq 3
+rc=0; : > "${ROOT}/wait.log"; WAIT_LOG="${ROOT}/wait.log" WAIT_MODE=error waitfor aaaaaaaaaa-bbbbbbbbbb-cccccccccc 3000 >/dev/null || rc=$?
+check "a codex agent's step that fails for real ends the stepping, and the wait fails" test "$(grep -c . "${ROOT}/wait.log"):${rc}" == "2:1"
+if out="$(WAIT_MODE=timeout long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 3000)"; then rc=0; else rc=$?; fi
+check "a codex builder's wait --stall returns on a stall between steps" test "${rc}:$(grep -c '^stalled: working' <<< "${out}")" == "3:1"
+printf '%s\tcode\taaaaaaaaaa-bbbbbbbbbb-cccccccccc\tclaude\topus\thigh\tsess-cut\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "dash maps a cut agent name to the story not done" grep -qE 'look at aaaaaaaaaa-bbbbbbbbbb-cccccccccc: working 1(19|20|21) min' <<< "${out}"
-if out="$(long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 5000)"; then rc=0; else rc=$?; fi
+if out="$(long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 3000)"; then rc=0; else rc=$?; fi
 check "wait maps a cut agent name to the story not done" test "${rc}" -eq 3
 # A PR updated a minute ago is a sign of life: neither dash nor wait --stall calls it stalled.
 ago 1 > "${ROOT}/pr8.updated"
@@ -361,7 +401,7 @@ ago 1 > "${ROOT}/pr8.updated"
 awk 'NR > 1 && /^---$/ && !d { print "prs: https://github.com/o/r/pull/8"; d = 1 } { print }' "${P}/docs/stories/s-three.md" > "${ROOT}/s3" && mv "${ROOT}/s3" "${P}/docs/stories/s-three.md"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a recent PR update is not a stall in dash" lacks "look at s-three" "${out}"
-if out="$(long_ago --stall s-three 5000)"; then rc=0; else rc=$?; fi
+if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
 
 # --- An epic's progress from history, in a project of its own (Q), with no herdr. Each story file

@@ -60,7 +60,9 @@ case "$1 $2" in
   "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
-  "agent wait")       echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent wait")       [ -e "$H/swap" ] && mv "$H/swap" "$H/claude.json"   # the session changes while herdr waits
+                      [ -e "$H/waiterr" ] && { echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; }
+                      echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
   "agent read")       cat "$H/screen" 2>/dev/null ;;
 esac
 EOF
@@ -216,19 +218,95 @@ item "${b}" epics/f.md "status: active" "repos: svc"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 check "with pr_per = story the rule does not apply" "plan-epic f" "$(first "$(nx)")"
 
-# --- wait: an agent idle after an API error is told to carry on; any other idle agent is left alone.
+# --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
+# state is its session's, from the claude stub's fixture. An agent idle after an API error is told
+# to carry on; any other idle agent is left alone.
+export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
+session() { # <file> <session>=<status>... — a `claude agents --json` fixture
+  local f="$1" e out=""; shift
+  for e in "$@"; do out+="${out:+,}{\"sessionId\":\"${e%%=*}\",\"status\":\"${e#*=}\"}"; done
+  echo "[${out}]" > "${f}"
+}
 nudges() { grep -c '^agent prompt' "${ROOT}/herdr.log" || true; }
 echo "a w:50" >> "${ROOT}/agents"; echo "w:50 a" > "${p}/.swarm/state/wait-a"   # this project's agent a, in a pane it recorded
+printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agents.tsv"
+session "${ROOT}/claude.json" sess-a=idle
 printf '%s\n' "⏺ I have opened the PR." "⏺ Error: Exit code 1 from make test" > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"
-check "an idle agent whose last event is not an API error is not nudged" "idle|0" "$(run wait a)|$(nudges)"
+check "an idle session whose last event is not an API error is not nudged, whatever herdr says" "idle|0" "$(run wait a)|$(nudges)"
 printf '%s\n' "⏺ Reviewing the commit." "⏺ API Error: The response stopped arriving." "✻ Crunched for 5m" > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"
 check "an agent stopped by an API error is nudged, then waited on again" "idle|1" "$(run wait a | tail -1)|$(nudges)"
 printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"; touch "${ROOT}/sticky"
 : > "${ROOT}/herdr.log"
 check "an error that does not clear stops after three nudges" "idle|3" "$(run wait a | tail -1)|$(nudges)"
+# The session still reads idle after each nudge: wait wakes on herdr before it reads it again, so no
+# two nudges go out without a wake between them.
+check "after a nudge, wait wakes before it takes the session's word again" "yes" \
+  "$(grep -E '^agent (wait|prompt)' "${ROOT}/herdr.log" | awk '/^agent prompt/ { if (p) bad = 1; p = 1; next } { p = 0 } END { print bad ? "no" : "yes" }')"
 rm -f "${ROOT}/sticky" "${ROOT}/screen"
+waitrc() { # <stderr file> <wait args...> — "<stdout>|exit <rc>|<seconds taken>"
+  local e="$1" t0=${SECONDS} out rc=0; shift
+  out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>"${e}")" || rc=$?
+  echo "${out}|exit ${rc}|$((SECONDS - t0))"
+}
+# herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
+session "${ROOT}/claude.json" sess-a=busy
+(sleep 2; session "${ROOT}/claude.json.new" sess-a=idle; mv "${ROOT}/claude.json.new" "${ROOT}/claude.json") &
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; wait
+check "herdr done and the session busy: wait holds until the session is idle" "idle|exit 0|yes" \
+  "${got%|*}|$([[ ${got##*|} -ge 2 && ${got##*|} -lt 10 ]] && echo yes || echo "no, ${got##*|}s")"
+# The session turns idle during the last slice's sleep-out (2 s slices, a 4 s timeout, idle at 3 s):
+# wait takes its read after the sleep-out, so it returns idle in time, not the busy read before it.
+session "${ROOT}/claude.json" sess-a=busy
+(sleep 3; session "${ROOT}/claude.json.new" sess-a=idle; mv "${ROOT}/claude.json.new" "${ROOT}/claude.json") &
+got="$(SWARM_STALL_POLL_MS=2000 waitrc /dev/null a 4000)"; wait
+check "a session that turns idle in the last slice's sleep-out is returned idle" "idle|exit 0" "${got%|*}"
+# herdr wakes at once and the session has settled by then: wait returns on that read, not a minute's
+# slice later.
+fast() { [[ ${1##*|} -lt 5 ]] && echo yes || echo "no, ${1##*|}s"; }
+session "${ROOT}/claude.json" sess-a=busy; session "${ROOT}/swap" sess-a=idle
+got="$(SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+check "a session idle on the read after an early wake is returned at once" "idle|exit 0|yes" "${got%|*}|$(fast "${got}")"
+session "${ROOT}/claude.json" sess-a=busy; echo '[]' > "${ROOT}/swap"
+got="$(SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+check "a session gone on the read after an early wake is returned at once" "gone|exit 0|yes" "${got%|*}|$(fast "${got}")"
+# Claude Code lists pid and status only while the process is alive: an entry with neither has exited.
+echo '[{"sessionId":"sess-a","cwd":"/w","kind":"interactive","startedAt":"2026-10-13T10:00:00Z"}]' > "${ROOT}/claude.json"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000)"
+check "a listed session with no pid or status reads gone" "gone|exit 0" "${got%|*}"
+# A recorded session with no entry is gone, read on the first wake, even when herdr's wait fails
+# (the pane is gone too); a slice of a minute shows it does not wait a slice out first.
+session "${ROOT}/claude.json" sess-a=busy; echo '[]' > "${ROOT}/swap"; touch "${ROOT}/waiterr"
+got="$(SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+check "a gone session is returned on the first wake, though herdr's wait failed" "gone|exit 0|yes" \
+  "${got%|*}|$([[ ${got##*|} -lt 10 ]] && echo yes || echo "no, ${got##*|}s")"
+# A herdr wait that fails for another reason, with the session still busy, fails the wait at once:
+# the state and a non-zero exit, not slices slept out to the timeout.
+session "${ROOT}/claude.json" sess-a=busy
+got="$(SWARM_STALL_POLL_MS=10000 waitrc /dev/null a 20000)"
+check "a herdr wait that fails, the session busy, fails the wait within a slice" "busy|exit 1|yes" \
+  "${got%|*}|$([[ ${got##*|} -lt 8 ]] && echo yes || echo "no, ${got##*|}s")"
+rm -f "${ROOT}/waiterr"
+# A reader that fails (python3 here fails it) is unknown: a Claude agent never falls back to herdr.
+mkdir -p "${ROOT}/badpy"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\n[ -n "${SWARM_LIST_OK+x}" ] && exit 1\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/badpy/python3"
+chmod +x "${ROOT}/badpy/python3"
+got="$(PATH="${ROOT}/badpy:${PATH}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000)"
+check "a reader that fails reads as unknown, never as herdr's word" "unknown|exit 1" "${got%|*}"
+# A list call that fails is unknown, never gone: wait keeps stepping, says so once, and times out.
+got="$(CLAUDE_STUB_AGENTS="${ROOT}/no-such-file" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 3000)"
+check "a failed list call reads as unknown, said once on stderr, until the timeout" "unknown|exit 1|1" \
+  "${got%|*}|$(grep -c 'unknown' "${ROOT}/wait.err")"
+# A reused name: the older line's session is idle, the newer one's busy. wait reads the newer.
+printf '2026-10-14\tcode\ta\tclaude\topus\thigh\tsess-a2\n' >> "${p}/.swarm/agents.tsv"
+session "${ROOT}/claude.json" sess-a=idle sess-a2=busy
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000)"
+check "with two agents.tsv lines for a name, wait reads the newer line's session" "busy|exit 1" "${got%|*}"
+# A codex agent has no session: herdr answers for it.
+printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
+check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"
 # The same name held only by another project's agent is never waited on or nudged.
 printf '%s\n' "⏺ API Error: overloaded" > "${ROOT}/screen"; rm -f "${p}/.swarm/state/wait-a"
 : > "${ROOT}/herdr.log"
