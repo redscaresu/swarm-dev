@@ -1838,8 +1838,8 @@ for a in json.load(sys.stdin):
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
 # project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
-# lead, named with what it waits for. Each head is reported once, and each such list once until a
-# poll finds nothing waiting (state in .swarm/state).
+# lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
+# poll finds that agent no longer waiting (state in .swarm/state).
 watch_prs() {
   local epic="" stories=("${BOARD}"/stories/*.md) epic_heads="" epic_repos="" f
   if [[ "${1:-}" == --epic ]]; then
@@ -1890,27 +1890,32 @@ watch_prs() {
         -q '.[]|select(.headRefName|startswith("story/") or startswith("epic/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
-      local waiting
+      local agents now e news="" tmp
       # Only agents in panes this project opened: herdr lists every project's. Each one's state is
-      # PANES_PY's agent_state: its session's, else herdr's (codex, or no session recorded).
-      waiting=$(herdr agent list 2>/dev/null | SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="$(claude_agents)" \
+      # PANES_PY's agent_state: its session's, else herdr's (codex, or no session recorded). One line
+      # per agent waiting, "<name> (<what it waits for>)". A read that fails changes nothing.
+      if agents="$(herdr agent list 2>/dev/null)" && now="$(printf '%s' "${agents}" | SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="$(claude_agents)" \
         python3 -c '
 import json, os, sys
 exec(os.environ["SWARM_PANES_PY"])
-own, out = set(os.environ["SWARM_OWN"].split()), []
+own = set(os.environ["SWARM_OWN"].split())
 for a in json.load(sys.stdin)["result"]["agents"]:
     name = a.get("name")
     if name and a.get("pane_id") in own:
         s = session_state(sys.argv[1], name, os.environ["SWARM_SESSIONS"])
         if agent_state(a, name, s)[0] == "WAITING":
-            out.append(name + (f" ({s[1]})" if s and s[1] else ""))
-print(", ".join(out))' "${AGENTS_LOG}" 2>/dev/null || true)
-      if [[ -z "${waiting}" ]]; then
-        # Nothing waits: forget the waits reported, so a builder that stops again on the same kind
-        # of prompt after being answered is reported again.
-        if grep -q '^waiting ' "${seen}"; then grep -v '^waiting ' "${seen}" > "${seen}.tmp" || true; mv "${seen}.tmp" "${seen}"; fi
-      elif ! grep -qxF "waiting ${waiting}" "${seen}"; then
-        echo "waiting ${waiting}" >> "${seen}"; echo "agent(s) waiting: ${waiting}"; return 0
+            print(name + (f" ({s[1]})" if s and s[1] else ""))' "${AGENTS_LOG}" 2>/dev/null)"; then
+        while IFS= read -r e; do
+          if [[ -n "${e}" ]] && ! grep -qxF "waiting ${e}" "${seen}"; then news=1; fi
+        done <<< "${now}"
+        # seen's waiting lines become exactly the agents waiting now: an agent that stopped waiting is
+        # forgotten at once, so its next wait is reported again, whoever else still waits.
+        if [[ "$(sed -n 's/^waiting //p' "${seen}" | sort)" != "$(sort <<< "${now}")" ]]; then
+          tmp="$(mktemp "${STATE_DIR}/watch-seen.XXXXXX")"
+          { grep -v '^waiting ' "${seen}" || true; [[ -z "${now}" ]] || printf 'waiting %s\n' "${now//$'\n'/$'\n'waiting }"; } > "${tmp}"
+          mv "${tmp}" "${seen}"
+        fi
+        if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
     sleep 60

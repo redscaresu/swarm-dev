@@ -217,8 +217,9 @@ builder (busy, as above) has shown no sign of life (a worktree commit, a PR upda
 on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, or when an agent's session is waiting, and it names what the agent waits for. A codex
-agent, or one with no session recorded, counts as waiting when herdr says it is blocked. A wait is
-reported once, and again only after a poll that finds nothing waiting. herdr lists every project's agents, so
+agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's
+wait is reported once, and again only after a poll finds that agent no longer waiting; a poll that
+cannot read the agents changes nothing. herdr lists every project's agents, so
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 

@@ -59,14 +59,14 @@ cat > "${ROOT}/bin/herdr" <<EOF
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"; N="${ROOT}/rename-noop"; L="${ROOT}/list-fails"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") if [ -f "$I" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
-  "agent list")   if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
+  "agent list")   if [ -f "$L" ]; then exit 1; fi; if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
   "agent rename") if [ -f "$A" ] && [ ! -f "$N" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
@@ -400,15 +400,18 @@ check "watch --epic finds the repo from the epic's repos: line once its stories 
 
 # watch reports this project's agents whose session is waiting, with what each waits for; herdr
 # lists every project's (lead, in w:6, is another's). A Claude agent's state is its session's (the
-# claude stub), never herdr's; a codex agent (cx) has no session, so herdr answers for it. The PR
-# above is already seen, so the next event is the agents.
-mkdir -p "${w}/.swarm/state"; printf 'w:5 mine-builder\nw:7 cx\n' > "${w}/.swarm/state/tab"   # this project's panes
+# claude stub), never herdr's; a codex agent (cx) has no session, so herdr answers for it. mine-two is
+# a second Claude agent, idle unless $TWO says otherwise. The PR above is already seen, so the next
+# event is the agents.
+mkdir -p "${w}/.swarm/state"; printf 'w:5 mine-builder\nw:7 cx\nw:8 mine-two\n' > "${w}/.swarm/state/tab"   # this project's panes
 printf 'w:6 a brief line\n' > "${w}/.swarm/state/brief-x.md"   # a brief's words are not a pane record
-printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' mine-builder claude s-mb cx codex - > "${w}/.swarm/agents.tsv"
+printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' mine-builder claude s-mb cx codex - mine-two claude s-two > "${w}/.swarm/agents.tsv"
 wagents() { # <mine-builder's herdr status> <cx's herdr status>
-  echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"blocked\",\"pane_id\":\"w:6\"},{\"name\":\"mine-builder\",\"agent_status\":\"$1\",\"pane_id\":\"w:5\"},{\"name\":\"cx\",\"agent_status\":\"$2\",\"pane_id\":\"w:7\"}]}}" > "${ROOT}/agents.json"
+  echo "{\"result\":{\"agents\":[{\"name\":\"lead\",\"agent_status\":\"blocked\",\"pane_id\":\"w:6\"},{\"name\":\"mine-builder\",\"agent_status\":\"$1\",\"pane_id\":\"w:5\"},{\"name\":\"cx\",\"agent_status\":\"$2\",\"pane_id\":\"w:7\"},{\"name\":\"mine-two\",\"agent_status\":\"idle\",\"pane_id\":\"w:8\"}]}}" > "${ROOT}/agents.json"
 }
-wsession() { echo "[{\"sessionId\":\"s-mb\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}}]" > "${ROOT}/watch-sessions.json"; }
+wsession() { # <mine-builder's session status> [its waitingFor]; mine-two's session is $TWO (default idle), waiting on $TWO_WHY
+  echo "[{\"sessionId\":\"s-mb\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"s-two\",\"status\":\"${TWO:-idle}\"${TWO_WHY:+,\"waitingFor\":\"${TWO_WHY}\"}}]" > "${ROOT}/watch-sessions.json"
+}
 # watchrun — run watch --epic mine for at most 10 seconds and print what it printed, or "(still
 # watching)" once it has read the agents and not returned, so a watch that wrongly polls on fails
 # rather than hangs. It runs as swarm.sh's own pid (exec), so its sleep is its child: swarm.sh is
@@ -444,6 +447,19 @@ check "watch does not return on an agent herdr reports blocked whose session is 
 # stops on a second prompt of the same kind is reported again, not left waiting.
 wagents idle idle; wsession waiting "permission prompt"
 check "watch reports the same wait again after a poll with nothing waiting" "agent(s) waiting: mine-builder (permission prompt)" "$(watchrun)"
+# Each agent's wait is its own: mine-two is answered while mine-builder still waits, then waits again
+# on the same text, and is reported again.
+TWO=waiting TWO_WHY="permission prompt" wsession waiting "permission prompt"
+check "watch reports a second agent waiting while the first still waits" "agent(s) waiting: mine-builder (permission prompt), mine-two (permission prompt)" "$(watchrun)"
+wsession waiting "permission prompt"
+check "watch is quiet when one of two waiting agents is answered" "(still watching)" "$(watchrun)"
+TWO=waiting TWO_WHY="permission prompt" wsession waiting "permission prompt"
+check "watch reports an agent that waits again on the same text while another still waits" "agent(s) waiting: mine-builder (permission prompt), mine-two (permission prompt)" "$(watchrun)"
+# A read that fails changes nothing: the waits already reported are not reported again after it.
+touch "${ROOT}/list-fails"
+check "watch is quiet on a poll whose herdr read fails" "(still watching)" "$(watchrun)"
+rm -f "${ROOT}/list-fails"
+check "watch does not report a wait twice across a failed read" "(still watching)" "$(watchrun)"
 rm -f "${ROOT}/agents.json"
 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.
