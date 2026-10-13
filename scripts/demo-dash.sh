@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # demo-dash.sh — `swarm.sh dash --watch` on a made-up project, for the README's recording.
-# Builds a throwaway board in git, stub herdr and gh on PATH, then changes the state every few
+# Builds a throwaway board in git, stub herdr, gh and claude on PATH, then changes the state every few
 # seconds (a PR merges, a story unblocks, a builder starts, a PR goes green) while the dash watches.
-# Nothing real is read: no herdr, no GitHub, no ~/.claude.
+# Nothing real is read: no herdr, no GitHub, no Claude Code sessions, no ~/.claude.
 #   asciinema rec --window-size 120x34 -c scripts/demo-dash.sh demo.cast && agg demo.cast docs/assets/dash.gif
 set -euo pipefail
 
@@ -28,12 +28,15 @@ merge() { # <minutes ago> <pr> <slug>: the story's PR deletes its file and merge
   "${G[@]}" commit -qm "$3"; "${G[@]}" checkout -q main
   GIT_COMMITTER_DATE="$(ago "$1")" "${G[@]}" merge -q --no-ff -m "Merge pull request #$2 from acme/story/$3" "story/$3"
 }
-agents() { # <name:status:pane>... — what the stub herdr reports
+agents() { # <name:status:pane>... — what the stub herdr reports, and the stub claude (each agent's
+  # session id is its name; working is busy)
   python3 -c 'import json, sys
-a = [dict(zip(("name", "agent_status", "pane_id"), x.split(":", 2))) for x in sys.argv[1:]]
+a = [dict(zip(("name", "agent_status", "pane_id"), x.split(":", 2))) for x in sys.argv[2:]]
 for x in a: x["pane_id"] = x["pane_id"].replace("-", ":")
 print(json.dumps({"result": {"agents": a}}))
-print(json.dumps({"result": {"panes": [{"pane_id": x["pane_id"]} for x in a]}}))' "$@" > "${D}/herdr.json"
+print(json.dumps({"result": {"panes": [{"pane_id": x["pane_id"]} for x in a]}}))
+s = [{"sessionId": x["name"], "status": "busy" if x["agent_status"] == "working" else x["agent_status"]} for x in a]
+json.dump(s, open(sys.argv[1], "w"))' "${D}/claude.json" "$@" > "${D}/herdr.json"
 }
 pr() { printf '{"mergeStateStatus":"CLEAN","statusCheckRollup":[{"__typename":"CheckRun","status":"%s","conclusion":"%s"}]}\n' "$2" "$3" > "${D}/pr/$1"; }
 
@@ -46,11 +49,15 @@ case "\$1 \$2" in
   *) exit 1 ;;
 esac
 STUB
+cat > "${B}/claude" <<STUB
+#!/bin/sh
+[ "\$*" = "agents --json" ] && cat "${D}/claude.json"
+STUB
 cat > "${B}/gh" <<STUB
 #!/bin/sh
 f="${D}/pr/\${3##*/}"; [ -f "\$f" ] && cat "\$f" || exit 1
 STUB
-chmod +x "${B}/herdr" "${B}/gh"
+chmod +x "${B}/herdr" "${B}/gh" "${B}/claude"
 
 git init -q -b main "${P}"
 mkdir -p "${P}/.claude/swarm" && echo "stall_minutes = 240" > "${P}/.claude/swarm/config"
@@ -71,8 +78,10 @@ merge 190 37 rl-config; merge 140 38 rl-middleware; merge 95 39 audit-events
 printf 'w1:p1 conductor\nw1:p2 rl-token-bucket\nw1:p3 rl-redis-store\n' > "${P}/.swarm/state/rate-limiting"
 printf 'w1:p5 conductor\nw1:p6 audit-schema\n' > "${P}/.swarm/state/audit-log"
 T="$(date +%F)"
-printf '%s\tconduct\tconduct-rate-limiting\tclaude\topus\thigh\ts1\n%s\tcode\trl-redis-store\tclaude\topus\thigh\ts1\n%s\tcode\trl-token-bucket\tclaude\topus\thigh\ts1\n%s\tconduct\tconduct-audit-log\tclaude\topus\thigh\ts1\n%s\tcode-risky\taudit-schema\tclaude\topus\txhigh\ts1\n' "$T" "$T" "$T" "$T" "$T" > "${P}/.swarm/agents.tsv"
-echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":2000000,"output_tokens":1500000}}}' > "${D}/projects/p/s1.jsonl"
+printf "%s\t%s\t%s\tclaude\topus\t%s\t%s\n" "$T" conduct conduct-rate-limiting high conduct-rate-limiting "$T" code rl-redis-store high rl-redis-store \
+  "$T" code rl-token-bucket high rl-token-bucket "$T" conduct conduct-audit-log high conduct-audit-log \
+  "$T" code-risky audit-schema xhigh audit-schema > "${P}/.swarm/agents.tsv"
+echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":2000000,"output_tokens":1500000}}}' > "${D}/projects/p/conduct-rate-limiting.jsonl"
 printf '%s\tvacuous-test\thttps://github.com/acme/api/pull/38\ta test that passed with its fix removed\n' "$T" > "${P}/.swarm/findings.tsv"
 event 60 conduct rate-limiting w1:p0; event 58 story rl-token-bucket w1:p1; event 57 story rl-redis-store w1:p1
 event 40 conduct audit-log w1:p0; event 39 story audit-schema w1:p5; event 12 tell rl-token-bucket w1:p1
@@ -89,7 +98,7 @@ agents conduct-rate-limiting:working:w1-p1 rl-token-bucket:idle:w1-p2 rl-redis-s
   sleep 3; sed -i.bak -e 's/^status: blocked/status: ready/' -e '/^blocked_by/d' "${P}/docs/stories/rl-headers.md"; rm -f "${P}"/docs/stories/*.bak
   "${G[@]}" commit -qam "unblock rl-headers"; event 0 unblock rl-headers w1:p1; fresh
   sleep 2; echo 'w1:p4 rl-headers' >> "${P}/.swarm/state/rate-limiting"; event 0 story rl-headers w1:p1
-  printf '%s\tcode\trl-headers\tclaude\topus\thigh\ts1\n' "$T" >> "${P}/.swarm/agents.tsv"
+  printf '%s\tcode\trl-headers\tclaude\topus\thigh\trl-headers\n' "$T" >> "${P}/.swarm/agents.tsv"
   agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 rl-headers:working:w1-p4 conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6
   sleep 3; pr 42 IN_PROGRESS ""
   python3 - "${P}/docs/stories/audit-schema.md" <<'PY'

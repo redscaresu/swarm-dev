@@ -277,23 +277,56 @@ out=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/nouuid:${ROOT}
 check "a session id that cannot be minted stops the start, named, before any pane opens" "yes|no" \
   "$(has 'could not mint a session id (python3)' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
 
-# --- status: each open pane's agent, an empty pane, and what waits on the user.
+# --- status: each open pane's agent, from its Claude session (the claude stub) where one is recorded,
+# else herdr's word; an empty pane; and what waits on the user.
 mkdir -p "${p}/.swarm/state"
-printf '%s\n' 'w:5 lead' 'w:6 builder' 'w:7 gone' > "${p}/.swarm/state/t"
-printf '%s\n' 'w:8 finished' >> "${p}/.swarm/state/t"
+printf '%s\n' 'w:5 lead' 'w:6 builder' 'w:7 closed' > "${p}/.swarm/state/t"
+printf '%s\n' 'w:8 finished' 'w:10 waiter' 'w:11 lost' 'w:12 odd' 'w:13 re' 'w:14 re' 'w:15 cx9' 'w:16 nosess' >> "${p}/.swarm/state/t"
 printf '%s\n' 'w:8 finished' > "${p}/.swarm/state/t-2"
-echo '{"result":{"agents":[{"name":"builder","agent_status":"working","pane_id":"w:6"},{"name":"finished","agent_status":"idle","pane_id":"w:8"}]}}' > "${ROOT}/agents.json"
-echo '{"result":{"panes":[{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:8"}]}}' > "${ROOT}/panes.json"
+# re is a reused name: its older line's agent was retired to re-done (w:13), and the newer one runs in w:14.
+tsvline() { printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' "$@" >> "${p}/.swarm/agents.tsv"; }
+tsvline builder claude s-builder; tsvline finished claude s-finished; tsvline waiter claude s-waiter
+tsvline lost claude s-lost; tsvline odd claude s-odd; tsvline re claude s-re-old; tsvline re claude s-re-new
+tsvline cx9 codex -; tsvline nosess claude -
+# herdr's word, where the session must win: builder done while busy, finished working while idle,
+# waiter and lost idle, odd working; re's newer agent says <re> (STATUS_RE) and its retired one idle.
+herdr_agents() { # <re's herdr status>
+  printf '{"result":{"agents":[%s]}}\n' "$(printf '{"name":"%s","agent_status":"%s","pane_id":"%s"},' \
+    builder "done" w:6 finished working w:8 waiter idle w:10 lost idle w:11 odd working w:12 \
+    re-done idle w:13 re "$1" w:14 cx9 blocked w:15 nosess starting w:16 | sed 's/,$//')"
+}
+echo '{"result":{"panes":[{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:8"},{"pane_id":"w:10"},{"pane_id":"w:11"},{"pane_id":"w:12"},{"pane_id":"w:13"},{"pane_id":"w:14"},{"pane_id":"w:15"},{"pane_id":"w:16"}]}}' > "${ROOT}/panes.json"
+sessions() { # <re's older status> <re's newer status> [waiter's waitingFor, as JSON string text]
+  printf '[{"sessionId":"s-builder","status":"busy"},{"sessionId":"s-finished","status":"idle"},{"sessionId":"s-waiter","status":"waiting","waitingFor":"%s"},{"sessionId":"s-odd","status":"compacting"},{"sessionId":"s-re-old","status":"%s"},{"sessionId":"s-re-new","status":"%s"}]\n' "${3:-input}" "$1" "$2" > "${ROOT}/sessions.json"
+}
+herdr_agents working > "${ROOT}/agents.json"; sessions busy idle
 item "${b}" stories/ls.md "status: ready" "kind: lead"
-out=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1)
+status() { (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${ROOT}/sessions.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status "$@" 2>&1); }
+row() { grep -E "^  $1 " <<< "$2" | sed -E 's/ +/ /g; s/^ //; s/ \[.*//'; }
+out=$(status); all=$(status --all)
 check "status shows a pane whose agent never started as empty" "yes" \
   "$(grep -qE '^  lead +EMPTY' <<< "${out}" && echo yes || echo "no, got: ${out}")"
-check "status shows a working agent, and leaves out a pane closed by hand" "yes|no" \
-  "$(grep -qE '^  builder +working' <<< "${out}" && echo yes || echo no)|$(grep -q 'gone' <<< "${out}" && echo yes || echo no)"
+check "status shows a busy session as working while herdr says done" "builder working" "$(row builder "${out}")"
+check "status leaves out a pane closed by hand" "no" "$(grep -q 'closed' <<< "${all}" && echo yes || echo no)"
+check "status shows an idle session as idle while herdr says working" "finished idle: finished, or waiting for its next step" "$(row finished "${all}")"
+check "status shows a waiting session's waitingFor" "waiter WAITING on input: herdr agent read waiter" "$(row waiter "${out}")"
+check "status shows a recorded session with no entry as gone" "lost gone: session ended" "$(row lost "${out}")"
+check "status shows a session in a state it does not know as unknown" "odd unknown: no session state" "$(row odd "${out}")"
+check "status counts gone and unknown as needing a look, never idle" "Agents: 7 need a look or are working, 3 idle or done" "$(sed -n 1p <<< "${out}")"
+check "a reused name shows the newer session (older busy, newer idle), and the retired pane retired" "re idle: finished, or waiting for its next step|re-done done (retired)" \
+  "$(row re "${all}")|$(row re-done "${all}")"
+herdr_agents idle > "${ROOT}/agents.json"; sessions idle busy
+check "a reused name shows the newer session (older idle, newer busy), and the retired pane retired" "re working|re-done done (retired)" \
+  "$(row re "$(status --all)")|$(row re-done "$(status --all)")"
+sessions idle busy 'Allow Bash to run:\n  rm -rf build && make all && make test && make install && echo done\n(y/n)'
+check "status shows a long, multi-line waitingFor on one line, cut with …" "waiter WAITING on Allow Bash to run: rm -rf build && make all && make test &&…: herdr agent read waiter" \
+  "$(row waiter "$(status)")"
+check "a codex agent herdr says is blocked is WAITING" "cx9 WAITING on a question: herdr agent read cx9" "$(row cx9 "${out}")"
+check "an agent with no session recorded shows herdr's word" "nosess starting" "$(row nosess "${out}")"
+check "status with a claude that cannot list shows recorded sessions as unknown" "builder unknown: no session state" \
+  "$(row builder "$(CLAUDE_STUB_AGENTS="${ROOT}/no-such-file" status)")"
 check "status lists a lead story under Waiting on you" "yes" "$(has 'lead: ls' "$(sed -n '/^Waiting on you/,/^Next/p' <<< "${out}")")"
-all=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status --all 2>&1)
-check "status counts an idle agent instead of listing it, and --all lists it" "yes|no|yes" \
-  "$(has '1 idle or done' "${out}")|$(grep -qE '^  finished ' <<< "${out}" && echo yes || echo no)|$(grep -qE '^  finished +idle' <<< "${all}" && echo yes || echo no)"
+check "status counts an idle agent instead of listing it" "no" "$(grep -qE '^  finished ' <<< "${out}" && echo yes || echo no)"
 rm -f "${ROOT}/agents.json" "${ROOT}/panes.json" "${p}/.swarm/state/t" "${p}/.swarm/state/t-2" "${b}/stories/ls.md"
 
 # --- findings: a success check can still carry a failure note (the CodeQL case), and open alerts.

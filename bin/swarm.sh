@@ -298,18 +298,22 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 # exec's it from $SWARM_PANES_PY), so the three views agree.
 #   pane_records(state, keep) yields (tab label, pane, recorded name) for each pane in keep (own_panes
 #     and still live), from the tab records in STATE_DIR, skipping *.tmp; a pane's first record wins.
-#   agent_state(a, name) -> (state, needs_a_look), where a is herdr's agent in the pane (None for an
-#     empty pane): EMPTY (a start that failed), WAITING (blocked on a prompt), working, retired
-#     (renamed <name>-done by retire_agent), or herdr's own status.
+#   agent_state(a, name, s=None) -> (state, needs_a_look), where a is herdr's agent in the pane (None
+#     for an empty pane) and s is session_state's answer for <name>: EMPTY (a start that failed),
+#     then from the session: working (busy), idle, WAITING (waiting; s[1] says on what), unknown or
+#     gone (both need a look). With no session (s None: codex, none recorded, or a retired
+#     <name>-done, which has no agents.tsv line of its own), herdr's word: WAITING (blocked on a
+#     prompt), working, retired (renamed by retire_agent), or herdr's own status.
 #   session_state(log, name, listing) -> (state, waitingFor) from Claude Code's own list: the newest
 #     agents.tsv (<log>) line for <name>, its session id, then that id's entry in <listing> (the
 #     text of `claude agents --json`, None when the call failed). state is busy, idle, waiting (with
-#     waitingFor, when the entry has it), unknown (the call failed, or a status it does not know) or
-#     gone (no entry for the recorded session, or one with no status: Claude Code lists status only
-#     while the process is alive). None for an agent herdr must answer for: codex, no line, or a
-#     session of '-'.
+#     waitingFor, when the entry has it, on one line and cut to WHY_MAX characters), unknown (the
+#     call failed, or a status it does not know) or gone (no entry for the recorded session, or one
+#     with no status: Claude Code lists status only while the process is alive). None for an agent
+#     herdr must answer for: codex, no line, or a session of '-'.
 PANES_PY='
 import glob, json, os, re
+WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
     for path in sorted(glob.glob(os.path.join(state, "*"))):
@@ -321,9 +325,12 @@ def pane_records(state, keep):
                 continue
             seen.add(f[0])
             yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
-def agent_state(a, name):
+def agent_state(a, name, s=None):
     if a is None:
         return "EMPTY", True
+    if s is not None:
+        st = {"busy": "working", "waiting": "WAITING"}.get(s[0], s[0])
+        return st, st not in ("working", "idle")
     st = a.get("agent_status") or "unknown"
     if st == "blocked":
         return "WAITING", True
@@ -354,7 +361,8 @@ def session_state(log, name, listing):
     if st is None:
         return "gone", ""
     if st == "waiting":
-        return st, str(e.get("waitingFor") or "")
+        why = " ".join(str(e.get("waitingFor") or "").split())
+        return st, why if len(why) <= WHY_MAX else why[:WHY_MAX - 1] + "…"
     return (st, "") if st in ("busy", "idle") else ("unknown", "")
 '
 
@@ -1866,14 +1874,17 @@ watch_prs() {
 # status [--all] — one summary for the user: the agents that need a look or are working, what is
 # waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
-# left out.
+# left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
+# only for codex, an agent with no session recorded, and a retired one.
 status_report() {
-  local all="${1:-}" agents panes waiting
+  local all="${1:-}" agents panes waiting sessions
   if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
-    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" <<'PY'
+    sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
+    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+      python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" <<'PY'
 import json, os, sys
 exec(os.environ["SWARM_PANES_PY"])
-state, agents_json, panes_json, show_all = sys.argv[1:5]
+state, agents_json, panes_json, show_all, log = sys.argv[1:6]
 try:
     agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
@@ -1884,10 +1895,13 @@ for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) 
         a = agents.get(pane)
         if a is not None:
             name = a.get("name") or name
-        st, _ = agent_state(a, name)
+        s = session_state(log, name, os.environ["SWARM_SESSIONS"])
+        st, _ = agent_state(a, name, s)
         what = {"EMPTY": "EMPTY: no agent started in this pane; close it",
-                "WAITING": f"WAITING on a question: herdr agent read {name}",
+                "WAITING": f"WAITING on {(s or ('', ''))[1] or 'a question'}: herdr agent read {name}",
                 "retired": "done (retired)",
+                "unknown": "unknown: no session state" if s else "unknown",
+                "gone": "gone: session ended",
                 "idle": "idle: finished, or waiting for its next step",
                 "done": "idle: finished, or waiting for its next step"}.get(st, st)
         rows.append((name, what, f"{tab} {pane}"))
@@ -2162,13 +2176,16 @@ dash_fields() {
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
-# DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads.
+# DASH_H. herdr is asked whenever it is on PATH, inside a herdr pane or not: dash only reads. Claude
+# Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
+# session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" board="" policies="" merges="" drift=0 commits="" f d r x
+  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift=0 commits="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)" \
       && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
   fi
+  [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
   # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title.
   for d in hld epics stories; do
     while IFS= read -r f; do
@@ -2180,18 +2197,22 @@ dash_render() {
   while IFS= read -r r; do
     [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_commit_time "${r}")"$'\n'
   done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
-    | SWARM_STALL_PY="${STALL_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" python3 -c '
+    | SWARM_STALL_PY="${STALL_PY}" SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
+      DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" python3 -c '
 import json, os, sys
 exec(os.environ["SWARM_STALL_PY"])
+exec(os.environ["SWARM_PANES_PY"])
+E = os.environ
 rows = [l.rstrip("\n").split("\t") for l in sys.stdin]
-own = set(os.environ["SWARM_OWN"].split())
+own = set(E["SWARM_OWN"].split())
 try:
-    agents = json.loads(os.environ["DASH_AGENTS"])["result"]["agents"]
+    agents = json.loads(E["DASH_AGENTS"])["result"]["agents"]
 except (ValueError, KeyError, TypeError):
     agents = []
 for a in agents:
-    if isinstance(a, dict) and a.get("agent_status") == "working" and a.get("pane_id") in own and a.get("name"):
-        print(story_for(a["name"], rows) or "")' 2>/dev/null || true)
+    n = a.get("name") if isinstance(a, dict) else None
+    if n and a.get("pane_id") in own and agent_state(a, n, session_state(E["DASH_AGENTS_LOG"], n, E["DASH_SESSIONS"]))[0] == "working":
+        print(story_for(n, rows) or "")' 2>/dev/null || true)
   # ponytail: a few forks per board item each redraw; read the front matter in python if boards grow past ~150 items.
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then
@@ -2208,7 +2229,7 @@ for a in agents:
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
-  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" \
+  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
     python3 - <<'PY'
 import collections, datetime, itertools, json, os, re, time
@@ -2224,7 +2245,7 @@ STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": 
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
 SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
        "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
-LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you", "? unknown"]
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
 out = []
 
 def paint(t, s):
@@ -2348,11 +2369,14 @@ if agents is not None:
             name = (a or {}).get("name") or recorded
             base = re.sub(r"-done\d*$", "", name)
             rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
-            st, look = agent_state(a, name)
+            s = session_state(E["DASH_AGENTS_LOG"], name, E["DASH_SESSIONS"])
+            st, look = agent_state(a, name, s)
             if st in ("idle", "done") and reported(base):
                 st = "reported"
             slug = story_for(name, story_rows)
-            words = {"EMPTY": "empty pane", "WAITING": "waiting on a prompt", "done": "idle"}.get(st, st)
+            why = s[1] if s and st == "WAITING" else ""
+            words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle",
+                     "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             if st == "working" and slug:
                 b = story_by_slug[slug]
                 signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
@@ -2361,7 +2385,7 @@ if agents is not None:
                     st, look, words = "stalled", True, f"stalled {age}m"
                     stalled.append((name, age))
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
-                     look=look, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
+                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
                      open=bool(slug) and story_by_slug[slug][2] != "done")
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
@@ -2407,9 +2431,12 @@ for l in lines("DASH_WAITING"):
         need.append(bang + [(l, "")])
 for r in recs:
     if r["state"] == "WAITING":
-        need.append(bang + [(f"answer {r['name']}: ", ""), (f"herdr agent read {r['name']}", "dim")])
+        why = f" (waiting on {r['why']})" if r.get("why") else ""
+        need.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
     elif r["state"] == "EMPTY":
         need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
+    elif r["state"] in ("gone", "unknown") and r["look"]:
+        need.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
 need += [bang + [(f"look at {n}: working {age} min with no commit or PR update", "")] for n, age in stalled]
 need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
 
