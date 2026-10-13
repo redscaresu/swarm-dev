@@ -1,7 +1,6 @@
 ---
 kind: docs
-status: blocked
-blocked_by: [no-herdr-state-for-claude-sessions, sonnet-share]
+status: ready
 depends_on: [no-herdr-state-for-claude-sessions, sonnet-share]
 touches: [README.md, docs/method.md, docs/dash.md, docs/review.md, docs/assets/swarm-flow.workflow.json, docs/assets/swarm-flow-light.png, docs/assets/swarm-flow-dark.png, docs/assets/board.png]
 ---
