@@ -244,13 +244,20 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
-`cost`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
+`cost`, `outcomes`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
 lines, because a nudge is not a sign of life. `reconcile` and `unblock` write a line
 per item they move. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command.
+
+`swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
+builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
+and tokens from the session's own log, the `tell` and `close` lines in this log, the findings logged
+against its PR, the PR and its state from `gh`, and which attempt at the story it was. The slug comes
+from the session's worktree, because agents.tsv cuts names at 32 characters. A story that merged and
+left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one

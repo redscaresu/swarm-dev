@@ -127,7 +127,7 @@ check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}
 
 # The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
 # that changes state (story, say) cannot be declared read-only without this test changing too.
-RO_EXPECTED="base cost config dash findings lessons next policy status wait watch _base _label _name _pane _target _trusted"
+RO_EXPECTED="base cost config dash findings lessons next outcomes policy status wait watch _base _label _name _pane _target _trusted"
 ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
 check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"
@@ -169,6 +169,7 @@ check "an unwritable .swarm: nothing logged" test "$(lines)" -eq "${was}"
 item stories/s1.md 'status: ready' 'kind: code'
 echo "w:1 s1" > "${P}/.swarm/state/t1"
 printf '2026-10-13\tcode\ts1\tclaude\topus\thigh\tsess-s1\n' >> "${P}/.swarm/agents.tsv"
+appends "outcomes logs nothing" 0 - - - outcomes
 echo '[{"sessionId":"sess-s1","status":"idle"}]' > "${ROOT}/claude.json"
 git -C "${P}" remote add origin https://github.com/o/r
 was="$(lines)"
