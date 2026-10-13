@@ -312,9 +312,10 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #     call failed, or a status it does not know) or gone (no entry for the recorded session, or one
 #     with no status: Claude Code lists status only while the process is alive). None for an agent
 #     herdr must answer for: codex, no line, or a session of '-' (session_id's None).
-#   login_expired(log, name, projects) -> True when the last assistant entry in <name>'s transcript
-#     (<projects>/*/<session>.jsonl, the file cost finds) is Claude Code's "Login expired · Please
-#     run /login": its error field is authentication_failed. Never the pane.
+#   login_expired(log, name, projects) -> True when the last user or assistant entry in <name>'s
+#     transcript (<projects>/*/<session>.jsonl, the file cost finds) is Claude Code's "Login expired ·
+#     Please run /login": an assistant entry whose error field is authentication_failed. A user entry
+#     after it (a resume sent) clears it; a transcript that cannot be read is not expired. Never the pane.
 PANES_PY='
 import glob, json, os, re
 WHY_MAX = 60
@@ -356,17 +357,20 @@ def session_id(log, name):
 def login_expired(log, name, projects):
     sid, last = session_id(log, name), None
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
-        for l in open(path, encoding="utf-8", errors="replace"):
-            if "\"type\":\"assistant\"" not in l:
-                continue
-            try:
-                d = json.loads(l)
-            except ValueError:
-                continue
-            if isinstance(d, dict) and d.get("type") == "assistant" and not d.get("isSidechain"):
-                last = d
+        try:
+            for l in open(path, encoding="utf-8", errors="replace"):
+                if "\"type\":\"assistant\"" not in l and "\"type\":\"user\"" not in l:
+                    continue
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                if isinstance(d, dict) and d.get("type") in ("user", "assistant") and not d.get("isSidechain"):
+                    last = d
+        except OSError:
+            return False
         break
-    return last is not None and last.get("error") == "authentication_failed"
+    return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
 def session_state(log, name, listing):
     sid = session_id(log, name)
     if sid is None:
@@ -630,6 +634,10 @@ codex_out_dir() {
   esac
 }
 
+# CLAUDE_PROJECTS: Claude Code's per-project folders (session transcripts, memory), read by cost,
+# lessons and wait's login_expired.
+CLAUDE_PROJECTS="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}"
+
 # AGENTS_LOG: one line per agent started (date, role, name, kind, model, effort, session), so
 # `cost` can attribute every token to a role. Beside state/, not in it: state/ holds tab records.
 AGENTS_LOG="${PROJECT_DIR}/.swarm/agents.tsv"
@@ -664,7 +672,7 @@ login_expired() {
   SWARM_PANES_PY="${PANES_PY}" python3 -c '
 import os, sys
 exec(os.environ["SWARM_PANES_PY"])
-sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}"
+sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
 # record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
@@ -720,7 +728,7 @@ lessons_report() {
   [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
   # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
   local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
-  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}/${key//[^A-Za-z0-9]/-}/memory}"
+  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS}/${key//[^A-Za-z0-9]/-}/memory}"
   # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
   # is long by design and loaded by the agents themselves.
   python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
@@ -825,7 +833,7 @@ cost_report() {
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS_DIR:-${HOME}/.claude/projects}" <<'PY'
+  python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
 import glob, json, os, sys
 log, since, lead, projects = sys.argv[1:5]
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
@@ -1371,6 +1379,15 @@ never dismiss an alert.$(review_bot_rule)
 EOF
 }
 
+# auth_rule — what a conductor does when `wait` on a builder prints auth.
+auth_rule() {
+  cat <<EOF
+A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
+/login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
+login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> <file>\`).
+EOF
+}
+
 # pr_per = story: a PR per story.
 conduct_story_mode() {
   local epic="$1"
@@ -1380,6 +1397,8 @@ Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge
 start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
+
+$(auth_rule)
 
 $(green_rule)
 
@@ -1407,6 +1426,8 @@ starts each builder on story/<slug>, branched from epic/${epic}; builders push t
 no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
 and wait with \`swarm.sh wait <slug>\` in the background.
+
+$(auth_rule)
 
 When a builder reports, review its branch. Then, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):

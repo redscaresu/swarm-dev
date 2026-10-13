@@ -212,7 +212,8 @@ least a slice apart unless the session turns busy in between. If herdr cannot de
 `wait` stops there and returns idle, and logs nothing for it. Only code, docs and chore stories are
 nudged, never a verify story, a conductor or a planner, and a gh or git call that fails counts as a
 PR. An idle agent whose transcript (its session's `.jsonl`, the file `cost` reads) ends on Claude
-Code's "Login expired · Please run /login" is never nudged or waited on: `wait` prints `auth` at once,
+Code's "Login expired · Please run /login", with no message sent to it since, is never nudged or
+waited on: `wait` prints `auth` at once,
 with a line on stderr naming it, for a builder and a conductor alike. Only the user's `/login` clears
 it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a conductor tells the same
 to each builder whose `wait` printed `auth`. `wait` does not read the pane. `wait --stall
