@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [off-screen-nudge]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [session-reader-and-wait, off-screen-nudge]
 touches: [bin/swarm.sh (wait_agent, wait_conductor, a transcript auth check beside the session reader), tests/epic_test.sh (wait block), tests/next_test.sh (conductor block), commands/swarm.md (the wait step), docs/method.md (§ Building's wait paragraph), README.md (When `/swarm` stops for you)]

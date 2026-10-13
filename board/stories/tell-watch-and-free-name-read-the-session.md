@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [off-screen-nudge, status-and-dash-read-the-session]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [off-screen-nudge, status-and-dash-read-the-session]
 touches: [bin/swarm.sh:tell_agent, bin/swarm.sh:watch_prs, bin/swarm.sh:free_agent_name, bin/swarm.sh:dispatch (tell arm), bin/swarm.sh:main (tell target), bin/swarm.sh:review_rule, bin/swarm.sh:usage header :10, tests/next_test.sh (tell block), tests/review_test.sh (name and watch blocks), tests/epic_test.sh:91, tests/events_test.sh (tell lines), commands/swarm.md:58, docs/method.md (:237; § Building watch sentence)]
