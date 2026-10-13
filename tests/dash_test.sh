@@ -73,6 +73,8 @@ printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that cou
 for i in 1 2 3 4 5; do printf '2026-10-04\tkind%s\thttps://github.com/o/r/pull/8\tfinding %s\n' "${i}" "${i}" >> "${P}/.swarm/findings.tsv"; done
 ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\treview\ts-one\tw1:p1\tok\n' > "${P}/.swarm/events.tsv"
+# Older actions, so that from 140 columns the recent log is taller than the needs-you box beside it.
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf '2026-09-%02dT10:00:00Z\ttell\told-%s\tw1:p1\tok\n' "${i}" "${i}" >> "${P}/.swarm/events.tsv"; done
 
 # Claude Code's sessions: the conductor (sess-1) and s-three's builder (sess-today) are busy, and
 # s-one's builder waits on a permission prompt. The wait checks below rewrite this file.
@@ -196,8 +198,27 @@ check "below 140 columns the ladder and recent are stacked" lacks "╮ ╭─ re
 
 fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"
 check "COLUMNS sets the width when stty and tput cannot" test "$(widest <<< "${out}")" -eq 160
-check "from 140 columns the ladder and recent sit side by side" grep -qE '─ ladder ─+╮ ╭─ recent' <<< "${out}"
+check "from 140 columns the ladder sits above recent, in the right column" python3 -c '
+import sys
+t = sys.stdin.read().splitlines()
+lad = [(i, l.index("╭─ ladder")) for i, l in enumerate(t) if "╭─ ladder" in l]
+rec = [(i, l.index("╭─ recent")) for i, l in enumerate(t) if "╭─ recent" in l]
+sys.exit(not (lad and rec and 0 < lad[0][1] == rec[0][1] and lad[0][0] < rec[0][0]))' <<< "${out}"
 check "outside a herdr pane, a herdr that answers still shows the agents" grep -qE '● conduct-e1 +conduct +opus·high +working' <<< "${out}"
+fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "at 160 columns the epics and the recent log sit side by side" grep -qE '^│ ! e1 +█.* │ │ +[0-9]{2}[:-][0-9]{2}  . ' <<< "${out}"
+check "at 160 columns needs you is the left column's first box, recent the right's" grep -qE '^╭─ needs you ─+╮ ╭─ recent ─+╮$' <<< "${out}"
+check "at 160 columns recent's time column is HH:MM today, the date before" grep -qE '^│ 10-05  ⇡ merged #9 story/s-zero ' <<< "$(sed -n '/╭─ recent/{n;s/^.* │ │/│/;p;}' <<< "${out}")"
+check "at 160 columns an agent's card has its role, model label and state" grep -qE '│   ● conduct-e1 +conduct +opus·high +working +│ ' <<< "${out}"
+check "at 160 columns the status bar is the last line, with merge, the counts, cost and the keys" grep -qE '^merge human · 1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · [$]24[.]00 today +q quit · t tree · l ladder · r redraw' <<< "$(tail -1 <<< "${out}")"
+check "at 160 columns the summary line moves into the status bar" test "$(grep -c 'epics active' <<< "${out}")" -eq 1
+check "at 160 columns, piped, there are no ANSI escapes" lacks $'\033[' "${out}"
+for cols in 140 147 153 159; do
+  for view in "" --tree; do
+    fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS="${cols}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder ${view} 2>&1 || true)"
+    check "at ${cols} columns ${view:-epics} no line is wider than the terminal" test "$(widest <<< "${out}")" -le "${cols}"
+  done
+done
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=50 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "at 50 columns no line is wider than the terminal" test "$(widest <<< "${out}")" -le 50
 check "at 50 columns the header drops version and merge mode, keeping next" grep -qE '^proj  next wait conduct-e1 +[0-9:]{8}$' <<< "$(head -1 <<< "${out}")"
@@ -297,7 +318,7 @@ check "--watch lists its keys in the legend" grep -qE 'q quit · t tree · l lad
 ptywatch "${ROOT}/pty2.out" 30 2 4 || true
 text="$(plain "${ROOT}/pty2.out")"
 check "--watch redraws at once on SIGWINCH" test "$(frames <<< "${text}")" -eq 2
-check "--watch re-measures on SIGWINCH (150 columns)" grep -qE '^╰─{148}╯$' <<< "${text}"
+check "--watch re-measures on SIGWINCH (150 columns, two columns)" test "$(grep -E '^╭─ needs you ─+╮ ╭─ recent ─+╮$' <<< "${text}" | widest)" -eq 150
 # t shows the tree in place of the epics, l adds the ladder (beside recent from 140 columns).
 ptywatch "${ROOT}/pty4.out" 30 0 4 t@1.5 l@2.5 || true
 text="$(plain "${ROOT}/pty4.out")"
@@ -340,6 +361,9 @@ check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${
 # no worktree commit, no PR. After the snapshot, since a stall's age changes every minute.
 printf '%s\tstory\ts-three\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
 printf '%s\tconduct\te1\tw1:p1\tok\n' "$(ago 4)" >> "${P}/.swarm/events.tsv"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "at 160 columns a working agent's card shows the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working  [45]m +│' <<< "${out}"
+check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 1(19|20|21)m +│' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
@@ -426,8 +450,8 @@ check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c 
 # newer session each time.
 S="${ROOT}/s"; mkdir -p "${S}/.swarm/state"; git -C "${S}" init -q
 printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\n' > "${S}/.swarm/state/t"
-printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' s-re claude re-old s-re claude re-new s-lost claude lost \
-  s-odd claude odd cx codex - s-dash claude - > "${S}/.swarm/agents.tsv"
+printf '2026-10-13\tcode\t%s\t%s\t%s\thigh\t%s\n' s-re claude opus re-old s-re claude opus re-new s-lost claude sonnet lost \
+  s-odd claude haiku odd cx codex gpt - s-dash claude fable - > "${S}/.swarm/agents.tsv"
 sdash() { # <re-old status> <re-new status> <herdr's s-re status> — dash --tree in S
   printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"}]' "$1" "$2" > "${ROOT}/s.json"
   fresh; (cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR="$3" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)
@@ -443,6 +467,32 @@ check "a retired pane is retired, whatever its name's newest session says" grep 
 check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"
 check "a codex agent waiting is in needs you" has "! answer cx: herdr agent read cx" "${out}"
 check "an agent with no session recorded shows herdr's word" grep -qE '● s-dash .* working' <<< "${out}"
+# Each model's label carries its own colour, on a terminal (a pty, 160 columns); NO_COLOR prints none.
+cat > "${ROOT}/ptyonce.py" <<'PY'
+import fcntl, os, pty, struct, sys, termios
+pid, fd = pty.fork()
+if pid == 0:
+    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 40, int(sys.argv[1]), 0, 0))
+    os.execvp("bash", ["bash"] + sys.argv[2:])
+out = b""
+while True:
+    try:
+        b = os.read(fd, 65536)
+    except OSError:
+        break
+    if not b:
+        break
+    out += b
+os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+PY
+ptyonce() { (fresh; cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" PATH="${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptyonce.py" 160 "${SWARM}" dash --tree --ladder); }
+w="$(ptyonce)"
+for m in "opus:208" "sonnet:75" "haiku:114" "fable:213" "codex:250"; do
+  check "on a terminal the ${m%:*} label is colour ${m#*:}" has $'\033[38;5;16;48;5;'"${m#*:}m ${m%:*}·high "$'\033[0m' "${w}"
+done
+check "on a terminal the ladder names a model in its colour" has $'\033[38;5;208mopus · xhigh\033[0m' "${w}"
+check "NO_COLOR on a terminal prints no escape codes" lacks $'\033[' "$(NO_COLOR=1 ptyonce)"
 out="$(sdash idle busy idle)"
 check "a reused name shows the newer session (older idle, newer busy)" grep -qE '● s-re +code .* working' <<< "${out}"
 check "a retired pane stays retired when its name's newest session is busy" grep -qE '✓ s-re-done .* retired' <<< "${out}"
