@@ -24,31 +24,46 @@ read_state      the reader's herdr fallback for tell and free_agent_name: codex,
 herdr_wait      wait's herdr fallback: codex, or no session recorded
 "
 # Allowed anywhere, with no list entry:
-#   `agent_field <name> agent_status any` — a name check: does any agent hold the name; it reads no state.
+#   `-z "$(agent_field <name> agent_status any)"` — a name check: does any agent hold the name. Any
+#   other use of the `any` form reads herdr's status.
 #   PANES_PY's agent_state after `if s is not None:` — herdr's word only when session_state gave None.
 # The one function that may call agent_state with no session (its no-entry fallback):
 #   tidy_panes — closes only empty panes and retired ones, and retired is retire_agent's rename in
 #   herdr, which no session reports.
 NO_SESSION_CALLER=tidy_panes
+# The one function that may call herdr_wait, which has no session guard of its own:
+#   settle — calls it only when session_state answered `herdr` (codex, or no session recorded).
+HERDR_WAIT_CALLER=settle
 
 # walk — one line per violation: "<line>: <function or PANES_PY def>: <what>".
 walk() {
-  awk -v allowed="$(awk 'NF {print $1}' <<< "${ALLOWED}" | tr '\n' ' ')" -v nosess="${NO_SESSION_CALLER}" -v q="'" '
+  awk -v allowed="$(awk 'NF {print $1}' <<< "${ALLOWED}" | tr '\n' ' ')" -v nosess="${NO_SESSION_CALLER}" -v hwait="${HERDR_WAIT_CALLER}" -v q="'" '
     BEGIN { n = split(allowed, a, " "); for (i = 1; i <= n; i++) ok[a[i]] = 1 }
+    # no_session(line) — the line calls agent_state with fewer than three arguments, or a None third.
+    function no_session(line,   args, f) {
+      if (!match(line, /agent_state\(/)) return 0
+      args = substr(line, RSTART + RLENGTH)
+      while (gsub(/\([^()]*\)/, "", args)) {}
+      args = substr(args, 1, index(args ")", ")") - 1)
+      return split(args, f, ",") < 3 || f[3] ~ /^ *(s *= *)?None *$/
+    }
     $0 == "PANES_PY=" q { py = 1; next }
     py && $0 == q { py = 0; def = ""; next }
-    py && match($0, /^def [a-z_]+/) { def = substr($0, 5, RLENGTH - 4); fb = 0 }
-    py && def == "agent_state" && /^    if s is not None:/ { fb = 1; next }
-    py && fb == 1 && /^    [^ ]/ { fb = 2 }
-    !py && match($0, /^[a-z_]+\(\) *\{/) { fn = substr($0, 1, index($0, "(") - 1); one = ($0 ~ /\}$/) }
+    py && /^[^ \t#]/ { def = ""; fb = 0 } # column 0 ends a def
+    py && match($0, /^def [A-Za-z0-9_]+/) { def = substr($0, 5, RLENGTH - 4) }
+    py && fb == 1 && /^    [^ ]/ { fb = 2 } # first line after the session branch: the fallback
+    py && def == "agent_state" && /^    if s is not None:/ { fb = 1 }
+    !py && match($0, /^[A-Za-z0-9_]+\(\) *\{/) { fn = substr($0, 1, index($0, "(") - 1); one = ($0 ~ /\}[ \t]*(#.*)?$/) }
     {
       where = py ? "PANES_PY " def : fn
       if ($0 !~ /^[ \t]*#/) {
-        l = $0; gsub(/agent_field "[^"]*" agent_status any/, "", l)
+        l = $0; gsub(/-z "\$\(agent_field "[^"]*" agent_status any\)"/, "", l)
         if (l ~ /agent_status/ && !(!py && ok[fn]) && !(py && def == "agent_state" && fb == 2))
           print NR ": " where ": reads agent_status"
-        if ($0 !~ /^def / && $0 ~ /agent_state\([^,()]*,[^,()]*(, *(s *= *)?None *)?\)/ && fn != nosess)
+        if ($0 !~ /^def / && no_session($0) && fn != nosess)
           print NR ": " where ": calls agent_state with no session"
+        if ($0 ~ /(^|[^A-Za-z0-9_])herdr_wait([ \t]|$)/ && fn != hwait)
+          print NR ": " where ": calls herdr_wait"
         cmd = cmd " " $0 # a command continued with \ is checked whole, on its last line
         if ($0 !~ /\\$/) {
           if (cmd ~ /herdr agent read[^|]*\|([^|]|$)/) print NR ": " where ": pipes herdr agent read"
@@ -66,9 +81,10 @@ out="$(walk)"
 none() { ! grep -q "$1" <<< "${out}"; }
 check "agent_status is read only in allowlisted places" none ': reads agent_status$'
 check "agent_state is called with no session only from ${NO_SESSION_CALLER}" none ': calls agent_state with no session$'
+check "herdr_wait is called only from ${HERDR_WAIT_CALLER}" none ': calls herdr_wait$'
 check "no herdr agent read output is piped" none ': pipes herdr agent read$'
 # The walk is only as good as its anchors: each allowlisted place must exist, or a rename would pass.
-for fn in $(awk 'NF {print $1}' <<< "${ALLOWED}") "${NO_SESSION_CALLER}"; do
+for fn in $(awk 'NF {print $1}' <<< "${ALLOWED}") "${NO_SESSION_CALLER}" "${HERDR_WAIT_CALLER}"; do
   check "allowlisted ${fn} is defined" grep -Eq "^${fn}\(\) *\{" "${SWARM}"
 done
 check "PANES_PY's agent_state has its session branch" grep -q '^    if s is not None:$' "${SWARM}"
