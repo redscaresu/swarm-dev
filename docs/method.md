@@ -130,6 +130,8 @@ prints every setting and where it came from.
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
 | `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it, and `dash` marks it `!` and lists it under needs you. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
+| `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked; a retry is built on Opus. `0` is off (§ Model and effort) |
+| `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -150,7 +152,10 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **Reading is Sonnet, running is Haiku.** Surveys read and cite at `high`, since they feed the
   lead, and docs run on Sonnet at `medium`. Verification and chores run on Haiku at `medium`:
   their result is a command's output or a mechanical diff, checked by the conductor.
-- **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`.
+- **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`. To find out
+  whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories on
+  Sonnet at `high` (`code-sonnet`). The slug fixes the pick, a retry goes back to Opus, and each
+  build's agents.tsv line says which model built it. It ships off (`0`).
 - **Codex is the cross-model check**, read-only, because a different model family shares fewer
   blind spots with the one that wrote the plan.
 - **Below the design level, Fable is escalation only**: a story that failed twice, or an epic whose

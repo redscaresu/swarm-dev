@@ -7,7 +7,7 @@ swarm-dev runs a team of Claude Code agents that build software while you watch.
 with one agent. Others plan it, try to break the plan, and build it in parallel, each in its own
 terminal pane. The run stops whenever a decision is yours.
 
-![swarm.sh dash --watch on a demo project](docs/assets/dash.gif)
+![swarm.sh dash --watch on a demo project, 160 columns wide: what needs you and the epics on the left, recent on the right](docs/assets/dash.gif)
 
 ## How it works
 
@@ -104,7 +104,9 @@ Every agent is a full Claude Code session, on a model chosen by its role (`swarm
 Planning one epic starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git`
 logins and never touch real cloud or credentials. By default no agent merges, so every green,
 reviewed PR waits for you. When codex hits its usage limit, review continues with `/code-review`
-and the PR says so.
+and the PR says so. Two settings try cheaper models for building, and both ship off:
+`sonnet_share = N` builds one in N ordinary code stories on Sonnet so `swarm.sh outcomes` can
+compare it with Opus, and `builder_subagent_model` puts builders' subagents on a smaller model.
 
 `/swarm` tells you when a new version is out. To update, run
 `! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,

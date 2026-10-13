@@ -405,5 +405,48 @@ check "wait never addresses another project's agent of the same name" "0|0" \
   "$(grep -c '^agent wait' <<< "$(run wait a >/dev/null 2>&1; cat "${ROOT}/herdr.log")" || true)|$(nudges)"
 rm -f "${b}/stories/a.md"
 
+# --- sonnet_share: a story's role is its kind, code-risky for risk: high, and with sonnet_share = N,
+# code-sonnet for the other code stories whose slug's cksum mod N is 0 (r0-code, r4-f, r4-g, the s4-*
+# slugs; r4-a and r4-b are not). Each build's role, model and effort are read off its agents.tsv line.
+row() { awk -F'\t' -v n="$1" '$3 == n { r = $2 " " $5 " " $6 } END { print r }' "${p}/.swarm/agents.tsv"; }
+build() { # <slug> <front-matter line>... — build a ready story in svc, then print its agents.tsv line
+  local s="$1"; shift
+  item "${b}" "stories/${s}.md" "status: ready" "repo: svc" "$@"
+  run story "${s}" >/dev/null || true   # a start that fails shows as the FAIL, not an abort
+  row "${s}"
+}
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+check "sonnet_share = 0 (the default): roles resolve as before" \
+  "code opus high|code-risky opus xhigh|docs sonnet medium|chore haiku medium|verify haiku medium" \
+  "$(build r0-code "kind: code")|$(build r0-risky "kind: code" "risk: high")|$(build r0-docs "kind: docs")|$(build r0-chore "kind: chore")|$(build r0-verify "kind: verify")"
+echo "sonnet_share = 4" >> "${p}/.claude/swarm/config"
+check "sonnet_share = 4: code stories split by cksum mod 4, and a sampled one starts on code-sonnet sonnet high" \
+  "code opus high|code opus high|code-sonnet sonnet high|code-sonnet sonnet high" \
+  "$(build r4-a "kind: code")|$(build r4-b)|$(build r4-f "kind: code")|$(build r4-g "kind: code")"
+check "sonnet_share = 4: risk: high stays code-risky, and docs, chore and verify are unchanged" \
+  "code-risky opus xhigh|docs sonnet medium|chore haiku medium|verify haiku medium" \
+  "$(build s4-risky4 "kind: code" "risk: high")|$(build s4-docs4 "kind: docs")|$(build s4-chore2 "kind: chore")|$(build s4-verify2 "kind: verify")"
+printf '2026-10-13\tcode-sonnet\ts4-retry2\tclaude\tsonnet\thigh\tsess-r\n' >> "${p}/.swarm/agents.tsv"
+check "only a first attempt is sampled: a slug already in agents.tsv goes back to code" "code opus high" \
+  "$(build s4-retry2 "kind: code")"
+
+# --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
+printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
+sub='--settings {"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
+started() { # <name> — with or without the setting, or "not started" when herdr never started <name>
+  local l; l="$(grep "^agent start $1 " "${ROOT}/herdr.log")" || { echo "not started"; return; }
+  if grep -qF -- "${sub}" <<< "${l}"; then echo with; else echo without; fi
+}
+: > "${ROOT}/herdr.log"
+build sub1 "kind: code" >/dev/null
+echo brief > "${ROOT}/survey-brief.md"
+run agent scope-sub sv1 "${ROOT}/svc" survey "${ROOT}/survey-brief.md" >/dev/null || true
+item "${b}" epics/sube.md "status: active"
+run conduct sube >/dev/null || true
+check "builder_subagent_model: the builder's start sets it; a survey's and a conductor's do not" "with|without|without" \
+  "$(started sub1)|$(started sv1)|$(started conduct-sube)"
+rm -f "${b}"/stories/r[04]-*.md "${b}"/stories/s4-*.md "${b}/stories/sub1.md" "${b}/epics/sube.md"
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -132,7 +132,9 @@ CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo ge
 CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # a builder working this long with no commit, PR update or swarm action is stalled?
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes"
+CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
+CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share builder_subagent_model"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -174,6 +176,10 @@ load_config() {
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: stall_minutes must be a positive whole number, not '${value}'" ;;
+      sonnet_share)
+        [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: sonnet_share must be a non-negative whole number, not '${value}'" ;;
+      builder_subagent_model)
+        [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: builder_subagent_model must be a model name such as haiku, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -262,8 +268,10 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,docs,chore,verify,escalate conducting:conduct"
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,verify,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
+# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model).
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ }"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -276,6 +284,7 @@ policy() {
     codex)      echo "codex default high" ;;   # a different model family, read-only
     code)       echo "claude opus high" ;;
     code-risky) echo "claude opus xhigh" ;;    # Layer 3, teardown, safety or hygiene paths
+    code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
     verify)     echo "claude haiku medium" ;;  # run tests or commands and report
@@ -614,6 +623,10 @@ start_agent() {
       # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
       local guard=()
       [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
+      # builder_subagent_model: the session's env, through --settings since herdr passes no env. Without
+      # _FORCE the model setting leaves an Explore subagent on the parent's model (opusplan-spike).
+      [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && guard+=(--settings \
+        "{\"env\":{\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\"}}")
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
         --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto ${guard[@]+"${guard[@]}"} 2>&1) && break
     fi
@@ -923,7 +936,6 @@ PY
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells and
 # closes it took, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
-BUILDER_ROLES="code code-risky docs chore verify escalate"
 outcomes_report() {
   local since="" rows meta="" slug text kind src pr state
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
@@ -1414,6 +1426,23 @@ agent_kind() {
   case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
 }
 
+# story_role <slug> <kind> <risk> — the role a story is built as: its kind, code-risky for code with
+# risk: high, and with sonnet_share = N, code-sonnet for the other code stories whose slug's cksum mod
+# N is 0, so a slug always lands in the same arm. Only a first attempt is sampled: a slug with an
+# agents.tsv line already goes back to code.
+story_role() {
+  local slug="$1" kind="$2" risk="$3" sum
+  if [[ "${kind}" != code ]]; then echo "${kind}"; return; fi
+  if [[ "${risk}" == high ]]; then echo code-risky; return; fi
+  sum="$(printf '%s' "${slug}" | cksum)"; sum="${sum%% *}"
+  if [[ ${CFG_sonnet_share} -gt 0 && $((sum % CFG_sonnet_share)) -eq 0 ]] \
+     && ! awk -F'\t' -v n="$(agent_name "${slug}")" '$3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
+    echo code-sonnet
+  else
+    echo code
+  fi
+}
+
 build_story() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base epic from epic_branch
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -1427,7 +1456,7 @@ build_story() {
   esac
   risk=$(sed -n 's/^risk: *//p' "${story}" | head -1)
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
-  role="${kind}"; [[ "${kind}" == code && "${risk}" == high ]] && role=code-risky
+  role="$(story_role "${slug}" "${kind}" "${risk}")"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
@@ -2426,12 +2455,25 @@ exec(E["SWARM_STALL_PY"])
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
 NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
+WIDE = W >= 140   # two columns: needs you and the epics on the left, recent as a log on the right
+RW = W * 2 // 5 if WIDE else 0
+LW = W - RW - 1 if WIDE else W
 COLOR = E.get("DASH_COLOR") == "1"
 KEYS = E.get("DASH_KEYS") == "1"
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
 SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
        "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
+# A colour per model (256-colour ANSI), the same wherever it shows: its name in that colour, and from
+# 140 columns a label on that colour.
+MODEL_COLOR = {"fable": 213, "opus": 208, "sonnet": 75, "haiku": 114, "codex": 250}
+for m, c in MODEL_COLOR.items():
+    STYLE[m], STYLE[m + "-label"] = f"38;5;{c}", f"38;5;16;48;5;{c}"
+
+def model_style(model, label=False):
+    k = next((m for m in MODEL_COLOR if m in model.lower()), None)
+    return (k + "-label" if label else k) if k else "dim"
+
 LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
 out = []
 
@@ -2522,6 +2564,12 @@ def pr_ref(m):
 # life for stall_minutes (STALL_PY) is stalled, and needs you.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
 seen = last_seen(E["DASH_EVENTS"])
+STARTS = ("agent", "conduct", "story")
+started = {}   # target -> when its newest start (agent, conduct or story) in events.tsv ran
+for f in read_tsv(E["DASH_EVENTS"], 5):
+    t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
+    if t is not None and t > started.get(f[2], 0):
+        started[f[2]] = t
 recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
@@ -2573,7 +2621,8 @@ if agents is not None:
                     stalled.append((name, age))
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
                      look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
-                     open=bool(slug) and story_by_slug[slug][2] != "done")
+                     open=bool(slug) and story_by_slug[slug][2] != "done",
+                     since=started.get(slug) or started.get(epic_of.get(base)) or started.get(base))
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
         r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
@@ -2634,11 +2683,23 @@ for r in shown:
     groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
 name_w = min(max((len(r["name"]) for r in shown), default=0), 30 if not NARROW else max(12, (W - 20) // 2))
 
+def agent_cols(r):
+    # Role and model, then the state; from 140 columns the model is a label in its colour, and a
+    # working agent shows how long since it started.
+    row = []
+    if WIDE:
+        label = f" {r['model']} "
+        row = [(f"{r['role']:<10} ", "dim"), (label, model_style(r["model"], True)), (" " * max(16 - len(label), 1), "")]
+    elif not NARROW:
+        row = [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", model_style(r["model"]))]
+    row.append((r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"))
+    if WIDE and r.get("state") == "working" and r.get("since"):
+        m = max(int(time.time() - r["since"]) // 60, 0)
+        row.append((f"  {m}m" if m < 60 else f"  {m // 60}h{m % 60:02d}m", "dim"))
+    return row
+
 def agent_row(r):
-    row = [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")]
-    if not NARROW:
-        row += [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", "dim")]
-    return row + [(r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim")]
+    return [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")] + agent_cols(r)
 
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
@@ -2681,7 +2742,7 @@ def rank(item):
 # An active epic with no open story and no agent shown is one line for them all.
 quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
-epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), W // 3)
+epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
 if quiet:
     epic_view.append([sym("done"), (f"{len(quiet)} active epic{'' if len(quiet) == 1 else 's'} with no open story: {', '.join(quiet)}", "dim")])
@@ -2706,10 +2767,8 @@ def tree_view():
             rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
             for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
-                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")]
-                if not NARROW:
-                    row += [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", "dim")]
-                rows.append(row + [(r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"), (f"  {r['prs']}" if r["prs"] else "", "dim")])
+                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(r)
+                rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim")])
     return rows or [[("no agents open in this project's panes", "dim")]]
 
 # Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
@@ -2736,7 +2795,6 @@ def when(s):
     except ValueError:
         return None, s
 
-STARTS = ("agent", "conduct", "story")
 events = []   # (time, actor, text, icon key)
 for l in lines("DASH_MERGES"):
     f = l.split("\t", 2)
@@ -2756,18 +2814,24 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
 ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad")}
 dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
 
-def recent_box(w, n):
+def stamp(raw, t):
+    # The log's time column: HH:MM today, the date before; a dated finding of today is "today".
+    t = t.astimezone()
+    return t.strftime("%m-%d") if t.date() != TODAY else "today" if len(raw) == 10 else t.strftime("%H:%M")
+
+def recent_box(w, n, clock=False):
     rec, findings = [], 0
     actor_w = 0 if w < 100 else 14
-    for (_, ago), (_, actor, text, kind) in dated:
+    tw = 5 if clock else 9
+    for (t, ago), (raw, actor, text, kind) in dated:
         if len(rec) >= n:
             break
         if kind == "finding":
             findings += 1
             if findings > max(1, n // 3):
                 continue
-        room = max(w - 4 - 11 - 2 - (actor_w + 2 if actor_w else 0), 0)
-        row = [(f"{ago:>9}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
+        room = max(w - 4 - tw - 2 - 2 - (actor_w + 2 if actor_w else 0), 0)
+        row = [(f"{stamp(raw, t) if clock else ago:>{tw}}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
         if actor_w:
             row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
         rec.append(row)
@@ -2775,14 +2839,18 @@ def recent_box(w, n):
 
 def ladder_box(w, cell=30):
     policy = [l.split() for l in lines("DASH_POLICY")]
-    ladder = [f"{p[0]:<11}→ {p[2] if p[1] == 'claude' else p[1]} · {p[3]}" for p in policy]
+    ladder = [(f"{p[0]:<11}→ ", f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}") for p in policy]
     per = max(1, (w - 4) // cell)
-    return box("ladder", [[(c.ljust(cell), "") for c in ladder[i:i + per]] for i in range(0, len(ladder), per)], w)
+    return box("ladder", [[s for role, m in ladder[i:i + per] for s in ((role, ""), (m, model_style(m)), (" " * max(cell - len(role) - len(m), 0), ""))]
+                          for i in range(0, len(ladder), per)], w)
 
-# Layout. Header: one line, the clock at the right; then the summary line.
+# Layout. Header: one line, the clock at the right; then the summary line (from 140 columns, the
+# status bar at the bottom carries it, with the merge mode).
 right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
 head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
         ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
+if WIDE:
+    head = head[:2] + head[4:]
 if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
@@ -2792,46 +2860,60 @@ summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} age
            (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
 if E.get("DASH_COST"):
     summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
-out.append(fit(summary, W))
+if not WIDE:
+    out.append(fit(summary, W))
 drift = int(E.get("DASH_DRIFT") or 0)
 if drift:
     out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
 
-out += box("needs you", [l for r in need for l in wrap(r, W - 4)], W, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], W)]
+# The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
+# left column, LW wide.
+left = box("needs you", [l for r in need for l in wrap(r, LW - 4)], LW, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], LW)]
 if E.get("DASH_TREE") == "1":
-    out += box("agents by workspace and tab", tree_view(), W)
+    left += box("agents by workspace and tab", tree_view(), LW)
 elif epic_view:
-    out += box("epics", epic_view, W)
+    left += box("epics", epic_view, LW)
 if blocked or later:
-    out.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], W))
+    left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
-# The legend, packed onto as few lines as the width allows.
+# The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
+KEYWORDS = "q quit · t tree · l ladder · r redraw"
 legend, cur = [], ""
-for item in LEGEND + (["q quit · t tree · l ladder · r redraw"] if KEYS else []):
+for item in LEGEND + ([KEYWORDS] if KEYS and not WIDE else []):
     if cur and len(cur) + 3 + len(item) > W:
         legend.append(cur); cur = item
     else:
         cur = f"{cur}   {item}" if cur else item
 legend.append(cur)
+foot = [fit([(cut(l, W), "dim")], W) for l in legend]
+if WIDE:
+    foot.append(fit([("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary
+                    + [("   ", ""), (KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")], W))
 
-# Recent fills the height left; from 140 columns a shown ladder sits beside it.
+# Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
+# column; from 140 they are the right column, the ladder on top.
+# A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
 ladder = E.get("DASH_LADDER") == "1"
-if ladder and W < 140:
-    out += ladder_box(W)
-# A watched frame drops what does not fit, never the legend; a one-shot dash shows at least 5 rows.
-room = H - len(out) - 2 - len(legend) if H else 8
-if not KEYS:
-    room = max(5, room)
-if ladder and W >= 140:
-    lw = 64
-    lad = ladder_box(lw)
-    rec = recent_box(W - lw - 1, max(room, len(lad) - 2))
-    out += [(a or " " * lw) + " " + (b or "") for a, b in itertools.zip_longest(lad, rec, fillvalue=None)]
-elif room > 0:
-    out += recent_box(W, room)
+if WIDE:
+    side = ladder_box(RW) if ladder else []
+    room = H - len(out) - len(foot) - len(side) - 2 if H else max(8, len(left) - len(side) - 2)
+    if not KEYS:
+        room = max(5, room)
+    if room > 0:
+        side += recent_box(RW, room, clock=True)
+    out += [(a if a is not None else " " * LW) + " " + (b or "") for a, b in itertools.zip_longest(left, side)]
+else:
+    out += left
+    if ladder:
+        out += ladder_box(W)
+    room = H - len(out) - 2 - len(foot) if H else 8
+    if not KEYS:
+        room = max(5, room)
+    if room > 0:
+        out += recent_box(W, room)
 if KEYS and H:
-    out = out[:max(H - len(legend), 0)]   # a watched frame never scrolls the screen
-out += [fit([(cut(l, W), "dim")], W) for l in legend]
+    out = out[:max(H - len(foot), 0)]   # a watched frame never scrolls the screen
+out += foot
 if KEYS and H:
     out = out[:H]
 print("\n".join(l.rstrip() for l in out))
