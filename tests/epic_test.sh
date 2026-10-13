@@ -94,6 +94,9 @@ check "the conductor reviews with codex and /code-review, tells the builder, and
   "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
+sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
+check "a story starts with a --session-id, and its agents.tsv line ends in it" "yes|${sid}" \
+  "$([[ -n "${sid}" ]] && echo yes || echo no)|$(awk -F'\t' 'NF == 7 && $3 == "s1" { print $7 }' "${p}/.swarm/agents.tsv")"
 check "a story of the epic splits the conductor's pane, and is named" "yes|yes" \
   "$(has "pane split w:1 --direction right" "$(log)")|$(has "pane rename w:2 s1" "$(log)")"
 check "the fourth pane splits the second, and the fifth opens <epic>-2" "yes|yes" \

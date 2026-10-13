@@ -456,8 +456,13 @@ start_agent() {
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
-  # Before the pane opens, so a refusal leaves no empty pane behind.
-  if [[ "${kind}" == claude ]]; then require_trusted "${cwd}"; fi
+  # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
+  # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
+  local session=-
+  if [[ "${kind}" == claude ]]; then
+    require_trusted "${cwd}"
+    session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
+  fi
   free_agent_name "${name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -480,7 +485,7 @@ start_agent() {
       local guard=()
       [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
-        --model "${model}" --effort "${effort}" --permission-mode auto ${guard[@]+"${guard[@]}"} 2>&1) && break
+        --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto ${guard[@]+"${guard[@]}"} 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then
       # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
@@ -489,6 +494,8 @@ start_agent() {
     fi
     sleep 3
   done
+  # Before the brief, so an agent whose brief is not taken up is still on record.
+  record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session}"
   if [[ "${kind}" == codex && -n "$(codex_out_dir "${tab}")" ]]; then
     # Its working directory is the output dir, so say where the brief's relative paths start.
     local brief="${STATE_DIR}/brief-${name}.md"
@@ -497,7 +504,6 @@ start_agent() {
     prompt_file="${brief}"
   fi
   deliver_prompt "${name}" "${prompt_file}" "${pane}"
-  record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${pane}"
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
 
@@ -519,11 +525,11 @@ session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
 }
 
+# record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
+# '-' for codex.
 record_agent() {
-  local role="$1" name="$2" kind="$3" model="$4" effort="$5" pane="$6" session
-  session="$(session_for_pane "${pane}")"
   mkdir -p "$(dirname "${AGENTS_LOG}")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session:--}" >> "${AGENTS_LOG}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}"
 }
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,

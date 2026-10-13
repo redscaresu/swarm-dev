@@ -59,16 +59,17 @@ cat > "${ROOT}/bin/herdr" <<EOF
 echo "\$*" >> "${ROOT}/herdr.log"
 EOF
 cat >> "${ROOT}/bin/herdr" <<EOF
-A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"
+A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${ROOT}/start-fails-once"; I="${ROOT}/prompt-idle"
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
-  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent prompt") if [ -f "$I" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent list")   if [ -f "$A" ]; then cat "$A"; else echo '{"result":{"agents":[]}}'; fi ;;
   "agent rename") if [ -f "$A" ]; then sed -i.bak "s/\"name\":\"[a-z0-9-]*\",\"agent_status\":\"\([a-z]*\)\",\"pane_id\":\"$3\"/\"name\":\"$4\",\"agent_status\":\"\1\",\"pane_id\":\"$3\"/" "$A"; fi ;;
-  "agent start")  if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
+  "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
+                  if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
 esac
 EOF
@@ -249,6 +250,32 @@ check "codex outside a planning tab stays read-only" "yes" "$(has '-s read-only'
 check "a planning codex writes only in its tab's output dir, told where paths start" "yes|yes|yes" \
   "$(has "-s workspace-write -C ${p}/.swarm/ep -c" "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")|$([[ -d "${p}/.swarm/ep" ]] && echo yes || echo no)|$(has "The project is ${p}; every relative path below is relative to it." "$(grep '^agent prompt w:' "${ROOT}/herdr.log")")"
 check "codex starts with hooks off, so no trust dialog can take the brief" "yes" "$(has '-c features.hooks=false' "$(grep '^agent start cx4 ' "${ROOT}/herdr.log")")"
+
+# --- The session id: minted once per claude agent, passed to herdr, and recorded before the brief.
+tsv="${p}/.swarm/agents.tsv"
+sid() { grep "^agent start $1 " "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p' | paste -sd' ' -; }
+logged() { awk -F'\t' -v n="$1" '$3 == n { print $7 }' "${tsv}" 2>/dev/null; }
+uuid() { grep -qE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' <<< "$1" && echo yes || echo no; }
+agent sid1 lead >/dev/null; s="$(sid sid1)"
+check "a claude agent starts with a minted --session-id, and its agents.tsv line ends in it" "yes|${s}" "$(uuid "${s}")|$(logged sid1)"
+touch "${ROOT}/start-fails-once"; agent sid2 lead >/dev/null; s="$(sid sid2)"
+check "a start retried after a failed first try reuses the same session id" "2|yes|${s%% *}" \
+  "$(wc -w <<< "${s}" | tr -d ' ')|$(uuid "${s%% *}")$([[ "${s% *}" == "${s#* }" ]] || echo ' (two ids)')|$(logged sid2)"
+# herdr reports a session for every pane, so a codex line that read it back would not end in '-'.
+echo '{"result":{"agents":[{"name":"x","agent_status":"idle","pane_id":"w:1","agent_session":{"value":"herdr-sess"}},{"name":"y","agent_status":"idle","pane_id":"w:2","agent_session":{"value":"herdr-sess"}}]}}' > "${ROOT}/agents.json"
+agent cx5 codex >/dev/null
+check "a codex start has no --session-id, and its line ends in '-'" "no|-" \
+  "$(grep -q -- '--session-id' "${ROOT}/herdr.log" && echo yes || echo no)|$(logged cx5)"
+rm -f "${ROOT}/agents.json"; touch "${ROOT}/prompt-idle"; agent sid3 lead >/dev/null; rm -f "${ROOT}/prompt-idle"
+check "a start whose brief is not taken up still leaves its line, and every line has 7 fields" "yes|$(sid sid3)|0" \
+  "$(uuid "$(logged sid3)")|$(logged sid3)|$(awk -F'\t' 'NF != 7' "${tsv}" | wc -l | tr -d ' ')"
+# A python3 that cannot mint the id stops the start, by name, before any pane opens.
+mkdir -p "${ROOT}/nouuid"
+printf '#!/bin/sh\ncase "$*" in *uuid*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "${ROOT}/nouuid/python3"
+chmod +x "${ROOT}/nouuid/python3"; : > "${ROOT}/herdr.log"
+out=$(cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/nouuid:${ROOT}/bin:${PATH}" bash "${SWARM}" agent t sid4 "${p}" lead "${ROOT}/brief.md" 2>&1) || true
+check "a session id that cannot be minted stops the start, named, before any pane opens" "yes|no" \
+  "$(has 'could not mint a session id (python3)' "${out}")|$(grep -qE '^(tab create|pane split)' "${ROOT}/herdr.log" && echo yes || echo no)"
 
 # --- status: each open pane's agent, an empty pane, and what waits on the user.
 mkdir -p "${p}/.swarm/state"
