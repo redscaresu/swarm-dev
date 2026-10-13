@@ -33,6 +33,7 @@ mkdir -p "${P}/.swarm/state" "${P}/docs/stories" "${P}/docs/epics" "${ROOT}/bin"
 git -C "${P}" init -q
 cat > "${ROOT}/bin/gh" <<'STUB'
 #!/bin/sh
+[ "$1 $2" = "pr list" ] && { echo 0; exit 0; }   # no story has a PR
 case "$3" in */pull/1) echo '{"state":"MERGED"}' ;; */pull/2) echo '{"state":"CLOSED"}' ;; *) exit 1 ;; esac
 STUB
 cat > "${ROOT}/bin/herdr" <<'STUB'
@@ -161,6 +162,20 @@ check "an unwritable .swarm never fails the command" run finish s4
 chmod u+w "${P}/.swarm" "${LOG}"
 check "an unwritable .swarm: the command did its work" test ! -f "${P}/docs/stories/s4.md"
 check "an unwritable .swarm: nothing logged" test "$(lines)" -eq "${was}"
+
+# wait is read-only, but a nudge is logged: s1's builder sits idle and story/s1 has no PR, so wait
+# nudges it IDLE_NUDGES times and appends one `nudge s1` line each, and nothing else.
+item stories/s1.md 'status: ready' 'kind: code'
+echo "w:1 s1" > "${P}/.swarm/state/t1"
+printf '2026-10-13\tcode\ts1\tclaude\topus\thigh\tsess-s1\n' >> "${P}/.swarm/agents.tsv"
+echo '[{"sessionId":"sess-s1","status":"idle"}]' > "${ROOT}/claude.json"
+git -C "${P}" remote add origin https://github.com/o/r
+was="$(lines)"
+(cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=200 CLAUDE_STUB_AGENTS="${ROOT}/claude.json" \
+  PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait s1 >/dev/null 2>&1) || true
+new="$(tail -n +"$((was + 1))" "${LOG}")"
+check "a nudging wait appends a line per nudge" test "$(grep -c . <<< "${new}")" -eq 3
+check "a nudging wait appends only nudge lines" test "$(grep -cv $'^[^\t]*\tnudge\ts1\tw:me\tok$' <<< "${new}")" -eq 0
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
