@@ -268,6 +268,8 @@ check "a builder whose gh call fails is not nudged" "idle|0" "$(run wait a | tai
 rm -f "${ROOT}/ghfail"
 item "${b}" stories/a.md "status: ready" "kind: verify" "repo: svc"; : > "${ROOT}/herdr.log"
 check "a verify story's builder is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+item "${b}" stories/a.md "status: blocked" "kind: code" "repo: svc"; : > "${ROOT}/herdr.log"
+check "the builder of a story that is not ready (blocked) is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
 # A nudge herdr could not deliver is not logged or counted: wait stops nudging and returns idle.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
 touch "${ROOT}/promptfail"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
@@ -275,11 +277,17 @@ got="$(SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 20000)"
 check "a nudge that could not be delivered is not logged, and wait returns idle, saying so" "idle|exit 0|1|0|yes" \
   "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)|$(has "could not be delivered" "$(cat "${ROOT}/wait.err")")"
 rm -f "${ROOT}/promptfail"
-# pr_per = epic: a pushed story/a is the builder's hand-off; until then it is nudged.
-item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
+# pr_per = epic: a pushed story/a is an epic story's hand-off; until then it is nudged.
+item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
 printf '%s\n' "pr_per = epic" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
 "${GIT[@]}" -C "${ROOT}/svc" push -q origin main:refs/heads/story/a; : > "${ROOT}/herdr.log"
 check "epic mode: a builder whose story branch is pushed is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+# A one-off story (no epic:) opens its own PR even with pr_per = epic: pushed with no PR, it is nudged.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "epic mode: a one-off story pushed with no PR is nudged for its PR" "idle|3|yes" \
+  "${got%%|*}|$(nudges)|$(has "you are idle and story/a has no PR" "$(log)")"
+item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
 "${GIT[@]}" -C "${ROOT}/svc" push -q origin :refs/heads/story/a; : > "${ROOT}/herdr.log"
 # A tag named story/a on origin is not the branch: the story still reads as not pushed.
 "${GIT[@]}" -C "${ROOT}/svc" tag story/a && "${GIT[@]}" -C "${ROOT}/svc" push -q origin refs/tags/story/a

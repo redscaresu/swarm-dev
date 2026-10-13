@@ -201,8 +201,8 @@ herdr's word for it. A session Claude Code gives no state for (`unknown`, or the
 is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1, and so
 it does at once when herdr's wait fails other than by timing out and the session has not settled.
 A codex agent, or one with no recorded session, is waited on through herdr's status. A builder
-whose session goes idle before its story has a PR (with `pr_per = epic`, before `story/<slug>` is
-pushed) has stopped early, perhaps on an API error, and nothing else would wake it. `wait` tells it
+whose session goes idle while its story is `ready` and has no PR (for an epic's story with `pr_per =
+epic`, before `story/<slug>` is pushed) has stopped early, perhaps on an API error, and nothing else would wake it. `wait` tells it
 why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at
 least a slice apart unless the session turns busy in between. If herdr cannot deliver a nudge,
 `wait` stops there and returns idle, and logs nothing for it. Only code, docs and chore stories are

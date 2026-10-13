@@ -809,8 +809,9 @@ deliver_prompt() {
 # out a dropped stream; few enough that a builder that is truly stuck still comes back to the lead.
 IDLE_NUDGES=3
 
-# nudge_reason <name> — when <name> builds a code, docs or chore story that is not done and has no
-# PR (pr_per = epic: story/<slug> is not pushed), print why a nudge is sent and succeed. A name with
+# nudge_reason <name> — when <name> builds a ready code, docs or chore story that has no PR (an
+# epic story with pr_per = epic, as build_story builds it: story/<slug> is not pushed), print why a
+# nudge is sent and succeed. A name with
 # no story (a conductor, hld, a planner) or a verify story is never nudged, and a repo that cannot
 # be resolved, or a gh or git call that fails, counts as having a PR.
 nudge_reason() {
@@ -818,9 +819,9 @@ nudge_reason() {
   slug="$(stall_py story "$1")"; [[ -n "${slug}" ]] || return 1
   f="${BOARD}/stories/${slug}.md"
   case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
-  [[ "$(fm "${f}" status)" != "done" ]] || return 1
+  [[ "$(fm "${f}" status)" == ready ]] || return 1   # a story being built stays ready until review
   src="$(repo_dir "$(fm "${f}" repo)")" || return 1
-  if [[ "${CFG_pr_per}" == epic ]]; then
+  if [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]]; then
     git -C "${src}" ls-remote --exit-code origin "refs/heads/story/${slug}" >/dev/null 2>&1 || rc=$?
     [[ ${rc} -eq 2 ]] || return 1   # 2: no such branch; 0 is pushed, anything else a failure
     echo "you are idle and story/${slug} is not pushed"; return
