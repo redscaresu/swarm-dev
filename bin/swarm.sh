@@ -1231,6 +1231,7 @@ tell_agent() {
     waiting*|herdr:blocked) die "${name} is waiting on $(waiting_for "${state}"); answer it (herdr agent read ${name}), then tell it" ;;
     gone) die "${name}: its Claude session has ended (gone); there is no one to tell" ;;
     unknown) die "${name}: Claude Code gives no state for its session (unknown); look at it (herdr agent read ${name}) before telling it" ;;
+    herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
@@ -2914,9 +2915,9 @@ close_agent() {
 # free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
 # keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
 # `lead`) failed and left an empty pane. herdr's holder decides first: with none, the name is free,
-# whatever an old session says. A holder this project started is retired when it has finished (idle,
-# or its session gone) and refused while it works, waits on a prompt, or has no known state
-# (read_state). Names are unique across every herdr workspace, so a holder in another project is
+# whatever an old session says. A holder this project started is retired only when it has finished
+# (read_state: idle, its session gone, or herdr's idle or done) and refused in any other state,
+# naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
 # refused, never retired: it is that project's agent. Runs before any pane opens.
 free_agent_name() {
   local state
@@ -2926,9 +2927,12 @@ free_agent_name() {
   fi
   state="$(read_state "$1")"
   case "${state}" in
+    idle|gone|herdr:idle|herdr:done) ;;   # finished: the only states retired
     busy|herdr:working) die "$1: an agent with this name is still working; wait for it, or use another name" ;;
     waiting*|herdr:blocked) die "$1: an agent with this name is waiting on $(waiting_for "${state}"); answer it (herdr agent read $1), or use another name" ;;
     unknown) die "$1: Claude Code gives no state for the session holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
+    herdr:unknown) die "$1: herdr gives no state for the agent holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
+    *) die "$1: the agent holding this name is '${state#herdr:}', not finished, so it is not retired; look at it (herdr agent read $1), or use another name" ;;
   esac
   retire_agent "$1" >/dev/null
   [[ -z "$(agent_field "$1" pane_id)" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"

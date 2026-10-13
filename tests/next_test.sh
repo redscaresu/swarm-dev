@@ -297,10 +297,8 @@ told "tell sends an agent with no session that herdr reports as idle" idle findi
 told "tell also sends one herdr reports as done" "done" findings findings.md
 refused "tell refuses one herdr reports as working" "still working" working findings findings.md
 refused "tell refuses one herdr reports as blocked on a prompt" "waiting on a prompt" blocked findings findings.md
-out="$(tellout "" findings findings.md)"
-if [[ "${out}" == *"exit 1" && "${out}" != *"not one this project started"* && ! -f "${dir}/sent" ]]; then
-  echo "ok   tell never calls this project's own agent of unknown status another project's"; else
-  echo "FAIL tell never calls this project's own agent of unknown status another project's: '${out}'"; fails=$((fails + 1)); fi
+# herdr giving no status (agent_field reads it as unknown): refused as unknown, never as another project's.
+refused "tell refuses its own agent with no session and no herdr status as unknown" "herdr gives no state for it (unknown)" "" findings findings.md
 rm -rf "${dir}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

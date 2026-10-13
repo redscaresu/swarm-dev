@@ -273,6 +273,11 @@ holder blocked -; out=$(agent lead lead)
 refuses "a holder with no session that herdr reports blocked stops the start" "waiting on a prompt"
 holder idle -; agent lead lead >/dev/null
 check "a holder with no session that herdr reports idle is retired" "agent rename w:9 lead-done|agent start lead" "$(started)"
+# Only a finished holder is retired: herdr giving no status, or one not known to be finished, refuses.
+holder "" -; out=$(agent lead lead)
+refuses "a holder with no session and no herdr status is refused as unknown, not retired" "herdr gives no state for the agent holding this name (unknown)"
+holder starting -; out=$(agent lead lead)
+refuses "a holder with no session in a herdr state not known to be finished is refused, naming it" "is 'starting', not finished"
 # A rename that leaves the name held: the check after retiring stops the start.
 holder idle idle; touch "${ROOT}/rename-noop"; out=$(agent lead lead); rm -f "${ROOT}/rename-noop"
 check "a name still held after retiring stops the start before any pane opens" "yes|no" "$(has "still taken after retiring" "${out}")|$(paned)"
