@@ -59,16 +59,12 @@ from is missing from that list. In either case, run `claude update` and restart 
    claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
    ```
 
-3. Add the board to your project, from its root:
+3. From your project's root, run `swarm.sh init` (or run `/swarm`, which offers to do it). It
+   copies the board into `docs/`, leaving any file already there alone, creates `.claude/swarm/`
+   and adds `.swarm/` and the Obsidian lines to `.gitignore`. Running it again changes nothing.
 
-   ```bash
-   git clone --depth 1 https://github.com/redscaresu/swarm-dev /tmp/swarm-dev
-   mkdir -p docs .claude/swarm && cp -Rn /tmp/swarm-dev/templates/docs/. docs/
-   printf '.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json\n' >> .gitignore
-   ```
-
-   Run `claude` once in the repo and accept "do you trust this folder?". Agents work in worktrees
-   of the repo, and `swarm.sh` won't start until it is trusted.
+   Then run `claude` once in the repo and accept "do you trust this folder?". Agents work in
+   worktrees of the repo, and `swarm.sh` won't start until it is trusted.
 4. Inside herdr, run `claude`, then `/hld Add rate limiting to the API`. Agree the design with the
    co-author, then run `/swarm`. Run it again each time it stops for you.
 
