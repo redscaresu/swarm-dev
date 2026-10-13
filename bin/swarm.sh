@@ -9,6 +9,7 @@
 #   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
 #   swarm.sh tell <slug> <file>                             send a builder (or any agent) the contents of a file, such as review findings
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
+#   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -645,7 +646,7 @@ codex_out_dir() {
   esac
 }
 
-# CLAUDE_PROJECTS: Claude Code's per-project folders (session transcripts, memory), read by cost,
+# CLAUDE_PROJECTS: Claude Code's per-project folders (session transcripts, memory), read by cost, outcomes,
 # lessons and wait's login_expired.
 CLAUDE_PROJECTS="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}"
 
@@ -727,6 +728,46 @@ record_finding() {
   echo "recorded ${kind}"
 }
 
+# REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
+#   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
+#   session_log(projects, session) is a session's .jsonl under Claude Code's projects dir, or "".
+#   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
+#   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
+REPORT_PY='
+import glob, json, os, re
+# ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
+# cache writes assume the 1-hour cache at 2x input. Update when prices change.
+PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
+
+def pr_key(pr):
+    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
+    return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
+
+def session_log(projects, session):
+    paths = glob.glob(os.path.join(projects, "*", session + ".jsonl")) if session not in ("", "-") else []
+    return paths[0] if paths else ""
+
+def session_usage(path, seen):
+    tok, usd, models = [0, 0, 0, 0], 0.0, set()
+    for line in open(path, errors="ignore"):
+        try:
+            m = json.loads(line).get("message") or {}
+        except (ValueError, AttributeError):
+            continue
+        u, mid = m.get("usage"), m.get("id")
+        if not u or not mid or mid in seen:
+            continue
+        seen.add(mid)
+        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
+        model = m.get("model", "?")
+        models.add(model)
+        tok = [x + y for x, y in zip(tok, t)]
+        price = next((v for k, v in PRICES.items() if k in model), None)
+        if price:
+            usd += sum(x * p for x, p in zip(t, price)) / 1e6
+    return tok, usd, models
+'
+
 # lessons [--all] — the "brief" below is lessons_file (default the brief itself).
 # Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
@@ -742,17 +783,13 @@ lessons_report() {
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS}/${key//[^A-Za-z0-9]/-}/memory}"
   # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
   # is long by design and loaded by the agents themselves.
-  python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
+exec(os.environ["SWARM_REPORT_PY"])
 project, log, brief, min_prs, recent_days, max_bytes, flag, memory, swarm_brief = sys.argv[1:10]
 min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
 cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
-
-def pr_key(pr):
-    # One PR, however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
-    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
-    return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
 def adopted(kind):
     # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
@@ -844,12 +881,10 @@ cost_report() {
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
-import glob, json, os, sys
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
+import os, sys
+exec(os.environ["SWARM_REPORT_PY"])
 log, since, lead, projects = sys.argv[1:5]
-# ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
-# cache writes assume the 1-hour cache at 2x input. Update when prices change.
-PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
 agents = []
 if os.path.exists(log):
     for line in open(log):
@@ -862,26 +897,14 @@ rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    paths = glob.glob(os.path.join(projects, "*", a["session"] + ".jsonl")) if a["session"] != "-" else []
-    if a["kind"] != "claude" or not paths:
+    path = session_log(projects, a["session"])
+    if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
-    for line in open(paths[0], errors="ignore"):
-        try:
-            m = json.loads(line).get("message") or {}
-        except ValueError:
-            continue
-        u, mid = m.get("usage"), m.get("id")
-        if not u or not mid or mid in seen:
-            continue
-        seen.add(mid)
-        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
-        model = m.get("model", "?")
-        r["models"].add(model)
-        r["tok"] = [x + y for x, y in zip(r["tok"], t)]
-        price = next((v for k, v in PRICES.items() if k in model), None)
-        if price:
-            r["usd"] += sum(x * p for x, p in zip(t, price)) / 1e6
+    tok, usd, models = session_usage(path, seen)
+    r["models"] |= models
+    r["tok"] = [x + y for x, y in zip(r["tok"], tok)]
+    r["usd"] += usd
 def n(x):
     return f"{x/1e6:.1f}M" if x >= 1e6 else f"{x/1e3:.0f}k"
 print("| role | agents | model | input | cache write | cache read | output | est. $ |")
@@ -894,6 +917,101 @@ for role, r in sorted(rows.items(), key=lambda kv: -kv[1]["usd"]):
 print(f"| **total** | {sum(r['agents'] for r in rows.values())} | | " + " | ".join(n(x) for x in tot) + f" | {usd:.2f} |")
 print("\nList prices; on a subscription this is plan usage, not a bill. Codex agents are not priced.")
 PY
+}
+
+# outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
+# already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells and
+# closes it took, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
+# agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
+BUILDER_ROLES="code code-risky docs chore verify escalate"
+outcomes_report() {
+  local since="" rows meta="" slug text kind src pr state
+  [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
+    || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
+  [[ -z "${1:-}" ]] || since="$2"
+  [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  # date, slug, role, model, effort, cost_usd, tokens, tells, closes, attempts
+  rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
+    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" <<'PY'
+import collections, json, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+log, events, since, projects, roles = sys.argv[1:6]
+
+def slug_of(path, name):
+    # A builder runs in <repo>-wt/<slug>; any other cwd (or none logged) leaves the agents.tsv name.
+    for line in open(path, errors="ignore") if path else ():
+        try:
+            cwd = json.loads(line).get("cwd")
+        except (ValueError, AttributeError):
+            continue
+        if cwd:
+            return os.path.basename(cwd.rstrip("/")) if os.path.dirname(cwd.rstrip("/")).endswith("-wt") else name
+    return name
+
+steer = collections.Counter()
+if os.path.exists(events):
+    for line in open(events, errors="ignore"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 5 and f[1] in ("tell", "close"):
+            steer[f[1], f[2]] += 1
+attempts = collections.Counter()
+for line in open(log, errors="ignore"):
+    f = line.rstrip("\n").split("\t")
+    if len(f) != 7 or f[1] not in roles.split():
+        continue
+    day, role, name, _, model, effort, session = f
+    path = session_log(projects, session)
+    slug = slug_of(path, name)
+    attempts[slug] += 1
+    if day < since:
+        continue
+    cost = tokens = ""
+    if path:
+        tok, usd, _ = session_usage(path, set())
+        cost, tokens = f"{usd:.2f}", str(sum(tok))
+    targets = {slug, name}
+    tells, closes = (sum(steer[c, t] for t in targets) for c in ("tell", "close"))
+    print("\t".join([day, slug, role, model, effort, cost, tokens, str(tells), str(closes), str(attempts[slug])]))
+PY
+)"
+  # Per slug: kind, risk and the PR, from the story (on the board, or its last version in git once a
+  # merge deleted it) and gh. A gh that fails leaves the PR empty; it never fails the run.
+  while IFS= read -r slug; do
+    [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+    text="$(story_text "${slug}")"; pr=""; state=""
+    kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
+    if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then
+      IFS=$'\t' read -r pr state <<< "$( (cd "${src}" && gh pr list --head "story/${slug}" --state all --limit 1 \
+        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null || true)"
+    fi
+    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${pr}"$'\t'"${state}"$'\n'
+  done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
+import collections, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 5}
+fixed = collections.Counter()
+if os.path.exists(sys.argv[1]):
+    for line in open(sys.argv[1], errors="ignore"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 4:
+            fixed[pr_key(f[2])] += 1
+print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
+for line in os.environ["SWARM_ROWS"].splitlines():
+    day, slug, role, model, effort, cost, tokens, tells, closes, attempts = line.split("\t")
+    kind, risk, pr, state = meta.get(slug, ("", "", "", ""))
+    print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tells, closes,
+                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
+PY
+}
+
+# story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
+# the board's git history; nothing when neither has it.
+story_text() {
+  local f="${BOARD}/stories/$1.md" c
+  if [[ -f "${f}" ]]; then cat "${f}"; return; fi
+  c="$(git -C "${BOARD}" log --diff-filter=D -1 --format=%H -- "stories/$1.md" 2>/dev/null)" || return 0
+  [[ -z "${c}" ]] || git -C "${BOARD}" show "${c}^:./stories/$1.md" 2>/dev/null || true
 }
 
 # deliver_prompt <name> <prompt-file> — submit the brief and confirm the agent acted on it.
@@ -2929,6 +3047,7 @@ dispatch() {
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
+    outcomes) outcomes_report "$@" ;;
     log-finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
@@ -2958,7 +3077,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost lessons findings wait watch base _base _name _target _label _trusted _pane"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes lessons findings wait watch base _base _name _target _label _trusted _pane"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
