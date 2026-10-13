@@ -76,6 +76,11 @@ for t in tests/*_test.sh; do bash "$t"; done
 claude plugin validate .
 ```
 
+A PR that changes what a user runs, sees or has to do updates README.md in the same PR. Before
+the PR opens, run the humanizer skill (`humanizer:humanizer`) over the prose it changes for people to
+read: README.md, docs/, HLDs, the text in commands/ that the user sees, and the PR description. Say
+in the PR that you did. Story files and briefs are written for agents and need no pass.
+
 Secrets are stopped at three layers: the pre-commit hook, the CI gitleaks job over the full
 history (required on `main`), and GitHub push protection. Keep template links as markdown links,
 never `[[wikilinks]]`.
