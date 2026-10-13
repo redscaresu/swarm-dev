@@ -95,6 +95,7 @@ reach them:
 | a PR waiting for you | merge it, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
+| `auth`: an agent's login expired | run `/login` (only you can clear it), then say so; `/swarm` tells the stopped agents to resume |
 
 ## Cost and safety
 

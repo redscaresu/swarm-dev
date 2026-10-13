@@ -294,7 +294,20 @@ item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
 check "epic mode: a builder whose story branch is not pushed (only a tag story/a) is nudged, and told so" "idle|3|yes" \
   "${got%%|*}|$(nudges)|$(has "you are idle and story/a is not pushed" "$(log)")"
-rm -f "${ROOT}/screen" "${b}/stories/a.md"
+# The same builder, its transcript ending on an expired login: only the user's /login helps, so wait
+# returns auth at once (a minute's slice), naming it, and never nudges it. The fixture is a real
+# transcript's shape, ids replaced; without its auth entry the last turn is ordinary and the
+# builder is nudged as before.
+fixture="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl"
+export CLAUDE_PROJECTS_DIR="${ROOT}/projects"; mkdir -p "${CLAUDE_PROJECTS_DIR}/p"
+cp "${fixture}" "${CLAUDE_PROJECTS_DIR}/p/sess-a.jsonl"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(SWARM_STALL_POLL_MS=60000 waitrc "${ROOT}/wait.err" a 120000)"
+check "an idle builder whose login expired: wait prints auth at once, names it, and does not nudge" "auth|exit 0|yes|0|0|yes" \
+  "${got%|*}|$([[ ${got##*|} -lt 5 ]] && echo yes || echo "no, ${got##*|}s")|$(nudges)|$(nudged)|$(has "a: its login expired" "$(cat "${ROOT}/wait.err")")"
+grep -v authentication_failed "${fixture}" > "${CLAUDE_PROJECTS_DIR}/p/sess-a.jsonl"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "an idle builder after an ordinary turn is still nudged" "idle|3" "${got%%|*}|$(nudges)"
+rm -f "${ROOT}/screen" "${b}/stories/a.md" "${CLAUDE_PROJECTS_DIR}/p/sess-a.jsonl"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
 session "${ROOT}/claude.json" sess-a=busy
