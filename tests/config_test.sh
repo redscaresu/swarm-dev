@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # config_test.sh — the project config: finding the project, parsing .claude/swarm/config, a board
-# outside the project, repos_dir, base branches, and finished = mark. Fixture remotes are local bare
-# repos; herdr and claude (tests/claude_stub.sh) are stubs on PATH.
+# outside the project, repos_dir, base branches, finished = mark, and the minimum Claude Code.
+# Fixture remotes are local bare repos; herdr and claude (tests/claude_stub.sh) are stubs on PATH.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -99,7 +99,7 @@ esac
 EOF
 chmod +x "${ROOT}/bin/herdr"
 story() { (cd "$1" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story "$2" 2>&1); }
-story "${p}" a >/dev/null
+story "${p}" a >/dev/null || true   # a start that fails shows as the FAIL below, not an abort
 check "story starts from the first base branch origin has" \
   "$(git -C "${ROOT}/repos/svc" rev-parse origin/dev)" "$(git -C "${ROOT}/repos/svc-wt/a" rev-parse HEAD 2>&1)"
 sed -i.bak 's/^status: later$/status: ready/' "${b}/stories/no-repo.md" && rm -f "${b}/stories/no-repo.md.bak"
@@ -237,6 +237,56 @@ check "agents --json prints [] with no fixture" "[]" "$(unset CLAUDE_STUB_AGENTS
 rc=0; run_stub claude foo >/dev/null 2>&1 || rc=$?
 check "any other call exits 1" "1" "${rc}"
 check "any other call names the call" "claude stub: unexpected call: foo" "$(run_stub claude foo 2>&1 || true)"
+
+# --- require_claude: an old Claude Code, a missing one, or a caller session missing from Claude
+# Code's own list is refused before any pane opens. The caller runs in pane w:0; herdr's agent list
+# names its session when $HERDR_CALLER is set. Every herdr call is logged, so a pane opened shows.
+rc="${ROOT}/rc"; mkdir -p "${rc}/bin"; echo brief > "${rc}/brief.md"
+cat > "${rc}/bin/herdr" <<'EOF'
+#!/bin/sh
+echo "$*" >> "${HERDR_LOG}"
+case "$1 $2" in
+  "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
+  "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent list")   echo "{\"result\":{\"agents\":[${HERDR_CALLER:-}]}}" ;;
+esac
+EOF
+chmod +x "${rc}/bin/herdr"
+export HERDR_LOG="${rc}/herdr.log" HERDR_CALLER=""
+caller_id="00000000-0000-4000-8000-0000000000aa"
+caller="{\"name\":\"lead\",\"agent_status\":\"working\",\"pane_id\":\"w:0\",\"agent_session\":{\"value\":\"${caller_id}\"}}"
+sed "s/00000000-0000-4000-8000-000000000001/${caller_id}/" "${AGENTS_FIXTURE}" > "${rc}/with-caller.json"
+kb="${ROOT}/kanban"
+item "${ROOT}/elsewhere/board" stories/old-claude.md "status: ready" "kind: code" "repo: svc"
+# in_herdr <PATH> <command>... — swarm.sh in the kanban project from pane w:0, with an empty herdr log.
+in_herdr() { local path="$1"; shift; : > "${HERDR_LOG}"; (cd "${kb}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:0 PATH="${path}" bash "${SWARM}" "$@" 2>&1); }
+start() { in_herdr "${rc}/bin:${PATH}" agent rc rc-agent "${ROOT}/repos/svc" code "${rc}/brief.md"; }
+started() { local out; out="$(start)"; [[ "${out##*$'\n'}" == "rc-agent w:"* ]] && echo started || echo "${out}"; }
+panes() { grep -cE '^(tab create|pane split)' "${HERDR_LOG}" || true; }
+need="needs Claude Code 2.1.145 or later"
+
+CLAUDE_STUB_VERSION="2.1.144 (Claude Code)"
+check "agent: below the minimum is refused, naming both versions, before any pane" "yes|0" \
+  "$(fails_with "${need}, and claude --version says '2.1.144 (Claude Code)'" start)|$(panes)"
+check "story: below the minimum is refused before any pane or worktree" "yes|0|no worktree" \
+  "$(fails_with "${need}" in_herdr "${rc}/bin:${PATH}" story old-claude)|$(panes)|$([[ -e "${ROOT}/repos/svc-wt/old-claude" ]] && echo worktree || echo no worktree)"
+CLAUDE_STUB_VERSION="2.1.99 (Claude Code)"
+check "versions compare as numbers: 2.1.99 is below 2.1.145" "yes" "$(fails_with "${need}" start)"
+
+CLAUDE_STUB_VERSION="2.1.145 (Claude Code)" HERDR_CALLER="${caller}" CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
+check "at the minimum, a caller session missing from claude agents --json is refused before any pane" "yes|0" \
+  "$(fails_with "this session (${caller_id}) is not in claude agents --json" start)|$(panes)"
+CLAUDE_STUB_AGENTS="${rc}/with-caller.json"
+check "at the minimum, a caller session in the list starts" "started" "$(started)"
+HERDR_CALLER="" CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
+check "at the minimum, with no caller session, the version alone starts" "started" "$(started)"
+
+no_claude="${rc}/bin"; IFS=: read -r -a dirs <<< "${PATH}"
+for d in "${dirs[@]}"; do [[ -x "${d}/claude" ]] || no_claude+=":${d}"; done
+check "the PATH without claude has none" "" "$(PATH="${no_claude}"; command -v claude || true)"
+check "no claude on PATH is refused before any pane" "yes|0" \
+  "$(fails_with "Claude Code (claude) is not on PATH; swarm.sh needs 2.1.145 or later" in_herdr "${no_claude}" agent rc rc-agent "${ROOT}/repos/svc" code "${rc}/brief.md")|$(panes)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

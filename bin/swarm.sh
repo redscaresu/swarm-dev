@@ -442,6 +442,29 @@ sys.exit(0 if any(projects.get(p, {}).get("hasTrustDialogAccepted") is True for 
 PY
 }
 
+# MIN_CLAUDE: the oldest Claude Code with both `--session-id` and `claude agents --json`, which every
+# Claude agent's state is read through (pinned by experiment; README's Requirements names it too).
+MIN_CLAUDE=2.1.145
+
+# require_claude — stop unless the installed Claude Code is MIN_CLAUDE or later (`claude --version`
+# prints `2.1.145 (Claude Code)`). When the caller is a Claude session herdr knows (the pane it runs
+# in), that session must also be in Claude Code's own list, or the readers would find no agent
+# there. From a plain shell with no session, only the version is checked.
+require_claude() {
+  local have session
+  command -v claude >/dev/null || die "Claude Code (claude) is not on PATH; swarm.sh needs ${MIN_CLAUDE} or later."
+  have="$(claude --version 2>/dev/null)" || have=""
+  python3 -c '
+import re, sys
+m = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "${have}" "${MIN_CLAUDE}" \
+    || die "swarm.sh needs Claude Code ${MIN_CLAUDE} or later, and claude --version says '${have%%$'\n'*}'. Update it (claude update), then try again."
+  session="$(session_for_pane "${HERDR_PANE_ID:-}")"
+  [[ -n "${session}" ]] || return 0
+  claude_agents | python3 -c 'import json, sys; sys.exit(0 if any(isinstance(e, dict) and e.get("sessionId") == sys.argv[1] for e in json.load(sys.stdin)) else 1)' "${session}" 2>/dev/null \
+    || die "this session (${session}) is not in claude agents --json: the interactive listing every agent's state is read from is missing. Restart Claude Code on ${MIN_CLAUDE} or later, then try again."
+}
+
 # next_pane <tab-label> <cwd> — a fresh shell pane in a tab with room, creating tabs as needed.
 # prune_dead_panes <state> — drop the panes herdr no longer has (closed by hand), so the next split
 # targets a live pane. Left alone when herdr cannot list its panes.
@@ -492,6 +515,7 @@ start_agent() {
   local session=-
   if [[ "${kind}" == claude ]]; then
     require_trusted "${cwd}"
+    require_claude
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
   fi
   free_agent_name "${name}"
@@ -1175,6 +1199,7 @@ build_story() {
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
+  require_claude
   base="$(base_for "${src}")"
   epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
   if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
