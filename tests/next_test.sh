@@ -118,6 +118,9 @@ stub() { # [api-error]
   {
     echo '#!/bin/sh'
     echo 'case "$1 $2" in'
+    echo "  \"agent prompt\") echo \"\$*\" >> '${dir}/prompts' ;;"
+    echo 'esac'
+    echo 'case "$1 $2" in'
     echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"done\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"done\",\"pane_id\":\"w:2\"}]}}' ;;"
     if [ -n "${1:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
     echo '  "agent wait"|"agent prompt") case "$3" in w:1|w:2) ;; *) echo "{\"error\":\"not this project'"'"'s pane: $3\"}"; exit 1 ;; esac ;;'
@@ -169,14 +172,14 @@ if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
   echo "ok   wait on a conductor that never reports ends at its timeout"; else
   echo "FAIL wait on a conductor that never reports ends at its timeout: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
-# A conductor idle on an API error is stuck: wait returns after wait_agent's nudges, well inside
-# the timeout, instead of polling and nudging again.
-stub api-error
+# A conductor has no story, so it is never nudged, even with an API error on its pane: idle with no
+# report, wait polls on until the timeout.
+stub api-error; rm -f "${dir}/prompts"
 start=${SECONDS}
-got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000 2>/dev/null)"
-if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
-  echo "ok   wait on a conductor stuck on an API error returns without polling"; else
-  echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+got="$(SWARM_CONDUCTOR_POLL=1 waitc conduct-e1 4000 2>/dev/null)"
+if [[ "${got}" == idle && $((SECONDS - start)) -ge 4 && ! -e "${dir}/prompts" ]]; then
+  echo "ok   an idle conductor with no report is not nudged, and wait returns at the timeout"; else
+  echo "FAIL an idle conductor with no report is not nudged, and wait returns at the timeout: got '${got}' after $((SECONDS - start))s, prompts: $(cat "${dir}/prompts" 2>/dev/null)"; fails=$((fails + 1)); fi
 
 # A conductor of the same name started by another project is refused, never waited on.
 printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub

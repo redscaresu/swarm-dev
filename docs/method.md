@@ -200,7 +200,14 @@ STALL_POLL_MS slices (a minute); after each wake or slice `wait` reads the sessi
 herdr's word for it. A session Claude Code gives no state for (`unknown`, or the list call failed)
 is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1, and so
 it does at once when herdr's wait fails other than by timing out and the session has not settled.
-A codex agent, or one with no recorded session, is waited on through herdr's status. `wait --stall
+A codex agent, or one with no recorded session, is waited on through herdr's status. A builder
+whose session goes idle while its story is `ready` and has no PR (for an epic's story with `pr_per =
+epic`, before `story/<slug>` is pushed) has stopped early, perhaps on an API error, and nothing else would wake it. `wait` tells it
+why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at
+least a slice apart unless the session turns busy in between. If herdr cannot deliver a nudge,
+`wait` stops there and returns idle, and logs nothing for it. Only code, docs and chore stories are
+nudged, never a verify story, a conductor or a planner, and a gh or git call that fails counts as a
+PR. `wait` does not read the pane. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, a PR update, a swarm action
 on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
@@ -234,8 +241,10 @@ line of the error that stopped it, or `failed (exit N)` when the error came from
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
 `cost`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
-`tidy` without `--yes`), so a new command is logged until someone names it read-only. `reconcile`
-and `unblock` write a line per item they move. The log is local to the machine and append-only,
+`tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
+exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
+lines, because a nudge is not a sign of life. `reconcile` and `unblock` write a line
+per item they move. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command.
 

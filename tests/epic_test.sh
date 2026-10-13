@@ -51,7 +51,7 @@ case "$1 $2" in
   "pane list")        [ -e "$H/live" ] && cat "$H/live" ;;
   "pane split")       [ -e "$H/nosplit" ] && { echo '{"error":{"code":"pane_not_found"}}'; exit 1; }
                       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "agent prompt")     [ -e "$H/sticky" ] || rm -f "$H/screen"   # a nudge clears the error, unless it is sticky
+  "agent prompt")     [ -e "$H/promptfail" ] && { echo '{"error":{"code":"pane_not_found"}}' >&2; exit 1; }
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
@@ -219,8 +219,9 @@ printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 check "with pr_per = story the rule does not apply" "plan-epic f" "$(first "$(nx)")"
 
 # --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
-# state is its session's, from the claude stub's fixture. An agent idle after an API error is told
-# to carry on; any other idle agent is left alone.
+# state is its session's, from the claude stub's fixture. A builder idle before its story has a PR
+# is nudged; any other idle agent is left alone. The pane shows an API error throughout, so the old
+# rule (nudge on an API error on screen) would nudge every case here: none of these read the pane.
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 session() { # <file> <session>=<status>... — a `claude agents --json` fixture
   local f="$1" e out=""; shift
@@ -228,28 +229,73 @@ session() { # <file> <session>=<status>... — a `claude agents --json` fixture
   echo "[${out}]" > "${f}"
 }
 nudges() { grep -c '^agent prompt' "${ROOT}/herdr.log" || true; }
-echo "a w:50" >> "${ROOT}/agents"; echo "w:50 a" > "${p}/.swarm/state/wait-a"   # this project's agent a, in a pane it recorded
-printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agents.tsv"
-session "${ROOT}/claude.json" sess-a=idle
-printf '%s\n' "⏺ I have opened the PR." "⏺ Error: Exit code 1 from make test" > "${ROOT}/screen"
-: > "${ROOT}/herdr.log"
-check "an idle session whose last event is not an API error is not nudged, whatever herdr says" "idle|0" "$(run wait a)|$(nudges)"
-printf '%s\n' "⏺ Reviewing the commit." "⏺ API Error: The response stopped arriving." "✻ Crunched for 5m" > "${ROOT}/screen"
-: > "${ROOT}/herdr.log"
-check "an agent stopped by an API error is nudged, then waited on again" "idle|1" "$(run wait a | tail -1)|$(nudges)"
-printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"; touch "${ROOT}/sticky"
-: > "${ROOT}/herdr.log"
-check "an error that does not clear stops after three nudges" "idle|3" "$(run wait a | tail -1)|$(nudges)"
-# The session still reads idle after each nudge: wait wakes on herdr before it reads it again, so no
-# two nudges go out without a wake between them.
-check "after a nudge, wait wakes before it takes the session's word again" "yes" \
-  "$(grep -E '^agent (wait|prompt)' "${ROOT}/herdr.log" | awk '/^agent prompt/ { if (p) bad = 1; p = 1; next } { p = 0 } END { print bad ? "no" : "yes" }')"
-rm -f "${ROOT}/sticky" "${ROOT}/screen"
+nudged() { grep -c $'\tnudge\ta\t' "${p}/.swarm/events.tsv" || true; }
 waitrc() { # <stderr file> <wait args...> — "<stdout>|exit <rc>|<seconds taken>"
   local e="$1" t0=${SECONDS} out rc=0; shift
   out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>"${e}")" || rc=$?
   echo "${out}|exit ${rc}|$((SECONDS - t0))"
 }
+# gh: story/a has a PR only in the repo whose origin URL is in pr-in; ghfail makes every call fail.
+printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '%s\n' '[ -e "$H/ghfail" ] && exit 1' \
+  'case "$*" in "pr list -R $(cat "$H/pr-in" 2>/dev/null) --head story/a --state all "*) echo 1 ;; *) echo 0 ;; esac' >> "${ROOT}/bin/gh"
+chmod +x "${ROOT}/bin/gh"
+echo "a w:50" >> "${ROOT}/agents"; echo "w:50 a" > "${p}/.swarm/state/wait-a"   # this project's agent a, in a pane it recorded
+printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agents.tsv"
+session "${ROOT}/claude.json" sess-a=idle
+printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"
+check "an idle agent with no story is not nudged" "idle|0" "$(run wait a)|$(nudges)"
+# Story a, in svc (repos_dir set), has no PR: its idle builder is nudged three times, each logged.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "an idle builder with no PR is nudged IDLE_NUDGES times, each logged as nudge a" "idle|exit 0|3|3" \
+  "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)"
+check "the nudge says why, and does not wait for herdr to see it working" "yes|0" \
+  "$(has "you are idle and story/a has no PR" "$(grep '^agent prompt' "${ROOT}/herdr.log")")|$(grep '^agent prompt' "${ROOT}/herdr.log" | grep -c -- '--until' || true)"
+# The session stays idle: three nudges with a 1 s slice between each take at least two slices.
+check "three nudges on a session that stays idle are spread over two slices or more" "yes" \
+  "$([[ ${got##*|} -ge 2 ]] && echo yes || echo "no, ${got##*|}s")"
+check "after a nudge, wait wakes before it takes the session's word again" "yes" \
+  "$(grep -E '^agent (wait|prompt)' "${ROOT}/herdr.log" | awk '/^agent prompt/ { if (p) bad = 1; p = 1; next } { p = 0 } END { print bad ? "no" : "yes" }')"
+echo "${ROOT}/svc.git" > "${ROOT}/pr-in"; : > "${ROOT}/herdr.log"
+check "a builder whose PR sits in its story's repo is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+rm -f "${ROOT}/pr-in"; touch "${ROOT}/ghfail"; : > "${ROOT}/herdr.log"
+check "a builder whose gh call fails is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+rm -f "${ROOT}/ghfail"
+item "${b}" stories/a.md "status: ready" "kind: verify" "repo: svc"; : > "${ROOT}/herdr.log"
+check "a verify story's builder is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+item "${b}" stories/a.md "status: blocked" "kind: code" "repo: svc"; : > "${ROOT}/herdr.log"
+check "the builder of a story that is not ready (blocked) is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+# A nudge herdr could not deliver is not logged or counted: wait stops nudging and returns idle.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
+touch "${ROOT}/promptfail"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 20000)"
+check "a nudge that could not be delivered is not logged, and wait returns idle, saying so" "idle|exit 0|1|0|yes" \
+  "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)|$(has "could not be delivered" "$(cat "${ROOT}/wait.err")")"
+rm -f "${ROOT}/promptfail"
+# pr_per = epic: a pushed story/a is an epic story's hand-off; until then it is nudged.
+item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
+printf '%s\n' "pr_per = epic" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+"${GIT[@]}" -C "${ROOT}/svc" push -q origin main:refs/heads/story/a; : > "${ROOT}/herdr.log"
+check "epic mode: a builder whose story branch is pushed is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+# A one-off story (no epic:) opens its own PR even with pr_per = epic: pushed with no PR, it is nudged.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "epic mode: a one-off story pushed with no PR is nudged for its PR" "idle|3|yes" \
+  "${got%%|*}|$(nudges)|$(has "you are idle and story/a has no PR" "$(log)")"
+item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
+"${GIT[@]}" -C "${ROOT}/svc" push -q origin :refs/heads/story/a; : > "${ROOT}/herdr.log"
+# A tag named story/a on origin is not the branch: the story still reads as not pushed.
+"${GIT[@]}" -C "${ROOT}/svc" tag story/a && "${GIT[@]}" -C "${ROOT}/svc" push -q origin refs/tags/story/a
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "epic mode: a builder whose story branch is not pushed (only a tag story/a) is nudged, and told so" "idle|3|yes" \
+  "${got%%|*}|$(nudges)|$(has "you are idle and story/a is not pushed" "$(log)")"
+rm -f "${ROOT}/screen" "${b}/stories/a.md"
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
 session "${ROOT}/claude.json" sess-a=busy
 (sleep 2; session "${ROOT}/claude.json.new" sess-a=idle; mv "${ROOT}/claude.json.new" "${ROOT}/claude.json") &
@@ -308,11 +354,11 @@ check "with two agents.tsv lines for a name, wait reads the newer line's session
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"
 # The same name held only by another project's agent is never waited on or nudged.
-printf '%s\n' "⏺ API Error: overloaded" > "${ROOT}/screen"; rm -f "${p}/.swarm/state/wait-a"
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"; rm -f "${p}/.swarm/state/wait-a"
 : > "${ROOT}/herdr.log"
 check "wait never addresses another project's agent of the same name" "0|0" \
   "$(grep -c '^agent wait' <<< "$(run wait a >/dev/null 2>&1; cat "${ROOT}/herdr.log")" || true)|$(nudges)"
-rm -f "${ROOT}/screen"
+rm -f "${b}/stories/a.md"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
