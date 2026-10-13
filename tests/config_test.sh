@@ -211,8 +211,12 @@ rm "${t}/cfg/.claude.json"
 check "no trust file to read: the start goes ahead" "trusted" "$(trusted "${t}/plain")"
 
 # The stub. The version is one the real binary never prints, so a real claude on PATH cannot pass.
+# run_stub runs claude only when the stub is what `claude` resolves to; otherwise it prints a marker
+# that fails the check, so the real binary (which may open a logged-in session) is never run.
+run_stub() { if [[ "$(command -v claude || true)" == "${STUB_BIN}/claude" ]]; then "$@"; else echo "claude is not the stub"; fi; }
+check "claude on PATH is the stub" "${STUB_BIN}/claude" "$(command -v claude || true)"
 export CLAUDE_STUB_VERSION="0.0.1 (Claude Code)"
-check "the stub prints CLAUDE_STUB_VERSION" "0.0.1 (Claude Code)" "$(claude --version)"
+check "the stub prints CLAUDE_STUB_VERSION" "0.0.1 (Claude Code)" "$(run_stub claude --version)"
 AGENTS_FIXTURE="${ROOT}/agents.json"
 cat > "${AGENTS_FIXTURE}" <<'JSON'
 [
@@ -228,11 +232,11 @@ cat > "${AGENTS_FIXTURE}" <<'JSON'
 ]
 JSON
 export CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
-check "agents --json prints the fixture it is given" "$(cat "${AGENTS_FIXTURE}")" "$(claude agents --json)"
-check "agents --json prints [] with no fixture" "[]" "$(env -u CLAUDE_STUB_AGENTS claude agents --json)"
-rc=0; claude foo >/dev/null 2>&1 || rc=$?
+check "agents --json prints the fixture it is given" "$(cat "${AGENTS_FIXTURE}")" "$(run_stub claude agents --json)"
+check "agents --json prints [] with no fixture" "[]" "$(unset CLAUDE_STUB_AGENTS; run_stub claude agents --json)"
+rc=0; run_stub claude foo >/dev/null 2>&1 || rc=$?
 check "any other call exits 1" "1" "${rc}"
-check "any other call names the call" "claude stub: unexpected call: foo" "$(claude foo 2>&1 || true)"
+check "any other call names the call" "claude stub: unexpected call: foo" "$(run_stub claude foo 2>&1 || true)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
