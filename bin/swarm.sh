@@ -1403,6 +1403,8 @@ start_conductor() {
   [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
   hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
   [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
+  # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
+  require_claude
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's

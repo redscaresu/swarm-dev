@@ -239,8 +239,9 @@ check "any other call exits 1" "1" "${rc}"
 check "any other call names the call" "claude stub: unexpected call: foo" "$(run_stub claude foo 2>&1 || true)"
 
 # --- require_claude: an old Claude Code, a missing one, or a caller session missing from Claude
-# Code's own list is refused before any pane opens. The caller runs in pane w:0; herdr's agent list
-# names its session when $HERDR_CALLER is set. Every herdr call is logged, so a pane opened shows.
+# Code's own list is refused before any pane or workspace opens. The caller runs in pane w:0;
+# herdr's agent list names its session when $HERDR_CALLER is set. Every herdr call is logged, so a
+# pane or workspace opened shows.
 rc="${ROOT}/rc"; mkdir -p "${rc}/bin"; echo brief > "${rc}/brief.md"
 cat > "${rc}/bin/herdr" <<'EOF'
 #!/bin/sh
@@ -250,6 +251,8 @@ case "$1 $2" in
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent list")   echo "{\"result\":{\"agents\":[${HERDR_CALLER:-}]}}" ;;
+  "workspace list")   echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"ws"},"tab":{"tab_id":"ws:t"}}}' ;;
 esac
 EOF
 chmod +x "${rc}/bin/herdr"
@@ -259,11 +262,12 @@ caller="{\"name\":\"lead\",\"agent_status\":\"working\",\"pane_id\":\"w:0\",\"ag
 sed "s/00000000-0000-4000-8000-000000000001/${caller_id}/" "${AGENTS_FIXTURE}" > "${rc}/with-caller.json"
 kb="${ROOT}/kanban"
 item "${ROOT}/elsewhere/board" stories/old-claude.md "status: ready" "kind: code" "repo: svc"
+item "${ROOT}/elsewhere/board" epics/old-claude.md "status: active"
 # in_herdr <PATH> <command>... — swarm.sh in the kanban project from pane w:0, with an empty herdr log.
 in_herdr() { local path="$1"; shift; : > "${HERDR_LOG}"; (cd "${kb}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w HERDR_PANE_ID=w:0 PATH="${path}" bash "${SWARM}" "$@" 2>&1); }
 start() { in_herdr "${rc}/bin:${PATH}" agent rc rc-agent "${ROOT}/repos/svc" code "${rc}/brief.md"; }
 started() { local out; out="$(start)"; [[ "${out##*$'\n'}" == "rc-agent w:"* ]] && echo started || echo "${out}"; }
-panes() { grep -cE '^(tab create|pane split)' "${HERDR_LOG}" || true; }
+panes() { grep -cE '^(tab create|pane split|workspace create)' "${HERDR_LOG}" || true; }
 need="needs Claude Code 2.1.145 or later"
 
 CLAUDE_STUB_VERSION="2.1.144 (Claude Code)"
@@ -271,6 +275,9 @@ check "agent: below the minimum is refused, naming both versions, before any pan
   "$(fails_with "${need}, and claude --version says '2.1.144 (Claude Code)'" start)|$(panes)"
 check "story: below the minimum is refused before any pane or worktree" "yes|0|no worktree" \
   "$(fails_with "${need}" in_herdr "${rc}/bin:${PATH}" story old-claude)|$(panes)|$([[ -e "${ROOT}/repos/svc-wt/old-claude" ]] && echo worktree || echo no worktree)"
+report="${kb}/.swarm/conduct-old-claude.report.md"; mkdir -p "${kb}/.swarm"; echo earlier > "${report}"
+check "conduct: below the minimum is refused before any workspace or pane, and the old report stays" "yes|0|report kept" \
+  "$(fails_with "${need}" in_herdr "${rc}/bin:${PATH}" conduct old-claude)|$(panes)|$([[ -f "${report}" ]] && echo report kept || echo report gone)"
 CLAUDE_STUB_VERSION="2.1.99 (Claude Code)"
 check "versions compare as numbers: 2.1.99 is below 2.1.145" "yes" "$(fails_with "${need}" start)"
 
