@@ -132,7 +132,9 @@ CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo ge
 CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # a builder working this long with no commit, PR update or swarm action is stalled?
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes"
+CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
+CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share builder_subagent_model"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -174,6 +176,10 @@ load_config() {
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: stall_minutes must be a positive whole number, not '${value}'" ;;
+      sonnet_share)
+        [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: sonnet_share must be a non-negative whole number, not '${value}'" ;;
+      builder_subagent_model)
+        [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: builder_subagent_model must be a model name such as haiku, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -262,8 +268,10 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,docs,chore,verify,escalate conducting:conduct"
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,verify,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
+# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model).
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ }"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -276,6 +284,7 @@ policy() {
     codex)      echo "codex default high" ;;   # a different model family, read-only
     code)       echo "claude opus high" ;;
     code-risky) echo "claude opus xhigh" ;;    # Layer 3, teardown, safety or hygiene paths
+    code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
     verify)     echo "claude haiku medium" ;;  # run tests or commands and report
@@ -579,6 +588,10 @@ start_agent() {
       # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
       local guard=()
       [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
+      # builder_subagent_model: the session's env, through --settings since herdr passes no env. Without
+      # _FORCE the model setting leaves an Explore subagent on the parent's model (opusplan-spike).
+      [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && guard+=(--settings \
+        "{\"env\":{\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\"}}")
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
         --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto ${guard[@]+"${guard[@]}"} 2>&1) && break
     fi
@@ -875,7 +888,6 @@ PY
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells and
 # closes it took, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
-BUILDER_ROLES="code code-risky docs chore verify escalate"
 outcomes_report() {
   local since="" rows meta="" slug text kind src pr state
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
@@ -1360,6 +1372,23 @@ agent_kind() {
   case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
 }
 
+# story_role <slug> <kind> <risk> — the role a story is built as: its kind, code-risky for code with
+# risk: high, and with sonnet_share = N, code-sonnet for the other code stories whose slug's cksum mod
+# N is 0, so a slug always lands in the same arm. Only a first attempt is sampled: a slug with an
+# agents.tsv line already goes back to code.
+story_role() {
+  local slug="$1" kind="$2" risk="$3" sum
+  if [[ "${kind}" != code ]]; then echo "${kind}"; return; fi
+  if [[ "${risk}" == high ]]; then echo code-risky; return; fi
+  sum="$(printf '%s' "${slug}" | cksum)"; sum="${sum%% *}"
+  if [[ ${CFG_sonnet_share} -gt 0 && $((sum % CFG_sonnet_share)) -eq 0 ]] \
+     && ! awk -F'\t' -v n="$(agent_name "${slug}")" '$3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
+    echo code-sonnet
+  else
+    echo code
+  fi
+}
+
 build_story() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base epic from epic_branch
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -1373,7 +1402,7 @@ build_story() {
   esac
   risk=$(sed -n 's/^risk: *//p' "${story}" | head -1)
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
-  role="${kind}"; [[ "${kind}" == code && "${risk}" == high ]] && role=code-risky
+  role="$(story_role "${slug}" "${kind}" "${risk}")"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.

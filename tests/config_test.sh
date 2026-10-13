@@ -72,6 +72,18 @@ project "${p}" "stall_minutes = 0"
 check "stall_minutes must be a positive whole number" "yes" "$(fails_with 'config:1: stall_minutes must be' run "${p}" config)"
 project "${p}" "stall_minutes = 45"
 check "stall_minutes is read" "45" "$(run "${p}" config stall_minutes)"
+for v in -1 x 2.5 04; do
+  project "${p}" "sonnet_share = ${v}"
+  check "sonnet_share = ${v} is refused, naming the key" "yes" "$(fails_with 'config:1: sonnet_share must be a non-negative whole number' run "${p}" config)"
+done
+project "${p}" "sonnet_share = 4"
+check "sonnet_share is read" "4" "$(run "${p}" config sonnet_share)"
+check "sonnet_share ships off" "0" "$(project "${p}"; run "${p}" config sonnet_share)"
+project "${p}" 'builder_subagent_model = haiku"}'
+check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
+  "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
+project "${p}" "builder_subagent_model = claude-haiku-5-5"
+check "builder_subagent_model is read" "claude-haiku-5-5" "$(run "${p}" config builder_subagent_model)"
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
