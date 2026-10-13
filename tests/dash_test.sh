@@ -366,6 +366,10 @@ check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<<
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
 check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
+# A nudge is wait's doing, not a sign of life: a fresh `nudge s-three` line leaves the builder stalled.
+printf '%s\tnudge\ts-three\tw1:p1\tok\n' "$(ago 0)" >> "${P}/.swarm/events.tsv"
+if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
+check "a nudge line does not lower a builder's stall age" test "${rc}" -eq 3
 # Past stall_minutes, the session is busy before the first wake and idle on the read after it: the
 # stall check takes only the read after the wake, so wait returns idle, not stalled.
 cp "${ROOT}/claude.json" "${ROOT}/claude.json.flip"

@@ -363,7 +363,8 @@ def session_state(log, name, listing):
 # builder's last sign of life stands in for it.
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
-#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
+#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once;
+#     a `nudge` line is wait's doing, not a sign of life, so it is skipped.
 #   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
 #     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
 #     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
@@ -389,7 +390,7 @@ def last_seen(events):
         for l in open(events, encoding="utf-8", errors="replace"):
             f = l.rstrip("\n").split("\t")
             t = epoch(f[0]) if len(f) == 5 else None
-            if t is not None and t > seen.get(f[2], 0):
+            if t is not None and f[1] != "nudge" and t > seen.get(f[2], 0):
                 seen[f[2]] = t
     except OSError:
         pass
@@ -803,17 +804,31 @@ deliver_prompt() {
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
 }
 
-# API_ERROR_NUDGES: how many times one `wait` re-prompts an agent whose turn died on an API error.
-# Enough to ride out a dropped stream; few enough that a hard error (a bad key) still surfaces.
-API_ERROR_NUDGES=3
+# IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
+# PR (its turn died on an API error, or it stopped early): nothing else would wake it. Enough to ride
+# out a dropped stream; few enough that a builder that is truly stuck still comes back to the lead.
+IDLE_NUDGES=3
 
-# ended_on_api_error <name> — true when the agent's last event (Claude Code marks each with ⏺)
-# is an API error, such as "The response stopped arriving". The agent then sits idle, its work
-# unfinished, and nothing else will wake it.
-ended_on_api_error() {
-  local target
-  target="$(agent_field "$1" pane_id)"; [[ -n "${target}" ]] || return 1
-  herdr agent read "${target}" --source recent-unwrapped 2>/dev/null | grep '⏺' | tail -1 | grep -q '⏺ API Error'
+# nudge_reason <name> — when <name> builds a code, docs or chore story that is not done and has no
+# PR (pr_per = epic: story/<slug> is not pushed), print why a nudge is sent and succeed. A name with
+# no story (a conductor, hld, a planner) or a verify story is never nudged, and a repo that cannot
+# be resolved, or a gh or git call that fails, counts as having a PR.
+nudge_reason() {
+  local slug f src url n rc=0
+  slug="$(stall_py story "$1")"; [[ -n "${slug}" ]] || return 1
+  f="${BOARD}/stories/${slug}.md"
+  case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
+  [[ "$(fm "${f}" status)" != "done" ]] || return 1
+  src="$(repo_dir "$(fm "${f}" repo)")" || return 1
+  if [[ "${CFG_pr_per}" == epic ]]; then
+    git -C "${src}" ls-remote --exit-code origin "story/${slug}" >/dev/null 2>&1 || rc=$?
+    [[ ${rc} -eq 2 ]] || return 1   # 2: no such branch; 0 is pushed, anything else a failure
+    echo "you are idle and story/${slug} is not pushed"; return
+  fi
+  url="$(git -C "${src}" remote get-url origin 2>/dev/null)" || return 1
+  n="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number -q length 2>/dev/null)" || return 1
+  [[ "${n}" == 0 ]] || return 1
+  echo "you are idle and story/${slug} has no PR"
 }
 
 # story_commit_time <slug> — the epoch time of the last commit in a story's worktree; empty when it
@@ -916,19 +931,22 @@ sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 100
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
-# wake (after a nudge), the read before the first wake never ends the wait.
+# wake (after a nudge), an idle read ends the wait only once a whole slice has passed, unless the
+# session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
 settle() {
-  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0
+  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
-  while [[ -n "${wake}" || ! "${state}" =~ ${SETTLED} ]]; do
-    wake=""; t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
+  [[ -z "${wake}" ]] || hold=$(($(now_ms) + STALL_POLL_MS))
+  while [[ ${hold} -gt 0 || ! "${state}" =~ ${SETTLED} ]]; do
+    t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
     if [[ ${end} -gt ${t0} ]]; then
       herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
-    if [[ "${state}" =~ ${SETTLED} ]]; then rc=0; break; fi
+    [[ "${state}" =~ ^(idle|unknown)$ ]] || hold=0
+    if [[ "${state}" =~ ${SETTLED} ]] && [[ ${hold} -eq 0 || $(now_ms) -ge ${hold} ]]; then rc=0; break; fi
     if [[ ${rc} -ne 0 ]]; then cat "${err}" >&2; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
@@ -944,26 +962,27 @@ settle() {
 }
 
 # wait_agent <name> <timeout-ms> [--stall] — block until the agent settles (settle) and print its
-# state; at the timeout, print the last one and fail. An agent idle after an API error has not
-# settled: tell it to carry on, and wait again. With --stall, a builder that shows no sign of life
+# state; at the timeout, print the last one and fail. A builder whose session is idle before its
+# story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
+# to IDLE_NUDGES times. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake=""
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake="" reason
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
     rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
     [[ ${rc} -eq 0 ]] || { echo "${status}"; return "${rc}"; }
-    # A session whose turn ended is idle; herdr reports a codex agent's as idle or done.
-    if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
-      break
-    fi
-    nudges=$((nudges + 1)); wake=1   # a read before the next wake may predate the nudge
-    echo "swarm: ${name} stopped on an API error; telling it to carry on (${nudges}/${API_ERROR_NUDGES})" >&2
-    herdr agent prompt "${target}" "Your last turn ended on an API error. Carry on from where you stopped." \
-      --wait --until working --timeout 60000 >/dev/null 2>&1 || true
+    # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
+    [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
+    reason="$(nudge_reason "${name}")" || break
+    nudges=$((nudges + 1)); wake=1   # settle holds a slice, or until busy, before it takes idle again
+    echo "swarm: ${name}: ${reason}; telling it to carry on (${nudges}/${IDLE_NUDGES})" >&2
+    record_event nudge "${name}"
+    herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
+      >/dev/null 2>&1 || true
   done
   echo "${status}"
 }
@@ -976,7 +995,6 @@ wait_conductor() {
   while :; do
     rc=0; status="$(wait_agent "${name}" "$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))")" || rc=$?
     [[ "${status}" =~ ^(idle|done)$ && ! -f "$(conductor_report "${name}")" ]] || break
-    ended_on_api_error "${name}" && break   # stuck after wait_agent's nudges: never nudge again
     [[ ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
     sleep "${poll}"
@@ -2743,6 +2761,7 @@ dispatch() {
 
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
+# The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
 READ_ONLY_COMMANDS="dash status next config policy cost lessons findings wait watch base _base _name _target _label _trusted _pane"
