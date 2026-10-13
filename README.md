@@ -7,7 +7,7 @@ swarm-dev runs a team of Claude Code agents that build software while you watch.
 with one agent. Others plan it, try to break the plan, and build it in parallel, each in its own
 terminal pane. The run stops whenever a decision is yours.
 
-![swarm.sh dash --watch on a demo project](docs/assets/dash.gif)
+![swarm.sh dash --watch on a demo project, 160 columns wide: what needs you and the epics on the left, recent on the right](docs/assets/dash.gif)
 
 ## How it works
 
