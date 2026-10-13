@@ -253,7 +253,7 @@ chmod +x "${dir}/bin/herdr"
 printf -- '- a finding\n' > "${dir}/findings.md"
 mkdir -p "${dir}/tmp"
 tsv() { printf '2026-10-13\tcode\ts1\t%s\topus\thigh\t%s\n' "$1" "$2" >> "${dir}/.swarm/agents.tsv"; }
-session() { # <status> [waitingFor] — sess-s1's entry; `none` lists no entry for it
+tsession() { # <status> [waitingFor] — sess-s1's entry; `none` lists no entry for it
   if [[ "$1" == none ]]; then echo '[]'; else echo "[{\"sessionId\":\"sess-s1\",\"status\":\"$1\"${2:+,\"waitingFor\":\"$2\"}},{\"sessionId\":\"sess-old\",\"status\":\"${OLD:-idle}\"}]"; fi > "${dir}/claude.json"
 }
 # tellout <herdr status> <tell args...> — run tell; print its output, then "exit N".
@@ -274,12 +274,12 @@ told() { # <name> <herdr status> <tell args...>
     echo "FAIL ${name}: got '${out}', sent '${sent}', left '${left}'"; fails=$((fails + 1)); fi
 }
 tsv claude sess-s1
-session idle; told "tell sends an idle session the findings while herdr says working, and leaves no temp file" working findings findings.md
-session busy; refused "tell refuses a busy session while herdr says done: still working" "still working" "done" findings findings.md
-session waiting "permission prompt"; refused "tell refuses a waiting session, naming what it waits for" "waiting on permission prompt" idle findings findings.md
-session none; refused "tell refuses a session that is gone" "gone" idle findings findings.md
-session compacting; refused "tell refuses a session in a state it does not know (unknown)" "(unknown)" idle findings findings.md
-session idle
+tsession idle; told "tell sends an idle session the findings while herdr says working, and leaves no temp file" working findings findings.md
+tsession busy; refused "tell refuses a busy session while herdr says done: still working" "still working" "done" findings findings.md
+tsession waiting "permission prompt"; refused "tell refuses a waiting session, naming what it waits for" "waiting on permission prompt" idle findings findings.md
+tsession none; refused "tell refuses a session that is gone" "gone" idle findings findings.md
+tsession compacting; refused "tell refuses a session in a state it does not know (unknown)" "(unknown)" idle findings findings.md
+tsession idle
 CLAUDE_STUB_AGENTS="${dir}/no-such-file" refused "tell refuses when Claude Code cannot list its sessions (unknown)" "(unknown)" idle findings findings.md
 for k in nudge resume; do told "tell takes the kind ${k}" idle "${k}" findings.md; done
 refused "tell with no kind fails, listing the three" "findings, nudge or resume, not ''" idle
@@ -289,10 +289,10 @@ refused "tell with a kind and no file fails" "no such file ''" idle findings
 TELL_PANE=w:77 refused "tell refuses another project's agent of the same name" "not one this project started" idle findings findings.md
 # A reused name: the older line's session (sess-old) is retired; the newer line's (sess-s1) decides.
 : > "${dir}/.swarm/agents.tsv"; tsv claude sess-old; tsv claude sess-s1
-OLD=busy session idle; told "a reused name reads the newer line (older busy, newer idle): told" working findings findings.md
-OLD=idle session busy; refused "a reused name reads the newer line (older idle, newer busy): refused" "still working" idle findings findings.md
+OLD=busy tsession idle; told "a reused name reads the newer line (older busy, newer idle): told" working findings findings.md
+OLD=idle tsession busy; refused "a reused name reads the newer line (older idle, newer busy): refused" "still working" idle findings findings.md
 # No session recorded ('-', as a codex agent has): herdr answers for it.
-tsv codex -; session busy
+tsv codex -; tsession busy
 told "tell sends an agent with no session that herdr reports as idle" idle findings findings.md
 told "tell also sends one herdr reports as done" "done" findings findings.md
 refused "tell refuses one herdr reports as working" "still working" working findings findings.md
