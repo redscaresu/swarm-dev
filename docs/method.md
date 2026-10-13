@@ -195,7 +195,7 @@ swarm.sh watch             # in the background: returns when a story PR needs th
 
 `wait` returns when the agent's Claude session reports `idle`, `waiting` (printed with what it
 waits on, such as `waiting: permission prompt`) or `gone` (its session has no entry in `claude agents
---json`: the process exited), which can be early. herdr's `agent wait` is only the wake-up, in
+--json`, or one with no status: the process exited), which can be early. herdr's `agent wait` is only the wake-up, in
 STALL_POLL_MS slices (a minute); after each wake or slice `wait` reads the session once, and never
 herdr's word for it. A session Claude Code gives no state for (`unknown`, or the list call failed)
 is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1, and so

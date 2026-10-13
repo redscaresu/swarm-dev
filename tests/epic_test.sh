@@ -220,8 +220,7 @@ check "with pr_per = story the rule does not apply" "plan-epic f" "$(first "$(nx
 
 # --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
 # state is its session's, from the claude stub's fixture. An agent idle after an API error is told
-# to carry on (each nudge is followed by a slice slept out, half a second here, before the session is
-# read again); any other idle agent is left alone.
+# to carry on; any other idle agent is left alone.
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 session() { # <file> <session>=<status>... — a `claude agents --json` fixture
   local f="$1" e out=""; shift
@@ -234,13 +233,13 @@ printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agent
 session "${ROOT}/claude.json" sess-a=idle
 printf '%s\n' "⏺ I have opened the PR." "⏺ Error: Exit code 1 from make test" > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"
-check "an idle session whose last event is not an API error is not nudged, whatever herdr says" "idle|0" "$(SWARM_STALL_POLL_MS=500 run wait a)|$(nudges)"
+check "an idle session whose last event is not an API error is not nudged, whatever herdr says" "idle|0" "$(run wait a)|$(nudges)"
 printf '%s\n' "⏺ Reviewing the commit." "⏺ API Error: The response stopped arriving." "✻ Crunched for 5m" > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"
-check "an agent stopped by an API error is nudged, then waited on again" "idle|1" "$(SWARM_STALL_POLL_MS=500 run wait a | tail -1)|$(nudges)"
+check "an agent stopped by an API error is nudged, then waited on again" "idle|1" "$(run wait a | tail -1)|$(nudges)"
 printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"; touch "${ROOT}/sticky"
 : > "${ROOT}/herdr.log"
-check "an error that does not clear stops after three nudges" "idle|3" "$(SWARM_STALL_POLL_MS=500 run wait a | tail -1)|$(nudges)"
+check "an error that does not clear stops after three nudges" "idle|3" "$(run wait a | tail -1)|$(nudges)"
 # The session still reads idle after each nudge: wait wakes on herdr before it reads it again, so no
 # two nudges go out without a wake between them.
 check "after a nudge, wait wakes before it takes the session's word again" "yes" \
@@ -263,6 +262,19 @@ session "${ROOT}/claude.json" sess-a=busy
 (sleep 3; session "${ROOT}/claude.json.new" sess-a=idle; mv "${ROOT}/claude.json.new" "${ROOT}/claude.json") &
 got="$(SWARM_STALL_POLL_MS=2000 waitrc /dev/null a 4000)"; wait
 check "a session that turns idle in the last slice's sleep-out is returned idle" "idle|exit 0" "${got%|*}"
+# herdr wakes at once and the session has settled by then: wait returns on that read, not a minute's
+# slice later.
+fast() { [[ ${1##*|} -lt 5 ]] && echo yes || echo "no, ${1##*|}s"; }
+session "${ROOT}/claude.json" sess-a=busy; session "${ROOT}/swap" sess-a=idle
+got="$(SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+check "a session idle on the read after an early wake is returned at once" "idle|exit 0|yes" "${got%|*}|$(fast "${got}")"
+session "${ROOT}/claude.json" sess-a=busy; echo '[]' > "${ROOT}/swap"
+got="$(SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+check "a session gone on the read after an early wake is returned at once" "gone|exit 0|yes" "${got%|*}|$(fast "${got}")"
+# Claude Code lists pid and status only while the process is alive: an entry with neither has exited.
+echo '[{"sessionId":"sess-a","cwd":"/w","kind":"interactive","startedAt":"2026-10-13T10:00:00Z"}]' > "${ROOT}/claude.json"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000)"
+check "a listed session with no pid or status reads gone" "gone|exit 0" "${got%|*}"
 # A recorded session with no entry is gone, read on the first wake, even when herdr's wait fails
 # (the pane is gone too); a slice of a minute shows it does not wait a slice out first.
 session "${ROOT}/claude.json" sess-a=busy; echo '[]' > "${ROOT}/swap"; touch "${ROOT}/waiterr"
@@ -272,9 +284,9 @@ check "a gone session is returned on the first wake, though herdr's wait failed"
 # A herdr wait that fails for another reason, with the session still busy, fails the wait at once:
 # the state and a non-zero exit, not slices slept out to the timeout.
 session "${ROOT}/claude.json" sess-a=busy
-got="$(SWARM_STALL_POLL_MS=5000 waitrc /dev/null a 10000)"
+got="$(SWARM_STALL_POLL_MS=10000 waitrc /dev/null a 20000)"
 check "a herdr wait that fails, the session busy, fails the wait within a slice" "busy|exit 1|yes" \
-  "${got%|*}|$([[ ${got##*|} -lt 4 ]] && echo yes || echo "no, ${got##*|}s")"
+  "${got%|*}|$([[ ${got##*|} -lt 8 ]] && echo yes || echo "no, ${got##*|}s")"
 rm -f "${ROOT}/waiterr"
 # A reader that fails (python3 here fails it) is unknown: a Claude agent never falls back to herdr.
 mkdir -p "${ROOT}/badpy"

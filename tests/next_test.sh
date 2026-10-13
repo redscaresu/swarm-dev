@@ -170,11 +170,10 @@ if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
   echo "FAIL wait on a conductor that never reports ends at its timeout: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
 # A conductor idle on an API error is stuck: wait returns after wait_agent's nudges, well inside
-# the timeout, instead of polling and nudging again. Each nudge is followed by a slice slept out
-# before the session is read again (half a second here).
+# the timeout, instead of polling and nudging again.
 stub api-error
 start=${SECONDS}
-got="$(SWARM_CONDUCTOR_POLL=5 SWARM_STALL_POLL_MS=500 waitc conduct-e1 20000 2>/dev/null)"
+got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000 2>/dev/null)"
 if [[ "${got}" == idle && $((SECONDS - start)) -lt 5 ]]; then
   echo "ok   wait on a conductor stuck on an API error returns without polling"; else
   echo "FAIL wait on a conductor stuck on an API error returns without polling: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi

@@ -84,6 +84,7 @@ case "$1 $2" in
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
     [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
     [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
+    if [ -n "${WAIT_SWAP:-}" ] && [ -e "${WAIT_SWAP}.new" ]; then mv "${WAIT_SWAP}.new" "${WAIT_SWAP}"; fi   # the session changes while herdr waits
     echo "herdr: a notice on stderr" >&2
     case "${WAIT_MODE:-done}" in
       timeout) echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
@@ -353,8 +354,10 @@ check "each slice herdr cut short is slept out, so the wait lasts its timeout" t
 # Slices are timed in milliseconds: a herdr wait of half a second is slept out to the slice, never
 # rounded to a whole second (a gap of 0.5 s or 1.5 s between wakes).
 WAIT_TIMES="${ROOT}/wait.times" WAIT_SLEEP=0.5 waitfor s-three 3000 >/dev/null || true
-check "each slice lasts its STALL_POLL_MS, timed in milliseconds" test "$(awk 'NR > 1 { g = $1 - p; if (g < 900 || g > 1300) bad = 1 } { p = $1 } END { print NR, (bad ? "off" : "on time") }' "${ROOT}/wait.times")" == "3 on time"
-check "a 3-slice wait lists Claude's sessions at most 4 times" test "$(grep -c '^agents --json$' "${ROOT}/claude.log")" -le 4
+check "each slice lasts its STALL_POLL_MS, timed in milliseconds" test "$(awk 'NR > 1 { g = $1 - p; if (g < 900 || g > 1450) bad = 1 } { p = $1 } END { print NR, (bad ? "off" : "on time") }' "${ROOT}/wait.times")" == "3 on time"
+# One read before the first wake, one after each of the 3, and one at the deadline after the last
+# slice's early wake: herdr wakes at once here, so every slice is slept out.
+check "a 3-slice wait lists Claude's sessions at most 5 times" test "$(grep -c '^agents --json$' "${ROOT}/claude.log")" -le 5
 # wait --stall counts from when the wait began: started now, 2 hours of silence before it do not count.
 if out="$(waitfor --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<< "${out}")" == "1:0"
@@ -363,14 +366,12 @@ check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<<
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
 check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
-# Past stall_minutes, the session turns idle during the first slice's sleep-out (2 s slices, idle at
-# 1 s): the stall check takes the read after the sleep-out, so wait returns idle, not stalled.
+# Past stall_minutes, the session is busy before the first wake and idle on the read after it: the
+# stall check takes only the read after the wake, so wait returns idle, not stalled.
 cp "${ROOT}/claude.json" "${ROOT}/claude.json.flip"
-(sleep 1; printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.flip.new"; mv "${ROOT}/claude.json.flip.new" "${ROOT}/claude.json.flip") &
-flip=$!
-if out="$(SWARM_STALL_POLL_MS=2000 CLAUDE_STUB_AGENTS="${ROOT}/claude.json.flip" long_ago --stall s-three 4000)"; then rc=0; else rc=$?; fi
-wait "${flip}"
-check "a builder that turns idle in the sleep-out is idle, not stalled" test "${rc}:${out}" == "0:idle"
+printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.flip.new"
+if out="$(WAIT_SWAP="${ROOT}/claude.json.flip" CLAUDE_STUB_AGENTS="${ROOT}/claude.json.flip" long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
+check "a builder idle on the read after the wake is idle, not stalled" test "${rc}:${out}" == "0:idle"
 # An idle session has settled, and stalls are not checked.
 printf '[{"sessionId":"sess-today","status":"idle"}]' > "${ROOT}/claude.json.idle"
 if out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json.idle" long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi

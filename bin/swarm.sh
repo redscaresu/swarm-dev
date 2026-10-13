@@ -304,9 +304,10 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #   session_state(log, name, listing) -> (state, waitingFor) from Claude Code's own list: the newest
 #     agents.tsv (<log>) line for <name>, its session id, then that id's entry in <listing> (the
 #     text of `claude agents --json`, None when the call failed). state is busy, idle, waiting (with
-#     waitingFor, when the entry has it), unknown (the call failed, or the entry has no status) or
-#     gone (no entry for the recorded session). None for an agent herdr must answer for: codex, no
-#     line, or a session of '-'.
+#     waitingFor, when the entry has it), unknown (the call failed, or a status it does not know) or
+#     gone (no entry for the recorded session, or one with no status: Claude Code lists status only
+#     while the process is alive). None for an agent herdr must answer for: codex, no line, or a
+#     session of '-'.
 PANES_PY='
 import glob, json, os, re
 def pane_records(state, keep):
@@ -349,9 +350,9 @@ def session_state(log, name, listing):
     if not isinstance(entries, list):
         return "unknown", ""
     e = next((x for x in entries if isinstance(x, dict) and x.get("sessionId") == line[6]), None)
-    if e is None:
+    st = e.get("status") if e is not None else None
+    if st is None:
         return "gone", ""
-    st = e.get("status")
     if st == "waiting":
         return st, str(e.get("waitingFor") or "")
     return (st, "") if st in ("busy", "idle") else ("unknown", "")
@@ -874,6 +875,9 @@ STALL_POLL_MS="${SWARM_STALL_POLL_MS:-60000}"
 # WAIT_STALLED: the exit code of `wait --stall` when it returns because the agent stalled.
 WAIT_STALLED=3
 
+# timed_out <stderr file> — true when herdr's failed agent wait only timed out.
+timed_out() { grep -q '"timeout"' "$1"; }
+
 # herdr_wait <target> <name> <timeout-ms> [<since>] — the wait for an agent with no Claude session to
 # read (codex, or no session recorded), and the one place a wait takes herdr's own status: herdr
 # agent wait in STALL_POLL_MS steps; with <since>, between steps an agent stalled since then
@@ -886,7 +890,7 @@ herdr_wait() {
     if out="$(herdr agent wait "${target}" --timeout "${STALL_POLL_MS}" 2>"${err}")"; then
       rm -f "${err}"; json "d['result']['agent']['agent_status']" <<< "${out}"; return
     fi
-    grep -q '"timeout"' "${err}" || break
+    timed_out "${err}" || break
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit or PR update"; return
@@ -907,25 +911,21 @@ sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 100
 # settle <target> <name> <timeout-ms> [<since>] [wake] — block until the agent settles and print its
 # state. A Claude agent has settled when its session says so (session_state: idle, waiting or gone);
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
-# The session is read before the first wake, and once after each wake and the sleep-out of the rest
-# of its slice; every decision is taken on that read. With wake (after a nudge), the read before the
-# first wake never ends the wait. A herdr wait that fails other than by timing out ends it at once:
-# settled, or the state and a failure. While the state is unknown it says so once on stderr. With
-# <since>, a busy builder stalled since then (agent_stalled) ends the wait with "stalled: ...". At
-# the deadline (now plus <timeout-ms>) it prints the last state and fails.
+# The session is read before the first wake and right after each; every decision is taken on that
+# read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
+# With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
+# unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
+# deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
+# wake (after a nudge), the read before the first wake never ends the wait.
 settle() {
-  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 slice err min said="" rc=0
+  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
   while [[ -n "${wake}" || ! "${state}" =~ ${SETTLED} ]]; do
-    wake=""; t0="$(now_ms)"
-    if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
-    slice=$((deadline - t0 < STALL_POLL_MS ? deadline - t0 : STALL_POLL_MS))
-    if herdr agent wait "${target}" --timeout "${slice}" >/dev/null 2>"${err}" || grep -q '"timeout"' "${err}"; then
-      sleep_ms $((slice - ($(now_ms) - t0)))
-    else
-      rc=1
+    wake=""; t0="$(now_ms)"; end=$((t0 + STALL_POLL_MS < deadline ? t0 + STALL_POLL_MS : deadline))
+    if [[ ${end} -gt ${t0} ]]; then
+      herdr agent wait "${target}" --timeout $((end - t0)) >/dev/null 2>"${err}" || timed_out "${err}" || rc=1
     fi
     state="$(session_state "${name}")"
     if [[ "${state}" =~ ${SETTLED} ]]; then rc=0; break; fi
@@ -936,6 +936,9 @@ settle() {
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit or PR update"; break
     fi
+    t0="$(now_ms)"
+    if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
+    sleep_ms $((end - t0))
   done
   rm -f "${err}"; echo "${state}"; return "${rc}"
 }
