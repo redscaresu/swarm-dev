@@ -1,7 +1,6 @@
 ---
 kind: lead
-status: blocked
-blocked_by: [pin-claude-version]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [pin-claude-version]
 touches: []
