@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [build-outcomes, opusplan-spike]
+status: ready
 depends_on: [build-outcomes, opusplan-spike]
 touches: [bin/swarm.sh (policy, ROLE_GROUPS, build_story's role line, CFG_/CONFIG_KEYS/load_config), tests/config_test.sh, tests/epic_test.sh, docs/method.md (§ Model and effort, config table), README.md (Cost and safety)]
 ---
