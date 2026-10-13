@@ -47,6 +47,7 @@
     }
   ],
   "mainPath": [
+    "init",
     "hld",
     "swarm",
     "planhld",
@@ -165,6 +166,24 @@
       "label": "PR review",
       "sublabel": "codex + /code-review",
       "width": 140
+    },
+    {
+      "id": "init",
+      "lane": "lead",
+      "col": 0,
+      "type": "backend",
+      "label": "swarm.sh init",
+      "sublabel": "once per project",
+      "width": 140
+    },
+    {
+      "id": "login",
+      "lane": "you",
+      "col": 4,
+      "type": "security",
+      "label": "/login",
+      "sublabel": "login expired",
+      "width": 140
     }
   ],
   "edges": [
@@ -254,6 +273,20 @@
       "to": "board",
       "label": "next stories ready",
       "role": "return",
+      "variant": "dashed"
+    },
+    {
+      "id": "init-hld",
+      "from": "init",
+      "to": "hld",
+      "label": "board ready"
+    },
+    {
+      "id": "auth",
+      "from": "builders",
+      "to": "login",
+      "label": "auth, then resume",
+      "role": "branch",
       "variant": "dashed"
     }
   ]
