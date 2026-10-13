@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [pin-claude-version, session-reader-and-wait]
+blocked_by: [session-reader-and-wait]
 epic: agent-state-from-the-session
-depends_on: [pin-claude-version, mint-session-id, session-reader-and-wait]
+depends_on: [mint-session-id, session-reader-and-wait]
 touches: [bin/swarm.sh:start_agent (one call), bin/swarm.sh:require_claude (new), tests/config_test.sh (require_claude block), README.md (Requirements)]
 risk: high
 ---
