@@ -16,6 +16,25 @@ With N > 0, build_story gives role `code-sonnet` to a `kind: code` story without
 `cksum` of its slug mod N is 0. The choice is deterministic, so a rebuild of the same story picks the
 same role and the row in agents.tsv already says which arm a build was in; no new logging.
 
+## Spike findings (opusplan-spike)
+
+Claude Code 2.1.296. Throwaway repo, `claude -p` (print mode) with `--output-format stream-json --verbose`.
+Model per turn read from each assistant event's `message.model`.
+
+- **Lever 1, `--model opusplan`: does not work headless.** `claude -p --model opusplan --permission-mode plan`
+  plans on `claude-opus-5-5` for every turn, then stops still in plan mode. It never reaches ExitPlanMode:
+  on the second run the model asked for it and ToolSearch returned "No matching deferred tools found", so
+  no Sonnet turn happens and nothing is edited. The session's `init` event reports `claude-sonnet-5-5`; that
+  field is not the turn model. Not tested interactively: a fresh folder shows the trust prompt, which a
+  person must accept. Until that is checked, leave `code-opusplan` out.
+- **Lever 2, subagent model: works with a condition (`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`).** Evidence:
+  `CLAUDE_CODE_SUBAGENT_MODEL=haiku CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 claude -p --model opus
+  --permission-mode auto --output-format stream-json --verbose "Use the Agent tool with subagent_type Explore
+  to find where add is defined..."`: the main turns are `claude-opus-5-5`, the Explore subagent's turns
+  (events with `parent_tool_use_id` set) are `claude-haiku-5-5`. Without `_FORCE`, the same
+  `CLAUDE_CODE_SUBAGENT_MODEL=haiku` leaves the subagent on `claude-opus-5-5`, and so does no env at all.
+  The variable alone does nothing for an Explore subagent; with `_FORCE` it overrides.
+
 **Two more arms (user, 2026-10-13), shaped by opusplan-spike's findings:** if the spike shows `opusplan`
 runs unattended, add a role `code-opusplan` (`claude opusplan high`, with whatever approval the spike found)
 and split the sampled share between `code-sonnet` and `code-opusplan` by the same cksum rule (e.g. cksum mod
