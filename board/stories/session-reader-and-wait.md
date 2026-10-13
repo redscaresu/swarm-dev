@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [mint-session-id]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [mint-session-id]
 touches: [bin/swarm.sh:PANES_PY (new reader only), bin/swarm.sh:session list helper (new), bin/swarm.sh:settle, bin/swarm.sh:wait_agent, bin/swarm.sh:wait_conductor, tests/epic_test.sh (wait block), tests/next_test.sh (conductor block), tests/dash_test.sh (wait/stall block), docs/method.md (config table stall_minutes; § Building wait paragraph), commands/swarm.md:26]
