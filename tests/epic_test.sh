@@ -94,6 +94,8 @@ cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
   "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
+check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
+  "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
@@ -191,6 +193,8 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
+check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \
+  "$(has "stopped on an expired login, which only the user's" "${brief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${brief}")"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
 printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
@@ -294,7 +298,48 @@ item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
 check "epic mode: a builder whose story branch is not pushed (only a tag story/a) is nudged, and told so" "idle|3|yes" \
   "${got%%|*}|$(nudges)|$(has "you are idle and story/a is not pushed" "$(log)")"
-rm -f "${ROOT}/screen" "${b}/stories/a.md"
+# The same builder, its transcript ending on an expired login: only the user's /login helps, so wait
+# returns auth at once (a minute's slice), naming it, and never nudges it. The fixture is a real
+# transcript's shape, ids replaced; without its auth entry the last turn is ordinary and the
+# builder is nudged as before. CLAUDE_PROJECTS_DIR is set for these waits only.
+fixture="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl"
+tr_dir="${ROOT}/projects"; tr="${tr_dir}/p/sess-a.jsonl"; mkdir -p "${tr_dir}/p"
+cp "${fixture}" "${tr}"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=60000 waitrc "${ROOT}/wait.err" a 120000)"
+check "an idle builder whose login expired: wait prints auth at once, names it, and does not nudge" "auth|exit 0|yes|0|0|yes" \
+  "${got%|*}|$([[ ${got##*|} -lt 5 ]] && echo yes || echo "no, ${got##*|}s")|$(nudges)|$(nudged)|$(has "a: its login expired" "$(cat "${ROOT}/wait.err")")"
+grep -v authentication_failed "${fixture}" > "${tr}"; : > "${ROOT}/herdr.log"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "an idle builder after an ordinary turn is still nudged" "idle|3" "${got%%|*}|$(nudges)"
+# A resume sent after the /login (a user entry after the auth error) clears it, before the agent
+# has written a new assistant entry: wait does not print auth again.
+{ cat "${fixture}"; printf '%s\n' '{"parentUuid":"00000000-0000-4000-8000-000000000004","isSidechain":false,"type":"user","uuid":"00000000-0000-4000-8000-000000000007","timestamp":"2026-10-13T18:50:00.000Z","message":{"role":"user","content":"Your login is renewed: resume where you stopped."},"userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'; } > "${tr}"
+: > "${ROOT}/herdr.log"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "a user entry after the auth error (a resume) is not auth: the idle builder is nudged" "idle|3" "${got%%|*}|$(nudges)"
+# Claude Code's own user entries after the auth error are not a resume: a queued task notification
+# (shape from a real transcript, ids and text replaced), an isMeta entry, an Esc interrupt, and a
+# slash command run in the pane (/login there; a real /exit pair's shape, its command and output
+# replaced), which Claude Code writes as two user entries that are not isMeta.
+automated=(
+  task-notification '{"parentUuid":"00000000-0000-4000-8000-000000000004","isSidechain":false,"promptId":"00000000-0000-4000-8000-000000000008","type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>bfixture1</task-id>\n<tool-use-id>toolu_fixture</tool-use-id>\n<output-file>/tmp/fixture.output</output-file>\n<status>completed</status>\n<summary>Background command \"Wait on a builder\" completed (exit code 0)</summary>\n</task-notification>"},"uuid":"00000000-0000-4000-8000-000000000009","timestamp":"2026-10-13T16:10:00.000Z","permissionMode":"auto","origin":{"kind":"task-notification","producer":"session-task","runId":"fixture-run"},"promptSource":"system","turnOrigin":"task_notification","queueSkipAttachments":true,"userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+  isMeta '{"parentUuid":"00000000-0000-4000-8000-000000000009","isSidechain":false,"type":"user","message":{"role":"user","content":"A scheduled fixture prompt."},"isMeta":true,"uuid":"00000000-0000-4000-8000-00000000000a","timestamp":"2026-10-13T16:20:00.000Z","promptSource":"system","turnOrigin":"scheduled","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+  interrupted '{"parentUuid":"00000000-0000-4000-8000-00000000000a","isSidechain":false,"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"uuid":"00000000-0000-4000-8000-00000000000b","timestamp":"2026-10-13T16:30:00.000Z","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+  slash-command '{"parentUuid":"00000000-0000-4000-8000-000000000004","isSidechain":false,"promptId":"00000000-0000-4000-8000-00000000000c","type":"user","message":{"role":"user","content":"<command-name>/login</command-name>\n            <command-message>login</command-message>\n            <command-args></command-args>"},"uuid":"00000000-0000-4000-8000-00000000000d","timestamp":"2026-10-13T16:40:00.000Z","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}
+{"parentUuid":"00000000-0000-4000-8000-00000000000d","isSidechain":false,"promptId":"00000000-0000-4000-8000-00000000000c","type":"user","message":{"role":"user","content":"<local-command-stdout>Login successful</local-command-stdout>"},"uuid":"00000000-0000-4000-8000-00000000000e","timestamp":"2026-10-13T16:40:00.000Z","userType":"external","entrypoint":"cli","cwd":"/w","sessionId":"sess-fixture","version":"2.1.296","gitBranch":"story/a"}'
+)
+for ((i = 0; i < ${#automated[@]}; i += 2)); do
+  { cat "${fixture}"; printf '%s\n' "${automated[i + 1]}"; } > "${tr}"; : > "${ROOT}/herdr.log"
+  got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
+  check "an automated user entry (${automated[i]}) after the auth error is not a resume: still auth" "auth|0" "${got%%|*}|$(nudges)"
+done
+# A transcript that cannot be read is not expired, and wait prints no traceback.
+cp "${fixture}" "${tr}"; chmod 000 "${tr}"; : > "${ROOT}/herdr.log"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 20000)"
+check "an unreadable transcript is not auth, and wait prints no traceback" "idle|3|0" \
+  "${got%%|*}|$(nudges)|$(grep -c Traceback "${ROOT}/wait.err" || true)"
+chmod 600 "${tr}"
+rm -f "${ROOT}/screen" "${b}/stories/a.md" "${tr}"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
 session "${ROOT}/claude.json" sess-a=busy
@@ -359,6 +404,49 @@ item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"; rm -f "${p}/.
 check "wait never addresses another project's agent of the same name" "0|0" \
   "$(grep -c '^agent wait' <<< "$(run wait a >/dev/null 2>&1; cat "${ROOT}/herdr.log")" || true)|$(nudges)"
 rm -f "${b}/stories/a.md"
+
+# --- sonnet_share: a story's role is its kind, code-risky for risk: high, and with sonnet_share = N,
+# code-sonnet for the other code stories whose slug's cksum mod N is 0 (r0-code, r4-f, r4-g, the s4-*
+# slugs; r4-a and r4-b are not). Each build's role, model and effort are read off its agents.tsv line.
+row() { awk -F'\t' -v n="$1" '$3 == n { r = $2 " " $5 " " $6 } END { print r }' "${p}/.swarm/agents.tsv"; }
+build() { # <slug> <front-matter line>... — build a ready story in svc, then print its agents.tsv line
+  local s="$1"; shift
+  item "${b}" "stories/${s}.md" "status: ready" "repo: svc" "$@"
+  run story "${s}" >/dev/null || true   # a start that fails shows as the FAIL, not an abort
+  row "${s}"
+}
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+check "sonnet_share = 0 (the default): roles resolve as before" \
+  "code opus high|code-risky opus xhigh|docs sonnet medium|chore haiku medium|verify haiku medium" \
+  "$(build r0-code "kind: code")|$(build r0-risky "kind: code" "risk: high")|$(build r0-docs "kind: docs")|$(build r0-chore "kind: chore")|$(build r0-verify "kind: verify")"
+echo "sonnet_share = 4" >> "${p}/.claude/swarm/config"
+check "sonnet_share = 4: code stories split by cksum mod 4, and a sampled one starts on code-sonnet sonnet high" \
+  "code opus high|code opus high|code-sonnet sonnet high|code-sonnet sonnet high" \
+  "$(build r4-a "kind: code")|$(build r4-b)|$(build r4-f "kind: code")|$(build r4-g "kind: code")"
+check "sonnet_share = 4: risk: high stays code-risky, and docs, chore and verify are unchanged" \
+  "code-risky opus xhigh|docs sonnet medium|chore haiku medium|verify haiku medium" \
+  "$(build s4-risky4 "kind: code" "risk: high")|$(build s4-docs4 "kind: docs")|$(build s4-chore2 "kind: chore")|$(build s4-verify2 "kind: verify")"
+printf '2026-10-13\tcode-sonnet\ts4-retry2\tclaude\tsonnet\thigh\tsess-r\n' >> "${p}/.swarm/agents.tsv"
+check "only a first attempt is sampled: a slug already in agents.tsv goes back to code" "code opus high" \
+  "$(build s4-retry2 "kind: code")"
+
+# --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
+printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
+sub='--settings {"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
+started() { # <name> — with or without the setting, or "not started" when herdr never started <name>
+  local l; l="$(grep "^agent start $1 " "${ROOT}/herdr.log")" || { echo "not started"; return; }
+  if grep -qF -- "${sub}" <<< "${l}"; then echo with; else echo without; fi
+}
+: > "${ROOT}/herdr.log"
+build sub1 "kind: code" >/dev/null
+echo brief > "${ROOT}/survey-brief.md"
+run agent scope-sub sv1 "${ROOT}/svc" survey "${ROOT}/survey-brief.md" >/dev/null || true
+item "${b}" epics/sube.md "status: active"
+run conduct sube >/dev/null || true
+check "builder_subagent_model: the builder's start sets it; a survey's and a conductor's do not" "with|without|without" \
+  "$(started sub1)|$(started sv1)|$(started conduct-sube)"
+rm -f "${b}"/stories/r[04]-*.md "${b}"/stories/s4-*.md "${b}/stories/sub1.md" "${b}/epics/sube.md"
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

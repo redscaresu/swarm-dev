@@ -32,6 +32,13 @@ Repeat until a step below says stop:
      the wait's timeout (an hour) has passed, not each time it idles on its own background
      work. `wait` never nudges a conductor. When it returns, go back to 1. Never
      close a conductor that has not reported.
+
+     If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
+     Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
+     tell the user to run `/login` and nothing else. Once they say it is done, write a file
+     that says "Your login is renewed: resume where you stopped. Send the same to any builder whose
+     wait printed auth." and run `swarm.sh tell <agent> resume <file>` for each agent whose `wait` printed
+     `auth`, then go back to 1.
    - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
      `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first
      (from the project's repo, `gh pr list --state all --limit 200 --search 'in:title "lesson: <kind>"'
