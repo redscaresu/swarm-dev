@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [claude-stub]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [claude-stub]
 touches: [bin/swarm.sh:start_agent, bin/swarm.sh:record_agent, tests/review_test.sh (agent start block), tests/epic_test.sh (story start checks)]
