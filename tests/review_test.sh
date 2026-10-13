@@ -434,11 +434,16 @@ watchrun() {
 }
 wagents idle idle; wsession waiting "permission prompt"
 check "watch names this project's agent whose session waits (herdr: idle), with what it waits for" "agent(s) waiting: mine-builder (permission prompt)" "$(watchrun)"
+check "watch does not report the same wait twice in a row" "(still watching)" "$(watchrun)"
 wagents idle blocked; wsession idle
 check "watch names a codex agent herdr reports blocked" "agent(s) waiting: cx" "$(watchrun)"
 # herdr says blocked, but the session is busy: nothing needs the lead, so watch polls on.
 wagents blocked idle; wsession busy
 check "watch does not return on an agent herdr reports blocked whose session is busy" "(still watching)" "$(watchrun)"
+# That poll found nothing waiting, so the wait reported first is forgotten: a builder answered that
+# stops on a second prompt of the same kind is reported again, not left waiting.
+wagents idle idle; wsession waiting "permission prompt"
+check "watch reports the same wait again after a poll with nothing waiting" "agent(s) waiting: mine-builder (permission prompt)" "$(watchrun)"
 rm -f "${ROOT}/agents.json"
 
 # --- tidy: closes only empty panes and retired agents' panes; lists them first without --yes.

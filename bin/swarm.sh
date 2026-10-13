@@ -372,8 +372,9 @@ def session_state(log, name, listing):
 # builder's last sign of life stands in for it.
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
-#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once;
-#     a `nudge` line is wait's doing, not a sign of life, so it is skipped.
+#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
+#     A nudge is not a sign of life, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are
+#     skipped, and so is any other tell whose outcome is not ok: it never reached the builder.
 #   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
 #     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
 #     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
@@ -399,7 +400,9 @@ def last_seen(events):
         for l in open(events, encoding="utf-8", errors="replace"):
             f = l.rstrip("\n").split("\t")
             t = epoch(f[0]) if len(f) == 5 else None
-            if t is not None and f[1] != "nudge" and t > seen.get(f[2], 0):
+            if t is None or f[1] in ("nudge", "tell:nudge") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+                continue
+            if t > seen.get(f[2], 0):
                 seen[f[2]] = t
     except OSError:
         pass
@@ -1835,7 +1838,8 @@ for a in json.load(sys.stdin):
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
 # project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
-# lead, named with what it waits for. Each head, and each such list, is reported once (state in .swarm/state).
+# lead, named with what it waits for. Each head is reported once, and each such list once until a
+# poll finds nothing waiting (state in .swarm/state).
 watch_prs() {
   local epic="" stories=("${BOARD}"/stories/*.md) epic_heads="" epic_repos="" f
   if [[ "${1:-}" == --epic ]]; then
@@ -1901,7 +1905,11 @@ for a in json.load(sys.stdin)["result"]["agents"]:
         if agent_state(a, name, s)[0] == "WAITING":
             out.append(name + (f" ({s[1]})" if s and s[1] else ""))
 print(", ".join(out))' "${AGENTS_LOG}" 2>/dev/null || true)
-      if [[ -n "${waiting}" ]] && ! grep -qxF "waiting ${waiting}" "${seen}"; then
+      if [[ -z "${waiting}" ]]; then
+        # Nothing waits: forget the waits reported, so a builder that stops again on the same kind
+        # of prompt after being answered is reported again.
+        if grep -q '^waiting ' "${seen}"; then grep -v '^waiting ' "${seen}" > "${seen}.tmp" || true; mv "${seen}.tmp" "${seen}"; fi
+      elif ! grep -qxF "waiting ${waiting}" "${seen}"; then
         echo "waiting ${waiting}" >> "${seen}"; echo "agent(s) waiting: ${waiting}"; return 0
       fi
     fi
