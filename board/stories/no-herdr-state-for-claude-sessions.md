@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [off-screen-nudge, status-and-dash-read-the-session, tell-watch-and-free-name-read-the-session]
+status: ready
 epic: agent-state-from-the-session
 depends_on: [off-screen-nudge, status-and-dash-read-the-session, tell-watch-and-free-name-read-the-session]
 touches: [tests/agent_state_test.sh (new)]
@@ -15,3 +14,4 @@ Add tests/agent_state_test.sh, run over ${SWARM} in events_test's awk idiom (tes
 
 **From review (binding; overrides the scope above where they differ):**
 - Name tidy_panes (:2564) as an explicit allowlist entry with its reason. Drop the 'retired agents' allowance. agent_state's no-entry fallback is allowed only from the named fallback helper; any other caller that reaches herdr for a Claude session fails the test.
+- Note from the wave-5 conductor: #73 added `read_state` (bin/swarm.sh), the bash helper for the herdr fallback, which the allowlist needs; #69 added `login_expired` to PANES_PY, which reads the transcript, not herdr.
