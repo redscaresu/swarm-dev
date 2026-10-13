@@ -198,9 +198,10 @@ waits on, such as `waiting: permission prompt`) or `gone` (its session has no en
 --json`: the process exited), which can be early. herdr's `agent wait` is only the wake-up, in
 STALL_POLL_MS slices (a minute); after each wake or slice `wait` reads the session once, and never
 herdr's word for it. A session Claude Code gives no state for (`unknown`, or the list call failed)
-is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1. A codex
-agent, or one with no recorded session, is waited on through herdr's status. `wait --stall <slug>`
-also returns, with exit code 3 and `stalled: working <N> min with no commit or PR update`, when the
+is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1, and so
+it does at once when herdr's wait fails other than by timing out and the session has not settled.
+A codex agent, or one with no recorded session, is waited on through herdr's status. `wait --stall
+<slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, a PR update, a swarm action
 on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks

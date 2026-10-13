@@ -559,18 +559,18 @@ session_for_pane() {
 claude_agents() { claude agents --json 2>/dev/null; }
 
 # session_state <name> — the state Claude Code reports for <name>'s session (PANES_PY's
-# session_state over one claude_agents call): busy, idle, waiting[: <waitingFor>], unknown or gone.
-# Nothing when herdr answers for the agent instead (codex, or no session recorded).
+# session_state over one claude_agents call, its listing on stdin): busy, idle, waiting[:
+# <waitingFor>], unknown or gone; `herdr` when herdr answers for the agent instead (codex, or no
+# session recorded). A reader that fails, or prints nothing, is unknown, never herdr.
 session_state() {
-  local list ok=1
+  local list ok=1 out
   list="$(claude_agents)" || ok=""
-  SWARM_PANES_PY="${PANES_PY}" SWARM_LIST="${list}" SWARM_LIST_OK="${ok}" python3 - "${AGENTS_LOG}" "$1" <<'PY'
+  out="$(printf '%s' "${list}" | SWARM_PANES_PY="${PANES_PY}" SWARM_LIST_OK="${ok}" python3 -c '
 import os, sys
 exec(os.environ["SWARM_PANES_PY"])
-s = session_state(sys.argv[1], sys.argv[2], os.environ["SWARM_LIST"] if os.environ["SWARM_LIST_OK"] else None)
-if s:
-    print(s[0] + (": " + s[1] if s[1] else ""))
-PY
+s = session_state(sys.argv[1], sys.argv[2], sys.stdin.read() if os.environ["SWARM_LIST_OK"] else None)
+print("herdr" if s is None else s[0] + (": " + s[1] if s[1] else ""))' "${AGENTS_LOG}" "$1")" || out=""
+  echo "${out:-unknown}"
 }
 
 # record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
@@ -899,32 +899,41 @@ herdr_wait() {
 # SETTLED: the session states a wait returns on.
 SETTLED='^(idle|waiting|gone)(:|$)'
 
-# settle <target> <name> <timeout-ms> [<since>] — block until the agent settles and print its state.
-# A Claude agent has settled when its session says so (session_state: idle, waiting or gone); herdr's
-# agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed. The session
-# is read once after each wake or slice, and a wake that came early sleeps out the slice. While the
-# state is unknown it says so once on stderr. At the timeout it prints the last state and fails.
-# With <since>, a busy builder stalled since then (agent_stalled) ends the wait with "stalled: ...".
+# now_ms — the time in milliseconds (bash 3.2 has no EPOCHREALTIME). sleep_ms <ms> — sleep that
+# long; nothing for zero or less.
+now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
+sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 1000)))"; }
+
+# settle <target> <name> <timeout-ms> [<since>] [wake] — block until the agent settles and print its
+# state. A Claude agent has settled when its session says so (session_state: idle, waiting or gone);
+# herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
+# The session is read before the first wake and once after each; a wake that came early sleeps out
+# the slice. With wake (after a nudge), the read before it never ends the wait. A herdr wait that
+# fails other than by timing out ends it too: settled, or the state and a failure. While the state is
+# unknown it says so once on stderr. At the timeout it prints the last state and fails. With
+# <since>, a busy builder stalled since then (agent_stalled) ends the wait with "stalled: ...".
 settle() {
-  local target="$1" name="$2" left="$3" since="${4:-}" state slice t0 rest min said=""
+  local target="$1" name="$2" left="$3" since="${4:-}" wake="${5:-}" state slice t0 err min said="" failed="" rc=0
   state="$(session_state "${name}")"
-  [[ -n "${state}" ]] || { herdr_wait "$@"; return; }
-  while [[ ! "${state}" =~ ${SETTLED} ]]; do
-    [[ ${left} -gt 0 ]] || { echo "${state}"; return 1; }
-    slice=$((left < STALL_POLL_MS ? left : STALL_POLL_MS)); left=$((left - slice)); t0=${SECONDS}
-    herdr agent wait "${target}" --timeout "${slice}" >/dev/null 2>&1 || true
+  [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "${left}" "${since}"; return; }
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
+  while [[ -n "${wake}" || ! "${state}" =~ ${SETTLED} ]]; do
+    wake=""
+    if [[ ${left} -le 0 ]]; then rc=1; break; fi
+    slice=$((left < STALL_POLL_MS ? left : STALL_POLL_MS)); left=$((left - slice)); t0="$(now_ms)"
+    herdr agent wait "${target}" --timeout "${slice}" >/dev/null 2>"${err}" || grep -q '"timeout"' "${err}" || failed=1
     state="$(session_state "${name}")"
     [[ ! "${state}" =~ ${SETTLED} ]] || break
+    if [[ -n "${failed}" ]]; then cat "${err}" >&2; rc=1; break; fi
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
-    rest=$((slice - (SECONDS - t0) * 1000))
-    [[ ${rest} -le 0 ]] || sleep "$((rest / 1000)).$(printf '%03d' $((rest % 1000)))"
+    sleep_ms $((slice - ($(now_ms) - t0)))
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      echo "stalled: working ${min} min with no commit or PR update"; return
+      state="stalled: working ${min} min with no commit or PR update"; break
     fi
   done
-  echo "${state}"
+  rm -f "${err}"; echo "${state}"; return "${rc}"
 }
 
 # wait_agent <name> <timeout-ms> [--stall] — block until the agent settles (settle) and print its
@@ -933,18 +942,18 @@ settle() {
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake=""
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
-    rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}")" || rc=$?
+    rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
     [[ ${rc} -eq 0 ]] || { echo "${status}"; return "${rc}"; }
     # A session whose turn ended is idle; herdr reports a codex agent's as idle or done.
     if [[ ! "${status}" =~ ^(idle|done)$ || ${nudges} -ge ${API_ERROR_NUDGES} ]] || ! ended_on_api_error "${name}"; then
       break
     fi
-    nudges=$((nudges + 1))
+    nudges=$((nudges + 1)); wake=1   # a read before the next wake may predate the nudge
     echo "swarm: ${name} stopped on an API error; telling it to carry on (${nudges}/${API_ERROR_NUDGES})" >&2
     herdr agent prompt "${target}" "Your last turn ended on an API error. Carry on from where you stopped." \
       --wait --until working --timeout 60000 >/dev/null 2>&1 || true

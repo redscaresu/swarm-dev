@@ -81,7 +81,15 @@ cat > "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"working","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"}]}}' ;;
   "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"}]}}' ;;
-  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"; echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
+  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
+    [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
+    [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
+    echo "herdr: a notice on stderr" >&2
+    case "${WAIT_MODE:-done}" in
+      timeout) echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
+      error) echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
+      *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
+    esac ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -341,6 +349,10 @@ took=$((SECONDS - t0))
 check "a bare wait on a busy, stalled builder times out with its state: no stall" test "${rc}:${out}" == "1:busy"
 check "a bare wait polls herdr in slices" test "$(sort -u "${ROOT}/wait.log")|$(wc -l < "${ROOT}/wait.log" | tr -d ' ')" == "agent wait w1:p9 --timeout 1000|3"
 check "each slice herdr cut short is slept out, so the wait lasts its timeout" test "${took}" -ge 2
+# Slices are timed in milliseconds: a herdr wait of half a second is slept out to the slice, never
+# rounded to a whole second (a gap of 0.5 s or 1.5 s between wakes).
+WAIT_TIMES="${ROOT}/wait.times" WAIT_SLEEP=0.5 waitfor s-three 3000 >/dev/null || true
+check "each slice lasts its STALL_POLL_MS, timed in milliseconds" test "$(awk 'NR > 1 { g = $1 - p; if (g < 900 || g > 1300) bad = 1 } { p = $1 } END { print NR, (bad ? "off" : "on time") }' "${ROOT}/wait.times")" == "3 on time"
 check "a 3-slice wait lists Claude's sessions at most 4 times" test "$(grep -c '^agents --json$' "${ROOT}/claude.log")" -le 4
 # wait --stall counts from when the wait began: started now, 2 hours of silence before it do not count.
 if out="$(waitfor --stall s-three 3000)"; then rc=0; else rc=$?; fi
@@ -356,6 +368,18 @@ if out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json.idle" long_ago --stall s-three
 check "wait --stall returns an idle session's state" test "${rc}:${out}" == "0:idle"
 # Two stories share an agent name's 32 characters; the builder is the one not done.
 printf '%s\tstory\taaaaaaaaaa-bbbbbbbbbb-cccccccccc-2\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
+# While that builder is a codex agent, herdr answers for it (herdr_wait): herdr's stderr notice never
+# reaches the JSON parse, a step that times out is told from a real failure, and stalls are checked
+# between steps.
+printf '%s\tcode\taaaaaaaaaa-bbbbbbbbbb-cccccccccc\tcodex\tgpt\thigh\t-\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
+if out="$(WAIT_MODE=idle waitfor --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc 3000)"; then rc=0; else rc=$?; fi
+check "a codex agent's wait reads herdr's status with a notice on stderr" test "${rc}:${out}" == "0:idle"
+: > "${ROOT}/wait.log"; WAIT_LOG="${ROOT}/wait.log" WAIT_MODE=timeout waitfor aaaaaaaaaa-bbbbbbbbbb-cccccccccc 3000 >/dev/null || true
+check "a codex agent's step that times out is stepped past" test "$(grep -c . "${ROOT}/wait.log")" -eq 3
+rc=0; : > "${ROOT}/wait.log"; WAIT_LOG="${ROOT}/wait.log" WAIT_MODE=error waitfor aaaaaaaaaa-bbbbbbbbbb-cccccccccc 3000 >/dev/null || rc=$?
+check "a codex agent's step that fails for real ends the stepping, and the wait fails" test "$(grep -c . "${ROOT}/wait.log"):${rc}" == "2:1"
+if out="$(WAIT_MODE=timeout long_ago --stall aaaaaaaaaa-bbbbbbbbbb-cccccccccc-2 3000)"; then rc=0; else rc=$?; fi
+check "a codex builder's wait --stall returns on a stall between steps" test "${rc}:$(grep -c '^stalled: working' <<< "${out}")" == "3:1"
 printf '%s\tcode\taaaaaaaaaa-bbbbbbbbbb-cccccccccc\tclaude\topus\thigh\tsess-cut\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "dash maps a cut agent name to the story not done" grep -qE 'look at aaaaaaaaaa-bbbbbbbbbb-cccccccccc: working 1(19|20|21) min' <<< "${out}"

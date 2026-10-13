@@ -240,6 +240,10 @@ check "an agent stopped by an API error is nudged, then waited on again" "idle|1
 printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"; touch "${ROOT}/sticky"
 : > "${ROOT}/herdr.log"
 check "an error that does not clear stops after three nudges" "idle|3" "$(run wait a | tail -1)|$(nudges)"
+# The session still reads idle after each nudge: wait wakes on herdr before it reads it again, so no
+# two nudges go out without a wake between them.
+check "after a nudge, wait wakes before it takes the session's word again" "yes" \
+  "$(grep -E '^agent (wait|prompt)' "${ROOT}/herdr.log" | awk '/^agent prompt/ { if (p) bad = 1; p = 1; next } { p = 0 } END { print bad ? "no" : "yes" }')"
 rm -f "${ROOT}/sticky" "${ROOT}/screen"
 waitrc() { # <stderr file> <wait args...> — "<stdout>|exit <rc>|<seconds taken>"
   local e="$1" t0=${SECONDS} out rc=0; shift
@@ -258,7 +262,20 @@ session "${ROOT}/claude.json" sess-a=busy; echo '[]' > "${ROOT}/swap"; touch "${
 got="$(SWARM_STALL_POLL_MS=60000 waitrc /dev/null a 120000)"
 check "a gone session is returned on the first wake, though herdr's wait failed" "gone|exit 0|yes" \
   "${got%|*}|$([[ ${got##*|} -lt 10 ]] && echo yes || echo "no, ${got##*|}s")"
+# A herdr wait that fails for another reason, with the session still busy, fails the wait at once:
+# the state and a non-zero exit, not slices slept out to the timeout.
+session "${ROOT}/claude.json" sess-a=busy
+got="$(SWARM_STALL_POLL_MS=5000 waitrc /dev/null a 10000)"
+check "a herdr wait that fails, the session busy, fails the wait within a slice" "busy|exit 1|yes" \
+  "${got%|*}|$([[ ${got##*|} -lt 4 ]] && echo yes || echo "no, ${got##*|}s")"
 rm -f "${ROOT}/waiterr"
+# A reader that fails (python3 here fails it) is unknown: a Claude agent never falls back to herdr.
+mkdir -p "${ROOT}/badpy"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\n[ -n "${SWARM_LIST_OK+x}" ] && exit 1\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/badpy/python3"
+chmod +x "${ROOT}/badpy/python3"
+got="$(PATH="${ROOT}/badpy:${PATH}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000)"
+check "a reader that fails reads as unknown, never as herdr's word" "unknown|exit 1" "${got%|*}"
 # A list call that fails is unknown, never gone: wait keeps stepping, says so once, and times out.
 got="$(CLAUDE_STUB_AGENTS="${ROOT}/no-such-file" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 3000)"
 check "a failed list call reads as unknown, said once on stderr, until the timeout" "unknown|exit 1|1" \
