@@ -47,6 +47,7 @@
     }
   ],
   "mainPath": [
+    "init",
     "hld",
     "swarm",
     "planhld",
@@ -165,6 +166,24 @@
       "label": "PR review",
       "sublabel": "codex + /code-review",
       "width": 140
+    },
+    {
+      "id": "init",
+      "lane": "lead",
+      "col": 0,
+      "type": "backend",
+      "label": "swarm.sh init",
+      "sublabel": "once per project: board, config",
+      "width": 140
+    },
+    {
+      "id": "login",
+      "lane": "you",
+      "col": 4,
+      "type": "security",
+      "label": "/login",
+      "sublabel": "auth: an agent's login expired",
+      "width": 140
     }
   ],
   "edges": [
@@ -253,6 +272,28 @@
       "from": "reconcile",
       "to": "board",
       "label": "next stories ready",
+      "role": "return",
+      "variant": "dashed"
+    },
+    {
+      "id": "init-hld",
+      "from": "init",
+      "to": "hld",
+      "label": "board ready"
+    },
+    {
+      "id": "auth",
+      "from": "builders",
+      "to": "login",
+      "label": "auth",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "resume",
+      "from": "login",
+      "to": "builders",
+      "label": "tell: resume",
       "role": "return",
       "variant": "dashed"
     }
