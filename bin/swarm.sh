@@ -1420,7 +1420,7 @@ builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file 
 what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
-its latest head has passed.
+its latest head has passed.$(rules_review_rule)
 
 $(finding_rule)
 EOF
@@ -1529,6 +1529,35 @@ EOF
   [[ -z "${extra}" ]] || printf '%s' "${extra}"
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
+  rules_check_step "${before}" "${rules}"
+}
+
+# rule_kinds — the kinds of the tagged rules (<!-- lesson: <kind> -->) on stdin, one per line.
+rule_kinds() {
+  grep -oE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' | sed -E 's/.*lesson:[[:space:]]*([a-z0-9-]+).*/\1/' | sort -u || true
+}
+
+# rules_check_step <before> <rules> — a rule pasted into the brief does not stop the mistake, so a
+# builder walks its diff against each tagged rule and says what it checked. Nothing without one.
+rules_check_step() {
+  local kinds where="the PR body"; kinds="$(rule_kinds <<< "$2")"
+  [[ -n "${kinds}" ]] || return 0
+  [[ "$1" == "open the PR" ]] || where="your reply"
+  cat <<EOF
+
+Before you $1, walk your diff against each rule tagged \`<!-- lesson: <kind> -->\` above. Then give
+${where} a \`Rules checked:\` section with one line per kind: what in the diff you checked (file:line),
+or \`n/a: <why>\`:
+
+Rules checked:
+EOF
+  sed 's/^/- /; s/$/: <file:line>, or n\/a: <why>/' <<< "${kinds}"
+}
+
+# rules_review_rule — the conductor's half of rules_check_step, while the project has tagged rules.
+rules_review_rule() {
+  [[ -n "$(project_rules | rule_kinds)" ]] || return 0
+  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other."
 }
 
 # project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
@@ -1706,7 +1735,9 @@ and wait with \`swarm.sh wait <slug>\` in the background.
 
 $(auth_rule)
 
-When a builder reports, review its branch. Then, one story at a time, merge it into the epic branch
+When a builder reports, review its branch.$(rules_review_rule)
+
+Then, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
 \`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
 and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
