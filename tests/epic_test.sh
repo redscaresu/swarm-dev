@@ -465,6 +465,10 @@ check "swarm.sh story of a code story at attempts: 2 starts escalate on fable xh
   "$(build e4-build "kind: code" "attempts: 2")"
 check "a slug sampled for code-sonnet at attempts: 2 starts escalate" "escalate fable xhigh" \
   "$(build e4-g "kind: code" "attempts: 2")"
+item "${b}" stories/e4-bad.md "status: ready" "repo: svc" "kind: code" "attempts: two"; : > "${p}/.swarm/events.tsv"
+check "swarm.sh story at attempts: two fails, and its events.tsv line carries the reason" "fails|yes" \
+  "$(run story e4-bad >/dev/null && echo starts || echo fails)|$(has "attempts must be a non-negative whole number, not 'two'" "$(cut -f5 "${p}/.swarm/events.tsv")")"
+rm -f "${b}/stories/e4-bad.md"
 echo "escalate_after = 0" >> "${p}/.claude/swarm/config"
 check "escalate_after = 0: attempts 0, 1, 2 and 5 never escalate" "code code code code|code-risky code-risky code-risky code-risky" \
   "$(ladder e4-a 0 1 2 5 -- "kind: code")|$(ladder e4-a 0 1 2 5 -- "kind: code" "risk: high")"

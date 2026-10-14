@@ -1578,14 +1578,15 @@ agent_kind() {
 # attempts: reaches escalate_after (> 0), else its kind, code-risky for code with risk: high, and with
 # sonnet_share = N, code-sonnet for the other code stories whose slug's cksum mod N is 0, so a slug
 # always lands in the same arm. Only a first attempt is sampled: a slug with an agents.tsv line
-# already goes back to code.
+# already goes back to code. A missing story or a bad attempts: prints the reason and returns 1.
 story_role() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk attempts sum
-  [[ -f "${story}" ]] || die "no story ${story}"
+  [[ -f "${story}" ]] || { echo "no story ${story}"; return 1; }
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"; risk="$(fm "${story}" risk)"
   attempts="$(fm "${story}" attempts)"; attempts="${attempts:-0}"
   # Checked before any arithmetic, which would evaluate it.
-  [[ "${attempts}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${story}: attempts must be a non-negative whole number, not '${attempts}'"
+  [[ "${attempts}" =~ ^(0|[1-9][0-9]*)$ ]] \
+    || { echo "${story}: attempts must be a non-negative whole number, not '${attempts}'"; return 1; }
   if agent_kind "${kind}" && (( CFG_escalate_after > 0 && attempts >= CFG_escalate_after )); then echo escalate; return; fi
   if [[ "${kind}" != code ]]; then echo "${kind}"; return; fi
   if [[ "${risk}" == high ]]; then echo code-risky; return; fi
@@ -1610,7 +1611,7 @@ build_story() {
     *) die "${slug} has kind: ${kind}; an agent builds only code, docs, chore or verify" ;;
   esac
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
-  role="$(story_role "${slug}")"
+  role="$(story_role "${slug}")" || die "${role}"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
@@ -3404,7 +3405,7 @@ dispatch() {
     init)   init_project ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
-    _role)  story_role "${1:?slug}" ;;                            # test hook: the role a story is built as
+    _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
