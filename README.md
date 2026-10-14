@@ -77,10 +77,10 @@ Ask your agent "how do I use swarm-dev?" or "why did /swarm stop?" and it loads 
 |---|---|
 | `/hld <title>` | Write the design with a co-author agent. |
 | `/swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh status` | Show agents that need a look (from their Claude session: waiting, gone or unknown), what waits on you, and what runs next. |
+| `swarm.sh status` | Show agents that need a look (from their Claude session: waiting, gone, unknown, or `auth` when the login expired), what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
-| `swarm.sh outcomes [--since YYYY-MM-DD]` | Print one TSV row per builder: the story, its kind and risk, the model and effort, cost, tells, findings fixed, the PR and how it ended, and which attempt it was. |
+| `swarm.sh outcomes [--since YYYY-MM-DD]` | Print one TSV row per builder: the story, its kind and risk, the model and effort, cost, tells by kind (findings, nudge, resume; a refused tell is not counted), findings fixed, the PR and how it ended, and which attempt it was. |
 | `swarm.sh decisions [--since YYYY-MM-DD]` | Print JSON lines, one per decision the logs record (model choice, retry, finding fixed or declined, nudge, close), each with the build's outcome. Fields the logs don't hold are null. |
 
 `swarm.sh close` also keeps a gzip'd copy of the Claude session log of each agent it closes in `.swarm/sessions/`,
@@ -107,7 +107,7 @@ reach them:
 | a PR waiting for you | merge it, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
-| `auth`: an agent's login expired | run `/login` (only you can clear it), then say so; `/swarm` tells the stopped agents to resume |
+| `auth`: an agent's login expired (`status`, `dash` and `next` show it too) | run `/login` (only you can clear it), then say so; `/swarm`, `/plan-epic` and `/plan-hld` tell the stopped agents to resume |
 
 ## Cost and safety
 

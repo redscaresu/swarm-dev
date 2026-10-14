@@ -19,14 +19,15 @@ is one column, top to bottom:
   mode and the summary move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
-  on a prompt (with what its session waits for), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled builder (working for `stall_minutes`, 30
+  on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled builder (working for `stall_minutes`, 30
   by default, with no commit, PR update or swarm action), `agree` a draft HLD. When nothing does,
   it is one line.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
   many open stories are in each status. An agent's status is its Claude session's (`claude agents
   --json`, read once a frame): busy is working, idle is idle, waiting shows what it waits for, and a
   recorded session that is `gone` (it ended) or `unknown` (no state, or no `claude` to ask) is
-  marked `!`. herdr's word stands for codex agents, agents with no session recorded, and retired
+  marked `!`. So is an idle one whose transcript ends on an expired login: it shows `auth`, since
+  only your `/login` clears it. herdr's word stands for codex agents, agents with no session recorded, and retired
   ones. A finished story's file is deleted, so finished ones are
   counted from the board repo's history: story files deleted on its base branch (and on HEAD) whose
   front matter named the epic, once per slug, when any deletion closed the story: its own PR's
@@ -52,7 +53,7 @@ is one column, top to bottom:
 - **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on.
   From 140 columns it sits at the top of the right column, above recent.
 - **Legend**: one status vocabulary throughout: ● working, ○ ready, ◐ review or CI running, ✓ done
-  or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown), and ?
+  or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown, or whose login expired), and ?
   for a herdr state dash does not know (with herdr's word for it).
 - **Status bar**, from 140 columns, on the last line: the merge mode, the summary's counts, today's
   cost and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).

@@ -55,7 +55,7 @@ check() { # <name> <output> <exact expected output>
 }
 before="$(ls -lR "${P}/.swarm")"
 out="$(decisions)"
-O='{"attempts": 1, "cost_usd": 4.0, "findings": 1, "merged": true, "pr": "https://github.com/o/r/pull/7", "tells": 1}'
+O='{"attempts": 1, "cost_usd": 4.0, "findings": 1, "merged": true, "pr": "https://github.com/o/r/pull/7", "tells_findings": 0, "tells_nudge": 1, "tells_resume": 0}'
 check "one object per model choice, finding (fixed and declined), nudge and close, null where the logs hold nothing" \
   "$(summary <<< "${out}")" "$(cat <<EOF
 model_choice|conduct-e|None|null|{"effort": "high", "kind": "claude", "model": "opus", "role": "conduct"}|null
