@@ -20,27 +20,33 @@ reached=""   # one role per line
 # A command file is read without its <!-- --> comments.
 for f in "${REPO}"/commands/*.md; do
   md="$(perl -0pe 's/<!--.*?-->//gs' "${f}")"
-  reached+=$'\n'"$(sed -n 's/.*swarm\.sh agent \([^ `]*\) \([^ `]*\) \([^ `]*\) \([a-z-]*\)[ `].*/\4/p' <<< "${md}")"
+  reached+=$'\n'"$(sed -n 's/.*swarm\.sh agent \([^ `]*\) \([^ `]*\) \([^ `]*\) \([a-z-]*\)\([ `].*\)\{0,1\}$/\4/p' <<< "${md}")"
   if grep -q 'swarm\.sh agent .*<role>' <<< "${md}"; then
-    reached+=$'\n'"$(grep -o 'role `[a-z-]*`' <<< "${md}" | sed 's/role `\(.*\)`/\1/')"
+    reached+=$'\n'"$(grep -o 'role `[a-z-]*`' <<< "${md}" | sed 's/role `\(.*\)`/\1/' || true)"
   fi
 done
 reached+=$'\n'"$(grep -v '^[[:space:]]*#' "${SWARM}" \
   | sed -n 's/.*start_agent \([^ ]*\) \([^ ]*\) \([^ ]*\) \([a-z-]*\)\( .*\)\{0,1\}$/\4/p')"
 
-# _role for one fixture story per arm of story_role. With sonnet_share = 4, slug f lands in the
-# code-sonnet sample and slug a does not.
+# _role for one fixture story per arm of story_role. With sonnet_share = 4, slug e4-f lands in the
+# code-sonnet sample and slug e4-a does not. escalate_after is set too, so its default can change.
 mkdir -p "${tmp}/docs/stories" "${tmp}/.claude/swarm"
-echo "sonnet_share = 4" > "${tmp}/.claude/swarm/config"
-story() { # <slug> <front-matter line>... — write the story, print its _role
-  local s="$1"; shift
+printf '%s\n' "sonnet_share = 4" "escalate_after = 2" > "${tmp}/.claude/swarm/config"
+story() { # <slug> <front-matter line>... — write the story, add its _role to reached
+  local s="$1" out; shift
   { echo ---; echo "status: ready"; printf '%s\n' "$@"; echo ---; } > "${tmp}/docs/stories/${s}.md"
-  (cd "${tmp}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" _role "${s}")
+  if ! out="$(cd "${tmp}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" _role "${s}" 2>&1)"; then
+    echo "FAIL _role ${s} ($*) failed: ${out}"; exit 1
+  fi
+  reached+=$'\n'"${out}"
 }
-reached+=$'\n'"$(story e4-a "kind: code")"$'\n'"$(story e4-a "kind: code" "risk: high")"
-reached+=$'\n'"$(story e4-f "kind: code")"$'\n'"$(story a "kind: docs")"
-reached+=$'\n'"$(story a "kind: chore")"$'\n'"$(story a "kind: verify")"
-reached+=$'\n'"$(story a "kind: code" "attempts: 2")"
+story e4-a "kind: code"
+story e4-a "kind: code" "risk: high"
+story e4-f "kind: code"
+story a "kind: docs"
+story a "kind: chore"
+story a "kind: verify"
+story a "kind: code" "attempts: 2"
 
 fails=0
 for r in ${roles}; do
