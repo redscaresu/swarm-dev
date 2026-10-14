@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [goal-spike, goal-delivery]
+blocked_by: [goal-delivery]
 epic: goal-for-builders
-depends_on: [goal-spike, goal-delivery]
+depends_on: [goal-delivery]
 touches: [bin/swarm.sh:tell_agent, tests/next_test.sh (the tell block: its herdr stub, tellout, a session fixture), docs/method.md (§ Building, the **The goal.** paragraph)]
 ---
 
@@ -18,3 +18,6 @@ In tell_agent, with goal on and kind findings, after the findings message is tak
 - `tell s1 nudge f` and `tell s1 resume f` write one record each; with goal off, `tell s1 findings f` writes one.
 - tests/outcomes_test.sh still counts tell:resume apart from tell:nudge.
 - The PR shows each new check failing with its code removed; humanizer ran over the changed docs prose and the PR description, and the PR says so; shellcheck bin/swarm.sh tests/*.sh, every tests/*_test.sh and `claude plugin validate .` pass.
+
+**From the spike (binding; overrides the scope above where they differ; report: .swarm/goal-spike.report.md, Claude Code 2.1.299; user chose form 1, bound 5, on 2026-10-14):**
+- The fresh goal is form 1, sent after the findings turn is idle, confirmed by a `goal_status sentinel:true` newer than the tell (the build-time sentinel never counts).

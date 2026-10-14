@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [goal-spike, method-config-table-test, wire-escalate-role, fable-on-call-release]
+blocked_by: [method-config-table-test, wire-escalate-role, fable-on-call-release]
 epic: goal-for-builders
-depends_on: [goal-spike, method-config-table-test, wire-escalate-role, fable-on-call-release]
+depends_on: [method-config-table-test, wire-escalate-role, fable-on-call-release]
 touches: [bin/swarm.sh:CFG_ defaults, CONFIG_KEYS, load_config (goal arm), bin/swarm.sh:story_brief (reply sentences), bin/swarm.sh:goal_condition (new), bin/swarm.sh:build_story (cap and goal file, beside require_claude), bin/swarm.sh:require_claude (minimum argument), tests/config_test.sh (config-file block; require_claude block), tests/epic_test.sh (Layout block; pr_per = epic block), docs/method.md (§ Configuring a project, the goal row), README.md (Requirements)]
 ---
 
@@ -17,3 +17,7 @@ New key goal: a CFG_goal=off default, CONFIG_KEYS, a load_config arm (off or ^[1
 - With goal on, `story` on a story whose condition is over 4000 characters fails naming the slug. With pr_per = epic, afterwards no worktree, no story/<slug> branch and no epic/<epic> on the bare remote exist, and the epic file is unchanged.
 - tests/config_test.sh, require_claude block: with goal = 5 and CLAUDE_STUB_VERSION one below the goal minimum, `story` fails naming that version; with goal off the same version passes.
 - The PR shows each new check failing with its code removed; humanizer ran over the changed README/docs prose and the PR description, and the PR says so; shellcheck bin/swarm.sh tests/*.sh, every tests/*_test.sh and `claude plugin validate .` pass.
+
+**From the spike (binding; overrides the scope above where they differ; report: .swarm/goal-spike.report.md, Claude Code 2.1.299; user chose form 1, bound 5, on 2026-10-14):**
+- `goal = N` defaults the bound to 5 in the docs' example (the key still ships `off`). The condition ends `or stop after N more turns` and carries an escape clause: if the story cannot be done, reply `IMPOSSIBLE: <why>` and stop; that reply satisfies the condition.
+- The cap is 4000 characters (the binary's own limit).

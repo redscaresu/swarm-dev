@@ -1,9 +1,9 @@
 ---
 kind: chore
 status: blocked
-blocked_by: [goal-spike, fable-on-call-release, goal-condition, goal-delivery, goal-done-when-line, close-takes-a-cause, goal-wait-no-nudge, goal-on-findings, goal-conductor-rule]
+blocked_by: [fable-on-call-release, goal-condition, goal-delivery, goal-done-when-line, close-takes-a-cause, goal-wait-no-nudge, goal-on-findings, goal-conductor-rule]
 epic: goal-for-builders
-depends_on: [goal-spike, fable-on-call-release, goal-condition, goal-delivery, goal-done-when-line, close-takes-a-cause, goal-wait-no-nudge, goal-on-findings, goal-conductor-rule]
+depends_on: [fable-on-call-release, goal-condition, goal-delivery, goal-done-when-line, close-takes-a-cause, goal-wait-no-nudge, goal-on-findings, goal-conductor-rule]
 touches: [.claude-plugin/plugin.json]
 ---
 
