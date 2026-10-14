@@ -3026,20 +3026,28 @@ def recent_box(w, n, clock=False):
         rec.append(row)
     return box("recent", rec, w)
 
-def first_model(path):
-    # The first message carrying a model; reading stops there, so a --watch redraw stays cheap.
-    for l in open(path, errors="ignore"):
-        try:
-            m = (json.loads(l).get("message") or {}).get("model")
-        except (ValueError, AttributeError):
-            continue
-        if m:
-            return next((k for k in MODEL_COLOR if k in m.lower()), m)
-    return ""
+def line_model(l):
+    # A log line's model, or "" for none, a non-string, or "<synthetic>" (a failed turn's entry).
+    try:
+        m = (json.loads(l).get("message") or {}).get("model")
+    except (ValueError, AttributeError):
+        return ""
+    return m if isinstance(m, str) and not m.startswith("<") else ""
 
-def ladder_box(w, cell=44):
+def first_model(path):
+    # The first real model in a session's log; reading stops there, so a --watch redraw stays
+    # cheap. An unreadable log names none, as a missing one does.
+    try:
+        with open(path, errors="ignore") as f:
+            m = next((m for m in map(line_model, f) if m), "")
+    except OSError:
+        return ""
+    return next((k for k in MODEL_COLOR if k in m.lower()), m)
+
+def ladder_box(w):
     # Per role: its policy model, then how many agents agents.tsv recorded and the models their
-    # sessions ran on (a session with no log or no model counts but names none).
+    # sessions ran on (a session with no log or no model counts but names none). The cell is the
+    # longest row plus a gap, so no row runs into the next.
     ran = collections.defaultdict(lambda: [0, set()])
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
         path = session_log(E["DASH_PROJECTS"], f[6])
@@ -3049,8 +3057,9 @@ def ladder_box(w, cell=44):
     for p in (l.split() for l in lines("DASH_POLICY")):
         n, models = ran[p[0]]
         m = f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}"
-        segs = [(f"{p[0]:<11}→ ", ""), (m, model_style(m)), (f"  {n}", "dim")] + [(" " + x, model_style(x)) for x in sorted(models - {""})]
-        rows.append(segs + [(" " * max(cell - sum(len(t) for t, _ in segs), 0), "")])
+        rows.append([(f"{p[0]:<11}→ ", ""), (m, model_style(m)), (f"  {n}", "dim")] + [(" " + x, model_style(x)) for x in sorted(models - {""})])
+    cell = max((sum(len(t) for t, _ in r) for r in rows), default=0) + 2
+    rows = [r + [(" " * (cell - sum(len(t) for t, _ in r)), "")] for r in rows]
     per = max(1, (w - 4) // cell)
     return box("ladder", [sum(rows[i:i + per], []) for i in range(0, len(rows), per)], w)
 
