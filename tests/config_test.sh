@@ -87,6 +87,27 @@ check "builder_subagent_model is read" "claude-haiku-5-5" "$(run "${p}" config b
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
+# --- One set of keys: the method's config table, CONFIG_KEYS and load_config's case arms. A key
+# missing from any of the three is named.
+REPO="$(dirname "${SWARM}")/.."
+# shellcheck disable=SC2016 # the backticks are the table's, not a command
+table_keys="$(sed -n '/^## Configuring a project/,/^## /s/^| `\([a-z_]*\)` |.*/\1/p' "${REPO}/docs/method.md")"
+list_keys="$(sed -n 's/^CONFIG_KEYS="\(.*\)"$/\1/p' "${SWARM}" | tr ' ' '\n')"
+arm_keys="$(sed -n '/^load_config() {/,/^}/p' "${SWARM}" | sed -n 's/^      \([a-z_|]*\)).*/\1/p' | tr '|' '\n')"
+# absent <keys> — each key of the three lists that is not in <keys>, space-separated.
+absent() {
+  local k out=""
+  for k in $(printf '%s\n' "${table_keys}" "${list_keys}" "${arm_keys}" | sort -u); do
+    grep -qxF -- "${k}" <<< "$1" || out+="${k} "
+  done
+  printf '%s' "${out% }"
+}
+check "the three key lists were all read" "yes" \
+  "$([[ -n "${table_keys}" && -n "${list_keys}" && -n "${arm_keys}" ]] && echo yes || echo no)"
+check "no key is missing from the method's config table" "" "$(absent "${table_keys}")"
+check "no key is missing from CONFIG_KEYS" "" "$(absent "${list_keys}")"
+check "no key is missing from load_config's case arms" "" "$(absent "${arm_keys}")"
+
 # --- A non-git project whose board is outside it, and repos in repos_dir.
 remote "${ROOT}/svc.git" main main dev
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/repos/svc"
