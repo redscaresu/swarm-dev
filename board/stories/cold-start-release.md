@@ -1,9 +1,9 @@
 ---
 kind: chore
 status: blocked
-blocked_by: [release-agent-state, skill-swarm-dev, cold-start-swarm-first-run, cold-start-fresh-session]
+blocked_by: [release-agent-state, skill-swarm-dev, cold-start-swarm-first-run, cold-start-fresh-session, cold-start-swarm-resolves]
 epic: cold-start
-depends_on: [release-agent-state, skill-swarm-dev, cold-start-swarm-first-run, cold-start-fresh-session]
+depends_on: [release-agent-state, skill-swarm-dev, cold-start-swarm-first-run, cold-start-fresh-session, cold-start-swarm-resolves]
 touches: [.claude-plugin/plugin.json]
 ---
 
