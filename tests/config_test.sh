@@ -79,6 +79,12 @@ done
 project "${p}" "sonnet_share = 4"
 check "sonnet_share is read" "4" "$(run "${p}" config sonnet_share)"
 check "sonnet_share ships off" "0" "$(project "${p}"; run "${p}" config sonnet_share)"
+for v in -1 1.5 two; do
+  project "${p}" "escalate_after = ${v}"
+  check "escalate_after = ${v} is refused, naming file and line" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: escalate_after must be a non-negative whole number" run "${p}" config)"
+done
+check "escalate_after ships on, at 2" "2" "$(project "${p}"; run "${p}" config escalate_after)"
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"

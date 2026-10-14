@@ -134,8 +134,9 @@ CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs 
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # a builder working this long with no commit, PR update or swarm action is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
+CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share builder_subagent_model"
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -177,8 +178,8 @@ load_config() {
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: stall_minutes must be a positive whole number, not '${value}'" ;;
-      sonnet_share)
-        [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: sonnet_share must be a non-negative whole number, not '${value}'" ;;
+      sonnet_share|escalate_after)
+        [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
       builder_subagent_model)
         [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: builder_subagent_model must be a model name such as haiku, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
@@ -1573,12 +1574,19 @@ agent_kind() {
   case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
 }
 
-# story_role <slug> <kind> <risk> — the role a story is built as: its kind, code-risky for code with
-# risk: high, and with sonnet_share = N, code-sonnet for the other code stories whose slug's cksum mod
-# N is 0, so a slug always lands in the same arm. Only a first attempt is sampled: a slug with an
-# agents.tsv line already goes back to code.
+# story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
+# attempts: reaches escalate_after (> 0), else its kind, code-risky for code with risk: high, and with
+# sonnet_share = N, code-sonnet for the other code stories whose slug's cksum mod N is 0, so a slug
+# always lands in the same arm. Only a first attempt is sampled: a slug with an agents.tsv line
+# already goes back to code.
 story_role() {
-  local slug="$1" kind="$2" risk="$3" sum
+  local slug="$1" story="${BOARD}/stories/$1.md" kind risk attempts sum
+  [[ -f "${story}" ]] || die "no story ${story}"
+  kind="$(fm "${story}" kind)"; kind="${kind:-code}"; risk="$(fm "${story}" risk)"
+  attempts="$(fm "${story}" attempts)"; attempts="${attempts:-0}"
+  # Checked before any arithmetic, which would evaluate it.
+  [[ "${attempts}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${story}: attempts must be a non-negative whole number, not '${attempts}'"
+  if agent_kind "${kind}" && (( CFG_escalate_after > 0 && attempts >= CFG_escalate_after )); then echo escalate; return; fi
   if [[ "${kind}" != code ]]; then echo "${kind}"; return; fi
   if [[ "${risk}" == high ]]; then echo code-risky; return; fi
   sum="$(printf '%s' "${slug}" | cksum)"; sum="${sum%% *}"
@@ -1591,7 +1599,7 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" story="${BOARD}/stories/$1.md" kind risk repo src role wt branch prompt base epic from epic_branch
+  local slug="$1" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -1601,9 +1609,8 @@ build_story() {
     operator) die "${slug} is kind: operator, which is now kind: lead: change it, and mark the user's step **You:**" ;;
     *) die "${slug} has kind: ${kind}; an agent builds only code, docs, chore or verify" ;;
   esac
-  risk=$(sed -n 's/^risk: *//p' "${story}" | head -1)
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
-  role="$(story_role "${slug}" "${kind}" "${risk}")"
+  role="$(story_role "${slug}")"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
@@ -3397,6 +3404,7 @@ dispatch() {
     init)   init_project ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
+    _role)  story_role "${1:?slug}" ;;                            # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
@@ -3415,7 +3423,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _name _target _label _trusted _pane"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
