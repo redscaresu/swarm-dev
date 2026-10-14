@@ -257,7 +257,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
-`cost`, `outcomes`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
+`cost`, `outcomes`, `decisions`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
@@ -274,6 +274,22 @@ and tokens from the session's own log, the `tell` (any `tell:<kind>`) and `close
 against its PR, the PR and its state from `gh`, and which attempt at the story it was. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. A story that merged and
 left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
+
+`swarm.sh decisions [--since YYYY-MM-DD]` exports the same logs as training data for a small
+decision model. It prints one JSON object per line for each decision the logs record: a
+`model_choice` per agent started, a `retry` per later attempt at a story, a `finding_accept` per
+finding fixed or declined, a `nudge` per `nudge` or `tell:nudge` line, and a `close` per `close` line.
+Each object has `decision`, `time`, `subject`, `context` (a builder's story as committed to the board
+by the end of the day it started, or the finding's text), `options`, `chosen`, and `outcome`, which is
+that build's `outcomes` row: merged, PR, tells, fixed findings, attempts and cost. A field the logs
+don't hold is null. It writes nothing.
+
+`swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after
+`cleanupPeriodDays` (30 by default) and they hold every tool call and the model of every turn. The log
+is copied, gzip'd, to `.swarm/sessions/<date>-<agent>-<session>.jsonl.gz`, once per session; a codex
+agent has none to keep. Nothing is redacted, because a list of what to scrub misses whatever it
+doesn't list, so the copy holds whatever the session held. The copy is readable by its owner only,
+and `.swarm/` is git-ignored: the archive stays on the machine, and is never committed or uploaded.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one
@@ -295,7 +311,8 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
-(`vacuous-test`, `denylist`). `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
+(`vacuous-test`, `denylist`). Each finding declined is logged with `log-finding --declined`, with the
+reason in its line; `lessons` and `outcomes` count only the fixed ones, and `decisions` exports both. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `lessons_file` (default `.claude/swarm/brief.md`) has no rule for is a `candidate`. So is a lead
 memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
 frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
@@ -306,7 +323,8 @@ opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silen
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
 PR of its repo, so findings count per epic per repo. A brief over 4 KB (counting `lessons_file`'s tagged lines, which every brief also carries) is flagged, and pruning it is your call: a rule that works stops
 its own findings, so quiet is no sign a rule is unneeded. The log is `.swarm/findings.tsv`, local to
-the machine.
+the machine: date, kind, PR, the line and its outcome (`fixed` or `declined`; rows written before the
+outcome column count as fixed).
 
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on

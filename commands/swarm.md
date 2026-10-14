@@ -66,7 +66,8 @@ Repeat until a step below says stop:
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
      builder, `codex exec review` plus `/code-review <PR>` when it changes code (log each fixed
-     finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`), with findings
+     finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`, and
+     each declined one with `log-finding --declined <kind> <PR URL> "<the finding, and why>"`), with findings
      sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing
      substantive
      (method.md § Building).

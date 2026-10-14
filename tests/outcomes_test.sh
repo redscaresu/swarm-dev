@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # outcomes_test.sh — `swarm.sh outcomes` against a fixture: a merged code story whose file the merge
-# deleted (its slug longer than the 32 characters agents.tsv keeps), built twice; a docs story still on
+# deleted (its slug longer than the 32 characters agents.tsv keeps), built twice, with findings fixed (old
+# four-field rows and new ones) and one declined, which is not counted; a docs story still on
 # the board; a conductor and a codex agent (not builders, left out). gh is a stub on PATH.
 set -euo pipefail
 
@@ -39,7 +40,8 @@ printf '%s\n' \
   $'2026-10-02T10:00:00Z\ttell\tother\tw:1\tok' > "${P}/.swarm/events.tsv"
 printf '%s\n' \
   $'2026-10-01\tvacuous-test\to/r#7\ta' \
-  $'2026-10-01\tmissing-check\thttps://github.com/o/r/pull/7\tb' \
+  $'2026-10-01\tmissing-check\thttps://github.com/o/r/pull/7\tb\tfixed' \
+  $'2026-10-01\tout-of-scope\to/r#7\tdeclined, not counted\tdeclined' \
   $'2026-10-02\tvacuous-test\thttps://github.com/o/r/pull/8/files\tc' \
   $'2026-10-02\tvacuous-test\to/r#9\td' > "${P}/.swarm/findings.tsv"
 # shellcheck disable=SC2016 # the stub's own shell expands these

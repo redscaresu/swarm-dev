@@ -27,7 +27,7 @@ Two loops feed what reviews find back into the work:
 
 | Loop | What happens |
 |---|---|
-| Inner (one PR) | codex and `/code-review` review the PR, the lead sends findings back with `swarm.sh tell`, and the builder fixes and pushes. This repeats until a pass on the latest head finds nothing substantive. Each fixed finding is logged with `swarm.sh log-finding <kind>`. |
+| Inner (one PR) | codex and `/code-review` review the PR, the lead sends findings back with `swarm.sh tell`, and the builder fixes and pushes. This repeats until a pass on the latest head finds nothing substantive. Each fixed finding is logged with `swarm.sh log-finding <kind>`, and each declined one with `log-finding --declined <kind>`. |
 | Outer (across PRs) | When a kind of finding has been fixed in 3 or more PRs within 90 days, or the lead has a memory tagged `lesson: <kind>`, `swarm.sh lessons` turns it into a one-line rule PR titled `lesson: <kind>` for the brief or `lessons_file`. Later builders read that rule. You merge or close it, and a rule you closed is not proposed again for 90 days. |
 
 The full method is in [`docs/method.md`](docs/method.md). The diagram's source is
@@ -76,6 +76,12 @@ from is missing from that list. In either case, run `claude update` and restart 
 | `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
 | `swarm.sh outcomes [--since YYYY-MM-DD]` | Print one TSV row per builder: the story, its kind and risk, the model and effort, cost, tells, findings fixed, the PR and how it ended, and which attempt it was. |
+| `swarm.sh decisions [--since YYYY-MM-DD]` | Print JSON lines, one per decision the logs record (model choice, retry, finding fixed or declined, nudge, close), each with the build's outcome. Fields the logs don't hold are null. |
+
+`swarm.sh close` also keeps a gzip'd copy of the Claude session log of each agent it closes in `.swarm/sessions/`,
+because Claude Code deletes session logs after 30 days by default. The copy holds everything the
+session held, secrets included, since nothing is redacted. Only your user can read it, and
+`.swarm/` is git-ignored, so it stays on your machine and is never committed or uploaded.
 
 You can also put builder rules in `.claude/swarm/brief.md` and settings such as `merge = agent` in
 `.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock
