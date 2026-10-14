@@ -1826,7 +1826,7 @@ epic_has_stories() {
 #                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting=""
+  local f slug epic kind story_epic src buildable="" waiting="" b open
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -1883,6 +1883,12 @@ next_step() {
     [[ "$(fm "${f}" status)" == active ]] || continue
     epic=$(basename "${f}" .md)
     epic_has_stories "${epic}" && continue
+    # Stories are scoped against the code its dependencies build, so wait until they are done.
+    open=0
+    for b in $(sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' "${f}" | tr ',' ' ' | tr -d "\"'"); do
+      if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md"; then open=1; fi
+    done
+    [[ ${open} -eq 0 ]] || continue
     echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return
   done < <(board epics)
   while IFS= read -r f; do

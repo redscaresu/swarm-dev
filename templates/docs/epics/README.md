@@ -8,10 +8,13 @@ story's builder runs from its worktree, and makes pass, before opening its PR (o
 branch). With
 `pr_per = epic`, `swarm.sh story` writes `repos:` itself: the repos that have an `epic/<slug>`
 branch, each of which gets one PR for the whole epic.
+`depends_on` lists the epics this one builds on (`[]` when none); `swarm.sh next` plans an
+epic only once every epic it lists is done.
 
 ```
 ---
 status: active | later | review
+depends_on: [other-epic]
 check: make test
 ---
 

@@ -48,7 +48,7 @@ what), or says none; every goal in the HLD belongs to exactly one epic; every di
 
 Report in this order: refuted epics, contradictions, codex and critic findings the plan does not
 answer, then the surviving epics and their order, then **What you will do**: each epic's `your_part`. Ask before writing. On approval write one
-`docs/epics/<slug>.md` per epic (front matter `status: active` or `later`, `hld: $1`; body: goal,
+`docs/epics/<slug>.md` per epic (front matter `status: active` or `later`, `hld: $1`, `depends_on: [<epic slugs>]`, `[]` when none; body: goal,
 **Done when**, out of scope, constraints, **Your part**), add a link to each under the HLD's `## Epics`, open a PR
 through the codex loop, and `swarm.sh close plan-$1`. Then scope each epic with
 `/plan-epic <slug>`, one at a time: each is its own ten-agent swarm.
