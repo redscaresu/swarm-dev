@@ -298,7 +298,10 @@ and `.swarm/` is git-ignored: the archive stays on the machine, and is never com
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from
-`.claude/swarm/brief.md`. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
+`.claude/swarm/brief.md`. When those rules include tagged ones (`<!-- lesson: <kind> -->`), the
+brief adds a last step: before opening the PR, the builder walks its diff against each one and gives
+the PR body (its reply, with `pr_per = epic`) a `Rules checked:` section, one line per kind naming
+what it checked (file:line) or `n/a: <why>`. With no tagged rule there is no step. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
 
 **Review before closing.** A story is reviewed when its latest head has passed codex and, if it
@@ -322,7 +325,10 @@ memory (Claude Code's per-project memory, which builders in their own worktrees 
 frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
 the builders the same way. Every builder and conductor gets that file's rules (the brief is pasted
 into their prompts whole; from another `lessons_file`, its tagged rule lines are), so one rule
-there reaches every later builder and conductor, in any repo. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
+there reaches every later builder and conductor, in any repo. A rule pasted into a prompt does not
+stop the mistake by itself, so each builder checks its diff against every tagged rule and lists what
+it checked under `Rules checked:`; the conductor logs a missing section, a missing kind, or a line
+that names nothing as a finding of kind `rules-unchecked`. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
 opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
 PR of its repo, so findings count per epic per repo. A brief over 4 KB (counting `lessons_file`'s tagged lines, which every brief also carries) is flagged, and pruning it is your call: a rule that works stops

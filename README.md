@@ -31,6 +31,9 @@ stories are marked **You:**.
 When reviews keep finding the same kind of problem across PRs, `/swarm`
 proposes a one-line rule for future builders, as a PR titled `lesson: <kind>`. You merge it
 or close it.
+Once a rule is in, each builder checks its diff against it before opening the PR and lists
+what it checked under `Rules checked:` in the PR body. If that list is missing, the conductor
+sends the PR back.
 
 Everything is plain Markdown in `docs/` (the board), so a run can stop anywhere and the next
 `/swarm` picks up where it left off. The full method is in [`docs/method.md`](docs/method.md).

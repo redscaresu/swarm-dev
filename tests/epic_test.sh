@@ -98,6 +98,8 @@ check "the conductor's brief says what a builder's auth means and to resume it a
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
+check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
+  "$(grep -q "Rules checked:" "${p}/.swarm/briefs/s1.md" && echo yes || echo no)|$(grep -q "rules-unchecked" <<< "${cbrief}" && echo yes || echo no)"
 sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
 check "a story starts with a --session-id, and its agents.tsv line ends in it" "yes|${sid}" \
   "$([[ -n "${sid}" ]] && echo yes || echo no)|$(awk -F'\t' 'NF == 7 && $3 == "s1" { print $7 }' "${p}/.swarm/agents.tsv")"
@@ -198,9 +200,18 @@ check "the one-PR-per-epic conductor's brief says what a builder's auth means, t
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
 printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
-printf 'A PROJECT RULE every agent reads.' > "${p}/.claude/swarm/brief.md"   # no final newline
+printf 'A PROJECT RULE every agent reads. <!-- lesson: brief-kind -->' > "${p}/.claude/swarm/brief.md"   # no final newline
 item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
 run story g1 >/dev/null
+gbrief="$(cat "${p}/.swarm/briefs/g1.md")"
+check "a builder walks its diff against each tagged rule, and lists both kinds in the PR body" "yes|yes|yes|yes" \
+  "$(has "Before you open the PR, walk your diff against each rule tagged" "${gbrief}")|$(has "the PR body a \`Rules checked:\` section" "${gbrief}")|$(has "- agents-kind: <file:line>, or n/a: <why>" "${gbrief}")|$(has "- brief-kind: <file:line>, or n/a: <why>" "${gbrief}")"
+for mode in story epic; do   # epic last: the tests below run with pr_per = epic
+  printf '%s\n' "pr_per = ${mode}" "base_branches = dev main" "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
+  run conduct f >/dev/null || true
+  check "with tagged rules, the ${mode}-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
+    "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+done
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
