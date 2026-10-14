@@ -68,6 +68,16 @@ printf '2026-10-01\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-1\n2026-10-02\
 # Today's cost, the same as `swarm.sh cost <today>`: 1M input at $4 + 1M output at $20.
 printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000}}}' > "${ROOT}/projects/p/sess-today.jsonl"
+# One escalate agent whose session ran on opus (its first message with a model), not the fable its
+# policy names; the ladder shows the session's model. No verify agent: verify shows 0.
+printf '2026-10-02\tescalate\tx-esc\tclaude\tfable\txhigh\tsess-esc\n' >> "${P}/.swarm/agents.tsv"
+# Ahead of opus: a non-string model and a failed turn's "<synthetic>" one, both skipped.
+printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"message":{"model":5}}' \
+  '{"message":{"id":"e0","model":"<synthetic>"}}' '{"message":{"id":"e1","model":"claude-opus-5-5"}}' \
+  '{"message":{"id":"e2","model":"claude-fable-5-1"}}' > "${ROOT}/projects/p/sess-esc.jsonl"
+# A chore agent whose log cannot be read: it counts, with no model, and the ladder still draws.
+printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
+echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
 for i in 1 2 3 4 5; do printf '2026-10-04\tkind%s\thttps://github.com/o/r/pull/8\tfinding %s\n' "${i}" "${i}" >> "${P}/.swarm/findings.tsv"; done
@@ -195,6 +205,17 @@ check "--tree lists a retired agent" grep -qE 'old-done .*retired' <<< "${out}"
 check "--tree shows a story's PR on its builder" grep -qE '! s-one .*waiting on input  https://g' <<< "${out}"
 check "--ladder maps role to model and effort" has "code-risky → opus · xhigh" "${out}"
 check "--ladder names codex" has "codex      → codex · high" "${out}"
+check "--ladder counts a role's agents, with its sessions' models" has "code       → opus · high  2 opus " "${out}"
+check "--ladder names the model a session ran on, not the policy's" has "escalate   → fable · xhigh  1 opus " "${out}"
+check "--ladder shows 0 for a role with no agents" grep -qE "verify     → haiku · medium  0( |$)" <<< "${out}"
+check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +verify" <<< "${out}"
+check "--ladder cells are as wide as the longest row: two a row at 100 columns, every role aligned" python3 -c '
+import sys
+t = sys.stdin.read().splitlines()
+rows = t[next(i for i, l in enumerate(t) if "╭─ ladder" in l) + 1:]
+rows = rows[:next(i for i, l in enumerate(rows) if l.startswith("╰"))]
+cols = {tuple(i for i, c in enumerate(l) if c == "→") for l in rows[:-1]}
+sys.exit(not (len(cols) == 1 and len(next(iter(cols))) == 2))' <<< "${out}"
 check "below 140 columns the ladder and recent are stacked" lacks "╮ ╭─ recent" "${out}"
 
 fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"
