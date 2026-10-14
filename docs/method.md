@@ -14,7 +14,7 @@ at every level runs in its own herdr pane so it can be watched.
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them.
 
-`/swarm` runs the chain after the HLD: `swarm.sh next` reads the board and names the next step,
+`/swarm` runs the chain after the HLD (on an empty board it explains the flow instead): `swarm.sh next` reads the board and names the next step,
 `/swarm` does it and loops, stopping only at an approval, a draft HLD, a `lead`
 story, or a `later` epic. The board is the only state, so a run can stop anywhere and the next
 `/swarm` continues. Building comes first (a conductor still working, then an active epic's ready
@@ -111,7 +111,8 @@ each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the boa
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
 without overwriting a file, creates `.claude/swarm/`, and adds `.swarm/` and the board's Obsidian
-lines to `.gitignore`.
+lines to `.gitignore`. The next `/swarm` asks once for the brief (`.claude/swarm/brief.md`) and writes
+only what the user says; an empty file means they declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
 runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
