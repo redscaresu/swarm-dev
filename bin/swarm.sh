@@ -1754,8 +1754,9 @@ next_step() {
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
-      elif login_expired "${slug}"; then
-        # wait returns auth at once, and /swarm stops there for the user's /login.
+      elif [[ "$(session_state "${slug}")" == idle ]] && login_expired "${slug}"; then
+        # As in wait, only an idle session is auth: wait returns it at once, and /swarm stops there
+        # for the user's /login.
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm tells it to resume"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"

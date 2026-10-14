@@ -179,6 +179,13 @@ got="$(nextc)"
 if [[ "${got}" == "wait conduct-e1"$'\n'"auth: the conductor conduct-e1 stopped on an expired login; run /login"* ]]; then
   echo "ok   next names auth and /login for a conductor whose login expired"; else
   echo "FAIL next names auth and /login for a conductor whose login expired: got '${got}'"; fails=$((fails + 1)); fi
+# Only an idle session is auth, as in wait: with the session gone there is nothing to resume.
+echo '[]' > "${dir}/claude.json"
+got="$(nextc)"
+if [[ "${got}" == "wait conduct-e1"$'\n'"the conductor conduct-e1 is still working"* ]]; then
+  echo "ok   next does not say auth for a conductor whose session is gone"; else
+  echo "FAIL next does not say auth for a conductor whose session is gone: got '${got}'"; fails=$((fails + 1)); fi
+session idle
 # After an ordinary turn (the same transcript without the auth entry) it is waited on, as below.
 grep -v authentication_failed "${fixture}" > "${dir}/projects/p/sess-c1.jsonl"
 got="$(nextc)"
