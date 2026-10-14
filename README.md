@@ -68,6 +68,9 @@ from is missing from that list. In either case, run `claude update` and restart 
 4. Inside herdr, run `claude`, then `/hld Add rate limiting to the API`. Agree the design with the
    co-author, then run `/swarm`. Run it again each time it stops for you.
 
+Ask your agent "how do I use swarm-dev?" or "why did /swarm stop?" and it loads the plugin's
+`swarm-dev` skill, which covers these steps, the stops and the commands.
+
 | Command | What it does |
 |---|---|
 | `/hld <title>` | Write the design with a co-author agent. |
