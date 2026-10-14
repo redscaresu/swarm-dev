@@ -1,7 +1,6 @@
 ---
 kind: lead
-status: blocked
-blocked_by: [skill-swarm-dev, cold-start-swarm-first-run]
+status: ready
 epic: cold-start
 depends_on: [skill-swarm-dev, cold-start-swarm-first-run]
 touches: []
