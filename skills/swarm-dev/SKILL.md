@@ -12,7 +12,9 @@ All state lives in the board, the directory `swarm.sh config board_dir` prints.
 
 ## First run in a project
 
-Everything runs inside herdr (`HERDR_ENV=1`), from the root of a git repo with a GitHub origin.
+Work from the root of a git repo with a GitHub origin. `/hld`, `/swarm` and the agents they start
+run inside herdr (`HERDR_ENV=1`), as does `swarm.sh conduct`. `swarm.sh init`, `next`, `status`,
+`config`, `cost`, `version` and `update` work outside herdr too.
 
 1. `swarm.sh init` creates the board and `.claude/swarm/`. It never overwrites a file.
 2. The user runs `claude` in that folder once and accepts the trust prompt. Only the user can do
@@ -24,7 +26,8 @@ Everything runs inside herdr (`HERDR_ENV=1`), from the root of a git repo with a
 ## Why /swarm stopped
 
 It stops only when the user has to act: a draft design, epics or stories to approve, a `lead`
-story, a PR to merge, an expired login (`/login`), or a proposed rule. After the user acts, run
+story, a PR to merge, an expired login (`/login`), a proposed rule, or a `blocked` or `later`
+item (the user sets it `ready` or `active` to start it). After the user acts, run
 `/swarm` again. The full table of stops and what to do is in README § When `/swarm` stops for you.
 
 ## Commands
@@ -32,7 +35,7 @@ story, a PR to merge, an expired login (`/login`), or a proposed rule. After the
 | Command | Use |
 |---|---|
 | `/hld <title>` | write the design with a co-author |
-| `/plan-hld <hld>` | split an agreed design into epics |
+| `/plan-hld <hld-file-name>` | split an agreed design (its file name in the board's `hld/`) into epics |
 | `/plan-epic <epic>` | split an epic into stories |
 | `/swarm` | do the next step and loop until the user must decide |
 | `swarm.sh next` | name the next step without doing it |

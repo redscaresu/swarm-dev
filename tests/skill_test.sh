@@ -19,11 +19,13 @@ check() { # <name> <want> <got>
 IS_COMMAND="$(sed -n '/^is_command() {/,/^}/p' "${SWARM}")"
 is_command() { [[ "$1" == version || "$1" == update ]] || bash -c "${IS_COMMAND}"'; is_command "$1"' "${SWARM}" "$1"; }
 
-# --- Every `swarm.sh <sub>` is a real subcommand.
+# --- Every `swarm.sh <sub>` is a real subcommand; the whole word after it is checked, so a placeholder
+# or a capital is named, and a missing one shows as (none).
 bad=""
+# shellcheck disable=SC2016 # the backtick is literal Markdown
 while IFS= read -r sub; do
-  is_command "${sub}" || bad="${bad} ${sub}"
-done < <(grep -o 'swarm\.sh [a-z_-]*' "${SKILL}" | cut -d' ' -f2 | sort -u)
+  [[ -n "${sub}" ]] && is_command "${sub}" || bad="${bad} ${sub:-(none)}"
+done < <(grep -o 'swarm\.sh [^ `]*' "${SKILL}" | cut -d' ' -f2 | sort -u)
 check "every swarm.sh subcommand is a dispatch arm" "" "${bad# }"
 
 # --- Every backticked `/<name>` (no further /) is a plugin command or a built-in.
