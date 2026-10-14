@@ -14,6 +14,12 @@ path. Briefs go in `.swarm/briefs/<name>.md`; start each with
 `swarm.sh agent plan-$1 <name> "$PWD" <role> <brief>` and supervise with
 `swarm.sh wait <name>` in the background.
 
+**An expired login.** If a `wait` prints `auth`, that agent stopped on "Login expired · Please run
+/login". No agent can fix that, and only the user's `/login` clears it. Stop, and tell the user to
+run `/login` and nothing else. Once they say it is done, write a file that says "Your login is
+renewed: resume where you stopped.", run `swarm.sh tell <name> resume <file>` for each agent whose
+`wait` printed `auth`, and wait on each again in the background.
+
 **Resuming.** An interrupted run picks up where it stopped: before starting an agent, check for
 its output file. If it exists, parses as JSON and is newer than `docs/hld/$1.md`, reuse it and do not
 start that agent again; an older one belongs to a previous plan, so start the agent.

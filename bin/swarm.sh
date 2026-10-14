@@ -329,6 +329,9 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #     <task-notification>, "[Request interrupted by user]", a slash command such as /login run in its
 #     pane and its <local-command-stdout>). A transcript that cannot be read is not
 #     expired. Never the pane.
+#   shown_state(a, name, s, log, projects) -> agent_state, except that an idle Claude agent whose
+#     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle.
+#     For the views (status, dash); wait reads login_expired itself.
 PANES_PY='
 import glob, json, os, re
 WHY_MAX = 60
@@ -392,6 +395,9 @@ def login_expired(log, name, projects):
             return False
         break
     return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
+def shown_state(a, name, s, log, projects):
+    st, look = agent_state(a, name, s)
+    return ("auth", True) if st == "idle" and s is not None and login_expired(log, name, projects) else (st, look)
 def session_state(log, name, listing):
     sid = session_id(log, name)
     if sid is None:
@@ -950,8 +956,8 @@ PY
 }
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
-# already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells and
-# closes it took, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
+# already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
+# took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
 outcomes_report() {
   local since="" rows meta="" slug text kind src pr state
@@ -959,7 +965,7 @@ outcomes_report() {
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  # date, slug, role, model, effort, cost_usd, tokens, tells, closes, attempts
+  # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts
   rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" <<'PY'
 import collections, json, os, sys
@@ -981,9 +987,11 @@ steer = collections.Counter()
 if os.path.exists(events):
     for line in open(events, errors="ignore"):
         f = line.rstrip("\n").split("\t")
-        # A tell is logged as tell:<kind> (a bare tell in logs from before kinds).
-        if len(f) == 5 and f[1].split(":")[0] in ("tell", "close"):
-            steer[f[1].split(":")[0], f[2]] += 1
+        # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings. Only an
+        # ok tell reached the builder: a refused or interrupted one is not counted.
+        c = {"tell": "tell:findings"}.get(f[1], f[1]) if len(f) == 5 else ""
+        if c.split(":")[0] in ("tell", "close") and f[4] == "ok":
+            steer[c, f[2]] += 1
 attempts = collections.Counter()
 for line in open(log, errors="ignore"):
     f = line.rstrip("\n").split("\t")
@@ -1000,8 +1008,8 @@ for line in open(log, errors="ignore"):
         tok, usd, _ = session_usage(path, set())
         cost, tokens = f"{usd:.2f}", str(sum(tok))
     targets = {slug, name}
-    tells, closes = (sum(steer[c, t] for t in targets) for c in ("tell", "close"))
-    print("\t".join([day, slug, role, model, effort, cost, tokens, str(tells), str(closes), str(attempts[slug])]))
+    counts = [str(sum(steer[c, t] for t in targets)) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
+    print("\t".join([day, slug, role, model, effort, cost, tokens] + counts + [str(attempts[slug])]))
 PY
 )"
   # Per slug: kind, risk and the PR, from the story (on the board, or its last version in git once a
@@ -1026,11 +1034,11 @@ if os.path.exists(sys.argv[1]):
         f = line.rstrip("\n").split("\t")
         if len(f) == 4:
             fixed[pr_key(f[2])] += 1
-print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
+print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
 for line in os.environ["SWARM_ROWS"].splitlines():
-    day, slug, role, model, effort, cost, tokens, tells, closes, attempts = line.split("\t")
+    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = line.split("\t")
     kind, risk, pr, state = meta.get(slug, ("", "", "", ""))
-    print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tells, closes,
+    print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
 PY
 }
@@ -1724,7 +1732,8 @@ epic_has_stories() {
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
 #   collect <agent>   a conductor has written its report: read it, then close its tab
-#   wait <agent>      a conductor exists and has not reported (idle between its own steps counts)
+#   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
+#                     why starts `auth:` when its login expired (wait then prints auth at once)
 #   conduct <epic>    an active epic has a story an agent can build, or (pr_per = epic) every story
 #                     merged into its epic branch and no PR yet
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
@@ -1745,6 +1754,10 @@ next_step() {
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
+      elif [[ "$(session_state "${slug}")" == idle ]] && login_expired "${slug}"; then
+        # As in wait, only an idle session is auth: wait returns it at once, and /swarm stops there
+        # for the user's /login.
+        echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm tells it to resume"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
       fi
@@ -2151,10 +2164,10 @@ status_report() {
   if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
     SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
-      python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" <<'PY'
+      python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}" <<'PY'
 import json, os, sys
 exec(os.environ["SWARM_PANES_PY"])
-state, agents_json, panes_json, show_all, log = sys.argv[1:6]
+state, agents_json, panes_json, show_all, log, projects = sys.argv[1:7]
 try:
     agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
@@ -2166,8 +2179,9 @@ for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) 
         if a is not None:
             name = a.get("name") or name
         s = session_state(log, name, os.environ["SWARM_SESSIONS"])
-        st, _ = agent_state(a, name, s)
+        st, _ = shown_state(a, name, s, log, projects)
         what = {"EMPTY": "EMPTY: no agent started in this pane; close it",
+                "auth": "auth: its login expired; run /login, then /swarm tells it to resume",
                 "WAITING": f"WAITING on {(s or ('', ''))[1] or 'a question'}: herdr agent read {name}",
                 "retired": "done (retired)",
                 "unknown": "unknown: no session state" if s else "unknown",
@@ -2500,7 +2514,7 @@ for a in agents:
   DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
-  DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
+  DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
     python3 - <<'PY'
 import collections, datetime, itertools, json, os, re, time
 E = os.environ
@@ -2659,12 +2673,12 @@ if agents is not None:
             base = re.sub(r"-done\d*$", "", name)
             rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
             s = session_state(E["DASH_AGENTS_LOG"], name, E["DASH_SESSIONS"])
-            st, look = agent_state(a, name, s)
+            st, look = shown_state(a, name, s, E["DASH_AGENTS_LOG"], E["DASH_PROJECTS"])
             if st in ("idle", "done") and reported(base):
                 st = "reported"
             slug = story_for(name, story_rows)
             why = s[1] if s and st == "WAITING" else ""
-            words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle",
+            words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle", "auth": "auth: login expired",
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             if st == "working" and slug:
                 b = story_by_slug[slug]
@@ -2723,6 +2737,8 @@ for r in recs:
     if r["state"] == "WAITING":
         why = f" (waiting on {r['why']})" if r.get("why") else ""
         need.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
+    elif r["state"] == "auth":
+        need.append(bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm tells it to resume", "")])
     elif r["state"] == "EMPTY":
         need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
     elif r["state"] in ("gone", "unknown") and r["look"]:

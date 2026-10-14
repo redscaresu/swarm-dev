@@ -323,27 +323,30 @@ check "a session id that cannot be minted stops the start, named, before any pan
 # else herdr's word; an empty pane; and what waits on the user.
 mkdir -p "${p}/.swarm/state"
 printf '%s\n' 'w:5 lead' 'w:6 builder' 'w:7 closed' > "${p}/.swarm/state/t"
-printf '%s\n' 'w:8 finished' 'w:10 waiter' 'w:11 lost' 'w:12 odd' 'w:13 re' 'w:14 re' 'w:15 cx9' 'w:16 nosess' >> "${p}/.swarm/state/t"
+printf '%s\n' 'w:8 finished' 'w:10 waiter' 'w:11 lost' 'w:12 odd' 'w:13 re' 'w:14 re' 'w:15 cx9' 'w:16 nosess' 'w:17 authed' >> "${p}/.swarm/state/t"
 printf '%s\n' 'w:8 finished' > "${p}/.swarm/state/t-2"
 # re is a reused name: its older line's agent was retired to re-done (w:13), and the newer one runs in w:14.
 tsvline() { printf '2026-10-13\tcode\t%s\t%s\topus\thigh\t%s\n' "$@" >> "${p}/.swarm/agents.tsv"; }
 tsvline builder claude s-builder; tsvline finished claude s-finished; tsvline waiter claude s-waiter
 tsvline lost claude s-lost; tsvline odd claude s-odd; tsvline re claude s-re-old; tsvline re claude s-re-new
-tsvline cx9 codex -; tsvline nosess claude -
+tsvline cx9 codex -; tsvline nosess claude -; tsvline authed claude s-authed
+# authed is idle, and its transcript ends on an expired login (the fixture wait's tests use).
+mkdir -p "${ROOT}/projects/p"
+cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/s-authed.jsonl"
 # herdr's word, where the session must win: builder done while busy, finished working while idle,
 # waiter and lost idle, odd working; re's newer agent says <re> (STATUS_RE) and its retired one idle.
 herdr_agents() { # <re's herdr status>
   printf '{"result":{"agents":[%s]}}\n' "$(printf '{"name":"%s","agent_status":"%s","pane_id":"%s"},' \
     builder "done" w:6 finished working w:8 waiter idle w:10 lost idle w:11 odd working w:12 \
-    re-done idle w:13 re "$1" w:14 cx9 blocked w:15 nosess starting w:16 | sed 's/,$//')"
+    re-done idle w:13 re "$1" w:14 cx9 blocked w:15 nosess starting w:16 authed idle w:17 | sed 's/,$//')"
 }
-echo '{"result":{"panes":[{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:8"},{"pane_id":"w:10"},{"pane_id":"w:11"},{"pane_id":"w:12"},{"pane_id":"w:13"},{"pane_id":"w:14"},{"pane_id":"w:15"},{"pane_id":"w:16"}]}}' > "${ROOT}/panes.json"
+echo '{"result":{"panes":[{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:8"},{"pane_id":"w:10"},{"pane_id":"w:11"},{"pane_id":"w:12"},{"pane_id":"w:13"},{"pane_id":"w:14"},{"pane_id":"w:15"},{"pane_id":"w:16"},{"pane_id":"w:17"}]}}' > "${ROOT}/panes.json"
 sessions() { # <re's older status> <re's newer status> [waiter's waitingFor, as JSON string text]
-  printf '[{"sessionId":"s-builder","status":"busy"},{"sessionId":"s-finished","status":"idle"},{"sessionId":"s-waiter","status":"waiting","waitingFor":"%s"},{"sessionId":"s-odd","status":"compacting"},{"sessionId":"s-re-old","status":"%s"},{"sessionId":"s-re-new","status":"%s"}]\n' "${3:-input}" "$1" "$2" > "${ROOT}/sessions.json"
+  printf '[{"sessionId":"s-builder","status":"busy"},{"sessionId":"s-finished","status":"idle"},{"sessionId":"s-waiter","status":"waiting","waitingFor":"%s"},{"sessionId":"s-odd","status":"compacting"},{"sessionId":"s-re-old","status":"%s"},{"sessionId":"s-re-new","status":"%s"},{"sessionId":"s-authed","status":"idle"}]\n' "${3:-input}" "$1" "$2" > "${ROOT}/sessions.json"
 }
 herdr_agents working > "${ROOT}/agents.json"; sessions busy idle
 item "${b}" stories/ls.md "status: ready" "kind: lead"
-status() { (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${ROOT}/sessions.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status "$@" 2>&1); }
+status() { (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${ROOT}/sessions.json}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status "$@" 2>&1); }
 row() { grep -E "^  $1 " <<< "$2" | sed -E 's/ +/ /g; s/^ //; s/ \[.*//'; }
 out=$(status); all=$(status --all)
 check "status shows a pane whose agent never started as empty" "yes" \
@@ -354,7 +357,8 @@ check "status shows an idle session as idle while herdr says working" "finished 
 check "status shows a waiting session's waitingFor" "waiter WAITING on input: herdr agent read waiter" "$(row waiter "${out}")"
 check "status shows a recorded session with no entry as gone" "lost gone: session ended" "$(row lost "${out}")"
 check "status shows a session in a state it does not know as unknown" "odd unknown: no session state" "$(row odd "${out}")"
-check "status counts gone and unknown as needing a look, never idle" "Agents: 7 need a look or are working, 3 idle or done" "$(sed -n 1p <<< "${out}")"
+check "an idle agent whose login expired shows auth and /login" "authed auth: its login expired; run /login, then /swarm tells it to resume" "$(row authed "${out}")"
+check "status counts gone, unknown and auth as needing a look, never idle" "Agents: 8 need a look or are working, 3 idle or done" "$(sed -n 1p <<< "${out}")"
 check "a reused name shows the newer session (older busy, newer idle), and the retired pane retired" "re idle: finished, or waiting for its next step|re-done done (retired)" \
   "$(row re "${all}")|$(row re-done "${all}")"
 herdr_agents idle > "${ROOT}/agents.json"; sessions idle busy
