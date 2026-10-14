@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lessons_test.sh — the outer loop: `swarm.sh log-finding` logs fixed findings by kind, and
 # `swarm.sh lessons` names a kind fixed in 3+ distinct recent PRs that the brief has no rule for, and
-# a brief that has grown too long. (Whether a rule PR was declined is /swarm's check, by PR title.)
+# a brief that has grown too long. (Whether a rule PR was declined is /swarm-dev:swarm's check, by PR title.)
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"

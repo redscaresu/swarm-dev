@@ -63,7 +63,7 @@ MARKETPLACE=swarm-dev
 plugin_version() { python3 -c "import json,sys; print(json.load(sys.stdin)['version'])"; }
 
 # show_version — the installed version; when a newer one is published, a warning and how to update.
-# A failed lookup (offline) is not an error: /swarm must still run.
+# A failed lookup (offline) is not an error: /swarm-dev:swarm must still run.
 show_version() {
   local have latest
   have="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")"
@@ -822,7 +822,7 @@ def session_usage(path, seen):
 # Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
 # no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
 # as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
-# declined rule is a closed 'lesson: <kind>' PR, which /swarm checks before proposing. A lead's memory
+# declined rule is a closed 'lesson: <kind>' PR, which /swarm-dev:swarm checks before proposing. A lead's memory
 # (Claude Code's per-project memory directory, which builders in their own worktrees never see) that
 # carries `lesson: <kind>` in its frontmatter is a candidate too, until the brief rules that kind. There is no staleness check: the log is local while the brief is committed, and a
 # rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
@@ -1448,7 +1448,7 @@ conduct_merge_rule() {
 Never merge a PR, by any route: not `gh pr merge`, not `gh api`, not the web page. A human merges.
 When a story's PR is green and reviewed, run `swarm.sh review <slug> <PR URL>` and
 `swarm.sh close <slug>`, then carry on with stories that do not wait on it. A story that does wait
-stays blocked until the human merges and `/swarm` reconciles the board. When every story left
+stays blocked until the human merges and `/swarm-dev:swarm` reconciles the board. When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
 `swarm.sh review <epic> <every PR URL still waiting>`: the epic leaves the board once they all merge.
 RULE
@@ -1836,9 +1836,9 @@ next_step() {
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
       elif [[ "$(session_state "${slug}")" == idle ]] && login_expired "${slug}"; then
-        # As in wait, only an idle session is auth: wait returns it at once, and /swarm stops there
+        # As in wait, only an idle session is auth: wait returns it at once, and /swarm-dev:swarm stops there
         # for the user's /login.
-        echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm tells it to resume"
+        echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
       fi
@@ -2268,7 +2268,7 @@ for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) 
         s = session_state(log, name, os.environ["SWARM_SESSIONS"])
         st, _ = shown_state(a, name, s, log, projects)
         what = {"EMPTY": "EMPTY: no agent started in this pane; close it",
-                "auth": "auth: its login expired; run /login, then /swarm tells it to resume",
+                "auth": "auth: its login expired; run /login, then /swarm-dev:swarm tells it to resume",
                 "WAITING": f"WAITING on {(s or ('', ''))[1] or 'a question'}: herdr agent read {name}",
                 "retired": "done (retired)",
                 "unknown": "unknown: no session state" if s else "unknown",
@@ -2826,7 +2826,7 @@ for r in recs:
         why = f" (waiting on {r['why']})" if r.get("why") else ""
         need.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
     elif r["state"] == "auth":
-        need.append(bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm tells it to resume", "")])
+        need.append(bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm-dev:swarm tells it to resume", "")])
     elif r["state"] == "EMPTY":
         need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
     elif r["state"] in ("gone", "unknown") and r["look"]:

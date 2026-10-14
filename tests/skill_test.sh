@@ -33,12 +33,12 @@ bad=""
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 while IFS= read -r name; do
   [[ -f "${REPO}/commands/${name}.md" || " ${BUILTINS} " == *" ${name} "* ]] || bad="${bad} /${name}"
-done < <(grep -o '`/[^`/]*`' "${SKILL}" | sed 's|^`/||; s|[ `].*||' | sort -u)
+done < <(grep -o '`/[^`/]*`' "${SKILL}" | sed 's|^`/||; s|^swarm-dev:||; s|[ `].*||' | sort -u)
 check "every /command is a plugin command or a built-in" "" "${bad# }"
 
 # --- The description carries the three trigger phrases.
 desc="$(awk 'NR > 1 && /^---$/ { exit } /^description:/' "${SKILL}")"
-for phrase in "how to use swarm-dev" "set up a project" "why /swarm stopped"; do
+for phrase in "how to use swarm-dev" "set up a project" "why /swarm-dev:swarm stopped"; do
   check "the description says '${phrase}'" "yes" "$(grep -qF -- "${phrase}" <<< "${desc}" && echo yes || echo no)"
 done
 check "the front matter names the skill swarm-dev" "yes" "$(grep -qx 'name: swarm-dev' "${SKILL}" && echo yes || echo no)"
