@@ -50,8 +50,12 @@ is one column, top to bottom:
   other actions (·); a failed one is ✗. It fills the rest of the screen. From 140 columns it is
   the right column, and its time column is the clock instead (`14:05` today, `10-03` before then;
   a finding dated today reads `today`).
-- **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on.
-  From 140 columns it sits at the top of the right column, above recent.
+- **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on,
+  then how many agents of that role `agents.tsv` records and the models their sessions ran on.
+  `escalate → fable · xhigh  1 opus` is one escalate agent whose session ran on Opus. Each
+  session's model is the first one its log names. A role with no agents shows 0, and an agent
+  whose session has no log is counted with no model. From 140 columns it sits at the top of the
+  right column, above recent.
 - **Legend**: one status vocabulary throughout: ● working, ○ ready, ◐ review or CI running, ✓ done
   or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown, or whose login expired), and ?
   for a herdr state dash does not know (with herdr's word for it).

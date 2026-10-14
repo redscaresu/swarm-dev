@@ -3026,12 +3026,33 @@ def recent_box(w, n, clock=False):
         rec.append(row)
     return box("recent", rec, w)
 
-def ladder_box(w, cell=30):
-    policy = [l.split() for l in lines("DASH_POLICY")]
-    ladder = [(f"{p[0]:<11}→ ", f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}") for p in policy]
+def first_model(path):
+    # The first message carrying a model; reading stops there, so a --watch redraw stays cheap.
+    for l in open(path, errors="ignore"):
+        try:
+            m = (json.loads(l).get("message") or {}).get("model")
+        except (ValueError, AttributeError):
+            continue
+        if m:
+            return next((k for k in MODEL_COLOR if k in m.lower()), m)
+    return ""
+
+def ladder_box(w, cell=44):
+    # Per role: its policy model, then how many agents agents.tsv recorded and the models their
+    # sessions ran on (a session with no log or no model counts but names none).
+    ran = collections.defaultdict(lambda: [0, set()])
+    for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
+        path = session_log(E["DASH_PROJECTS"], f[6])
+        ran[f[1]][0] += 1
+        ran[f[1]][1].add(first_model(path) if path else "")
+    rows = []
+    for p in (l.split() for l in lines("DASH_POLICY")):
+        n, models = ran[p[0]]
+        m = f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}"
+        segs = [(f"{p[0]:<11}→ ", ""), (m, model_style(m)), (f"  {n}", "dim")] + [(" " + x, model_style(x)) for x in sorted(models - {""})]
+        rows.append(segs + [(" " * max(cell - sum(len(t) for t, _ in segs), 0), "")])
     per = max(1, (w - 4) // cell)
-    return box("ladder", [[s for role, m in ladder[i:i + per] for s in ((role, ""), (m, model_style(m)), (" " * max(cell - len(role) - len(m), 0), ""))]
-                          for i in range(0, len(ladder), per)], w)
+    return box("ladder", [sum(rows[i:i + per], []) for i in range(0, len(rows), per)], w)
 
 # Layout. Header: one line, the clock at the right; then the summary line (from 140 columns, the
 # status bar at the bottom carries it, with the merge mode).
