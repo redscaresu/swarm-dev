@@ -70,6 +70,9 @@ from is missing from that list. In either case, run `claude update` and restart 
    `.claude/swarm/brief.md`; commit that file. Then `/hld Add rate limiting to the API`: agree the
    design with the co-author, and run `/swarm` again. Run it each time it stops for you.
 
+Ask your agent "how do I use swarm-dev?" or "why did /swarm stop?" and it loads the plugin's
+`swarm-dev` skill, which covers these steps, the stops and the commands.
+
 | Command | What it does |
 |---|---|
 | `/hld <title>` | Write the design with a co-author agent. |
