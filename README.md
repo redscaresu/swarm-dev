@@ -65,8 +65,13 @@ from is missing from that list. In either case, run `claude update` and restart 
 
    Then run `claude` once in the repo and accept "do you trust this folder?". Agents work in
    worktrees of the repo, and `swarm.sh` won't start until it is trusted.
-4. Inside herdr, run `claude`, then `/hld Add rate limiting to the API`. Agree the design with the
-   co-author, then run `/swarm`. Run it again each time it stops for you.
+4. Inside herdr, run `claude`, then `/swarm`. The first time, it asks once for your builder rules
+   (commit trailers, where credentials live, commands that must never run) and writes them to
+   `.claude/swarm/brief.md`; commit that file. Then `/hld Add rate limiting to the API`: agree the
+   design with the co-author, and run `/swarm` again. Run it each time it stops for you.
+
+Ask your agent "how do I use swarm-dev?" or "why did /swarm stop?" and it loads the plugin's
+`swarm-dev` skill, which covers these steps, the stops and the commands.
 
 | Command | What it does |
 |---|---|
@@ -77,7 +82,7 @@ from is missing from that list. In either case, run `claude update` and restart 
 | `swarm.sh cost` | Show where the tokens went. |
 | `swarm.sh outcomes [--since YYYY-MM-DD]` | Print one TSV row per builder: the story, its kind and risk, the model and effort, cost, tells by kind (findings, nudge, resume; a refused tell is not counted), findings fixed, the PR and how it ended, and which attempt it was. |
 
-You can also put builder rules in `.claude/swarm/brief.md` and settings such as `merge = agent` in
+You can also set things such as `merge = agent` in
 `.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock
 or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't
 reach them:
