@@ -103,6 +103,10 @@ Every agent is a full Claude Code session, on a model chosen by its role, and pl
 starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
 touch real cloud or credentials. By default no agent merges.
 
+A story whose front matter says `attempts: 2` or more, meaning it has failed twice, is rebuilt on
+Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
+`escalate_after = 0` turns it off.
+
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.

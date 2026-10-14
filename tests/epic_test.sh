@@ -441,6 +441,41 @@ printf '2026-10-13\tcode-sonnet\ts4-retry2\tclaude\tsonnet\thigh\tsess-r\n' >> "
 check "only a first attempt is sampled: a slug already in agents.tsv goes back to code" "code opus high" \
   "$(build s4-retry2 "kind: code")"
 
+# --- escalate_after: a story an agent builds whose attempts: (absent is 0) reaches escalate_after
+# (default 2; 0 is off) is built as escalate, ahead of code-risky and code-sonnet. Read through _role.
+role() { local s="$1"; shift; item "${b}" "stories/${s}.md" "status: ready" "$@"; run _role "${s}"; }
+ladder() { # <slug> <attempts>... -- <front-matter line>... — _role at each attempts:, space-separated
+  local s="$1" n ns=() out=(); shift
+  while [[ "$1" != -- ]]; do ns+=("$1"); shift; done; shift
+  for n in "${ns[@]}"; do out+=("$(role "${s}" "attempts: ${n}" "$@")"); done
+  echo "${out[*]}"
+}
+printf '%s\n' "base_branches = dev main" "sonnet_share = 4" > "${p}/.claude/swarm/config"
+check "escalate_after = 2 (the default): every kind an agent builds escalates at attempts: 2" \
+  "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate|verify verify escalate" \
+  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")|$(ladder e4-a 0 1 2 -- "kind: verify")"
+check "no attempts: and no kind: is a first attempt at code" "code" "$(role e4-a)"
+check "a kind: lead story never escalates" "lead" "$(ladder e4-a 3 -- "kind: lead")"
+check "attempts: two is refused, naming the story file" "yes" \
+  "$(has "${b}/stories/e4-a.md: attempts must be a non-negative whole number, not 'two'" "$(role e4-a "attempts: two")")"
+# shellcheck disable=SC2016 # the $(...) is the story's, and must never run
+check "attempts: BASH_VERSINFO[\$(touch X)] is refused and never evaluated" "yes|no" \
+  "$(has "attempts must be a non-negative whole number" "$(role e4-a 'attempts: BASH_VERSINFO[$(touch '"${ROOT}"'/pwned)]')")|$([[ -e "${ROOT}/pwned" ]] && echo yes || echo no)"
+check "swarm.sh story of a code story at attempts: 2 starts escalate on fable xhigh" "escalate fable xhigh" \
+  "$(build e4-build "kind: code" "attempts: 2")"
+check "a slug sampled for code-sonnet at attempts: 2 starts escalate" "escalate fable xhigh" \
+  "$(build e4-g "kind: code" "attempts: 2")"
+item "${b}" stories/e4-bad.md "status: ready" "repo: svc" "kind: code" "attempts: two"; : > "${p}/.swarm/events.tsv"
+check "swarm.sh story at attempts: two fails, and its events.tsv line carries the reason" "fails|yes" \
+  "$(run story e4-bad >/dev/null && echo starts || echo fails)|$(has "attempts must be a non-negative whole number, not 'two'" "$(cut -f5 "${p}/.swarm/events.tsv")")"
+rm -f "${b}/stories/e4-bad.md"
+echo "escalate_after = 0" >> "${p}/.claude/swarm/config"
+check "escalate_after = 0: attempts 0, 1, 2 and 5 never escalate" "code code code code|code-risky code-risky code-risky code-risky" \
+  "$(ladder e4-a 0 1 2 5 -- "kind: code")|$(ladder e4-a 0 1 2 5 -- "kind: code" "risk: high")"
+printf '%s\n' "base_branches = dev main" "escalate_after = 3" > "${p}/.claude/swarm/config"
+check "escalate_after = 3: attempts: 2 is code, 3 is escalate" "code escalate" "$(ladder e4-a 2 3 -- "kind: code")"
+rm -f "${b}/stories/e4-a.md" "${b}/stories/e4-f.md"
+
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
 printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
 sub='--settings {"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
