@@ -282,7 +282,7 @@ decision model. It prints one JSON object per line for each decision the logs re
 finding fixed or declined, a `nudge` per `nudge` or `tell:nudge` line, and a `close` per `close` line.
 Each object has `decision`, `time`, `subject`, `context` (a builder's story as committed to the board
 by the end of the day it started, or the finding's text), `options`, `chosen`, and `outcome`, which is
-that build's `outcomes` row: merged, PR, tells, fixed findings, attempts and cost. A field the logs
+that build's `outcomes` row: merged, PR, its tells columns, fixed findings, attempts and cost. A field the logs
 don't hold is null. It writes nothing.
 
 `swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after

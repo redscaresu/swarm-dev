@@ -1044,8 +1044,8 @@ PY
 
 # decisions [--since YYYY-MM-DD] — one JSON object per line for each decision the logs record, for
 # training a decision model: decision (model_choice, retry, finding_accept, nudge, close), time,
-# subject, context, options, chosen and outcome (the build's row in `outcomes`: merged, PR, tells,
-# fixed findings, attempts, cost). A builder's context is its story as committed to the board by the
+# subject, context, options, chosen and outcome (the build's row in `outcomes`: merged, PR, every
+# tells* column it prints, fixed findings, attempts, cost). A builder's context is its story as committed to the board by the
 # end of its start day. What the logs do not hold is null, never guessed. It writes nothing.
 decisions_report() {
   local since="" rows=""
@@ -1053,7 +1053,7 @@ decisions_report() {
     || die "usage: swarm.sh decisions [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
-  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report | tail -n +2)"
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_ROWS="${rows}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" \
     "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${BUILDER_ROLES}" "${BOARD}" <<'PY'
 import json, os, subprocess, sys
@@ -1061,9 +1061,12 @@ exec(os.environ["SWARM_REPORT_PY"])
 log, events, findings, since, roles, board = sys.argv[1:7]
 
 def outcome(r):
-    _, _, _, _, _, _, _, cost, _, tells, _, fixed, pr, state, attempts = r
-    return {"merged": state == "MERGED" if state else None, "pr": pr or None, "tells": int(tells),
-            "findings": int(fixed) if pr else None, "attempts": int(attempts), "cost_usd": float(cost) if cost else None}
+    # Read by column name, so the tells columns are whichever outcomes prints (one or one per kind).
+    o = {"merged": r["pr_state"] == "MERGED" if r["pr_state"] else None, "pr": r["pr"] or None,
+         "findings": int(r["findings_fixed"]) if r["pr"] else None, "attempts": int(r["attempts"]),
+         "cost_usd": float(r["cost_usd"]) if r["cost_usd"] else None}
+    o.update({k: int(v) for k, v in r.items() if k.startswith("tells")})
+    return o
 
 def story_at(slug, day):
     # The story's last committed version on or before <day>; None when git has none.
@@ -1077,16 +1080,17 @@ def rec(decision, time, subject, context, options, chosen, out):
     return {"decision": decision, "time": time, "subject": subject, "context": context, "options": options,
             "chosen": chosen, "outcome": out}
 
-rows = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines() if l.count("\t") == 14]
+table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
+rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])]
 builds = []   # (day, keys, outcome): what a finding, nudge or close is joined to
 out = []
 lines = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
 for f in (f for f in lines if len(f) == 7):
     day, role, name, kind, model, effort, _ = f
     r = rows.pop(0) if role in roles.split() and rows else None
-    o, slug = (outcome(r), r[1]) if r else (None, None)
+    o, slug = (outcome(r), r["slug"]) if r else (None, None)
     if r:
-        builds.append((day, {slug, name, pr_key(r[12])} if r[12] else {slug, name}, o))
+        builds.append((day, {slug, name, pr_key(r["pr"])} if r["pr"] else {slug, name}, o))
     if day < since:
         continue
     context = story_at(slug, day) if slug else None
