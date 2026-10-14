@@ -22,7 +22,7 @@ terminal pane. The run stops whenever a decision is yours.
 3. A conductor agent takes an epic and starts one builder per story, each in its own git
    worktree and pane. Each PR is reviewed by codex and `/code-review`, and the builder fixes what
    they find.
-4. Green, reviewed PRs wait for you to merge, and the next stories start.
+4. Green, reviewed PRs wait for you to merge. The next `/swarm` starts the stories that were waiting on them.
 
 Your own Claude session is the lead. It runs `/swarm`, keeps an eye on the agents, and handles
 `kind: lead` stories: real cloud, credentials and anything hard to undo. Your steps in those

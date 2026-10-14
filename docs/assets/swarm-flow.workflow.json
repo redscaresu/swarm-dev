@@ -247,7 +247,7 @@
       "id": "merged",
       "from": "merge",
       "to": "board",
-      "label": "merged: next stories ready",
+      "label": "next /swarm readies what follows",
       "role": "return",
       "variant": "dashed"
     },
