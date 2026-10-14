@@ -448,6 +448,6 @@ In order; each ships on its own and the next does not depend on the last except 
 
 ## Epics
 
-- [agent-state-from-the-session](../epics/agent-state-from-the-session.md)
+- agent-state-from-the-session — done (shipped in v0.14.0; goal-off baseline on infrafactory-epic-on-agent-state, #109)
 - [fable-on-call](../epics/fable-on-call.md)
 - [goal-for-builders](../epics/goal-for-builders.md)
