@@ -65,8 +65,10 @@ from is missing from that list. In either case, run `claude update` and restart 
 
    Then run `claude` once in the repo and accept "do you trust this folder?". Agents work in
    worktrees of the repo, and `swarm.sh` won't start until it is trusted.
-4. Inside herdr, run `claude`, then `/hld Add rate limiting to the API`. Agree the design with the
-   co-author, then run `/swarm`. Run it again each time it stops for you.
+4. Inside herdr, run `claude`, then `/swarm`. The first time, it asks once for your builder rules
+   (commit trailers, where credentials live, commands that must never run) and writes them to
+   `.claude/swarm/brief.md`; commit that file. Then `/hld Add rate limiting to the API`: agree the
+   design with the co-author, and run `/swarm` again. Run it each time it stops for you.
 
 Ask your agent "how do I use swarm-dev?" or "why did /swarm stop?" and it loads the plugin's
 `swarm-dev` skill, which covers these steps, the stops and the commands.
@@ -86,7 +88,7 @@ because Claude Code deletes session logs after 30 days by default. The copy hold
 session held, secrets included, since nothing is redacted. Only your user can read it, and
 `.swarm/` is git-ignored, so it stays on your machine and is never committed or uploaded.
 
-You can also put builder rules in `.claude/swarm/brief.md` and settings such as `merge = agent` in
+You can also set things such as `merge = agent` in
 `.claude/swarm/config` ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock
 or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't
 reach them:

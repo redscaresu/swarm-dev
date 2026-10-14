@@ -1,5 +1,5 @@
 ---
-description: Run the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
+description: Start here. Runs the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
@@ -14,6 +14,12 @@ If `<board>/stories/README.md` does not exist, the project has no board yet. Off
 `swarm.sh init` from the project's git root, and wait for the user's yes before you run it. It adds
 the board, `.claude/swarm/` and the `.gitignore` lines, then tells the user to run `claude` there once
 and accept the folder trust prompt. Only the user can do that, so stop after it.
+
+If `.claude/swarm/brief.md` does not exist, ask the user once, in one message, for their commit
+trailers, where credentials live, and commands that must never run. Write only what they said to
+`.claude/swarm/brief.md`, under 4 KB (`BRIEF_MAX_BYTES`). If they decline, write an empty file so they
+are not asked again. Do not commit it. Tell the user to commit it, even empty: an untracked brief
+stops `swarm.sh reconcile` from pulling a `lesson:` PR that adds the file.
 
 First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
 an old version still runs.
@@ -86,7 +92,11 @@ Repeat until a step below says stop:
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). Stop.
-   - `done`: say so, suggest `/hld <title>` for the next piece of work, and stop.
+   - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories
+     -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
+     about five lines (a design written with you, split into epics, split into stories, built by
+     agents in panes, and where it stops for you: approvals, `lead` stories, merges) and suggest
+     `/hld <title>`. Otherwise suggest `/hld <title>` for the next piece of work.
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.
 
