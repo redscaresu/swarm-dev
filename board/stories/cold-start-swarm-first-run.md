@@ -1,7 +1,6 @@
 ---
 kind: docs
-status: blocked
-blocked_by: [release-agent-state, wait-reports-login-expired]
+status: ready
 epic: cold-start
 depends_on: [release-agent-state, wait-reports-login-expired]
 touches: [commands/swarm.md (:2 description, brief step after :16, done arm :81), README.md (§ Getting started :53-86)]

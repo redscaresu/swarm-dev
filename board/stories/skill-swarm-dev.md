@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [release-agent-state]
+status: ready
 epic: cold-start
 depends_on: [release-agent-state]
 touches: [skills/swarm-dev/SKILL.md (new), tests/skill_test.sh (new)]

@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [release-agent-state]
+status: ready
 depends_on: [release-agent-state, build-outcomes]
 touches: [bin/swarm.sh (close_agent's session archive, log-finding's declined form, a new decisions arm, usage line), tests/decisions_test.sh (new), tests/events_test.sh, commands/swarm.md (record declines), templates/ conductor text if it lives there, docs/method.md (§ The audit log), README.md (command table)]
 ---
