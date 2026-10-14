@@ -15,6 +15,9 @@ gh auth status                  # PRs, checks and merges go through gh
 git remote get-url origin       # a GitHub origin; swarm.sh resolves the owner from it
 ```
 
+A read-only review (codex, /code-review, a skeptic) skips these checks: it reads a diff and needs
+none of them, and `gh auth status` fails inside codex's sandbox.
+
 If `swarm.sh` stops with "Claude Code does not trust <folder> yet", ask the user to run `claude` in
 that folder once and accept the trust prompt. Never accept it for them, and never edit
 `~/.claude.json`.
