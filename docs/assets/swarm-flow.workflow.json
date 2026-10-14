@@ -13,7 +13,7 @@
     },
     {
       "id": "lead",
-      "label": "Lead session (/swarm)"
+      "label": "Lead session (/swarm-dev:swarm)"
     },
     {
       "id": "plan",
@@ -100,7 +100,7 @@
       "lane": "lead",
       "col": 1,
       "type": "backend",
-      "label": "/swarm",
+      "label": "/swarm-dev:swarm",
       "sublabel": "picks the next step",
       "width": 140
     },
@@ -247,7 +247,7 @@
       "id": "merged",
       "from": "merge",
       "to": "board",
-      "label": "next /swarm readies what follows",
+      "label": "next /swarm-dev:swarm readies what follows",
       "role": "return",
       "variant": "dashed"
     },

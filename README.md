@@ -13,7 +13,7 @@ terminal pane. The run stops whenever a decision is yours.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swarm-flow-dark.png">
-  <img alt="How the swarm builds a design: /hld, /swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
+  <img alt="How the swarm builds a design: /hld, /swarm-dev:swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
 1. You write a high-level design (HLD) with a co-author agent.
@@ -22,18 +22,18 @@ terminal pane. The run stops whenever a decision is yours.
 3. A conductor agent takes an epic and starts one builder per story, each in its own git
    worktree and pane. Each PR is reviewed by codex and `/code-review`, and the builder fixes what
    they find.
-4. Green, reviewed PRs wait for you to merge. The next `/swarm` starts the stories that were waiting on them.
+4. Green, reviewed PRs wait for you to merge. The next `/swarm-dev:swarm` starts the stories that were waiting on them.
 
-Your own Claude session is the lead. It runs `/swarm`, keeps an eye on the agents, and handles
+Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, and handles
 `kind: lead` stories: real cloud, credentials and anything hard to undo. Your steps in those
 stories are marked **You:**.
 
-When reviews keep finding the same kind of problem across PRs, `/swarm`
+When reviews keep finding the same kind of problem across PRs, `/swarm-dev:swarm`
 proposes a one-line rule for future builders, as a PR titled `lesson: <kind>`. You merge it
 or close it.
 
 Everything is plain Markdown in `docs/` (the board), so a run can stop anywhere and the next
-`/swarm` picks up where it left off. The full method is in [`docs/method.md`](docs/method.md).
+`/swarm-dev:swarm` picks up where it left off. The full method is in [`docs/method.md`](docs/method.md).
 
 ## Requirements
 
@@ -56,18 +56,19 @@ Everything is plain Markdown in `docs/` (the board), so a run can stop anywhere 
 
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents work in
    worktrees of the repo and can't start until it is trusted.
-3. Inside herdr, run `claude`, then `/swarm`. The first time, it offers to set up the board and asks
-   once for your rules for builders (commit trailers, where credentials live, commands that must
+3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name: Claude Code
+   completes the short form to `/swarm-dev:hld`. The first time, it offers to set up the board and
+   asks once for your rules for builders (commit trailers, where credentials live, commands that must
    never run). Commit the `.claude/swarm/brief.md` it writes.
-4. Run `/hld Add rate limiting to the API`, agree the design with the co-author, then run `/swarm`
+4. Run `/hld Add rate limiting to the API`, agree the design with the co-author, then run `/swarm-dev:swarm`
    again. Run it each time it stops for you.
 
-Your agent can also answer "how do I use swarm-dev?" and "why did /swarm stop?".
+Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
 
 | Command | What it does |
 |---|---|
 | `/hld <title>` | Write a design with a co-author agent. |
-| `/swarm` | Run everything after the design, stopping when a decision is yours. |
+| `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
@@ -81,7 +82,7 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
 ```
 
-## When `/swarm` stops for you
+## When `/swarm-dev:swarm` stops for you
 
 | You see | Do |
 |---|---|
@@ -91,7 +92,7 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 | a PR waiting for you | merge it, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
-| an agent's login expired | run `/login`, then tell `/swarm` it's done |
+| an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 
 ## Cost and safety
 
@@ -103,7 +104,7 @@ touch real cloud or credentials. By default no agent merges.
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
 
-`/swarm` tells you when a new version is out. To update, run
+`/swarm-dev:swarm` tells you when a new version is out. To update, run
 `! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,
 and restart. See [`SECURITY.md`](SECURITY.md) for security and [`AGENTS.md`](AGENTS.md) for working
 on swarm-dev itself.

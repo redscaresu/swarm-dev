@@ -357,7 +357,7 @@ check "status shows an idle session as idle while herdr says working" "finished 
 check "status shows a waiting session's waitingFor" "waiter WAITING on input: herdr agent read waiter" "$(row waiter "${out}")"
 check "status shows a recorded session with no entry as gone" "lost gone: session ended" "$(row lost "${out}")"
 check "status shows a session in a state it does not know as unknown" "odd unknown: no session state" "$(row odd "${out}")"
-check "an idle agent whose login expired shows auth and /login" "authed auth: its login expired; run /login, then /swarm tells it to resume" "$(row authed "${out}")"
+check "an idle agent whose login expired shows auth and /login" "authed auth: its login expired; run /login, then /swarm-dev:swarm tells it to resume" "$(row authed "${out}")"
 check "status counts gone, unknown and auth as needing a look, never idle" "Agents: 8 need a look or are working, 3 idle or done" "$(sed -n 1p <<< "${out}")"
 check "a reused name shows the newer session (older busy, newer idle), and the retired pane retired" "re idle: finished, or waiting for its next step|re-done done (retired)" \
   "$(row re "${all}")|$(row re-done "${all}")"

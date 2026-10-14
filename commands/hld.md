@@ -15,7 +15,7 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    - Several: list them with their titles and ask which; do not guess.
    - None: there is no design in progress. Run `swarm.sh next` and tell the user where the chain
      stands (for example "`conduct policy-correctness`: a ready story in an active epic") and that
-     `/swarm` continues it. Offer to start a new design if they give a title. Then stop.
+     `/swarm-dev:swarm` continues it. Offer to start a new design if they give a title. Then stop.
 
 1. If an HLD with this title exists in `docs/hld/`, resume it. Otherwise create
    `docs/hld/<today>-<slug>.md` (today from `date +%F`; slug: lowercase, words joined by `-`) from
@@ -46,4 +46,4 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    `t="$(swarm.sh _target hld-<slug>)" && herdr agent prompt "$t" "The reviewer has finished: read D/review.md, summarise it for the user and go through it together."`
 5. Still in the background: wait until `D/agreed` exists. Then set `status: agreed`, open a PR for
    the HLD through the codex loop, `swarm.sh close hld`, and tell the user the design is agreed and
-   that `/swarm` decomposes it next (`/plan-hld <file>`).
+   that `/swarm-dev:swarm` decomposes it next (`/plan-hld <file>`).

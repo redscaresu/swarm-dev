@@ -12,7 +12,7 @@ In a terminal at least 140 columns wide it splits into two columns: needs you an
 the left, recent as a timestamped log on the right, and a status bar on the last line. Narrower, it
 is one column, top to bottom:
 
-- **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm` does next, and the
+- **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm-dev:swarm` does next, and the
   time of the last refresh. Under it, one summary line: epics active, agents working, PRs green and
   waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today); then a
   warning when the main checkout has board edits not committed yet. From 140 columns the merge
