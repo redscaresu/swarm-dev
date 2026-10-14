@@ -1,7 +1,6 @@
 ---
 kind: lead
-status: blocked
-blocked_by: [sonnet-share]
+status: ready
 depends_on: [sonnet-share]
 touches: []
 ---
