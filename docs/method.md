@@ -14,10 +14,10 @@ at every level runs in its own herdr pane so it can be watched.
 4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them.
 
-`/swarm` runs the chain after the HLD (on an empty board it explains the flow instead): `swarm.sh next` reads the board and names the next step,
-`/swarm` does it and loops, stopping only at an approval, a draft HLD, a `lead`
+`/swarm-dev:swarm` runs the chain after the HLD (on an empty board it explains the flow instead): `swarm.sh next` reads the board and names the next step,
+`/swarm-dev:swarm` does it and loops, stopping only at an approval, a draft HLD, a `lead`
 story, or a `later` epic. The board is the only state, so a run can stop anywhere and the next
-`/swarm` continues. Building comes first (a conductor still working, then an active epic's ready
+`/swarm-dev:swarm` continues. Building comes first (a conductor still working, then an active epic's ready
 stories, then one-offs), then planning (an active epic with no stories, then an agreed HLD with
 no epics). An epic is planned only once every epic it `depends_on` is done, so its stories are
 scoped against code that exists.
@@ -36,7 +36,7 @@ not found out while building.
 
 - **You** agree the HLD, approve the epics and the stories, merge PRs (with `merge = human`), say go
   before each `lead` story, and do its **You:** steps.
-- **The lead** is your own Claude Code session, the one you run `/swarm` in. It supervises,
+- **The lead** is your own Claude Code session, the one you run `/swarm-dev:swarm` in. It supervises,
   reviews, and runs `lead` stories while you watch: they touch real cloud or credentials, are hard
   to undo, or need a step from you, so they need your logins, your go-ahead or your hand.
 - **Agents** plan, conduct and build everything else, each in its own pane; builders also get
@@ -85,7 +85,7 @@ story and line of code after it is for, so it is written with you, not for you.
 4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: agreed`,
    opens a PR for the HLD (reviewed like any other change), and closes the co-author's pane. Only
    you can agree an HLD; no agent changes its status.
-5. **Hand over.** Run `/swarm`. It sees an agreed HLD with no epics and starts `/plan-hld`.
+5. **Hand over.** Run `/swarm-dev:swarm`. It sees an agreed HLD with no epics and starts `/plan-hld`.
 
 **What a good HLD has.** The template's sections: Problem (with evidence), Goals, Non-goals,
 Current state, Design, Alternatives, Risks and safety, Rollout, Open questions, and Epics (filled
@@ -95,7 +95,7 @@ decomposition from growing; **Rollout**, which becomes the order of the epics; a
 questions**, which must be answered or explicitly deferred before the HLD is agreed.
 
 **Stopping and resuming.** The HLD is a file, so nothing is lost if you stop: run `/hld` on its own
-(or `/swarm`, which sees the draft) and a new co-author picks up the draft in progress from the
+(or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress from the
 file; if there are several, it asks which. With no draft at all, it tells you where the chain
 stands instead. To
 replace a design later, write a new HLD and set the old one `status: superseded`.
@@ -112,7 +112,7 @@ each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the boa
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
 without overwriting a file, creates `.claude/swarm/`, and adds `.swarm/` and the board's Obsidian
-lines to `.gitignore`. The next `/swarm` asks once for the brief (`.claude/swarm/brief.md`) and writes
+lines to `.gitignore`. The next `/swarm-dev:swarm` asks once for the brief (`.claude/swarm/brief.md`) and writes
 only what the user says; an empty file means they declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
@@ -187,7 +187,7 @@ the code or the switch broke it, and the rollback has to undo both.
 
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
 stops and reports; the session it was started from stays free. Its last act is writing that report
-to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm`
+to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm-dev:swarm`
 knows it has finished: a conductor is idle whenever it waits on its own background work. It runs in a herdr workspace named
 for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named for the
 epic, in a pane named `conductor`. Each story it starts gets a pane in that tab, named for the
@@ -328,7 +328,7 @@ into their prompts whole; from another `lessons_file`, its tagged rule lines are
 there reaches every later builder and conductor, in any repo. A rule pasted into a prompt does not
 stop the mistake by itself, so each builder checks its diff against every tagged rule and lists what
 it checked under `Rules checked:`; the conductor logs a missing section, a missing kind, or a line
-that names nothing as a finding of kind `rules-unchecked`. `/swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
+that names nothing as a finding of kind `rules-unchecked`. `/swarm-dev:swarm` turns candidates into a short rule, tagged `<!-- lesson: <kind> -->`, and
 opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silently, and a kind
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
 PR of its repo, so findings count per epic per repo. A brief over 4 KB (counting `lessons_file`'s tagged lines, which every brief also carries) is flagged, and pruning it is your call: a rule that works stops
@@ -346,7 +346,7 @@ the PR with a reason; none is silenced or dismissed.
 runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
 `prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
-too, with every PR still waiting. You merge on GitHub; the next `/swarm` runs `swarm.sh reconcile`,
+too, with every PR still waiting. You merge on GitHub; the next `/swarm-dev:swarm` runs `swarm.sh reconcile`,
 which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
 closed unmerged. Before it pulls the board's repo, it puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
