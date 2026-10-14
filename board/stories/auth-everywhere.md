@@ -1,7 +1,6 @@
 ---
 kind: code
-status: blocked
-blocked_by: [release-agent-state]
+status: ready
 depends_on: [release-agent-state]
 touches: [bin/swarm.sh (status_report, dash_render, next_step, outcomes), commands/plan-epic.md, commands/plan-hld.md, tests/dash_test.sh, tests/review_test.sh, tests/outcomes_test.sh, docs/dash.md, README.md (When /swarm stops for you)]
 ---
