@@ -1064,7 +1064,7 @@ deliver_prompt() {
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
-# PR (its turn died on an API error, or it stopped early): nothing else would wake it. Enough to ride
+# PR (its turn died on a dropped stream, or it stopped early): nothing else would wake it. Enough to ride
 # out a dropped stream; few enough that a builder that is truly stuck still comes back to the lead.
 IDLE_NUDGES=3
 
