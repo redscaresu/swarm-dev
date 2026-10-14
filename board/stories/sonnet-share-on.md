@@ -11,7 +11,7 @@ touches: []
 The user approved the experiment on 2026-10-13 ("I am ok with you experimenting a bit"). After the
 release carrying sonnet-share, the lead sets `sonnet_share = 4` in infrafactory's
 `.claude/swarm/config` (one line, its own PR), and after roughly 20 sampled builds compares
-`swarm.sh outcomes` rows for `code-sonnet` and `code-opusplan` (if built) against `code`: merged or not, review rounds (tells),
+`swarm.sh outcomes` rows for `code-sonnet` and `code-opusplan` (if built) against `code`: merged or not, review rounds (tells_findings),
 findings fixed, closes per story, cost. The lead posts the comparison for the user.
 
 **Phase 2, after the user's phase 1 decision (user, 2026-10-13):** the lead sets
@@ -20,7 +20,7 @@ subagents run on Haiku. First check that it took: sonnet-share passes the variab
 (herdr cannot pass environment variables), which the spike did not test, so read the first such builder's
 .jsonl and confirm its subagent turns (`parent_tool_use_id` set) show a Haiku `message.model`; if not, stop and file a fix. Never with phase 1 still running: changing both at once would hide which change
 moved the outcomes. After roughly 20 Opus builds with it on, the lead compares their `swarm.sh outcomes`
-rows (cost, tells, findings fixed, attempts) with the Opus builds before the switch, and posts it. The same
+rows (cost, tells_findings, findings fixed, attempts) with the Opus builds before the switch, and posts it. The same
 early stop applies: two builds in a row that fail to reach a green, reviewed PR set it back to empty.
 
 **You:** read the comparison and say keep, widen, or turn it off. Stop early and set it back to 0 if
