@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [goal-spike, goal-condition]
+blocked_by: [goal-condition]
 epic: goal-for-builders
-depends_on: [goal-spike, goal-condition]
+depends_on: [goal-condition]
 touches: [bin/swarm.sh:build_story (goal send after start_agent), bin/swarm.sh:deliver_prompt (send-once mode), bin/swarm.sh:goal_entry (new), tests/epic_test.sh (herdr stub at the top: session .jsonl; Layout block), docs/method.md (§ Building, new **The goal.** paragraph), README.md (How it works step 3)]
 risk: high
 ---
@@ -18,3 +18,9 @@ Once start_agent returns (the brief taken up), build_story sends `/goal <the .go
 - In each failing case herdr.log holds exactly one /goal prompt: nothing is resent.
 - tests/agent_state_test.sh passes with ALLOWED unchanged.
 - The PR shows each new check failing with its code removed; humanizer ran over the changed README/docs prose and the PR description, and the PR says so; shellcheck bin/swarm.sh tests/*.sh, every tests/*_test.sh and `claude plugin validate .` pass.
+
+**From the spike (binding; overrides the scope above where they differ; report: .swarm/goal-spike.report.md, Claude Code 2.1.299; user chose form 1, bound 5, on 2026-10-14):**
+- Form 1: `/goal <condition>` pasted with `herdr agent prompt`, sent once the brief's turn is idle (mid-turn also sets, but queues one extra turn).
+- Confirm only from the session .jsonl: an attachment `goal_status` with `sentinel:true` and this condition, newer than the send. Never the pane.
+- Refused (hooks restricted, or an untrusted folder): a `system/local_command` stdout line (`/goal can't run while hooks are restricted…` or `/goal is only available in trusted workspaces…`) and no sentinel; `story` fails naming the story.
+- No Stop-hook or launch-prompt path; drop any worktree settings file.

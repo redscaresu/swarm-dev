@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [goal-spike, goal-condition, wire-escalate-role, close-counts-a-failed-build, fable-failure-goes-to-you]
+blocked_by: [goal-condition, wire-escalate-role, close-counts-a-failed-build, fable-failure-goes-to-you]
 epic: goal-for-builders
-depends_on: [goal-spike, goal-condition, wire-escalate-role, close-counts-a-failed-build, fable-failure-goes-to-you]
+depends_on: [goal-condition, wire-escalate-role, close-counts-a-failed-build, fable-failure-goes-to-you]
 touches: [bin/swarm.sh:close_agent, bin/swarm.sh:is_close_cause (new), bin/swarm.sh:close-counts-a-failed-build's cleanup helper (called for uncounted causes), bin/swarm.sh:fable-failure-goes-to-you's lead-block writer (You: text passed in), bin/swarm.sh:dispatch (close arm), bin/swarm.sh:usage header (close line), bin/swarm.sh:main (close:<cause>), bin/swarm.sh:outcomes_report (close count), bin/swarm.sh:decisions_report (close rows), tests/close_test.sh, tests/epic_test.sh (close-counts-a-failed-build's end-to-end block), tests/events_test.sh, tests/outcomes_test.sh, tests/decisions_test.sh, docs/method.md (§ Model and effort, the escalation bullet; § Building, the **The audit log.** paragraph), README.md (§ When /swarm stops for you), board/stories/README.md, templates/docs/stories/README.md]
 risk: high
 ---
@@ -21,3 +21,6 @@ risk: high
 - tests/events_test.sh: `close s1 bound` logs command close:bound, target s1, ok; a bare `close s1` still logs close.
 - tests/outcomes_test.sh counts a close:stalled line among its slug's closes; tests/decisions_test.sh reads a close:impossible line as a close with chosen close:impossible, and its existing close rows are unchanged.
 - The PR shows each new check failing with its code removed; humanizer ran over the changed README/docs prose and the PR description, and the PR says so; shellcheck bin/swarm.sh tests/*.sh, every tests/*_test.sh and `claude plugin validate .` pass.
+
+**From the spike (binding; overrides the scope above where they differ; report: .swarm/goal-spike.report.md, Claude Code 2.1.299; user chose form 1, bound 5, on 2026-10-14):**
+- Claude Code writes met, the bound and the IMPOSSIBLE escape all as `goal_status met:true`; there is no bound or impossible entry, and `failed` marks only a judge/hook error. The cause is chosen by the conductor: `impossible` when the reply starts `IMPOSSIBLE:`, `bound` when the final met entry's `reason` says the stop-after clause applied and the reply is not the story's reply, `met` when the reply is there, `cleared-on-error` for a refused or failed goal.

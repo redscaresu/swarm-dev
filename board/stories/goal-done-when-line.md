@@ -1,9 +1,9 @@
 ---
 kind: docs
 status: blocked
-blocked_by: [goal-spike, wire-escalate-role, fable-on-call-release]
+blocked_by: [wire-escalate-role, fable-on-call-release]
 epic: goal-for-builders
-depends_on: [goal-spike, wire-escalate-role, fable-on-call-release]
+depends_on: [wire-escalate-role, fable-on-call-release]
 touches: [commands/plan-epic.md (**4. Critic** paragraph), docs/method.md (§ Scoping an epic)]
 ---
 

@@ -1,9 +1,9 @@
 ---
 kind: lead
 status: blocked
-blocked_by: [goal-spike, goal-for-builders-release]
+blocked_by: [goal-for-builders-release]
 epic: goal-for-builders
-depends_on: [goal-spike, goal-for-builders-release]
+depends_on: [goal-for-builders-release]
 touches: []
 ---
 
