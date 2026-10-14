@@ -15,3 +15,9 @@ Runs on main after skill-swarm-dev and cold-start-swarm-first-run merge, before 
 - /swarm in the throwaway repo asks the three brief questions once; after a decline .claude/swarm/brief.md exists and is empty, and a second /swarm does not ask.
 - On the empty board /swarm prints the flow in about five lines and suggests /hld <title>.
 - The user's go is recorded on this story before cold-start-release starts.
+
+**Result (2026-10-14, Claude Code 2.1.299, swarm-dev 0.14.1 in a throwaway CLAUDE_CONFIG_DIR):**
+- "how do I use swarm-dev?": the model called `Skill swarm-dev:swarm-dev` itself; the answer named swarm.sh init, the trust prompt, /hld <title> and /swarm.
+- /swarm-dev:swarm offered init and waited for a yes; asked the three brief questions once; a decline wrote a 0-byte brief; a second run did not ask; the empty board printed the flow and suggested /hld <title>.
+- Found: a bare `/swarm` + Enter ran /swarm-dev:hld. Fixed by cold-start-swarm-resolves (#103) before the bump.
+- **User's go for cold-start-release: given 2026-10-14.**
