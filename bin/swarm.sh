@@ -10,7 +10,8 @@
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
-#   swarm.sh log-finding <kind> <pr-url> <text>             log one review finding that was fixed, by its kind (the outer loop)
+#   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
+#   swarm.sh log-finding [--declined] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -749,24 +750,28 @@ LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 
-# record_finding <kind> <pr-url> <text> — log one fixed finding.
+# record_finding <kind> <pr-url> <text> <fixed|declined> — log one finding and what became of it.
+# A row is date, kind, PR, text, outcome; rows from before the outcome column have four fields and
+# were all fixed. lessons, outcomes and dash count only fixed rows; decisions reads both.
 record_finding() {
-  local kind="$1" pr="$2" text="$3"
-  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] || die "usage: swarm.sh log-finding <kind> <pr-url> <one line>"
+  local kind="$1" pr="$2" text="$3" outcome="$4"
+  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] || die "usage: swarm.sh log-finding [--declined] <kind> <pr-url> <one line>"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
     || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
   text="${text:0:200}"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" \
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
-  echo "recorded ${kind}"
+  echo "recorded ${kind} (${outcome})"
 }
 
 # REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
 #   session_log(projects, session) is a session's .jsonl under Claude Code's projects dir, or "".
+#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome); a row
+#   from before the outcome column is "fixed". fixed_rows(path) is the fixed ones' first four fields.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
@@ -782,6 +787,15 @@ def pr_key(pr):
 def session_log(projects, session):
     paths = glob.glob(os.path.join(projects, "*", session + ".jsonl")) if session not in ("", "-") else []
     return paths[0] if paths else ""
+
+def finding_rows(path):
+    if not os.path.exists(path):
+        return []
+    rows = (l.rstrip("\n").split("\t") for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
+    return [f if len(f) == 5 else f + ["fixed"] for f in rows if len(f) == 4 or (len(f) == 5 and f[4] in ("fixed", "declined"))]
+
+def fixed_rows(path):
+    return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
@@ -853,21 +867,19 @@ def read_brief(brief=brief):
 
 prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
 last, example = {}, {}
-if os.path.exists(log):
-    for line in open(log, encoding="utf-8", errors="replace", newline="\n"):
-        parts = line.rstrip("\n").split("\t")
-        try:
-            when = datetime.date.fromisoformat(parts[0]) if len(parts) == 4 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) else None
-        except ValueError:
-            when = None
-        if when is None or when > datetime.date.today():
-            continue  # a malformed, impossible or future row must not count, least of all as recent
-        _, kind, pr, finding = parts
-        day = when.isoformat()
-        prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
-        dated[kind].append((day, pr_key(pr)))
-        if day >= cutoff:
-            recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
+for parts in fixed_rows(log):  # a declined finding is no lesson
+    try:
+        when = datetime.date.fromisoformat(parts[0]) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) else None
+    except ValueError:
+        when = None
+    if when is None or when > datetime.date.today():
+        continue  # a malformed, impossible or future row must not count, least of all as recent
+    _, kind, pr, finding = parts
+    day = when.isoformat()
+    prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
+    dated[kind].append((day, pr_key(pr)))
+    if day >= cutoff:
+        recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
 brief_text, note, brief_path = read_brief()
 # The brief is pasted into every prompt, so a rule it still tags rules its kind too. Each kind keeps
 # its tag as written and the file it is in, for its adoption date.
@@ -1028,18 +1040,85 @@ PY
 import collections, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 5}
-fixed = collections.Counter()
-if os.path.exists(sys.argv[1]):
-    for line in open(sys.argv[1], errors="ignore"):
-        f = line.rstrip("\n").split("\t")
-        if len(f) == 4:
-            fixed[pr_key(f[2])] += 1
+fixed = collections.Counter(pr_key(f[2]) for f in fixed_rows(sys.argv[1]))
 print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
 for line in os.environ["SWARM_ROWS"].splitlines():
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = line.split("\t")
     kind, risk, pr, state = meta.get(slug, ("", "", "", ""))
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
+PY
+}
+
+# decisions [--since YYYY-MM-DD] — one JSON object per line for each decision the logs record, for
+# training a decision model: decision (model_choice, retry, finding_accept, nudge, close), time,
+# subject, context, options, chosen and outcome (the build's row in `outcomes`: merged, PR, every
+# tells* column it prints, fixed findings, attempts, cost). A builder's context is its story as committed to the board by the
+# end of its start day. What the logs do not hold is null, never guessed. It writes nothing.
+decisions_report() {
+  local since="" rows=""
+  [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
+    || die "usage: swarm.sh decisions [--since YYYY-MM-DD]"
+  [[ -z "${1:-}" ]] || since="$2"
+  # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_ROWS="${rows}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" \
+    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${BUILDER_ROLES}" "${BOARD}" <<'PY'
+import json, os, subprocess, sys
+exec(os.environ["SWARM_REPORT_PY"])
+log, events, findings, since, roles, board = sys.argv[1:7]
+
+def outcome(r):
+    # Read by column name, so the tells columns are whichever outcomes prints (one or one per kind).
+    o = {"merged": r["pr_state"] == "MERGED" if r["pr_state"] else None, "pr": r["pr"] or None,
+         "findings": int(r["findings_fixed"]) if r["pr"] else None, "attempts": int(r["attempts"]),
+         "cost_usd": float(r["cost_usd"]) if r["cost_usd"] else None}
+    o.update({k: int(v) for k, v in r.items() if k.startswith("tells")})
+    return o
+
+def story_at(slug, day):
+    # The story's last committed version on or before <day>; None when git has none.
+    got = subprocess.run(["git", "-C", board, "log", "-1", "--format=%H", "--diff-filter=d", f"--until={day} 23:59:59",
+                          "--", f"stories/{slug}.md"], capture_output=True, text=True)
+    c = got.stdout.strip() if got.returncode == 0 else ""
+    shown = subprocess.run(["git", "-C", board, "show", f"{c}:./stories/{slug}.md"], capture_output=True, text=True) if c else None
+    return shown.stdout if shown and shown.returncode == 0 else None
+
+def rec(decision, time, subject, context, options, chosen, out):
+    return {"decision": decision, "time": time, "subject": subject, "context": context, "options": options,
+            "chosen": chosen, "outcome": out}
+
+table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
+rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])]
+builds = []   # (day, keys, outcome): what a finding, nudge or close is joined to
+out = []
+lines = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
+for f in (f for f in lines if len(f) == 7):
+    day, role, name, kind, model, effort, _ = f
+    r = rows.pop(0) if role in roles.split() and rows else None
+    o, slug = (outcome(r), r["slug"]) if r else (None, None)
+    if r:
+        builds.append((day, {slug, name, pr_key(r["pr"])} if r["pr"] else {slug, name}, o))
+    if day < since:
+        continue
+    context = story_at(slug, day) if slug else None
+    out.append(rec("model_choice", day, slug or name, context, None, {"role": role, "kind": kind, "model": model, "effort": effort}, o))
+    if o and o["attempts"] > 1:
+        out.append(rec("retry", day, slug, context, None, {"role": role, "model": model, "effort": effort}, o))
+
+def joined(key, day):
+    # The newest build of <key> started on or before <day>.
+    return next((o for d, keys, o in reversed(builds) if key in keys and d <= day), None)
+
+for day, kind, pr, text, chosen in finding_rows(findings):
+    if day >= since:
+        out.append(rec("finding_accept", day, pr, text, ["fixed", "declined"], chosen, joined(pr_key(pr), day)))
+for f in ([l.rstrip("\n").split("\t") for l in open(events, errors="ignore")] if os.path.exists(events) else []):
+    if len(f) == 5 and f[1] in ("nudge", "tell:nudge", "close") and f[4] == "ok" and f[0][:10] >= since:
+        d = "close" if f[1] == "close" else "nudge"
+        out.append(rec(d, f[0], f[2], None, None, f[1], joined(f[2], f[0][:10])))
+for r in sorted(out, key=lambda r: r["time"]):
+    print(json.dumps(r))
 PY
 }
 
@@ -1347,14 +1426,16 @@ $(finding_rule)
 EOF
 }
 
-# finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons).
+# finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
+# logged too, for `decisions`, and never count as lessons.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
   cat <<EOF
-Log each finding that was fixed (not the ones rebutted), from any directory, with:
+Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
     SWARM_PROJECT=${proj} ${sw} log-finding <kind> <PR URL> "<one line>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined <kind> <PR URL> "<the finding, and why it was declined>"
 
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
@@ -2515,9 +2596,10 @@ for a in agents:
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
-    python3 - <<'PY'
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
 import collections, datetime, itertools, json, os, re, time
 E = os.environ
+exec(E["SWARM_REPORT_PY"])
 exec(E["SWARM_PANES_PY"])
 exec(E["SWARM_STALL_PY"])
 W = max(int(E.get("DASH_COLS") or 100), 40)
@@ -2872,7 +2954,7 @@ for l in lines("DASH_MERGES"):
         m = re.match(r"Merge pull request #(\d+) from [^/\s]+/(\S+)", f[2])
         events.append((f[0], f[1], f"merged #{m.group(1)} {m.group(2)}" if m else f[2], "merge"))
 found = collections.OrderedDict()
-for f in read_tsv(E["DASH_FINDINGS"], 4):
+for f in fixed_rows(E["DASH_FINDINGS"]):
     m = re.search(r"(\d+)\D*$", f[2])
     found.setdefault((f[0], m.group(1) if m else f[2]), []).append(f)
 for (day, pr), fs in found.items():
@@ -3003,11 +3085,35 @@ tab_label() {
   echo "$1"
 }
 
+# archive_session <name> — keep a gzip'd copy of <name>'s Claude session log (its newest agents.tsv
+# line's session) as .swarm/sessions/<date>-<name>-<session>.jsonl.gz, once per session: Claude Code
+# deletes session logs after cleanupPeriodDays. .swarm/ is git-ignored, so the copy stays on this
+# machine, readable by its user only; nothing is redacted. An agent with no session (codex) has nothing to keep. A copy that
+# fails is reported and never stops the close: the session log itself is untouched.
+archive_session() {
+  local name session src dir
+  name="$(agent_name "$1")"
+  [[ -f "${AGENTS_LOG}" ]] || return 0
+  session="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null || true)"
+  [[ -n "${session}" && "${session}" != - ]] || return 0
+  dir="${PROJECT_DIR}/.swarm/sessions"
+  compgen -G "${dir}/*-${session}.jsonl.gz" >/dev/null && return 0
+  src="$(SWARM_REPORT_PY="${REPORT_PY}" python3 -c 'import os, sys; exec(os.environ["SWARM_REPORT_PY"]); print(session_log(*sys.argv[1:3]))' \
+    "${CLAUDE_PROJECTS}" "${session}" 2>/dev/null || true)"
+  [[ -n "${src}" ]] || return 0
+  # Readable by this user only: the copy may hold secrets.
+  ( umask 077 && mkdir -p "${dir}" && gzip -c "${src}" > "${dir}/.${session}.tmp" \
+    && mv "${dir}/.${session}.tmp" "${dir}/$(date +%F)-${name}-${session}.jsonl.gz" ) \
+    || { rm -f "${dir}/.${session}.tmp"; echo "${name}: could not archive session ${session}; its log is still at ${src}" >&2; }
+}
+
 # close_agent <name> — close what was opened for <name>: its pane, or its tab when that was the
 # tab's last pane. A conductor's name closes its epic's tabs, with any story panes left in them.
-# With keep_panes = true, everything stays open to read, and the agent is only retired.
+# With keep_panes = true, everything stays open to read, and the agent is only retired. Either way,
+# its session log is archived first.
 close_agent() {
   local state pane epic
+  archive_session "$1"
   if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; return; fi
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
@@ -3169,13 +3275,15 @@ init_project() {
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
-# close_tabs <label> — close every tab this script opened under <label>, and its state. A tab may be
-# in another workspace (a conductor's is its HLD's): its first pane id, "<workspace>:<pane>", says which.
+# close_tabs <label> — close every tab this script opened under <label>, and its state, archiving the
+# session of each agent in it first. A tab may be in another workspace (a conductor's is its HLD's):
+# its first pane id, "<workspace>:<pane>", says which.
 close_tabs() {
-  local label state tab_label id ws
+  local label state tab_label id ws n
   label="$(tab_label "$1")"
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
+    while read -r _ n; do [[ -z "${n}" ]] || archive_session "${n}"; done < "${state}"
     tab_label="$(basename "${state}")"
     ws="$(head -1 "${state}")"; ws="${ws%%:*}"; ws="${ws:-${HERDR_WORKSPACE_ID}}"
     id=$(herdr tab list --workspace "${ws}" | python3 -c "
@@ -3209,7 +3317,9 @@ dispatch() {
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "${1:-}" ;;
     outcomes) outcomes_report "$@" ;;
-    log-finding) record_finding "${1:-}" "${2:-}" "${*:3}" ;;
+    decisions) decisions_report "$@" ;;
+    log-finding) o=fixed; if [[ "${1:-}" == --declined ]]; then o=declined; shift; fi
+            record_finding "${1:-}" "${2:-}" "${*:3}" "${o}" ;;
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
@@ -3238,7 +3348,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes lessons findings wait watch base _base _name _target _label _trusted _pane"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _name _target _label _trusted _pane"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -3281,7 +3391,10 @@ main() {
   fi
   case "${EV_CMD}" in
     agent) [[ -z "${3:-}" ]] || EV_TARGET="$(agent_name "$3")" ;;
-    log-finding) EV_TARGET="${2:-} ${3:-}"; EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
+    # A decline is logged as log-finding:declined, so its target stays <kind> <pr>, as for a fix.
+    log-finding) EV_TARGET="${2:-} ${3:-}"
+                 if [[ "${2:-}" == --declined ]]; then EV_CMD="log-finding:declined"; EV_TARGET="${3:-} ${4:-}"; fi
+                 EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the

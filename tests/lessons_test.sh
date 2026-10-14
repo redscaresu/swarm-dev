@@ -38,6 +38,13 @@ check "a kind the brief already rules is no longer a candidate" "no" \
 for pr in o/r#4 o/r#5 o/r#6; do sw log-finding denylist "${pr}" "a scrub that lists what to remove" >/dev/null; done
 check "denylist is now a candidate" "yes" "$(has "candidate denylist" "$(sw lessons)")"
 
+# A declined finding is logged with its outcome, and never counts toward a lesson.
+check "a fixed finding is logged as fixed" "fixed" "$(grep -m1 denylist "${dir}/.swarm/findings.tsv" | cut -f5)"
+for pr in o/r#90 o/r#91 o/r#92; do sw log-finding --declined out-of-scope "${pr}" "an edge case the story leaves out" >/dev/null; done
+check "a declined finding is logged as declined" "out-of-scope	declined" "$(tail -1 "${dir}/.swarm/findings.tsv" | cut -f2,5)"
+check "declined findings in 3 PRs are no candidate, nor listed" "no" \
+  "$(grep -q "out-of-scope" <<< "$(sw lessons; sw lessons --all)" && echo yes || echo no)"
+
 # A malformed date never counts as recent.
 for pr in o/r#60 o/r#61 o/r#62; do printf 'soon\tbad-date\t%s\tx\n' "${pr}" >> "${dir}/.swarm/findings.tsv"; done
 check "a malformed date is not counted" "no" "$(grep -q "candidate bad-date" <<< "$(sw lessons)" && echo yes || echo no)"
@@ -104,7 +111,7 @@ check "a long brief is flagged" "yes" "$(has "long brief" "$(sw lessons)")"
 
 # Tabs and newlines in a finding cannot break the log's columns.
 sw log-finding tab-test o/r#7 "$(printf 'a\tb\nc')" >/dev/null
-check "a finding's tabs and newlines are flattened" "4" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
+check "a finding's tabs and newlines are flattened" "5" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
 
 # Recurring: with the rule on origin/HEAD since a date, only findings after it count. The findings that
 # made the kind a candidate must not flag the rule as failing the day it lands.
