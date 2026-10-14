@@ -85,8 +85,8 @@ printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"}]}}' ;;
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
     [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
     [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
@@ -464,13 +464,14 @@ check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c 
 # (s-lost) and one in a state not known (s-odd) need a look; a reused name (s-re: the older agent
 # retired to s-re-done, the newer running) shows its newer session; a codex agent (cx) and one with
 # no session recorded (s-dash) show herdr's word. herdr says s-re is RE_HERDR, the opposite of its
-# newer session each time.
+# newer session each time. s-auth is idle, and its transcript ends on an expired login: auth, not idle.
 S="${ROOT}/s"; mkdir -p "${S}/.swarm/state"; git -C "${S}" init -q
-printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\n' > "${S}/.swarm/state/t"
+printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\nw2:p7 s-auth\n' > "${S}/.swarm/state/t"
+cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/auth.jsonl"
 printf '2026-10-13\tcode\t%s\t%s\t%s\thigh\t%s\n' s-re claude opus re-old s-re claude opus re-new s-lost claude sonnet lost \
-  s-odd claude haiku odd cx codex gpt - s-dash claude fable - > "${S}/.swarm/agents.tsv"
+  s-odd claude haiku odd cx codex gpt - s-dash claude fable - s-auth claude opus auth > "${S}/.swarm/agents.tsv"
 sdash() { # <re-old status> <re-new status> <herdr's s-re status> — dash --tree in S
-  printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"}]' "$1" "$2" > "${ROOT}/s.json"
+  printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"},{"sessionId":"auth","status":"idle"}]' "$1" "$2" > "${ROOT}/s.json"
   fresh; (cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR="$3" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)
 }
 out="$(sdash busy idle working)"
@@ -479,6 +480,8 @@ check "a session in a state dash does not know is ! unknown" grep -qE '! s-odd .
 needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 check "needs you lists an agent whose session is gone" has "! look at s-lost: session ended" "${needs}"
 check "needs you lists an agent whose session state is unknown" has "! look at s-odd: no session state" "${needs}"
+check "an idle agent whose login expired is ! auth, not idle" grep -qE '! s-auth .* auth: login expired' <<< "${out}"
+check "needs you lists an agent whose login expired, with /login" has "! auth: run /login (s-auth's login expired), then /swarm tells it to resume" "${needs}"
 check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
 check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
 check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"

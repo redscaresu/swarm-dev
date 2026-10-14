@@ -173,8 +173,18 @@ got="$(SWARM_CONDUCTOR_POLL=5 waitc conduct-e1 20000 2>"${dir}/wait.err")"
 if [[ "${got}" == auth && $((SECONDS - start)) -lt 5 ]] && grep -q "conduct-e1: its login expired" "${dir}/wait.err"; then
   echo "ok   wait on a conductor whose login expired returns auth at once, naming it"; else
   echo "FAIL wait on a conductor whose login expired returns auth at once, naming it: got '${got}' after $((SECONDS - start))s, stderr: $(cat "${dir}/wait.err")"; fails=$((fails + 1)); fi
+# next says so too: its step stays `wait` (which returns auth at once), its why names auth and /login.
+nextc() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next); }
+got="$(nextc)"
+if [[ "${got}" == "wait conduct-e1"$'\n'"auth: the conductor conduct-e1 stopped on an expired login; run /login"* ]]; then
+  echo "ok   next names auth and /login for a conductor whose login expired"; else
+  echo "FAIL next names auth and /login for a conductor whose login expired: got '${got}'"; fails=$((fails + 1)); fi
 # After an ordinary turn (the same transcript without the auth entry) it is waited on, as below.
 grep -v authentication_failed "${fixture}" > "${dir}/projects/p/sess-c1.jsonl"
+got="$(nextc)"
+if [[ "${got}" == "wait conduct-e1"$'\n'"the conductor conduct-e1 is still working"* ]]; then
+  echo "ok   next does not say auth once the conductor's last turn is an ordinary one"; else
+  echo "FAIL next does not say auth once the conductor's last turn is an ordinary one: got '${got}'"; fails=$((fails + 1)); fi
 
 # A conductor that never reports does not hang `wait`: the timeout bounds the whole wait.
 start=${SECONDS}

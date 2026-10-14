@@ -234,14 +234,15 @@ cannot read the agents changes nothing. herdr lists every project's agents, so
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
 **Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an
-empty pane where a start failed, or a session gone or unknown), what waits on you, and the next
-step. A Claude agent's state comes from its own session in `claude agents --json`, read once per
+empty pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose
+login expired, which only your `/login` clears), what waits on you, and the next step. `next` says
+`auth` too when the conductor's login expired. A Claude agent's state comes from its own session in `claude agents --json`, read once per
 run: busy is working, idle is idle, waiting is WAITING with what it waits for, and a recorded
 session with no entry in the list (`gone`: the session ended) or no state in it (`unknown`, also
 when there is no `claude` to ask) needs a look. herdr's word stands only for codex agents, agents
 with no session recorded, and retired panes. `swarm.sh dash` shows the
 same on one screen, for a person to scan: a summary line, then what needs the user first (PRs to
-merge with their checks, `lead` stories, agents waiting on a prompt (with what their session waits for), agents whose session is gone or unknown, empty panes, stalled builders,
+merge with their checks, `lead` stories, agents waiting on a prompt (with what their session waits for), agents whose session is gone or unknown, agents whose login expired, empty panes, stalled builders,
 draft HLDs), each active epic with a bar of its finished stories (finished story files are deleted,
 so they are counted from history: a deletion counts once per slug, and only when it closed the story,
 never a re-scope) and its live agents and open PRs beneath it,
@@ -270,7 +271,7 @@ fails the command.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
-and tokens from the session's own log, the `tell` (any `tell:<kind>`) and `close` lines in this log, the findings logged
+and tokens from the session's own log, the tells it took by kind (`tells_findings`, `tells_nudge`, `tells_resume`; a bare `tell` from older logs counts as findings, and a refused tell, which never reached it, is not counted) and its `close` lines in this log, the findings logged
 against its PR, the PR and its state from `gh`, and which attempt at the story it was. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. A story that merged and
 left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
