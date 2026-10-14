@@ -92,7 +92,7 @@
       "col": 5,
       "type": "security",
       "label": "Merge",
-      "sublabel": "merge = human (default)",
+      "sublabel": "or let agents merge",
       "width": 140
     },
     {
@@ -101,7 +101,7 @@
       "col": 1,
       "type": "backend",
       "label": "/swarm",
-      "sublabel": "swarm.sh next picks a step",
+      "sublabel": "picks the next step",
       "width": 140
     },
     {
@@ -111,15 +111,6 @@
       "type": "database",
       "label": "The board",
       "sublabel": "docs/: hld, epics, stories",
-      "width": 140
-    },
-    {
-      "id": "reconcile",
-      "lane": "lead",
-      "col": 4,
-      "type": "backend",
-      "label": "reconcile + unblock",
-      "sublabel": "finish what merged",
       "width": 140
     },
     {
@@ -145,8 +136,8 @@
       "lane": "build",
       "col": 3,
       "type": "backend",
-      "label": "swarm.sh conduct",
-      "sublabel": "a conductor per epic",
+      "label": "Conductor",
+      "sublabel": "one per epic",
       "width": 140
     },
     {
@@ -174,15 +165,6 @@
       "type": "backend",
       "label": "swarm.sh init",
       "sublabel": "once per project",
-      "width": 140
-    },
-    {
-      "id": "login",
-      "lane": "you",
-      "col": 4,
-      "type": "security",
-      "label": "/login",
-      "sublabel": "login expired",
       "width": 140
     }
   ],
@@ -264,14 +246,8 @@
     {
       "id": "merged",
       "from": "merge",
-      "to": "reconcile",
-      "label": "merged"
-    },
-    {
-      "id": "next",
-      "from": "reconcile",
       "to": "board",
-      "label": "next stories ready",
+      "label": "next /swarm readies what follows",
       "role": "return",
       "variant": "dashed"
     },
@@ -280,14 +256,6 @@
       "from": "init",
       "to": "hld",
       "label": "board ready"
-    },
-    {
-      "id": "auth",
-      "from": "builders",
-      "to": "login",
-      "label": "auth, then resume",
-      "role": "branch",
-      "variant": "dashed"
     }
   ]
 }
