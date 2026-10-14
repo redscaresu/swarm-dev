@@ -19,7 +19,8 @@ at every level runs in its own herdr pane so it can be watched.
 story, or a `later` epic. The board is the only state, so a run can stop anywhere and the next
 `/swarm` continues. Building comes first (a conductor still working, then an active epic's ready
 stories, then one-offs), then planning (an active epic with no stories, then an agreed HLD with
-no epics).
+no epics). An epic is planned only once every epic it `depends_on` is done, so its stories are
+scoped against code that exists.
 
 A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
 the user's is marked **You:** in it (§ Who does what). An open question for the user is a `lead`

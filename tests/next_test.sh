@@ -50,6 +50,14 @@ expect "superseded HLD" "done" \
   "item hld/2026-01-01-x.md 'status: superseded'"
 expect "active epic, no stories" "plan-epic e1" \
   "item epics/e1.md 'status: active'"
+expect "epic waits on an open dependency" "plan-epic b" \
+  "item epics/a.md 'status: active' 'depends_on: [b]'" \
+  "item epics/b.md 'status: active'"
+expect "epic planned once its dependency is deleted" "plan-epic a" \
+  "item epics/a.md 'status: active' 'depends_on: [b]'"
+expect "epic planned once its dependency is done" "plan-epic a" \
+  "item epics/a.md 'status: active' 'depends_on: [b]'" \
+  "item epics/b.md 'status: done'"
 expect "active epic before a one-off" "conduct e1" \
   "item epics/e1.md 'status: active'" \
   "item stories/a-one-off.md 'status: ready' 'kind: code'" \
