@@ -21,6 +21,7 @@
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
+#   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
@@ -1676,7 +1677,7 @@ EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
-for the user. Stop when the epic's **Done when** holds or when nothing ready is left.
+for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
 EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
@@ -1710,6 +1711,36 @@ again with \`swarm.sh wait <slug>\` in the background.
 EOF
 }
 
+# give_up_rule — when a conductor stops waiting on a builder and builds the story again, and how it
+# answers Fable's usage-credits consent, which is not giving up.
+give_up_rule() {
+  local retry
+  if (( CFG_escalate_after > 0 )); then
+    retry="swarm.sh picks Fable for build $((CFG_escalate_after + 1)) (escalate_after = ${CFG_escalate_after})."
+  else
+    retry="escalation is off (escalate_after = 0), so once a story has failed twice
+(\`attempts: 2\`), do not start it again: report it to the lead."
+  fi
+  cat <<EOF
+Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, when it is idle with no PR
+(with one PR per epic, no pushed story/<slug>) after wait's nudges, or when review has not converged
+in the rounds you allow. Run \`swarm.sh close <slug>\`: on a code, docs or chore story still \`ready\` it
+counts the attempt and clears its worktree, branch and PR. That is the one close before a review
+passes. Start the story again in a later wave with \`swarm.sh story <slug>\`, and never choose a
+model: ${retry}
+A story that comes back \`kind: lead\` with \`escalated_from:\` is the lead's to decide: report it
+to the lead, and do not count it as waiting on the user.
+
+A builder whose wait prints \`waiting: dialog open\` may be on Fable's usage-credits consent. Answer it
+only when it is an escalate build (\`swarm.sh _role <slug>\` prints \`escalate\`) and its pane
+(\`swarm.sh _target <slug>\` prints it) shows that consent in \`herdr agent read <pane>\`. Then accept it
+with \`herdr pane send-keys <pane> <key>...\`, run \`swarm.sh dialog <slug> accepted\` (or \`dismissed\`
+if it would not accept, and tell the lead), and wait on it again. Never close or tell it over a
+dialog: a dialog is not an attempt. Any other dialog, and every permission or tool prompt, is not
+yours to answer: never send keys to it; leave it for the lead.
+EOF
+}
+
 # pr_per = story: a PR per story.
 conduct_story_mode() {
   local epic="$1"
@@ -1721,6 +1752,8 @@ start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.s
 .swarm/briefs/<slug>.md.
 
 $(auth_rule)
+
+$(give_up_rule)
 
 $(green_rule)
 
@@ -1750,6 +1783,8 @@ no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) a
 and wait with \`swarm.sh wait <slug>\` in the background.
 
 $(auth_rule)
+
+$(give_up_rule)
 
 When a builder reports, review its branch.$(rules_review_rule)
 
@@ -2085,6 +2120,16 @@ drop_story() {
   is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
   finish_item "$1"
   echo "dropped: $1; commit the change to the board in a board PR"
+}
+
+# dialog <slug> <accepted|dismissed> — a conductor answered an escalate builder's Fable usage-credits
+# consent (wait printed `waiting: dialog open`). It changes nothing: main logs `dialog <slug>` with
+# `ok (<result>)` as the outcome, so each escalation step is in events.tsv with its time.
+dialog_answered() {
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "dialog: bad slug '$1': swarm.sh dialog <slug> <accepted|dismissed>"
+  [[ -f "${BOARD}/stories/$1.md" ]] || die "dialog: no story ${BOARD}/stories/$1.md"
+  [[ "$2" == accepted || "$2" == dismissed ]] || die "dialog: the result must be accepted or dismissed, not '$2'"
+  echo "logged: dialog $1 $2"
 }
 
 # item_file <slug> — the story or epic file for <slug>.
@@ -3613,6 +3658,7 @@ dispatch() {
     finish) finish_item "${1:?slug}" ;;
     reset)  reset_story "${1:-}" "${*:2}" ;;
     drop)   drop_story "${1:-}" "${*:2}" ;;
+    dialog) dialog_answered "${1:-}" "${2:-}" ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
@@ -3693,6 +3739,7 @@ main() {
     # old form, tell <slug> <file>, would put a path there).
     tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
+    dialog) EV_TARGET="${2:-}"; EV_OK="ok (${3:-})" ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
