@@ -669,6 +669,26 @@ printf '2026-10-14\tcode\ta\tclaude\topus\thigh\tsess-a2\n' >> "${p}/.swarm/agen
 session "${ROOT}/claude.json" sess-a=idle sess-a2=busy
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000)"
 check "with two agents.tsv lines for a name, wait reads the newer line's session" "busy|exit 1" "${got%|*}"
+# Stalls: story a's builder is busy, its worktree's last commit 2 hours old, no events.tsv line, and
+# the wait begun 2 hours ago. A file edited a minute ago in the worktree is a sign of life; aged past
+# stall_minutes (or gone, the worktree clean) it is not, and wait --stall returns on the stall.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.swarm/events.tsv"; wt="${ROOT}/svc-wt/a"; old=$(($(date +%s) - 7200))
+"${GIT[@]}" init -q "${wt}" && GIT_COMMITTER_DATE="@${old}" "${GIT[@]}" -C "${wt}" commit -q --allow-empty -m old
+mins_ago() { python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M", time.localtime(time.time() - 60 * int(sys.argv[1]))))' "$1"; }
+stallrc() { local got; got="$(SWARM_WAIT_STARTED="${old}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null --stall a 3000)"; got="${got%|*}"; echo "${got##*|}"; }
+echo wip > "${wt}/wip.txt"; touch -t "$(mins_ago 1)" "${wt}/wip.txt"
+check "a busy builder with a file edited a minute ago in its worktree is not stalled: wait --stall times out" "exit 1" "$(stallrc)"
+touch -t "$(mins_ago 120)" "${wt}/wip.txt"
+check "the same file edited 2 hours ago is no sign of life: wait --stall exits 3, stalled" "exit 3" "$(stallrc)"
+rm "${wt}/wip.txt"
+check "a clean worktree with an old commit is stalled, as before" "exit 3" "$(stallrc)"
+# Its session log (sess-a2, the newer agents.tsv line) written a minute ago is a sign of life too.
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
+rm "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+rm -rf "${wt}" "${b}/stories/a.md"; printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"

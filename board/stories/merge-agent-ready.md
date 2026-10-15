@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [goal-conductor-rule, codex-time-limit, story-after-unmerged-close, reconcile-keeps-board-edits]
+blocked_by: [merge-command, goal-conductor-rule, codex-time-limit, story-after-unmerged-close, reconcile-keeps-board-edits]
 epic: flow-speedups
-depends_on: [goal-conductor-rule, codex-time-limit, story-after-unmerged-close, reconcile-keeps-board-edits]
+depends_on: [merge-command, goal-conductor-rule, codex-time-limit, story-after-unmerged-close, reconcile-keeps-board-edits]
 touches: [bin/swarm.sh:conduct_merge_rule (agent branch), bin/swarm.sh:conduct_epic_mode (merge_step, agent branch), bin/swarm.sh:start_agent (merge guard), bin/swarm.sh:merge_rule (agent wording), tests/epic_test.sh (conductor-brief checks), tests/review_test.sh (merge guard block), commands/swarm.md (story arm, merge = agent sentences), docs/method.md (§ Building, **Merging.**, the merge = agent part)]
 risk: high
 ---
@@ -27,3 +27,5 @@ Only the merge = agent branches change. With human, the briefs and start args st
 - Starting newly ready stories yields to goal_rule: after a cleared-on-error or a give-up, start nothing more in the wave; a check pins this.
 - commands/swarm.md's story arm with merge = agent drops its `swarm.sh close <slug>` after reconcile too (commands/swarm.md:80-84).
 - Main is checked after every merge (ruleset-not-strict removed the up-to-date rule; on 2026-10-15 #134 and #137 were each green alone and main went red once both landed, fixed by #141). After each merge the conductor waits for CI on the merge commit on main, with a time limit; if it is red it merges nothing more, finds the PR pair, opens the fix (or lists it for the lead) and says so in its report. The brief contains this rule, and a check fails with it removed.
+- From lead-loop (2026-10-15): merge-command lands first. The conductor merges with `swarm.sh merge --head <reviewed sha> <PR URL>`, never a bare `gh pr merge`: the pinned head, the fail-closed gate and the main-CI check are merge-command's code. depends_on gains merge-command; the brief's merge text names `swarm.sh merge`, and a check greps for it.
+- Order: `swarm.sh merge` needs the item in `review` with the URL in `prs:`, so the conductor runs `swarm.sh review <slug> <PR URL>` before `swarm.sh merge`, in story mode, epic mode and commands/swarm.md's one-off arm; reconcile runs inside merge. Brief checks pin that `review` precedes `merge` in each.
