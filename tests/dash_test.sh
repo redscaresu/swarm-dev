@@ -386,7 +386,7 @@ check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${
 printf '%s\tstory\ts-three\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
 printf '%s\tconduct\te1\tw1:p1\tok\n' "$(ago 4)" >> "${P}/.swarm/events.tsv"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
-check "at 160 columns a working agent's card shows the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working  [45]m +│' <<< "${out}"
+check "at 160 columns a working agent's card shows its state age, then the time since it started" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m  [45]m +│' <<< "${out}"
 check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 1(19|20|21)m +│' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
@@ -402,7 +402,8 @@ rm "${P}/.claude/swarm/config"
 # --- Escalation. DASH_NOW fixes dash's now at local noon on 2026-10-10, and every line here is
 # minutes before it, so "today" cannot drift across midnight. Two ok escalate builds today (x-esc's
 # attempt 3 an hour ago), one yesterday and one failed; each other escalation kind once ok, and a
-# reset, a drop and a dialog that failed. x-esc, an escalate agent (agents.tsv), gets a pane and a busy session.
+# reset, a drop and a dialog that failed. x-esc, an escalate agent (agents.tsv), gets a pane and a busy
+# session; its newest line (dialog) is 40 minutes old, so stall_minutes is 120 here to keep it working.
 NOW="$(python3 -c 'import datetime; print(int(datetime.datetime(2026, 10, 10, 12).timestamp()))')"
 before_now() { python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) - 60 * int(sys.argv[2]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "${NOW}" "$1"; }
 cp "${P}/.swarm/events.tsv" "${ROOT}/events.before-esc"
@@ -421,16 +422,17 @@ cp "${P}/.swarm/events.tsv" "${ROOT}/events.before-esc"
   printf '%s\tdialog\tg-bad\tw1:p1\tfailed (exit 1)\n' "$(before_now 5)"
 } >> "${P}/.swarm/events.tsv"
 printf 'w2:p8 x-esc\n' > "${P}/.swarm/state/x-esc"
+mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 120" > "${P}/.claude/swarm/config"
 esc_at="$(python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) - 3600).strftime("%H:%M"))' "${NOW}")"
 printf '[{"sessionId":"sess-esc","status":"busy"}]' > "${ROOT}/claude-esc.json"
 escdash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/claude-esc.json" DASH_NOW="${NOW}" LINES=80 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
 out="$(COLUMNS=160 escdash)"
 check "at 160 columns the status bar says who is on call" has "on call: fable·xhigh" "$(tail -2 <<< "${out}")"
 check "at 160 columns the status bar counts today's ok escalate builds, not yesterday's or a failed one" has " · 2 escalations today" "$(tail -2 <<< "${out}")"
-check "at 160 columns an escalated builder's card shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working +attempt 3 · ${esc_at} +│" <<< "${out}"
+check "at 160 columns an escalated builder's card shows its state age, attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m  attempt 3 · ${esc_at} +│" <<< "${out}"
 out="$(COLUMNS=100 escdash)"
 check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 3p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
-check "at 100 columns an escalated builder's row shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working +attempt 3 · ${esc_at} +│" <<< "${out}"
+check "at 100 columns an escalated builder's row shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m +attempt 3 · ${esc_at} +│" <<< "${out}"
 recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
 for k in "escalate y-esc" "dialog x-esc" "escalated w-esc" "reset w-esc" "drop v-esc"; do
   check "recent marks ${k%% *} with ▲" grep -qE "^│ +[0-9]+m ago  ▲ ${k}" <<< "${recent}"
@@ -439,10 +441,69 @@ check "recent keeps · for a tell" grep -qE '^│ +20m ago  · tell t-esc' <<< "
 for k in "escalate z-esc" "reset r-bad" "drop d-bad" "dialog g-bad"; do
   check "recent marks a failed ${k%% *} ✗" grep -qE "^│ +[0-9]+m ago  ✗ ${k}: failed" <<< "${recent}"
 done
-mkdir -p "${P}/.claude/swarm"; echo "escalate_after = 0" > "${P}/.claude/swarm/config"
+echo "escalate_after = 0" >> "${P}/.claude/swarm/config"
 check "with escalate_after = 0 nobody is on call" has "on call: off · 2 escalations today" "$(COLUMNS=100 escdash)"
 rm "${P}/.claude/swarm/config" "${P}/.swarm/state/x-esc"
 cp "${ROOT}/events.before-esc" "${P}/.swarm/events.tsv"
+
+# --- State age. aaaa…-2's builder is working (herdr's word), started 25 minutes ago, and its
+# worktree's last commit is 12 minutes old: the row shows 12m right after its state, and at 160
+# columns the 25m since its start after that, so 12m can only be the state age.
+cp "${P}/.swarm/events.tsv" "${ROOT}/events.before-age"; cp "${P}/.swarm/findings.tsv" "${ROOT}/findings.before-age"
+A=aaaaaaaaaa-bbbbbbbbbb-cccccccccc
+mkdir -p "${ROOT}/proj-wt/${A}-2" && git -C "${ROOT}/proj-wt/${A}-2" init -q
+GIT_COMMITTER_DATE="$(ago 12)" git -C "${ROOT}/proj-wt/${A}-2" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m work
+printf '%s\tstory\t%s-2\tw1:p1\tok\n' "$(ago 25)" "${A}" >> "${P}/.swarm/events.tsv"
+agedash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 LINES=80 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
+out="$(COLUMNS=160 agedash)"
+check "at 160 columns a working builder shows its state age, then the time since it started" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 1[23]m  2[56]m +│' <<< "${out}"
+check "at 160 columns a conductor keeps its time since start after its state age" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m  [45]m +│' <<< "${out}"
+check "at 160 columns a stalled builder still shows stalled" grep -qE '! s-three +code +opus·high +stalled 1(19|20|21)m +│' <<< "${out}"
+out="$(COLUMNS=100 agedash)"
+check "at 100 columns a working builder shows its state age" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 1[23]m +│$' <<< "${out}"
+check "at 100 columns a stalled builder still shows stalled" grep -qE '! s-three .*stalled 1(19|20|21)m +│$' <<< "${out}"
+check "a stalled builder still needs you, in the same words" grep -qE '! look at s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
+check "a conductor below stall_minutes is working, not stalled" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m +│$' <<< "${out}"
+# The conductor's newest sign (its start, from its own pane) is 4 minutes old: past stall_minutes = 3.
+echo "stall_minutes = 3" > "${P}/.claude/swarm/config"
+out="$(COLUMNS=100 agedash)"
+check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "${out}"
+check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working [45] min with no swarm action' <<< "${out}"
+# A nudge its pane sent a minute ago (wait's, or the lead's tell:nudge) and a tell that never reached
+# anyone are not signs of life (STALL_PY's rule): the conductor stays stalled.
+printf '%s\tnudge\ts-one\tw1:p1\tok\n%s\ttell:nudge\ts-one\tw1:p1\tok\n%s\ttell:findings\ts-one\tw1:p1\tfailed (exit 1)\n' "$(ago 1)" "$(ago 1)" "$(ago 1)" >> "${P}/.swarm/events.tsv"
+check "a conductor whose only recent pane lines are nudges is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "$(COLUMNS=100 agedash)"
+# A command its own pane ran a minute ago (a review of s-one, not naming it) is a sign of life.
+printf '%s\treview\ts-one\tw1:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
+check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working [12]m +│$' <<< "$(COLUMNS=100 agedash)"
+rm "${P}/.claude/swarm/config"
+
+# --- Findings in recent. Eight declined findings on #133, a tell, three more on #133, a lone one on
+# #134, a failed one, and a fix logged through log-finding (findings.tsv and events.tsv both).
+{
+  for i in 1 2 3 4 5 6 7 8; do printf '%s\tlog-finding:declined\tkind-x https://github.com/o/r/pull/133\tw1:p1\tok\n' "$(ago $((30 - i)))"; done
+  printf '%s\ttell\tt-split\tw1:p1\tok\n' "$(ago 20)"
+  for i in 1 2 3; do printf '%s\tlog-finding:declined\tkind-x https://github.com/o/r/pull/133\tw1:p1\tok\n' "$(ago $((20 - i)))"; done
+  printf '%s\tlog-finding:declined\tkind-y https://github.com/o/r/pull/134\tw1:p1\tok\n' "$(ago 16)"
+  printf '%s\tlog-finding:declined\tkind-x https://github.com/o/r/pull/133\tw1:p1\tfailed (exit 1)\n' "$(ago 15)"
+  # One PR written three ways: one run, numbered from the PR, never from a commit or path after it.
+  printf '%s\ttell\tt-split2\tw1:p1\tok\n' "$(ago 14)"
+  for t in o/r#136 https://github.com/o/r/pull/136/files https://github.com/o/r/pull/136/commits/abc123; do
+    printf '%s\tlog-finding:declined\tkind-w %s\tw1:p1\tok\n' "$(ago 13)" "${t}"
+  done
+} >> "${P}/.swarm/events.tsv"
+(cd "${P}" && env -u HERDR_PANE_ID bash "${SWARM}" log-finding kind-z https://github.com/o/r/pull/135 "the fixed one" >/dev/null)
+recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "$(COLUMNS=100 agedash)")"
+check "eight consecutive declined findings on one PR are one recent row" test "$(grep -c '· 8 findings declined on #133 ' <<< "${recent}")" -eq 1
+check "a tell between two runs of declined findings splits them" has "· 3 findings declined on #133 " "${recent}"
+check "a declined run is one row: no single declined line on #133 is left" lacks "log-finding:declined kind-x https://github.com/o/r/pull/133 " "${recent}"
+check "a PR's URL, its subpaths and owner/repo#N fold into one declined run" has "· 3 findings declined on #136 " "${recent}"
+check "a lone declined finding reads as before" has "· log-finding:declined kind-y https://github.com/o/r/pull/134 " "${recent}"
+check "a failed log-finding line stays its own ✗ row" has "✗ log-finding:declined kind-x https://github.com/o/r/pull/133: fail" "${recent}"
+check "a fix logged through log-finding shows once in recent" test "$(grep -c 'the fixed one' <<< "${recent}")" -eq 1
+check "a fix's log-finding line is not a recent row" lacks "log-finding kind-z" "${recent}"
+cp "${ROOT}/events.before-age" "${P}/.swarm/events.tsv"; cp "${ROOT}/findings.before-age" "${P}/.swarm/findings.tsv"
+rm -rf "${ROOT}/proj-wt"
 # wait: herdr says done at once (the stub), and s-three's session (sess-today) is busy, so a wait
 # sleeps out each slice and reads the session again; herdr's word is never the answer.
 printf '[{"sessionId":"sess-today","status":"busy"},{"sessionId":"sess-cut","status":"busy"}]' > "${ROOT}/claude.json"
