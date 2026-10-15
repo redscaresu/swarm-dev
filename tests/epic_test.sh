@@ -43,6 +43,38 @@ gives_up() {
   has "for the user, unless it has \`escalated_from:\`: that one is the lead's" "$1"
 }
 GIVES_UP="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes"
+# goal_on <brief> — goal_rule's parts, as has prints them: the six causes, the impossible close, one
+# resume tell for a pause and then the paused close, cleared-on-error stopping the wave and its story
+# left for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line
+# (agent_name described in full), and the goal-on give-up: only a stall or an unconverged review,
+# an idle builder left to the goal rule, no 'after wait's nudges', a stalled close. No `failed` entry.
+goal_on() {
+  local c
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  printf '%s|' "$(has "\`${CLAUDE_PROJECTS_DIR}/*/<session>.jsonl\`" "$1")" \
+    "$(has "whose name (field 3) is the builder's agent name" "$1")" \
+    "$(has 'do not start it again in a later wave. It waits for the lead.' "$1")" \
+    "$(has 'an s in front unless it starts with a letter, then cut' "$1")" \
+    "$(has '- none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose' "$1")" \
+    "$(has 'the story again: list it for the lead, as for cleared-on-error.' "$1")" \
+    "$(has 'returns stalled, or when review has' "$1")" "$(has "it is the goal rule's, which picks" "$1")" \
+    "$(grep -qF 'with `failed`' <<< "$1" && echo failed || echo "no failed")"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  for c in '- met: ' '- impossible: ' '- stalled: ' '- bound: ' '- paused: ' '- cleared-on-error: ' \
+    'Run `swarm.sh close <slug> impossible`' 'Send it one `swarm.sh tell <slug> resume <file>`' \
+    'If it stops paused again, run `swarm.sh close <slug> paused`.' \
+    'Run `swarm.sh close <slug> cleared-on-error`, start nothing more in this wave' 'Run `swarm.sh close <slug> stalled`'; do
+    printf '%s|' "$(has "${c}" "$1")"
+  done
+  grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
+}
+GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
+# goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
+goal_off() {
+  printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  grep -qF 'close <slug> impossible`' <<< "$1" && echo yes || echo no
+}
 
 item() { # <board> <path> <front-matter line>...
   local path="$1/$2" title; shift 2
@@ -174,6 +206,7 @@ check "the conductor's brief says what a builder's auth means and to resume it a
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
+check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
@@ -200,6 +233,11 @@ check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5"
 run conduct e >/dev/null || true
 rm "${ROOT}/idle"
 check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
+echo "goal = 5" > "${p}/.claude/swarm/config"
+run conduct e >/dev/null || true
+check "with goal = 5, the story-mode conductor reads why a builder stopped and closes it with that cause" \
+  "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
+run close conduct-e >/dev/null; : > "${p}/.claude/swarm/config"
 # goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
 # prompts and goals count the herdr agent prompt calls since herdr.log was emptied, and the /goal ones.
 prompts() { grep -c '^agent prompt ' "${ROOT}/herdr.log" || true; }
@@ -357,6 +395,12 @@ check "the one-PR-per-epic conductor's brief says what a builder's auth means, t
   "$(has "stopped on an expired login, which only the user's" "${brief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${brief}")"
 check "the one-PR-per-epic conductor gives up with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${brief}")"
+check "with goal off, the one-PR-per-epic conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${brief}")"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 5" > "${p}/.claude/swarm/config"
+run conduct f >/dev/null || true
+check "with goal = 5, the one-PR-per-epic conductor reads why a builder stopped and closes it with that cause" \
+  "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
 printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
@@ -536,9 +580,8 @@ got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/
 check "an unreadable transcript is not auth, and wait prints no traceback" "idle|3|0" \
   "${got%%|*}|$(nudges)|$(grep -c Traceback "${ROOT}/wait.err" || true)"
 chmod 600 "${tr}"
-# With goal on, a builder whose session log holds a goal set and not yet met retries on its own:
-# wait returns idle at once, with no nudge. One with no goal entry, or whose goal is met, is nudged
-# as with goal off. The goal_status shapes are the ones Claude Code 2.1.299 wrote in the goal spike.
+# With goal on, wait nudges no builder: whether its goal is set, met or missing, it returns idle at
+# once, with no nudge and no nudge line in events.tsv, so the reply and goal entry stay last. The goal_status shapes are the ones Claude Code 2.1.299 wrote in the goal spike.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "goal = 5" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
 gs() { # <met> <sentinel> — a goal_status entry
@@ -551,12 +594,12 @@ check "goal = 5 and a goal set in the session log: the idle builder with no PR i
   "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)"
 grep -v authentication_failed "${fixture}" > "${tr}"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "goal = 5 and no goal entry in the session log: the builder is nudged IDLE_NUDGES times" "idle|3|3" \
+check "goal = 5 and no goal entry in the session log: the idle builder with no PR is not nudged, nor logged" "idle|0|0" \
   "${got%%|*}|$(nudges)|$(nudged)"
 { grep -v authentication_failed "${fixture}"; gs false true; gs true false; } > "${tr}"
 : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "goal = 5 and the goal met: the builder is nudged as with goal off" "idle|3|3" "${got%%|*}|$(nudges)|$(nudged)"
+check "goal = 5 and the goal met: the idle builder with no PR is not nudged, nor logged" "idle|0|0" "${got%%|*}|$(nudges)|$(nudged)"
 rm -f "${ROOT}/screen" "${b}/stories/a.md" "${tr}"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.

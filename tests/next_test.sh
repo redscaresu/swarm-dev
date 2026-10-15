@@ -109,13 +109,11 @@ expect "lead story is a gate" "gate" \
 expect "an escalated story is the lead's to decide, ahead of gate" "escalated b" \
   "item stories/a.md 'status: ready' 'kind: lead'" \
   "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'"
-# `close <slug> impossible` hands a story on with a **You:** step in its block: the user's, so a gate.
-# A **You:** line in the story's body, outside the block, leaves an escalated story the lead's.
-YOU_BLOCK="printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**You:** fix its **Done when**' '<!-- /swarm.sh escalated -->' >> docs/stories/b.md"
-expect "an impossible story, its block's **You:** step the user's, is a gate, not escalated" "gate" \
-  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 1' 'escalated_from: code'" "${YOU_BLOCK}"
-expect "a **You:** line outside the block leaves an escalated story the lead's" "escalated b" \
-  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'" "echo '**You:** a step in the body' >> docs/stories/b.md"
+# `close <slug> impossible` hands a story on with an **Impossible.** block: the lead's, like a failed
+# Fable build, so escalated, never a gate; next's reason says its builder called it impossible.
+IMPOSSIBLE_BLOCK="printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**Impossible.** The builder replied' '<!-- /swarm.sh escalated -->' >> docs/stories/b.md"
+expect "an impossible story is the lead's to decide, escalated, not a gate" "escalated b" \
+  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 1' 'escalated_from: code'" "${IMPOSSIBLE_BLOCK}"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture
 expect "once the lead drops it, next no longer names it" "gate" \
   "item stories/a.md 'status: ready' 'kind: lead'" \
@@ -129,22 +127,52 @@ waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Wa
 if grep -qx '  lead: a' <<< "${waiting}" && ! grep -q 'b$' <<< "${waiting}"; then echo "ok   status lists a plain lead story under Waiting on you, never an escalated one"
 else echo "FAIL status lists a plain lead story under Waiting on you, never an escalated one: got '${waiting}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+# An impossible story is never under Waiting on you, and next says why it is the lead's.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item stories/b.md 'status: ready' 'kind: lead' 'attempts: 1' 'escalated_from: code' \
+  && eval "${IMPOSSIBLE_BLOCK}")
+waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Waiting on you$/,/^$/p')"
+why="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 2p)"
+if ! grep -q 'b$' <<< "${waiting}" && [[ "${why}" == "b's builder called its Done when impossible: re-scope it and run swarm.sh reset b <reason>, or swarm.sh drop b <reason>, then tell the user why" ]]; then
+  echo "ok   an impossible story is not under Waiting on you, and next says its builder called it impossible"
+else echo "FAIL an impossible story is not under Waiting on you, and next says its builder called it impossible: got '${waiting}' and '${why}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
 # Before its one reset, next offers reset or drop; after it (an ok reset line in events.tsv), only drop.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories .swarm && item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code')
 why1="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 2p)"
 printf '2026-10-15T01:00:00Z\treset\tb\tw:me\tok (re-scoped)\n' > "${dir}/.swarm/events.tsv"
 why2="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 2p)"
+# An impossible story after its one reset is offered only drop too.
+(cd "${dir}" && eval "${IMPOSSIBLE_BLOCK}")
+why3="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 2p)"
 if [[ "${why1}" == *"swarm.sh reset b <reason>"* && "${why2}" == *"after its one reset (2026-10-15T01:00:00Z)"* \
-      && "${why2}" == *"swarm.sh drop b <reason>"* && "${why2}" != *"swarm.sh reset"* ]]; then
-  echo "ok   next offers reset before a story's one reset, and only drop after it"
-else echo "FAIL next offers reset before a story's one reset, and only drop after it: got '${why1}' then '${why2}'"; fails=$((fails + 1)); fi
+      && "${why2}" == *"swarm.sh drop b <reason>"* && "${why2}" != *"swarm.sh reset"* \
+      && "${why3}" == *"impossible after its one reset (2026-10-15T01:00:00Z)"* && "${why3}" == *"swarm.sh drop b <reason>"* && "${why3}" != *"swarm.sh reset"* ]]; then
+  echo "ok   next offers reset before a story's one reset, and only drop after it, impossible or not"
+else echo "FAIL next offers reset before a story's one reset, and only drop after it, impossible or not: got '${why1}', '${why2}', '${why3}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+# With goal on, /swarm's story arm names the cause on its give-up closes, reads the current build's
+# transcript, and leaves a cleared-on-error story alone until it decides.
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+arm="$(sed -n '/^   - `story <slug>`:/,/^   - `plan-epic <epic>`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+got=""
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+for w in '`swarm.sh close <slug>' 'stalled` for a stall' '`swarm.sh close <slug> met` when review has not converged' \
+         "whose name (field 3) is the builder's agent name" 'do not start it again until you have decided' \
+         'an `s` in front unless it starts with a' '- None of the above fits (no reply, no refusal, no stall' \
+         'That counts nothing, so do not start it again: decide' 'the restart above is only for a stall or a review that has not converged' \
+         '- `met`:' '- `impossible`:' '- `stalled`:' '- `bound`:' '- `paused`:' '- `cleared-on-error`:'; do
+  grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+grep -qF 'with `failed`' <<< "${arm}" && got+=" has an invented failed entry"
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story arm closes with a cause under goal, reads the current build, and holds a cleared-on-error story"
+else echo "FAIL commands/swarm.md's story arm:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 got=""; for w in 'swarm.sh reset <slug> <reason>' 'swarm.sh drop <slug> <reason>' 'not a stop' 'tell the user' \
-         'swarm.sh reset <slug> <reason> && git pull --ff-only' 'Waiting on you'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
+         'swarm.sh reset <slug> <reason> && git pull --ff-only' 'Waiting on you' '(its block starts **Impossible.**)'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's escalated arm resets then pulls, or drops, is not a stop, tells the user, and shows Waiting on you while it waits"
 else echo "FAIL commands/swarm.md's escalated arm:${got}"; fails=$((fails + 1)); fi
 expect "ready story in a later epic waits" "gate" \
@@ -470,6 +498,34 @@ refused "tell refuses one herdr reports as working" "still working" working find
 refused "tell refuses one herdr reports as blocked on a prompt" "waiting on a prompt" blocked findings findings.md
 # herdr giving no status (agent_field reads it as unknown): refused as unknown, never as another project's.
 refused "tell refuses its own agent with no session and no herdr status as unknown" "herdr gives no state for it (unknown)" "" findings findings.md
+rm -rf "${dir}"
+
+# conduct on a later epic sets it active, says so, and status stops listing it as waiting on you; an
+# active epic is left as it is, silently. An epic file that cannot be written stays later, conduct says
+# so and still succeeds. herdr is a stub whose one answer has every field conduct reads.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p bin && item stories/s.md 'status: ready' 'kind: code' 'epic: e')
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
+for st in later active; do
+  (cd "${dir}" && item epics/e.md "status: ${st}")
+  out="$(conduct)"; rm -rf "${dir}/.swarm/state"
+  said=no; grep -q '^epic e: status later -> active' <<< "${out}" && said=yes
+  # The whole output, then grep: grep -q can close the pipe on status, which fails under pipefail.
+  waits=no; grep -q 'later epic: e' <<< "$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status)" && waits=yes
+  got="$(sed -n 's/^status: //p' "${dir}/docs/epics/e.md")|${said}|${waits}"
+  want="active|no|no"; [[ ${st} == later ]] && want="active|yes|no"
+  if [[ "${got}" == "${want}" ]]; then echo "ok   conduct on a ${st} epic leaves it active (active|said|waits on you: ${got})"; else
+    echo "FAIL conduct on a ${st} epic: want '${want}', got '${got}': ${out}"; fails=$((fails + 1)); fi
+done
+(cd "${dir}" && item epics/e.md "status: later"); chmod a-w "${dir}/docs/epics"
+out="$(conduct; echo "exit $?")"; rm -rf "${dir}/.swarm/state"; chmod u+w "${dir}/docs/epics"
+got="$(sed -n 's/^status: //p' "${dir}/docs/epics/e.md")|$(ls "${dir}/docs/epics")"
+if [[ "${got}" == "later|e.md" && "${out}" == *"epic e: could not write "*"/docs/epics/e.md, so it is still later"*"exit 0" ]]; then
+  echo "ok   conduct on a later epic it cannot write leaves it later, says so, and exits 0"; else
+  echo "FAIL conduct on a later epic it cannot write: got '${got}': ${out}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

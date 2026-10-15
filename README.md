@@ -75,7 +75,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `/hld <title>` | Write a design with a co-author agent. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
 | `swarm.sh outcomes` | One row per build: model, cost, review rounds, and whether it merged. |
 
@@ -94,9 +94,9 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 | a draft design | finish it with the co-author, then agree it |
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
-| a story its builder called impossible | fix its **Done when**, then run `swarm.sh reset <slug> <reason>` |
+| a builder stopped `cleared-on-error` (its goal was refused or failed) | nothing: the wave stops, and the lead decides whether to build it again and tells you why |
 | a PR waiting for you | merge it, or close it to send the story back |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (`swarm.sh conduct` sets a `later` epic `active` itself) |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 

@@ -95,6 +95,39 @@ Repeat until a step below says stop:
      escalation is off: after a story's second failed build, stop and tell the user instead of
      starting it again.
 
+     With `goal` on (`swarm.sh config goal` is not `off`), a bare `swarm.sh close <slug>` on a
+     `ready` story is refused, so the give-up closes name their cause: `swarm.sh close <slug>
+     stalled` for a stall, and `swarm.sh close <slug> met` when review has not converged. A builder
+     idle short of its reply is not nudged and is not given up on as above: read why it stopped and
+     close it with that cause, `swarm.sh close <slug> <cause>`. The list below also says whether to
+     start it again; the restart above is only for a stall or a review that has not converged.
+     Read its reply and its transcript, never its pane. The transcript is
+     `<projects>/*/<session>.jsonl`, where `<projects>` is `$CLAUDE_PROJECTS_DIR`, or
+     `${CLAUDE_CONFIG_DIR:-~/.claude}/projects`, and `<session>` is field 7 of the last line in
+     `.swarm/agents.tsv` whose name (field 3) is the builder's agent name: its slug lowercased, each
+     character outside `a-z`, `0-9`, `_` and `-` made `-`, an `s` in front unless it starts with a
+     letter, then cut to 32 characters. That line is the current build. The reply comes first (`IMPOSSIBLE:` or the
+     story's reply), then the `reason` of the last `goal_status` entry with `met:true`.
+     - `met`: the reply is there. Review it as above; the closes after review or merge stay bare.
+     - `impossible`: the reply starts `IMPOSSIBLE:`. `swarm.sh close <slug> impossible` makes the
+       story `kind: lead`; go back to 1, where `next` names its `escalated <slug>` step.
+     - `stalled`: `wait --stall` returned stalled. `swarm.sh close <slug> stalled`, then start it again.
+     - `bound`: no reply, and the met entry's reason says the stop-after clause applied.
+       `swarm.sh close <slug> bound`, then start it again.
+     - `paused`: the goal is still set with no met entry since, and the builder is idle. Send one
+       `swarm.sh tell <slug> resume <file>` and wait again; if it stops paused again,
+       `swarm.sh close <slug> paused`. That counts nothing, so do not start it again: decide
+       yourself what happens to it, as for `cleared-on-error`, and tell the user what you chose.
+     - `cleared-on-error`: the transcript holds a `/goal` refusal (a `system` `local_command` entry
+       whose stdout refuses `/goal`, with no `goal_status` after it), or the goal is gone and the
+       transcript ends on an API error; or `swarm.sh story` failed on a refused goal.
+       `swarm.sh close <slug> cleared-on-error`, start nothing more, and decide yourself whether to
+       build it again; tell the user what you chose. The story stays `ready` with nothing on it to
+       say so, and `next` will name it again: do not start it again until you have decided.
+     - None of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry
+       whose reason is not the stop-after clause): `swarm.sh close <slug> stalled`, which counts the
+       attempt so `escalate_after` bounds the retries, then start it again.
+
      If `wait` prints `waiting: dialog open` for an escalate build (`swarm.sh _role <slug>` prints
      `escalate`), it may be Fable's usage-credits consent, and accepting that is yours, not the
      user's. `swarm.sh _target <slug>` prints its pane. Read it with `herdr agent read <pane>`, and
@@ -108,8 +141,10 @@ Repeat until a step below says stop:
    - `hld <hld>`: the HLD is a draft, and only the user can write it. Follow `/hld` to resume it
      (the title is in the file): the user works in the co-author's pane, and the review and the
      agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
-   - `escalated <slug>`: Fable's build of the story failed too. Deciding what happens to it is yours,
-     not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
+   - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
+     (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
+     when** impossible, and that **Done when** is what to re-scope. Deciding what happens to it is
+     yours, not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
      PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
      or two what you chose and why:
      - Re-scope it: change the story so a fresh build can succeed, and run

@@ -130,12 +130,13 @@ prints every setting and where it came from.
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
-| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you. An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
+| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort) |
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
 | `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
+| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -179,14 +180,17 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   clear the build away under the same conditions and leave `attempts:` as it was. An unknown cause
   is refused before anything closes, and with `goal` on, so is a close with no cause while the story
   is `ready`. `impossible` means the builder replied `IMPOSSIBLE:`, so the **Done when** cannot be
-  met: the story becomes `kind: lead` with `escalated_from:` and a block whose **You:** step is the
-  user's (fix the **Done when**, then `swarm.sh reset <slug> <reason>`). Because of that step,
-  `next` lists it under waiting on you, not as the lead's `escalated` step. `impossible` hands on
+  met: the story becomes `kind: lead` with `escalated_from:` and a block with the lead's choices
+  (re-scope the **Done when**, then `swarm.sh reset <slug> <reason>`, or `swarm.sh drop <slug>
+  <reason>`). Like a failed Fable build it is the lead's, with no **You:** step, so `next` prints
+  `escalated <slug>` for it and it is never under waiting on you. `impossible` hands on
   any story still `ready` of a kind an agent builds, verify included, and clears its worktree and
-  `story/<slug>` here and on origin so a reset builds it again. When the close finds no build to count
-  (its builder is gone, gh cannot list its PRs, or it is a verify story), it closes no PR, and its
-  block says the PRs were not listed, so the user looks before resetting. Any other story, and a name
-  with no story file, is refused before anything closes.
+  `story/<slug>` here and on origin so a reset builds it again. When the close lists the story's PRs,
+  it closes each open one with `gh pr close`. When it lists none (its builder is gone, gh cannot list
+  them, or it is a verify story), it runs no `gh pr close`, but deleting `story/<slug>` on origin makes
+  GitHub close any PR still open on that branch. The block then says the PRs were not listed, so the
+  lead looks before resetting. Any other story, and a name with no story file, is refused before
+  anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs
@@ -240,13 +244,15 @@ A story's **Done when** names what the builder's session can show (a test run, a
 
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
 stops and reports; the session it was started from stays free. Its last act is writing that report
-to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm-dev:swarm`
-knows it has finished: a conductor is idle whenever it waits on its own background work. It runs in a herdr workspace named
-for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named for the
-epic, in a pane named `conductor`. Each story it starts gets a pane in that tab, named for the
-story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off story gets a tab of its
-own. Run one conductor at a
-time: `watch` reports every story PR, and shared files are the lead's alone.
+to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how
+`/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
+background work. When it starts, an epic still `later` is set `active` (an uncommitted board edit
+that `conduct` reports in one line), so `status` and `next` stop listing it as waiting on you. It
+runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
+it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
+story gets a tab of its own. Run one conductor at a time: `watch` reports every story PR, and shared
+files are the lead's alone.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
@@ -269,7 +275,7 @@ whose session goes idle while its story is `ready` and has no open or merged PR 
 earlier attempt's; for an epic's story with `pr_per = epic`, before `story/<slug>` is pushed) has stopped early, perhaps on a failed request, and nothing else would wake it. `wait` tells it
 why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at
 least a slice apart unless the session turns busy in between. If herdr cannot deliver a nudge,
-`wait` stops there and returns idle, and logs nothing for it. With `goal` on, a builder whose session log shows a goal set and not yet met is not nudged: the goal keeps it going, so `wait` returns idle and the conductor reads why it stopped. Only code, docs and chore stories are
+`wait` stops there and returns idle, and logs nothing for it. With `goal` on, `wait` nudges no builder, whatever its session log shows: a nudge would bury the reply and the goal entry the conductor reads the cause from, so `wait` returns idle and the conductor reads why it stopped. Only code, docs and chore stories are
 nudged, never a verify story, a conductor or a planner, and a gh or git call that fails counts as a
 PR. An idle agent whose transcript (its session's `.jsonl`, the file `cost` reads) ends on Claude
 Code's "Login expired · Please run /login", with no message sent to it since, is never nudged or
@@ -319,7 +325,10 @@ and starts the story again in a later wave with
 `swarm.sh story <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
 builds (2 by default). With `escalate_after = 0` it reports a story that has failed twice to the lead
 instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
-the user's. A Fable builder can stop on its usage-credits consent, which `wait` prints as
+the user's. With `goal` on, a builder idle short of its reply is not nudged: the conductor reads the
+cause from its reply and the last met `goal_status` entry's `reason` in its session log, closes it with
+`swarm.sh close <slug> <cause>` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
+in the wave and lists the story for the lead. A Fable builder can stop on its usage-credits consent, which `wait` prints as
 `waiting: dialog open`. Only for an escalate build, and only once `herdr agent read` shows that
 consent, the conductor accepts it with `herdr pane send-keys` in the builder's pane, runs
 `swarm.sh dialog <slug> accepted` (or `dismissed`, telling the lead), which logs `dialog <slug>`
@@ -457,9 +466,17 @@ Before it pulls the board's repo, it sets the front matter that swarm.sh wrote o
 back to what is committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
 if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
-stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and restores them all if
-the pull still fails. It touches nothing, and stops naming why, when the pull cannot fast-forward or
-a file outside the board is changed; a staged or differing edit is left alone and still stops it. `swarm.sh unblock` then readies a
+stop it. When the pull changes a board file whose only unstaged edit is to keys swarm.sh writes
+(`status`, `prs`, `blocked_by`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
+another story in review, reconcile checks the file out, pulls, then sets those keys again. If the
+pull deleted the file, it stays deleted; reconcile prints its name and keeps the backup, which holds
+the edit. If the base changed one of those keys as well, to a different value, reconcile stops
+before it touches anything and names the file. It also stops when the edit changes `status` and the
+base changed `blocked_by` or `depends_on`, so a flip to `ready` never lands over a new dependency.
+Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and
+reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
+again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
+a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
 blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
 It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
 and `swarm.sh reconcile`, which pull the board the way they do for you, putting back a retry's
