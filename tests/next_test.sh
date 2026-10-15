@@ -362,13 +362,23 @@ if [[ "${got}" == "idle"$'\n'"exit 0" && "${reported}" == yes && $((SECONDS - st
   echo "ok   wait --until-report on a busy conductor waits across slices until it reports"; else
   echo "FAIL wait --until-report on a busy conductor waits across slices until it reports: got '${got}' after $((SECONDS - start))s, report: ${reported}"; fails=$((fails + 1)); fi
 rm -f "${dir}/.swarm/conduct-e1.report.md"
+# A slice that runs out with the session unknown (claude agents --json failing) waits again too.
+rm -f "${dir}/claude.json"; start=${SECONDS}
+(sleep 3; echo report > "${dir}/.swarm/conduct-e1.report.md"; session idle) &
+got="$(SWARM_CONDUCTOR_SLICE_MS=1000 SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null; echo "exit $?")"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == "idle"$'\n'"exit 0" && "${reported}" == yes && $((SECONDS - start)) -ge 3 ]]; then
+  echo "ok   wait --until-report on a conductor of unknown state waits across slices until it reports"; else
+  echo "FAIL wait --until-report on a conductor of unknown state waits across slices until it reports: got '${got}' after $((SECONDS - start))s, report: ${reported}"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
 # A herdr wait that fails other than by timing out is not a slice running out: it ends the wait.
 mv "${dir}/bin/herdr" "${dir}/bin/herdr.real"
 # shellcheck disable=SC2016 # the stub's $1/$2/$@ are its own arguments, written literally
 printf '#!/bin/sh\n[ "$1 $2" = "agent wait" ] && { echo "{\\"error\\":\\"socket closed\\"}" >&2; exit 1; }\nexec "%s" "$@"\n' "${dir}/bin/herdr.real" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"; session busy; start=${SECONDS}
-got="$(cd "${dir}" && SWARM_CONDUCTOR_SLICE_MS=1000 HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
-  perl -e 'alarm 20; exec @ARGV' bash "${SWARM}" wait --until-report conduct-e1 2>/dev/null; echo "exit $?")"   # alarm: a retry loop fails, not hangs
+got="$(cd "${dir}" && SWARM_CONDUCTOR_SLICE_MS=10000 HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+  perl -e 'alarm 30; exec @ARGV' bash "${SWARM}" wait --until-report conduct-e1 2>/dev/null; echo "exit $?")"   # a slice well above startup; alarm: a retry loop fails, not hangs
 mv "${dir}/bin/herdr.real" "${dir}/bin/herdr"
 if [[ "${got}" == "busy"$'\n'"exit 1" && $((SECONDS - start)) -lt 10 ]]; then
   echo "ok   wait --until-report on a busy conductor ends when herdr's wait fails"; else

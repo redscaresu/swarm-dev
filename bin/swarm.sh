@@ -1424,8 +1424,8 @@ wait_agent() {
 # login expired (wait_agent's auth).
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 # <timeout-ms> 0 (`wait --until-report`) has no deadline: each wait_agent slice is
-# SWARM_CONDUCTOR_SLICE_MS (an hour), and a slice that ran out with the session still busy waits
-# again. A busy return before the slice ran out is herdr's wait failing, and ends the wait.
+# SWARM_CONDUCTOR_SLICE_MS (an hour), and a slice that ran out with the session still busy (or
+# unknown) waits again. Such a return before the slice ran out is herdr's wait failing, and ends it.
 wait_conductor() {
   local name="$1" forever="" status deadline=$((SECONDS + $2 / 1000)) poll rc ms t0
   [[ $2 -ne 0 ]] || forever=1
@@ -1433,7 +1433,7 @@ wait_conductor() {
     ms=$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))
     [[ -z "${forever}" ]] || ms="${SWARM_CONDUCTOR_SLICE_MS:-3600000}"
     t0="$(now_ms)"; rc=0; status="$(wait_agent "${name}" "${ms}")" || rc=$?
-    [[ -z "${forever}" || ${rc} -ne 1 || "${status}" != busy || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
+    [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
     [[ "${status}" =~ ^(idle|done)$ && ! -f "$(conductor_report "${name}")" ]] || break
     [[ -n "${forever}" || ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; [[ -n "${forever}" ]] || (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
