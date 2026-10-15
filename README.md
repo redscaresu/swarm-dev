@@ -97,7 +97,7 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 | a `lead` story | say go, and do its **You:** steps |
 | a builder stopped `cleared-on-error` (its goal was refused or failed) | nothing: the wave stops, and the lead decides whether to build it again and tells you why |
 | a PR waiting for you | merge it, or close it to send the story back |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (`swarm.sh conduct` sets a `later` epic `active` itself) |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 

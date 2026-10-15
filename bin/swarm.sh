@@ -2079,6 +2079,17 @@ start_conductor() {
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
   HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
   echo "workspace ${hld} (${ws})"
+  # An epic being built is active, or status and next list it as a later epic waiting on the user.
+  # An uncommitted board edit, as unblock's are; any other status is left as it is. The conductor is
+  # already running, so a file that cannot be written is reported, never fatal: a failed conduct
+  # would invite a second conductor.
+  [[ "$(get_fm "${epic_file}" status)" == later ]] || return 0
+  if set_fm "${epic_file}" status active 2>/dev/null; then
+    echo "epic ${epic}: status later -> active (uncommitted board edit)"
+  else
+    rm -f "${epic_file}.tmp"
+    echo "epic ${epic}: could not write ${epic_file}, so it is still later; set status: active by hand" >&2
+  fi
 }
 
 # fm <file> <key> — the first front-matter value for <key>, or nothing.
