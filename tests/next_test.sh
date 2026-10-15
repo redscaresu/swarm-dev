@@ -198,7 +198,8 @@ else echo "FAIL commands/swarm.md's story arm:${got}"; fails=$((fails + 1)); fi
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 got=""; for w in 'swarm.sh reset <slug> <reason>' 'swarm.sh drop <slug> <reason>' 'not a stop' 'tell the user' \
-         'swarm.sh reset <slug> <reason> && git pull --ff-only' 'Waiting on you' '(its block starts **Impossible.**)'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
+         'swarm.sh reset <slug> <reason> && git pull --ff-only' 'Waiting on you' '(its block starts **Impossible.**)' \
+         'its block starts **Held (<cause>).**' 'Lifting a hold is not the story'"'"'s one reset'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's escalated arm resets then pulls, or drops, is not a stop, tells the user, and shows Waiting on you while it waits"
 else echo "FAIL commands/swarm.md's escalated arm:${got}"; fails=$((fails + 1)); fi
 expect "ready story in a later epic waits" "gate" \

@@ -146,10 +146,15 @@ Repeat until a step below says stop:
      agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
-     when** impossible, and that **Done when** is what to re-scope. Deciding what happens to it is
+     when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
+     its block starts **Held (<cause>).**, and `next`'s line names the hold): its builder paused or
+     its goal was cleared on an error, nothing failed, and there is nothing to re-scope. Deciding what happens to it is
      yours, not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
      PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
      or two what you chose and why:
+     - A held story: lift the hold with `swarm.sh reset <slug> <reason>`, which puts its kind back
+       and keeps `attempts:`, so it is built again. Lifting a hold is not the story's one reset, so
+       the at-most-once rule below does not apply to it. Or drop it, as below.
      - Re-scope it: change the story so a fresh build can succeed, and run
        `swarm.sh reset <slug> <reason>`. When the board is in the story's repo, a builder reads the
        story in its own worktree, from the branch builds start from, so the new scope has to reach
