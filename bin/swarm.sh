@@ -2920,7 +2920,7 @@ for a in agents:
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
+  DASH_ESCALATE_AFTER="${CFG_escalate_after}" SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
 import collections, datetime, itertools, json, os, re, time
 E = os.environ
 exec(E["SWARM_REPORT_PY"])
@@ -2928,6 +2928,9 @@ exec(E["SWARM_PANES_PY"])
 exec(E["SWARM_STALL_PY"])
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
+# Now, and so today: DASH_NOW (epoch seconds) fixes them, so a test's "today" holds across midnight.
+NOW = float(E.get("DASH_NOW") or time.time())
+TODAY = datetime.date.fromtimestamp(NOW)
 NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
 WIDE = W >= 140   # two columns: needs you and the epics on the left, recent as a log on the right
 RW = W * 2 // 5 if WIDE else 0
@@ -3044,6 +3047,17 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
+# Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
+ESCALATION = ("escalate", "dialog", "escalated", "reset", "drop")
+escalations, escalated_at = 0, {}
+for f in read_tsv(E["DASH_EVENTS"], 5):
+    t = epoch(f[0]) if f[1] == "escalate" else None
+    m = re.match(r"ok \(attempt (\d+)\)", f[4])
+    if t is None or not f[4].startswith("ok"):
+        continue
+    escalations += datetime.date.fromtimestamp(t) == TODAY
+    if m and t > escalated_at.get(f[2], (0,))[0]:
+        escalated_at[f[2]] = (t, m.group(1))
 recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
@@ -3096,7 +3110,8 @@ if agents is not None:
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
                      look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
                      open=bool(slug) and story_by_slug[slug][2] != "done",
-                     since=started.get(slug) or started.get(epic_of.get(base)) or started.get(base))
+                     since=started.get(slug) or started.get(epic_of.get(base)) or started.get(base),
+                     escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
         r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
@@ -3170,8 +3185,11 @@ def agent_cols(r):
         row = [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", model_style(r["model"]))]
     row.append((r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"))
     if WIDE and r.get("state") == "working" and r.get("since"):
-        m = max(int(time.time() - r["since"]) // 60, 0)
+        m = max(int(NOW - r["since"]) // 60, 0)
         row.append((f"  {m}m" if m < 60 else f"  {m // 60}h{m % 60:02d}m", "dim"))
+    if r.get("escalated"):
+        t, n = r["escalated"]
+        row.append((f"  attempt {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
     return row
 
 def agent_row(r):
@@ -3249,9 +3267,6 @@ def tree_view():
 
 # Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
 # Findings are one row per PR and day, and at most a third of the rows, so they never crowd out the rest.
-NOW = time.time()
-TODAY = datetime.date.today()
-
 def when(s):
     # (sort time, relative time). A date alone (findings.tsv) sorts as the end of that local day,
     # after the day's timed events, and reads in calendar days: today, yesterday, Nd ago.
@@ -3286,8 +3301,10 @@ for (day, pr), fs in found.items():
     events.append((day, fs[0][1] if len(fs) == 1 else "findings", f"{text} (#{pr})", "finding"))
 for f in read_tsv(E["DASH_EVENTS"], 5):
     ok = f[4].startswith("ok")
-    events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"), "failed" if not ok else "start" if f[1] in STARTS else "action"))
-ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad")}
+    events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"),
+                   "failed" if not ok else "start" if f[1] in STARTS else "escalation" if f[1] in ESCALATION else "action"))
+ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad"),
+        "escalation": ("▲", "fable")}
 dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
 
 def stamp(raw, t):
@@ -3366,8 +3383,26 @@ summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} age
            (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
 if E.get("DASH_COST"):
     summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
+# Who is on call (the escalate role's model, off when escalate_after is 0) and today's escalations, a
+# zero count too. It goes on the summary's line when it fits there, else on a line of its own.
+esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "escalate" and len(p) > 3), None)
+on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
+on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
+           (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
+SEP = (" · ", "dim")
+
+def pack(groups, n):
+    # Groups of styled segments onto as few lines of n as they fit, never splitting a group; each
+    # group carries the separator it takes after another on the same line.
+    rows = [[]]
+    for sep, g in groups:
+        if rows[-1] and sum(len(t) for t, _ in rows[-1] + [sep] + g) > n:
+            rows.append([])
+        rows[-1] += ([sep] if rows[-1] else []) + g
+    return [fit(r, n) for r in rows]
+
 if not WIDE:
-    out.append(fit(summary, W))
+    out += pack([(SEP, summary), (SEP, on_call)], W)
 drift = int(E.get("DASH_DRIFT") or 0)
 if drift:
     out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
@@ -3393,8 +3428,8 @@ for item in LEGEND + ([KEYWORDS] if KEYS and not WIDE else []):
 legend.append(cur)
 foot = [fit([(cut(l, W), "dim")], W) for l in legend]
 if WIDE:
-    foot.append(fit([("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary
-                    + [("   ", ""), (KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")], W))
+    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call),
+                  (("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])], W)
 
 # Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
 # column; from 140 they are the right column, the ladder on top.

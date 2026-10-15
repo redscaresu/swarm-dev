@@ -95,8 +95,8 @@ printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"}]}}' ;;
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
     [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
     [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
@@ -150,7 +150,8 @@ for panel in "needs you" "epics" "recent"; do
 done
 check "the header is one line: project, version, merge, next, clock" grep -qE '^proj  swarm-dev [0-9.]+  merge human  next wait conduct-e1 +[0-9]{2}:[0-9]{2}:[0-9]{2}$' <<< "$(head -1 <<< "${out}")"
 check "the summary line counts epics, working agents, green PRs, stalls and cost" test "$(sed -n 2p <<< "${out}")" == "1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · \$24.00 today"
-check "an uncommitted board edit is one line under the summary" has "board: 1 uncommitted edit in the main checkout (reconcile pulls first)" "$(sed -n 3p <<< "${out}")"
+check "below 140 columns, on call and today's escalations follow the summary, on a line of their own when it is full" test "$(sed -n 3p <<< "${out}")" == "on call: fable·xhigh · 0 escalations today"
+check "an uncommitted board edit is one line under the summary" has "board: 1 uncommitted edit in the main checkout (reconcile pulls first)" "$(sed -n 4p <<< "${out}")"
 check "needs you is the first panel" grep -q '^╭─ needs you ─' <<< "$(grep -m1 '^╭─' <<< "${out}")"
 needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 check "needs you lists a green PR as a merge" grep -qE '^│ ! merge r#7 \(✓ green · behind\)  s-one +│$' <<< "${needs}"
@@ -232,7 +233,7 @@ check "at 160 columns the epics and the recent log sit side by side" grep -qE '^
 check "at 160 columns needs you is the left column's first box, recent the right's" grep -qE '^╭─ needs you ─+╮ ╭─ recent ─+╮$' <<< "${out}"
 check "at 160 columns recent's time column is HH:MM today, the date before" grep -qE '^│ 10-05  ⇡ merged #9 story/s-zero ' <<< "$(sed -n '/╭─ recent/{n;s/^.* │ │/│/;p;}' <<< "${out}")"
 check "at 160 columns an agent's card has its role, model label and state" grep -qE '│   ● conduct-e1 +conduct +opus·high +working +│ ' <<< "${out}"
-check "at 160 columns the status bar is the last line, with merge, the counts, cost and the keys" grep -qE '^merge human · 1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · [$]24[.]00 today +q quit · t tree · l ladder · r redraw' <<< "$(tail -1 <<< "${out}")"
+check "at 160 columns the status bar is the last lines, with merge, the counts, cost, on call and the keys" grep -qE '^merge human · 1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · [$]24[.]00 today · on call: fable·xhigh · 0 escalations today +q quit · t tree · l ladder · r redraw' <<< "$(tail -2 <<< "${out}" | paste -sd' ' -)"
 check "at 160 columns the summary line moves into the status bar" test "$(grep -c 'epics active' <<< "${out}")" -eq 1
 check "at 160 columns, piped, there are no ANSI escapes" lacks $'\033[' "${out}"
 for cols in 140 147 153 159; do
@@ -396,6 +397,51 @@ mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
 rm "${P}/.claude/swarm/config"
+
+# --- Escalation. DASH_NOW fixes dash's now at local noon on 2026-10-10, and every line here is
+# minutes before it, so "today" cannot drift across midnight. Two ok escalate builds today (x-esc's
+# attempt 3 an hour ago), one yesterday and one failed; each other escalation kind once ok, and a
+# reset, a drop and a dialog that failed. x-esc, an escalate agent (agents.tsv), gets a pane and a busy session.
+NOW="$(python3 -c 'import datetime; print(int(datetime.datetime(2026, 10, 10, 12).timestamp()))')"
+before_now() { python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) - 60 * int(sys.argv[2]), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))' "${NOW}" "$1"; }
+cp "${P}/.swarm/events.tsv" "${ROOT}/events.before-esc"
+{
+  printf '%s\tescalate\tx-esc\tw1:p1\tok (attempt 2)\n' "$(before_now 1500)"
+  printf '%s\tescalate\tx-esc\tw1:p1\tok (attempt 3)\n' "$(before_now 60)"
+  printf '%s\tescalate\ty-esc\tw1:p1\tok (attempt 3)\n' "$(before_now 50)"
+  printf '%s\tescalate\tz-esc\tw1:p1\tfailed (exit 1)\n' "$(before_now 45)"
+  printf '%s\tdialog\tx-esc\tw1:p1\tok\n' "$(before_now 40)"
+  printf '%s\tescalated\tw-esc\tw1:p1\tok (attempts 3, 1 PRs)\n' "$(before_now 35)"
+  printf '%s\treset\tw-esc\tw1:p1\tok\n' "$(before_now 30)"
+  printf '%s\tdrop\tv-esc\tw1:p1\tok\n' "$(before_now 25)"
+  printf '%s\ttell\tt-esc\tw1:p1\tok\n' "$(before_now 20)"
+  printf '%s\treset\tr-bad\tw1:p1\tfailed (exit 1)\n' "$(before_now 15)"
+  printf '%s\tdrop\td-bad\tw1:p1\tfailed (exit 1)\n' "$(before_now 10)"
+  printf '%s\tdialog\tg-bad\tw1:p1\tfailed (exit 1)\n' "$(before_now 5)"
+} >> "${P}/.swarm/events.tsv"
+printf 'w2:p8 x-esc\n' > "${P}/.swarm/state/x-esc"
+esc_at="$(python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) - 3600).strftime("%H:%M"))' "${NOW}")"
+printf '[{"sessionId":"sess-esc","status":"busy"}]' > "${ROOT}/claude-esc.json"
+escdash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/claude-esc.json" DASH_NOW="${NOW}" LINES=80 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
+out="$(COLUMNS=160 escdash)"
+check "at 160 columns the status bar says who is on call" has "on call: fable·xhigh" "$(tail -2 <<< "${out}")"
+check "at 160 columns the status bar counts today's ok escalate builds, not yesterday's or a failed one" has " · 2 escalations today" "$(tail -2 <<< "${out}")"
+check "at 160 columns an escalated builder's card shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working +attempt 3 · ${esc_at} +│" <<< "${out}"
+out="$(COLUMNS=100 escdash)"
+check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 3p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
+check "at 100 columns an escalated builder's row shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working +attempt 3 · ${esc_at} +│" <<< "${out}"
+recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
+for k in "escalate y-esc" "dialog x-esc" "escalated w-esc" "reset w-esc" "drop v-esc"; do
+  check "recent marks ${k%% *} with ▲" grep -qE "^│ +[0-9]+m ago  ▲ ${k}" <<< "${recent}"
+done
+check "recent keeps · for a tell" grep -qE '^│ +20m ago  · tell t-esc' <<< "${recent}"
+for k in "escalate z-esc" "reset r-bad" "drop d-bad" "dialog g-bad"; do
+  check "recent marks a failed ${k%% *} ✗" grep -qE "^│ +[0-9]+m ago  ✗ ${k}: failed" <<< "${recent}"
+done
+mkdir -p "${P}/.claude/swarm"; echo "escalate_after = 0" > "${P}/.claude/swarm/config"
+check "with escalate_after = 0 nobody is on call" has "on call: off · 2 escalations today" "$(COLUMNS=100 escdash)"
+rm "${P}/.claude/swarm/config" "${P}/.swarm/state/x-esc"
+cp "${ROOT}/events.before-esc" "${P}/.swarm/events.tsv"
 # wait: herdr says done at once (the stub), and s-three's session (sess-today) is busy, so a wait
 # sleeps out each slice and reads the session again; herdr's word is never the answer.
 printf '[{"sessionId":"sess-today","status":"busy"},{"sessionId":"sess-cut","status":"busy"}]' > "${ROOT}/claude.json"
