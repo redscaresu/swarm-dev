@@ -300,9 +300,9 @@ aside), written after the send. If Claude Code refused
 the goal (hooks restricted by settings or policy, or a folder it does not trust), or no entry came,
 `story` fails, names the story and the reason, and leaves the builder open for the lead to look at.
 It never sends the `/goal` again, because a second one would reset a goal that had set.
-After `swarm.sh tell <slug> findings <file>`, `tell` waits for the findings turn to end, then sends
-a fresh `/goal` that holds until the findings are addressed and the builder has sent the reply its
-brief asks for, or until N more turns have passed. `tell` fails and names the story unless the
+Once the builder takes up findings from `swarm.sh tell <slug> findings <file>`, `tell` sends it a
+fresh `/goal` in the same turn. The goal holds until the findings are addressed and the builder has
+sent the reply its brief asks for, or until N more turns have passed. `tell` fails and names the story unless the
 session log shows that goal set after the tell began. A nudge or resume tell sends no goal.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,

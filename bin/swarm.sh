@@ -1146,8 +1146,6 @@ story_text() {
 # PROMPT_TIMEOUT_MS: how long a prompt has to be taken up (deliver_prompt), and a /goal to show in
 # the session log (send_goal).
 PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
-# WAIT_MS: how long `wait` waits by default, and a findings tell with goal on for the findings turn.
-WAIT_MS=3600000
 
 # deliver_prompt <name> <prompt-file> [<pane>] [once] — submit the brief and confirm the agent acted on it.
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
@@ -1396,7 +1394,6 @@ is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1;
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
 tell_agent() {
   local kind="$2" f="$3" name msg state since
-  since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1418,31 +1415,28 @@ tell_agent() {
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
+  if [[ "${CFG_goal}" == off || "${kind}" != findings ]]; then deliver_prompt "${name}" "${msg}"; echo "told ${name}"; return; fi
+  since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
   deliver_prompt "${name}" "${msg}"
-  if [[ "${CFG_goal}" != off && "${kind}" == findings ]]; then
-    # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
-    # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
-    # shellcheck disable=SC2064 # expand now, as above
-    trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
-    findings_goal "$1" "${name}" "${since}" "${msg}.goal"
-  fi
+  # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
+  # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
+  # shellcheck disable=SC2064 # expand now, as above
+  trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
+  findings_goal "$1" "${since}" "${msg}.goal"
   echo "told ${name}"
 }
 
-# findings_goal <slug> <name> <since> <goal-file> — once the findings turn is idle (settle, holding a
-# slice so the turn just prompted is not read as idle), send the builder a fresh /goal: the findings
-# addressed, the reply its brief asks for in its mode, and the turn bound. Sent idle, as the goal spike
-# advised, so it costs no extra turn. send_goal confirms it from entries newer than the tell, so the
-# build-time goal never counts; a refusal or no entry fails naming the story.
+# findings_goal <slug> <since> <goal-file> — send the builder a fresh /goal mid-turn, once its findings
+# are taken up, so the goal drives the fix (sent after the turn, the judge would find it met at once): the
+# findings addressed, the reply its brief asks for in its mode, and the turn bound. Mid-turn it sets at
+# once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
+# than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
 findings_goal() {
-  local slug="$1" name="$2" goal="$4" mode=story state
+  local slug="$1" goal="$3" mode=story
   [[ "${CFG_pr_per}" != epic || -z "$(fm "${BOARD}/stories/${slug}.md" epic 2>/dev/null)" ]] || mode=epic
-  state="$(settle "$(own_target "${name}")" "${name}" "${WAIT_MS}" "" wake)" \
-    || die "${slug}: its findings turn did not settle within $((WAIT_MS / 60000)) min (${state}); no goal sent"
-  [[ "${state}" =~ ^(idle|done)$ ]] || die "${slug}: its findings turn ended ${state}, not idle; no goal sent"
-  printf '%s %s %s\n' "The goal: the findings in this message are addressed and you have replied." \
+  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed and you have replied." \
     "$(reply_sentence "${mode}")" "It is met once both hold, or stop after ${CFG_goal} more turns." > "${goal}"
-  send_goal "${slug}" "${goal}" "$3"
+  send_goal "${slug}" "${goal}" "$2"
 }
 
 # The merge, signing and review rules, shared by the briefs.
@@ -1467,18 +1461,13 @@ in its worktree, and, when it changes code (not only docs, board files or a depe
 reports a usage limit, do not wait for it: rely on the other review and your own reading of the
 diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
-what to decline), wait for it, and review the new head.$(goal_tell_rule) Stop at the first pass on the latest head
+what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
 its latest head has passed.$(rules_review_rule)
 
 $(finding_rule)
 EOF
-}
-
-# goal_tell_rule — with goal on, a findings tell waits for the findings turn, longer than a foreground call.
-goal_tell_rule() {
-  [[ "${CFG_goal}" == off ]] || printf ' %s' "With goal on, tell itself waits for the findings turn to end, then sets the builder a fresh goal, so run it in the background and wait for it to return before you wait on the builder."
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
@@ -3903,8 +3892,8 @@ dispatch() {
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; stall=""; if [[ "${1:-}" == --stall ]]; then stall=--stall; shift; fi
             n="$(agent_name "${1:?name}")"
-            if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-${WAIT_MS}}"
-            else wait_agent "${n}" "${2:-${WAIT_MS}}" "${stall}"; fi ;;
+            if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
+            else wait_agent "${n}" "${2:-3600000}" "${stall}"; fi ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
 }
