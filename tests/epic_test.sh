@@ -130,7 +130,7 @@ logs_findings() {
   while IFS= read -r line; do
     line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"
     line="${line%%\"<*}\"text\""   # the text placeholder is the last word
-    n="$(cat "${f}" 2>/dev/null | wc -l)"
+    n=0; [[ ! -f "${f}" ]] || n="$(wc -l < "${f}")"
     if ! (cd "${ROOT}" && env -u SWARM_PROJECT bash -c "${line}" >/dev/null 2>&1); then printf 'failed: %s|' "${line}"; continue; fi
     [[ "$(wc -l < "${f}")" -eq $((n + 1)) ]] && printf '%s|' "$(tail -1 "${f}" | cut -f5,6 | tr '\t' ' ')" || printf 'no row|'
   done < <(grep -E '^    SWARM_PROJECT=.* log-finding ' <<< "$1")
