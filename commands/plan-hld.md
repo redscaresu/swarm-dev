@@ -50,5 +50,5 @@ Report in this order: refuted epics, contradictions, codex and critic findings t
 answer, then the surviving epics and their order, then **What you will do**: each epic's `your_part`. Ask before writing. On approval write one
 `docs/epics/<slug>.md` per epic (front matter `status: active` or `later`, `hld: $1`, `depends_on: [<epic slugs>]`, `[]` when none; body: goal,
 **Done when**, out of scope, constraints, **Your part**), add a link to each under the HLD's `## Epics`, open a PR
-with one `swarm.sh codex-review` pass, and `swarm.sh close plan-$1`. Then scope each epic with
+with one `swarm.sh codex-review` pass (a board-only PR needs no version bump), and `swarm.sh close plan-$1`. Then scope each epic with
 `/plan-epic <slug>`, one at a time: each is its own ten-agent swarm.
