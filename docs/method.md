@@ -181,7 +181,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   is `ready`. `impossible` means the builder replied `IMPOSSIBLE:`, so the **Done when** cannot be
   met: the story becomes `kind: lead` with `escalated_from:` and a block whose **You:** step is the
   user's (fix the **Done when**, then `swarm.sh reset <slug> <reason>`). Because of that step,
-  `next` lists it under waiting on you, not as the lead's `escalated` step.
+  `next` lists it under waiting on you, not as the lead's `escalated` step. When a story's close
+  `impossible` cannot hand it on (its builder is not open, say, or gh cannot list its PRs), the close
+  still closes the pane, then fails with the reason, so the story is not built again unnoticed.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs

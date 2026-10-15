@@ -3395,7 +3395,8 @@ CLOSE_CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
 # the attempt away (clear_build), so the next build starts fresh. With no cause, met, stalled or bound
 # it first raises the story's attempts: by one, and when that build was escalate, the story becomes
 # the lead's (escalate_story). impossible, paused and cleared-on-error count nothing, and impossible
-# makes the story the user's (impossible_story).
+# makes the story the user's (impossible_story). An impossible close of a story that ends no build
+# still closes, then fails naming why its story was not handed on.
 close_agent() {
   local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n
   # The message never repeats the word: main logs a die's first line.
@@ -3404,12 +3405,17 @@ close_agent() {
   [[ -n "${cause}" || "${CFG_goal}" == off || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] \
     || die "close: with goal on, $1's story is still ready, so say why its builder stopped: swarm.sh close $1 <cause>, the cause one of ${CLOSE_CAUSES}"
   archive_session "$1"
+  # prs: failed_build's PR list, or why the close ends no build.
   if prs="$(failed_build "$1")"; then counted=1; fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
-  [[ ${counted} == 1 ]] || return 0
+  if [[ ${counted} != 1 ]]; then
+    # A story the judge called impossible and left ready would be built again: say so, and fail.
+    [[ "${cause}" != impossible || ! -f "${f}" ]] || die "close: closed $1, but its story was not made a lead item, because ${prs}"
+    return 0
+  fi
   case "${cause}" in impossible|paused|cleared-on-error)
     clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs}"
     [[ "${cause}" != impossible ]] || impossible_story "$1" "${prs}"
@@ -3463,7 +3469,7 @@ escalate_story() {
 impossible_story() {
   local when you
   when="$(reset_at "$1")"
-  you="**You:** fix its **Done when** (the judge called it impossible from the builder's session), then run \`swarm.sh reset $1 <reason>\`, which puts its kind back so it is built again. When the board is in the story's repo, merge the fix as a board PR first, then reset and pull the board in one go."
+  you="**You:** fix its **Done when** (the judge called it impossible from the builder's session), then run \`swarm.sh reset $1 <reason>\`, which puts its kind back so it is built again. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the fix as a board PR first (with pr_per = epic, then merge the base into epic/<epic>), then reset and pull the board in one go."
   [[ -z "${when}" ]] || you="**You:** fix its **Done when** (the judge called it impossible from the builder's session) in a new story: this one was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it with \`swarm.sh drop $1 <reason>\`."
   lead_block "$1" "**Impossible.** The builder replied \`IMPOSSIBLE:\`, so no agent builds this story until its **Done when** changes. This build was not counted as an attempt."$'\n\n'"${you}" "$2" >/dev/null
   echo "impossible: $1 is kind: lead now, for you to fix its Done when"
@@ -3495,24 +3501,27 @@ lead_block() {
 # under that name (not closed by hand, not already retired), and none of its PRs merged or is open with
 # auto-merge set: with merge = agent a close that comes before the board is pulled, or while the merge
 # waits on auto-merge, finds the story still ready, so only the PR tells. One gh call answers both;
-# when it fails, nothing is counted or cleared, and stderr says so.
+# when it fails, nothing is counted or cleared, and stderr says so. Otherwise it fails printing why
+# not, on one line (close's impossible names it).
 failed_build() {
-  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging
-  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
+  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging st kind
+  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || { echo "there is no story ${f}"; return 1; }
+  st="$(fm "${f}" status)"; [[ "${st}" == ready ]] || { echo "its status is ${st:-missing}, not ready"; return 1; }
   # A verify story has no PR, so nothing here tells its pass from a failure: its close never counts.
-  case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
-  [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
+  kind="$(fm "${f}" kind)"
+  case "${kind}" in ""|code|docs|chore) ;; *) echo "it is a ${kind} story, and only a code, docs or chore build is cleared away"; return 1 ;; esac
+  [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || { echo "its builder is not open in herdr"; return 1; }
   # The conductor finishes an epic's story before closing it, so a ready one never merged.
   [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0
   src="$(repo_dir "$(fm "${f}" repo)")" \
-    || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; return 1; }
+    || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; echo "${src}"; return 1; }
   if ! url="$(git -C "${src}" remote get-url origin)" \
      || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url,autoMergeRequest)" \
      || ! merging="$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")"; then
     echo "swarm: ${slug}: could not list the PRs on story/${slug}, so this close counts no failed build and clears nothing" >&2
-    return 1
+    echo "gh could not list the PRs on story/${slug}"; return 1
   fi
-  [[ "${merging}" == False ]] || return 1
+  [[ "${merging}" == False ]] || { echo "a PR on story/${slug} merged or is set to auto-merge"; return 1; }
   printf '%s\n' "${prs}"
 }
 

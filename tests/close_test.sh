@@ -243,11 +243,22 @@ echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.jso
 item i1 "status: ready" "kind: code" "attempts: 1"; started i1 w:p41; cs i1 impossible >/dev/null
 is "close i1 impossible, its builder open: kind: lead, escalated_from: code, attempts: 1, still ready" "lead|code|1|ready" "$(state i1)"
 b="$(block i1)"
-is "its block has a **You:** line naming Done when, and the PR" "1|yes" \
-  "$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "${b}")|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
+is "its block has a **You:** line naming Done when, the epic branch step, and the PR" "1|yes|yes" \
+  "$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "${b}")|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
 is "and its build is cleared away" "" "$(left i1)"
-item i2 "status: ready" "kind: code" "attempts: 1"; started i2; cp "${P}/docs/stories/i2.md" "${ROOT}/i2.orig"; cs i2 impossible >/dev/null
-is "close impossible with no builder open leaves the story file unchanged" "" "$(diff "${ROOT}/i2.orig" "${P}/docs/stories/i2.md")"
+# A story left ready would be built again against a Done when the judge called impossible, so a close
+# impossible that hands nothing on still closes, then fails naming why; events.tsv does not say ok.
+NOT_LEAD="but its story was not made a lead item, because"
+item i2 "status: ready" "kind: code" "attempts: 1"; started i2; cp "${P}/docs/stories/i2.md" "${ROOT}/i2.orig"
+rc=0; out="$(cs i2 impossible)" || rc=$?
+is "close impossible with no builder open fails, naming i2 and why, and leaves the story file unchanged" "1|yes|" \
+  "${rc}|$(grep -qF "close: closed i2, ${NOT_LEAD} its builder is not open in herdr" <<< "${out}" && echo yes)|$(diff "${ROOT}/i2.orig" "${P}/docs/stories/i2.md")"
+item i3 "status: ready" "kind: code" "attempts: 1"; started i3 w:p57; touch "${ROOT}/ghfail"
+rc=0; out="$(cs i3 impossible)" || rc=$?; rm "${ROOT}/ghfail"
+is "with gh failing, close i3 impossible closes its pane, then fails naming why; still code, nothing cleared" "1|yes|closed|code|worktree branch origin" \
+  "${rc}|$(grep -qF "close: closed i3, ${NOT_LEAD} gh could not list the PRs on story/i3" <<< "${out}" && echo yes)|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(fmv i3 kind)|$(left i3)"
+is "and events.tsv logs close:impossible i3 with that reason, not ok" "1" \
+  "$(grep -c $'\tclose:impossible\ti3\tw:me\tclose: closed i3, '"${NOT_LEAD}" "${P}/.swarm/events.tsv")"
 n=42
 for c in met stalled bound paused cleared-on-error; do
   item "c-${c}" "status: ready" "kind: code" "attempts: 1"; started "c-${c}" "w:p${n}"; n=$((n + 1)); cs "c-${c}" "${c}" >/dev/null
