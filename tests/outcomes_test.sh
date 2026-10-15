@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # outcomes_test.sh — `swarm.sh outcomes` against a fixture: a merged code story whose file the merge
 # deleted (its slug longer than the 32 characters agents.tsv keeps), built twice, with findings fixed (old
-# four-field rows and new ones) and one declined, which is not counted; a docs story still on
+# four-field rows and new ones) and one declined, counted apart; a docs story still on
 # the board; a conductor and a codex agent (not builders, left out). gh is a stub on PATH. Then the same
 # builds read from close's copies of their session logs once Claude Code deleted them. Then each build
 # of a retried story gets its own PR: the last of the slug's PRs its own session log names. Last, each
 # build gets its own start, tokens by type, tells, closes and escalation steps. TZ is UTC, so a build
-# with no session log starts at a known time, except where a check sets another zone.
+# with no session log starts at a known time, except where a check sets another zone. Between them, a
+# fourth project pins kind and story_merged per story.
 set -euo pipefail
 export TZ=UTC
 
@@ -17,7 +18,7 @@ trap 'rm -rf "${dir}"' EXIT
 P="${dir}/repo"; LONG="merged-story-whose-name-is-longer-than-32"; CUT="${LONG:0:32}"
 mkdir -p "${P}/.swarm" "${P}/docs/stories" "${dir}/projects/p" "${dir}/bin" "${dir}/nobin"
 git -C "${P}" init -q
-printf -- '---\nkind: code\nrisk: high\nstatus: ready\n---\n' > "${P}/docs/stories/${LONG}.md"
+printf -- '---\nkind: code\nrisk: high\nepic: e0\nstatus: ready\n---\n' > "${P}/docs/stories/${LONG}.md"
 printf -- '---\nkind: docs\nstatus: ready\n---\n' > "${P}/docs/stories/docs-story.md"
 git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm stories
 git -C "${P}" rm -q "docs/stories/${LONG}.md" && git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm merged
@@ -61,7 +62,7 @@ printf '%s\n' \
   $'2026-10-02\tvacuous-test\thttps://github.com/o/r/pull/8/files\tc' \
   $'2026-10-02\tvacuous-test\to/r#9\td' > "${P}/.swarm/findings.tsv"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncase "$4" in\n  story/%s) printf "https://github.com/o/r/pull/7\\tMERGED\\n" ;;\n  story/docs-story) printf "https://github.com/o/r/pull/8\\tOPEN\\n" ;;\nesac\n' "${LONG}" > "${dir}/bin/gh"
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncase "$4" in\n  story/%s) printf "https://github.com/o/r/pull/7\\tMERGED\\t2026-10-03T10:00:00Z\\n" ;;\n  story/docs-story) printf "https://github.com/o/r/pull/8\\tOPEN\\t\\n" ;;\nesac\n' "${LONG}" > "${dir}/bin/gh"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/nobin/gh"
 chmod +x "${dir}/bin/gh" "${dir}/nobin/gh"
 
@@ -76,17 +77,19 @@ check() { # <name> <output> <exact expected output>
 # The first 17 columns, as they were before the rest were appended.
 HEAD=$'date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts'
 HEAD+=$'\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at'
+HEAD+=$'\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by'
 E6=$'\t\t\t\t\t\t'   # six empty columns, each after its tab: the escalation steps
 # opus 1M input = $4; sonnet 1M output = $10; fable 1M input = $10.
-R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}"
-R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}"
-R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	2	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}"
+R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}	e0	2026-10-03T10:00:00Z	true	1	unknown:2	unknown:1"
+R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}			false	0	unknown:1	"
+# The retry started after every finding on #7, so it takes none of them.
+R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	0	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}	e0	2026-10-03T10:00:00Z	true	0		"
 check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells by kind (bare as findings, refused left out), closes (close:stalled among them), findings, attempts, start to the second, tokens by type" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
 check "--since leaves earlier rows out, and attempts still count them" \
   "$(outcomes "${dir}/bin" --since 2026-10-03)" "$(printf '%s\n' "${HEAD}" "${R3}")"
-nopr() { awk -F'\t' -v OFS='\t' '{ $14 = 0; $15 = ""; $16 = "" } 1' <<< "$1"; }
-check "a failing gh leaves pr and pr_state empty and still prints every row" \
+nopr() { awk -F'\t' -v OFS='\t' '{ $14 = $33 = 0; $15 = $16 = $31 = $32 = $34 = $35 = "" } 1' <<< "$1"; }
+check "a failing gh leaves pr, pr_state, merged_at, story_merged and the findings empty, keeps epic, and still prints every row" \
   "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "$(nopr "${R1}")" "$(nopr "${R2}")" "$(nopr "${R3}")")"
 if outcomes "${dir}/bin" --since yesterday >/dev/null 2>&1; then
   echo "FAIL a bad --since is refused"; fails=$((fails + 1))
@@ -111,7 +114,7 @@ check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${P}/.swarm/sessions/"*
 # With neither, cost, tokens and started are empty and the slug is agents.tsv's cut name, whose story
 # is unknown. The close sent to that name is still the first build's, which started before it.
-R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}"
+R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}				0		"
 nolog() { awk -F'\t' -v OFS='\t' '{ $8 = $9 = $18 = $19 = $20 = $21 = $22 = "" } 1' <<< "$1"; }
 check "with neither, the cells are empty, a slug with one PR keeps it, and nothing fails" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nolog "${R2}")" "${R3N}")"
@@ -133,7 +136,7 @@ printf -- '---\nkind: code\nepic: e1\nstatus: ready\n---\n' > "${Q}/docs/stories
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\nn=99; case " $* " in *" --limit 1 "*) n=1 ;; esac\nhead -n "$n" "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" > "${dir}/bin2/gh"
 chmod +x "${dir}/bin2/gh"
-printf '%s\t%s\n' "${U}/2" MERGED "${U}/1" CLOSED > "${dir}/prs/story_retried"
+printf '%s\t%s\t%s\n' "${U}/2" MERGED 2026-10-02T12:00:00Z "${U}/1" CLOSED "" > "${dir}/prs/story_retried"
 printf '%s\t%s\n' "${U}/3" OPEN > "${dir}/prs/story_shared"
 printf '%s\t%s\n' "${U}/4" OPEN > "${dir}/prs/story_late"
 printf '%s\t%s\n' "${U}/6" OPEN > "${dir}/prs/story_foreign"
@@ -158,6 +161,9 @@ printf '%s\n' \
   $'2026-10-03\tcode\tlate\tclaude\topus\thigh\tl1' $'2026-10-03\tescalate\tlate\tclaude\tfable\txhigh\tl2' \
   $'2026-10-03\tcode\tforeign\tclaude\topus\thigh\tf1' \
   $'2026-10-04\tcode\tin-epic\tclaude\topus\thigh\te1' $'2026-10-05\tescalate\tin-epic\tclaude\tfable\txhigh\te2' > "${Q}/.swarm/agents.tsv"
+rows_of() { # <project> <slug regex> — the rows of the slugs that match, every column
+  (cd "$1" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | awk -F'\t' -v re="^($2)$" 'NR > 1 && $2 ~ re')
+}
 two() { # slug, model, pr, pr_state and attempts of each row
   (cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | cut -f2,6,15-17)
 }
@@ -166,6 +172,22 @@ check "each build gets the last of its slug's PRs its own log names (named 40000
     "retried	opus	${U}/1	CLOSED	1" "retried	fable	${U}/2	MERGED	2" \
     "shared	opus	${U}/3	OPEN	1" "shared	opus	${U}/3	OPEN	2" \
     "late	opus			1" "late	fable	${U}/4	OPEN	2" "foreign	opus			1")"
+check "merged_at is the merged PR's alone, and story_merged is true on every row of a slug with a MERGED PR, false with none" \
+  "$(rows_of "${Q}" 'retried|shared' | cut -f2,15,31,32)" "$(printf '%s\n' \
+    "retried	${U}/1		true" "retried	${U}/2	2026-10-02T12:00:00Z	true" "shared	${U}/3		false" "shared	${U}/3		false")"
+# Findings on the PR both builds of shared name: one row of each width, then one from before the
+# second build and one from before either. Each goes to the latest build on the PR started on or
+# before its day, so none is counted twice, and the one before both builds counts for neither.
+printf '%s\n' \
+  $'2026-10-02\tvacuous-test\to/r#3\ta' \
+  $'2026-10-02\tout-of-scope\to/r#3\tb\tdeclined' \
+  $'2026-10-02\tmissing-check\thttps://github.com/o/r/pull/3\tc\tfixed\tcodex' \
+  $'2026-10-02\tnit\to/r#3\td\tdeclined\tcode-review' \
+  $'2026-10-01\tmissing-check\to/r#3\te\tfixed\tcodex' \
+  $'2026-09-30\tmissing-check\to/r#3\tf\tfixed\tcodex' > "${Q}/.swarm/findings.tsv"
+check "findings fixed and declined, by reviewer (unknown for 4- and 5-field rows), each counted on one build" \
+  "$(rows_of "${Q}" shared | cut -f14,33-35)" "$(printf '%s\n' $'1\t0\tcodex:1\t' $'2\t2\tcodex:1 unknown:1\tcode-review:1 unknown:1')"
+rm "${Q}/.swarm/findings.tsv"
 check "with pr_per = story, an epic story's builds take their PR from their logs too" \
   "$(two | grep in-epic | cut -f3 | paste -sd, -)" ","
 mkdir -p "${Q}/.claude/swarm"; echo "pr_per = epic" > "${Q}/.claude/swarm/config"
@@ -177,6 +199,24 @@ check "with pr_per = epic, every build of an epic story gets the epic's PR, and 
     "in-epic	opus	${U}/10	OPEN	1" "in-epic	fable	${U}/10	OPEN	2")"
 printf '%s\t%s\n' "${U}/10" MERGED > "${dir}/prs/epic_e1"
 check "and MERGED once the epic's PR merges" "$(two | grep in-epic | cut -f4 | paste -sd' ' -)" "MERGED MERGED"
+
+# --- Kind and story_merged per story, in a fourth project with the same gh: an escalated story
+# (kind: lead with escalated_from:, either a kind or the no-kind-line value) keeps the kind it was
+# built as, and one the user holds stays lead; a slug with only a closed PR has not merged; a story
+# whose repo: names no repo here is unknown.
+F="${dir}/four"; mkdir -p "${F}/.swarm" "${F}/docs/stories"; git -C "${F}" init -q
+printf -- '---\nkind: lead\nescalated_from: code\nstatus: ready\n---\n' > "${F}/docs/stories/esc-code.md"
+printf -- '---\nkind: lead\nescalated_from: code (default)\nstatus: ready\n---\n' > "${F}/docs/stories/esc-default.md"
+printf -- '---\nkind: lead\nstatus: ready\n---\n' > "${F}/docs/stories/held.md"
+printf -- '---\nkind: code\nstatus: ready\n---\n' > "${F}/docs/stories/closed-only.md"
+printf -- '---\nkind: code\nrepo: nowhere\nstatus: ready\n---\n' > "${F}/docs/stories/norepo.md"
+printf '%s\t%s\t%s\n' "${U}/20" CLOSED "" > "${dir}/prs/story_closed-only"
+printf '%s\t%s\t%s\n' "${U}/21" MERGED 2026-10-02T12:00:00Z > "${dir}/prs/story_norepo"
+for s in esc-code esc-default held closed-only norepo; do printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\tx-%s\n' "${s}" "${s}"; done > "${F}/.swarm/agents.tsv"
+check "kind: lead with escalated_from: reports the kind it came from, without (default); a slug with only a closed PR is false; no repo is unknown" \
+  "$(rows_of "${F}" '[a-z-]+' | cut -f2,3,15,31,32)" "$(printf '%s\n' \
+    $'esc-code\tcode\t\t\tfalse' $'esc-default\tcode\t\t\tfalse' $'held\tlead\t\t\tfalse' \
+    "closed-only	code	${U}/20		false" $'norepo\tcode\t\t\t')"
 
 # --- Each build's own start, tokens by type, tells, closes and escalation steps, in a third project.
 # A retried story; a story whose second build has no session log; a story built twice as code, then
