@@ -67,7 +67,7 @@ chmod +x "${dir}/bin/gh" "${dir}/nobin/gh"
 
 outcomes() { # <gh dir> [args] — the report, with that gh first on PATH
   local bin="$1"; shift
-  (cd "${P}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${bin}:${PATH}" bash "${SWARM}" outcomes "$@")
+  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${bin}:${PATH}" bash "${SWARM}" outcomes "$@")
 }
 fails=0
 check() { # <name> <output> <exact expected output>
@@ -94,7 +94,7 @@ else echo "ok   a bad --since is refused"; fi
 
 # close's copy of a session log (written by archive_session, through its _archive test hook) stands in
 # once Claude Code deletes the log: s3 (the long slug's newest build) and s2 (docs-story's).
-run() { (cd "${P}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" "$@"); }
+run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" "$@"); }
 snap() { (cd "${P}/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
 run _archive "${CUT}"; run _archive docs-story
 check "the live log is a sign of life" "$(run _mtime docs-story | grep -c '^[0-9][0-9]*$')" 1
@@ -159,7 +159,7 @@ printf '%s\n' \
   $'2026-10-03\tcode\tforeign\tclaude\topus\thigh\tf1' \
   $'2026-10-04\tcode\tin-epic\tclaude\topus\thigh\te1' $'2026-10-05\tescalate\tin-epic\tclaude\tfable\txhigh\te2' > "${Q}/.swarm/agents.tsv"
 two() { # slug, model, pr, pr_state and attempts of each row
-  (cd "${Q}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | cut -f2,6,15-17)
+  (cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | cut -f2,6,15-17)
 }
 check "each build gets the last of its slug's PRs its own log names (named 40000 times or once); none, or another head's, leaves it empty" \
   "$(two | grep -v in-epic)" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
@@ -184,8 +184,12 @@ check "and MERGED once the epic's PR merges" "$(two | grep in-epic | cut -f4 | p
 # build's start than the first's), and a drop the second. Before the first, an escalate build whose
 # brief was never taken up (no log, no escalate line) takes no cycle. Last, a story escalated twice whose
 # first build's log is gone keeps its cycle: the second build's log started nearer the first escalate
-# than midnight does, but nearer still to its own. A reset's or drop's reason never shows.
-A="${dir}/three"; mkdir -p "${A}/.swarm" "${dir}/projects/a"; git -C "${A}" init -q
+# than midnight does, but nearer still to its own. Its slug is over 32 characters, so the log-less
+# build is known only by the cut name agents.tsv keeps, while events.tsv names the full slug; a tell to
+# it still goes to its own builds, not to another story's whose slug starts with the same 32. A
+# reset's or drop's reason never shows, and a line whose time does not parse goes to no build.
+A="${dir}/three"; LOST="lost-log-escalated-twice-with-a-slug-longer-than-32"; LCUT="${LOST:0:32}"; TWIN="${LCUT}twin"
+mkdir -p "${A}/.swarm" "${dir}/projects/a"; git -C "${A}" init -q
 as() { # <session id> <slug> <first timestamp> — a session log: one input, cache write, cache read and output count each
   printf '{"type":"user","cwd":"%s/repo-wt/%s","timestamp":"%s"}\n' "${dir}" "$2" "$3"
   printf '{"timestamp":"2026-10-09T00:00:00Z","message":{"id":"m-%s","model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":20,"cache_read_input_tokens":300,"output_tokens":4000}}}\n' "$1"
@@ -194,7 +198,8 @@ as ta1 retried 2026-10-01T10:00:00Z > "${dir}/projects/a/ta1.jsonl"; as ta2 retr
 as tn1 nolog 2026-10-01T10:00:00Z > "${dir}/projects/a/tn1.jsonl"
 as tc1 esc 2026-10-02T01:00:00Z > "${dir}/projects/a/tc1.jsonl"; as tc2 esc 2026-10-02T03:00:00Z > "${dir}/projects/a/tc2.jsonl"
 as te1 esc 2026-10-02T10:00:00Z > "${dir}/projects/a/te1.jsonl"; as te2 esc 2026-10-02T20:00:00Z > "${dir}/projects/a/te2.jsonl"
-as tl2 lost 2026-10-04T14:00:00Z > "${dir}/projects/a/tl2.jsonl"
+as tl2 "${LOST}" 2026-10-04T14:00:00Z > "${dir}/projects/a/tl2.jsonl"
+as tw1 "${TWIN}" 2026-10-05T10:00:00Z > "${dir}/projects/a/tw1.jsonl"
 printf '%s\n' \
   $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tta1' $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tta2' \
   $'2026-10-01\tcode\tnolog\tclaude\topus\thigh\ttn1' \
@@ -202,13 +207,15 @@ printf '%s\n' \
   $'2026-10-02\tescalate\tesc\tclaude\tfable\txhigh\tte0' \
   $'2026-10-02\tescalate\tesc\tclaude\tfable\txhigh\tte1' $'2026-10-02\tescalate\tesc\tclaude\tfable\txhigh\tte2' \
   $'2026-10-03\tcode\tnolog\tclaude\topus\thigh\ttn9' \
-  $'2026-10-04\tescalate\tlost\tclaude\tfable\txhigh\ttl1' $'2026-10-04\tescalate\tlost\tclaude\tfable\txhigh\ttl2' > "${A}/.swarm/agents.tsv"
+  $'2026-10-04\tescalate\t'"${LCUT}"$'\tclaude\tfable\txhigh\ttl1' $'2026-10-04\tescalate\t'"${LCUT}"$'\tclaude\tfable\txhigh\ttl2' \
+  $'2026-10-05\tcode\t'"${LCUT}"$'\tclaude\topus\thigh\ttw1' > "${A}/.swarm/agents.tsv"
 # A failed drop (not ok) neither ends the first cycle nor fills drop_at. The 03:00Z nudge is before
 # the log-less build's day starts in a zone five hours behind UTC.
 printf '%s\n' \
   $'2026-10-01T11:00:00Z\ttell:findings\tretried\tw:1\tok' \
   $'2026-10-01T12:00:00Z\tclose:stalled\tretried\tw:1\tok' \
   $'2026-10-01T15:00:00Z\ttell:findings\tretried\tw:1\tok' \
+  $'not-a-time\ttell:findings\tretried\tw:1\tok' \
   $'2026-10-02T09:59:00Z\tescalate\tesc\tw:1\tok (attempt 3)' \
   $'2026-10-02T10:01:00Z\tdialog\tesc\tw:1\tok (dismissed)' \
   $'2026-10-02T12:00:00Z\tescalated\tesc\tw:1\tok (attempts 3, 2 PRs)' \
@@ -218,37 +225,43 @@ printf '%s\n' \
   $'2026-10-02T19:59:00Z\tescalate\tesc\tw:1\tok (attempt 3)' \
   $'2026-10-02T20:01:00Z\tdialog\tesc\tw:1\tok (anything else)' \
   $'2026-10-02T21:00:00Z\tescalated\tesc\tw:1\tok (attempts 3, 2 PRs)' \
+  $'not-a-time\tescalated\tesc\tw:1\tok (attempts 3, 2 PRs)' \
   $'2026-10-02T22:00:00Z\tdrop\tesc\tw:1\tok (SENTINEL-REASON)' \
   $'2026-10-03T03:00:00Z\ttell:nudge\tnolog\tw:1\tok' \
   $'2026-10-03T09:00:00Z\ttell:findings\tnolog\tw:1\tok' \
-  $'2026-10-04T10:00:00Z\tescalate\tlost\tw:1\tok (attempt 2)' \
-  $'2026-10-04T11:00:00Z\tescalated\tlost\tw:1\tok (attempts 2, 1 PRs)' \
-  $'2026-10-04T12:00:00Z\treset\tlost\tw:1\tok (SENTINEL-REASON)' \
-  $'2026-10-04T13:59:30Z\tescalate\tlost\tw:1\tok (attempt 2)' \
-  $'2026-10-04T15:00:00Z\tescalated\tlost\tw:1\tok (attempts 2, 1 PRs)' > "${A}/.swarm/events.tsv"
-three() { (cd "${A}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/nobin:${PATH}" bash "${SWARM}" outcomes); }
+  $'2026-10-04T10:00:00Z\tescalate\t'"${LOST}"$'\tw:1\tok (attempt 2)' \
+  $'2026-10-04T11:00:00Z\tescalated\t'"${LOST}"$'\tw:1\tok (attempts 2, 1 PRs)' \
+  $'2026-10-04T12:00:00Z\treset\t'"${LOST}"$'\tw:1\tok (SENTINEL-REASON)' \
+  $'2026-10-04T13:59:30Z\tescalate\t'"${LOST}"$'\tw:1\tok (attempt 2)' \
+  $'2026-10-04T15:00:00Z\tescalated\t'"${LOST}"$'\tw:1\tok (attempts 2, 1 PRs)' \
+  $'2026-10-05T11:00:00Z\ttell:findings\t'"${LOST}"$'\tw:1\tok' > "${A}/.swarm/events.tsv"
+three() { (cd "${A}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/nobin:${PATH}" bash "${SWARM}" outcomes); }
 out="$(three)"
 check "a retried slug's tells, closes and close cause count per build, not per slug" \
   "$(awk -F'\t' '$2 == "retried"' <<< "${out}" | cut -f10,13,23)" "$(printf '%s\n' $'1\t1\tstalled' $'1\t0\t')"
 check "started is each session's first timestamp, and empty with no log" \
   "$(tail -n +2 <<< "${out}" | cut -f2,18 | paste -sd' ' -)" \
   "$(printf '%s\n' "retried	2026-10-01T10:00:00Z" "retried	2026-10-01T14:00:00Z" "nolog	2026-10-01T10:00:00Z" \
-    "esc	2026-10-02T01:00:00Z" "esc	2026-10-02T03:00:00Z" "esc	" "esc	2026-10-02T10:00:00Z" "esc	2026-10-02T20:00:00Z" "nolog	" "lost	" "lost	2026-10-04T14:00:00Z" | paste -sd' ' -)"
+    "esc	2026-10-02T01:00:00Z" "esc	2026-10-02T03:00:00Z" "esc	" "esc	2026-10-02T10:00:00Z" "esc	2026-10-02T20:00:00Z" "nolog	" "${LCUT}	" "${LOST}	2026-10-04T14:00:00Z" "${TWIN}	2026-10-05T10:00:00Z" | paste -sd' ' -)"
 check "the four tokens columns are the log's per-type usage and sum to tokens" \
   "$(awk -F'\t' 'NR > 1 && $18 != ""' <<< "${out}" | cut -f9,19-22 | sort -u)" $'4321\t1\t20\t300\t4000'
 check "a build with no log takes the tells logged from 00:00 UTC on its day" \
   "$(awk -F'\t' '$2 == "nolog"' <<< "${out}" | cut -f10,11 | paste -sd' ' -)" $'0\t0 1\t1'
 check "and from 00:00 local time, in a zone five hours behind UTC" \
   "$(TZ=EST5 three | awk -F'\t' '$2 == "nolog"' | cut -f10,11 | paste -sd' ' -)" $'0\t1 1\t0'
-check "escalation steps go to the escalate build whose cycle was open, by event order; a build that never took up its brief takes none, and one whose log is gone keeps its own; the last dialog of a cycle counts, and an answer other than accepted or dismissed is empty" \
+check "escalation steps go to the escalate build whose cycle was open, by event order; a build that never took up its brief takes none, and one whose log is gone keeps its own, known by its cut name; the last dialog of a cycle counts, and an answer other than accepted or dismissed is empty" \
   "$(tail -n +2 <<< "${out}" | cut -f2,5,24-29)" "$(printf '%s\n' "retried	code${E6}" "retried	code${E6}" "nolog	code${E6}" \
     "esc	code${E6}" "esc	code${E6}" "esc	escalate${E6}" \
     "esc	escalate	2026-10-02T09:59:00Z	2026-10-02T18:00:00Z	accepted	2026-10-02T12:00:00Z	2026-10-02T18:30:00Z	" \
     "esc	escalate	2026-10-02T19:59:00Z	2026-10-02T20:01:00Z		2026-10-02T21:00:00Z		2026-10-02T22:00:00Z" \
     "nolog	code${E6}" \
-    "lost	escalate	2026-10-04T10:00:00Z			2026-10-04T11:00:00Z	2026-10-04T12:00:00Z	" \
-    "lost	escalate	2026-10-04T13:59:30Z			2026-10-04T15:00:00Z		")"
+    "${LCUT}	escalate	2026-10-04T10:00:00Z			2026-10-04T11:00:00Z	2026-10-04T12:00:00Z	" \
+    "${LOST}	escalate	2026-10-04T13:59:30Z			2026-10-04T15:00:00Z		" "${TWIN}	code${E6}")"
 check "a reset's or drop's reason is nowhere in the report" "$(grep -c SENTINEL-REASON <<< "${out}" || true)" 0
+check "a tell to a slug over 32 characters goes to its own build, not to a story sharing its first 32" \
+  "$(tail -n +2 <<< "${out}" | cut -f2,10 | grep "^${LCUT}" | paste -sd' ' -)" "${LCUT}	0 ${LOST}	1 ${TWIN}	0"
+check "a line whose time does not parse goes to no build" \
+  "$(grep -c not-a-time <<< "${out}" || true) $(awk -F'\t' '$2 == "retried"' <<< "${out}" | cut -f10 | paste -sd' ' -)" "0 1 1"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

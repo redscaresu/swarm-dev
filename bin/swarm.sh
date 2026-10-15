@@ -1104,18 +1104,24 @@ def started_of(path):
     return ""
 
 def midnight(day):
-    # 00:00:00 of an agents.tsv day, a local date, in UTC: where a build with no session log starts.
+    # 00:00 local time on an agents.tsv day (a local date), in epoch seconds: where a build with no
+    # session log starts. None for a day that does not parse.
     try:
-        return datetime.datetime.strptime(day, "%Y-%m-%d").astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.datetime.strptime(day, "%Y-%m-%d").timestamp()
     except ValueError:
-        return ""
+        return None
 
 def secs(t):
-    # A UTC time as events.tsv writes it, in seconds; 0 for anything else.
+    # A UTC time as events.tsv and started write it, in epoch seconds; None when it does not parse.
     try:
-        return datetime.datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
     except ValueError:
-        return 0
+        return None
+
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
 
 builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
@@ -1127,23 +1133,30 @@ for line in open(log, errors="ignore"):
     tries[slug] += 1
     started = started_of(path)
     builds.append({"f": f, "path": path, "slug": slug, "n": tries[slug], "started": started,
-                   "start": started or midnight(f[0]), "steer": collections.Counter(), "at": {}})
+                   "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}})
 
 def of(target):
-    # The builds an events.tsv target names, by slug or by agents.tsv name.
-    return [b for b in builds if target in (b["slug"], b["f"][2])]
+    # The builds an events.tsv target names: by slug or agents.tsv name, and a build whose slug is
+    # unknown (no log, so it is the name) by the name agents.tsv keeps for the target, which cuts a slug
+    # over 32 characters. A build whose log names another slug with the same 32 is not this one.
+    cut = agent_name(target)
+    return [b for b in builds if b["t"] is not None
+            and (target in (b["slug"], b["f"][2]) or b["slug"] == b["f"][2] == cut)]
 
 STEPS = ("escalate", "dialog", "escalated", "reset", "drop")
-# Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read for
-# that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave.
-oks = [f for f in (l.rstrip("\n").split("\t") for l in open(events, errors="ignore")) if len(f) == 5
-       and (f[4] == "ok" or f[4].startswith("ok ("))] if os.path.exists(events) else []
-escalates = collections.defaultdict(list)
-for f in oks:
-    if f[1] == "escalate":
-        escalates[f[2]].append(secs(f[0]))
-cycle = {}
-for f in oks:
+oks, escalates = [], collections.defaultdict(list)
+for line in open(events, errors="ignore") if os.path.exists(events) else ():
+    f = line.rstrip("\n").split("\t")
+    # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
+    # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
+    # line whose time does not parse goes to no build.
+    t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
+    if t is not None:
+        oks.append((t, f))
+        if f[1] == "escalate":
+            escalates[f[2]].append(t)
+cycle, seen = {}, collections.Counter()
+for t, f in oks:
     # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings.
     when, c, target = f[0], {"tell": "tell:findings"}.get(f[1], f[1]), f[2]
     if c in STEPS:
@@ -1151,13 +1164,14 @@ for f in oks:
         # order, and each step until the next reset, drop or escalate belongs to that build (by event
         # order, the last of a kind kept). build_story logs the escalate as its build starts, so a later
         # build with a session log takes the cycle instead when this is the escalate of its target
-        # nearest its start, and it started nearer than the first: a build whose brief was never taken
-        # up logged no escalate, and must not take the cycle of its retry.
+        # nearest its start (a tie to the earlier), and it started nearer than the first: a build whose
+        # brief was never taken up logged no escalate, and must not take the cycle of its retry.
         if c == "escalate":
-            gap = lambda b, t=secs(when): abs(secs(b["start"]) - t)
+            mine, seen[target] = seen[target], seen[target] + 1
+            near = lambda b: min(range(len(escalates[target])), key=lambda i: abs(b["t"] - escalates[target][i]))
             free = [b for b in of(target) if b["f"][1] == "escalate" and "escalate" not in b["at"]]
-            own = [b for b in free[1:] if b["started"] and gap(b) == min(abs(secs(b["start"]) - t) for t in escalates[target])]
-            cycle[target] = min(free[:1] + own, key=gap, default=None)
+            own = [b for b in free[1:] if b["started"] and near(b) == mine]
+            cycle[target] = min(free[:1] + own, key=lambda b: abs(b["t"] - t), default=None)
         b = cycle.pop(target, None) if c in ("reset", "drop") else cycle.get(target)
         if b:
             b["at"][c] = when
@@ -1168,7 +1182,7 @@ for f in oks:
     if c.split(":")[0] not in ("tell", "close"):
         continue
     # A tell or close goes to the build of its target that started last at or before it.
-    b = max((b for b in reversed(of(target)) if b["start"] <= when), key=lambda b: b["start"], default=None)
+    b = max((b for b in reversed(of(target)) if b["t"] <= t), key=lambda b: b["t"], default=None)
     if b and c.split(":")[0] == "close":
         # Counted whatever its cause (close:<cause>); close_cause is the cause of the last close (none: empty).
         b["steer"]["close"] += 1

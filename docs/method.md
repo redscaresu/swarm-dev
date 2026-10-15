@@ -409,7 +409,7 @@ no PR, so every build of an epic story gets the epic's PR. A story that merged a
 left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
 
 Each `events.tsv` line counts for one build, so a retried story's tells and closes are split among
-its builds. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
+its builds. A line whose time does not parse counts for none. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
 story's next escalate build in agents.tsv that has none yet. A later escalate build takes the cycle
 instead when its session log started nearer this `escalate` than any other of the story's, and nearer
 than that first build. So a build whose brief was never taken up (it logged no `escalate`) cannot take
