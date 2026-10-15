@@ -657,9 +657,10 @@ start_agent() {
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
-      # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
+      # No agent can run `gh pr merge`, but a conductor with merge = agent. `gh api` could still merge,
+      # so the briefs say it too.
       local guard=()
-      [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
+      [[ "${CFG_merge}" == agent && "${role}" == conduct ]] || guard=(--disallowedTools "Bash(gh pr merge:*)")
       # builder_subagent_model: the session's env, through --settings since herdr passes no env. Without
       # _FORCE the model setting leaves an Explore subagent on the parent's model (opusplan-spike).
       [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && guard+=(--settings \
@@ -1700,7 +1701,7 @@ findings_goal() {
 # The merge, signing and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
-  else echo "Never merge (the lead merges)."; fi
+  else echo "Never merge (the conductor merges)."; fi
 }
 sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
@@ -1772,16 +1773,39 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 `swarm.sh review <epic> <every PR URL still waiting>`: the epic leaves the board once they all merge.
 RULE
   else
-    cat <<'RULE'
-Merge a PR only when it is green and reviewed. A queued merge (auto-merge, a merge queue) has not
-happened yet: wait until the PR is merged. Then run `swarm.sh review <slug> <PR URL>` and
-`swarm.sh reconcile`, never a plain `git pull`: reconcile first puts back swarm.sh's own edits to the
-story (a retry's `attempts:`), which would stop the pull, then pulls the board and finishes the
-story. Only then run `swarm.sh unblock` and `swarm.sh close <slug>` to close that story's tab:
-closing a story that is still `ready` counts a failed build. When the epic's **Done when** holds, take the epic off the board with
-`swarm.sh finish <epic>`.
-RULE
+    cat <<EOF
+$(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it.
+
+Then run \`swarm.sh unblock\`, and in this run start each story of this epic it prints as \`ready:\`
+whose \`touches\` do not overlap a running one, with \`swarm.sh story <slug>\`. After a
+cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
+story of this epic that is yours to start is ready and none is running, or the base is red. When the
+epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`.
+EOF
   fi
+}
+
+# pinned_merge_rule <review args> — with merge = agent, how a conductor merges a reviewed PR: review a
+# head it noted, put the item in review, then swarm.sh merge pinned to that head, which reconciles.
+pinned_merge_rule() {
+  cat <<EOF
+Review a PR at a pinned head: before you review it, note its head SHA
+(\`gh pr view <n> --json headRefOid\`), and once the review passes, read it again; if the head
+moved, review the new head. Merge a PR only when it is green and reviewed: run
+\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare
+\`gh pr merge\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
+repo's merge method, squash when allowed
+(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
+once every check on that head has completed and passed: the block-red-pr-merge hook needs a
+literal number and every check complete. Run it in the background (Bash \`run_in_background\`)
+and wait for it: it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the merge commit on the
+base, then runs \`swarm.sh reconcile\`, never a plain \`git pull\`, which pulls the board and finishes the item. If
+it exits non-zero, read why: a refusal before \`gh pr merge\` ran merged nothing; \`unconfirmed\`
+means \`gh pr merge\` ran but the PR never read as merged (a merge queue may hold it), so check it by
+hand. A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing
+more, find the PR pair that broke it (this PR and one merged before it, each green alone), open the
+fix or list it for the lead, and say so in your report.
+EOF
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail.
@@ -2261,7 +2285,8 @@ conduct_epic_mode() {
     merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
 merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
   else
-    merge_step="Merge each PR once it is green and reviewed, then run \`swarm.sh finish ${epic}\`."
+    merge_step="Merge the PRs one at a time. $(pinned_merge_rule "${epic} <every PR URL>") Reconcile takes
+the epic off the board once its last PR merges."
   fi
   cat <<EOF
 This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story <slug>\`
