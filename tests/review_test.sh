@@ -213,7 +213,7 @@ check "the merged item stays in review" "review" "$(sed -n 's/^status: //p' "${R
 
 # --- reconcile carries the board's own uncommitted front-matter edits over a pull that changes the
 # file. setup_flip <name>: a bare origin whose board has k, z, and x and y blocked on t (not on the
-# board); its main checkout <name>, with k in review (its PR merged), z in review (its PR open), and
+# board; x also depends on it); its main checkout <name>, with k in review (its PR merged), z in review (its PR open), and
 # x and y flipped to ready by unblock, all uncommitted; and a clone <name>-up for the base's changes.
 setup_flip() {
   local d="${ROOT}/$1"
@@ -221,7 +221,7 @@ setup_flip() {
   "${GIT[@]}" clone -q "${d}.git" "${d}" 2>/dev/null
   item "${d}/docs" stories/k.md "status: ready" "kind: code"
   item "${d}/docs" stories/z.md "status: ready" "kind: code"
-  item "${d}/docs" stories/x.md "status: blocked" "kind: code" "blocked_by: [t]"
+  item "${d}/docs" stories/x.md "status: blocked" "kind: code" "blocked_by: [t]" "depends_on: [t]"
   item "${d}/docs" stories/y.md "status: blocked" "kind: code" "blocked_by: [t]"
   "${GIT[@]}" -C "${d}" add docs && "${GIT[@]}" -C "${d}" commit -q -m board && "${GIT[@]}" -C "${d}" push -q origin main
   "${GIT[@]}" clone -q "${d}.git" "${d}-up"
@@ -234,6 +234,7 @@ same() { if cmp -s "$1" "$2"; then echo same; else echo differs; fi; }
 setup_flip fl
 echo "the base's line" | tee -a "${ROOT}/fl-up/docs/stories/x.md" >> "${ROOT}/fl-up/docs/stories/z.md"
 "${GIT[@]}" -C "${ROOT}/fl-up" rm -q docs/stories/y.md; push_up fl
+cp "${ROOT}/fl/docs/stories/y.md" "${ROOT}/fl-y"
 out="$(at fl reconcile; echo "exit $?")"
 check "a flip on a story the pull changes: reconcile pulls, and exits 0" "yes|$(git -C "${ROOT}/fl.git" rev-parse main)" \
   "$(has "exit 0" "${out}")|$(git -C "${ROOT}/fl" rev-parse HEAD)"
@@ -243,6 +244,11 @@ check "an in-review z keeps its status and prs: under the base's body" "review|$
   "$(sed -n 's/^status: //p' "${ROOT}/fl/docs/stories/z.md")|$(sed -n 's/^prs: //p' "${ROOT}/fl/docs/stories/z.md")|$(tail -1 "${ROOT}/fl/docs/stories/z.md")"
 check "the base deleted y: it stays deleted, and reconcile names it" "gone|yes" \
   "$(gone "${ROOT}/fl/docs/stories/y.md")|$(has "the pull deleted docs/stories/y.md" "${out}")"
+copy="$(sed -n 's/.*the pull deleted docs\/stories\/y\.md.*(its copy is in \(.*\))$/\1/p' <<< "${out}")"
+check "and the backup stays, holding y's edit at the path it names" "${ROOT}/fl/.swarm/state/reconcile-backup/|same|yes" \
+  "$(grep -o '.*/reconcile-backup/' <<< "${copy}")|$(same "${ROOT}/fl-y" "${copy}")|$(has "the backup stays in ${copy%/docs/stories/y.md}" "${out}")"
+check "a kept file names its backup before it is checked out" "yes" \
+  "$(has "docs/stories/x.md changes only swarm.sh's front-matter keys; checking it out for the pull, to set them again after it (backup in ${copy%/docs/stories/y.md})" "$(sed -n '1p' <<< "${out}")")"
 # A hand edit to x's body, under its flip, still stops the pull, named, and x stays as it was.
 setup_flip fh
 echo "the base's line" >> "${ROOT}/fh-up/docs/stories/x.md"; push_up fh
@@ -256,7 +262,14 @@ perl -pi -e 's/^blocked_by: \[t\]$/blocked_by: [w]/' "${ROOT}/fc-up/docs/stories
 cp "${ROOT}/fc/docs/stories/x.md" "${ROOT}/fc-x"
 out="$(at fc reconcile || true)"
 check "the base changed x's blocked_by too: reconcile stops naming x, and x is as it was" "yes|same" \
-  "$(has "docs/stories/x.md has an uncommitted blocked_by: edit" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fc-x" "${ROOT}/fc/docs/stories/x.md")"
+  "$(has "docs/stories/x.md has an uncommitted front-matter edit, and the base changed its blocked_by: too" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fc-x" "${ROOT}/fc/docs/stories/x.md")"
+# The base adds w to x's depends_on alone: x's flip to ready is not set again over it.
+setup_flip fp
+perl -pi -e 's/^depends_on: \[t\]$/depends_on: [t, w]/' "${ROOT}/fp-up/docs/stories/x.md"; push_up fp
+cp "${ROOT}/fp/docs/stories/x.md" "${ROOT}/fp-x"
+out="$(at fp reconcile || true)"
+check "the base changed x's depends_on under its flip: reconcile stops naming x, and x is as it was" "yes|same" \
+  "$(has "docs/stories/x.md has an uncommitted front-matter edit, and the base changed its depends_on: too" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fp-x" "${ROOT}/fp/docs/stories/x.md")"
 # A diverged main (no fast-forward), and a pull that fails after x was checked out: x keeps its flip.
 setup_flip fd
 echo "the base's line" >> "${ROOT}/fd-up/docs/stories/x.md"; push_up fd

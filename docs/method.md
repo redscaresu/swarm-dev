@@ -460,10 +460,13 @@ left unstaged with content already the base's, so a hand edit that matches what 
 stop it. When the pull changes a board file whose only unstaged edit is to keys swarm.sh writes
 (`status`, `prs`, `blocked_by`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
 another story in review, reconcile checks the file out, pulls, then sets those keys again. If the
-pull deleted the file, it stays deleted and reconcile prints its name. If the base changed one of
-those keys as well, to a different value, reconcile stops before it touches anything and names the
-file. Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and if
-the pull still fails they are all restored. It touches nothing, and stops naming why, when the pull cannot fast-forward or
+pull deleted the file, it stays deleted; reconcile prints its name and keeps the backup, which holds
+the edit. If the base changed one of those keys as well, to a different value, reconcile stops
+before it touches anything and names the file. It also stops when the edit changes `status` and the
+base changed `blocked_by` or `depends_on`, so a flip to `ready` never lands over a new dependency.
+Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and
+reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
+again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
 blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
 It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
