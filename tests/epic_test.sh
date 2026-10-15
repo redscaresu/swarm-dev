@@ -12,6 +12,10 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+# The herdr stub starts each session's .jsonl here, and a /goal prompt appends the entry
+# HERDR_STUB_GOAL picks: set (the default here), other (a goal for another condition), refused, or
+# none when empty. A goal wait is short.
+export CLAUDE_PROJECTS_DIR="${ROOT}/projects" HERDR_STUB_GOAL=set SWARM_PROMPT_TIMEOUT_MS=3000
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
@@ -68,6 +72,7 @@ STORY_REPLY="When CI is green, reply with the PR URL, what changed in three line
 EPIC_REPLY="When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
 
 # herdr: logs every call; each new pane is w:<n>, each new tab t<n>, and tab list shows their labels.
+# agent start makes the session's .jsonl; a /goal prompt is kept in goal.txt and writes its entry.
 mkdir -p "${ROOT}/bin"
 cat > "${ROOT}/bin/herdr" <<EOF
 #!/bin/sh
@@ -89,9 +94,25 @@ case "$1 $2" in
   "pane split")       [ -e "$H/nosplit" ] && { echo '{"error":{"code":"pane_not_found"}}'; exit 1; }
                       next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "agent prompt")     [ -e "$H/promptfail" ] && { echo '{"error":{"code":"pane_not_found"}}' >&2; exit 1; }
+                      case "$4" in "/goal "*) printf '%s' "$4" > "$H/goal.txt"
+                        [ -z "${HERDR_STUB_GOAL:-}" ] || python3 - "$HERDR_STUB_GOAL" "${4#/goal }" >> "$(cat "$H/session")" <<'PY'
+import datetime, json, sys
+now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+if sys.argv[1] in ("set", "other"):   # the shapes Claude Code 2.1.299 wrote in the goal spike; other sets another goal
+    cond = sys.argv[2] if sys.argv[1] == "set" else "another condition"
+    print(json.dumps({"type": "attachment", "timestamp": now, "attachment": {"type": "goal_status", "met": False, "sentinel": True, "condition": cond}}))
+else:
+    for c in ("<command-name>/goal</command-name>\n<command-args>%s</command-args>" % sys.argv[2],
+              "<local-command-stdout>/goal can't run while hooks are restricted (disableAllHooks or allowManagedHooksOnly is set in settings or by policy).</local-command-stdout>"):
+        print(json.dumps({"type": "system", "subtype": "local_command", "timestamp": now, "content": c}))
+PY
+                      esac
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
-  "agent start")      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
+  "agent start")      sid=$(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')
+                      if [ -n "$sid" ]; then mkdir -p "$CLAUDE_PROJECTS_DIR/p"; : > "$CLAUDE_PROJECTS_DIR/p/$sid.jsonl"
+                        echo "$CLAUDE_PROJECTS_DIR/p/$sid.jsonl" > "$H/session"; fi
+                      echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename")     [ -e "$H/norename" ] && exit 1
                       [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
   "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
@@ -173,16 +194,44 @@ run conduct e >/dev/null || true
 rm "${ROOT}/idle"
 check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
 # goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
+# prompts and goals count the herdr agent prompt calls since herdr.log was emptied, and the /goal ones.
+prompts() { grep -c '^agent prompt ' "${ROOT}/herdr.log" || true; }
+goals() { grep -c '^agent prompt [^ ]* /goal ' "${ROOT}/herdr.log" || true; }
+closes() { if grep -qE '^(pane|tab) close' "${ROOT}/herdr.log"; then echo closed; else echo "none closed"; fi; }
 goal_story "${b}" gl0 "status: ready" "kind: code" "repo: svc"
 mkdir -p "${p}/.swarm/briefs"; echo "an earlier build's condition" > "${p}/.swarm/briefs/gl0.goal.md"
+: > "${ROOT}/herdr.log"
 run story gl0 >/dev/null
 check "with goal off, story writes no .goal.md (and drops an earlier one), and the brief holds the story-mode reply" "no|yes" \
   "$([[ -e "${p}/.swarm/briefs/gl0.goal.md" ]] && echo yes || echo no)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl0.md")")"
+check "with goal off, story sends one agent prompt: the brief" "1|0" "$(prompts)|$(goals)"
 echo "goal = 7" > "${p}/.claude/swarm/config"
 goal_story "${b}" gl1 "status: ready" "kind: code" "repo: svc"
-run story gl1 >/dev/null
+: > "${ROOT}/herdr.log"
+rc=0; out="$(run story gl1)" || rc=$?
+[[ ${rc} -eq 0 ]] || echo "story gl1: ${out}"
 check "with goal = 7, story writes the condition: Done when, From review, the brief's reply, the escape and the bound" \
   "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
+check "with goal = 7 and the goal set, a second prompt follows the brief, /goal and the .goal.md, and story exits 0" \
+  "0|2|/goal|same" "${rc}|$(prompts)|$(grep '^agent prompt ' "${ROOT}/herdr.log" | sed -n '2s/^agent prompt [^ ]* \(\/goal\) .*/\1/p')|$(
+    [[ "$(cat "${ROOT}/goal.txt" 2>/dev/null)" == "/goal $(cat "${p}/.swarm/briefs/gl1.goal.md")" ]] && echo same || echo differs)"
+# A goal that does not set fails story, naming it and why, with the one /goal sent and the builder left open.
+goal_story "${b}" gl4 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"
+rc=0; out="$(HERDR_STUB_GOAL=refused run story gl4)" || rc=$?
+check "a refused /goal fails story naming the story and Claude Code's reason; one /goal, and no pane closed" "fail|yes|1|none closed" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl4: Claude Code refused its /goal (/goal can't run while hooks are restricted" "${out}")|$(goals)|$(closes)"
+goal_story "${b}" gl5 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"; echo "Goal set: DW-ONE holds" > "${ROOT}/screen"   # the pane alone would show a goal set
+rc=0; out="$(HERDR_STUB_GOAL='' run story gl5)" || rc=$?
+rm -f "${ROOT}/screen"
+check "with no goal entry in the session log, whatever the pane shows, story fails naming the story; one /goal, no pane closed" \
+  "fail|yes|1|none closed" "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl5: its session log shows no goal set for its condition" "${out}")|$(goals)|$(closes)"
+goal_story "${b}" gl6 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"
+rc=0; out="$(HERDR_STUB_GOAL=other run story gl6)" || rc=$?
+check "a goal set for another condition is not this goal: story fails; one /goal" "fail|yes|1" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl6: its session log shows no goal set for its condition" "${out}")|$(goals)"
 # A blank line under a heading does not end its block; the next bold line that is not one does.
 item "${b}" stories/gl2.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "- DW-ONE holds" "- DW-TWO holds" "**Out of scope:** OUT-ONE" "" \
@@ -196,7 +245,7 @@ item "${b}" stories/gl3.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "**Out of scope:** OUT-ONE" >> "${b}/stories/gl3.md"
 check "a Done when with no item under it fails like a missing one, before any worktree" "yes|no" \
   "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
-: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-3].md
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-6].md
 
 # --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
 echo "keep_panes = true" > "${p}/.claude/swarm/config"

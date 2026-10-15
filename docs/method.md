@@ -135,7 +135,7 @@ prints every setting and where it came from.
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort) |
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
-| `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Nothing sends the goal to the builder yet |
+| `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -274,6 +274,18 @@ wait is reported once, and again only after a poll finds that agent no longer wa
 cannot read the agents changes nothing. herdr lists every project's agents, so
 `watch`, and `next` when it looks for a running conductor, count only agents in panes this project
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
+
+**The goal.** With `goal = N`, once the builder has taken up its brief, `story` sends it `/goal`
+followed by the condition in `.swarm/briefs/<slug>.goal.md`, once, through `herdr agent prompt`. The
+builder is mid-turn by then; Claude Code still sets the goal straight away, and runs one extra short
+turn after the brief's turn ends. From then on Claude Code's judge keeps the builder working until
+the story's **Done when** holds, the builder replies `IMPOSSIBLE: <why>`, or N more turns have
+passed. The judge records all three as met, and only its reason text tells them apart. `story`
+looks for the goal in the builder's session log and does not read the pane: it waits up to a minute
+for a `goal_status` entry with that condition, written after the send. If Claude Code refused
+the goal (hooks restricted by settings or policy, or a folder it does not trust), or no entry came,
+`story` fails, names the story and the reason, and leaves the builder open for the lead to look at.
+It never sends the `/goal` again, because a second one would reset a goal that had set.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR (with `pr_per = epic`, no pushed `story/<slug>`) after wait's nudges, or
