@@ -182,7 +182,11 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   met: the story becomes `kind: lead` with `escalated_from:` and a block with the lead's choices
   (re-scope the **Done when**, then `swarm.sh reset <slug> <reason>`, or `swarm.sh drop <slug>
   <reason>`). Like a failed Fable build it is the lead's, with no **You:** step, so `next` prints
-  `escalated <slug>` for it and it is never under waiting on you. `impossible` hands on
+  `escalated <slug>` for it and it is never under waiting on you. `paused` and `cleared-on-error`
+  hold the story the same way, with `held_for: <cause>`, when the close ends a build (or a ready
+  verify story's open builder), and clear the build. The lead lifts
+  the hold with `swarm.sh reset <slug> <reason>`, which puts the kind back and keeps `attempts:`.
+  That is not the story's one reset, and a later pause or error holds it again. `impossible` hands on
   any story still `ready` of a kind an agent builds, verify included, and clears its worktree and
   `story/<slug>` here and on origin so a reset builds it again. When the close lists the story's PRs,
   it closes each open one with `gh pr close`. When it lists none (its builder is gone, gh cannot list

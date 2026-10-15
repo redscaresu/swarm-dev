@@ -152,16 +152,42 @@ if [[ "${why1}" == *"swarm.sh reset b <reason>"* && "${why2}" == *"after its one
   echo "ok   next offers reset before a story's one reset, and only drop after it, impossible or not"
 else echo "FAIL next offers reset before a story's one reset, and only drop after it, impossible or not: got '${why1}', '${why2}', '${why3}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+# close s1 paused or cleared-on-error, with its builder open (herdr and gh stubs), holds the story on
+# the board: next names it escalated, with the cause and never Fable, until reset lifts the hold.
+HOLD_BIN="$(mktemp -d)"
+cat > "${HOLD_BIN}/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"s1","agent_status":"idle","pane_id":"w:p1"}]}}' ;;
+  "tab list") echo '{"result":{"tabs":[]}}' ;;
+esac
+STUB
+printf '#!/bin/sh\necho "[]"\n' > "${HOLD_BIN}/gh"
+chmod +x "${HOLD_BIN}/herdr" "${HOLD_BIN}/gh"
+for c in paused cleared-on-error; do
+  dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+  (cd "${dir}" && git init -q && git remote add origin "${dir}/none.git" && mkdir -p docs/stories .swarm/state \
+    && item stories/s1.md 'status: ready' 'kind: code' 'attempts: 1' && echo "w:p1 s1" > .swarm/state/s1)
+  (cd "${dir}" && CLAUDE_CONFIG_DIR="${dir}/cc" HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${HOLD_BIN}:${PATH}" bash "${SWARM}" close s1 "${c}" >/dev/null 2>&1) || true
+  held="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"
+  (cd "${dir}" && bash "${SWARM}" reset s1 lifted >/dev/null 2>&1) || true
+  lifted="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 1p)"
+  if [[ "${held%%$'\n'*}" == "escalated s1" && "$(sed -n 2p <<< "${held}")" =~ paused|cleared && "${held}" != *Fable* && "${lifted}" == "story s1" ]]; then
+    echo "ok   after close s1 ${c}, next prints escalated s1 naming the cause, not Fable; after reset, it offers story s1"
+  else echo "FAIL after close s1 ${c}, next prints escalated s1 naming the cause, not Fable; after reset, it offers story s1: got '${held}' then '${lifted}'"; fails=$((fails + 1)); fi
+  rm -rf "${dir}"
+done
+rm -rf "${HOLD_BIN}"
 # With goal on, /swarm's story arm names the cause on its give-up closes, reads the current build's
-# transcript, and leaves a cleared-on-error story alone until it decides.
+# transcript, and a paused or cleared-on-error close holds the story.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `story <slug>`:/,/^   - `plan-epic <epic>`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 got=""
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 for w in '`swarm.sh close <slug>' 'stalled` for a stall' '`swarm.sh close <slug> met` when review has not converged' \
-         "whose name (field 3) is the builder's agent name" 'do not start it again until you have decided' \
+         "whose name (field 3) is the builder's agent name" 'The close holds the story' \
          'an `s` in front unless it starts with a' '- None of the above fits (no reply, no refusal, no stall' \
-         'That counts nothing, so do not start it again: decide' 'the restart above is only for a stall or a review that has not converged' \
+         'That counts nothing and holds the story for you' 'the restart above is only for a stall or a review that has not converged' \
          '- `met`:' '- `impossible`:' '- `stalled`:' '- `bound`:' '- `paused`:' '- `cleared-on-error`:'; do
   grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
 # shellcheck disable=SC2016 # the backticks are literal Markdown

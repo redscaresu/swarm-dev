@@ -292,6 +292,44 @@ is "met, stalled and bound raise attempts: by one; paused and cleared-on-error l
 is "each clears its build away" "||||" "$(left c-met)|$(left c-stalled)|$(left c-bound)|$(left c-paused)|$(left c-cleared-on-error)"
 is "an uncounted close closes the open PR with a comment naming its cause, not an attempt" "1" \
   "$(grep -c "^pr close ${U}/9 --comment swarm.sh close: the build of c-paused stopped (paused), which is not an attempt" "${ROOT}/gh.log")"
+# paused and cleared-on-error hold the story for the lead when they end a build: kind: lead,
+# escalated_from:, held_for: <cause>, and a block naming reset and drop, with no **You:** step. With no
+# builder open there is no build to end, and the story file is left as it was.
+# shellcheck disable=SC2016 # the backticks are the block's
+for c in paused cleared-on-error; do
+  b="$(block "c-${c}")"
+  is "close c-${c} ${c}, its builder open: kind: lead, escalated_from: code, attempts: 1, held_for: ${c}; the block names reset and drop, no **You:**" \
+    "lead|code|1|ready|${c}|0|yes|yes" \
+    "$(state "c-${c}")|$(fmv "c-${c}" held_for)|$(grep -c '\*\*You:\*\*' <<< "${b}")|$(grep -qF -- "- Lift the hold: run \`swarm.sh reset c-${c} <reason>\`" <<< "${b}" && echo yes)|$(grep -qF -- "- Or drop it: run \`swarm.sh drop c-${c} <reason>\`" <<< "${b}" && echo yes)"
+  item "h-${c}" "status: ready" "kind: code" "attempts: 1"; started "h-${c}"; cp "${P}/docs/stories/h-${c}.md" "${ROOT}/h.md"
+  cs "h-${c}" "${c}" >/dev/null
+  is "close h-${c} ${c} with no builder open leaves the story file unchanged" "same" "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/h-${c}.md" && echo same)"
+  item "hg-${c}" "status: ready" "kind: code" "attempts: 1"; started "hg-${c}" w:p77; cp "${P}/docs/stories/hg-${c}.md" "${ROOT}/h.md"
+  touch "${ROOT}/ghfail"; cs "hg-${c}" "${c}" >/dev/null; rm "${ROOT}/ghfail"
+  is "close hg-${c} ${c} with gh failing (a merging PR cannot be ruled out) leaves the story file and its build alone" "same|worktree branch origin" \
+    "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/hg-${c}.md" && echo same)|$(left "hg-${c}")"
+  item "hv-${c}" "status: ready" "kind: verify" "attempts: 1"; started "hv-${c}" w:p76
+  cs "hv-${c}" "${c}" >/dev/null
+  is "close hv-${c} ${c} on a verify story, its builder open (no build counts): held all the same, its PRs not listed, its build cleared" \
+    "lead|verify|1|ready|${c}|yes|" "$(state "hv-${c}")|$(fmv "hv-${c}" held_for)|$(unlisted "hv-${c}")|$(left "hv-${c}")"
+done
+# Lifting a hold is not the story's one reset: paused, reset, paused again and reset again each
+# succeed with attempts: 1 kept, a failed build then counts from there, and the reset-once rule for
+# the rest is unchanged (a real reset still works once, and a second is refused).
+rs() { (cd "${P}" && bash "${SWARM}" reset "$@" 2>&1); }
+item hr "status: ready" "kind: code" "attempts: 1"; got=""
+for i in 1 2; do
+  started hr "w:p7${i}"; cs hr paused >/dev/null; got+="$(state hr)/$(fmv hr held_for)/"
+  rc=0; rs hr lifted >/dev/null || rc=$?; got+="${rc}|$(state hr)|$(fmv hr held_for)|$(block hr) "
+done
+is "hr paused, reset, paused, reset: each reset succeeds, attempts: stays 1, kind: code again with no hold or block" \
+  "lead|code|1|ready/paused/0|code||1|ready|| lead|code|1|ready/paused/0|code||1|ready|| " "${got}"
+started hr w:p73; cs hr met >/dev/null
+is "a failed build after the lifted holds counts from there: attempts: 2" "2" "$(attempts hr)"
+rc=0; rs hr re-scoped >/dev/null || rc=$?
+started hr w:p74; cs hr met >/dev/null; rc2=0; out="$(rs hr again)" || rc2=$?
+is "the holds did not use hr's one reset: the first real reset succeeds and a second is refused" "0|1|yes" \
+  "${rc}|${rc2}|$(grep -qF 'reset: hr was reset already' <<< "${out}" && echo yes)"
 item u1 "status: ready" "kind: code" "attempts: 1"; started u1 w:p50
 rc=0; out="$(cs u1 maybe)" || rc=$?
 is "close u1 maybe fails naming the six causes, not the word; the pane stays and nothing is counted" "1|yes|0|yes|1" \
