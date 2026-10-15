@@ -125,6 +125,7 @@ escalated today, which attempt each Fable builder is on, and each escalation ste
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
+`cost`, `outcomes` and `decisions` read the copy once the original is gone.
 
 `/swarm-dev:swarm` tells you when a new version is out. To update, run
 `! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,
