@@ -1156,9 +1156,10 @@ deliver_prompt() {
 # out a dropped stream; few enough that a builder that is truly stuck still comes back to the lead.
 IDLE_NUDGES=3
 
-# nudge_reason <name> — when <name> builds a ready code, docs or chore story that has no PR (an
-# epic story with pr_per = epic, as build_story builds it: story/<slug> is not pushed), print why a
-# nudge is sent and succeed. A name with
+# nudge_reason <name> — when <name> builds a ready code, docs or chore story that has no open or
+# merged PR (a closed one is an earlier attempt's, closed by a counted close; an epic story with
+# pr_per = epic, as build_story builds it: story/<slug> is not pushed), print why a nudge is sent and
+# succeed. A name with
 # no story (a conductor, hld, a planner) or a verify story is never nudged, and a repo that cannot
 # be resolved, or a gh or git call that fails, counts as having a PR.
 nudge_reason() {
@@ -1174,7 +1175,7 @@ nudge_reason() {
     echo "you are idle and story/${slug} is not pushed"; return
   fi
   url="$(git -C "${src}" remote get-url origin 2>/dev/null)" || return 1
-  n="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number -q length 2>/dev/null)" || return 1
+  n="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json state -q '[.[] | select(.state != "CLOSED")] | length' 2>/dev/null)" || return 1
   [[ "${n}" == 0 ]] || return 1
   echo "you are idle and story/${slug} has no PR"
 }

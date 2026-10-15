@@ -271,12 +271,15 @@ waitrc() { # <stderr file> <wait args...> — "<stdout>|exit <rc>|<seconds taken
   out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>"${e}")" || rc=$?
   echo "${out}|exit ${rc}|$((SECONDS - t0))"
 }
-# gh: story/a has a PR only in the repo whose origin URL is in pr-in; ghfail makes every call fail.
+# gh: story/a has the PRs in prs-a.json only in the repo whose origin URL is in pr-in, and none
+# elsewhere; the call's -q runs over them through jq. ghfail makes every call fail.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '%s\n' '[ -e "$H/ghfail" ] && exit 1' \
-  'case "$*" in "pr list -R $(cat "$H/pr-in" 2>/dev/null) --head story/a --state all "*) echo 1 ;; *) echo 0 ;; esac' >> "${ROOT}/bin/gh"
+  'prs="[]"; case "$*" in "pr list -R $(cat "$H/pr-in" 2>/dev/null) --head story/a --state all "*) prs="$(cat "$H/prs-a.json")" ;; esac' \
+  'q=.; while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done; echo "$prs" | jq -r "$q"' >> "${ROOT}/bin/gh"
 chmod +x "${ROOT}/bin/gh"
+echo '[{"state":"OPEN"}]' > "${ROOT}/prs-a.json"
 echo "a w:50" >> "${ROOT}/agents"; echo "w:50 a" > "${p}/.swarm/state/wait-a"   # this project's agent a, in a pane it recorded
 printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agents.tsv"
 session "${ROOT}/claude.json" sess-a=idle
@@ -299,6 +302,12 @@ check "after a nudge, wait wakes before it takes the session's word again" "yes"
   "$(grep -E '^agent (wait|prompt)' "${ROOT}/herdr.log" | awk '/^agent prompt/ { if (p) bad = 1; p = 1; next } { p = 0 } END { print bad ? "no" : "yes" }')"
 echo "${ROOT}/svc.git" > "${ROOT}/pr-in"; : > "${ROOT}/herdr.log"
 check "a builder whose PR sits in its story's repo is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
+# A counted close left an earlier attempt's PR closed on story/a: the retry has no PR of its own yet.
+echo '[{"state":"CLOSED"}]' > "${ROOT}/prs-a.json"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "a retry whose only PR on story/a is an earlier attempt's, closed, is nudged" "idle|3" "${got%%|*}|$(nudges)"
+echo '[{"state":"CLOSED"},{"state":"OPEN"}]' > "${ROOT}/prs-a.json"; : > "${ROOT}/herdr.log"
+check "a retry with its own open PR beside the closed one is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
 rm -f "${ROOT}/pr-in"; touch "${ROOT}/ghfail"; : > "${ROOT}/herdr.log"
 check "a builder whose gh call fails is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
 rm -f "${ROOT}/ghfail"
