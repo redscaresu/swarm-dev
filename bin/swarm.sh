@@ -440,8 +440,8 @@ def session_state(log, name, listing):
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
-#     worktree's last commit, the time a wait began) or ISO times (a PR's updatedAt). None when
-#     there is no sign at all.
+#     worktree's last commit or edit, an agent's session log write, the time a wait began) or ISO
+#     times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 STALL_PY='
 import datetime, re, time
@@ -1210,12 +1210,34 @@ nudge_reason() {
   echo "you are idle and story/${slug} has no PR"
 }
 
-# story_commit_time <slug> — the epoch time of the last commit in a story's worktree; empty when it
-# has none (not started, or its repo is not here).
-story_commit_time() {
-  local src
+# STALL_PATHS: how many of a worktree's changed and untracked files story_work_time reads the mtime of.
+STALL_PATHS=300
+
+# story_work_time <slug> — the epoch time a story's worktree last showed work: the newer of its last
+# commit and the newest mtime among its changed and untracked files (git status, the first
+# STALL_PATHS of them), so a builder holding its diff uncommitted is not stalled; empty when it has
+# neither (not started, or its repo is not here).
+story_work_time() {
+  local src wt ct
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo 2>/dev/null)")" || return 0
-  git -C "$(worktree_for "${src}" "$1")" log -1 --format=%ct 2>/dev/null || true
+  wt="$(worktree_for "${src}" "$1")"
+  ct="$(git -C "${wt}" log -1 --format=%ct 2>/dev/null || true)"
+  { GIT_OPTIONAL_LOCKS=0 git -C "${wt}" status --porcelain -z --untracked-files=all 2>/dev/null || true; } \
+    | python3 -c '
+import os, sys
+wt, cap, best = sys.argv[1], int(sys.argv[2]), [float(sys.argv[3])] if sys.argv[3] else []
+es, i = sys.stdin.read().split("\0"), 0
+while i < len(es) and cap > 0:
+    e, i = es[i], i + 1
+    if len(e) < 4:
+        continue
+    i += e[0] in "RC"   # a rename or copy: its source path follows
+    cap -= 1
+    try:
+        best.append(os.lstat(os.path.join(wt, e[3:])).st_mtime)
+    except OSError:   # deleted
+        pass
+print(int(max(best)) if best else "")' "${wt}" "${STALL_PATHS}" "${ct}" || echo "${ct}"
 }
 
 # story_rows — one "slug<TAB>agent name<TAB>status<TAB>prs" line per story, for STALL_PY's story_for.
@@ -1245,21 +1267,37 @@ else:
 PY
 }
 
+# session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
+# REPORT_PY's session_log), which the session writes on every turn and tool call; empty when it has none.
+session_mtime() {
+  SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" <<'PY' || true
+import os, sys
+exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
+sid = session_id(sys.argv[1], sys.argv[2])
+path = session_log(sys.argv[3], sid) if sid else ""
+try:
+    print(int(os.path.getmtime(path)) if path else "")
+except OSError:   # removed since the glob: no sign
+    print("")
+PY
+}
+
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
-# stall_minutes (STALL_PY), counting <since> (epoch: when the wait began) as one, print how many
+# stall_minutes (STALL_PY), counting <since> (epoch: when the wait began), its worktree's last commit
+# or edit (story_work_time) and its session log's mtime (session_mtime) as signs, print how many
 # minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
 # stalled, so gh is rarely called.
 agent_stalled() {
-  local slug url age ct prs=()
+  local slug url age ct sl prs=()
   slug="$(stall_py story "$1")"
   [[ -n "${slug}" ]] || return 1
-  ct="$(story_commit_time "${slug}")"
-  age="$(stall_py age "${slug}" "$1" "$2" "${ct}")"
+  ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
+  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done
-  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${prs[@]+"${prs[@]}"}")"
+  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   echo "${age}"
 }
@@ -1287,7 +1325,7 @@ herdr_wait() {
     timed_out "${err}" || break
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      rm -f "${err}"; echo "stalled: working ${min} min with no commit or PR update"; return
+      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
     fi
   done
   rm -f "${err}"
@@ -1331,7 +1369,7 @@ settle() {
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      state="stalled: working ${min} min with no commit or PR update"; break
+      state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
     fi
     t0="$(now_ms)"
     if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
@@ -3135,9 +3173,9 @@ dash_render() {
       board+="${d}"$'\t'"${r}"$'\t'"${x%%$'\t'*}"$'\t'"$(cut -f2 <<< "${x}")"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\t'"$(cut -f3- <<< "${x}")"$'\n'
     done < <(board "${d}")
   done
-  # The last worktree commit of each working builder's story (STALL_PY's story_for), for the stall rule.
+  # The last worktree commit or edit of each working builder's story (STALL_PY's story_for), for the stall rule.
   while IFS= read -r r; do
-    [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_commit_time "${r}")"$'\n'
+    [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_work_time "${r}")"$'\n'
   done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
     | SWARM_STALL_PY="${STALL_PY}" SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
       DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" python3 -c '
@@ -3363,11 +3401,17 @@ if agents is not None:
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
             if st == "working":
+                # Any agent with a Claude session: its session log, written on every turn and tool call.
+                log = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
+                try:
+                    logged = os.path.getmtime(log) if log else None
+                except OSError:   # removed since the glob: no sign
+                    logged = None
                 if slug:
-                    signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
-                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit or PR update"
+                    signs = [commit_of.get(slug, ""), logged] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
+                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit, edit, session-log write or PR update"
                 else:
-                    age, lack = stall_age(seen, epic_of.get(base), base, [since, ran.get(pane)] if since else [], NOW), "no swarm action"
+                    age, lack = stall_age(seen, epic_of.get(base), base, ([since, ran.get(pane)] if since else []) + [logged], NOW), "no swarm action"
                 if age is not None and age >= int(E["DASH_STALL_MIN"]):
                     st, look, words = "stalled", True, f"stalled {age}m"
                     stalled.append((name, age, lack))
