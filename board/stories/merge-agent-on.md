@@ -17,5 +17,5 @@ After the release is published, the lead runs `claude plugin update swarm-dev@sw
 - In the first conductor run after the switch, the session .jsonl shows at least one merge by literal PR number with `--match-head-commit`, followed by reconcile and the start of a story that unblock readied in the same run. Otherwise the lead files a story naming what the conductor did instead.
 
 **From review (binding; overrides the scope above where they differ):**
-- No restart is needed: the lead runs `claude plugin update swarm-dev@swarm-dev` and calls the new script directly. The lead merges the config PR under its standing authority; there is no **You:** step.
+- No restart is needed: the lead runs `claude plugin update swarm-dev@swarm-dev` and calls the new script directly. The lead merges the config PR under its standing authority, so nothing here waits on the user.
 - Depends only on flow-speedups-release; ruleset-not-strict was done on 2026-10-15 before the board PR.
