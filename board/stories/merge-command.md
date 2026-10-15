@@ -31,3 +31,4 @@ New dispatch arm and merge_pr. Parse owner/repo/number from the URL; refuse anyt
 - `--board` refuses unless every file the PR changes is under the board dir.
 - commands/swarm.md's merge steps and docs/method.md § Merging (:449-455) say to use `swarm.sh merge`; done_when greps both.
 - Extra fixtures: 100 green runs then a red one on page 2; a pending legacy status; a cancelled, timed_out and action_required run; gh pr view failing; check-runs failing after partial green output; a fast green workflow finishing before a slower failing one on main; mergeCommit null. None may call `gh pr merge` where the gate should refuse.
+- More refusal fixtures, each failing with its guard removed: with merge_admin on, a required status-check context missing from the head refuses; on main, an expected workflow that never gets a run on the merge commit ends in `main-ci <t> timeout`, and a green run on a different SHA does not count.
