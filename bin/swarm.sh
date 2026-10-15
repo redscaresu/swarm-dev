@@ -2873,7 +2873,10 @@ PY
 # 3.2's read -t is not cut short by SIGWINCH, so it waits in one-second steps). Off a terminal it
 # prints each changed frame, plain.
 dash_watch() {
-  local every="$1" tty="$2" tpl="" frame last="" key i winch=0
+  local every="$1" tty="$2" tpl="" frame last="" key i winch=0 inst="" ver="" path="" now=""
+  # The installed copy this runs from, if it is one: its scope and project, to re-read each frame. A
+  # dev checkout matches no entry, so it never jumps to the installed copy.
+  IFS=$'\t' read -r inst path ver <<< "$(dash_installed)"
   if [[ ${tty} == 1 ]]; then
     trap 'printf "\033[?25h\033[?1049l"' EXIT
     printf '\033[?1049h\033[?25l'
@@ -2881,6 +2884,10 @@ dash_watch() {
   trap 'exit 0' INT TERM HUP
   trap 'winch=1' WINCH
   while :; do
+    if [[ -n "${inst}" ]]; then
+      IFS=$'\t' read -r _ path now <<< "$(dash_installed "${inst}")"
+      [[ -z "${now}" || "${now}" == "${ver}" ]] || dash_reexec "${path}/bin/swarm.sh" "${every}" "${tty}"
+    fi
     [[ ${tty} == 0 ]] || dash_size
     dash_slow   # the cache file decides whether this asks gh again
     # A failed render shows its error in the frame and the loop carries on: a watch must not die quietly.
@@ -2913,6 +2920,47 @@ dash_watch() {
       [[ ${winch} == 0 ]] || { last=""; break; }
     done
   done
+}
+
+# dash_installed [<install>] — this plugin's entry in installed_plugins.json as its install
+# (scope:projectPath, as project installs share a scope), installPath and version, tab-separated: that
+# install's entry, or with none the entry installed at SWARM_HOME (paths resolved). Installs at the
+# same version share an installPath, so this project's own install wins, then one with no project.
+# Prints nothing when the file is missing or unreadable or has no such entry.
+dash_installed() {
+  python3 - "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/installed_plugins.json" "${PLUGIN}" \
+    "${SWARM_HOME}" "${PROJECT_DIR}" "${1:-}" <<'PY' 2>/dev/null || true
+import json, os, sys
+path, plugin, home, project, inst = sys.argv[1:]
+real = os.path.realpath
+try:
+    entries = [(f"{e['scope']}:{e.get('projectPath', '')}", e) for e in json.load(open(path))["plugins"][plugin]]
+    if inst:
+        found = [(k, e) for k, e in entries if k == inst]
+    else:
+        def rank(ke):
+            where = ke[1].get("projectPath")
+            return 1 if not where else 0 if real(where) == real(project) else 2
+        found = sorted(((k, e) for k, e in entries if real(e["installPath"]) == real(home)), key=rank)
+    if found:
+        print(found[0][0], found[0][1]["installPath"], found[0][1]["version"], sep="\t")
+except Exception:
+    pass
+PY
+}
+
+# dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
+# on this project (the cwd may be gone), with the tree and ladder as they stand now. exec keeps the
+# PID and skips the EXIT trap, so a terminal is restored first, in case the new script dies before
+# it enters the alternate screen again. A script that is not an executable file is ignored.
+dash_reexec() {
+  [[ -f "$1" && -x "$1" ]] || return 0
+  local script="$1"
+  [[ $3 == 0 ]] || printf '\033[?25h\033[?1049l'
+  set -- dash --watch "$2"
+  [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
+  [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
+  SWARM_PROJECT="${PROJECT_DIR}" exec "${script}" "$@"
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind and title (its first "# " heading),

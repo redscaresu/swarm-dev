@@ -9,6 +9,11 @@ so it asks herdr for the agents whenever `herdr` is on your PATH. It never chang
 state or the logs, and never opens or closes a pane. In a folder with no board it stops with one line
 naming `swarm.sh init`.
 
+When `claude plugin update` installs a new version while `--watch` runs from the installed plugin,
+the watch switches to the new version's `swarm.sh` before its next frame and keeps your `t` and `l`
+choices. It reads the version from Claude Code's `installed_plugins.json`. Run from a checkout of
+this repo, it never switches.
+
 In a terminal at least 140 columns wide it splits into two columns: needs you and the epics on
 the left, recent as a timestamped log on the right, and a status bar on the last line. Narrower, it
 is one column, top to bottom:
