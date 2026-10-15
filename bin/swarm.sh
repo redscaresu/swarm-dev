@@ -1396,7 +1396,7 @@ is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1;
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
 tell_agent() {
   local kind="$2" f="$3" name msg state since
-  since="$(date +%s)"
+  since="$(python3 -c 'import time; print(time.time())')"   # to the sub-second: an earlier tell's goal may share the second
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"

@@ -423,7 +423,7 @@ goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /
 }
 onerecord() { # <name> <tell args...> — the tell sends one record, no goal
   local name="$1"; shift
-  tsession idle; TELL_GOAL=new tellout idle "$@" >/dev/null
+  tsession idle; : "$(TELL_GOAL=new tellout idle "$@")"   # in $(), so a failing tell does not trip set -e
   if [[ "$(records)" == 1 ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
 }
@@ -432,6 +432,12 @@ TELL_GOAL=new goalcase "goal on: a findings tell sends the findings, then once i
 TELL_GOAL=old goalcase "goal on: only a set entry older than the tell fails the tell, naming s1" 1 "its session log shows no goal set" findings findings.md
 TELL_GOAL=pane goalcase "goal on: a goal on the pane with no new entry fails the tell, naming s1" 1 "its session log shows no goal set" findings findings.md
 for k in nudge resume; do onerecord "goal on: a ${k} tell sends no goal" "${k}" findings.md; done
+# A second findings tell right after one that set its goal: the same condition's entry from the
+# first tell is older than the second tell, so with no new entry the second fails.
+tsession idle; first="$(TELL_GOAL=new tellout idle findings findings.md)"; tsession idle
+out="$(TELL_GOAL=pane tellout idle findings findings.md)"
+if [[ "${first}" == *"exit 0" && "${out}" == *"s1: its session log shows no goal set"*"exit 1" ]]; then echo "ok   goal on: a repeated findings tell does not count the previous tell's goal"; else
+  echo "FAIL goal on: a repeated findings tell does not count the previous tell's goal: got '${out}'"; fails=$((fails + 1)); fi
 printf -- '---\nkind: code\nstatus: ready\nepic: e1\n---\n' > "${dir}/docs/stories/s1.md"; printf 'goal = 4\npr_per = epic\n' > "${dir}/.claude/swarm/config"
 TELL_GOAL=new goalcase "goal on, pr_per = epic: the /goal holds the epic-mode reply" 0 "$(reply epic)" findings findings.md
 rm -rf "${dir}/.claude" "${dir}/docs/stories/s1.md"
