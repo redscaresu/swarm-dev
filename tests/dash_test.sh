@@ -901,7 +901,7 @@ marker() { printf '%s\t%s\t%s\n' "$(( $(date +%s) - $2 * 60 ))" main "${ROOT}/re
 marker "${live1}" 7 cs-one; marker "${live2}" 3 epic-beta; marker "${dead}" 2 dead-one; marker "${live3}" 12 old-one
 before="$(cksum "${S}"/codex-review.*)"
 for cols in 100 160; do
-  out="$(fresh; cd "${C}" && env -u HERDR_ENV -u SWARM_PROJECT COLUMNS="${cols}" PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+  out="$(fresh; cd "${C}" || exit 1; env -u HERDR_ENV -u SWARM_PROJECT COLUMNS="${cols}" PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
   # under <row text> — the epic header (a progress bar's line) above that row.
   under() { awk -v r="$1" '/[█░]/ { e = $0 } index($0, r) { print e; exit }' <<< "${out}" | grep -oE '(alpha|beta) '; }
   check "codex row at ${cols} columns: a story worktree's review shows with its 7m age" grep -qE 'codex review cs-one vs main.*7m' <<< "${out}"
