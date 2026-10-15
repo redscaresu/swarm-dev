@@ -22,7 +22,8 @@ terminal pane. The run stops whenever a decision is yours.
 3. A conductor agent takes an epic and starts one builder per story, each in its own git
    worktree and pane. With `goal` on, each builder also gets a Claude Code `/goal` made from its
    story's **Done when**, which keeps it working until that holds or a set number of turns pass.
-   Each PR is reviewed by codex and `/code-review`, and the builder fixes what they find.
+   Each PR is reviewed by codex and `/code-review`, and the builder fixes what they find
+   (with `goal` on, under a fresh goal that holds until the fixes are in).
 4. Green, reviewed PRs wait for you to merge. The next `/swarm-dev:swarm` starts the stories that were waiting on them.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, and handles

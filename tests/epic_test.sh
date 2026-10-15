@@ -106,6 +106,9 @@ else:
               "<local-command-stdout>/goal can't run while hooks are restricted (disableAllHooks or allowManagedHooksOnly is set in settings or by policy).</local-command-stdout>"):
         print(json.dumps({"type": "system", "subtype": "local_command", "timestamp": now, "content": c}))
 PY
+                        ;;
+                        # Any other prompt starts a turn: the goal tests list its session as busy.
+                        *) [ -e "$H/session" ] && echo "[{\"sessionId\":\"$(basename "$(cat "$H/session")" .jsonl)\",\"status\":\"busy\"}]" > "$H/started.json" ;;
                       esac
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
@@ -206,6 +209,8 @@ check "with goal off, story writes no .goal.md (and drops an earlier one), and t
   "$([[ -e "${p}/.swarm/briefs/gl0.goal.md" ]] && echo yes || echo no)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl0.md")")"
 check "with goal off, story sends one agent prompt: the brief" "1|0" "$(prompts)|$(goals)"
 echo "goal = 7" > "${p}/.claude/swarm/config"
+# send_goal types the /goal only into a started turn: the claude stub lists the brief's session busy.
+echo '[]' > "${ROOT}/started.json"; export CLAUDE_STUB_AGENTS="${ROOT}/started.json"
 goal_story "${b}" gl1 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
 rc=0; out="$(run story gl1)" || rc=$?
@@ -222,18 +227,18 @@ goal_story "${b}" gl4 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
 rc=0; out="$(HERDR_STUB_GOAL=refused run story gl4)" || rc=$?
 check "a refused /goal fails story naming the story and Claude Code's reason; one /goal, and no pane closed" "fail|yes|1|none closed" \
-  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl4: Claude Code refused its /goal (/goal can't run while hooks are restricted" "${out}")|$(goals)|$(closes)"
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl4: the brief was delivered, but Claude Code refused its /goal (/goal can't run while hooks are restricted" "${out}")|$(goals)|$(closes)"
 goal_story "${b}" gl5 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"; echo "Goal set: DW-ONE holds" > "${ROOT}/screen"   # the pane alone would show a goal set
 rc=0; out="$(HERDR_STUB_GOAL='' run story gl5)" || rc=$?
 rm -f "${ROOT}/screen"
 check "with no goal entry in the session log, whatever the pane shows, story fails naming the story; one /goal, no pane closed" \
-  "fail|yes|1|none closed" "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl5: its session log shows no goal set for its condition" "${out}")|$(goals)|$(closes)"
+  "fail|yes|1|none closed" "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl5: the brief was delivered, but its session log shows no goal set for its condition" "${out}")|$(goals)|$(closes)"
 goal_story "${b}" gl6 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
 rc=0; out="$(HERDR_STUB_GOAL=other run story gl6)" || rc=$?
 check "a goal set for another condition is not this goal: story fails; one /goal" "fail|yes|1" \
-  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl6: its session log shows no goal set for its condition" "${out}")|$(goals)"
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl6: the brief was delivered, but its session log shows no goal set for its condition" "${out}")|$(goals)"
 # A blank line under a heading does not end its block; the next bold line that is not one does.
 item "${b}" stories/gl2.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "- DW-ONE holds" "- DW-TWO holds" "**Out of scope:** OUT-ONE" "" \
@@ -247,7 +252,7 @@ item "${b}" stories/gl3.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "**Out of scope:** OUT-ONE" >> "${b}/stories/gl3.md"
 check "a Done when with no item under it fails like a missing one, before any worktree" "yes|no" \
   "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
-: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-6].md
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-6].md; unset CLAUDE_STUB_AGENTS
 
 # --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
 echo "keep_panes = true" > "${p}/.claude/swarm/config"
@@ -319,7 +324,7 @@ check "a later story branches from the epic branch as it is now" "${merged}|${me
 check "the repo is listed once" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md")"
 check "with goal off, the epic story brief holds the epic-mode reply, and no .goal.md is written" "yes|no" \
   "$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/f2.md")")|$([[ -e "${p}/.swarm/briefs/f2.goal.md" ]] && echo yes || echo no)"
-printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"; export CLAUDE_STUB_AGENTS="${ROOT}/started.json"
 goal_story "${b}" gf1 "status: ready" "kind: code" "epic: f" "repo: svc"
 run story gf1 >/dev/null
 check "with goal = 7 and pr_per = epic, the condition carries the epic-mode reply the brief holds" \
@@ -335,7 +340,7 @@ out="$(run story gx1 || true)"
 check "with goal on, an over-long condition fails naming the story, and leaves no worktree, branch, epic branch or epic edit" \
   "yes|no|no|no|no|same" \
   "$(has "gx1: its goal condition is" "${out}")|$([[ -e "${ROOT}/svc-wt/gx1" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify refs/heads/story/gx1 && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/story/gx1 && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/epic/gx && echo yes || echo no)|$(cmp -s "${ROOT}/gx-epic.md" "${b}/epics/gx.md" && echo same || echo changed)"
-printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"; unset CLAUDE_STUB_AGENTS
 rm -f "${b}/stories/gf1.md" "${b}/stories/gx1.md" "${b}/epics/gx.md"
 run conduct f >/dev/null
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
