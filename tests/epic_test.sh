@@ -69,14 +69,16 @@ goal_on() {
   grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
 }
 GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
-# inbox_rule <epic> <brief> — conduct_brief's inbox rule, as has prints them: the inbox, the mv aside
-# after each wait or watch, then read, act and delete.
-INBOX_RULE="yes|yes|yes"
+# inbox_rule <epic> <brief> — conduct_brief's inbox rule, as has prints them: the inbox; after each
+# wait or watch, an interrupted read's copy first; then the mv to that exact copy, read, act and delete.
+INBOX_RULE="yes|yes|yes|yes"
 inbox_rule() {
+  local b i=".swarm/inbox/conduct-$1"; b="$(tr '\n' ' ' <<< "$2")"
   # shellcheck disable=SC2016 # the backticks are the brief's
-  printf '%s|%s|%s' "$(has ".swarm/inbox/conduct-$1.md" "$2")" \
-    "$(has '`swarm.sh wait` or `swarm.sh watch` returns, if that file exists, `mv` it aside' "$(tr '\n' ' ' <<< "$2")")" \
-    "$(has "then read the moved copy, act on it, and delete it" "$(tr '\n' ' ' <<< "$2")")"
+  printf '%s|%s|%s|%s' "$(has "${i}.md. After each \`swarm.sh wait\` or \`swarm.sh watch\` returns: if " "${b}")" \
+    "$(has "${i}.reading.md is there (a read cut off before its delete), read it, act on it and delete it first." "${b}")" \
+    "$(has 'Then, if the inbox exists, `mv` it to ' "${b}")" \
+    "$(has "${i}.reading.md (atomic, so a note the lead adds meanwhile starts a new file), read the moved copy, act on it, and delete it." "${b}")"
 }
 # goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
 goal_off() {
@@ -202,7 +204,10 @@ nx() { (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}
 item "${b}" epics/e.md "status: active"
 for s in s1 s2 s3 s4; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: e" "repo: svc"; done
 item "${b}" stories/o1.md "status: ready" "kind: code" "repo: svc"
+mkdir -p "${p}/.swarm/inbox"; echo "a note for the last run" | tee "${p}/.swarm/inbox/conduct-e.md" > "${p}/.swarm/inbox/conduct-e.reading.md"
 run conduct e >/dev/null
+check "a new conductor starts with no inbox or reading copy left from the run before" "no|no" \
+  "$([[ -e "${p}/.swarm/inbox/conduct-e.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/inbox/conduct-e.reading.md" ]] && echo yes || echo no)"
 check "the conductor opens a tab named for the epic" "yes" "$(has "tab create --workspace w --cwd ${p} --label e --no-focus" "$(log)")"
 check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor" "$(log)")"
 check "the conductor's brief watches only its own epic's PRs" "yes" \

@@ -419,8 +419,10 @@ session is gone or unknown. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
 `.swarm/inbox/conduct-<epic>.md`, without sending a prompt or reading the conductor's state, and
 only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
-inbox aside with `mv` (so a note added meanwhile starts a new file), reads the moved copy, acts on
-it and deletes it. The conductor closes a builder only after both
+inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added meanwhile starts a new
+file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
+so the conductor reads and deletes it first. `conduct` clears both files, so a new conductor never
+acts on notes left for the one before. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With

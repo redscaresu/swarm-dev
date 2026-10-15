@@ -1887,7 +1887,8 @@ add_epic_repo() {
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
 conduct_brief() {
-  local epic="$1"
+  local epic="$1" inbox
+  inbox="${PROJECT_DIR}/.swarm/inbox/$(agent_name "conduct-$1")"
   cat <<EOF
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
@@ -1900,10 +1901,11 @@ Stay inside this epic: start no story outside it, and leave the HLD and other ep
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
 
-The lead may leave you notes while you work, in ${PROJECT_DIR}/.swarm/inbox/$(agent_name "conduct-${epic}").md. After each
-\`swarm.sh wait\` or \`swarm.sh watch\` returns, if that file exists, \`mv\` it aside to a .reading.md beside it
-(atomic, so a note the lead adds meanwhile starts a new file), then read the moved copy, act on it,
-and delete it.
+The lead may leave you notes while you work, in ${inbox}.md. After each
+\`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
+cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
+it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a new file),
+read the moved copy, act on it, and delete it.
 EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
@@ -2115,7 +2117,7 @@ conduct_epic() {
 }
 
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox
   [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
   [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
   hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
@@ -2125,6 +2127,8 @@ start_conductor() {
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
+  inbox="${PROJECT_DIR}/.swarm/inbox/$(agent_name "conduct-${epic}")"
+  rm -f "${inbox}.md" "${inbox}.reading.md"   # nor are notes left for it
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
