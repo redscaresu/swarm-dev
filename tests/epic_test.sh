@@ -174,15 +174,29 @@ rm "${ROOT}/idle"
 check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
 # goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
 goal_story "${b}" gl0 "status: ready" "kind: code" "repo: svc"
+mkdir -p "${p}/.swarm/briefs"; echo "an earlier build's condition" > "${p}/.swarm/briefs/gl0.goal.md"
 run story gl0 >/dev/null
-check "with goal off, story writes no .goal.md, and the brief holds the story-mode reply" "no|yes" \
+check "with goal off, story writes no .goal.md (and drops an earlier one), and the brief holds the story-mode reply" "no|yes" \
   "$([[ -e "${p}/.swarm/briefs/gl0.goal.md" ]] && echo yes || echo no)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl0.md")")"
 echo "goal = 7" > "${p}/.claude/swarm/config"
 goal_story "${b}" gl1 "status: ready" "kind: code" "repo: svc"
-run story gl1 >/dev/null || true
+run story gl1 >/dev/null
 check "with goal = 7, story writes the condition: Done when, From review, the brief's reply, the escape and the bound" \
   "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
-: > "${p}/.claude/swarm/config"; rm -f "${b}/stories/gl0.md" "${b}/stories/gl1.md"
+# A blank line under a heading does not end its block; the next bold line that is not one does.
+item "${b}" stories/gl2.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "" "**Done when:**" "" "- DW-ONE holds" "- DW-TWO holds" "**Out of scope:** OUT-ONE" "" \
+  "**From review (binding):**" "- FR-ONE holds" "**From the spike (binding):**" "- SPIKE-ONE" "**You:** YOU-ONE" >> "${b}/stories/gl2.md"
+rc=0; out="$(run story gl2)" || rc=$?   # the exit is checked: a refusal shows as a FAIL, not an abort
+[[ ${rc} -eq 0 ]] || echo "story gl2: ${out}"
+g="$(cat "${p}/.swarm/briefs/gl2.goal.md" 2>&1 || true)"
+check "a blank line before the first item keeps the items; a bold line straight after a block is not copied" "0|yes|yes|yes|no|no|no" \
+  "${rc}|$(has "- DW-ONE holds" "${g}")|$(has "- DW-TWO holds" "${g}")|$(has "- FR-ONE holds" "${g}")|$(grep -qE 'OUT-ONE|SPIKE-ONE' <<< "${g}" && echo yes || echo no)|$(grep -q 'YOU-ONE' <<< "${g}" && echo yes || echo no)|$(grep -q 'Out of scope' <<< "${g}" && echo yes || echo no)"
+item "${b}" stories/gl3.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "" "**Done when:**" "" "**Out of scope:** OUT-ONE" >> "${b}/stories/gl3.md"
+check "a Done when with no item under it fails like a missing one, before any worktree" "yes|no" \
+  "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-3].md
 
 # --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
 echo "keep_panes = true" > "${p}/.claude/swarm/config"
@@ -256,7 +270,7 @@ check "with goal off, the epic story brief holds the epic-mode reply, and no .go
   "$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/f2.md")")|$([[ -e "${p}/.swarm/briefs/f2.goal.md" ]] && echo yes || echo no)"
 printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"
 goal_story "${b}" gf1 "status: ready" "kind: code" "epic: f" "repo: svc"
-run story gf1 >/dev/null || true
+run story gf1 >/dev/null
 check "with goal = 7 and pr_per = epic, the condition carries the epic-mode reply the brief holds" \
   "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gf1.goal.md" "${EPIC_REPLY}" 7)|$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/gf1.md")")"
 # A condition over Claude Code's 4000 characters is refused before the epic branch or worktree exists.

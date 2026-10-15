@@ -1479,8 +1479,8 @@ mutation_rule() {
   printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and note which test failed and how."
 }
 
-# reply_sentence <epic|story> — what a builder replies, and when: the brief's last rule, and what its
-# goal condition waits for. One sentence per mode, so the two cannot drift.
+# reply_sentence <epic|story> — what a builder replies, and when: the brief's rule on finishing, and
+# what its goal condition waits for. One sentence per mode, so the two cannot drift.
 reply_sentence() {
   if [[ "$1" == epic ]]; then
     printf '%s' "When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
@@ -1489,15 +1489,25 @@ reply_sentence() {
   fi
 }
 
-# goal_condition <slug> — the builder's /goal: the story's **Done when** and **From review** blocks
-# (each from its bold line to the next blank line), the reply its brief asks for, an escape for a
-# story that cannot be done, and the goal's turn bound. Fails, printing why, with no Done when.
+# goal_condition <slug> <epic|story> — the builder's /goal: the story's **Done when** and **From
+# review** blocks, the reply its brief asks for in that mode, an escape for a story that cannot be
+# done, and the goal's turn bound. A block runs from its bold heading to the first blank line after
+# its content, or to the next bold line. Fails, printing why, with no Done when or none under it.
 goal_condition() {
-  local story="${BOARD}/stories/$1.md" blocks mode=story
-  blocks="$(awk '/^\*\*(Done when|From review)/ { on = 1 } on && /^[[:space:]]*$/ { on = 0; print "" } on' "${story}")"
-  grep -q '^\*\*Done when' <<< "${blocks}" || { echo "$1 has no **Done when**, so its goal would have nothing to meet"; return 1; }
-  [[ "${CFG_pr_per}" != epic || -z "$(fm "${story}" epic)" ]] || mode=epic
-  printf '%s\n\n%s\n\n%s\n' "${blocks}" "$(reply_sentence "${mode}")" \
+  local blocks
+  blocks="$(awk '
+    /^\*\*(Done when|From review)/ {
+      if (on) print ""
+      on = 1; dw = /^\*\*Done when/; rest = $0; sub(/^\*\*[^*]*\*\*[[:space:]]*/, "", rest)
+      has = (rest != ""); if (has && dw) items = 1
+      print; next
+    }
+    on && /^\*\*/ { on = 0; print ""; next }
+    on && /^[[:space:]]*$/ { if (has) { on = 0; print "" }; next }
+    on { has = 1; if (dw) items = 1; print }
+    END { exit !items }' "${BOARD}/stories/$1.md")" \
+    || { echo "$1 has no **Done when** with an item under it, so its goal would have nothing to meet"; return 1; }
+  printf '%s\n\n%s\n\n%s\n' "${blocks}" "$(reply_sentence "$2")" \
     "If the story cannot be done, reply \`IMPOSSIBLE: <why>\` and stop; that reply meets this goal. The goal is met once all of the above holds and you have replied, or stop after ${CFG_goal} more turns."
 }
 GOAL_MAX_CHARS=4000   # Claude Code's own cap on a /goal condition
@@ -1632,7 +1642,7 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal=""
+  local slug="$1" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" mode=story
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -1646,17 +1656,20 @@ build_story() {
   role="$(story_role "${slug}")" || die "${role}"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
+  # Decided once: the epic branch below, the brief's reply (keyed on that branch) and the goal's.
+  epic="$(fm "${story}" epic)"
+  [[ "${CFG_pr_per}" != epic || -z "${epic}" ]] || mode=epic
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
   if [[ "${CFG_goal}" == off ]]; then require_claude; else
-    goal="$(goal_condition "${slug}")" || die "${goal}"
+    goal="$(goal_condition "${slug}" "${mode}")" || die "${goal}"
     (( ${#goal} <= GOAL_MAX_CHARS )) \
       || die "${slug}: its goal condition is ${#goal} characters, over Claude Code's ${GOAL_MAX_CHARS}; shorten its **Done when** or **From review**"
     require_claude "${GOAL_MIN_CLAUDE}"
   fi
   base="$(base_for "${src}")"
-  epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
-  if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
+  from="origin/${base}"; epic_branch=""
+  if [[ "${mode}" == epic ]]; then
     [[ -f "${BOARD}/epics/${epic}.md" ]] || die "${slug}: no epic ${BOARD}/epics/${epic}.md"
     epic_branch="$(epic_branch_for "${src}" "${epic}" "${base}")"; from="origin/${epic_branch}"
     add_epic_repo "${epic}" "${repo:-$(basename "${PROJECT_DIR}")}"
@@ -1664,6 +1677,7 @@ build_story() {
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
   git -C "${src}" worktree add -q -b "${branch}" "${wt}" "${from}"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
+  rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" "${epic_branch}" > "${prompt}"
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"   # goal-delivery sends it
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
