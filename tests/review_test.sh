@@ -211,6 +211,97 @@ check "a failed pull restores the put-back edit from its backup" " M docs/storie
   "$(git -C "${ROOT}/pf" status --porcelain -- docs/stories/m.md)|$(same_as_base pf)"
 check "the merged item stays in review" "review" "$(sed -n 's/^status: //p' "${ROOT}/pf/docs/stories/k.md")"
 
+# --- reconcile carries the board's own uncommitted front-matter edits over a pull that changes the
+# file. setup_flip <name>: a bare origin whose board has k, z, and x and y blocked on t (not on the
+# board; x also depends on it); its main checkout <name>, with k in review (its PR merged), z in review (its PR open), and
+# x and y flipped to ready by unblock, all uncommitted; and a clone <name>-up for the base's changes.
+setup_flip() {
+  local d="${ROOT}/$1"
+  "${GIT[@]}" init -q --bare "${d}.git"
+  "${GIT[@]}" clone -q "${d}.git" "${d}" 2>/dev/null
+  item "${d}/docs" stories/k.md "status: ready" "kind: code"
+  item "${d}/docs" stories/z.md "status: ready" "kind: code"
+  item "${d}/docs" stories/x.md "status: blocked" "kind: code" "blocked_by: [t]" "depends_on: [t]"
+  item "${d}/docs" stories/y.md "status: blocked" "kind: code" "blocked_by: [t]"
+  "${GIT[@]}" -C "${d}" add docs && "${GIT[@]}" -C "${d}" commit -q -m board && "${GIT[@]}" -C "${d}" push -q origin main
+  "${GIT[@]}" clone -q "${d}.git" "${d}-up"
+  at "$1" review k "${U}/1" >/dev/null; at "$1" review z "${U}/3" >/dev/null; at "$1" unblock >/dev/null
+}
+push_up() { "${GIT[@]}" -C "${ROOT}/$1-up" add -A && "${GIT[@]}" -C "${ROOT}/$1-up" commit -q -m "the base's" && "${GIT[@]}" -C "${ROOT}/$1-up" push -q origin main; }
+flipped() { sed -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "$1"; }
+same() { if cmp -s "$1" "$2"; then echo same; else echo differs; fi; }
+# The base changes x's and z's bodies and deletes y: the pull goes through, and each keeps its edit.
+setup_flip fl
+echo "the base's line" | tee -a "${ROOT}/fl-up/docs/stories/x.md" >> "${ROOT}/fl-up/docs/stories/z.md"
+"${GIT[@]}" -C "${ROOT}/fl-up" rm -q docs/stories/y.md; push_up fl
+cp "${ROOT}/fl/docs/stories/y.md" "${ROOT}/fl-y"
+out="$(at fl reconcile; echo "exit $?")"
+check "a flip on a story the pull changes: reconcile pulls, and exits 0" "yes|$(git -C "${ROOT}/fl.git" rev-parse main)" \
+  "$(has "exit 0" "${out}")|$(git -C "${ROOT}/fl" rev-parse HEAD)"
+check "x has the base's body, status: ready and no blocked_by" "same" \
+  "$(same <(flipped "${ROOT}/fl-up/docs/stories/x.md") "${ROOT}/fl/docs/stories/x.md")"
+check "an in-review z keeps its status and prs: under the base's body" "review|${U}/3|the base's line" \
+  "$(sed -n 's/^status: //p' "${ROOT}/fl/docs/stories/z.md")|$(sed -n 's/^prs: //p' "${ROOT}/fl/docs/stories/z.md")|$(tail -1 "${ROOT}/fl/docs/stories/z.md")"
+check "the base deleted y: it stays deleted, and reconcile names it" "gone|yes" \
+  "$(gone "${ROOT}/fl/docs/stories/y.md")|$(has "the pull deleted docs/stories/y.md" "${out}")"
+copy="$(sed -n 's/.*the pull deleted docs\/stories\/y\.md.*(its copy is in \(.*\))$/\1/p' <<< "${out}")"
+check "and the backup stays, holding y's edit at the path it names" "${ROOT}/fl/.swarm/state/reconcile-backup/|same|yes" \
+  "$(grep -o '.*/reconcile-backup/' <<< "${copy}")|$(same "${ROOT}/fl-y" "${copy}")|$(has "the backup stays in ${copy%/docs/stories/y.md}" "${out}")"
+check "a kept file names its backup before it is checked out" "yes" \
+  "$(has "docs/stories/x.md changes only swarm.sh's front-matter keys; checking it out for the pull, to set them again after it (backup in ${copy%/docs/stories/y.md})" "$(sed -n '1p' <<< "${out}")")"
+# A hand edit to x's body, under its flip, still stops the pull, named, and x stays as it was.
+setup_flip fh
+echo "the base's line" >> "${ROOT}/fh-up/docs/stories/x.md"; push_up fh
+echo "a local note" >> "${ROOT}/fh/docs/stories/x.md"; cp "${ROOT}/fh/docs/stories/x.md" "${ROOT}/fh-x"
+out="$(at fh reconcile || true)"
+check "a hand edit to x stops the pull, named, and x is byte for byte as it was" "yes|same" \
+  "$(has "docs/stories/x.md" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fh-x" "${ROOT}/fh/docs/stories/x.md")"
+# The base blocks x on another story while x is flipped to ready here: stop, named, x as it was.
+setup_flip fc
+perl -pi -e 's/^blocked_by: \[t\]$/blocked_by: [w]/' "${ROOT}/fc-up/docs/stories/x.md"; push_up fc
+cp "${ROOT}/fc/docs/stories/x.md" "${ROOT}/fc-x"
+out="$(at fc reconcile || true)"
+check "the base changed x's blocked_by too: reconcile stops naming x, and x is as it was" "yes|same" \
+  "$(has "docs/stories/x.md has an uncommitted front-matter edit, and the base changed its blocked_by: too" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fc-x" "${ROOT}/fc/docs/stories/x.md")"
+# The base adds w to x's depends_on alone: x's flip to ready is not set again over it.
+setup_flip fp
+perl -pi -e 's/^depends_on: \[t\]$/depends_on: [t, w]/' "${ROOT}/fp-up/docs/stories/x.md"; push_up fp
+cp "${ROOT}/fp/docs/stories/x.md" "${ROOT}/fp-x"
+out="$(at fp reconcile || true)"
+check "the base changed x's depends_on under its flip: reconcile stops naming x, and x is as it was" "yes|same" \
+  "$(has "docs/stories/x.md has an uncommitted front-matter edit, and the base changed its depends_on: too" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fp-x" "${ROOT}/fp/docs/stories/x.md")"
+# A diverged main (no fast-forward), and a pull that fails after x was checked out: x keeps its flip.
+setup_flip fd
+echo "the base's line" >> "${ROOT}/fd-up/docs/stories/x.md"; push_up fd
+"${GIT[@]}" -C "${ROOT}/fd" commit -q --allow-empty -m "diverged"; cp "${ROOT}/fd/docs/stories/x.md" "${ROOT}/fd-x"
+out="$(at fd reconcile || true)"
+check "a diverged main: the pull stops, and x keeps its flip" "yes|same" \
+  "$(has "cannot fast-forward" "${out}")|$(same "${ROOT}/fd-x" "${ROOT}/fd/docs/stories/x.md")"
+setup_flip ff
+echo "the base's line" >> "${ROOT}/ff-up/docs/stories/x.md"; echo "theirs" > "${ROOT}/ff-up/notes.txt"; push_up ff
+echo "mine" > "${ROOT}/ff/notes.txt"; cp "${ROOT}/ff/docs/stories/x.md" "${ROOT}/ff-x"
+out="$(at ff reconcile || true)"
+check "a pull that fails after x was checked out restores x's flip from the backup" "yes|same" \
+  "$(has "the pull failed, and every board edit is as it was" "${out}")|$(same "${ROOT}/ff-x" "${ROOT}/ff/docs/stories/x.md")"
+# A merge lands on the base while reconcile runs (git, wrapped, pushes x: done before the
+# fast-forward): reconcile moves to the base it checked, so its keys never cover the newer status.
+setup_flip fr
+echo "the base's line" >> "${ROOT}/fr-up/docs/stories/x.md"; push_up fr
+checked="$(git -C "${ROOT}/fr.git" rev-parse main)"
+mkdir -p "${ROOT}/late-bin"
+cat > "${ROOT}/late-bin/git" <<EOF
+#!/bin/sh
+case " \$* " in *" pull "*|*" merge "*) [ -e "${ROOT}/late-done" ] || { : > "${ROOT}/late-done"
+  perl -pi -e 's/^status: blocked\$/status: done/' "${ROOT}/fr-up/docs/stories/x.md"
+  "$(command -v git)" -c user.name=t -c user.email=t@t -C "${ROOT}/fr-up" commit -q -am late
+  "$(command -v git)" -C "${ROOT}/fr-up" push -q origin main; } ;; esac
+exec "$(command -v git)" "\$@"
+EOF
+chmod +x "${ROOT}/late-bin/git"
+PATH="${ROOT}/late-bin:${PATH}" at fr reconcile >/dev/null || true
+check "a merge that lands during reconcile is not pulled under its keys" "${checked}|ready|done" \
+  "$(git -C "${ROOT}/fr" rev-parse HEAD)|$(sed -n 's/^status: //p' "${ROOT}/fr/docs/stories/x.md")|$(git -C "${ROOT}/fr.git" show main:docs/stories/x.md | sed -n 's/^status: //p')"
+
 # --- The merge guard: every Claude agent starts unable to run gh pr merge, unless merge = agent.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
