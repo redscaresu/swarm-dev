@@ -109,6 +109,13 @@ expect "lead story is a gate" "gate" \
 expect "an escalated story is the lead's to decide, ahead of gate" "escalated b" \
   "item stories/a.md 'status: ready' 'kind: lead'" \
   "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'"
+# `close <slug> impossible` hands a story on with a **You:** step in its block: the user's, so a gate.
+# A **You:** line in the story's body, outside the block, leaves an escalated story the lead's.
+YOU_BLOCK="printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**You:** fix its **Done when**' '<!-- /swarm.sh escalated -->' >> docs/stories/b.md"
+expect "an impossible story, its block's **You:** step the user's, is a gate, not escalated" "gate" \
+  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 1' 'escalated_from: code'" "${YOU_BLOCK}"
+expect "a **You:** line outside the block leaves an escalated story the lead's" "escalated b" \
+  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'" "echo '**You:** a step in the body' >> docs/stories/b.md"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture
 expect "once the lead drops it, next no longer names it" "gate" \
   "item stories/a.md 'status: ready' 'kind: lead'" \

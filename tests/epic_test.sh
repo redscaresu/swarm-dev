@@ -662,10 +662,10 @@ gh_stub; : > "${ROOT}/gh.log"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 item "${b}" stories/x1.md "status: ready" "kind: code" "repo: svc"
 wt="${ROOT}/svc-wt/x1"; adds=""; fresh=""; cleared=""
-left() { # which of x1's worktree, local story/x1 and origin's are still there
-  [[ ! -d "${wt}" ]] || printf ' worktree'
-  ! git -C "${ROOT}/svc" show-ref -q --verify refs/heads/story/x1 || printf ' branch'
-  ! git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/story/x1 || printf ' origin'
+left() { # <slug> — which of its worktree, local story/<slug> and origin's are still there
+  [[ ! -d "${ROOT}/svc-wt/$1" ]] || printf ' worktree'
+  ! git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/$1" || printf ' branch'
+  ! git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/$1" || printf ' origin'
 }
 for i in 1 2 3; do
   if run story x1 >/dev/null; then adds+="ok "; else adds+="failed "; fi
@@ -675,7 +675,7 @@ for i in 1 2 3; do
   touch "${wt}/untracked"
   echo "[{\"number\":${i},\"state\":\"OPEN\",\"url\":\"https://github.com/o/svc/pull/${i}\"}]" > "${ROOT}/prs.json"
   run close x1 >/dev/null
-  cleared+="$(left)|"
+  cleared+="$(left x1)|"
 done
 check "story, close, story, close, story builds code, code, then escalate" "code code escalate" \
   "$(awk -F'\t' '$3 == "x1" { print $2 }' "${p}/.swarm/agents.tsv" | paste -sd' ' -)"
@@ -683,7 +683,21 @@ check "every worktree add succeeds, and starts fresh from the base" "ok ok ok |y
 check "after each close the worktree, local and origin's story/x1 are gone" "||" "${cleared}"
 check "each close closed its attempt's open PR" "2|yes|yes" \
   "$(grep -c '^pr close' "${ROOT}/gh.log")|$(has "pr close https://github.com/o/svc/pull/1 --comment" "$(cat "${ROOT}/gh.log")")|$(has "pr close https://github.com/o/svc/pull/2 --comment" "$(cat "${ROOT}/gh.log")")"
-rm -f "${b}/stories/x1.md" "${ROOT}/prs.json"
+# An uncounted close (paused, cleared-on-error, impossible) clears its build away the same way, and a
+# story closed impossible builds again once it is reset.
+echo '[]' > "${ROOT}/prs.json"; item "${b}" stories/y1.md "status: ready" "kind: code" "repo: svc"; cleared=""; adds=""
+for c in paused cleared-on-error impossible; do
+  if run story y1 >/dev/null; then adds+="ok "; else adds+="failed "; fi
+  "${GIT[@]}" -C "${ROOT}/svc-wt/y1" commit -q --allow-empty -m "${c}" && "${GIT[@]}" -C "${ROOT}/svc-wt/y1" push -q origin story/y1
+  touch "${ROOT}/svc-wt/y1/untracked"
+  run close y1 "${c}" >/dev/null
+  cleared+="$(left y1)|"
+done
+check "each build of y1 starts, and after each uncounted close its worktree, local and origin's story/y1 are gone" "ok ok ok |||" "${adds}${cleared}"
+got="$(sed -n 's/^kind: //p' "${b}/stories/y1.md")|$(run reset y1 its Done when is fixed >/dev/null && echo ok || echo failed)"
+check "close y1 impossible leaves it kind: lead; reset y1 succeeds, and then story y1 succeeds" "lead|ok|ok" \
+  "${got}|$(run story y1 >/dev/null && echo ok || echo failed)"
+rm -f "${b}/stories/x1.md" "${b}/stories/y1.md" "${ROOT}/prs.json"
 
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
 printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"

@@ -16,7 +16,14 @@ that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
 `attempts: <n>` is how many builds of the story failed. Only `swarm.sh close` writes it, when it
 closes the builder of a code, docs or chore story that is still `ready`; once it reaches `escalate_after` (2 by default) the
-story is built on Fable (swarm-dev `docs/method.md` § Model and effort).
+story is built on Fable (swarm-dev `docs/method.md` § Model and effort). `swarm.sh close <slug> <cause>`
+says why the builder stopped (`met`, `impossible`, `stalled`, `bound`, `paused` or `cleared-on-error`;
+with `goal` on, closing a `ready` story's builder needs one). `impossible`, `paused` and
+`cleared-on-error` are not counted in `attempts:`.
+
+When the builder says the **Done when** cannot be met (`impossible`), the story becomes `kind: lead`
+with `escalated_from: <its kind>`, and its block's **You:** step asks you to fix the **Done when** and
+run `swarm.sh reset <slug> <reason>`.
 
 If the Fable build fails too, `swarm.sh close` turns the story into `kind: lead` with
 `escalated_from: <its kind>` (`code (default)` when it had no `kind:` line), and appends a block

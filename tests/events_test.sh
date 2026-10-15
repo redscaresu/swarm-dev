@@ -83,6 +83,8 @@ appends "a tell with an unknown kind" 1 tell s1 "tell: the kind must be findings
 appends "the old form, tell <slug> <file>" 1 tell s1 "tell: the kind must be findings, nudge or resume" tell s1 /tmp/f.md
 check "tell never logs the file's contents" bash -c "! grep -q SECRET-CONTENT '${LOG}'"
 appends "close" 1 close s1 ok close s1
+# A close's cause goes with its command too (close:<cause>), and the target stays the slug.
+appends "close with a cause" 1 close:bound s1 ok close s1 bound
 appends "tidy --yes" 1 tidy - ok tidy --yes
 appends "tidy without --yes logs nothing" 0 - - - tidy
 appends "unblock, one per story" 2 unblock '*' ok unblock
