@@ -58,7 +58,11 @@ is one column, top to bottom:
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
   `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it
-  started, from its newest `escalate` line (`attempt 3 · 14:02`). Idle and
+  started, from its newest `escalate` line (`attempt 3 · 14:02`). A codex review running through
+  `swarm.sh codex-review` is a row too, `codex review <worktree> vs <base>` with how long it has
+  run, under the epic of its worktree's story (or of an `epic-<epic>` worktree). It never goes in
+  needs you or the lead's queue, and it drops off once its process is gone or it has run past
+  `codex_minutes` plus a minute. Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
   epics with no open story share one line. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
