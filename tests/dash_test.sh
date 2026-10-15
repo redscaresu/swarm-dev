@@ -132,6 +132,7 @@ chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nob
 
 # The board is committed, with one merge on the base branch; then one board file is edited.
 G=(git -C "${P}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
+touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 "${G[@]}" add docs && "${G[@]}" commit -qm board
 "${G[@]}" rm -q docs/stories/s-old.md && "${G[@]}" commit -qm "finish s-old"
 "${G[@]}" checkout -qb story/s-zero && "${G[@]}" commit -q --allow-empty -m work
@@ -486,7 +487,7 @@ check "a recent PR update is not a stall in wait --stall" test "${rc}:$(grep -c 
 # retired to s-re-done, the newer running) shows its newer session; a codex agent (cx) and one with
 # no session recorded (s-dash) show herdr's word. herdr says s-re is RE_HERDR, the opposite of its
 # newer session each time. s-auth is idle, and its transcript ends on an expired login: auth, not idle.
-S="${ROOT}/s"; mkdir -p "${S}/.swarm/state"; git -C "${S}" init -q
+S="${ROOT}/s"; mkdir -p "${S}/.swarm/state" "${S}/docs/stories"; git -C "${S}" init -q; touch "${S}/docs/stories/README.md"
 printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\nw2:p7 s-auth\n' > "${S}/.swarm/state/t"
 cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/auth.jsonl"
 printf '2026-10-13\tcode\t%s\t%s\t%s\thigh\t%s\n' s-re claude opus re-old s-re claude opus re-new s-lost claude sonnet lost \
@@ -564,6 +565,7 @@ echo "epic: x" >> "${Q}/docs/stories/x-body.md"; echo "epic: x" >> "${Q}/docs/st
 printf '# late\n\n---\nepic: x\n---\n' > "${Q}/docs/stories/y-late.md"
 # CRLF line endings: still x's, and ready.
 printf -- '---\r\nstatus: ready\r\nepic: x\r\n---\r\n\r\n# crlf\r\n' > "${Q}/docs/stories/x-crlf.md"
+touch "${Q}/docs/stories/README.md"
 "${GQ[@]}" add -A && "${GQ[@]}" commit -qm board
 # A story that listed its PR, deleted with its code (a squash merge looks like this). Counts.
 echo 1 > "${Q}/src/a"; "${GQ[@]}" rm -q docs/stories/x-own.md docs/stories/x-body.md; "${GQ[@]}" add -A; "${GQ[@]}" commit -qm "ship x-own"
@@ -633,6 +635,22 @@ echo "board_dir = ../rboard/docs" > "${R}/.claude/swarm/config"
 cp -R "${Q}/." "${B}" && rm -rf "${B}/.swarm" && git -C "${B}" update-ref -d refs/remotes/origin/main && git -C "${B}" symbolic-ref --delete refs/remotes/origin/HEAD
 out="$(fresh; cd "${R}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a board in its own repo counts from that repo's history" grep -qE '^│ ○ x +█{7}░{5}  6/11  5 ready +│$' <<< "${out}"
+
+# --- A git repo with no board: dash and dash --watch stop at once and name swarm.sh init.
+N="${ROOT}/noboard"; mkdir -p "${N}"; git -C "${N}" init -q
+for args in "" "--watch 1"; do
+  # shellcheck disable=SC2086 # args is split on purpose
+  # perl's alarm kills it after 5 seconds (exit 142): macOS has no timeout(1).
+  if out="$(fresh; cd "${N}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/nobin:${PATH}" perl -e 'alarm 5; exec @ARGV' bash "${SWARM}" dash ${args} 2>&1 </dev/null)"; then rc=0; else rc=$?; fi
+  check "dash${args:+ }${args} with no board exits 1 within 5 s" test "${rc}" -eq 1
+  check "dash${args:+ }${args} with no board says no board and names swarm.sh init" grep -q 'no board.*swarm.sh init' <<< "${out}"
+  check "dash${args:+ }${args} with no board does not say nothing needs you" lacks "nothing needs you" "${out}"
+done
+# A board with nothing in progress or waiting: nothing needs you, and exit 0.
+mkdir -p "${N}/docs/stories"; touch "${N}/docs/stories/README.md"
+if out="$(fresh; cd "${N}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1)"; then rc=0; else rc=$?; fi
+check "dash on an empty board exits 0" test "${rc}" -eq 0
+check "dash on an empty board says nothing needs you" has "nothing needs you" "${out}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
