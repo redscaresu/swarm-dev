@@ -2022,6 +2022,12 @@ start_conductor() {
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
   HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
   echo "workspace ${hld} (${ws})"
+  # An epic being built is active, or status and next list it as a later epic waiting on the user.
+  # An uncommitted board edit, as unblock's are; any other status is left as it is.
+  if [[ "$(get_fm "${epic_file}" status)" == later ]]; then
+    set_fm "${epic_file}" status active
+    echo "epic ${epic}: status later -> active (uncommitted board edit)"
+  fi
 }
 
 # fm <file> <key> — the first front-matter value for <key>, or nothing.
@@ -2322,7 +2328,7 @@ set_status() {
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes with set_fm, which refuses any other.
 # reconcile puts them back as committed on an item whose PRs merged, so they never stop its pull.
-SET_FM_KEYS="attempts kind escalated_from"
+SET_FM_KEYS="attempts kind escalated_from status"
 
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
 # when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.

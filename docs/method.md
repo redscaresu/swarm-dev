@@ -241,7 +241,9 @@ A story's **Done when** names what the builder's session can show (a test run, a
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
 stops and reports; the session it was started from stays free. Its last act is writing that report
 to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm-dev:swarm`
-knows it has finished: a conductor is idle whenever it waits on its own background work. It runs in a herdr workspace named
+knows it has finished: a conductor is idle whenever it waits on its own background work. When it starts, an epic still `later` is set `active` (an uncommitted
+board edit that `conduct` reports in one line), so `status` and `next` stop listing it as waiting
+on you. It runs in a herdr workspace named
 for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named for the
 epic, in a pane named `conductor`. Each story it starts gets a pane in that tab, named for the
 story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off story gets a tab of its
