@@ -17,17 +17,22 @@ H1=1111111111111111111111111111111111111111; H2=22222222222222222222222222222222
 M=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; URL=https://github.com/o/r/pull/7
 mkdir -p "${P}/.claude/swarm" "${P}/docs/stories" "${P}/.swarm/state" "${ROOT}/bin"
 git -C "${P}" init -q
+# The board's repo has an origin, a local bare repo the gh stub names o/r (${FX}/origin).
+git init -q --bare "${ROOT}/origin.git"; git -C "${P}" remote add origin "${ROOT}/origin.git"
 
 # gh: pr view, pr merge (fails unless --match-head-commit is ${FX}/head; marks the PR merged with
-# merge commit ${M}) and repo view from ${FX}; each api path from serve's fixture.
+# merge commit ${M}, and then fails the next ${FX}/readback-fails pr views) and repo view (the merge
+# methods, or with nameWithOwner ${FX}/origin) from ${FX}; each api path from serve's fixture.
 printf '#!/usr/bin/env bash\nFX="%s"; LOG="%s"; M="%s"\n' "${FX}" "${ROOT}/gh.log" "${M}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
 # serve <key> — the fixture <key>.<n> on the nth read of <key> when there is one, else <key>; with
-# <key>.fail, print that (a partial answer) and fail; with neither, a 404.
+# <key>.fail, print that (a partial answer) and fail; with <key>.<n>.fail, fail the nth read only;
+# with none of them, a 404.
 serve() {
   local n; n=$(( $(cat "${FX}/$1.n" 2>/dev/null || echo 0) + 1 )); echo "${n}" > "${FX}/$1.n"
   if [ -e "${FX}/$1.fail" ]; then cat "${FX}/$1.fail"; echo "gh: HTTP 502" >&2; exit 1; fi
+  if [ -e "${FX}/$1.${n}.fail" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
   if [ -e "${FX}/$1.${n}" ]; then cat "${FX}/$1.${n}"
   elif [ -e "${FX}/$1" ]; then cat "${FX}/$1"
   else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
@@ -35,14 +40,17 @@ serve() {
 case "$1 $2" in
   "pr view")
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
-    printf '{"state":"%s","headRefOid":"%s","baseRefName":"main","mergeCommit":%s,"files":%s,"changedFiles":%s}\n' \
-      "$(cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/files")" "$(cat "${FX}/nfiles")" ;;
+    left="$(cat "${FX}/readback-left" 2>/dev/null || echo 0)"
+    if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
+    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s}\n' \
+      "$(cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" ;;
   "pr merge")
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
-    [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;;
-  "repo view") cat "${FX}/repo" ;;
+    [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit"
+    [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left" ;;
+  "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
   api*)
     for a in "$@"; do path="${a}"; done
     sha="${path#*/commits/}"; sha="${sha%%/*}"
@@ -52,6 +60,7 @@ case "$1 $2" in
                      [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head" ;;
       */commits/*/status*) serve "${sha}.status" ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
+      */pulls/*/files*) serve files ;;
       */rules/branches/*) serve rules ;;
       */branches/*) serve branch ;;
       */contents/.github/workflows\?*) serve workflows ;;
@@ -103,8 +112,9 @@ item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "$
 fresh() {
   rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
-  echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"
-  echo '[{"path":"docs/stories/s.md"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+  echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
+  echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+  echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
   checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
@@ -117,7 +127,7 @@ merge() {
   local envs=()
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
-  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 \
+  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 \
     SWARM_MERGE_CI_SECONDS=5 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
@@ -219,7 +229,7 @@ fresh; paths nodocs paths-ignore 'docs/**'; merge "${URL}"
 is "a workflow whose paths-ignore covers every file the PR changes is not waited for" 0 "${rc}"
 fresh; paths docs paths "'docs/**'"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
 check "a workflow whose paths the PR touches is waited for: main-ci timeout" logged '^main-ci s timeout (.github/workflows/docs.yml (no run'
-fresh; paths go paths "'**/*.go'"; echo '[{"path":"main.go"}]' > "${FX}/files"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+fresh; paths go paths "'**/*.go'"; echo '[{"filename":"main.go"}]' > "${FX}/files"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
 check "**/ matches a file at the root: main-ci timeout" logged '^main-ci s timeout (.github/workflows/go.yml (no run'
 fresh; workflows ci multi; printf 'on:\n  push:\n    branches: [\n      main ]\n' > "${FX}/wf.multi.yml"; merge "${URL}"
 check "a [list] over several lines is not skipped: main-ci error naming it" logged '^main-ci s error .github/workflows/multi.yml'
@@ -231,9 +241,34 @@ fresh; paths code paths 'bin/**'; echo 101 > "${FX}/nfiles"; merge SWARM_MERGE_C
 check "with not every file listed, a path-filtered workflow is waited for" logged '^main-ci s timeout (.github/workflows/code.yml (no run'
 fresh; touch "${FX}/no-merge-commit"; merge "${URL}"
 is "no merge commit: exits non-zero" 1 "${rc}"
-is "no merge commit: one merge line, not merged" "merge s not merged (MERGED, no merge commit)" "$(events)"
+is "no merge commit: one merge line, unconfirmed, no main-ci" \
+  "merge s unconfirmed (MERGED, no merge commit): gh pr merge ran, but ${URL} does not read as merged; check it by hand" "$(events)"
 fresh; touch "${FX}/stays-open"; merge "${URL}"
-is "a merge that leaves the PR open: not merged, no main-ci" "merge s not merged (OPEN)" "$(events)"
+is "a merge that leaves the PR open: unconfirmed, never 'not merged', no main-ci" \
+  "merge s unconfirmed (OPEN): gh pr merge ran, but ${URL} does not read as merged; check it by hand" "$(events)"
+check "a merge that leaves the PR open: it read the PR back 5 times" test "$(grep -c '^pr view 7 --repo o/r --json state,mergeCommit' "${ROOT}/gh.log")" = 5
+check "a merge that leaves the PR open: says check it by hand" said "check it by hand"
+fresh; echo 1 > "${FX}/readback-fails"; merge "${URL}"
+is "a read-back that fails once, then reads MERGED: the ok path" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+# The merge commit needs no check run of its own when no workflow is expected on it.
+fresh; rm "${FX}/workflows"; checks "${FX}/${M}.checks"; wfruns "${FX}/${M}.runs"; merge "${URL}"
+is "no expected workflow and no runs on the merge commit: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+# A failed read is a missed poll; three in a row end the wait.
+fresh; checks "${FX}/${M}.checks.1" "$(run test in_progress)"; touch "${FX}/${M}.checks.2.fail"; merge "${URL}"
+is "one failed read between pending and green: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+fresh; touch "${FX}/${M}.checks.1.fail" "${FX}/${M}.checks.2.fail" "${FX}/${M}.checks.3.fail"; merge "${URL}"
+is "three failed reads in a row: exits non-zero" 1 "${rc}"
+check "three failed reads in a row: main-ci error" logged '^main-ci s error .*3 reads in a row failed'
+fresh; workflows ci comma; printf "on:\n  push:\n    paths: ['data/a,b.csv']\n" > "${FX}/wf.comma.yml"; merge "${URL}"
+check "a quoted entry holding a comma is not split: main-ci error naming it" logged '^main-ci s error .github/workflows/comma.yml: .*comma is not read'
+for v in "*branches" "[main, *other]" "&b [main]"; do
+  fresh; workflows ci alias; printf 'on:\n  push:\n    branches: %s\n' "${v}" > "${FX}/wf.alias.yml"; merge "${URL}"
+  check "an anchor or alias (branches: ${v}) is not read as a glob: main-ci error naming it" logged '^main-ci s error .github/workflows/alias.yml'
+done
+fresh; workflows ci alias; printf 'on:\n  push:\n    branches:\n      - *b\n' > "${FX}/wf.alias.yml"; merge "${URL}"
+check "an alias in a block list is not read as a glob: main-ci error naming it" logged '^main-ci s error .github/workflows/alias.yml'
+fresh; workflows ci star; printf "on:\n  push:\n    branches: ['*']\n" > "${FX}/wf.star.yml"; merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+check "a quoted '*' is a glob, not an alias: the workflow is waited for" logged '^main-ci s timeout (.github/workflows/star.yml (no run'
 
 # --- What is merged, and how.
 fresh; item s "status: ready" "prs: ${URL}"; merge "${URL}"; refused "a story that is ready" "s is ready, not review"
@@ -247,9 +282,14 @@ is "--board: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|mai
 fresh; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge --board "${URL}"
 is "--board runs no reconcile: only merge and main-ci lines" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
 check "--board runs no reconcile: the other story stays in review" grep -qx 'status: review' "${S}"
-fresh; rm "${S}"; echo '[{"path":"docs/stories/s.md"},{"path":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
+fresh; rm "${S}"; echo '[{"filename":"docs/stories/s.md"},{"filename":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
 merge --board "${URL}"; refused "--board with a file off the board" "changes bin/swarm.sh, outside docs/"
 fresh; rm "${S}"; echo 2 > "${FX}/nfiles"; merge --board "${URL}"; refused "--board with files missing from gh's list" "cannot list every file"
+fresh; rm "${S}"; echo '[{"filename":"docs/x.sh","previous_filename":"bin/swarm.sh","status":"renamed"}]' > "${FX}/files"
+merge --board "${URL}"; refused "--board with a file renamed onto the board" "changes bin/swarm.sh, outside docs/"
+check "--board reads the files with --paginate" grep -q -- "--paginate repos/o/r/pulls/7/files" "${ROOT}/gh.log"
+fresh; rm "${S}"; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
+merge --board "${URL}"; refused "--board for a PR outside the board's repo" "is not in other/repo, the board's repo"
 # protected <context>... — main's classic branch protection requires these checks, from any app.
 protected() {
   local c list=""; for c in "$@"; do list+="${list:+,}\"${c}\""; done
@@ -275,6 +315,9 @@ merge "${URL}"; refused "merge_admin with branch protection's required check abs
 fresh "merge_admin = true"; echo '[]' > "${FX}/rules"
 echo '{"strict":false,"contexts":["test"],"checks":[{"context":"test","app_id":99}]}' > "${FX}/branch"
 merge "${URL}"; refused "merge_admin with branch protection's check bound to an app that never reported it" "test (required, absent)"
+fresh "merge_admin = true"; echo release/1.x > "${FX}/base"; echo '[]' > "${FX}/rules"; merge "${URL}"
+check "merge_admin, base release/1.x: the rules path encodes the branch" grep -q -- "repos/o/r/rules/branches/release%2F1.x?" "${ROOT}/gh.log"
+check "merge_admin, base release/1.x: so does branch protection's" grep -q -- "repos/o/r/branches/release%2F1.x/protection/required_status_checks" "${ROOT}/gh.log"
 fresh "merge_admin = true"; echo '[]' > "${FX}/rules"; touch "${FX}/branch.fail"
 merge "${URL}"; refused "merge_admin when branch protection cannot be read" "HTTP 502"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
@@ -287,7 +330,9 @@ fresh "merge = agent"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 is "a conductor's pane with merge = agent: exits 0" 0 "${rc}"
 fresh "merge = agent"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b "${URL}"; refused "a builder's pane with merge = agent" "pane w:b"
 fresh; mkdir -p "${P}/.swarm/state/reconcile-backup"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b "${URL}"
-refused "a builder's pane beside a reconcile backup directory" "pane w:b"; rmdir "${P}/.swarm/state/reconcile-backup"
+refused "a builder's pane beside a reconcile backup directory" "pane w:b"
+fresh; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead "${URL}"
+is "the lead's own pane beside a reconcile backup directory: exits 0" 0 "${rc}"; rmdir "${P}/.swarm/state/reconcile-backup"
 fresh "merge = agent"; printf 'conduct-e-done w:c\nt w:b\n' > "${ROOT}/agents"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c "${URL}"
 refused "a retired conductor's pane" "pane w:c"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 fresh; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead "${URL}"

@@ -86,8 +86,10 @@ Repeat until a step below says stop:
      `agent`, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
      reviewed> <PR URL>`, never a bare `gh pr merge`. It merges that head only when every check on it
      passed, waits for CI on the base branch, and runs `swarm.sh reconcile`, which puts back a retry's
-     `attempts:`, pulls the board and finishes the story. If it exits non-zero, a refusal merged
-     nothing; a red or timed-out CI on the base means the PR merged and the base needs a fix. Then
+     `attempts:`, pulls the board and finishes the story. If it exits non-zero, read why: a refusal
+     before `gh pr merge` ran merged nothing; `unconfirmed` means `gh pr merge` ran but the PR never
+     read as merged, so check it by hand; a red or timed-out CI on the base means the PR merged and
+     the base needs a fix. Then
      `swarm.sh unblock` and `swarm.sh close <slug>`: closing a story that is still `ready` counts a
      failed build.
 
