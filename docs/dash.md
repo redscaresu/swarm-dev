@@ -30,7 +30,8 @@ is one column, top to bottom:
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
   by default, with no sign of life: for a builder no commit, PR update or swarm action on its story,
-  for any other agent no `events.tsv` line naming it or run from its pane), `agree` a draft HLD. When nothing does,
+  for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
+  pane, nudges and failed tells excepted), `agree` a draft HLD. When nothing does,
   it is one line.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
   many open stories are in each status. An agent's status is its Claude session's (`claude agents

@@ -431,9 +431,10 @@ def session_state(log, name, listing):
 # builder's last sign of life stands in for it.
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
-#   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
-#     A nudge is not a sign of life, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are
-#     skipped, and so is any other tell whose outcome is not ok: it never reached the builder.
+#   sign_time(f) -> an events.tsv line's (fields) epoch when it is a sign of life, else None. A
+#     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, and so
+#     is any other tell whose outcome is not ok: it never reached the builder.
+#   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
 #     worktree's last commit, the time a wait began) or ISO times (a PR's updatedAt). None when
@@ -454,15 +455,18 @@ def epoch(x):
             return datetime.datetime.fromisoformat(str(x).replace("Z", "+00:00")).timestamp()
         except ValueError:
             return None
+def sign_time(f):
+    t = epoch(f[0]) if len(f) == 5 else None
+    if t is None or f[1] in ("nudge", "tell:nudge") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+        return None
+    return t
 def last_seen(events):
     seen = {}
     try:
         for l in open(events, encoding="utf-8", errors="replace"):
             f = l.rstrip("\n").split("\t")
-            t = epoch(f[0]) if len(f) == 5 else None
-            if t is None or f[1] in ("nudge", "tell:nudge") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
-                continue
-            if t > seen.get(f[2], 0):
+            t = sign_time(f)
+            if t is not None and t > seen.get(f[2], 0):
                 seen[f[2]] = t
     except OSError:
         pass
@@ -3155,18 +3159,18 @@ def pr_ref(m):
 
 # Agents: this project's panes (its tab records). A working agent shows how long since its last sign
 # of life (STALL_PY's stall_age); past stall_minutes it is stalled, and needs you. A story's builder
-# counts its worktree's commits and PR updates; any other agent (a conductor, planner or escalate
-# row) its own events.tsv lines: by target, and once it has a start line, by the pane that ran them.
+# counts its worktree's commits and PR updates; an agent with no story (a conductor or planner)
+# its own events.tsv lines: by target, and once it has a start line, by the pane that ran them.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
 seen = last_seen(E["DASH_EVENTS"])
 STARTS = ("agent", "conduct", "story")
 started = {}   # target -> when its newest start (agent, conduct or story) in events.tsv ran
-ran = {}       # pane -> when the newest line it ran was written
+ran = {}       # pane -> when the newest sign of life it ran (STALL_PY's sign_time) was written
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = epoch(f[0])
+    t = sign_time(f)
     if t is not None and t > ran.get(f[3], 0):
         ran[f[3]] = t
-    t = t if f[1] in STARTS and f[4] == "ok" else None
+    t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
 # Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).

@@ -469,6 +469,10 @@ echo "stall_minutes = 3" > "${P}/.claude/swarm/config"
 out="$(COLUMNS=100 agedash)"
 check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "${out}"
 check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working [45] min with no swarm action' <<< "${out}"
+# A nudge its pane sent a minute ago (wait's, or the lead's tell:nudge) and a tell that never reached
+# anyone are not signs of life (STALL_PY's rule): the conductor stays stalled.
+printf '%s\tnudge\ts-one\tw1:p1\tok\n%s\ttell:nudge\ts-one\tw1:p1\tok\n%s\ttell:findings\ts-one\tw1:p1\tfailed (exit 1)\n' "$(ago 1)" "$(ago 1)" "$(ago 1)" >> "${P}/.swarm/events.tsv"
+check "a conductor whose only recent pane lines are nudges is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "$(COLUMNS=100 agedash)"
 # A command its own pane ran a minute ago (a review of s-one, not naming it) is a sign of life.
 printf '%s\treview\ts-one\tw1:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
 check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working [12]m +│$' <<< "$(COLUMNS=100 agedash)"
