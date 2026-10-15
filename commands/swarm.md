@@ -94,16 +94,20 @@ Repeat until a step below says stop:
      not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
      PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
      or two what you chose and why:
-     - Re-scope it: change the story so a fresh build can succeed, then run
-       `swarm.sh reset <slug> <reason>`. A builder reads the story in its own worktree, so when the
-       board is in the story's repo the new scope has to reach the branch builds start from first:
-       make the change in a board PR, leave the main checkout's copy alone, and run `reset` only
-       once that PR has merged and, with `pr_per = epic`, once you have merged the base into
-       `epic/<epic>` and pushed it. Until then `next` names the story again: that is a wait on the
-       PR's merge, so say so and stop. A story is reset at most once (`reset` refuses a second), so
-       after its second failed escalate build, drop it.
-     - Drop it: `swarm.sh drop <slug> <reason>` takes it off the board; open a board PR with that
-       deletion.
+     - Re-scope it: change the story so a fresh build can succeed, and run
+       `swarm.sh reset <slug> <reason>`. When the board is in the story's repo, a builder reads the
+       story in its own worktree, from the branch builds start from, so the new scope has to reach
+       that branch first: make the change in a board PR and leave the main checkout's copy alone.
+       Once that PR has merged (and, with `pr_per = epic`, once you have merged the base into
+       `epic/<epic>` and pushed it), run `swarm.sh reset <slug> <reason> && git pull --ff-only` in
+       the board's repo, in one go: `reset` puts the file back to its committed text, so the pull
+       brings in the re-scope (its kind, repo, epic and risk included) before anything builds it.
+       Until the PR merges, `next` names the story again: that is a wait on the user's merge,
+       so name the board PR, show what `swarm.sh status` lists under Waiting on you, and stop.
+       A story is reset at most once (`reset` refuses a second, and `next` then says to drop it),
+       so after its second failed escalate build, drop it.
+     - Drop it: `swarm.sh drop <slug> <reason>` takes it off the board (deleted, or `status: done`
+       with `finished = mark`); open a board PR with the change.
 
      Then go back to 1.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead

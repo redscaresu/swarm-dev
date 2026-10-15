@@ -191,6 +191,9 @@ is "reset is logged with its reason" "1" "$(grep -c $'\treset\te1\tw:me\tok (re-
 item e1 "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"; rc=0; out="$(sw reset e1 again)" || rc=$?
 is "a second reset of e1 fails, naming the first, and leaves it kind: lead" "1|yes|lead" \
   "${rc}|$(grep -qF 'reset: e1 was reset already, at ' <<< "${out}" && echo yes)|$(fmv e1 kind)"
+item e1 "status: ready" "kind: code" "attempts: 2"; built e1 escalate; started e1 w:p39; close e1; b="$(block e1)"
+is "escalated again after its reset, e1's block offers only drop" "yes|0|yes" \
+  "$(grep -qF 'It was reset once already' <<< "${b}" && echo yes)|$(grep -c 'swarm.sh reset e1' <<< "${b}")|$(grep -qF 'swarm.sh drop e1 <reason>' <<< "${b}" && echo yes)"
 # A block whose close marker was edited away: reset would take the rest of the file with it, so it refuses.
 item cm "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"
 printf '%s\n' "<!-- swarm.sh escalated: swarm.sh reset removes this block -->" "the lead's choices" "the lead's re-scope" >> "${P}/docs/stories/cm.md"

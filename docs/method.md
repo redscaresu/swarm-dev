@@ -181,13 +181,16 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   `escalated <slug>` for it, ahead of `gate`. The lead either re-scopes the story and runs
   `swarm.sh reset <slug> <reason>`, which removes `attempts:`, puts the kind back from
   `escalated_from:` and removes the block, or drops it. A builder reads its story in its worktree,
-  so when the board is in the story's repo the re-scope merges as a board PR before the reset (and
-  with `pr_per = epic`, the base is merged into `epic/<epic>` too).
-  `swarm.sh drop <slug> <reason>` takes a dropped story off the board as `finish` does, and the lead
-  commits that in a board PR; it refuses any story that is not escalated. A story is reset at most
-  once: `reset` refuses a slug that events.tsv already shows reset, and names when. It also refuses
-  a block whose closing marker is gone, rather than remove everything after the opening one. An
-  escalated story is the lead's, so it is not listed under waiting on you (`status`, `dash`,
+  so when the board is in the story's repo the re-scope merges as a board PR first (and with
+  `pr_per = epic`, the base is merged into `epic/<epic>` too). Then the lead runs `reset` and pulls
+  the board in one go: `reset` puts the file back to its committed text, so the pull brings in the
+  re-scope, and `story` reads its kind, repo, epic and risk from that. `swarm.sh drop <slug>
+  <reason>` takes a dropped story off the board as `finish` does (deleted, or `status: done` with
+  `finished = mark`), and the lead commits the change in a board PR; it refuses any story that is
+  not escalated. A story is reset at most once: `reset` refuses a slug that events.tsv already shows
+  reset, and names when, and a story that escalates again after its reset is offered only drop, in
+  its block and in `next`. `reset` also refuses a block whose closing marker is gone, rather than
+  remove everything after the opening one. An escalated story is the lead's, so it is not listed under waiting on you (`status`, `dash`,
   `gate`). Each step is a line in events.tsv with its UTC time, for the training data:
   `escalate <slug>` when the build starts (`ok (attempt <n>)`), `escalated <slug>` at the close
   (`ok (attempts <n>, <k> PRs)`), and `reset` or `drop <slug>` with `ok (<reason>)`.

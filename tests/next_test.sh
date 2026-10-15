@@ -122,11 +122,23 @@ waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Wa
 if grep -qx '  lead: a' <<< "${waiting}" && ! grep -q 'b$' <<< "${waiting}"; then echo "ok   status lists a plain lead story under Waiting on you, never an escalated one"
 else echo "FAIL status lists a plain lead story under Waiting on you, never an escalated one: got '${waiting}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+# Before its one reset, next offers reset or drop; after it (an ok reset line in events.tsv), only drop.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories .swarm && item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code')
+why1="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 2p)"
+printf '2026-10-15T01:00:00Z\treset\tb\tw:me\tok (re-scoped)\n' > "${dir}/.swarm/events.tsv"
+why2="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next | sed -n 2p)"
+if [[ "${why1}" == *"swarm.sh reset b <reason>"* && "${why2}" == *"after its one reset (2026-10-15T01:00:00Z)"* \
+      && "${why2}" == *"swarm.sh drop b <reason>"* && "${why2}" != *"swarm.sh reset"* ]]; then
+  echo "ok   next offers reset before a story's one reset, and only drop after it"
+else echo "FAIL next offers reset before a story's one reset, and only drop after it: got '${why1}' then '${why2}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
-got=""; for w in 'swarm.sh reset <slug> <reason>' 'swarm.sh drop <slug> <reason>' 'not a stop' 'tell the user'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
-if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's escalated arm resets or drops, is not a stop, and tells the user"
+got=""; for w in 'swarm.sh reset <slug> <reason>' 'swarm.sh drop <slug> <reason>' 'not a stop' 'tell the user' \
+         'swarm.sh reset <slug> <reason> && git pull --ff-only' 'Waiting on you'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's escalated arm resets then pulls, or drops, is not a stop, tells the user, and shows Waiting on you while it waits"
 else echo "FAIL commands/swarm.md's escalated arm:${got}"; fails=$((fails + 1)); fi
 expect "ready story in a later epic waits" "gate" \
   "item epics/e1.md 'status: later'" \
