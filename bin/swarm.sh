@@ -29,6 +29,7 @@
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
+#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -140,8 +141,9 @@ CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
+CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal lead"
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -181,8 +183,8 @@ load_config() {
         [[ "${value}" == true || "${value}" == false ]] || die "${where}: ${key} must be true or false, not '${value}'" ;;
       pr_per)
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
-      stall_minutes)
-        [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: stall_minutes must be a positive whole number, not '${value}'" ;;
+      stall_minutes|codex_minutes)
+        [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: ${key} must be a positive whole number, not '${value}'" ;;
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
       builder_subagent_model)
@@ -1505,11 +1507,9 @@ review_bot_rule() {
 # review_rule — for pr_per=story, where each story has its own PR and its builder stays open.
 review_rule() {
   cat <<EOF
-A story is reviewed only when its latest head has passed \`codex exec review --base origin/<base>\`
+A story is reviewed only when its latest head has passed \`$(codex_review_cmd '<base>')\`
 in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
-/code-review skill on its PR (\`/code-review <PR>\`). If codex
-reports a usage limit, do not wait for it: rely on the other review and your own reading of the
-diff, and say "codex skipped: usage limit" in the PR. Send every real finding to the story's
+/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule) Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
 what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
@@ -1518,6 +1518,17 @@ its latest head has passed.$(rules_review_rule)
 
 $(finding_rule)
 EOF
+}
+
+# codex_review_cmd <base> — how a brief runs codex: through codex-review, which stops it after
+# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config.
+codex_review_cmd() { printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"; }
+# codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
+# conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
+# Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
+codex_rule() {
+  printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
+  printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
@@ -1705,9 +1716,8 @@ Title your commit with a plain description of the change.
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. This project opens one PR per epic, so open no PR: commit on your branch,
 story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
-\`codex exec review --base origin/${epic_branch}\` before committing; fix real findings, decline
-nits with a reason, and converge on one clean pass. If codex reports a usage limit, do not wait for
-it to reset: carry on without it and say so. Run the repo's tests and make them pass. $(mutation_rule)
+\`$(codex_review_cmd "${epic_branch}")\` before committing; fix real findings, decline
+nits with a reason, and converge on one clean pass. $(codex_rule) Run the repo's tests and make them pass. $(mutation_rule)
 $(reply_sentence epic)
 EOF
   else
@@ -1718,10 +1728,9 @@ Implement ${story_ref}. Its **Done when** is the acceptance.
 Title your commit and PR with a plain description of the change.
 
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
-credentials. Open the PR against \`${base}\`. Run \`codex exec review --base origin/${base}\` before
+credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
-loop in the PR body. If codex reports a usage limit, do not wait for it to reset: carry on without it
-and write "codex skipped: usage limit" in the PR body. If \`gh pr view --json mergeable\` says
+loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
 in the PR body. $(reply_sentence story)
@@ -2052,8 +2061,8 @@ and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\`
 
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
 line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
-\`codex exec review --base origin/<base>\`, where \`swarm.sh base <repo>\` prints the base. Fix real
-findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
+\`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
+$(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
 waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
 keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
@@ -4284,6 +4293,7 @@ dispatch() {
     config) show_config "${1:-}" ;;
     init)   init_project ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
+    codex-review) codex_review "${1:-}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
@@ -4320,12 +4330,60 @@ kill_tree() {
   kill -TERM "$1" 2>/dev/null || true
 }
 
+CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it is KILLed
+
+# tree_pids <pid> — a process and everything under it, children first.
+tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
+
+# stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then KILL each
+# process left and whatever is under it by then (a TERM trap can start more). The tree is read before
+# the TERM, since a child whose parent dies leaves it. Stderr is off, so bash prints no "Terminated"
+# line for the job.
+stop_codex() {
+  local pids p left
+  pids="$(tree_pids "$1")"
+  # shellcheck disable=SC2046,SC2086 # one pid per word
+  {
+    kill -TERM ${pids}
+    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 ${pids} || break; sleep 1; done
+    for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
+    wait "$1"
+  } 2>/dev/null || true
+}
+
+# codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
+# beside --base) and stdin from /dev/null, so it never waits on input. codex stays in the caller's
+# process group, so a harness that kills that group kills codex too. stop_codex stops it after
+# codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent TERM or
+# HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
+# events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
+codex_review() {
+  local pid left rc=0
+  [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
+  left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
+  codex exec review --base "origin/$1" < /dev/null &
+  pid=$!
+  # shellcheck disable=SC2064 # this codex's pid, fixed now
+  trap "stop_codex ${pid}; exit 143" TERM HUP
+  while ((left-- > 0)) && kill -0 "${pid}" 2>/dev/null; do sleep 1; done
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    wait "${pid}" || rc=$?
+    return "${rc}"
+  fi
+  stop_codex "${pid}"
+  die "codex skipped: timed out after ${CFG_codex_minutes} min"
+}
+
 # main_signal <INT|TERM|HUP> — stop the logged command at once (it runs in the background, so this
-# trap runs as soon as the signal lands), log it as interrupted, remove the temp file, and die of the
-# same signal, so the exit status stays 128+N.
+# trap runs as soon as the signal lands; codex-review is waited for while it stops codex), log it as
+# interrupted, remove the temp file, and die of the same signal, so the exit status stays 128+N.
 # shellcheck disable=SC2317,SC2329 # invoked by the signal traps
 main_signal() {
-  [[ -z "${EV_CHILD:-}" ]] || kill_tree "${EV_CHILD}"
+  if [[ -n "${EV_CHILD:-}" && "${EV_CMD}" == codex-review ]]; then
+    # It stops codex itself (stop_codex, from its tree as it stands), so it alone gets the TERM, and
+    # swarm.sh exits only once codex is gone.
+    kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
+  elif [[ -n "${EV_CHILD:-}" ]]; then kill_tree "${EV_CHILD}"; fi
   record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   trap - "$1"
