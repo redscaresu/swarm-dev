@@ -8,7 +8,7 @@
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
-#   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
+#   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
 #   swarm.sh log-finding [--declined] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind (the outer loop)
@@ -940,14 +940,17 @@ print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) 
 PY
 }
 
-# cost [since] — tokens and estimated cost per role, for every agent this project's swarm started
+# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started
 # (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
 # session logs, deduplicated by message id; codex agents are listed but not priced (not logged here).
 cost_report() {
-  local lead=""
+  local lead="" since=""
+  # A bare date is the older form, still what dash passes.
+  if [[ $# -eq 1 ]]; then since="$1"; elif [[ $# -eq 2 && "$1" == --since ]]; then since="$2"; fi
+  [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
 import os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 log, since, lead, projects = sys.argv[1:5]
@@ -4276,7 +4279,7 @@ dispatch() {
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
-    cost)   cost_report "${1:-}" ;;
+    cost)   cost_report "$@" ;;
     outcomes) outcomes_report "$@" ;;
     decisions) decisions_report "$@" ;;
     log-finding) o=fixed; if [[ "${1:-}" == --declined ]]; then o=declined; shift; fi
