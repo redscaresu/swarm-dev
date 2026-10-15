@@ -76,7 +76,7 @@ tell you which of the two broke something, and cannot be rolled back one half at
 
 **4. Critic** — one `critic`, role `critic`: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
-real-cloud step hidden inside an agent story. Under 250 words.
+real-cloud step hidden inside an agent story. A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
 the plan does not answer; the surviving stories with `kind`, `touches` and waves; then **What you will do**: every `lead`
