@@ -1437,9 +1437,9 @@ tell_agent() {
 findings_goal() {
   local slug="$1" goal="$3" mode=story
   [[ "${CFG_pr_per}" != epic || -z "$(fm "${BOARD}/stories/${slug}.md" epic 2>/dev/null)" ]] || mode=epic
-  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed and you have replied." \
+  printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
     "$(reply_sentence "${mode}")" "It is met once both hold, or stop after ${CFG_goal} more turns." > "${goal}"
-  send_goal "${slug}" "${goal}" "$2"
+  send_goal "${slug}" "${goal}" findings "$2"
 }
 
 # The merge, signing and review rules, shared by the briefs.
@@ -1593,23 +1593,37 @@ print(kind)
 PY
 }
 
-# send_goal <slug> <goal-file> [<since-epoch>] — send <slug>'s builder `/goal <condition>` once (deliver_prompt's
+# send_goal <slug> <goal-file> <brief|findings> [<since-epoch>] — send <slug>'s builder `/goal <condition>` once (deliver_prompt's
 # once mode) and confirm it set from its session log (goal_entry, for this condition), polling up to
 # PROMPT_TIMEOUT_MS. The condition goes on one line: the spike only saw a one-line /goal set, and a
 # multi-line paste could be split or become a "[Pasted text]" placeholder; goal_entry compares it
 # whitespace aside. Any goal_status newer than the send means it set: the judge may already have
 # written its own after the sentinel. A refusal, or no entry, fails naming the story and why, and
-# leaves the builder open for the lead to read. <since> defaults to now.
+# leaves the builder open for the lead to read. <since> defaults to now. The /goal goes only into a
+# turn that has started: herdr can say working while the session is still idle, and deliver_prompt
+# takes blocked as taken up, so it waits up to PROMPT_TIMEOUT_MS for the session (session_state) to
+# read busy, and fails with nothing sent if it reads waiting (a dialog, where Enter could approve
+# what auto mode flagged) or never reads busy. Each failure says the brief or the findings were
+# delivered, so they are not sent again.
 send_goal() {
-  local slug="$1" goal="$2" name since="${3:-$(date +%s)}" entry deadline cond
+  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline cond state pre post
   name="$(agent_name "${slug}")"
+  pre="${slug}: the brief was delivered, but"; post="; do not send it again"
+  [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; }
+  deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
+  while state="$(session_state "${name}")"; [[ "${state}" != busy && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
+  case "${state}" in
+    busy) ;;
+    waiting*) die "${pre} its builder is waiting on $(waiting_for "${state}"), so no /goal was sent; answer it (herdr agent read ${name})${post}" ;;
+    *) die "${pre} its session did not read busy within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
+  esac
   cond="$(tr -s '[:space:]' ' ' < "${goal}")"; cond="${cond# }"; cond="${cond% }"
   deliver_prompt "${name}" <(printf '/goal %s' "${cond}") "" once   # read once, so a pipe will do
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
   while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ -z "${entry}" && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
   case "${entry}" in
-    refused:*) die "${slug}: Claude Code refused its /goal (${entry#refused: }); its builder is still open" ;;
-    "") die "${slug}: its session log shows no goal set for its condition $((PROMPT_TIMEOUT_MS / 1000))s after the /goal; its builder is still open" ;;
+    refused:*) die "${pre} Claude Code refused its /goal (${entry#refused: }); its builder is still open${post}" ;;
+    "") die "${pre} its session log shows no goal set for its condition $((PROMPT_TIMEOUT_MS / 1000))s after the /goal; its builder is still open${post}" ;;
   esac
 }
 
@@ -1786,7 +1800,7 @@ build_story() {
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
-  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md"
+  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief
 }
 
 # epic_branch_for <repo-dir> <epic> <base> — epic/<epic>, fetched from origin; pushed there from

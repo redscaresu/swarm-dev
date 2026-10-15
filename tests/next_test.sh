@@ -343,7 +343,8 @@ rm -rf "${dir}"
 # typing into it. The stub's `agent list` reports s1 as $TELL_STATUS in pane $TELL_PANE; `agent
 # prompt` appends what it was sent to ${dir}/sent as one record ending in a `--` line, and reports
 # the agent working. With $TELL_GOAL set (a goal test), a prompt that is not a /goal makes sess-s1
-# busy, as its turn starts; a /goal's record also holds `state: <sess-s1's status>`
+# busy, as its turn starts, or $TELL_AFTER: idle (herdr said working, the session has not started)
+# or waiting (on a permission prompt); a /goal's record also holds `state: <sess-s1's status>`
 # as the stub saw it, and the stub appends to sess-s1's log a goal_status set entry for it, written
 # now (new), an hour ago (old), or none, showing the goal on the pane instead (pane).
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -365,7 +366,8 @@ print(json.dumps({"type": "attachment", "timestamp": t.isoformat(timespec="milli
             "\${TELL_GOAL}" "\${4#/goal }" >> "${dir}/projects/p/sess-s1.jsonl"
         fi ;;
       *) printf '%s\n--\n' "\$4" >> "${dir}/sent"
-        [ -z "\${TELL_GOAL}" ] || sed -i.bak 's/"sess-s1","status":"[a-z]*"/"sess-s1","status":"busy"/' "${dir}/claude.json" ;;
+        after="\${TELL_AFTER:-busy}\""; [ "\${TELL_AFTER}" = waiting ] && after='waiting","waitingFor":"permission prompt"'
+        [ -z "\${TELL_GOAL}" ] || sed -i.bak "s/\"sess-s1\",\"status\":\"[a-z]*\"/\"sess-s1\",\"status\":\"\$after/" "${dir}/claude.json" ;;
     esac
     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent read") cat "${dir}/screen" 2>/dev/null ;;
@@ -381,8 +383,8 @@ tsession() { # <status> [waitingFor] — sess-s1's entry; `none` lists no entry 
 # tellout <herdr status> <tell args...> — run tell; print its output, then "exit N".
 tellout() {
   local st="$1"; shift; rm -f "${dir}/sent"
-  (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="${st}" TELL_GOAL="${TELL_GOAL:-}" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${dir}/claude.json}" \
-    CLAUDE_PROJECTS_DIR="${dir}/projects" SWARM_PROMPT_TIMEOUT_MS=2000 PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 "$@" 2>&1; echo "exit $?")
+  (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" TELL_STATUS="${st}" TELL_GOAL="${TELL_GOAL:-}" TELL_AFTER="${TELL_AFTER:-}" CLAUDE_STUB_AGENTS="${CLAUDE_STUB_AGENTS:-${dir}/claude.json}" \
+    CLAUDE_PROJECTS_DIR="${dir}/projects" SWARM_PROMPT_TIMEOUT_MS="${PTO:-2000}" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell s1 "$@" 2>&1; echo "exit $?")
 }
 refused() { # <name> <want in the message> <herdr status> <tell args...>
   local name="$1" want="$2" out; shift 2
@@ -410,14 +412,15 @@ for k in nudge resume; do told "tell takes the kind ${k}" idle "${k}" findings.m
 # The events log holds one ok tell:findings line, and when the goal step fails, its failure after it.
 records() { grep -c '^--$' "${dir}/sent" 2>/dev/null || true; }
 reply() { local f; f="$(awk '/^reply_sentence\(\)/,/^}$/' "${SWARM}")"; (eval "${f}"; reply_sentence "$1"); }
-goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal> <tell args...>
+goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal or the refusal> <tell args...>
+  # A refusal leaves $NREC records (2: the /goal was sent) and says the findings must not be sent again.
   local name="$1" rc="$2" want="$3" out goal ev; shift 3
   : > "${dir}/projects/p/sess-s1.jsonl"; rm -f "${dir}/screen" "${dir}/.swarm/events.tsv"; tsession idle
   out="$(tellout idle "$@")"; ev="$(cut -f2,3,5 "${dir}/.swarm/events.tsv" | tr '\t\n' ' |')"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
   if [[ ${rc} == 0 && "${out}" == *"exit 0" && "$(records)" == 2 && "$(head -1 "${dir}/sent")" == "From the conductor:" \
-        && "${goal}" == *"the conductor's review findings, sent to you just before this goal, are addressed"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: busy"* \
+        && "${goal}" == *"the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: busy"* \
         && -z "$(ls "${dir}/tmp")" && "${ev}" == "tell:findings s1 ok|" ]] \
-     || [[ ${rc} == 1 && "${out}" == *"s1: ${want}"*"exit 1" \
+     || [[ ${rc} == 1 && "${out}" == *"s1: ${want}"*"do not send them again"*"exit 1" && "$(records)" == "${NREC:-2}" \
            && "${ev}" == "tell:findings s1 ok|tell:findings s1 s1: ${want}"* ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: got '${out}', events '${ev}', sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
 }
@@ -429,14 +432,22 @@ onerecord() { # <name> <tell args...> — the tell sends one record, no goal
 }
 mkdir -p "${dir}/.claude/swarm"; echo "goal = 4" > "${dir}/.claude/swarm/config"
 TELL_GOAL=new goalcase "goal on: a findings tell sends the findings, then mid-turn a /goal with the story reply, and finds it set" 0 "$(reply story)" findings findings.md
-TELL_GOAL=old goalcase "goal on: only a set entry older than the tell fails the tell, naming s1" 1 "its session log shows no goal set" findings findings.md
-TELL_GOAL=pane goalcase "goal on: a goal on the pane with no new entry fails the tell, naming s1" 1 "its session log shows no goal set" findings findings.md
+TELL_GOAL=old goalcase "goal on: only a set entry older than the tell fails the tell, naming s1" 1 "the findings were delivered, but its session log shows no goal set" findings findings.md
+TELL_GOAL=pane goalcase "goal on: a goal on the pane with no new entry fails the tell, naming s1" 1 "the findings were delivered, but its session log shows no goal set" findings findings.md
+# The /goal goes only into a turn that has started, never into a dialog: nothing is typed otherwise.
+t0=${SECONDS}
+TELL_GOAL=new TELL_AFTER=waiting NREC=1 PTO=10000 goalcase "goal on: a session waiting on a prompt once the findings are taken up gets no /goal; the tell fails naming s1 and the prompt" \
+  1 "the findings were delivered, but its builder is waiting on permission prompt, so no /goal was sent" findings findings.md
+if (( SECONDS - t0 < 5 )); then echo "ok   goal on: a waiting session fails the tell at once, not at the timeout"; else
+  echo "FAIL goal on: a waiting session fails the tell at once, not at the timeout: took $((SECONDS - t0))s"; fails=$((fails + 1)); fi
+TELL_GOAL=new TELL_AFTER=idle NREC=1 goalcase "goal on: a session still idle while herdr says working gets no /goal; the tell fails naming s1" \
+  1 "the findings were delivered, but its session did not read busy" findings findings.md
 for k in nudge resume; do onerecord "goal on: a ${k} tell sends no goal" "${k}" findings.md; done
 # A second findings tell right after one that set its goal: the same condition's entry from the
 # first tell is older than the second tell, so with no new entry the second fails.
 tsession idle; first="$(TELL_GOAL=new tellout idle findings findings.md)"; tsession idle
 out="$(TELL_GOAL=pane tellout idle findings findings.md)"
-if [[ "${first}" == *"exit 0" && "${out}" == *"s1: its session log shows no goal set"*"exit 1" ]]; then echo "ok   goal on: a repeated findings tell does not count the previous tell's goal"; else
+if [[ "${first}" == *"exit 0" && "${out}" == *"s1: the findings were delivered, but its session log shows no goal set"*"exit 1" ]]; then echo "ok   goal on: a repeated findings tell does not count the previous tell's goal"; else
   echo "FAIL goal on: a repeated findings tell does not count the previous tell's goal: got '${out}'"; fails=$((fails + 1)); fi
 printf -- '---\nkind: code\nstatus: ready\nepic: e1\n---\n' > "${dir}/docs/stories/s1.md"; printf 'goal = 4\npr_per = epic\n' > "${dir}/.claude/swarm/config"
 TELL_GOAL=new goalcase "goal on, pr_per = epic: the /goal holds the epic-mode reply" 0 "$(reply epic)" findings findings.md
