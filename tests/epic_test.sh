@@ -376,6 +376,12 @@ check "the epic-mode builder runs codex-review in the background, and knows what
 check "the epic story brief asks for a mutation" "yes" \
   "$(has "prove each new or changed test can fail" "${brief}")"
 check "the epic-mode builder says a missing bump is not a finding" "yes" "$(has "${BUMP}" "${brief}")"
+# The release story does the bump, so its brief must not tell it not to.
+item "${b}" stories/f3.md "status: ready" "kind: code" "epic: f" "repo: svc" "touches: [.claude-plugin/plugin.json]"
+run story f3 >/dev/null
+check "a story whose touches name plugin.json (the release story) gets no bump line" "no" \
+  "$(grep -qF "${BUMP}" "${p}/.swarm/briefs/f3.md" && echo yes || echo no)"
+rm -f "${b}/stories/f3.md"
 # Someone merged into the epic branch: the next story starts from there, and the repo is listed once.
 "${GIT[@]}" -C "${ROOT}/svc" fetch -q origin && "${GIT[@]}" -C "${ROOT}/svc" checkout -q -b m origin/epic/f
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m f1 && "${GIT[@]}" -C "${ROOT}/svc" push -q origin m:epic/f
@@ -410,7 +416,8 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
   "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
-check "the epic-mode conductor's whole-epic review says a missing bump is not a finding" "yes" "$(has "${BUMP}" "$(para "review the whole epic" "${brief}")")"
+check "the epic-mode conductor's per-story review says a missing bump is not a finding; its whole-epic review, which must see the bump, does not" "yes|no" \
+  "$(has "${BUMP}" "$(para "When a builder reports, review its branch." "${brief}")")|$(para "review the whole epic" "${brief}" | grep -qF "${BUMP}" && echo yes || echo no)"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
 check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \

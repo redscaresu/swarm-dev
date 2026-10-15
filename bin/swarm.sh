@@ -1585,9 +1585,10 @@ codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
-# bump_rule — beside codex_rule, in a project that ships a plugin: the epic's last story does the
-# plugin.json bump, so a story PR without one is not a finding. A one-off story has no epic,
-# so story_brief leaves it out there.
+# bump_rule — beside codex_rule, in a project that ships a plugin: an epic's release story makes the
+# plugin.json bump, so a story PR without one is not a finding. story_brief leaves it out of a one-off
+# story (no epic, so no release story) and of the release story itself (its touches name plugin.json).
+# The whole-epic review gets none: the epic PR carries the release story's bump.
 bump_rule() {
   [[ -f "${PROJECT_DIR}/.claude-plugin/plugin.json" ]] || return 0
   printf ' %s' "Do not bump plugin.json: the epic's release story does. A PR without the bump is not a finding; decline it."
@@ -1751,7 +1752,7 @@ send_goal() {
 story_brief() {
   local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before bump=""
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
-  [[ -z "${epic}" ]] || bump="$(bump_rule)"
+  [[ -z "${epic}" || "$(fm "${BOARD}/stories/${slug}.md" touches)" == *.claude-plugin/plugin.json* ]] || bump="$(bump_rule)"
   if [[ -n "${epic_branch}" ]]; then
     story_ref="${BOARD}/stories/${slug}.md"
     [[ ${BOARD_IN_REPO} == 1 && "${src}" == "${PROJECT_DIR}" ]] && story_ref="${BOARD#"${PROJECT_DIR}/"}/stories/${slug}.md"
@@ -2114,7 +2115,7 @@ $(auth_rule)$(goal_rule_if_on)
 
 $(give_up_rule)
 
-When a builder reports, review its branch.$(rules_review_rule)
+When a builder reports, review its branch.$(bump_rule)$(rules_review_rule)
 
 Then, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
@@ -2125,7 +2126,7 @@ and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\`
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
 line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
 \`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
-$(codex_rule)$(bump_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
+$(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
 waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
 keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
