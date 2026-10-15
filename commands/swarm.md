@@ -31,12 +31,12 @@ Repeat until a step below says stop:
    merged), then `swarm.sh next`.
    Its first line is the step, the rest is why. Tell the user both in one line.
 2. Do the step:
-   - `wait <agent>`: a conductor is working. Run `swarm.sh wait <agent>` in the background, in
-     the same response that read `next` and before any other work: a side task the user asks
-     for meanwhile must not leave the conductor unwatched. For a conductor it returns once
-     the conductor has written its report, is not idle (its session is waiting on a prompt, or gone), or
-     the wait's timeout (an hour) has passed, not each time it idles on its own background
-     work. `wait` never nudges a conductor. When it returns, go back to 1. Never
+   - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
+     background, in the same response that read `next` and before any other work: a side task the
+     user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns
+     once the conductor has written its report, is not idle (its session is waiting on a prompt, or
+     gone), or prints `auth`, not each time it idles on its own background work. `wait` never
+     nudges a conductor. When it returns, go back to 1. Never
      close a conductor that has not reported.
 
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
