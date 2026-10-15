@@ -40,7 +40,7 @@ Everything is plain Markdown in `docs/` (the board), so a run can stop anywhere 
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) 2.1.145 or later
+- [Claude Code](https://claude.com/claude-code) 2.1.145 or later, or 2.1.269 or later with `goal` on
 - [herdr](https://herdr.dev), the terminal multiplexer every agent runs in
 - the [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), both logged in
 - `git`, `python3` and `bash`
