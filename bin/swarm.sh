@@ -2628,8 +2628,6 @@ PY
 # tree and the ladder. Colour only on a terminal with NO_COLOR unset.
 dash() {
   local every="" tty=0
-  # init's marker; checked first, so --watch never draws an empty board either.
-  [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
   DASH_LADDER=0; DASH_TREE=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -2643,6 +2641,8 @@ dash() {
     esac
     shift
   done
+  # init's marker; checked after the arguments and before any drawing, so --watch never draws an empty board either.
+  [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
   DASH_COLOR=0
   if [[ -t 1 ]]; then
     tty=1

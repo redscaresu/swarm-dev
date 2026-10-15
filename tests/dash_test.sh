@@ -641,14 +641,14 @@ N="${ROOT}/noboard"; mkdir -p "${N}"; git -C "${N}" init -q
 for args in "" "--watch 1"; do
   # shellcheck disable=SC2086 # args is split on purpose
   # perl's alarm kills it after 5 seconds (exit 142): macOS has no timeout(1).
-  if out="$(cd "${N}" && perl -e 'alarm 5; exec @ARGV' bash "${SWARM}" dash ${args} 2>&1 </dev/null)"; then rc=0; else rc=$?; fi
-  check "dash${args:+ }${args} with no board exits non-zero within 5 s" test "${rc}" -ne 0 -a "${rc}" -ne 142
+  if out="$(fresh; cd "${N}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/nobin:${PATH}" perl -e 'alarm 5; exec @ARGV' bash "${SWARM}" dash ${args} 2>&1 </dev/null)"; then rc=0; else rc=$?; fi
+  check "dash${args:+ }${args} with no board exits 1 within 5 s" test "${rc}" -eq 1
   check "dash${args:+ }${args} with no board says no board and names swarm.sh init" grep -q 'no board.*swarm.sh init' <<< "${out}"
   check "dash${args:+ }${args} with no board does not say nothing needs you" lacks "nothing needs you" "${out}"
 done
 # A board with nothing in progress or waiting: nothing needs you, and exit 0.
 mkdir -p "${N}/docs/stories"; touch "${N}/docs/stories/README.md"
-if out="$(fresh; cd "${N}" && env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1)"; then rc=0; else rc=$?; fi
+if out="$(fresh; cd "${N}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1)"; then rc=0; else rc=$?; fi
 check "dash on an empty board exits 0" test "${rc}" -eq 0
 check "dash on an empty board says nothing needs you" has "nothing needs you" "${out}"
 
