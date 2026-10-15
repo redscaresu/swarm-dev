@@ -220,6 +220,8 @@ the code or the switch broke it, and the rollback has to undo both. One exceptio
 `escalate_after` ships on, at `2`, by the user's decision of 2026-10-13. It changes nothing until a
 story has failed twice.
 
+A story's **Done when** names what the builder's session can show (a test run, a command's output, a file), never something only the conductor or a merge can show, so a goal's judge can see it.
+
 ## Building
 
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
