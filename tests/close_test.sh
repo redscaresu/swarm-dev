@@ -246,19 +246,36 @@ b="$(block i1)"
 is "its block has a **You:** line naming Done when, the epic branch step, and the PR" "1|yes|yes" \
   "$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "${b}")|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
 is "and its build is cleared away" "" "$(left i1)"
-# A story left ready would be built again against a Done when the judge called impossible, so a close
-# impossible that hands nothing on still closes, then fails naming why; events.tsv does not say ok.
-NOT_LEAD="but its story was not made a lead item, because"
-item i2 "status: ready" "kind: code" "attempts: 1"; started i2; cp "${P}/docs/stories/i2.md" "${ROOT}/i2.orig"
-rc=0; out="$(cs i2 impossible)" || rc=$?
-is "close impossible with no builder open fails, naming i2 and why, and leaves the story file unchanged" "1|yes|" \
-  "${rc}|$(grep -qF "close: closed i2, ${NOT_LEAD} its builder is not open in herdr" <<< "${out}" && echo yes)|$(diff "${ROOT}/i2.orig" "${P}/docs/stories/i2.md")"
+# impossible hands a ready story an agent builds to the user whether or not its build could be
+# cleared: with no builder open, gh failing, or a verify story (no PR tells its pass from a failure),
+# the block says no PR was found and the build is left as it was. Any other story, and a name with no
+# story file, is refused before anything closes.
+item i2 "status: ready" "kind: code" "attempts: 1"; started i2
+rc=0; cs i2 impossible >/dev/null || rc=$?
+is "close i2 impossible with no builder open still hands it on, with no PR found; exit 0, nothing cleared" \
+  "0|lead|code|1|ready|yes|worktree branch origin" \
+  "${rc}|$(state i2)|$(grep -qx 'No PR was found on story/i2.' <<< "$(block i2)" && echo yes)|$(left i2)"
 item i3 "status: ready" "kind: code" "attempts: 1"; started i3 w:p57; touch "${ROOT}/ghfail"
 rc=0; out="$(cs i3 impossible)" || rc=$?; rm "${ROOT}/ghfail"
-is "with gh failing, close i3 impossible closes its pane, then fails naming why; still code, nothing cleared" "1|yes|closed|code|worktree branch origin" \
-  "${rc}|$(grep -qF "close: closed i3, ${NOT_LEAD} gh could not list the PRs on story/i3" <<< "${out}" && echo yes)|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(fmv i3 kind)|$(left i3)"
-is "and events.tsv logs close:impossible i3 with that reason, not ok" "1" \
-  "$(grep -c $'\tclose:impossible\ti3\tw:me\tclose: closed i3, '"${NOT_LEAD}" "${P}/.swarm/events.tsv")"
+is "with gh failing, close i3 impossible closes its pane and hands it on; stderr says gh failed, nothing cleared" \
+  "0|closed|lead|code|1|ready|yes|worktree branch origin" \
+  "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(left i3)"
+item v1 "status: ready" "kind: verify" "attempts: 1"; echo "w:p14 v1" > "${P}/.swarm/state/v1"
+rc=0; cs v1 impossible >/dev/null || rc=$?
+is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, a **You:** block" \
+  "0|lead|verify|1|ready|1" "${rc}|$(state v1)|$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "$(block v1)")"
+item ir "status: review" "kind: code"; started ir w:p58
+item il "status: ready" "kind: lead"; started il w:p59
+started ix w:p60   # no story file
+got=""
+for s in ir il ix; do
+  rc=0; out="$(cs "${s}" impossible)" || rc=$?
+  got+="${rc}|$(grep -qF "close: ${s} cannot be closed impossible, because" <<< "${out}" && echo named || echo unnamed)|$(grep -qsx "w:p[0-9]* ${s}" "${P}/.swarm/state/${s}" && echo open || echo closed) "
+done
+is "close impossible on a story in review, a lead story or a name with no story file is refused, naming it; its pane stays" \
+  "1|named|open 1|named|open 1|named|open " "${got}"
+is "and the stories are as they were: ir in review, il kind: lead with no escalated_from: or block" "review|lead||" \
+  "$(fmv ir status)|$(fmv il kind)|$(fmv il escalated_from)|$(block il)"
 n=42
 for c in met stalled bound paused cleared-on-error; do
   item "c-${c}" "status: ready" "kind: code" "attempts: 1"; started "c-${c}" "w:p${n}"; n=$((n + 1)); cs "c-${c}" "${c}" >/dev/null

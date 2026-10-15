@@ -3390,35 +3390,37 @@ CLOSE_CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
 # close_agent <name> [cause] — close what was opened for <name> (close_panes), or with keep_panes = true
 # leave it open to read and only retire the agent. Either way, its session log is archived first.
 # An unknown cause is refused before anything closes, and so, with goal on, is a missing one while
-# <name>'s story is still ready (its builder is giving up). A close that ends a failed build
-# (failed_build, decided before anything closes, while the builder can still be found) then clears
-# the attempt away (clear_build), so the next build starts fresh. With no cause, met, stalled or bound
-# it first raises the story's attempts: by one, and when that build was escalate, the story becomes
-# the lead's (escalate_story). impossible, paused and cleared-on-error count nothing, and impossible
-# makes the story the user's (impossible_story). An impossible close of a story that ends no build
-# still closes, then fails naming why its story was not handed on.
+# <name>'s story is still ready (its builder is giving up), and so is impossible for a story that
+# cannot be handed on (impossible_refused). A close that ends a failed build (failed_build, decided
+# before anything closes, while the builder can still be found) then clears the attempt away
+# (clear_build), so the next build starts fresh. With no cause, met, stalled or bound it first raises
+# the story's attempts: by one, and when that build was escalate, the story becomes the lead's
+# (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
+# the user's (impossible_story) whether or not there was a build to clear.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
   [[ -n "${cause}" || "${CFG_goal}" == off || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] \
     || die "close: with goal on, $1's story is still ready, so say why its builder stopped: swarm.sh close $1 <cause>, the cause one of ${CLOSE_CAUSES}"
+  if [[ "${cause}" == impossible ]] && why="$(impossible_refused "$1")"; then
+    die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
+  fi
   archive_session "$1"
-  # prs: failed_build's PR list, or why the close ends no build.
   if prs="$(failed_build "$1")"; then counted=1; fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
-  if [[ ${counted} != 1 ]]; then
-    # A story the judge called impossible and left ready would be built again: say so, and fail.
-    [[ "${cause}" != impossible || ! -f "${f}" ]] || die "close: closed $1, but its story was not made a lead item, because ${prs}"
+  if [[ "${cause}" == impossible ]]; then
+    [[ ${counted} != 1 ]] || clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs}"
+    impossible_story "$1" "${prs}"
     return 0
   fi
-  case "${cause}" in impossible|paused|cleared-on-error)
+  [[ ${counted} == 1 ]] || return 0
+  case "${cause}" in paused|cleared-on-error)
     clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs}"
-    [[ "${cause}" != impossible ]] || impossible_story "$1" "${prs}"
     return 0 ;;
   esac
   n="$(get_fm "${f}" attempts)"
@@ -3429,6 +3431,19 @@ close_agent() {
   set_fm "${f}" attempts "${n}"
   clear_build "$1" "attempt ${n} at $1 failed" "${prs}"
   escalate_story "$1" "${n}" "${prs}"
+}
+
+# impossible_refused <name> — print why `close <name> impossible` cannot hand <name>'s story on, and
+# succeed; fail, printing nothing, when it can: a story on the board, still ready, of a kind an agent
+# builds (agent_kind). Whether its build can be cleared does not matter.
+impossible_refused() {
+  local f="${BOARD}/stories/$1.md" st kind
+  [[ "$1" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || { echo "there is no story file ${f}"; return 0; }
+  st="$(fm "${f}" status)"
+  [[ "${st}" == ready ]] || { echo "its story is ${st:-without a status}, not ready"; return 0; }
+  kind="$(fm "${f}" kind)"
+  agent_kind "${kind}" || { echo "its story is kind: ${kind}, which no agent builds"; return 0; }
+  return 1
 }
 
 # ESCALATED_OPEN, ESCALATED_CLOSE: the markers around the lead's block, which escalate_story appends
@@ -3463,9 +3478,10 @@ escalate_story() {
   echo "escalated: $1 is kind: lead now, for the lead to reset or drop"
 }
 
-# impossible_story <slug> <prs> — after `close <slug> impossible` ends a build (failed_build), the
-# builder replied IMPOSSIBLE: the story's **Done when** cannot be met, so it is the user's to fix: a
-# lead_block whose **You:** step says how. attempts: stays as it was.
+# impossible_story <slug> <prs> — after `close <slug> impossible`, the builder replied IMPOSSIBLE: the
+# story's **Done when** cannot be met, so it is the user's to fix: a lead_block whose **You:** step
+# says how, with <prs> (failed_build's list, or nothing when there was no build to clear).
+# attempts: stays as it was.
 impossible_story() {
   local when you
   when="$(reset_at "$1")"
@@ -3501,27 +3517,24 @@ lead_block() {
 # under that name (not closed by hand, not already retired), and none of its PRs merged or is open with
 # auto-merge set: with merge = agent a close that comes before the board is pulled, or while the merge
 # waits on auto-merge, finds the story still ready, so only the PR tells. One gh call answers both;
-# when it fails, nothing is counted or cleared, and stderr says so. Otherwise it fails printing why
-# not, on one line (close's impossible names it).
+# when it fails, nothing is counted or cleared, and stderr says so.
 failed_build() {
-  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging st kind
-  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || { echo "there is no story ${f}"; return 1; }
-  st="$(fm "${f}" status)"; [[ "${st}" == ready ]] || { echo "its status is ${st:-missing}, not ready"; return 1; }
+  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging
+  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
   # A verify story has no PR, so nothing here tells its pass from a failure: its close never counts.
-  kind="$(fm "${f}" kind)"
-  case "${kind}" in ""|code|docs|chore) ;; *) echo "it is a ${kind} story, and only a code, docs or chore build is cleared away"; return 1 ;; esac
-  [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || { echo "its builder is not open in herdr"; return 1; }
+  case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
+  [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
   # The conductor finishes an epic's story before closing it, so a ready one never merged.
   [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0
   src="$(repo_dir "$(fm "${f}" repo)")" \
-    || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; echo "${src}"; return 1; }
+    || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; return 1; }
   if ! url="$(git -C "${src}" remote get-url origin)" \
      || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url,autoMergeRequest)" \
      || ! merging="$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")"; then
     echo "swarm: ${slug}: could not list the PRs on story/${slug}, so this close counts no failed build and clears nothing" >&2
-    echo "gh could not list the PRs on story/${slug}"; return 1
+    return 1
   fi
-  [[ "${merging}" == False ]] || { echo "a PR on story/${slug} merged or is set to auto-merge"; return 1; }
+  [[ "${merging}" == False ]] || return 1
   printf '%s\n' "${prs}"
 }
 
