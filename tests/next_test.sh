@@ -105,6 +105,10 @@ expect "old operator kind is a gate, not built" "gate" \
   "item stories/a.md 'status: ready' 'kind: operator'"
 expect "lead story is a gate" "gate" \
   "item stories/a.md 'status: ready' 'kind: lead'"
+# A story whose Fable build failed is the lead's to decide, so next names it instead of the gate.
+expect "an escalated story is the lead's to decide, ahead of gate" "escalated b" \
+  "item stories/a.md 'status: ready' 'kind: lead'" \
+  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'"
 expect "ready story in a later epic waits" "gate" \
   "item epics/e1.md 'status: later'" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"

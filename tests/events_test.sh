@@ -185,5 +185,46 @@ new="$(tail -n +"$((was + 1))" "${LOG}")"
 check "a nudging wait appends a line per nudge" test "$(grep -c . <<< "${new}")" -eq 3
 check "a nudging wait appends only nudge lines" test "$(grep -cv $'^[^\t]*\tnudge\ts1\tw:me\tok$' <<< "${new}")" -eq 0
 
+# --- Each escalation step writes its own line with its UTC time, for the training data: escalate
+# when build_story starts an escalate build, escalated when that build's close makes the story the
+# lead's, then reset or drop with the lead's reason. A project of its own, with its own herdr and gh.
+P="${ROOT}/esc"; LOG="${P}/.swarm/events.tsv"; EB="${ROOT}/escbin"
+mkdir -p "${P}/.claude/swarm" "${EB}"; echo "base_branches = main" > "${P}/.claude/swarm/config"
+git init -q --bare "${ROOT}/esc.git"; git init -q "${P}"; git -C "${P}" remote add origin "${ROOT}/esc.git"
+git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "${P}" push -q origin HEAD:refs/heads/main
+printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${EB}/herdr"
+cat >> "${EB}/herdr" <<'STUB'
+case "$1 $2" in
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:5"}}}' ;;
+  "agent start") touch "$H/esc-started" ;;
+  "agent list") if [ -e "$H/esc-started" ]; then echo '{"result":{"agents":[{"name":"x1","agent_status":"idle","pane_id":"w:5"}]}}'
+                else echo '{"result":{"agents":[]}}'; fi ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "tab list") echo '{"result":{"tabs":[]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w:5"}]}}' ;;
+esac
+STUB
+printf '%s\n' '#!/bin/sh' "[ \"\$1 \$2\" = 'pr list' ] && echo '[{\"number\":1,\"state\":\"CLOSED\",\"url\":\"${U}/1\"},{\"number\":2,\"state\":\"OPEN\",\"url\":\"${U}/2\"}]'" 'exit 0' > "${EB}/gh"
+chmod +x "${EB}/herdr" "${EB}/gh"
+run() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me HERDR_WORKSPACE_ID=w PATH="${EB}:${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" >/dev/null 2>&1); }
+logged() { # <command> <target> <outcome> — events.tsv has this line, with an ISO UTC time and the actor
+  # shellcheck disable=SC2016 # an awk program
+  awk -F'\t' -v c="$1" -v t="$2" -v o="$3" '$1 ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z$/ \
+    && NF == 5 && $2 == c && $3 == t && $4 == "w:me" && $5 == o { f = 1 } END { exit !f }' "${LOG}"
+}
+item stories/x1.md 'status: ready' 'kind: code' 'attempts: 2'
+item stories/y1.md 'status: ready' 'kind: code'
+run story x1 || true
+check "an escalate build's start logs escalate x1, ok (attempt 3)" logged escalate x1 "ok (attempt 3)"
+check "and the build itself, story x1 ok" logged story x1 ok
+run story y1 || true
+check "a code build's start logs no escalate line" bash -c "grep -q \$'\tstory\ty1\tw:me\tok\$' '${LOG}' && ! grep -q \$'\tescalate\ty1\t' '${LOG}'"
+run close x1 || true
+check "its failed close logs escalated x1, ok (attempts 3, 2 PRs)" logged escalated x1 "ok (attempts 3, 2 PRs)"
+appends "reset with no reason fails, naming it" 1 reset x1 "reset: <reason> is missing" reset x1
+appends "drop with a blank reason fails, naming it" 1 drop x1 "drop: <reason> is missing" drop x1 " "
+appends "reset logs the lead's reason" 1 reset x1 "ok (re-scoped to the parser alone)" reset x1 re-scoped to the parser alone
+appends "drop logs the lead's reason" 1 drop x1 "ok (failed on Fable after a reset)" drop x1 "failed on Fable after a reset"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

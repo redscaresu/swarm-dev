@@ -173,6 +173,19 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   then starts fresh, and the third runs on Fable. A close after `review`, after a merge or after
   the builder has gone counts nothing, and `reconcile` sending a story back to `ready` never
   counts. If gh cannot list the PRs, the close counts and clears nothing and says why on stderr.
+- **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
+  hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code` when it had none),
+  still `ready`, and a block at the end of the file with the attempts' PRs (from the same
+  `gh pr list`) and the lead's two choices. It has no **You:** step, because by the user's decision
+  of 2026-10-15 the lead decides and then tells the user what it chose and why. `next` prints
+  `escalated <slug>` for it, ahead of `gate`. The lead either re-scopes the story and runs
+  `swarm.sh reset <slug> <reason>`, which removes `attempts:`, puts the kind back from
+  `escalated_from:` and removes the block, or drops it: `swarm.sh drop <slug> <reason>` only logs
+  the choice, and the lead deletes the file in a board PR. A story is reset at most once: `reset`
+  refuses a slug that events.tsv already shows reset, and names when. Each step is a line in
+  events.tsv with its UTC time, for the training data: `escalate <slug>` when the build starts
+  (`ok (attempt <n>)`), `escalated <slug>` at the close (`ok (attempts <n>, <k> PRs)`), and `reset`
+  or `drop <slug>` with `ok (<reason>)`.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost` turns that and Claude Code's logs into
   tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
@@ -280,7 +293,8 @@ lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. `reconcile` and `unblock` write a line
-per item they move. The log is local to the machine and append-only,
+per item they move. A `story` that starts an `escalate` build, and the `close` that hands its story to
+the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command.
 

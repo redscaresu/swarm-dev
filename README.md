@@ -107,7 +107,9 @@ When `swarm.sh close` closes the builder of a code, docs or chore story that is 
 counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
 `story/<slug>` branch here and on origin, and any open PR, closed unmerged. A story that has failed
 twice is rebuilt on Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
-`escalate_after = 0` turns it off.
+`escalate_after = 0` turns it off. If the Fable build fails as well, the story becomes a `lead`
+story and the lead decides: it re-scopes the story and runs `swarm.sh reset <slug> <reason>` to build
+it again (once per story), or drops it. Then it tells you what it chose and why.
 
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
