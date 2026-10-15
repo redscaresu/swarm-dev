@@ -1753,9 +1753,12 @@ finding_rule() {
   cat <<EOF
 Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
-    SWARM_PROJECT=${proj} ${sw} log-finding <kind> <PR URL> "<one line>"
-    SWARM_PROJECT=${proj} ${sw} log-finding --declined <kind> <PR URL> "<the finding, and why it was declined>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
 
+<who> is the reviewer that raised it: codex for a finding from \`swarm.sh codex-review\`, code-review
+for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one
+from your own reading of the diff, and lead for one the lead sent.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
