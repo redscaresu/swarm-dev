@@ -434,9 +434,10 @@ def session_state(log, name, listing):
 #   last_seen(events) -> {target: epoch} of each target's newest line in events.tsv, read once.
 #     A nudge is not a sign of life, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are
 #     skipped, and so is any other tell whose outcome is not ok: it never reached the builder.
-#   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
-#     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
-#     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
+#   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
+#     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
+#     worktree's last commit, the time a wait began) or ISO times (a PR's updatedAt). None when
+#     there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 STALL_PY='
 import datetime, re, time
@@ -466,9 +467,9 @@ def last_seen(events):
     except OSError:
         pass
     return seen
-def stall_age(seen, slug, name, signs):
+def stall_age(seen, slug, name, signs, now=None):
     ts = [t for t in [seen.get(slug), seen.get(name)] + [epoch(x) for x in signs if x] if t is not None]
-    return int((time.time() - max(ts)) // 60) if ts else None
+    return max(int(((now or time.time()) - max(ts)) // 60), 0) if ts else None
 '
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
@@ -3152,14 +3153,20 @@ def pr_state(url):
 def pr_ref(m):
     return f"{m.group(2)}#{m.group(3)}"
 
-# Agents: this project's panes (its tab records). A story's builder that is working with no sign of
-# life for stall_minutes (STALL_PY) is stalled, and needs you.
+# Agents: this project's panes (its tab records). A working agent shows how long since its last sign
+# of life (STALL_PY's stall_age); past stall_minutes it is stalled, and needs you. A story's builder
+# counts its worktree's commits and PR updates; any other agent (a conductor, planner or escalate
+# row) its own events.tsv lines: by target, and once it has a start line, by the pane that ran them.
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
 seen = last_seen(E["DASH_EVENTS"])
 STARTS = ("agent", "conduct", "story")
 started = {}   # target -> when its newest start (agent, conduct or story) in events.tsv ran
+ran = {}       # pane -> when the newest line it ran was written
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
+    t = epoch(f[0])
+    if t is not None and t > ran.get(f[3], 0):
+        ran[f[3]] = t
+    t = t if f[1] in STARTS and f[4] == "ok" else None
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
 # Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
@@ -3215,17 +3222,22 @@ if agents is not None:
             why = s[1] if s and st == "WAITING" else ""
             words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle", "auth": "auth: login expired",
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
-            if st == "working" and slug:
-                b = story_by_slug[slug]
-                signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(b[3])]
-                age = stall_age(seen, slug, base, signs)
+            since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
+            if st == "working":
+                if slug:
+                    signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
+                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit or PR update"
+                else:
+                    age, lack = stall_age(seen, epic_of.get(base), base, [since, ran.get(pane)] if since else [], NOW), "no swarm action"
                 if age is not None and age >= int(E["DASH_STALL_MIN"]):
                     st, look, words = "stalled", True, f"stalled {age}m"
-                    stalled.append((name, age))
+                    stalled.append((name, age, lack))
+                elif age is not None:
+                    words = f"working {age}m"
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
                      look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
                      open=bool(slug) and story_by_slug[slug][2] != "done",
-                     since=started.get(slug) or started.get(epic_of.get(base)) or started.get(base),
+                     since=since,
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
@@ -3279,7 +3291,7 @@ for r in recs:
         need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
     elif r["state"] in ("gone", "unknown") and r["look"]:
         need.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
-need += [bang + [(f"look at {n}: working {age} min with no commit or PR update", "")] for n, age in stalled]
+need += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
 need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
@@ -3290,8 +3302,8 @@ for r in shown:
 name_w = min(max((len(r["name"]) for r in shown), default=0), 30 if not NARROW else max(12, (W - 20) // 2))
 
 def agent_cols(r):
-    # Role and model, then the state; from 140 columns the model is a label in its colour, and a
-    # working agent shows how long since it started.
+    # Role and model, then the state (a working agent's with its age); from 140 columns the model is
+    # a label in its colour, and a working agent shows how long since it started.
     row = []
     if WIDE:
         label = f" {r['model']} "
@@ -3414,8 +3426,20 @@ for f in fixed_rows(E["DASH_FINDINGS"]):
 for (day, pr), fs in found.items():
     text = fs[0][3] if len(fs) == 1 else f"{len(fs)} findings: " + "; ".join(x[3] for x in fs)
     events.append((day, fs[0][1] if len(fs) == 1 else "findings", f"{text} (#{pr})", "finding"))
+# A fixed finding's log-finding line is left out: its findings.tsv row above shows it. A run of ok
+# declined lines on one PR, with nothing but fixed ones between, is one row at the newest's time.
+run = None   # [index in events, PR, count] of the declined run still open
 for f in read_tsv(E["DASH_EVENTS"], 5):
     ok = f[4].startswith("ok")
+    if f[1] == "log-finding" and ok:
+        continue
+    pr = (f[2].split() or [""])[-1]
+    if f[1] == "log-finding:declined" and ok and run and run[1] == pr:
+        run[2] += 1
+        m = re.search(r"(\d+)\D*$", pr)
+        events[run[0]] = (f[0], f[3], f"{run[2]} findings declined on #{m.group(1) if m else pr}", "action")
+        continue
+    run = [len(events), pr, 1] if f[1] == "log-finding:declined" and ok else None
     events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"),
                    "failed" if not ok else "start" if f[1] in STARTS else "escalation" if f[1] in ESCALATION else "action"))
 ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad"),
