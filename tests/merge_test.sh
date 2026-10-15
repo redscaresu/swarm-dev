@@ -49,7 +49,9 @@ case "$1 $2" in
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit"
-    [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left" ;;
+    [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
+    # A 5xx after GitHub merged it.
+    [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
   api*)
     for a in "$@"; do path="${a}"; done
@@ -127,7 +129,7 @@ merge() {
   local envs=()
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
-  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 \
+  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
     SWARM_MERGE_CI_SECONDS=5 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
@@ -250,9 +252,24 @@ check "a merge that leaves the PR open: it read the PR back 5 times" test "$(gre
 check "a merge that leaves the PR open: says check it by hand" said "check it by hand"
 fresh; echo 1 > "${FX}/readback-fails"; merge "${URL}"
 is "a read-back that fails once, then reads MERGED: the ok path" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
-# The merge commit needs no check run of its own when no workflow is expected on it.
+fresh; touch "${FX}/merge-then-fail"; merge "${URL}"
+is "pr merge exits 1 but the PR reads MERGED: the ok path" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+# The merge commit needs no check run of its own when no workflow is expected on it, but ok waits
+# out the grace for checks that appear just after the push.
 fresh; rm "${FX}/workflows"; checks "${FX}/${M}.checks"; wfruns "${FX}/${M}.runs"; merge "${URL}"
 is "no expected workflow and no runs on the merge commit: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+fresh; rm "${FX}/workflows"; wfruns "${FX}/${M}.runs"; checks "${FX}/${M}.checks.1"
+checks "${FX}/${M}.checks" "$(run ext completed failure)"; merge SWARM_MERGE_CI_GRACE=5 "${URL}"
+is "nothing expected, a red check appearing within the grace: exits non-zero" 1 "${rc}"
+check "nothing expected, a red check appearing within the grace: main-ci red names it" logged '^main-ci s red ext (failure)'
+fresh; rm "${FX}/workflows"; checks "${FX}/${M}.checks"; wfruns "${FX}/${M}.runs"; merge SWARM_MERGE_CI_GRACE=1 SWARM_MERGE_POLL=0.2 "${URL}"
+is "nothing at all through the grace: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "nothing at all through the grace: read more than once" test "$(cat "${FX}/${M}.checks.n")" -gt 1
+# A truncated contents answer is a missed read too.
+fresh; echo '[{"name":' > "${FX}/workflows.1"; merge "${URL}"
+is "one unreadable .github/workflows listing between good reads: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+fresh; echo '[{"name":"ci.yml"}]' > "${FX}/workflows.1"; merge "${URL}"
+is "one listing missing its keys between good reads: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 # A failed read is a missed poll; three in a row end the wait.
 fresh; checks "${FX}/${M}.checks.1" "$(run test in_progress)"; touch "${FX}/${M}.checks.2.fail"; merge "${URL}"
 is "one failed read between pending and green: main-ci ok" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
@@ -272,6 +289,11 @@ check "a quoted '*' is a glob, not an alias: the workflow is waited for" logged 
 
 # --- What is merged, and how.
 fresh; item s "status: ready" "prs: ${URL}"; merge "${URL}"; refused "a story that is ready" "s is ready, not review"
+# A done story (finished = mark keeps prs:) lists the URL before the epic in review that also does.
+fresh; rm "${S}"; item a "status: done" "prs: ${URL}"; mkdir -p "${P}/docs/epics"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"; merge "${URL}"
+is "a done story and an epic in review list the URL: the epic merges" "merge e ok|main-ci e ok|reconcile e ok (finished)" "$(events | paste -sd'|' -)"
+rm -rf "${P}/docs/stories/a.md" "${P}/docs/epics"
 fresh; rm "${S}"; merge "${URL}"; refused "a PR no story or epic lists" "no story or epic lists"
 is "a PR no story lists: the line's target is the URL" "merge ${URL}" "$(events | cut -d' ' -f1-2)"
 fresh; rm "${S}"; merge --board "${URL}"

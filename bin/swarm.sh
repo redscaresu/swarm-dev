@@ -2636,6 +2636,7 @@ reconcile() {
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
 MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL)
+MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear (SWARM_MERGE_CI_GRACE)
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 
@@ -2645,8 +2646,9 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 # among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
-# ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> — wait, reading every <poll>
-# seconds, until the merge commit <sha> is green as above (with no check run needed of its own),
+# ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
+# <poll> seconds, until the merge commit <sha> is green as above (with no check run needed of its own,
+# though with no workflow expected not before <grace> seconds),
 # every workflow whose `on: push` covers <base> and the files PR <pr> changes (read from
 # .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
 # read is a missed poll; three in a row end it. Prints ok (0), red <checks> (1), timeout (<what it
@@ -2848,30 +2850,39 @@ def pr_files(repo, n, changed):
         got += d
     if len(got) != changed:
         return None
-    return [p for f in got for p in (f["filename"], f.get("previous_filename")) if p]
+    try:
+        return [p for f in got for p in (f["filename"], f.get("previous_filename")) if p]
+    except (KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable files for #%s: %r" % (n, e))
 
 def expected(repo, sha, base, n, changed):
     try:
-        listing = json.loads(gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha)))
+        out = gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha))
     except Err as e:
         if "HTTP 404" in str(e):
             return []
         raise
+    # A truncated or odd answer is a failed read, retried like any other; only YAML is Unread.
+    try:
+        paths = [w["path"] for w in json.loads(out) if w["type"] == "file" and w["name"].endswith((".yml", ".yaml"))]
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable .github/workflows listing at %s: %r" % (sha[:7], e))
     want, files = [], pr_files(repo, n, changed)
-    for w in listing:
-        if w["type"] == "file" and w["name"].endswith((".yml", ".yaml")):
-            text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, w["path"], sha))
-            try:
-                if covers(push_filters(text), base, files):
-                    want.append(w["path"])
-            except Unread as e:
-                raise Unread("%s: %s" % (w["path"], e))
+    for path in paths:
+        text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha))
+        try:
+            if covers(push_filters(text), base, files):
+                want.append(path)
+        except Unread as e:
+            raise Unread("%s: %s" % (path, e))
     return want
 
-def main_ci(repo, sha, base, n, changed, secs, poll):
-    """The merge commit needs no check run of its own: the expected workflows are what must run. A
-    gh error is a missed read, READ_TRIES of them in a row an error."""
-    want, end, missed = None, time.time() + secs, 0
+def main_ci(repo, sha, base, n, changed, secs, poll, grace):
+    """The merge commit needs no check run of its own: the expected workflows are what must run.
+    With none expected, ok waits out grace seconds, so an app's checks or a status that appear just
+    after the push are seen and judged. A gh error is a missed read, READ_TRIES in a row an error."""
+    want, start, missed = None, time.time(), 0
+    end, settled = start + secs, start + min(grace, secs)
     while True:
         try:
             if want is None:
@@ -2891,7 +2902,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll):
             wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
             if red:
                 return 1, "red " + "; ".join(red)
-            if not wait:
+            if not wait and (want or time.time() >= settled):
                 return 0, "ok"
         if time.time() >= end:
             return 2, "timeout (%s)" % "; ".join(wait)
@@ -2910,7 +2921,7 @@ try:
             raise Err("gh listed no files, or fewer than the PR changes")
         print("\n".join(files))
     else:
-        rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]))
+        rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]))
         print(msg)
         sys.exit(rc)
 except Exception as e:
@@ -2936,12 +2947,26 @@ merge_caller() {
   agents="$(herdr agent list 2>/dev/null)" || { echo "herdr cannot list its agents, so whose pane this is is unknown"; return 0; }
   # A here-string, not a pipe: grep -q may exit before own_panes has written all of it, and pipefail
   # would then read a match as none.
-  panes="$(own_panes)" || { echo "cannot read this project's tab records in ${STATE_DIR}"; return 0; }
+  panes="$(own_panes)"
   grep -qxF -- "${HERDR_PANE_ID}" <<< "${panes}" || return 0
   if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
     return 0
   fi
   echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
+}
+
+# merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
+# to MERGE_READS times, MERGE_READ_WAIT apart: GitHub may take a moment to say so, and a read may
+# fail. The state is unreadable when no read succeeded.
+merged_state() {
+  local try info state="" oid=""
+  for ((try = 1; try <= MERGE_READS; try++)); do
+    info="$(gh pr view "$1" --repo "$2" --json state,mergeCommit | json "d['state'] + ' ' + ((d['mergeCommit'] or {}).get('oid') or '')")" || info=unreadable
+    read -r state oid <<< "${info}"
+    [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]] || break
+    [[ ${try} -eq ${MERGE_READS} ]] || sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
+  done
+  echo "${state:-unreadable} ${oid}"
 }
 
 # merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
@@ -2958,7 +2983,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local board="" want="" url repo n info state head base changed f="" p rel origin own req="" method oid admin=() why rc=0 rrc try
+  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own req="" method oid admin=() why rc=0 rrc ran=1
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board) board=1; shift ;;
@@ -2982,10 +3007,15 @@ merge_pr() {
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   if [[ -z "${board}" ]]; then
-    while IFS= read -r p; do [[ " $(fm "${p}" prs) " != *" ${url} "* ]] || { f="${p}"; break; }; done < <(board stories; board epics)
-    [[ -n "${f}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
+    # Any item listing the URL may be the one in review: a done story (finished = mark) keeps prs:.
+    while IFS= read -r p; do
+      [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
+      [[ -n "${any}" ]] || any="${p}"
+      [[ "$(fm "${p}" status)" != review ]] || { f="${p}"; break; }
+    done < <(board stories; board epics)
+    [[ -n "${any}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
+    if [[ -z "${f}" ]]; then MERGE_TARGET="$(basename "${any}" .md)"; merge_fail "${MERGE_TARGET} is $(fm "${any}" status), not review"; fi
     MERGE_TARGET="$(basename "${f}" .md)"
-    [[ "$(fm "${f}" status)" == review ]] || merge_fail "${MERGE_TARGET} is $(fm "${f}" status), not review"
   else
     [[ ${BOARD_IN_REPO} == 1 ]] || merge_fail "--board: the board is not in the project's repo"
     origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || merge_fail "--board: ${PROJECT_DIR}, the board's repo, has no origin"
@@ -3003,23 +3033,19 @@ merge_pr() {
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
   [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
-  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" \
-    || merge_fail "gh pr merge failed: ${why##*$'\n'}"
-  # gh pr merge ran, so from here nothing says the PR did not merge: GitHub may take a moment to say
-  # MERGED with a merge commit, and a read may fail. Read again a few times before calling it unconfirmed.
-  for ((try = 1; try <= MERGE_READS; try++)); do
-    info="$(gh pr view "${n}" --repo "${repo}" --json state,mergeCommit | json "d['state'] + ' ' + ((d['mergeCommit'] or {}).get('oid') or '')")" || info=unreadable
-    read -r state oid <<< "${info}"
-    [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]] || break
-    [[ ${try} -eq ${MERGE_READS} ]] || sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
-  done
+  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
+  # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
+  read -r state oid <<< "$(merged_state "${n}" "${repo}")"
   if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+    # A failed gh pr merge on a PR that still reads open or closed never reached a merge.
+    [[ -n "${ran}" || "${state}" == unreadable ]] || merge_fail "gh pr merge failed: ${why##*$'\n'}"
     [[ "${state}" != MERGED ]] || state="MERGED, no merge commit"
-    merge_fail "unconfirmed (${state:-unreadable}): gh pr merge ran, but ${url} does not read as merged; check it by hand"
+    merge_fail "unconfirmed (${state}): gh pr merge ran, but ${url} does not read as merged; check it by hand"
   fi
   record_event merge "${MERGE_TARGET}" ok
   echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
-  if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-${MERGE_POLL}}")"; then
+  if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
+      "${SWARM_MERGE_POLL:-${MERGE_POLL}}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
     why=ok
   else
     rc=$?; why="${why:-error (exit ${rc})}"

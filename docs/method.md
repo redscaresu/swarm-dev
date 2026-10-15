@@ -539,12 +539,17 @@ when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a 
 after the check stops the merge. It never passes `--auto`, and passes `--admin` only with
 `merge_admin = true`, after checking that every status check the base's rulesets or branch
 protection require passed on the head, from the app it names when it names one. `--admin` also
-bypasses required reviews and every other rule on the base, which nothing checks. Then it waits up to 30 minutes for CI on the merge commit:
-each workflow whose `on: push` filters cover the base and the files the PR changes must have a run
-on that commit, and every run and check there must pass. The commit needs no check run of its own
-when no workflow is expected on it. A failed read is a missed poll, and three in a row end the wait
-as an error. A PR that does not read as merged after `gh pr merge` is read again a few times, then
-logged as unconfirmed, for you to check by hand: it may well have merged. Without
+bypasses required reviews and every other rule on the base, which nothing checks.
+
+It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
+merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
+unconfirmed, for you to check by hand: it may well have merged. Only a failed `gh pr merge` on a PR
+that still reads open or closed is a refusal. Then it waits up to 30 minutes for CI on the merge
+commit, so run it in the background: each workflow whose `on: push` filters cover the base and the
+files the PR changes must have a run on that commit, and every run and check there must pass. The
+commit needs no check run of its own when no workflow is expected on it, but then it waits a minute
+before calling main green, for checks other apps post just after the push. A failed read is a
+missed poll, and three in a row end the wait as an error. Without
 `--board` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
 exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a

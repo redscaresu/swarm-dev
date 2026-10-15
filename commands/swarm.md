@@ -84,12 +84,14 @@ Repeat until a step below says stop:
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
      `agent`, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
-     reviewed> <PR URL>`, never a bare `gh pr merge`. It merges that head only when every check on it
-     passed, waits for CI on the base branch, and runs `swarm.sh reconcile`, which puts back a retry's
-     `attempts:`, pulls the board and finishes the story. If it exits non-zero, read why: a refusal
-     before `gh pr merge` ran merged nothing; `unconfirmed` means `gh pr merge` ran but the PR never
-     read as merged, so check it by hand; a red or timed-out CI on the base means the PR merged and
-     the base needs a fix. Then
+     reviewed> <PR URL>`, never a bare `gh pr merge`. Run it in the background (Bash
+     `run_in_background`) and wait for it, as with codex-review: it can wait 30 minutes for CI on the
+     base, longer than a foreground Bash call lasts, and killed after the merge it never runs
+     reconcile. It merges that head only when every check on it passed, waits for CI on the base
+     branch, and runs `swarm.sh reconcile`, which puts back a retry's `attempts:`, pulls the board and
+     finishes the story. If it exits non-zero, read why: a refusal before `gh pr merge` ran merged
+     nothing; `unconfirmed` means `gh pr merge` ran but the PR never read as merged, so check it by
+     hand; a red or timed-out CI on the base means the PR merged and the base needs a fix. Then
      `swarm.sh unblock` and `swarm.sh close <slug>`: closing a story that is still `ready` counts a
      failed build.
 
