@@ -116,14 +116,17 @@ Repeat until a step below says stop:
        `swarm.sh close <slug> bound`, then start it again.
      - `paused`: the goal is still set with no met entry since, and the builder is idle. Send one
        `swarm.sh tell <slug> resume <file>` and wait again; if it stops paused again,
-       `swarm.sh close <slug> paused`. That counts nothing, so do not start it again: decide
-       yourself what happens to it, as for `cleared-on-error`, and tell the user what you chose.
+       `swarm.sh close <slug> paused`. That counts nothing and holds the story for you, as for
+       `cleared-on-error`.
      - `cleared-on-error`: the transcript holds a `/goal` refusal (a `system` `local_command` entry
        whose stdout refuses `/goal`, with no `goal_status` after it), or the goal is gone and the
        transcript ends on an API error; or `swarm.sh story` failed on a refused goal.
-       `swarm.sh close <slug> cleared-on-error`, start nothing more, and decide yourself whether to
-       build it again; tell the user what you chose. The story stays `ready` with nothing on it to
-       say so, and `next` will name it again: do not start it again until you have decided.
+       `swarm.sh close <slug> cleared-on-error`, and start nothing more. The close holds the story
+       (`kind: lead` with `held_for: <cause>`), so go back to 1, where `next` names its
+       `escalated <slug>` step: lift the hold with `swarm.sh reset <slug> <reason>` to build it
+       again, or drop it, and tell the user what you chose. If either close prints `not held:`
+       instead of `held:`, the story stays `ready` with nothing on it to say so, and `next` will
+       name it again: do not start it again until you have decided.
      - None of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry
        whose reason is not the stop-after clause): `swarm.sh close <slug> stalled`, which counts the
        attempt so `escalate_after` bounds the retries, then start it again.
@@ -143,10 +146,15 @@ Repeat until a step below says stop:
      agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
-     when** impossible, and that **Done when** is what to re-scope. Deciding what happens to it is
+     when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
+     its block starts **Held (<cause>).**, and `next`'s line names the hold): its builder paused or
+     its goal was cleared on an error, nothing failed, and there is nothing to re-scope. Deciding what happens to it is
      yours, not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
      PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
      or two what you chose and why:
+     - A held story: lift the hold with `swarm.sh reset <slug> <reason>`, which puts its kind back
+       and keeps `attempts:`, so it is built again. Lifting a hold is not the story's one reset, so
+       the at-most-once rule below does not apply to it. Or drop it, as below.
      - Re-scope it: change the story so a fresh build can succeed, and run
        `swarm.sh reset <slug> <reason>`. When the board is in the story's repo, a builder reads the
        story in its own worktree, from the branch builds start from, so the new scope has to reach

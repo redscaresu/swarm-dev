@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh policy <role>                                  print the model and effort for a role
-#   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's), required with goal on while the story is ready
+#   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
@@ -19,7 +19,7 @@
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
-#   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block
+#   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
@@ -1940,14 +1940,16 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
   Run \`swarm.sh close <slug> bound\` and start the story again in a later wave.
 - paused: the goal is still set, with no met entry since, and the builder is idle.
   Send it one \`swarm.sh tell <slug> resume <file>\` and wait on it again.
-  If it stops paused again, run \`swarm.sh close <slug> paused\`. It counts nothing, so do not start
-  the story again: list it for the lead, as for cleared-on-error.
+  If it stops paused again, run \`swarm.sh close <slug> paused\`. It counts nothing and holds the
+  story for the lead (\`kind: lead\`, \`held_for: paused\`): list it for the lead, as for cleared-on-error.
 - cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
   stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
   ends on an API error; or \`swarm.sh story\` failed on a refused goal.
   Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
-  the lead, who decides whether to build it again. The story stays \`ready\` with nothing on it to say
-  so: do not start it again in a later wave. It waits for the lead.
+  the lead, who decides whether to build it again. The close holds the story for the lead
+  (\`kind: lead\`, \`held_for: cleared-on-error\`), so no wave builds it until the lead lifts the hold.
+  If either close prints no \`held:\` line (it prints \`not held:\` instead), the story stays \`ready\`
+  with nothing on it to say so: do not start it again in a later wave. It waits for the lead.
 - none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose
   reason is not the stop-after clause): run \`swarm.sh close <slug> stalled\`, which counts the
   attempt so escalate_after bounds the retries, and start the story again in a later wave.
@@ -2169,14 +2171,15 @@ epic_has_stories() {
 #   plan-epic <epic>  an active epic has no stories yet
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
-#   escalated <slug>  a story whose Fable build failed, or whose builder called its Done when
-#                     impossible (kind: lead with escalated_from:): the lead re-scopes it and runs
+#   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
+#                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
+#                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
 #                     reset, or drops it
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting="" b open when
+  local f slug epic kind story_epic src buildable="" waiting="" b open when held
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -2253,9 +2256,11 @@ next_step() {
   done < <(board hld)
   while IFS= read -r f; do
     is_escalated "${f}" || continue
-    slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"
+    slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
     echo "escalated ${slug}"
-    if [[ -n "${when}" ]] && impossible_block "${f}"; then
+    if [[ -n "${held}" ]]; then
+      echo "${slug} is held (${held}): its builder stopped on its goal, which counts nothing; lift the hold with swarm.sh reset ${slug} <reason> to build it again, or swarm.sh drop ${slug} <reason>, then tell the user why"
+    elif [[ -n "${when}" ]] && impossible_block "${f}"; then
       echo "${slug}'s builder called its Done when impossible after its one reset (${when}): drop it with swarm.sh drop ${slug} <reason>, then tell the user why"
     elif impossible_block "${f}"; then
       echo "${slug}'s builder called its Done when impossible: re-scope it and run swarm.sh reset ${slug} <reason>, or swarm.sh drop ${slug} <reason>, then tell the user why"
@@ -2358,12 +2363,13 @@ reset_at() { awk -F'\t' -v s="$1" '$2 == "reset" && $3 == s && index($5, "ok") =
 # reset <slug> <reason> — put a story the lead re-scoped back in the build queue: drop attempts:,
 # put kind back from escalated_from: (no kind: line for NO_KIND_LINE) while the story still says
 # kind: lead, so a kind the lead re-scoped stays, drop escalated_from:, and remove escalate_story's
-# block. A story with
+# block. A held story (held_for:, held_story) keeps attempts: and loses held_for:, and its reset is not
+# counted as the one. A story with
 # neither attempts: nor escalated_from: is refused, and so is a second reset (an ok reset line for the
 # slug in events.tsv): at most one per story. So is a block whose close marker is gone, which would
 # take the rest of the file with it. main logs the reason as the outcome.
 reset_story() {
-  local slug="$1" f from when put kind
+  local slug="$1" f from when put kind held
   [[ -n "${slug}" ]] || die "reset: <slug> is missing: swarm.sh reset <slug> <reason>"
   [[ -n "${2//[[:space:]]/}" ]] || die "reset: <reason> is missing: swarm.sh reset ${slug} <reason>"
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "reset: bad slug '${slug}'"
@@ -2371,16 +2377,19 @@ reset_story() {
   [[ -f "${f}" ]] || die "reset: no story ${f}"
   from="$(get_fm "${f}" escalated_from)"
   [[ -n "${from}$(get_fm "${f}" attempts)" ]] || die "reset: ${slug} has neither attempts: nor escalated_from:, so there is nothing to reset"
+  held="$(get_fm "${f}" held_for)"
   when="$(reset_at "${slug}")"
-  [[ -z "${when}" ]] || die "reset: ${slug} was reset already, at ${when} (events.tsv); a story is reset at most once, so drop it: swarm.sh drop ${slug} <reason>"
+  [[ -n "${held}" || -z "${when}" ]] || die "reset: ${slug} was reset already, at ${when} (events.tsv); a story is reset at most once, so drop it: swarm.sh drop ${slug} <reason>"
   awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } $0 == c { s = 0 } END { exit s }' "${f}" \
     || die "reset: ${f} has the line '${ESCALATED_OPEN}' and no '${ESCALATED_CLOSE}' after it, so the block's end is unknown; put that line back where the block ends, then reset again"
   put="${from}"; [[ "${from}" != "${NO_KIND_LINE}" ]] || put=""
   [[ -z "${from}" || "$(get_fm "${f}" kind)" != lead ]] || set_fm "${f}" kind "${put}"
   set_fm "${f}" escalated_from
-  set_fm "${f}" attempts
+  set_fm "${f}" held_for
+  [[ -n "${held}" ]] || set_fm "${f}" attempts
   awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } !s { print } $0 == c { s = 0 }' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
   kind="$(get_fm "${f}" kind)"
+  if [[ -n "${held}" ]]; then echo "reset: ${slug} (kind: ${kind:-none, so code}; the ${held} hold is lifted, attempts: as it was)"; return; fi
   echo "reset: ${slug} (kind: ${kind:-none, so code}; no attempts:)"
 }
 
@@ -2430,7 +2439,7 @@ set_status() {
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status, prs and
 # blocked_by too, which review and unblock write. reconcile puts them back as committed on an item
 # whose PRs merged, and carries another board file's edit to them over its pull, so they never stop it.
-SET_FM_KEYS="attempts kind escalated_from status prs blocked_by"
+SET_FM_KEYS="attempts kind escalated_from held_for status prs blocked_by"
 
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
 # when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
@@ -3135,7 +3144,7 @@ dash_reexec() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading) and who
-# its step waits on, tab-separated, in one fork. The last is `escalated` for an escalated story
+# its step waits on, tab-separated, in one fork. The last is `held` for a held story (held_for: too), `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
 # else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
 # names the convention, "has no **You:** step", is no step), else empty. The keys are read from the front matter only (a leading ---, up to the next; CRLF
@@ -3150,9 +3159,10 @@ dash_fields() {
     n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
     n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
     n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
+    n == 1 && !hh && sub(/^held_for: */, "") { hh = 1; h = $0; next }
     n != 1 && /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/ { y = 1 }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? "escalated" : (y ? "you" : "")) }' "$1"
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")) }' "$1"
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -3345,7 +3355,7 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
 # Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
-ESCALATION = ("escalate", "dialog", "escalated", "reset", "drop")
+ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
 escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
 for f in read_tsv(E["DASH_EVENTS"], 5):
     if f[1] == "reset" and f[4].startswith("ok"):
@@ -3474,11 +3484,12 @@ for l in lines("DASH_WAITING"):
     else:
         lq.append(bang + [(l, "")])
 # An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
-# leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left.
+# leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left, except for a
+# held story, whose hold reset always lifts (as next says).
 if LEAD:
     queue += [bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
-                      (("" if b[1] in was_reset else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
-              for b in stories if b[2] == "ready" and b[7] == "lead" and b[9] == "escalated"]
+                      (("" if b[1] in was_reset and b[9] != "held" else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
+              for b in stories if b[2] == "ready" and b[7] == "lead" and b[9] in ("escalated", "held")]
 for r in recs:
     if r["state"] == "WAITING":
         why = f" (waiting on {r['why']})" if r.get("why") else ""
@@ -3856,9 +3867,10 @@ CLOSE_CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
 # (clear_build), so the next build starts fresh. With no cause, met, stalled or bound it first raises
 # the story's attempts: by one, and when that build was escalate, the story becomes the lead's
 # (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
-# the lead's (impossible_story) whether or not there was a build to clear.
+# the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
+# hold it for the lead (held_story) when the close ends a build, or a ready verify story's open builder.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why open
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -3869,6 +3881,7 @@ close_agent() {
   fi
   archive_session "$1"
   if prs="$(failed_build "$1")"; then counted=1; fi
+  open="$(agent_field "$(agent_name "$1")" pane_id)"
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
@@ -3880,11 +3893,20 @@ close_agent() {
     impossible_story "$1" "${prs}" "${counted}"
     return 0
   fi
-  [[ ${counted} == 1 ]] || return 0
   case "${cause}" in paused|cleared-on-error)
-    clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs}"
+    # Held, its build cleared so it builds again once the hold is lifted, when the close ends a build
+    # (counted), or closes the open builder of a ready verify story, whose close never counts. A story
+    # whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
+    # an agent builds the close says so (not held:).
+    if [[ ${counted} == 1 || ( -n "${open}" && -f "${f}" && "$(fm "${f}" kind)" == verify && "$(fm "${f}" status)" == ready ) ]]; then
+      clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
+      held_story "$1" "${cause}" "${prs:-[]}" "${counted}"
+    elif ! impossible_refused "$1" >/dev/null; then
+      echo "not held: $1 (${cause}) ended no build here (no builder open, a PR merged or merging, or gh could not list its PRs), so its story is as it was: list it for the lead and do not start it again"
+    fi
     return 0 ;;
   esac
+  [[ ${counted} == 1 ]] || return 0
   n="$(get_fm "${f}" attempts)"
   # Checked before the arithmetic, which would evaluate it.
   [[ "${n}" =~ ^(0|[1-9][0-9]*)?$ ]] \
@@ -3952,6 +3974,20 @@ impossible_story() {
   [[ "$3" == 1 ]] || none="swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo."
   lead_block "$1" "**Impossible.** The builder replied \`IMPOSSIBLE:\`, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"${choice}" "$2" "${none}" >/dev/null
   echo "impossible: $1 is kind: lead now, for the lead to re-scope or drop"
+}
+
+# held_story <slug> <cause> <prs> <listed> — after `close <slug> paused` or `close <slug> cleared-on-error`
+# ends a build, or closes a ready verify story's open builder, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
+# no conductor or /swarm-dev:swarm run builds it again. attempts: stays as it was. Lifting the hold with reset
+# is not the story's one reset (main logs it as reset:held, which reset_at does not read).
+held_story() {
+  local why="it paused on its goal" none=""
+  # Unless <listed> is 1, failed_build listed no PRs: the story is verify, which has none.
+  [[ "$4" == 1 ]] || none="A verify story has no PRs."
+  [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
+  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" "${none}" >/dev/null
+  set_fm "${BOARD}/stories/$1.md" held_for "$2"
+  echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
@@ -4301,7 +4337,8 @@ main_signal() {
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
 # log one line per item themselves. A tell's command is tell:<kind>, and a close's close:<cause>, so
-# the target stays the slug. A reset or drop that succeeds logs ok (<reason>).
+# the target stays the slug. A reset or drop that succeeds logs ok (<reason>); a reset that lifts a
+# hold (held_for:) logs as reset:held.
 main() {
   local rc why
   [[ "${1:-}" != init ]] || init_check
@@ -4323,7 +4360,10 @@ main() {
     tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     # Likewise a close's cause, and only a real one.
     close) EV_TARGET="${2:-}"; if is_close_cause "${3:-}"; then EV_CMD="close:$3"; fi ;;
-    reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
+    reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})"
+                # Lifting a hold is not the story's one reset, so reset_at must not read it.
+                if [[ "${EV_CMD}" == reset && "${2:-}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/stories/$2.md" \
+                      && -n "$(get_fm "${BOARD}/stories/$2.md" held_for)" ]]; then EV_CMD="reset:held"; fi ;;
     dialog) EV_TARGET="${2:-}"; EV_OK="ok (${3:-})" ;;
     *) EV_TARGET="${2:-}" ;;
   esac
