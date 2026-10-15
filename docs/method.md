@@ -440,9 +440,11 @@ here and on origin. A merged story's build always goes; if its builder is still 
 closes it first, which counts nothing while the story is in review. After a PR closed unmerged, the
 build goes only when no builder is open, and the story can then be built again. An open builder may
 be fixing that PR, so reconcile keeps its build and prints `build kept: <slug>`. It does the same when
-herdr cannot list its agents, since a builder may then be open unseen. Outside herdr it
-treats every builder as closed and never calls herdr. Before it pulls the board's repo, it sets the front matter that swarm.sh wrote on each merged item back to what is
-committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
+herdr cannot list its agents, since a builder may then be open unseen. After a merge it clears the
+build even then, and prints `build cleared: <slug>`: close that builder's pane yourself with
+`swarm.sh close <slug>`. Outside herdr it treats every builder as closed and never calls herdr.
+Before it pulls the board's repo, it sets the front matter that swarm.sh wrote on each merged item
+back to what is committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
 if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
 stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and restores them all if

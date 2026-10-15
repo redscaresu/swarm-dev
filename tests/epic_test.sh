@@ -729,7 +729,11 @@ check "with its builder still open, reconcile leaves the worktree and both branc
 built ru3 16; echo "${UR}/16 CLOSED" >> "${ROOT}/pr-states"; touch "${ROOT}/listfail"
 rout="$(run reconcile)"; rm "${ROOT}/listfail"
 check "when herdr cannot list its agents, the builder may be open: reconcile keeps the build, saying why" " worktree branch origin|yes" \
-  "$(left ru3)|$(has "build kept: herdr cannot list its agents, so ru3's builder may be open" "${rout}")"
+  "$(left ru3)|$(has "build kept: ru3's builder may be open (herdr cannot list its agents)" "${rout}")"
+built rm3 17; echo "${UR}/17 MERGED" >> "${ROOT}/pr-states"; touch "${ROOT}/listfail"
+rout="$(run reconcile)"; rm "${ROOT}/listfail"
+check "after a merge, when herdr cannot list its agents, reconcile still clears the build and says its builder may be open" "|yes" \
+  "$(left rm3)|$(has "build cleared: rm3's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close rm3" "${rout}")"
 built rm1 13; echo "${UR}/13 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"; : > "${ROOT}/gh.log"
 run reconcile >/dev/null
 check "a merged story with its builder open: reconcile closes it, clears its build and finishes it, counting nothing and closing no PR" \

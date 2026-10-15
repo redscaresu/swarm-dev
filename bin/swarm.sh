@@ -2331,11 +2331,12 @@ builder_state() {
 # reconcile — for each item in review: finish it once every PR it lists has merged; send it back to
 # ready, saying which, if any closed without merging; otherwise leave it waiting. A story's build is
 # cleared (clear_build) before the pull, while its file still names its repo: always once it merged,
-# after closing its builder if one is open (still in review, so close counts nothing); after a
+# after closing its builder if one is open (still in review, so close counts nothing), and saying so
+# when herdr cannot tell whether one is; after a
 # closed PR only when no builder is open (one may be fixing it; so may one herdr cannot list), so the
 # story can be built again.
 reconcile() {
-  local f slug url state closed waiting urls merged=()
+  local f slug url state closed waiting urls builder merged=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -2357,7 +2358,7 @@ reconcile() {
         case "$(builder_state "${slug}")" in
           none) clear_build "${slug}" "the PR of ${slug} closed unmerged" "[]" </dev/null ;;
           open) echo "build kept: ${slug}'s builder is still open, so its worktree and story/${slug} stay" ;;
-          *) echo "build kept: herdr cannot list its agents, so ${slug}'s builder may be open; its worktree and story/${slug} stay" ;;
+          *) echo "build kept: ${slug}'s builder may be open (herdr cannot list its agents), so its worktree and story/${slug} stay" ;;
         esac
       fi
       set_status "${f}" ready
@@ -2365,8 +2366,11 @@ reconcile() {
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
       if [[ "${f}" == "${BOARD}/stories/"* ]]; then
-        [[ "$(builder_state "${slug}")" != open ]] || close_agent "${slug}" </dev/null   # stdin is this loop's list
+        builder="$(builder_state "${slug}")"
+        [[ "${builder}" != open ]] || close_agent "${slug}" </dev/null   # stdin is this loop's list
         clear_build "${slug}" "the PR of ${slug} merged" "[]" </dev/null
+        [[ "${builder}" != unknown ]] \
+          || echo "build cleared: ${slug}'s builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close ${slug}"
       fi
       merged+=("${slug}")
     fi
