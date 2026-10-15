@@ -444,9 +444,17 @@ runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` 
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
 too, with every PR still waiting. You merge on GitHub; the next `/swarm-dev:swarm` runs `swarm.sh reconcile`,
 which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
-closed unmerged; that item keeps its `attempts:`, and reconcile never counts one. Before it pulls the
-board's repo, it sets the front matter that swarm.sh wrote on each merged item back to what is
-committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
+closed unmerged; that item keeps its `attempts:`, and reconcile never counts one. While the story
+file still names its repo, it also clears each story's build away: its worktree, and `story/<slug>`
+here and on origin. A merged story's build always goes; if its builder is still open, reconcile
+closes it first, which counts nothing while the story is in review. After a PR closed unmerged, the
+build goes only when no builder is open, and the story can then be built again. An open builder may
+be fixing that PR, so reconcile keeps its build and prints `build kept: <slug>`. It does the same when
+herdr cannot list its agents, since a builder may then be open unseen. After a merge it clears the
+build even then, and prints `build cleared: <slug>`: close that builder's pane yourself with
+`swarm.sh close <slug>`. Outside herdr it treats every builder as closed and never calls herdr.
+Before it pulls the board's repo, it sets the front matter that swarm.sh wrote on each merged item
+back to what is committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
 if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
 stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and restores them all if
@@ -455,8 +463,8 @@ a file outside the board is changed; a staged or differing edit is left alone an
 blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
 It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
 and `swarm.sh reconcile`, which pull the board the way they do for you, putting back a retry's
-`attempts:` first, and finish the story. Only then does it close the builder, because closing a
-story that is still `ready` counts a failed build:
+`attempts:` first, and finish the story, closing its builder. The conductor never closes the builder
+before that, because closing a story that is still `ready` counts a failed build:
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
@@ -474,6 +482,7 @@ epic keep their own PR.
 
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 
-**Clean up.** After each merge, `git worktree remove ../<repo>-wt/<slug>`, then
-`git worktree prune`, and `swarm.sh close <slug>` closes the story's pane (its tab, when it was
-the last pane there). `swarm.sh close conduct-<epic>` closes the epic's tabs.
+**Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and
+removes its worktree and `story/<slug>`, here and on origin (§ Merging). By hand,
+`swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there), and
+`swarm.sh close conduct-<epic>` closes the epic's tabs.

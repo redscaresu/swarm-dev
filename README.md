@@ -108,7 +108,11 @@ touch real cloud or credentials. By default no agent merges.
 
 When `swarm.sh close` closes the builder of a code, docs or chore story that is still `ready`, it
 counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
-`story/<slug>` branch here and on origin, and any open PR, closed unmerged. A story that has failed
+`story/<slug>` branch here and on origin, and any open PR, closed unmerged. `swarm.sh reconcile`
+removes the same worktree and branches once a story's PR merges, closing its builder first if it is
+open. When a PR closes unmerged, it removes them only if no builder is open. That leaves nothing to
+clean up by hand, unless reconcile prints `build kept: <slug>` or `build cleared: <slug>`, which say
+what is left. A story that has failed
 twice is rebuilt on Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
 `escalate_after = 0` turns it off. If the Fable build fails as well, the story becomes a `lead`
 story and the lead decides: it re-scopes the story and runs `swarm.sh reset <slug> <reason>` to build
