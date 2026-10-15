@@ -1,9 +1,9 @@
 ---
 kind: code
 status: blocked
-blocked_by: [finding-reviewer-column, outcomes-attempt-events]
+blocked_by: [outcomes-story-columns, finding-reviewer-column, outcomes-attempt-events]
 epic: review-yield
-depends_on: [finding-reviewer-column, outcomes-attempt-events]
+depends_on: [outcomes-story-columns, finding-reviewer-column, outcomes-attempt-events]
 touches: [bin/swarm.sh:review_yield_report (new), bin/swarm.sh:dispatch (review-yield arm), bin/swarm.sh:usage header (review-yield line), bin/swarm.sh:READ_ONLY_COMMANDS, tests/review_yield_test.sh (new), tests/events_test.sh (RO_EXPECTED), README.md (command table), docs/method.md (read-only list :362-365; review-yield paragraph after decisions)]
 ---
 
@@ -22,3 +22,4 @@ New read-only review_yield_report in the REPORT_PY style. --since is validated a
 - Depends on outcomes-attempt-events (training-export), so per-attempt tells and PRs are right. Fixtures: two attempts sharing one PR with three findings tells total report three rounds; two attempts with distinct PRs each get only their own tells.
 - Block 1 has a per-kind row across reviewers (`all <kind>`) as well as per (reviewer, kind), per reviewer and overall.
 - `--epic <slug>` limits the report to that epic's PRs and lists the PR URLs it counted, so the tuning can prove coverage.
+- `--epic` reads outcomes' epic column (outcomes-story-columns); a fixture with two epics shows the other epic's findings and PRs excluded.

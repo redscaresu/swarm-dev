@@ -18,3 +18,4 @@ Absorbed as is from board/stories/outcomes-every-attempt.md (add `epic: training
 - tests/decisions_test.sh: for the two-PR case the first decision has merged false and the second merged true; existing rows unchanged.
 - One builder, one PR prints as today, including with its session log missing.
 - The PR shows the new checks failing with `--limit 1` restored; shellcheck and every tests/*_test.sh pass.
+- With pr_per = epic, builders open no PR: each builder row of an epic story gets the epic's PR (`gh pr list --head epic/<epic>`), so story_merged and pr_state follow it. A fixture in epic mode pins the epic PR on every builder row and MERGED once it merges.
