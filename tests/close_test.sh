@@ -235,7 +235,7 @@ is "with gh failing the close counts nothing: no attempt, no kind: lead, no bloc
 
 # --- close <name> <cause>: met, stalled and bound count as above; impossible, paused and
 # cleared-on-error count nothing and still clear the build away, and impossible hands the story to the
-# user. An unknown cause is refused before anything closes; with goal on, so is a missing one while the
+# lead. An unknown cause is refused before anything closes; with goal on, so is a missing one while the
 # name's story is ready.
 cs() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "$@" 2>&1); }
 CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
@@ -243,10 +243,11 @@ echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.jso
 item i1 "status: ready" "kind: code" "attempts: 1"; started i1 w:p41; cs i1 impossible >/dev/null
 is "close i1 impossible, its builder open: kind: lead, escalated_from: code, attempts: 1, still ready" "lead|code|1|ready" "$(state i1)"
 b="$(block i1)"
-is "its block has a **You:** line naming Done when, the epic branch step, and the PR" "1|yes|yes" \
-  "$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "${b}")|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
+# shellcheck disable=SC2016 # the backticks are the block's
+is "its block is the lead's, with no **You:** step: re-scope Done when and reset, or drop; the epic branch step, and the PR" "0|yes|yes|yes|yes" \
+  "$(grep -c '\*\*You:\*\*' <<< "${b}")|$(grep -qF -- '- Re-scope its **Done when**' <<< "${b}" && echo yes)|$(grep -qF -- '- Or drop it: run `swarm.sh drop i1 <reason>`' <<< "${b}" && echo yes)|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
 is "and its build is cleared away" "" "$(left i1)"
-# impossible hands a ready story an agent builds to the user, and clears its worktree and branches so
+# impossible hands a ready story an agent builds to the lead, and clears its worktree and branches so
 # a reset builds it again, even when the close finds no build to count: with no builder open, gh
 # failing, or a verify story (no PR tells its pass from a failure). Then it closes no PR, and the block
 # says the PRs were not listed. Any other story, and a name with no story file, is refused before
@@ -264,8 +265,8 @@ is "with gh failing, close i3 impossible closes its pane, hands it on and clears
   "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(unlisted i3)|$(left i3)"
 item v1 "status: ready" "kind: verify" "attempts: 1"; echo "w:p14 v1" > "${P}/.swarm/state/v1"
 rc=0; cs v1 impossible >/dev/null || rc=$?
-is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, a **You:** block, its build cleared" \
-  "0|lead|verify|1|ready|1|yes|" "${rc}|$(state v1)|$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "$(block v1)")|$(unlisted v1)|$(left v1)"
+is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, the lead's block, its build cleared" \
+  "0|lead|verify|1|ready|1|yes|" "${rc}|$(state v1)|$(grep -c '^- Re-scope its \*\*Done when\*\*' <<< "$(block v1)")|$(unlisted v1)|$(left v1)"
 is "and none of the three closes a PR, since none was listed" "${closed_prs}" "$(grep -c '^pr close' "${ROOT}/gh.log")"
 echo '[]' > "${ROOT}/prs.json"; item i4 "status: ready" "kind: code"; started i4 w:p61; cs i4 impossible >/dev/null
 is "when gh lists no PR on story/i4, the block says none was found" "lead|yes" "$(fmv i4 kind)|$(grep -qx 'No PR was found on story/i4.' <<< "$(block i4)" && echo yes)"

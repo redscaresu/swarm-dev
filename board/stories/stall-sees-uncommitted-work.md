@@ -2,7 +2,7 @@
 kind: code
 status: ready
 epic: flow-speedups
-touches: [bin/swarm.sh:STALL_PY (stall_age signs), bin/swarm.sh:wait_agent (--stall signs), bin/swarm.sh:dash_slow or dash_fields (signs passed to the dash), tests/epic_test.sh (stall block), tests/dash_test.sh (stall rows), docs/method.md (stall_minutes row)]
+touches: [bin/swarm.sh:session_log (reused), bin/swarm.sh:STALL_PY (stall_age signs), bin/swarm.sh:wait_agent (--stall signs), bin/swarm.sh:dash_slow or dash_fields (signs passed to the dash), tests/epic_test.sh (stall block), tests/dash_test.sh (stall rows), docs/method.md (stall_minutes row)]
 ---
 
 # A builder editing files is not stalled
@@ -15,3 +15,5 @@ The stall rule's signs of life are events.tsv lines, the worktree's last commit 
 - A worktree with no changes behaves as today.
 - docs/method.md's stall_minutes row names the new sign.
 - The PR shows the first check failing with the new sign removed; shellcheck and every tests/*_test.sh pass.
+
+**From the lead (binding, 2026-10-15, after #143):** #143 gives the stall mark to every working agent, but a conductor in a foreground `wait`/`watch` writes nothing to events.tsv, and planners, skeptics, codex reviewers and the HLD co-writer never run swarm.sh, so each shows `stalled` after stall_minutes of normal work. Add one more sign for every agent with a recorded Claude session: the mtime of its session .jsonl (session_log finds it; a session writes to it on every turn and tool call). Extra Done when: in tests/dash_test.sh a working conductor and a working planner with no events.tsv lines for stall_minutes, whose session .jsonl was written a minute ago, show working, not stalled; with the .jsonl's mtime older than stall_minutes, they show stalled.

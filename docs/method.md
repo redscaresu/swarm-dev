@@ -136,7 +136,7 @@ prints every setting and where it came from.
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
 | `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
-| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** line, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** line (an escalated one too), an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged |
+| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -180,14 +180,17 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   clear the build away under the same conditions and leave `attempts:` as it was. An unknown cause
   is refused before anything closes, and with `goal` on, so is a close with no cause while the story
   is `ready`. `impossible` means the builder replied `IMPOSSIBLE:`, so the **Done when** cannot be
-  met: the story becomes `kind: lead` with `escalated_from:` and a block whose **You:** step is the
-  user's (fix the **Done when**, then `swarm.sh reset <slug> <reason>`). Because of that step,
-  `next` lists it under waiting on you, not as the lead's `escalated` step. `impossible` hands on
+  met: the story becomes `kind: lead` with `escalated_from:` and a block with the lead's choices
+  (re-scope the **Done when**, then `swarm.sh reset <slug> <reason>`, or `swarm.sh drop <slug>
+  <reason>`). Like a failed Fable build it is the lead's, with no **You:** step, so `next` prints
+  `escalated <slug>` for it and it is never under waiting on you. `impossible` hands on
   any story still `ready` of a kind an agent builds, verify included, and clears its worktree and
-  `story/<slug>` here and on origin so a reset builds it again. When the close finds no build to count
-  (its builder is gone, gh cannot list its PRs, or it is a verify story), it closes no PR, and its
-  block says the PRs were not listed, so the user looks before resetting. Any other story, and a name
-  with no story file, is refused before anything closes.
+  `story/<slug>` here and on origin so a reset builds it again. When the close lists the story's PRs,
+  it closes each open one with `gh pr close`. When it lists none (its builder is gone, gh cannot list
+  them, or it is a verify story), it runs no `gh pr close`, but deleting `story/<slug>` on origin makes
+  GitHub close any PR still open on that branch. The block then says the PRs were not listed, so the
+  lead looks before resetting. Any other story, and a name with no story file, is refused before
+  anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs
@@ -270,7 +273,7 @@ whose session goes idle while its story is `ready` and has no open or merged PR 
 earlier attempt's; for an epic's story with `pr_per = epic`, before `story/<slug>` is pushed) has stopped early, perhaps on a failed request, and nothing else would wake it. `wait` tells it
 why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at
 least a slice apart unless the session turns busy in between. If herdr cannot deliver a nudge,
-`wait` stops there and returns idle, and logs nothing for it. With `goal` on, a builder whose session log shows a goal set and not yet met is not nudged: the goal keeps it going, so `wait` returns idle and the conductor reads why it stopped. Only code, docs and chore stories are
+`wait` stops there and returns idle, and logs nothing for it. With `goal` on, `wait` nudges no builder, whatever its session log shows: a nudge would bury the reply and the goal entry the conductor reads the cause from, so `wait` returns idle and the conductor reads why it stopped. Only code, docs and chore stories are
 nudged, never a verify story, a conductor or a planner, and a gh or git call that fails counts as a
 PR. An idle agent whose transcript (its session's `.jsonl`, the file `cost` reads) ends on Claude
 Code's "Login expired · Please run /login", with no message sent to it since, is never nudged or
@@ -320,7 +323,10 @@ and starts the story again in a later wave with
 `swarm.sh story <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
 builds (2 by default). With `escalate_after = 0` it reports a story that has failed twice to the lead
 instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
-the user's. A Fable builder can stop on its usage-credits consent, which `wait` prints as
+the user's. With `goal` on, a builder idle short of its reply is not nudged: the conductor reads the
+cause from its reply and the last met `goal_status` entry's `reason` in its session log, closes it with
+`swarm.sh close <slug> <cause>` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
+in the wave and lists the story for the lead. A Fable builder can stop on its usage-credits consent, which `wait` prints as
 `waiting: dialog open`. Only for an escalate build, and only once `herdr agent read` shows that
 consent, the conductor accepts it with `herdr pane send-keys` in the builder's pane, runs
 `swarm.sh dialog <slug> accepted` (or `dismissed`, telling the lead), which logs `dialog <slug>`
