@@ -83,11 +83,13 @@ Repeat until a step below says stop:
      `codex skipped: usage limit` or `codex skipped: timed out` in the PR.
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
-     `agent`, merge it, and wait until the PR has merged (a queued merge, auto-merge or a merge
-     queue, has not merged yet). Then run `swarm.sh review <slug> <PR URL>` and `swarm.sh reconcile`,
-     never a plain `git pull`: reconcile first puts back a retry's `attempts:`, which would stop the
-     pull, then pulls the board and finishes the story. Then `swarm.sh unblock` and
-     `swarm.sh close <slug>`: closing a story that is still `ready` counts a failed build.
+     `agent`, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
+     reviewed> <PR URL>`, never a bare `gh pr merge`. It merges that head only when every check on it
+     passed, waits for CI on the base branch, and runs `swarm.sh reconcile`, which puts back a retry's
+     `attempts:`, pulls the board and finishes the story. If it exits non-zero, a refusal merged
+     nothing; a red or timed-out CI on the base means the PR merged and the base needs a fix. Then
+     `swarm.sh unblock` and `swarm.sh close <slug>`: closing a story that is still `ready` counts a
+     failed build.
 
      Give up on the builder as a conductor does when `swarm.sh wait --stall <slug>` returns stalled,
      when it is idle with no PR after wait's nudges, or when review has not converged in the rounds
@@ -190,5 +192,6 @@ Repeat until a step below says stop:
    if it prints the same step twice in a row with nothing changed, stop and report why.
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
-is `human` (not `gh pr merge`, not `gh api`, not the web page), and never give a `lead` story
-to an agent. Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.
+is `human` unless the user asks you to merge a PR, and then only with `swarm.sh merge <PR URL>`
+(not `gh pr merge`, not `gh api`, not the web page), and never give a `lead` story to an agent.
+Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

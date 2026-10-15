@@ -25,6 +25,7 @@
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
+#   swarm.sh merge [--board] [--head <sha>] <pr-url>        merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
@@ -132,6 +133,7 @@ CFG_repos_dir=""        # empty: the project dir's parent
 CFG_base_branches=""    # empty: origin's default branch
 CFG_finished=delete
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
+CFG_merge_admin=false   # true: swarm.sh merge passes --admin, after checking the base's required checks itself
 CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
@@ -144,7 +146,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge merge_admin review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -180,7 +182,7 @@ load_config() {
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
       review_bot)
         [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
-      sign_commits|keep_panes)
+      sign_commits|keep_panes|merge_admin)
         [[ "${value}" == true || "${value}" == false ]] || die "${where}: ${key} must be true or false, not '${value}'" ;;
       pr_per)
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
@@ -2627,6 +2629,355 @@ reconcile() {
   done
 }
 
+MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
+MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL)
+
+# ci_gate head <owner/repo> <sha> [base] — succeed when <sha> is green: at least one check run, every
+# run completed as success, skipped or neutral, and every commit status success; with [base]
+# (merge_admin), also every status check the base's rulesets or branch protection require present
+# among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
+# block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
+# closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
+# ci_gate main <owner/repo> <sha> <base> <pr> <seconds> <poll> — wait, reading every <poll> seconds,
+# until the merge commit <sha> is green as above, every workflow whose `on: push` covers <base> and
+# the files PR <pr> changes (read from .github/workflows at <sha>) has a run on <sha>, and every
+# workflow run on <sha> is green. Prints ok (0), red <checks> (1), timeout (<what it waited on>) (2)
+# or error <why> (3).
+ci_gate() {
+  python3 - "$@" <<'PY'
+import json, re, subprocess, sys, time
+OK = ("success", "skipped", "neutral")
+
+class Err(Exception):
+    pass
+
+def gh(*args):
+    p = subprocess.run(("gh",) + args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    if p.returncode:
+        raise Err("gh %s: %s" % (" ".join(args), (p.stderr.strip().splitlines() or ["exit %d" % p.returncode])[-1]))
+    return p.stdout
+
+def docs(path):
+    """Each JSON document gh prints for path, one per page; none is an error."""
+    s, dec, i, out = gh("api", "--paginate", path), json.JSONDecoder(), 0, []
+    while True:
+        while i < len(s) and s[i].isspace():
+            i += 1
+        if i == len(s):
+            break
+        d, i = dec.raw_decode(s, i)
+        out.append(d)
+    if not out:
+        raise Err("no answer for " + path)
+    return out
+
+def pages(path, key):
+    items, total = [], None
+    for d in docs(path):
+        if not (isinstance(d, dict) and isinstance(d.get(key), list) and isinstance(d.get("total_count"), int)):
+            raise Err("unreadable answer for " + path)
+        items += d[key]
+        total = d["total_count"] if total is None else total
+    if len(items) < total:
+        raise Err("%s: read %d of %d" % (path, len(items), total))
+    return items
+
+def judge(runs, red, wait):
+    for r in runs:
+        if r.get("status") != "completed":
+            wait.append("%s (%s)" % (r.get("name"), r.get("status")))
+        elif r.get("conclusion") not in OK:
+            red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
+
+def checks(repo, sha, required=()):
+    runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
+    sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
+    red, wait = [], ([] if runs else ["no check runs"])
+    judge(runs, red, wait)
+    for s in sts:
+        if s.get("state") == "pending":
+            wait.append("%s (pending)" % s.get("context"))
+        elif s.get("state") != "success":
+            red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
+    # A required check bound to an app (not None or -1, any source) needs a run from that app.
+    have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
+    names = {n for n, _ in have} | {s.get("context") for s in sts}
+    wait += ["%s (required, absent)" % c for c, app in required
+             if (c not in names if app in (None, -1) else (c, app) not in have)]
+    return red, wait
+
+def required(repo, base):
+    """The status checks base requires, its rulesets' and its classic branch protection's, each as
+    (context, the app that must report it or None)."""
+    out = []
+    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, base)):
+        if not isinstance(d, list):
+            raise Err("unreadable rules for " + base)
+        for rule in d:
+            if rule["type"] == "required_status_checks":
+                out += [(c["context"], c.get("integration_id")) for c in rule["parameters"]["required_status_checks"]]
+    try:
+        rsc = json.loads(gh("api", "repos/%s/branches/%s/protection/required_status_checks" % (repo, base)))
+    except Err as e:
+        if "HTTP 404" in str(e):   # not protected, or no required checks
+            return out
+        raise
+    return out + [(c, None) for c in rsc["contexts"]] + [(c["context"], c.get("app_id")) for c in rsc["checks"]]
+
+def unq(s):
+    return s.strip().strip("'\"")
+
+def flow(v):
+    v = v.strip()
+    if v.startswith("{") or v.startswith("[") != v.endswith("]"):
+        raise Err("%s: a {flow mapping} or a [list] over several lines is not read" % v)
+    return [unq(x) for x in v.strip("[]").split(",") if unq(x)]
+
+def push_filters(text):
+    """on: push's filters ({} for none), or None when there is no push trigger. Reads the forms
+    workflows use: on: push, on: [push, ...], and a block of events with block or [flow] lists."""
+    lines = [re.sub(r"(^|\s)#.*", "", l).rstrip() for l in text.splitlines()]
+    top = [i for i, l in enumerate(lines) if re.match(r"""^(on|"on"|'on'|true)\s*:""", l)]
+    if not top:
+        raise Err("no on: key")
+    v = lines[top[0]].split(":", 1)[1]
+    if v.strip():
+        return {} if "push" in flow(v) else None
+    block = []
+    for l in lines[top[0] + 1:]:
+        if l and not l[0].isspace() and not l.startswith("-"):
+            break
+        if l.strip():
+            block.append(l)
+    ind = lambda l: len(l) - len(l.lstrip())
+    for j, l in enumerate(block):
+        k = l.strip()
+        if ind(l) != ind(block[0]):
+            continue
+        if k.startswith("-"):
+            if unq(k[1:]) == "push":
+                return {}
+            continue
+        key, _, rest = k.partition(":")
+        if unq(key) != "push":
+            continue
+        if rest.strip() not in ("", "{}", "null", "~"):
+            raise Err("push: %s is not read" % rest.strip())
+        f, key = {}, None
+        for c in block[j + 1:]:
+            if ind(c) <= ind(l):
+                break
+            c = c.strip()
+            if c.startswith("-") and key:
+                f[key].append(unq(c[1:]))
+            elif ":" in c:
+                key, _, rest = c.partition(":")
+                key = unq(key)
+                f[key] = flow(rest)
+            else:
+                raise Err("push: %s is not read" % c)
+        return f
+    return None
+
+def glob(p):
+    """A GitHub filter pattern as a regex: * stops at /, ** does not, **/ is zero or more directories,
+    ? and + repeat what precedes."""
+    out = ""
+    for t in re.findall(r"\*\*/|\*\*|\*|\[[^\]]*\]|[?+]|[^*?+\[]+", p):
+        out += {"**/": "(?:.*/)?", "**": ".*", "*": "[^/]*"}.get(t, t if t[0] in "?+[" else re.escape(t))
+    return re.compile(out + r"\Z")
+
+def match(s, pats):
+    """Whether s matches a filter list: the last pattern it matches decides, ! negating."""
+    hit = False
+    for p in pats:
+        neg = p.startswith("!")
+        if glob(p[1:] if neg else p).match(s):
+            hit = not neg
+    return hit
+
+def covers(f, base, files):
+    """Whether pushing files (None: not all known) to base runs a workflow whose push filters are f.
+    An unknown file list covers any path filter, so the wait fails closed."""
+    if f is None:
+        return False
+    if "branches" in f and not match(base, f["branches"]):
+        return False
+    if "branches-ignore" in f and match(base, f["branches-ignore"]):
+        return False
+    if not ("branches" in f or "branches-ignore" in f) and ("tags" in f or "tags-ignore" in f):
+        return False
+    if files is not None:
+        if "paths" in f and not any(match(x, f["paths"]) for x in files):
+            return False
+        if "paths-ignore" in f and all(match(x, f["paths-ignore"]) for x in files):
+            return False
+    return True
+
+def pr_files(repo, n):
+    """The files the PR changes, or None when gh lists fewer than all of them (it lists 100)."""
+    d = json.loads(gh("pr", "view", n, "--repo", repo, "--json", "files,changedFiles"))
+    files = [x["path"] for x in d["files"]]
+    return files if len(files) == d["changedFiles"] else None
+
+def expected(repo, sha, base, n):
+    try:
+        listing = json.loads(gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha)))
+    except Err as e:
+        if "HTTP 404" in str(e):
+            return []
+        raise
+    want, files = [], pr_files(repo, n)
+    for w in listing:
+        if w["type"] == "file" and w["name"].endswith((".yml", ".yaml")):
+            text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, w["path"], sha))
+            try:
+                if covers(push_filters(text), base, files):
+                    want.append(w["path"])
+            except Err as e:
+                raise Err("%s: %s" % (w["path"], e))
+    return want
+
+def main_ci(repo, sha, base, n, secs, poll):
+    want, end = expected(repo, sha, base, n), time.time() + secs
+    while True:
+        runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
+                if r.get("head_sha") == sha]
+        red, wait = checks(repo, sha)
+        judge(runs, red, wait)
+        have = {(r.get("path") or "").split("@")[0] for r in runs}
+        wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
+        if red:
+            return 1, "red " + "; ".join(red)
+        if not wait:
+            return 0, "ok"
+        if time.time() >= end:
+            return 2, "timeout (%s)" % "; ".join(wait)
+        time.sleep(poll)
+
+try:
+    mode, repo, sha = sys.argv[1:4]
+    if mode == "head":
+        red, wait = checks(repo, sha, required(repo, sys.argv[4]) if len(sys.argv) > 4 else ())
+        if red or wait:
+            print("; ".join(red + wait))
+            sys.exit(1 if red else 2)
+    else:
+        rc, msg = main_ci(repo, sha, sys.argv[4], sys.argv[5], float(sys.argv[6]), float(sys.argv[7]))
+        print(msg)
+        sys.exit(rc)
+except Exception as e:
+    print("error %s" % (e or type(e).__name__))
+    sys.exit(3)
+PY
+}
+
+# merge_caller — why the pane running this may not merge, or nothing when it may. Outside herdr it
+# is the lead's own session, which merges for the user under merge = human too. Inside herdr the pane
+# must be one this project did not start (the lead's), or, with merge = agent, a conductor's; when the
+# pane cannot be identified (no HERDR_PANE_ID, an unreadable tab record, herdr cannot list its
+# agents) it may not. start_agent's guard blocks only a bare `gh pr merge`, so this is what stops a
+# builder merging through swarm.sh.
+merge_caller() {
+  local f agents panes
+  [[ -n "${HERDR_ENV:-}" ]] || return 0
+  [[ -n "${HERDR_PANE_ID:-}" ]] || { echo "inside herdr with no HERDR_PANE_ID, the pane running this is unknown"; return 0; }
+  [[ ! -e "${STATE_DIR}" || ( -r "${STATE_DIR}" && -x "${STATE_DIR}" ) ]] || { echo "cannot read ${STATE_DIR}, so whose pane this is is unknown"; return 0; }
+  for f in "${STATE_DIR}"/*; do
+    [[ ! -f "${f}" || -r "${f}" ]] || { echo "cannot read ${f}, so whose pane this is is unknown"; return 0; }
+  done
+  agents="$(herdr agent list 2>/dev/null)" || { echo "herdr cannot list its agents, so whose pane this is is unknown"; return 0; }
+  # Its cat fails on a directory in STATE_DIR (reconcile-backup/) yet still prints every record, all
+  # readable (checked above), so its status must not decide.
+  panes="$(own_panes || true)"
+  grep -qxF -- "${HERDR_PANE_ID}" <<< "${panes}" || return 0
+  if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
+    return 0
+  fi
+  echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
+}
+
+# merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
+merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
+
+# merge [--board] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned: refuse unless
+# merge_caller allows it, the head is <sha> (with --head), a story or epic in review lists the URL
+# (with --board instead: every file the PR changes is on the board), and ci_gate passes on the head.
+# Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
+# merge_admin, --admin; never --auto. Then wait for CI on the merge commit and, without --board, run
+# reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
+# the slug (or the URL with --board): merge <why> for a refusal, else merge ok, main-ci ok|red|
+# timeout|error, then reconcile's own. Fails on anything but a green main.
+merge_pr() {
+  local board="" want="" url repo n info state head base f="" p rel req="" method oid admin=() why rc=0 rrc
+  while [[ $# -gt 1 ]]; do
+    case "$1" in
+      --board) board=1; shift ;;
+      --head) want="$2"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  url="${1:-}"; MERGE_TARGET="${url:--}"
+  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board] [--head <sha>] <pr-url>"
+  [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
+  repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
+  why="$(merge_caller)" || why="cannot tell whose pane this is"
+  [[ -z "${why}" ]] || merge_fail "${why}"
+  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName | json "d['state'] + ' ' + d['headRefOid'] + ' ' + d['baseRefName']")" \
+    || merge_fail "gh cannot read ${url}"
+  read -r state head base <<< "${info}"
+  [[ "${head}" =~ ^[0-9a-f]{40}$ && "${base}" =~ ^[A-Za-z0-9._/-]+$ ]] || merge_fail "gh gave no head SHA or base branch for ${url}"
+  [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
+  [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
+  if [[ -z "${board}" ]]; then
+    while IFS= read -r p; do [[ " $(fm "${p}" prs) " != *" ${url} "* ]] || { f="${p}"; break; }; done < <(board stories; board epics)
+    [[ -n "${f}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
+    MERGE_TARGET="$(basename "${f}" .md)"
+    [[ "$(fm "${f}" status)" == review ]] || merge_fail "${MERGE_TARGET} is $(fm "${f}" status), not review"
+  else
+    [[ ${BOARD_IN_REPO} == 1 ]] || merge_fail "--board: the board is not in the project's repo"
+    rel="${BOARD#"${PROJECT_DIR}"/}"
+    info="$(gh pr view "${n}" --repo "${repo}" --json files,changedFiles \
+      | json "'\n'.join(f['path'] for f in d['files']) if 0 < len(d['files']) == d['changedFiles'] else sys.exit('not every file')")" \
+      || merge_fail "--board: gh cannot list every file ${url} changes"
+    while IFS= read -r p; do [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"; done <<< "${info}"
+  fi
+  if [[ "${CFG_merge_admin}" == true ]]; then admin=(--admin); req="${base}"; fi
+  why="$(ci_gate head "${repo}" "${head}" ${req:+"${req}"})" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
+    | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
+    || merge_fail "gh cannot read ${repo}'s merge methods"
+  [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
+  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" \
+    || merge_fail "gh pr merge failed: ${why##*$'\n'}"
+  info="$(gh pr view "${n}" --repo "${repo}" --json state,mergeCommit | json "d['state'] + ' ' + ((d['mergeCommit'] or {}).get('oid') or '')")" || info=unreadable
+  read -r state oid <<< "${info}"
+  if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+    [[ "${state}" != MERGED ]] || state="MERGED, no merge commit"
+    merge_fail "not merged (${state:-unreadable})"
+  fi
+  record_event merge "${MERGE_TARGET}" ok
+  echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
+  if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-${MERGE_POLL}}")"; then
+    why=ok
+  else
+    rc=$?; why="${why:-error (exit ${rc})}"
+  fi
+  record_event main-ci "${MERGE_TARGET}" "${why}"
+  echo "main-ci: ${why}"
+  if [[ -z "${board}" ]]; then
+    # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
+    ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
+    wait $! || {
+      rrc=$?; why="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
+      record_event reconcile - "${why:-failed (exit ${rrc})}"
+      die "merge: reconcile failed after the merge; run swarm.sh reconcile"
+    }
+  fi
+  [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
+}
+
 # pull_board_repo — pull the main checkout fast-forward, never losing an edit. It stops, touching
 # nothing, when the pull cannot fast-forward (local commits) or a tracked file outside the board is
 # changed. Otherwise it backs up, then puts back, each unstaged board edit (` M`, or `??` untracked)
@@ -4379,6 +4730,7 @@ dispatch() {
     dialog) dialog_answered "${1:-}" "${2:-}" ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
+    merge)  merge_pr "$@" ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
     init)   init_project ;;
@@ -4492,7 +4844,7 @@ main_signal() {
     # swarm.sh exits only once codex is gone.
     kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
   elif [[ -n "${EV_CHILD:-}" ]]; then kill_tree "${EV_CHILD}"; fi
-  record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
+  record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   trap - "$1"
   kill -"$1" "$$"
@@ -4502,8 +4854,9 @@ main_signal() {
 # outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
-# log one line per item themselves. A tell's command is tell:<kind>, and a close's close:<cause>, so
-# the target stays the slug. A reset or drop that succeeds logs ok (<reason>); a reset that lifts a
+# log one line per item themselves, and merge (target !) every line it writes, so main logs none
+# for it but an interrupt. A tell's command is tell:<kind>, and a close's close:<cause>, so the
+# target stays the slug. A reset or drop that succeeds logs ok (<reason>); a reset that lifts a
 # hold (held_for:) logs as reset:held.
 main() {
   local rc why
@@ -4521,6 +4874,7 @@ main() {
                  [[ "${FINDING_OUTCOME}" == fixed ]] || EV_CMD="log-finding:declined"
                  EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
+    merge) EV_TARGET='!' ;;
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).
@@ -4543,7 +4897,9 @@ main() {
   wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
-  if [[ ${rc} -ne 0 ]]; then
+  if [[ "${EV_TARGET}" == '!' ]]; then
+    :
+  elif [[ ${rc} -ne 0 ]]; then
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
   elif [[ "${EV_TARGET}" != + ]]; then

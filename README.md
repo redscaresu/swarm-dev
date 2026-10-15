@@ -78,6 +78,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life and how long each running codex review has run. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
+| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. |
 | `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date. |
 | `swarm.sh outcomes` | One row per build: model, cost, review rounds, and whether it merged. |
 
@@ -97,7 +98,7 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a builder stopped `cleared-on-error` (its goal was refused or failed) | nothing: the wave stops, the story is held on the board (`held_for:`, unless the close printed `not held:`), and the lead decides whether to build it again and tells you why |
-| a PR waiting for you | merge it, or close it to send the story back |
+| a PR waiting for you | merge it, or ask the lead to (it runs `swarm.sh merge`), or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (`swarm.sh conduct` sets a `later` epic `active` itself) |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
