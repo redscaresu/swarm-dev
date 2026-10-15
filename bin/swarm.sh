@@ -1455,10 +1455,12 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 RULE
   else
     cat <<'RULE'
-Merge a PR only when it is green and reviewed, then run `swarm.sh unblock` and `swarm.sh close <slug>` to close
-that story's tab. If a merged story is still open on the board once you have pulled (its file is
-there and not `status: done`), run `swarm.sh finish <slug>` first. When the epic's **Done when**
-holds, take the epic off the board with `swarm.sh finish <epic>`.
+Merge a PR only when it is green and reviewed. A queued merge (auto-merge, a merge queue) has not
+happened yet: wait until the PR is merged. Then pull, run `swarm.sh finish <slug>` if the story is
+still open on the board (its file is there and not `status: done`), and only then `swarm.sh unblock`
+and `swarm.sh close <slug>` to close that story's tab: closing a story that is still `ready` counts
+a failed build. When the epic's **Done when** holds, take the epic off the board with
+`swarm.sh finish <epic>`.
 RULE
   fi
 }
@@ -1583,7 +1585,7 @@ story_role() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk attempts sum
   [[ -f "${story}" ]] || { echo "no story ${story}"; return 1; }
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"; risk="$(fm "${story}" risk)"
-  attempts="$(fm "${story}" attempts)"; attempts="${attempts:-0}"
+  attempts="$(get_fm "${story}" attempts)"; attempts="${attempts:-0}"
   # Checked before any arithmetic, which would evaluate it.
   [[ "${attempts}" =~ ^(0|[1-9][0-9]*)$ ]] \
     || { echo "${story}: attempts must be a non-negative whole number, not '${attempts}'"; return 1; }
@@ -2031,13 +2033,25 @@ set_status() {
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
+# SET_FM_KEYS: the front-matter keys swarm.sh writes with set_fm, which refuses any other.
+# reconcile puts them back as committed on an item whose PRs merged, so they never stop its pull.
+SET_FM_KEYS="attempts"
+
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
-# when there is none, or drop it when <value> is empty.
+# when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
 set_fm() {
+  [[ " ${SET_FM_KEYS} " == *" $2 "* ]] || die "set_fm: $2 is not in SET_FM_KEYS"
   awk -v k="$2" -v v="${3:-}" '
     /^---$/ && ++n == 2 && !d && v != "" { print k ": " v }
     n == 1 && index($0, k ":") == 1 { if (!d && v != "") print k ": " v; d = 1; next }
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
+# get_fm <file> <key> — <key>'s value in the front matter alone, where set_fm writes it (fm takes the
+# first line for <key> anywhere, so a story's body could answer). <file> may be - for stdin.
+get_fm() {
+  awk -v k="$2" '/^---$/ && ++n == 2 { exit }
+    n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 
 # review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge.
@@ -2055,7 +2069,7 @@ mark_review() {
 # reconcile — for each item in review: finish it once every PR it lists has merged; send it back to
 # ready, saying which, if any closed without merging; otherwise leave it waiting.
 reconcile() {
-  local f slug url state closed waiting urls merged=() merged_prs=()
+  local f slug url state closed waiting urls merged=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -2077,22 +2091,25 @@ reconcile() {
       record_event reconcile "${slug}" "ok (reopened)"
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
-      merged+=("${slug}"); merged_prs+=("${urls[*]}")
+      merged+=("${slug}")
     fi
   done < <(board stories; board epics)
   [[ ${#merged[@]} -gt 0 ]] || return 0
-  local i committed
+  local i k committed saved=()
   if [[ ${BOARD_IN_REPO} == 1 ]]; then
-    # The board is in the project repo, and a merged PR may itself have taken the item off it. Our
-    # review edit would block that pull, so undo just that edit first, and redo it if the pull fails.
+    # The board is in the project repo, and a merged PR may itself have taken the item off it or
+    # changed it. Our own edits (the review status, and each SET_FM_KEYS key, such as a retry's
+    # attempts:) would block that pull, so put them back as committed first, and the whole file as it
+    # was if the pull fails. A hand edit is left alone, and still stops the pull.
     for slug in "${merged[@]}"; do
-      f="$(item_file "${slug}")"
+      f="$(item_file "${slug}")"; saved+=("$(cat "${f}"; echo .)")   # the dot keeps trailing newlines
       if committed="$(git -C "${PROJECT_DIR}" show "HEAD:${f#"${PROJECT_DIR}"/}" 2>/dev/null)"; then
         set_status "${f}" "$(sed -n 's/^status: *//p' <<< "${committed}" | head -1)"
+        for k in ${SET_FM_KEYS}; do set_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
       fi
     done
     if git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null && ! pull_board_repo; then
-      for i in "${!merged[@]}"; do set_status "$(item_file "${merged[i]}")" review "${merged_prs[i]}"; done
+      for i in "${!merged[@]}"; do printf '%s' "${saved[i]%.}" > "$(item_file "${merged[i]}")"; done
       die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
     fi
   fi
@@ -3202,7 +3219,7 @@ close_agent() {
   if prs="$(failed_build "$1")"; then counted=1; fi
   if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
   [[ ${counted} == 1 ]] || return 0
-  f="${BOARD}/stories/$1.md"; n="$(fm "${f}" attempts)"
+  f="${BOARD}/stories/$1.md"; n="$(get_fm "${f}" attempts)"
   # Checked before the arithmetic, which would evaluate it.
   [[ "${n}" =~ ^(0|[1-9][0-9]*)?$ ]] \
     || { echo "swarm: ${f}: attempts must be a non-negative whole number, not '${n}'; this failed build is not counted or cleared" >&2; return 0; }
@@ -3214,23 +3231,24 @@ close_agent() {
 # failed_build <name> — succeed when closing <name> ends a failed build, and print gh's list of the
 # PRs on story/<name> (nothing with pr_per = epic, whose epic stories have none): <name> is a story
 # on the board, still ready, of a kind an agent builds, whose builder this project has open in herdr
-# under that name (not closed by hand, not already retired), and none of its PRs merged: with
-# merge = agent the close follows the merge before the board is pulled, so only the PR tells. One gh
-# call answers both; when it fails, nothing is counted or cleared, and stderr says so.
+# under that name (not closed by hand, not already retired), and none of its PRs merged or is open with
+# auto-merge set: with merge = agent a close that comes before the board is pulled, or while the merge
+# waits on auto-merge, finds the story still ready, so only the PR tells. One gh call answers both;
+# when it fails, nothing is counted or cleared, and stderr says so.
 failed_build() {
-  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merged
+  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
   agent_kind "$(fm "${f}" kind)" || return 1
   [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
   # The conductor finishes an epic's story before closing it, so a ready one never merged.
   [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0
   if ! src="$(repo_dir "$(fm "${f}" repo)")" || ! url="$(git -C "${src}" remote get-url origin)" \
-     || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url)" \
-     || ! merged="$(json "any(p['state'] == 'MERGED' for p in d)" <<< "${prs}")"; then
+     || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url,autoMergeRequest)" \
+     || ! merging="$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")"; then
     echo "swarm: ${slug}: could not list the PRs on story/${slug}, so this close counts no failed build and clears nothing" >&2
     return 1
   fi
-  [[ "${merged}" == False ]] || return 1
+  [[ "${merging}" == False ]] || return 1
   printf '%s\n' "${prs}"
 }
 
@@ -3243,6 +3261,8 @@ clear_build() {
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
   wt="$(worktree_for "${src}" "${slug}")"
   if [[ -e "${wt}" ]]; then git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2; fi
+  # A worktree whose directory went by hand is still registered, and would keep the branch.
+  git -C "${src}" worktree prune || echo "swarm: ${slug}: could not prune ${src}'s worktrees" >&2
   if git -C "${src}" show-ref -q --verify "refs/heads/${b}"; then
     git -C "${src}" branch -q -D "${b}" || echo "swarm: ${slug}: could not delete ${b} in ${src}" >&2
   fi

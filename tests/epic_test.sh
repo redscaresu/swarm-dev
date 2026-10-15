@@ -227,6 +227,12 @@ for mode in story epic; do   # epic last: the tests below run with pr_per = epic
   check "with tagged rules, the ${mode}-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
     "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 done
+cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" "base_branches = dev main" > "${p}/.claude/swarm/config"
+run conduct f >/dev/null || true
+brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
+check "with merge = agent, the conductor waits out a queued merge and finishes the story before closing it" "yes|yes" \
+  "$(has "A queued merge (auto-merge, a merge queue) has not" "${brief}")|$(has "run \`swarm.sh finish <slug>\` if the story is" "${brief}")"
+printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
@@ -470,6 +476,8 @@ check "escalate_after = 2 (the default): every kind an agent builds escalates at
   "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate|verify verify escalate" \
   "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")|$(ladder e4-a 0 1 2 -- "kind: verify")"
 check "no attempts: and no kind: is a first attempt at code" "code" "$(role e4-a)"
+item "${b}" stories/e4-a.md "status: ready" "kind: code"; echo "attempts: 2" >> "${b}/stories/e4-a.md"
+check "attempts: is read from the front matter, never from a body line" "code" "$(run _role e4-a)"
 check "a kind: lead story never escalates" "lead" "$(ladder e4-a 3 -- "kind: lead")"
 check "attempts: two is refused, naming the story file" "yes" \
   "$(has "${b}/stories/e4-a.md: attempts must be a non-negative whole number, not 'two'" "$(role e4-a "attempts: two")")"

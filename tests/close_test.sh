@@ -89,7 +89,7 @@ left() { # <slug> — which of its worktree, local story/<slug> and origin's are
   ! git -C "${ROOT}/origin.git" show-ref -q --verify "refs/heads/story/$1" || o+=" origin"
   echo "${o# }"
 }
-attempts() { sed -n 's/^attempts: *//p' "${P}/docs/stories/$1.md" 2>/dev/null || true; }
+attempts() { awk '/^---$/ && ++n == 2 { exit } n == 1 && sub(/^attempts: */, "")' "${P}/docs/stories/$1.md" 2>/dev/null || true; }   # front matter only
 U="https://github.com/o/proj/pull"
 echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
 item s1 "status: ready" "kind: code"; started s1 w:p1
@@ -97,7 +97,7 @@ close s1
 is "closing a ready story's open builder writes attempts: 1" "1" "$(attempts s1)"
 is "and removes its worktree, local story/s1 and origin's" "" "$(left s1)"
 is "and closes its open PR, and only that one, with a comment naming the attempt" "1|0|yes" \
-  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at s1" "${ROOT}/gh.log")|$(grep -c "^pr close ${U}/2" "${ROOT}/gh.log")|$(grep -q "^pr list -R ${ROOT}/origin.git --head story/s1 --state all --json number,state,url$" "${ROOT}/gh.log" && echo yes)"
+  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at s1" "${ROOT}/gh.log")|$(grep -c "^pr close ${U}/2" "${ROOT}/gh.log")|$(grep -q "^pr list -R ${ROOT}/origin.git --head story/s1 --state all --json number,state,url,autoMergeRequest$" "${ROOT}/gh.log" && echo yes)"
 close s1
 is "closing it again leaves 1" "1" "$(attempts s1)"
 echo '[]' > "${ROOT}/prs.json"
@@ -109,21 +109,35 @@ is "with keep_panes, closing it writes attempts: 1, clears it, and retires the b
 close k1
 is "with keep_panes, closing it again leaves 1" "1" "$(attempts k1)"
 : > "${P}/.claude/swarm/config"
+# A worktree whose directory was deleted by hand is still registered: it is pruned, so the branch goes.
+item w1 "status: ready" "kind: code"; started w1 w:p11; rm -rf "${ROOT}/proj-wt/w1"
+close w1
+is "a worktree deleted by hand is pruned, so its local and origin branches go too" "1|" "$(attempts w1)|$(left w1)"
+# attempts: is read from the front matter alone, never from a body line that starts the same way.
+item b1 "status: ready" "kind: code"; echo "attempts: 3" >> "${P}/docs/stories/b1.md"; started b1 w:p12
+close b1
+is "a body line 'attempts: 3' is not the count: the first failure writes attempts: 1" "1|yes" \
+  "$(attempts b1)|$(grep -qx 'attempts: 3' "${P}/docs/stories/b1.md" && echo yes)"
 item r1 "status: review" "kind: code"; started r1 w:p3
 item m1 "status: ready" "kind: code"; started m1 w:p4
 item g1 "status: ready" "kind: code"; started g1 w:p5
 item n1 "status: ready" "kind: code"; started n1
 item h1 "status: ready" "kind: code"; started h1; echo "w:p6 h1" > "${P}/.swarm/state/h1"   # its pane closed by hand
+item q1 "status: ready" "kind: code"; started q1 w:p13
 started d1 w:p7
 started conduct-x w:p8; started hld-x w:p9; started plan-x w:p10
 close r1; close d1; close n1; close h1; for s in conduct-x hld-x plan-x; do close "${s}"; done
 echo "[{\"number\":3,\"state\":\"MERGED\",\"url\":\"${U}/3\"},{\"number\":4,\"state\":\"OPEN\",\"url\":\"${U}/4\"}]" > "${ROOT}/prs.json"
 close m1
+# Merged but queued: still open, with auto-merge set.
+echo "[{\"number\":5,\"state\":\"OPEN\",\"url\":\"${U}/5\",\"autoMergeRequest\":{\"mergeMethod\":\"SQUASH\"}}]" > "${ROOT}/prs.json"
+close q1
 rm "${ROOT}/prs.json"; touch "${ROOT}/ghfail"
 close g1
 rm "${ROOT}/ghfail"
 is "a gh call that fails is said on stderr" "1" "$(grep -c "g1: could not list the PRs on story/g1" "${ROOT}/close.out")"
-for s in r1:"a story in review" d1:"a deleted story" m1:"a story whose PR merged" g1:"a story whose gh call fails" \
+for s in r1:"a story in review" d1:"a deleted story" m1:"a story whose PR merged" q1:"a story whose open PR has auto-merge set" \
+         g1:"a story whose gh call fails" \
          n1:"a ready story with no builder open" h1:"a ready story whose builder's pane was closed by hand" \
          conduct-x:"conduct-x" hld-x:"hld-x" plan-x:"plan-x"; do
   is "closing ${s#*:} writes nothing and removes no worktree or branch" "|worktree branch origin" "$(attempts "${s%%:*}")|$(left "${s%%:*}")"

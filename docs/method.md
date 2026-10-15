@@ -166,12 +166,12 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   default) is built as `escalate`, on Fable at `xhigh`, ahead of `risk: high` and `sonnet_share`.
   A `kind: lead` story never escalates, since no agent builds it. `swarm.sh close <slug>` counts a
   failed build. When the story is still `ready`, its builder is still open (with `keep_panes`, the
-  one it retires) and no PR on `story/<slug>` has merged, it raises `attempts:` by one and clears
-  the attempt away: it removes the worktree and `story/<slug>`, here and on origin, and closes each
-  open PR unmerged with a comment naming the attempt. The next build then starts fresh, and the
-  third runs on Fable. A close after `review`, after a merge or after the builder has gone counts
-  nothing, and `reconcile` sending a story back to `ready` never counts. If gh cannot list the PRs,
-  the close counts and clears nothing and says why on stderr.
+  one it retires) and no PR on `story/<slug>` has merged or is open with auto-merge set, it raises
+  `attempts:` by one and clears the attempt away: it removes the worktree and `story/<slug>`, here
+  and on origin, and closes each open PR unmerged with a comment naming the attempt. The next build
+  then starts fresh, and the third runs on Fable. A close after `review`, after a merge or after
+  the builder has gone counts nothing, and `reconcile` sending a story back to `ready` never
+  counts. If gh cannot list the PRs, the close counts and clears nothing and says why on stderr.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost` turns that and Claude Code's logs into
   tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
@@ -360,12 +360,17 @@ runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` 
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
 too, with every PR still waiting. You merge on GitHub; the next `/swarm-dev:swarm` runs `swarm.sh reconcile`,
 which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
-closed unmerged. Before it pulls the board's repo, it puts back any board file the main checkout
+closed unmerged; that item keeps its `attempts:`, and reconcile never counts one. Before it pulls the
+board's repo, it sets the front matter that swarm.sh wrote on each merged item back to what is
+committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
+if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
 stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and restores them all if
 the pull still fails. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged or differing edit is left alone and still stops it. `swarm.sh unblock` then readies a
-blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead:
+blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
+It waits out a queued merge (auto-merge, a merge queue), and finishes a merged story before it closes
+the builder, because closing a story that is still `ready` counts a failed build:
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
