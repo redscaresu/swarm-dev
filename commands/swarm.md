@@ -84,6 +84,17 @@ Repeat until a step below says stop:
      never a plain `git pull`: reconcile first puts back a retry's `attempts:`, which would stop the
      pull, then pulls the board and finishes the story. Then `swarm.sh unblock` and
      `swarm.sh close <slug>`: closing a story that is still `ready` counts a failed build.
+
+     Give up on the builder as a conductor does when `swarm.sh wait --stall <slug>` returns stalled,
+     when it is idle with no PR after wait's nudges, or when review has not converged in the rounds
+     you allow: run `swarm.sh close <slug>`, which counts the attempt and clears its worktree, branch
+     and PR, and start it again with `swarm.sh story <slug>` (swarm.sh picks Fable for the third
+     build; never choose a model). If `wait` prints `waiting: dialog open`, the builder is on Fable's
+     usage-credits consent, and accepting it is yours, not the user's. `swarm.sh _target <slug>`
+     prints its pane: read the dialog with `herdr agent read <pane>`, accept it with
+     `herdr pane send-keys <pane> <key>...`, run `swarm.sh dialog <slug> accepted` (or `dismissed`
+     if it would not accept), and wait on it again. Never close or tell a builder over a dialog: it
+     is not an attempt.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.

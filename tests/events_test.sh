@@ -229,6 +229,10 @@ appends "drop of a missing story fails, naming it" 1 drop nope "drop: no story $
 item stories/z1.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'
 appends "drop logs the lead's reason" 1 drop z1 "ok (failed on Fable after a reset)" drop z1 "failed on Fable after a reset"
 check "drop takes the story off the board" test ! -e "${P}/docs/stories/z1.md"
+# A conductor that answers a builder's Fable consent dialog logs it, with the result as the outcome.
+appends "dialog logs the answer" 1 dialog y1 accepted dialog y1 accepted
+appends "dialog with no result fails, naming it" 1 dialog y1 "dialog: the result must be accepted or dismissed" dialog y1
+appends "dialog of a missing story fails, naming it" 1 dialog nope "dialog: no story" dialog nope dismissed
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

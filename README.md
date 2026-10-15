@@ -109,7 +109,9 @@ counts a failed build in the story's `attempts:` and clears the attempt away: it
 twice is rebuilt on Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
 `escalate_after = 0` turns it off. If the Fable build fails as well, the story becomes a `lead`
 story and the lead decides: it re-scopes the story and runs `swarm.sh reset <slug> <reason>` to build
-it again (once per story), or drops it. Then it tells you what it chose and why.
+it again (once per story), or drops it. Then it tells you what it chose and why. A Fable build
+can stop to ask your consent to spend usage credits. The conductor accepts it for you, so a third
+build can spend Fable usage credits.
 
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session

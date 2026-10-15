@@ -23,6 +23,17 @@ check() { # <name> <want> <got>
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 first() { printf '%s' "${1%%$'\n'*}"; }
+# gives_up <brief> — give_up_rule's parts, as has prints them: the give-up close, the dialog it
+# accepts through send-keys and logs, a dialog never closed or counted, and an escalated story the lead's.
+gives_up() {
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  printf '%s|' "$(has 'Run `swarm.sh close <slug>`: on a story still `ready` it counts the' "$1")" "$(has 'waiting: dialog open' "$1")" \
+    "$(has 'herdr pane send-keys <pane>' "$1")" "$(has 'swarm.sh dialog <slug> accepted' "$1")" \
+    "$(has 'Never close or tell it over a dialog: a dialog is not an attempt.' "$1")" \
+    "$(has 'report it to the lead, and do not count it as waiting on the user' "$1")"
+  has "for the user, unless it has \`escalated_from:\`: that one is the lead's" "$1"
+}
+GIVES_UP="yes|yes|yes|yes|yes|yes|yes"
 
 item() { # <board> <path> <front-matter line>...
   local path="$1/$2" title; shift 2
@@ -108,6 +119,8 @@ check "the conductor reviews with codex and /code-review, tells the builder, and
   "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
 check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
+check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
+  "${GIVES_UP}" "$(gives_up "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
@@ -212,6 +225,8 @@ check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
 check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \
   "$(has "stopped on an expired login, which only the user's" "${brief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${brief}")"
+check "the one-PR-per-epic conductor gives up with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
+  "${GIVES_UP}" "$(gives_up "${brief}")"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
 printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
@@ -237,6 +252,8 @@ printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
 oneoff="$(sed -n '/`story <slug>`: a one-off/,/`plan-epic <epic>`/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 check "/swarm-dev:swarm's one-off merge = agent step waits for the merge, then reviews and reconciles" "yes|yes|yes" \
   "$(has "wait until the PR has merged" "${oneoff}")|$(has "\`swarm.sh review <slug> <PR URL>\` and \`swarm.sh reconcile\`" "${oneoff}")|$(has "never a plain \`git pull\`" "${oneoff}")"
+check "/swarm-dev:swarm's one-off step gives up with close and answers a Fable dialog" "yes|yes|yes" \
+  "$(has "run \`swarm.sh close <slug>\`, which counts the attempt" "${oneoff}")|$(has "\`waiting: dialog open\`" "${oneoff}")|$(has "\`swarm.sh dialog <slug> accepted\`" "${oneoff}")"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
