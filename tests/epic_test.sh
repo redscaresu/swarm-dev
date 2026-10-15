@@ -780,6 +780,8 @@ mkdir -p "${q}/.claude/swarm"; echo "goal = 5" > "${q}/.claude/swarm/config"
 goal_story "${q}/docs" qz "status: ready" "kind: code"; item "${q}/docs" stories/qy.md "status: ready" "kind: code"
 "${GIT[@]}" -C "${q}" add docs && "${GIT[@]}" -C "${q}" commit -q -m board && "${GIT[@]}" -C "${q}" push -q origin main
 qrun() { (cd "${q}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# send_goal types the /goal only into a started turn: the claude stub lists the brief's session busy.
+echo '[]' > "${ROOT}/started.json"; export CLAUDE_STUB_AGENTS="${ROOT}/started.json"
 qrun story qz >/dev/null
 "${GIT[@]}" -C "${q}-wt/qz" rm -q docs/stories/qz.md && "${GIT[@]}" -C "${q}-wt/qz" commit -q -m qz
 "${GIT[@]}" -C "${q}-wt/qz" push -q origin story/qz story/qz:main   # the PR, merged
