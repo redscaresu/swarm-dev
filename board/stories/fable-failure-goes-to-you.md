@@ -27,3 +27,11 @@ In close_agent, after a counted close whose build was escalate (the newest agent
 - Runs on macOS's bash 3.2: no mapfile, no associative arrays (AGENTS.md).
 
 **From the user (2026-10-15; binding, overrides the scope and the review notes above where they differ):** "You should decide the escalation not me." The escalated story carries no **You:** step. The marked block names the lead's choices instead: re-scope and `swarm.sh reset <slug>`, or drop it, with at most one reset per story. `next_step` prints `escalated <slug>` for a ready `kind: lead` story that has `escalated_from`, ahead of `gate`, so /swarm acts on it instead of stopping. tests/next_test.sh checks that line in place of `gate` with `lead: <slug>`. README § When /swarm stops for you gets no row for it. The docs say the lead decides and tells the user.
+
+**From the user (2026-10-15; binding): log when each escalation step happened.** "It should be noted though as part of the logs for the training data when exactly this escalation occured." agents.tsv records only the date, and events.tsv's `story` line does not name the role. So each step writes its own events.tsv line, with log_event's UTC timestamp:
+- `escalate <slug>`, result `attempt <n>`: build_story starts a build as escalate.
+- `escalated <slug>`, result `attempts <n>, <k> PRs`: close_agent turns the story into `kind: lead`.
+- `reset <slug>`, result the reason: `swarm.sh reset <slug> <reason>` takes a required reason, which the lead writes.
+- `drop <slug>`, result the reason: new `swarm.sh drop <slug> <reason>` only logs. A board PR deletes the story file.
+
+Tests: tests/events_test.sh checks each line's command, target and result, and that reset or drop with no reason fails, naming the missing argument. touches adds bin/swarm.sh:build_story and bin/swarm.sh:drop (new, dispatch arm, usage line).
