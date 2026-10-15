@@ -45,7 +45,7 @@ gives_up() {
 GIVES_UP="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes"
 # goal_on <brief> — goal_rule's parts, as has prints them: the six causes, the impossible close, one
 # resume tell for a pause and then the paused close, cleared-on-error stopping the wave and its story
-# left for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line
+# held for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line
 # (agent_name described in full), and the goal-on give-up: only a stall or an unconverged review,
 # an idle builder left to the goal rule, no 'after wait's nudges', a stalled close. No `failed` entry.
 goal_on() {
@@ -53,10 +53,10 @@ goal_on() {
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|' "$(has "\`${CLAUDE_PROJECTS_DIR}/*/<session>.jsonl\`" "$1")" \
     "$(has "whose name (field 3) is the builder's agent name" "$1")" \
-    "$(has 'do not start it again in a later wave. It waits for the lead.' "$1")" \
+    "$(has 'so no wave builds it until the lead lifts the hold.' "$1")" \
     "$(has 'an s in front unless it starts with a letter, then cut' "$1")" \
     "$(has '- none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose' "$1")" \
-    "$(has 'the story again: list it for the lead, as for cleared-on-error.' "$1")" \
+    "$(has '`held_for: paused`): list it for the lead, as for cleared-on-error.' "$1")" \
     "$(has 'returns stalled, or when review has' "$1")" "$(has "it is the goal rule's, which picks" "$1")" \
     "$(grep -qF 'with `failed`' <<< "$1" && echo failed || echo "no failed")"
   # shellcheck disable=SC2016 # the backticks are the brief's
@@ -793,16 +793,19 @@ check "after each close the worktree, local and origin's story/x1 are gone" "||"
 check "each close closed its attempt's open PR" "2|yes|yes" \
   "$(grep -c '^pr close' "${ROOT}/gh.log")|$(has "pr close https://github.com/o/svc/pull/1 --comment" "$(cat "${ROOT}/gh.log")")|$(has "pr close https://github.com/o/svc/pull/2 --comment" "$(cat "${ROOT}/gh.log")")"
 # An uncounted close (paused, cleared-on-error, impossible) clears its build away the same way, and a
-# story closed impossible builds again once it is reset.
-echo '[]' > "${ROOT}/prs.json"; item "${b}" stories/y1.md "status: ready" "kind: code" "repo: svc"; cleared=""; adds=""
+# story closed impossible builds again once it is reset. paused and cleared-on-error hold the story
+# (kind: lead), so each hold is lifted with reset before the next build.
+echo '[]' > "${ROOT}/prs.json"; item "${b}" stories/y1.md "status: ready" "kind: code" "repo: svc"; cleared=""; adds=""; holds=""
 for c in paused cleared-on-error impossible; do
   if run story y1 >/dev/null; then adds+="ok "; else adds+="failed "; fi
   "${GIT[@]}" -C "${ROOT}/svc-wt/y1" commit -q --allow-empty -m "${c}" && "${GIT[@]}" -C "${ROOT}/svc-wt/y1" push -q origin story/y1
   touch "${ROOT}/svc-wt/y1/untracked"
   run close y1 "${c}" >/dev/null
   cleared+="$(left y1)|"
+  [[ "${c}" == impossible ]] || holds+="$(sed -n 's/^kind: //p' "${b}/stories/y1.md")$(run reset y1 lift the hold >/dev/null && echo ok || echo failed) "
 done
 check "each build of y1 starts, and after each uncounted close its worktree, local and origin's story/y1 are gone" "ok ok ok |||" "${adds}${cleared}"
+check "paused and cleared-on-error each hold y1 (kind: lead), and reset lifts each hold" "leadok leadok " "${holds}"
 got="$(sed -n 's/^kind: //p' "${b}/stories/y1.md")|$(run reset y1 its Done when is fixed >/dev/null && echo ok || echo failed)"
 check "close y1 impossible leaves it kind: lead; reset y1 succeeds, and then story y1 succeeds" "lead|ok|ok" \
   "${got}|$(run story y1 >/dev/null && echo ok || echo failed)"
