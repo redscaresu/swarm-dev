@@ -34,14 +34,25 @@ stub() {
 # timing checks instead of hanging the test.
 REVIEW_CAP=20
 review() {
-  local t0=${SECONDS} spid i
+  local t0=${SECONDS} spid
   (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main \
     <<< "typed at the prompt" > "${ROOT}/out" 2>&1) &
-  spid=$!
-  for ((i = 0; i < REVIEW_CAP * 5; i++)); do kill -0 "${spid}" 2>/dev/null || break; sleep 0.2; done
-  kill -0 "${spid}" 2>/dev/null && { pkill -KILL -f "${BIN}/" || true; }
-  rc=0; wait "${spid}" || rc=$?
+  spid=$!; finish "${spid}"
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
+}
+# finish <pid> — wait for a codex-review started in the background: rc is its exit. After REVIEW_CAP
+# seconds the stubs are KILLed. Stderr off, so the test prints no "Terminated" notice for it.
+finish() {
+  local i
+  for ((i = 0; i < REVIEW_CAP * 5; i++)); do kill -0 "$1" || break; sleep 0.2; done
+  kill -0 "$1" && { pkill -KILL -f "${BIN}/" || true; }
+  rc=0; wait "$1" || rc=$?
+} 2>/dev/null
+# started — "yes" once the stub has set its TERM trap and written ready, polled for up to 10 s.
+started() {
+  local i
+  for ((i = 0; i < 50; i++)); do [[ -e "${BIN}/ready" ]] && { echo yes; return; }; sleep 0.2; done
+  echo "no stub started"
 }
 # gone [seconds] — "yes" once no stub process is left, polled for up to <seconds> (2).
 gone() {
@@ -72,16 +83,24 @@ review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
 
-# --- An interrupted codex-review stops codex as its timeout does: TERM, the grace, then KILL.
+# --- An interrupted codex-review stops codex as its timeout does (TERM, the grace, then KILL), and
+# exits only once it has.
 stub "trap 'echo TERM ignored' TERM; touch \"\${d}/ready\"; while :; do \"\${d}/stubsleep\" 60; done"
 rm -f "${BIN}/ready"
 (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV SWARM_CODEX_SECONDS=60 bash "${SWARM}" codex-review main < /dev/null > "${ROOT}/out" 2>&1) &
-spid=$!
-for ((i = 0; i < 50; i++)); do [[ -e "${BIN}/ready" ]] && break; sleep 0.2; done
-sleep 1; { kill -TERM "${spid}"; wait "${spid}"; } 2>/dev/null || true   # stderr off: no "Terminated" notice
-check "codex-review sent TERM leaves neither a TERM-trapping stub nor its child" "yes|yes" \
-  "$([[ -e "${BIN}/ready" ]] && echo yes || echo "no stub started")|$(gone $((GRACE + 2)))"
+spid=$!; up="$(started)"
+sleep 1; kill -TERM "${spid}"; finish "${spid}"
+check "codex-review sent TERM exits with neither a TERM-trapping stub nor its child left" "yes|yes" "${up}|$(gone 1)"
 check "events.tsv's codex-review line says it was interrupted" "main|interrupted" "$(last_event)"
+
+# --- codex stays in the caller's process group, so a harness that KILLs that group (no trap runs)
+# takes codex with it. codex-review runs here as a session and group leader of its own.
+rm -f "${BIN}/ready"
+(cd "${P}" && exec python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  env -u SWARM_PROJECT -u HERDR_ENV SWARM_CODEX_SECONDS=60 bash "${SWARM}" codex-review main < /dev/null > "${ROOT}/out" 2>&1) &
+spid=$!; up="$(started)"
+kill -KILL -- "-${spid}"; finish "${spid}"
+check "a KILL to codex-review's process group leaves neither the stub nor its child" "yes|yes" "${up}|$(gone 2)"
 
 # --- A codex that finishes: its findings and exit come through, run with exactly these args.
 stub 'echo "P1: x.sh:3 drops the error"; exit 0'

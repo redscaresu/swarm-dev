@@ -4296,30 +4296,37 @@ kill_tree() {
 
 CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it is KILLed
 
-# stop_codex <pgid> — TERM codex's process group, give it CODEX_GRACE seconds, then KILL what is left.
-# The group also holds a helper whose parent has died, which a walk down from codex would miss.
-# Stderr is off, so bash prints no "Terminated" line for the job.
+# tree_pids <pid> — a process and everything under it, children first.
+tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
+
+# stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then KILL each
+# process left and whatever is under it by then (a TERM trap can start more). The tree is read before
+# the TERM, since a child whose parent dies leaves it. Stderr is off, so bash prints no "Terminated"
+# line for the job.
 stop_codex() {
-  local left
+  local pids p left
+  pids="$(tree_pids "$1")"
+  # shellcheck disable=SC2046,SC2086 # one pid per word
   {
-    kill -TERM -- "-$1"
-    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 -- "-$1" || break; sleep 1; done
-    kill -KILL -- "-$1"
+    kill -TERM ${pids}
+    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 ${pids} || break; sleep 1; done
+    for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
     wait "$1"
   } 2>/dev/null || true
 }
 
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
-# beside --base) and stdin from /dev/null, so it never waits on input. It runs in a process group of
-# its own (job control on for its start only), which stop_codex stops after codex_minutes
-# (SWARM_CODEX_SECONDS overrides it, for tests) or when this command is sent TERM or HUP: main_signal
-# turns an interrupt into a TERM, and a background job never sees INT. The timeout dies, so
+# beside --base) and stdin from /dev/null, so it never waits on input. codex stays in the caller's
+# process group, so a harness that kills that group kills codex too. stop_codex stops it after
+# codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent TERM or
+# HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
   local pid left rc=0
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
-  set -m; codex exec review --base "origin/$1" < /dev/null & pid=$!; set +m
+  codex exec review --base "origin/$1" < /dev/null &
+  pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
   while ((left-- > 0)) && kill -0 "${pid}" 2>/dev/null; do sleep 1; done
@@ -4332,11 +4339,15 @@ codex_review() {
 }
 
 # main_signal <INT|TERM|HUP> — stop the logged command at once (it runs in the background, so this
-# trap runs as soon as the signal lands), log it as interrupted, remove the temp file, and die of the
-# same signal, so the exit status stays 128+N.
+# trap runs as soon as the signal lands; codex-review is waited for while it stops codex), log it as
+# interrupted, remove the temp file, and die of the same signal, so the exit status stays 128+N.
 # shellcheck disable=SC2317,SC2329 # invoked by the signal traps
 main_signal() {
-  [[ -z "${EV_CHILD:-}" ]] || kill_tree "${EV_CHILD}"
+  if [[ -n "${EV_CHILD:-}" && "${EV_CMD}" == codex-review ]]; then
+    # It stops codex itself (stop_codex, from its tree as it stands), so it alone gets the TERM, and
+    # swarm.sh exits only once codex is gone.
+    kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
+  elif [[ -n "${EV_CHILD:-}" ]]; then kill_tree "${EV_CHILD}"; fi
   record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   trap - "$1"
