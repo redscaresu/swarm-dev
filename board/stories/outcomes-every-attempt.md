@@ -1,17 +1,21 @@
 ---
 kind: code
-status: ready
+status: blocked
+blocked_by: [finding-reviewer-column]
+epic: training-export
+depends_on: [finding-reviewer-column]
 touches: [bin/swarm.sh:outcomes_report, tests/outcomes_test.sh, tests/decisions_test.sh]
 ---
 
 # outcomes gives each build the PR that build made, not the slug's newest
 
-`outcomes` prints one row per builder line in agents.tsv, and `decisions_report` relies on that one-to-one match. But the PR comes from `gh pr list --head story/<slug> --state all --limit 1`, so every build of a retried story is shown with the newest PR. A first attempt whose PR was closed unmerged reads as merged, and the training record loses how that attempt ended. Keep one row per builder, and take each builder's PR from its own session log (session_log already finds it): the last `https://github.com/<owner>/<repo>/pull/<n>` URL in that log whose PR has head `story/<slug>`, checked against the slug's PRs from one `gh pr list --head story/<slug> --state all` call (no `--limit 1`). A builder whose log names none of the slug's PRs gets an empty PR, not a guess; only when its session log is gone (Claude Code deletes old ones) and the slug has exactly one PR does it get that PR, as today. Dates are not used, since agents.tsv records only the day.
+Absorbed as is from board/stories/outcomes-every-attempt.md (add `epic: training-export`). The PR comes from one `gh pr list --head story/<slug> --state all --limit 1` per slug (bin/swarm.sh:1046-1056), so every build of a retried story shows the newest PR. Keep one row per builder; take each builder's PR from its own session log: the last github pull URL there whose PR is one of the slug's PRs (one `gh pr list` without --limit). No match: empty PR. Session log gone and the slug has exactly one PR: that PR, as today. Dates are not used.
 
 **Done when:**
-- tests/outcomes_test.sh: a slug with two builder lines and a stubbed `gh` returning two PRs (#1 CLOSED, #2 MERGED; each builder's fixture session log prints its own URL) prints the first row with #1 and CLOSED and the second with #2 and MERGED. Each row keeps its own model and attempts (1, then 2).
-- Two builder lines with one PR between them both show that PR when both session logs name it; a first builder whose log names no PR shows an empty PR and the second shows its own, even when both builds started the same day.
-- A PR URL in the log for another head (a PR the builder only read) is not taken.
-- tests/decisions_test.sh: for the two-PR case above, the first decision has merged false and the second merged true; existing rows are unchanged.
-- A slug with one builder and one PR prints as today, including when that builder's session log is missing.
+- tests/outcomes_test.sh: a slug with two builder lines and stub gh returning #1 CLOSED and #2 MERGED (each session log prints its own URL) prints row 1 with #1 CLOSED and row 2 with #2 MERGED, attempts 1 then 2, each with its own model.
+- Two builders whose logs both name the one PR both show it; a first builder whose log names no PR shows an empty PR and the second its own, both started the same day.
+- A PR URL in the log for another head is not taken.
+- tests/decisions_test.sh: for the two-PR case the first decision has merged false and the second merged true; existing rows unchanged.
+- One builder, one PR prints as today, including with its session log missing.
 - The PR shows the new checks failing with `--limit 1` restored; shellcheck and every tests/*_test.sh pass.
+- With pr_per = epic, builders open no PR: each builder row of an epic story gets the epic's PR (`gh pr list --head epic/<epic>`), so story_merged and pr_state follow it. A fixture in epic mode pins the epic PR on every builder row and MERGED once it merges.
