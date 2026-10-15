@@ -230,8 +230,8 @@ done
 cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" "base_branches = dev main" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
-check "with merge = agent, the conductor waits out a queued merge and finishes the story before closing it" "yes|yes" \
-  "$(has "A queued merge (auto-merge, a merge queue) has not" "${brief}")|$(has "run \`swarm.sh finish <slug>\` if the story is" "${brief}")"
+check "with merge = agent, the conductor waits out a queued merge, then pulls and finishes through review and reconcile" "yes|yes|yes" \
+  "$(has "A queued merge (auto-merge, a merge queue) has not" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\` and" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"

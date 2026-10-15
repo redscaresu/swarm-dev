@@ -124,9 +124,10 @@ item g1 "status: ready" "kind: code"; started g1 w:p5
 item n1 "status: ready" "kind: code"; started n1
 item h1 "status: ready" "kind: code"; started h1; echo "w:p6 h1" > "${P}/.swarm/state/h1"   # its pane closed by hand
 item q1 "status: ready" "kind: code"; started q1 w:p13
+item v1 "status: ready" "kind: verify"; started v1 w:p14
 started d1 w:p7
 started conduct-x w:p8; started hld-x w:p9; started plan-x w:p10
-close r1; close d1; close n1; close h1; for s in conduct-x hld-x plan-x; do close "${s}"; done
+close r1; close v1; close d1; close n1; close h1; for s in conduct-x hld-x plan-x; do close "${s}"; done
 echo "[{\"number\":3,\"state\":\"MERGED\",\"url\":\"${U}/3\"},{\"number\":4,\"state\":\"OPEN\",\"url\":\"${U}/4\"}]" > "${ROOT}/prs.json"
 close m1
 # Merged but queued: still open, with auto-merge set.
@@ -136,7 +137,7 @@ rm "${ROOT}/prs.json"; touch "${ROOT}/ghfail"
 close g1
 rm "${ROOT}/ghfail"
 is "a gh call that fails is said on stderr" "1" "$(grep -c "g1: could not list the PRs on story/g1" "${ROOT}/close.out")"
-for s in r1:"a story in review" d1:"a deleted story" m1:"a story whose PR merged" q1:"a story whose open PR has auto-merge set" \
+for s in r1:"a story in review" v1:"a ready verify story (no PR tells its pass from a failure)" d1:"a deleted story" m1:"a story whose PR merged" q1:"a story whose open PR has auto-merge set" \
          g1:"a story whose gh call fails" \
          n1:"a ready story with no builder open" h1:"a ready story whose builder's pane was closed by hand" \
          conduct-x:"conduct-x" hld-x:"hld-x" plan-x:"plan-x"; do

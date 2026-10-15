@@ -1457,10 +1457,11 @@ RULE
   else
     cat <<'RULE'
 Merge a PR only when it is green and reviewed. A queued merge (auto-merge, a merge queue) has not
-happened yet: wait until the PR is merged. Then pull, run `swarm.sh finish <slug>` if the story is
-still open on the board (its file is there and not `status: done`), and only then `swarm.sh unblock`
-and `swarm.sh close <slug>` to close that story's tab: closing a story that is still `ready` counts
-a failed build. When the epic's **Done when** holds, take the epic off the board with
+happened yet: wait until the PR is merged. Then run `swarm.sh review <slug> <PR URL>` and
+`swarm.sh reconcile`, never a plain `git pull`: reconcile first puts back swarm.sh's own edits to the
+story (a retry's `attempts:`), which would stop the pull, then pulls the board and finishes the
+story. Only then run `swarm.sh unblock` and `swarm.sh close <slug>` to close that story's tab:
+closing a story that is still `ready` counts a failed build. When the epic's **Done when** holds, take the epic off the board with
 `swarm.sh finish <epic>`.
 RULE
   fi
@@ -3231,7 +3232,7 @@ close_agent() {
 
 # failed_build <name> — succeed when closing <name> ends a failed build, and print gh's list of the
 # PRs on story/<name> (nothing with pr_per = epic, whose epic stories have none): <name> is a story
-# on the board, still ready, of a kind an agent builds, whose builder this project has open in herdr
+# on the board, still ready, of kind code, docs or chore, whose builder this project has open in herdr
 # under that name (not closed by hand, not already retired), and none of its PRs merged or is open with
 # auto-merge set: with merge = agent a close that comes before the board is pulled, or while the merge
 # waits on auto-merge, finds the story still ready, so only the PR tells. One gh call answers both;
@@ -3239,7 +3240,8 @@ close_agent() {
 failed_build() {
   local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
-  agent_kind "$(fm "${f}" kind)" || return 1
+  # A verify story has no PR, so nothing here tells its pass from a failure: its close never counts.
+  case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
   [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
   # The conductor finishes an epic's story before closing it, so a ready one never merged.
   [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0

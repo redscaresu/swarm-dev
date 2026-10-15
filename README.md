@@ -103,10 +103,10 @@ Every agent is a full Claude Code session, on a model chosen by its role, and pl
 starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
 touch real cloud or credentials. By default no agent merges.
 
-When `swarm.sh close` closes a builder whose story is still `ready`, it counts a failed build in
-the story's `attempts:` and clears the attempt away: its worktree, its `story/<slug>` branch here
-and on origin, and any open PR, closed unmerged. A story that has failed twice is rebuilt on Fable,
-the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
+When `swarm.sh close` closes the builder of a code, docs or chore story that is still `ready`, it
+counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
+`story/<slug>` branch here and on origin, and any open PR, closed unmerged. A story that has failed
+twice is rebuilt on Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
 `escalate_after = 0` turns it off.
 
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because

@@ -165,7 +165,8 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   contradictions no one can reconcile. A story whose `attempts:` has reached `escalate_after` (2 by
   default) is built as `escalate`, on Fable at `xhigh`, ahead of `risk: high` and `sonnet_share`.
   A `kind: lead` story never escalates, since no agent builds it. `swarm.sh close <slug>` counts a
-  failed build. When the story is still `ready`, its builder is still open (with `keep_panes`, the
+  failed build of a code, docs or chore story (a verify story has no PR to tell a pass from a
+  failure, so its close never counts). When the story is still `ready`, its builder is still open (with `keep_panes`, the
   one it retires) and no PR on `story/<slug>` has merged or is open with auto-merge set, it raises
   `attempts:` by one and clears the attempt away: it removes the worktree and `story/<slug>`, here
   and on origin, and closes each open PR unmerged with a comment naming the attempt. The next build
@@ -369,8 +370,10 @@ stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and rest
 the pull still fails. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged or differing edit is left alone and still stops it. `swarm.sh unblock` then readies a
 blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
-It waits out a queued merge (auto-merge, a merge queue), and finishes a merged story before it closes
-the builder, because closing a story that is still `ready` counts a failed build:
+It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
+and `swarm.sh reconcile`, which pull the board the way they do for you, putting back a retry's
+`attempts:` first, and finish the story. Only then does it close the builder, because closing a
+story that is still `ready` counts a failed build:
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
