@@ -1,14 +1,16 @@
 ---
 kind: code
 status: ready
-touches: [bin/swarm.sh:outcomes_report, tests/outcomes_test.sh]
+touches: [bin/swarm.sh:outcomes_report, tests/outcomes_test.sh, tests/decisions_test.sh]
 ---
 
-# outcomes lists every PR a story had, not only the newest
+# outcomes gives each build the PR that build made, not the slug's newest
 
-`outcomes_report` looks up a slug's PR with `gh pr list --head story/<slug> --state all --limit 1`, so a story that was built, closed unmerged and built again shows only its last PR. The earlier attempts drop out of the record, and that record is training data for the model and effort router. Give each PR of a slug its own row (number, state, model, effort as today), oldest first, so a retried story shows every attempt and how it ended.
+`outcomes` prints one row per builder line in agents.tsv, and `decisions_report` relies on that one-to-one match. But the PR comes from `gh pr list --head story/<slug> --state all --limit 1`, so every build of a retried story is shown with the newest PR. A first attempt whose PR was closed unmerged reads as merged, and the training record loses how that attempt ended. Keep one row per builder; fetch all of a slug's PRs (oldest first, with createdAt) and give the slug's k-th builder the oldest PR not created before its start day that an earlier builder of the slug has not taken. A builder that opened no new PR (a rebuild that reused the open one) gets the PR the slug's previous builder had.
 
 **Done when:**
-- tests/outcomes_test.sh: with a stubbed `gh` returning two PRs for one slug (one CLOSED, one MERGED), `outcomes` prints two rows for that slug with both PR numbers and both states, the CLOSED one first.
-- A slug with one PR prints one row as today.
-- The PR shows the new check failing with `--limit 1` restored; shellcheck and every tests/*_test.sh pass.
+- tests/outcomes_test.sh: a slug with two builder lines and a stubbed `gh` returning two PRs (#1 CLOSED, created on the first build's day; #2 MERGED, created on the second's) prints the first row with #1 and CLOSED and the second with #2 and MERGED. Each row keeps its own model and attempts (1, then 2).
+- Two builder lines with one PR between them both show that PR.
+- tests/decisions_test.sh: for the two-PR case above, the first decision has merged false and the second merged true; existing rows are unchanged.
+- A slug with one builder and one PR prints as today.
+- The PR shows the new checks failing with `--limit 1` restored; shellcheck and every tests/*_test.sh pass.
