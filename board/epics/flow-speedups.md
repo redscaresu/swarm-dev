@@ -1,5 +1,5 @@
 ---
-status: later
+status: active
 ---
 
 # The swarm spends its time building, not waiting on the lead: a stuck review times out, a merge does not stall the other PRs, and the conductor carries a wave through to the end
