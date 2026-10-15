@@ -269,8 +269,25 @@ files are the lead's alone.
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
 
+A wave only sees its own epic, so `story` also looks across epics. Before it makes anything, it
+compares the story's `touches` with those of every story in another epic (a story with no epic
+counts as another). If one of them is open (in review, or with its builder open) and touches the
+same function or file, `story` prints `warning: <other> (epic <e>) is open and touches <entry>;
+start <slug> after it merges` and starts the story anyway. `story --strict` refuses instead, naming
+the other story, and leaves no branch, worktree, pane or brief behind. It also refuses when herdr
+cannot list its agents, where plain `story` warns that it cannot tell. Conductors always pass
+`--strict`. With `pr_per = epic` the check misses stories already merged into an epic branch: they
+are finished on the board, though their changes have not reached the base.
+
+A `<file>:<fn>` entry matches the same fn in the same file, and a file-only entry matches anything
+in that file. An entry with no `/` or `.` before its `:` names a fn in the previous entry's file, so
+`bin/swarm.sh:config defaults, CONFIG_KEYS` covers `bin/swarm.sh:CONFIG_KEYS`. It also counts as a
+file of that name, so `Makefile` after another entry still matches `Makefile`. A `<repo>: ` prefix
+sets the entry's repo, and otherwise the story's `repo:` does; the same file in another repo does
+not match. Parentheticals are dropped.
+
 ```bash
-swarm.sh story <slug>      # worktree on story/<slug>, a pane, the agent, its brief
+swarm.sh story [--strict] <slug>   # worktree on story/<slug>, a pane, the agent, its brief
 swarm.sh wait <slug>       # in the background: returns when it settles
 swarm.sh wait --until-report conduct-<epic>   # in the background: returns when the conductor reports
 swarm.sh watch             # in the background: returns when a story PR needs the lead

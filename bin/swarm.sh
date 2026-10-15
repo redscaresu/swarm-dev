@@ -2,7 +2,7 @@
 # swarm.sh — run agents in herdr panes so every one can be watched.
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
-#   swarm.sh story <slug>                                   build one <board>/stories/<slug>.md
+#   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same function or file, and with --strict refuse
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
@@ -2028,7 +2028,7 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" mode=story
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" mode=story
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -2038,6 +2038,7 @@ build_story() {
     operator) die "${slug} is kind: operator, which is now kind: lead: change it, and mark the user's step **You:**" ;;
     *) die "${slug} has kind: ${kind}; an agent builds only code, docs, chore or verify" ;;
   esac
+  touches_overlap "${slug}" "${strict}"   # before anything is made, so --strict leaves nothing behind
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
   role="$(story_role "${slug}")" || die "${role}"
   policy "${role}" >/dev/null
@@ -2072,6 +2073,90 @@ build_story() {
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
   [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief
+}
+
+# touches_overlap <slug> [strict] — warn on stderr for each story of another epic (no epic counts as
+# another) that is open, in review or with its builder open, and whose touches overlap <slug>'s; with
+# strict, die naming it. builder_state runs only for overlapping stories (touches_rows finds them);
+# strict refuses when it is unknown, and plain mode warns that it cannot tell.
+touches_overlap() {
+  local slug="$1" strict="${2:-}" other epic status entry state
+  while IFS=$'\t' read -r other epic status entry; do
+    state=open; [[ "${status}" == review ]] || state="$(builder_state "${other}" </dev/null)"
+    case "${state}" in
+      open) [[ -z "${strict}" ]] || die "${slug}: ${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges"
+            echo "warning: ${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges" >&2 ;;
+      unknown) [[ -z "${strict}" ]] || die "${slug}: cannot tell whether ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents); start ${slug} after it merges"
+               echo "warning: cannot tell whether ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents)" >&2 ;;
+    esac
+  done < <(touches_rows "${slug}")
+}
+
+# touches_rows <slug> — a line per story of another epic whose touches overlap <slug>'s: slug, epic
+# (none for no epic), status and its overlapping entries. Touches are a bracketed list split on commas
+# outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]; one with no / or .
+# before its : is a fn of the previous entry's file, and also a file of that name (Makefile).
+# (repo, file, fn) are compared: fn exactly, and a file-only entry overlaps the whole file. Its own
+# function, not inside a <(...): bash 3.2 misreads the parentheses in a heredoc there.
+touches_rows() {
+  python3 - "${BOARD}/stories" "$1" "$(basename "${PROJECT_DIR}")" <<'PY'
+import glob, os, re, sys
+stories, me, project = sys.argv[1:]
+
+def front(path):
+    lines, out = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}
+    if lines[0] != "---":
+        return out
+    for line in lines[1:]:
+        if line == "---":
+            break
+        k, sep, v = line.partition(":")
+        if sep and k not in out:
+            out[k] = v.strip()
+    return out
+
+def entries(fm):
+    repo = fm.get("repo", "")
+    raw, parts, cur, depth = fm.get("touches", "").strip().strip("[]"), [], "", 0
+    for c in raw:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and c == ",":
+            parts.append(cur); cur = ""
+        elif depth == 0:
+            cur += c
+    parts.append(cur)
+    out = []
+    for p in (p.strip() for p in parts):
+        m = re.match(r"([A-Za-z0-9._-]+): (.*)", p)
+        r, p = (m.group(1), m.group(2).strip()) if m else (repo, p)
+        if not p:
+            continue
+        r = "" if r == project else r
+        head = p.split(":", 1)[0]
+        if out and "/" not in head and "." not in head:
+            # Also a root file with no extension (Makefile), listed first: out[-1] keeps the real file.
+            out += [(r, p, ""), (r, out[-1][1], p)]
+        else:
+            f, _, fn = p.partition(":")
+            out.append((r, f.strip(), fn.strip()))
+    return out
+
+def overlap(a, b):
+    return a[:2] == b[:2] and (not a[2] or not b[2] or a[2] == b[2])
+
+fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
+mine = entries(fms[me])
+for slug, fm in sorted(fms.items()):
+    if slug == me or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
+        continue
+    hit = [e for e in entries(fm) if any(overlap(e, m) for m in mine)]
+    if hit:
+        print("\t".join([slug, fm.get("epic") or "none", fm.get("status", ""),
+                         ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))
+PY
 }
 
 # epic_branch_for <repo-dir> <epic> <base> — epic/<epic>, fetched from origin; pushed there from
@@ -2112,6 +2197,11 @@ EOF
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
+
+Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
+of another epic (in review, or with its builder open) touches the same function or file, and names
+that story: start yours in a later wave, after the named story merges. Without --strict, story only
+warns and starts it as the epic says.
 
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
@@ -4952,7 +5042,7 @@ dispatch() {
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
     agent)  require_herdr; start_agent "$@" ;;
-    story)  require_herdr; build_story "${1:?slug}" ;;
+    story)  require_herdr; if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict; else build_story "${1:?slug}"; fi ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
@@ -5130,6 +5220,7 @@ main() {
                 if [[ "${EV_CMD}" == reset && "${2:-}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/stories/$2.md" \
                       && -n "$(get_fm "${BOARD}/stories/$2.md" held_for)" ]]; then EV_CMD="reset:held"; fi ;;
     dialog) EV_TARGET="${2:-}"; EV_OK="ok (${3:-})" ;;
+    story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
