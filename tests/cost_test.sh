@@ -36,8 +36,9 @@ check "codex listed, not priced" "| codex | 1 (1 not in the logs) | - |"
 check "older than since is left out" "| **total** | 3 | | 1.0M | 0k | 10.0M | 1.0M | 26.00 |"
 
 # --since names the same date the bare positional does
-since_out="$(cd "${dir}/repo" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" cost --since 2026-09-15 2>&1)" || true
-if [[ "${since_out}" == "${out}" ]]; then echo "ok   --since prints the same table"; else echo "FAIL --since table differs"; fails=$((fails + 1)); fi
+since_out="$(cd "${dir}/repo" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" cost --since 2026-09-15)" && since_rc=0 || since_rc=$?
+if [[ ${since_rc} -eq 0 && "${since_out}" == "${out}" ]]; then echo "ok   --since prints the same table"
+else echo "FAIL --since exited ${since_rc} or its table differs"; fails=$((fails + 1)); fi
 
 # An argument cost does not understand is refused before any table
 for args in "--since" "--since 2026-9-15" "bogus" "2026-09-15 extra"; do

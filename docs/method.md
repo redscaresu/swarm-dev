@@ -433,7 +433,9 @@ Every codex review a builder, a conductor or the lead runs goes through `swarm.s
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
 beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. An interrupted
-codex-review stops codex the same way and exits only once it is gone. codex stays in the caller's
+codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
+`.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
+row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
 process group, so a harness that kills that group kills codex too. Every brief says to run it in the
 background (Bash `run_in_background`) and wait for it: Claude Code stops a foreground Bash call at 2
 minutes by default and 10 at most, before the limit could apply. When codex reports a
