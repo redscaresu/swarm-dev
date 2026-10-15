@@ -130,12 +130,13 @@ prints every setting and where it came from.
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
-| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you. An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
+| `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort) |
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
 | `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
+| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -247,13 +248,15 @@ A story's **Done when** names what the builder's session can show (a test run, a
 
 `swarm.sh conduct <epic>` starts a fresh conductor that drives the epic's stories to merge, then
 stops and reports; the session it was started from stays free. Its last act is writing that report
-to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how `/swarm-dev:swarm`
-knows it has finished: a conductor is idle whenever it waits on its own background work. It runs in a herdr workspace named
-for the epic's HLD (its `hld:` field; every epic of that HLD shares it), in a tab named for the
-epic, in a pane named `conductor`. Each story it starts gets a pane in that tab, named for the
-story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off story gets a tab of its
-own. Run one conductor at a
-time: `watch` reports every story PR, and shared files are the lead's alone.
+to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how
+`/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
+background work. When it starts, an epic still `later` is set `active` (an uncommitted board edit
+that `conduct` reports in one line), so `status` and `next` stop listing it as waiting on you. It
+runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
+it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
+that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
+story gets a tab of its own. Run one conductor at a time: `watch` reports every story PR, and shared
+files are the lead's alone.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
