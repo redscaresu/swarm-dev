@@ -743,6 +743,107 @@ cp -R "${Q}/." "${B}" && rm -rf "${B}/.swarm" && git -C "${B}" update-ref -d ref
 out="$(fresh; cd "${R}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a board in its own repo counts from that repo's history" grep -qE '^│ ○ x +█{7}░{5}  6/11  5 ready +│$' <<< "${out}"
 
+# --- lead = session, in a project of its own (L) whose panes are w4's: needs you keeps the user's
+# steps (a story's **You:** line, an expired login, a draft HLD) and the rest goes to the lead's queue.
+L="${ROOT}/lead"; mkdir -p "${L}/.swarm/state" "${L}/.claude/swarm" "${ROOT}/lbin"; git -C "${L}" init -q
+litem() { # <path under docs> <body> <front-matter line>...
+  local path="${L}/docs/$1" body="$2" title; shift 2
+  title="$(basename "${path}" .md)"
+  mkdir -p "$(dirname "${path}")"
+  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; echo; printf '%s\n' "${body}"; } > "${path}"
+}
+mkdir -p "${L}/docs/stories"; touch "${L}/docs/stories/README.md"
+litem stories/you-ask.md 'After the release merges. **You:** create the read-only user' 'status: ready' 'kind: lead'
+litem stories/no-you.md 'The lead runs the migration.' 'status: ready' 'kind: lead'
+# Prose that names the convention is no step: this story is the lead's.
+litem stories/talks.md 'The lead does it all, so there is no **You:** step.' 'status: ready' 'kind: lead'
+# A kind waiting_on_user lists that dash's rows do not parse: a verbatim line.
+litem stories/v-odd.md '' 'status: ready' 'kind: by hand'
+litem stories/esc.md "$(printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' 'Failed on Fable: re-scope or drop.' '<!-- /swarm.sh escalated -->')" \
+  'status: ready' 'kind: lead' 'escalated_from: code'
+# An impossible story (#144's block) is the lead's too, even with a **You:** line in its body.
+litem stories/esc-imp.md "$(printf '%s\n' '**You:** a step from before it escalated' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**Impossible.** the judge called it impossible' '<!-- /swarm.sh escalated -->')" \
+  'status: ready' 'kind: lead' 'escalated_from: code'
+litem stories/m-green.md '' 'status: review' 'prs: https://github.com/o/l/pull/1'
+litem stories/m-fail.md '' 'status: review' 'prs: https://github.com/o/l/pull/2'
+litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
+litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
+litem stories/l-stall.md '' 'status: ready' 'kind: code'
+litem hld/2026-10-01-d.md '' 'status: draft'
+printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
+printf '2026-10-13\tcode\t%s\tclaude\topus\thigh\t%s\n' l-auth lauth l-wait lwait l-gone lgone l-stall lstall > "${L}/.swarm/agents.tsv"
+cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/lauth.jsonl"
+printf '%s\tstory\tl-stall\tw4:p5\tok\n' "$(ago 120)" > "${L}/.swarm/events.tsv"
+printf '[{"sessionId":"lauth","status":"idle"},{"sessionId":"lwait","status":"waiting","waitingFor":"input"},{"sessionId":"lstall","status":"busy"}]' > "${ROOT}/l.json"
+cat > "${ROOT}/lbin/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"l-auth","agent_status":"idle","pane_id":"w4:p1"},{"name":"l-wait","agent_status":"blocked","pane_id":"w4:p2"},{"name":"l-gone","agent_status":"idle","pane_id":"w4:p4"},{"name":"l-stall","agent_status":"working","pane_id":"w4:p5"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w4:p1"},{"pane_id":"w4:p2"},{"pane_id":"w4:p3"},{"pane_id":"w4:p4"},{"pane_id":"w4:p5"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w4","label":"lead"}]}}' ;;
+  *) exit 1 ;;
+esac
+STUB
+# gh: PR 1 is green, PR 2 failing, PR 3 gh cannot read (unknown), and PR 4's CI is running.
+cat > "${ROOT}/lbin/gh" <<'STUB'
+#!/bin/sh
+case "$1 $2 $3" in
+  "pr view https://github.com/o/l/pull/1") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/l/pull/2") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
+  "pr view https://github.com/o/l/pull/4") echo '{"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "${ROOT}/lbin/herdr" "${ROOT}/lbin/gh"
+ldash() { # <columns> — dash in L
+  fresh; (cd "${L}" || exit 1; env -u HERDR_ENV COLUMNS="$1" CLAUDE_STUB_AGENTS="${ROOT}/l.json" PATH="${ROOT}/lbin:${PATH}" bash "${SWARM}" dash 2>&1 || true)
+}
+lbox() { # <title> <frame> — that box of the left column, the right column cut off
+  python3 -c '
+import sys
+t, out = sys.argv[1], []
+for l in sys.stdin.read().splitlines():
+    if l.startswith("╭─ " + t + " ") or out:
+        out.append(l.split("╮ ")[0].split("╯ ")[0].split("│ │")[0])
+        if l.startswith("╰"):
+            break
+print("\n".join(out))' "$1" <<< "$2"
+}
+joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
+YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft HLD 2026-10-01-d: /hld 2026-10-01-d")
+LEADS=("! merge l#1 (✓ green) m-green" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+  "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
+  "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
+  "! look at l-gone: session ended" "! look at l-stall: working 1")
+echo "lead = session" > "${L}/.claude/swarm/config"
+for cols in 100 160; do
+  out="$(ldash "${cols}")"
+  needs="$(lbox "needs you" "${out}")"; queue="$(lbox "lead's queue" "${out}")"
+  check "lead = session at ${cols} columns: the lead's queue is drawn right after needs you" \
+    grep -qE "^╭─ lead's queue ─" <<< "$(sed -n '/^╰/{n;p;q;}' <<< "${out}")"
+  check "lead = session at ${cols} columns: needs you has only the user's ${#YOURS[@]} steps" test "$(grep -c '^│ ! ' <<< "${needs}")" -eq ${#YOURS[@]}
+  check "lead = session at ${cols} columns: the lead's queue has only its ${#LEADS[@]} rows" test "$(grep -c '^│ ! ' <<< "${queue}")" -eq ${#LEADS[@]}
+  for want in "${YOURS[@]}"; do
+    check "lead = session at ${cols} columns: needs you holds '${want}'" has "${want}" "$(joined "${needs}")"
+    check "lead = session at ${cols} columns: the lead's queue lacks '${want}'" lacks "${want}" "$(joined "${queue}")"
+  done
+  for want in "${LEADS[@]}"; do
+    check "lead = session at ${cols} columns: the lead's queue holds '${want}'" has "${want}" "$(joined "${queue}")"
+    check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
+  done
+  check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"
+done
+# Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
+printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
+check "lead = session: an escalated story reset once offers only drop" \
+  has "! decide escalated story esc: swarm.sh drop esc" "$(joined "$(lbox "lead's queue" "$(ldash 100)")")"
+rm "${L}/.claude/swarm/config"
+out="$(ldash 100)"
+check "lead off: no lead's queue" lacks "lead's queue" "${out}"
+check "lead off: the legend says ! is needs you" has "! needs you (session gone or unknown)" "${out}"
+check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
+
 # --- A git repo with no board: dash and dash --watch stop at once and name swarm.sh init.
 N="${ROOT}/noboard"; mkdir -p "${N}"; git -C "${N}" init -q
 for args in "" "--watch 1"; do

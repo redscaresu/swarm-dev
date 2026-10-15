@@ -99,6 +99,12 @@ for v in 0 -1 1.5 two on; do
   check "goal = ${v} is refused, naming file and line" "yes" \
     "$(fails_with "${p}/.claude/swarm/config:1: goal must be off or a positive whole number" run "${p}" config)"
 done
+check "lead ships off" "off" "$(project "${p}"; run "${p}" config lead)"
+project "${p}" "lead = session"
+check "lead = session is read" "session" "$(run "${p}" config lead)"
+project "${p}" "lead = on"
+check "lead = on is refused, naming file and line" "yes" \
+  "$(fails_with "${p}/.claude/swarm/config:1: lead must be off or session, not 'on'" run "${p}" config)"
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
@@ -133,6 +139,9 @@ check "the table's goal row has the Default CFG_goal ships" "\`$(project "${p}";
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's codex_minutes row has the Default CFG_codex_minutes ships" "\`$(project "${p}"; run "${p}" config codex_minutes)\`" \
   "$(sed -n 's/^| `codex_minutes` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
+# shellcheck disable=SC2016 # the backticks are the table's
+check "the table's lead row has the Default CFG_lead ships" "\`$(project "${p}"; run "${p}" config lead)\`" \
+  "$(sed -n 's/^| `lead` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
 
 # --- A non-git project whose board is outside it, and repos in repos_dir.
 remote "${ROOT}/svc.git" main main dev
