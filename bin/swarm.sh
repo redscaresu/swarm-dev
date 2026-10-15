@@ -435,7 +435,8 @@ def session_state(log, name, listing):
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
 #   sign_time(f) -> an events.tsv line's (fields) epoch when it is a sign of life, else None. A
-#     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, and so
+#     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
+#     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
@@ -1456,7 +1457,7 @@ tell_agent() {
     die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
   fi
   if [[ "${kind}" == note ]]; then
-    inbox="${PROJECT_DIR}/.swarm/inbox/${name}.md"; mkdir -p "${inbox%/*}"
+    inbox="$(conductor_inbox "${name}").md"; mkdir -p "${inbox%/*}"
     # Built first, then one append: the conductor's mv between the open and a slow write would
     # take the note into a copy it has already read.
     msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
@@ -1888,7 +1889,7 @@ add_epic_repo() {
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
 conduct_brief() {
   local epic="$1" inbox
-  inbox="${PROJECT_DIR}/.swarm/inbox/$(agent_name "conduct-$1")"
+  inbox="$(conductor_inbox "$(agent_name "conduct-$1")")"
   cat <<EOF
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
@@ -1905,7 +1906,8 @@ The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
 cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
 it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a new file),
-read the moved copy, act on it, and delete it.
+read the moved copy, act on it, and delete it. Do all this once more just before you write your report,
+so a note left after your last wait is not lost.
 EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
@@ -2103,6 +2105,8 @@ hld_workspace() {
 
 # conductor_report <agent> — where a conductor writes its report as its last act.
 conductor_report() { echo "${PROJECT_DIR}/.swarm/conduct-$(conduct_epic "$1").report.md"; }
+# conductor_inbox <name> — the conductor's inbox, without its .md: notes are <it>.md, a read in progress <it>.reading.md.
+conductor_inbox() { echo "${PROJECT_DIR}/.swarm/inbox/$1"; }
 
 # conduct_epic <agent> — the epic a conductor's agent name is for. The name may be cut at 32
 # characters, so it is matched against the conductors started here (their briefs), which outlive
@@ -2129,13 +2133,14 @@ start_conductor() {
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
-  inbox="${PROJECT_DIR}/.swarm/inbox/$(agent_name "conduct-${epic}")"
-  rm -f "${inbox}.md" "${inbox}.reading.md"   # nor are notes left for it
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
   HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
+  # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
+  # must leave a live conductor's notes; this one reads its inbox only after its first wait.
+  inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
   echo "workspace ${hld} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # An uncommitted board edit, as unblock's are; any other status is left as it is. The conductor is

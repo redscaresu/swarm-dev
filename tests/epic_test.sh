@@ -70,15 +70,17 @@ goal_on() {
 }
 GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
 # inbox_rule <epic> <brief> — conduct_brief's inbox rule, as has prints them: the inbox; after each
-# wait or watch, an interrupted read's copy first; then the mv to that exact copy, read, act and delete.
-INBOX_RULE="yes|yes|yes|yes"
+# wait or watch, an interrupted read's copy first; then the mv to that exact copy, read, act and delete;
+# and all of it once more before the report.
+INBOX_RULE="yes|yes|yes|yes|yes"
 inbox_rule() {
   local b i=".swarm/inbox/conduct-$1"; b="$(tr '\n' ' ' <<< "$2")"
   # shellcheck disable=SC2016 # the backticks are the brief's
-  printf '%s|%s|%s|%s' "$(has "${i}.md. After each \`swarm.sh wait\` or \`swarm.sh watch\` returns: if " "${b}")" \
+  printf '%s|%s|%s|%s|%s' "$(has "${i}.md. After each \`swarm.sh wait\` or \`swarm.sh watch\` returns: if " "${b}")" \
     "$(has "${i}.reading.md is there (a read cut off before its delete), read it, act on it and delete it first." "${b}")" \
     "$(has 'Then, if the inbox exists, `mv` it to ' "${b}")" \
-    "$(has "${i}.reading.md (atomic, so a note the lead adds meanwhile starts a new file), read the moved copy, act on it, and delete it." "${b}")"
+    "$(has "${i}.reading.md (atomic, so a note the lead adds meanwhile starts a new file), read the moved copy, act on it, and delete it." "${b}")" \
+    "$(has "Do all this once more just before you write your report, so a note left after your last wait is not lost." "${b}")"
 }
 # goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
 goal_off() {
@@ -252,6 +254,12 @@ echo "goal = 5" > "${p}/.claude/swarm/config"
 run conduct e >/dev/null || true
 check "with goal = 5, the story-mode conductor reads why a builder stopped and closes it with that cause" \
   "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
+# A second conduct e, refused while conduct-e's session is busy, leaves the live conductor's notes.
+mkdir -p "${p}/.swarm/inbox"; echo "a note for the live conductor" | tee "${p}/.swarm/inbox/conduct-e.md" > "${p}/.swarm/inbox/conduct-e.reading.md"
+out="$(CLAUDE_STUB_AGENTS="${ROOT}/started.json" run conduct e || true)"
+check "a refused second conduct leaves the live conductor's inbox and reading copy" "yes|yes|yes" \
+  "$(has "still working" "${out}")|$([[ -e "${p}/.swarm/inbox/conduct-e.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/inbox/conduct-e.reading.md" ]] && echo yes || echo no)"
+rm -f "${p}/.swarm/inbox/conduct-e.md" "${p}/.swarm/inbox/conduct-e.reading.md"
 run close conduct-e >/dev/null; : > "${p}/.claude/swarm/config"
 # goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
 # prompts and goals count the herdr agent prompt calls since herdr.log was emptied, and the /goal ones.

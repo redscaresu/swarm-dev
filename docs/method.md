@@ -427,8 +427,10 @@ session is gone or unknown. To reach a busy conductor, the lead runs
 only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
 inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added meanwhile starts a new
 file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
-so the conductor reads and deletes it first. `conduct` clears both files, so a new conductor never
-acts on notes left for the one before. The conductor closes a builder only after both
+so the conductor reads and deletes it first. It does all of this once more just before it writes its
+report, so a note left after its last wait is still read. Once a new conductor has started,
+`conduct` clears both files, so it never acts on notes left for the one before. A `conduct` refused
+because the epic's conductor is still running leaves them alone. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With
