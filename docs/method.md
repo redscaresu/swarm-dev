@@ -457,9 +457,14 @@ Before it pulls the board's repo, it sets the front matter that swarm.sh wrote o
 back to what is committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
 if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
-stop it; it first backs each one up in `.swarm/state/reconcile-backup/` and restores them all if
-the pull still fails. It touches nothing, and stops naming why, when the pull cannot fast-forward or
-a file outside the board is changed; a staged or differing edit is left alone and still stops it. `swarm.sh unblock` then readies a
+stop it. When the pull changes a board file whose only unstaged edit is to keys swarm.sh writes
+(`status`, `prs`, `blocked_by`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
+another story in review, reconcile checks the file out, pulls, then sets those keys again. If the
+pull deleted the file, it stays deleted and reconcile prints its name. If the base changed one of
+those keys as well, to a different value, reconcile stops before it touches anything and names the
+file. Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and if
+the pull still fails they are all restored. It touches nothing, and stops naming why, when the pull cannot fast-forward or
+a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
 blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
 It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
 and `swarm.sh reconcile`, which pull the board the way they do for you, putting back a retry's
