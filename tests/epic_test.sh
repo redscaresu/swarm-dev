@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # epic_test.sh — the layout (an epic's tab holds its conductor and a pane per story) and
 # pr_per = epic (stories branch from, and merge into, epic/<slug>). herdr is a stub on PATH that
-# hands out pane ids in order and remembers tab labels; the repo is a local bare remote.
+# hands out pane ids in order and remembers tab labels; the repo is a local bare remote. gh is a stub
+# too, so a close's PR lookup never reaches the real gh.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -64,10 +65,21 @@ case "$1 $2" in
                       [ -e "$H/waiterr" ] && { echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; }
                       echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
   "agent read")       cat "$H/screen" 2>/dev/null ;;
+  # A closed pane takes its agent with it; a tab t<n> closes its first pane, w:<n>.
+  "pane close"|"tab close") p=$3; [ "$2" = close ] && [ "$1" = tab ] && p="w:${3#t}"
+                      [ -e "$H/agents" ] && awk -v p="$p" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/herdr"
 log() { cat "${ROOT}/herdr.log"; }
+# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs.
+gh_stub() {
+  printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
+  # shellcheck disable=SC2016 # the stub's own shell expands these
+  printf '%s\n' 'echo "$*" >> "$H/gh.log"' 'case "$1 $2" in "pr list") cat "$H/prs.json" 2>/dev/null || echo "[]" ;; esac' >> "${ROOT}/bin/gh"
+  chmod +x "${ROOT}/bin/gh"
+}
+gh_stub
 
 # A repo with main and dev (dev one commit ahead), and a project whose board names it.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
@@ -113,6 +125,8 @@ check "a story outside any epic gets a tab of its own" "yes" "$(has "--label o1 
 run close s1 >/dev/null
 check "closing a story closes its pane and leaves the epic's tab" "yes|no|no" \
   "$(has "pane close w:2" "$(log)")|$(grep -q 'tab close' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -q ' s1$' "${p}/.swarm/state/e" && echo yes || echo no)"
+check "closing a ready story's builder counts a failed build and removes its worktree" "1|no" \
+  "$(sed -n 's/^attempts: //p' "${b}/stories/s1.md")|$([[ -d "${ROOT}/svc-wt/s1" ]] && echo yes || echo no)"
 run close conduct-e >/dev/null
 check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5" "$(grep '^tab close' "${ROOT}/herdr.log" | paste -sd'|' -)"
 # A conductor that never takes its brief (an agent not logged in) must not leave the placeholder behind.
@@ -131,6 +145,7 @@ echo "Ask k1" > "${p}/.swarm/state/brief-x.md"   # a codex brief's prose: never 
 run close k1 >/dev/null; run close conduct-k >/dev/null
 check "with keep_panes, closing a story or a conductor closes nothing and renames the agents by their panes" "no|yes|yes|Ask k1" \
   "$(grep -q 'close' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^agent rename w:[0-9]+ k1-done$' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^agent rename w:[0-9]+ conduct-k-done$' "${ROOT}/herdr.log" && echo yes || echo no)|$(cat "${p}/.swarm/state/brief-x.md")"
+check "with keep_panes, closing a ready story's builder still counts a failed build" "1" "$(sed -n 's/^attempts: //p' "${b}/stories/k1.md")"
 rm -f "${p}/.swarm/state/brief-x.md"
 # Another project's agent with this project's name is never renamed (herdr names span workspaces).
 echo "k1 w:99" >> "${ROOT}/agents"; : > "${ROOT}/herdr.log"
@@ -475,6 +490,36 @@ check "escalate_after = 0: attempts 0, 1, 2 and 5 never escalate" "code code cod
 printf '%s\n' "base_branches = dev main" "escalate_after = 3" > "${p}/.claude/swarm/config"
 check "escalate_after = 3: attempts: 2 is code, 3 is escalate" "code escalate" "$(ladder e4-a 2 3 -- "kind: code")"
 rm -f "${b}/stories/e4-a.md" "${b}/stories/e4-f.md"
+
+# --- close counts a failed build: story, close, story, close, story on one ready code story builds it
+# as code, code, then escalate, each in a fresh worktree. Before each close the builder has committed
+# and pushed story/x1, left an untracked file and opened a PR; the close clears them all away.
+gh_stub; : > "${ROOT}/gh.log"
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+item "${b}" stories/x1.md "status: ready" "kind: code" "repo: svc"
+wt="${ROOT}/svc-wt/x1"; adds=""; fresh=""; cleared=""
+left() { # which of x1's worktree, local story/x1 and origin's are still there
+  [[ ! -d "${wt}" ]] || printf ' worktree'
+  ! git -C "${ROOT}/svc" show-ref -q --verify refs/heads/story/x1 || printf ' branch'
+  ! git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/story/x1 || printf ' origin'
+}
+for i in 1 2 3; do
+  if run story x1 >/dev/null; then adds+="ok "; else adds+="failed "; fi
+  fresh+="$([[ "$(tip "${wt}" HEAD)" == "$(tip "${ROOT}/svc.git" dev)" && ! -e "${wt}/untracked" ]] && echo yes || echo no) "
+  [[ ${i} -lt 3 ]] || break
+  "${GIT[@]}" -C "${wt}" commit -q --allow-empty -m "attempt ${i}" && "${GIT[@]}" -C "${wt}" push -q origin story/x1
+  touch "${wt}/untracked"
+  echo "[{\"number\":${i},\"state\":\"OPEN\",\"url\":\"https://github.com/o/svc/pull/${i}\"}]" > "${ROOT}/prs.json"
+  run close x1 >/dev/null
+  cleared+="$(left)|"
+done
+check "story, close, story, close, story builds code, code, then escalate" "code code escalate" \
+  "$(awk -F'\t' '$3 == "x1" { print $2 }' "${p}/.swarm/agents.tsv" | paste -sd' ' -)"
+check "every worktree add succeeds, and starts fresh from the base" "ok ok ok |yes yes yes " "${adds}|${fresh}"
+check "after each close the worktree, local and origin's story/x1 are gone" "||" "${cleared}"
+check "each close closed its attempt's open PR" "2|yes|yes" \
+  "$(grep -c '^pr close' "${ROOT}/gh.log")|$(has "pr close https://github.com/o/svc/pull/1 --comment" "$(cat "${ROOT}/gh.log")")|$(has "pr close https://github.com/o/svc/pull/2 --comment" "$(cat "${ROOT}/gh.log")")"
+rm -f "${b}/stories/x1.md" "${ROOT}/prs.json"
 
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
 printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"

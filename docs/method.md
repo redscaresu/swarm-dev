@@ -164,7 +164,14 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **Below the design level, Fable is escalation only**: a story that failed twice, or an epic whose
   contradictions no one can reconcile. A story whose `attempts:` has reached `escalate_after` (2 by
   default) is built as `escalate`, on Fable at `xhigh`, ahead of `risk: high` and `sonnet_share`.
-  A `kind: lead` story never escalates, since no agent builds it.
+  A `kind: lead` story never escalates, since no agent builds it. `swarm.sh close <slug>` counts a
+  failed build. When the story is still `ready`, its builder is still open (with `keep_panes`, the
+  one it retires) and no PR on `story/<slug>` has merged, it raises `attempts:` by one and clears
+  the attempt away: it removes the worktree and `story/<slug>`, here and on origin, and closes each
+  open PR unmerged with a comment naming the attempt. The next build then starts fresh, and the
+  third runs on Fable. A close after `review`, after a merge or after the builder has gone counts
+  nothing, and `reconcile` sending a story back to `ready` never counts. If gh cannot list the PRs,
+  the close counts and clears nothing and says why on stderr.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost` turns that and Claude Code's logs into
   tokens and estimated cost per role. Change `policy()` from that table, not from a guess.

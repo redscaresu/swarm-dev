@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh policy <role>                                  print the model and effort for a role
-#   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow
+#   swarm.sh close <name>                                   close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
@@ -2031,6 +2031,15 @@ set_status() {
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
+# set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
+# when there is none, or drop it when <value> is empty.
+set_fm() {
+  awk -v k="$2" -v v="${3:-}" '
+    /^---$/ && ++n == 2 && !d && v != "" { print k ": " v }
+    n == 1 && index($0, k ":") == 1 { if (!d && v != "") print k ": " v; d = 1; next }
+    { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+}
+
 # review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge.
 mark_review() {
   local f url
@@ -3182,14 +3191,75 @@ archive_session() {
     || { rm -f "${dir}/.${session}.tmp"; echo "${name}: could not archive session ${session}; its log is still at ${src}" >&2; }
 }
 
-# close_agent <name> — close what was opened for <name>: its pane, or its tab when that was the
-# tab's last pane. A conductor's name closes its epic's tabs, with any story panes left in them.
-# With keep_panes = true, everything stays open to read, and the agent is only retired. Either way,
-# its session log is archived first.
+# close_agent <name> — close what was opened for <name> (close_panes), or with keep_panes = true
+# leave it open to read and only retire the agent. Either way, its session log is archived first.
+# A close that ends a failed build (failed_build, decided before anything closes, while the builder
+# can still be found) then raises the story's attempts: by one and clears the attempt away
+# (clear_build), so the next build starts fresh.
 close_agent() {
-  local state pane epic
+  local prs counted=0 f n
   archive_session "$1"
-  if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; return; fi
+  if prs="$(failed_build "$1")"; then counted=1; fi
+  if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
+  [[ ${counted} == 1 ]] || return 0
+  f="${BOARD}/stories/$1.md"; n="$(fm "${f}" attempts)"
+  # Checked before the arithmetic, which would evaluate it.
+  [[ "${n}" =~ ^(0|[1-9][0-9]*)?$ ]] \
+    || { echo "swarm: ${f}: attempts must be a non-negative whole number, not '${n}'; this failed build is not counted or cleared" >&2; return 0; }
+  n=$((${n:-0} + 1))
+  set_fm "${f}" attempts "${n}"
+  clear_build "$1" "${n}" "${prs}"
+}
+
+# failed_build <name> — succeed when closing <name> ends a failed build, and print gh's list of the
+# PRs on story/<name> (nothing with pr_per = epic, whose epic stories have none): <name> is a story
+# on the board, still ready, of a kind an agent builds, whose builder this project has open in herdr
+# under that name (not closed by hand, not already retired), and none of its PRs merged: with
+# merge = agent the close follows the merge before the board is pulled, so only the PR tells. One gh
+# call answers both; when it fails, nothing is counted or cleared, and stderr says so.
+failed_build() {
+  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merged
+  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
+  agent_kind "$(fm "${f}" kind)" || return 1
+  [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
+  # The conductor finishes an epic's story before closing it, so a ready one never merged.
+  [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0
+  if ! src="$(repo_dir "$(fm "${f}" repo)")" || ! url="$(git -C "${src}" remote get-url origin)" \
+     || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url)" \
+     || ! merged="$(json "any(p['state'] == 'MERGED' for p in d)" <<< "${prs}")"; then
+    echo "swarm: ${slug}: could not list the PRs on story/${slug}, so this close counts no failed build and clears nothing" >&2
+    return 1
+  fi
+  [[ "${merged}" == False ]] || return 1
+  printf '%s\n' "${prs}"
+}
+
+# clear_build <slug> <attempt> <prs> — clear a failed build away, so the next one starts fresh: in
+# the story's repo, its worktree and story/<slug>; each of <prs> (failed_build's gh list) still open,
+# closed unmerged with a comment naming the attempt; then story/<slug> on origin. A step that fails
+# is said on stderr, and the rest still run.
+clear_build() {
+  local slug="$1" b="story/$1" src wt url
+  src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
+  wt="$(worktree_for "${src}" "${slug}")"
+  if [[ -e "${wt}" ]]; then git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2; fi
+  if git -C "${src}" show-ref -q --verify "refs/heads/${b}"; then
+    git -C "${src}" branch -q -D "${b}" || echo "swarm: ${slug}: could not delete ${b} in ${src}" >&2
+  fi
+  while IFS= read -r url; do
+    [[ -n "${url}" ]] || continue
+    gh pr close "${url}" --comment "swarm.sh close: attempt $2 at ${slug} failed, so this PR is closed unmerged and the next build starts fresh." >/dev/null \
+      || echo "swarm: ${slug}: gh could not close ${url}" >&2
+  done < <(json "'\n'.join(p['url'] for p in d if p['state'] == 'OPEN')" <<< "${3:-[]}")
+  if git -C "${src}" ls-remote --exit-code origin "refs/heads/${b}" >/dev/null 2>&1; then
+    git -C "${src}" push -q origin --delete "${b}" || echo "swarm: ${slug}: could not delete ${b} on origin" >&2
+  fi
+}
+
+# close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
+# conductor's name closes its epic's tabs, with any story panes left in them.
+close_panes() {
+  local state pane epic
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"

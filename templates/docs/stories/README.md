@@ -14,6 +14,10 @@ and with which model (swarm-dev `docs/method.md` § Model and effort); `lead` st
 never given to a swarm agent. A `lead` story says what it needs from you, and marks each step
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
+`attempts: <n>` is how many builds of the story failed. Only `swarm.sh close` writes it, when it
+closes a builder whose story is still `ready`; once it reaches `escalate_after` (2 by default) the
+story is built on Fable (swarm-dev `docs/method.md` § Model and effort).
+
 A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the files it
 `touches`, which is how a wave avoids two agents editing the same file. A story whose work lands
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a

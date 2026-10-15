@@ -71,6 +71,31 @@ expect "blocked code story is a gate, not done" "gate" \
 expect "started one-off resumes" "resume a" \
   "item stories/a.md 'status: ready'" \
   'mkdir -p "../$(basename "$PWD")-wt/a"'
+# The same one-off with a real worktree, its builder open in a pane this project recorded: a counted
+# close clears the worktree, so the next step builds it afresh. herdr and gh are stubs.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+origin="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(
+  cd "${dir}" && git init -q && git init -q --bare "${origin}" && git remote add origin "${origin}"
+  git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git push -q origin HEAD
+  mkdir -p docs/stories bin .swarm/state && item stories/a.md 'status: ready' 'kind: code'
+  git worktree add -q -b story/a "../$(basename "${dir}")-wt/a" && echo "w:1 a" > .swarm/state/a
+  # shellcheck disable=SC2016 # the stubs' own shell expands these
+  printf '%s\n' '#!/bin/sh' 'case "$1 $2" in' \
+    "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"a\",\"agent_status\":\"idle\",\"pane_id\":\"w:1\"}]}}' ;;" \
+    "  \"tab list\") echo '{\"result\":{\"tabs\":[]}}' ;;" 'esac' > bin/herdr
+  printf '%s\n' '#!/bin/sh' "[ \"\$1 \$2\" = 'pr list' ] && echo '[]'" 'exit 0' > bin/gh
+  chmod +x bin/herdr bin/gh
+)
+nxt() { local got; got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; echo "${got%%$'\n'*}"; }
+before="$(nxt)"
+(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" close a >/dev/null 2>&1) || true
+for pair in "before:resume a:${before}" "after:story a:$(nxt)"; do
+  IFS=: read -r when want got <<< "${pair}"
+  if [[ "${got}" == "${want}" ]]; then echo "ok   a started one-off is '${want}' ${when} the counted close"; else
+    echo "FAIL a started one-off is '${want}' ${when} the counted close: got '${got}'"; fails=$((fails + 1)); fi
+done
+rm -rf "${dir}" "${dir}-wt" "${origin}"
 expect "blocked story is not built" "gate" \
   "item epics/e1.md 'status: active'" \
   "item stories/a.md 'status: blocked' 'kind: lead' 'epic: e1'"
