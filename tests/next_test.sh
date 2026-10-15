@@ -409,17 +409,19 @@ CLAUDE_STUB_AGENTS="${dir}/no-such-file" refused "tell refuses when Claude Code 
 for k in nudge resume; do told "tell takes the kind ${k}" idle "${k}" findings.md; done
 # goal = N: a findings tell waits for the findings turn to be idle, then sends a fresh /goal and finds
 # it set in sess-s1's log after the tell began; a nudge or resume tell, or goal off, sends one record.
+# The events log holds one ok tell:findings line, and when the goal step fails, its failure after it.
 records() { grep -c '^--$' "${dir}/sent" 2>/dev/null || true; }
 reply() { local f; f="$(awk '/^reply_sentence\(\)/,/^}$/' "${SWARM}")"; (eval "${f}"; reply_sentence "$1"); }
 goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal> <tell args...>
-  local name="$1" rc="$2" want="$3" out goal; shift 3
-  : > "${dir}/projects/p/sess-s1.jsonl"; rm -f "${dir}/screen"; tsession idle
-  out="$(tellout idle "$@")"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
+  local name="$1" rc="$2" want="$3" out goal ev; shift 3
+  : > "${dir}/projects/p/sess-s1.jsonl"; rm -f "${dir}/screen" "${dir}/.swarm/events.tsv"; tsession idle
+  out="$(tellout idle "$@")"; ev="$(cut -f2,3,5 "${dir}/.swarm/events.tsv" | tr '\t\n' ' |')"; goal="$(sed -n '/^\/goal /,/^--$/p' "${dir}/sent" 2>/dev/null)"
   if [[ ${rc} == 0 && "${out}" == *"exit 0" && "$(records)" == 2 && "$(head -1 "${dir}/sent")" == "From the conductor:" \
         && "${goal}" == *"the findings in this message are addressed"*"${want}"*"or stop after 4 more turns"* && "${goal}" == *"state: idle"* \
-        && -z "$(ls "${dir}/tmp")" ]] \
-     || [[ ${rc} == 1 && "${out}" == *"s1: ${want}"*"exit 1" ]]; then echo "ok   ${name}"; else
-    echo "FAIL ${name}: got '${out}', sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
+        && -z "$(ls "${dir}/tmp")" && "${ev}" == "tell:findings s1 ok|" ]] \
+     || [[ ${rc} == 1 && "${out}" == *"s1: ${want}"*"exit 1" \
+           && "${ev}" == "tell:findings s1 ok|tell:findings s1 s1: ${want}"* ]]; then echo "ok   ${name}"; else
+    echo "FAIL ${name}: got '${out}', events '${ev}', sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
 }
 onerecord() { # <name> <tell args...> — the tell sends one record, no goal
   local name="$1"; shift

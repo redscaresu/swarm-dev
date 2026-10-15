@@ -1419,7 +1419,13 @@ tell_agent() {
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
   { echo "From the conductor:"; echo; cat "${f}"; } > "${msg}"
   deliver_prompt "${name}" "${msg}"
-  [[ "${CFG_goal}" == off || "${kind}" != findings ]] || findings_goal "$1" "${name}" "${since}" "${msg}.goal"
+  if [[ "${CFG_goal}" != off && "${kind}" == findings ]]; then
+    # The findings reached the builder: if the goal step fails, log that delivery as an ok tell
+    # (outcomes and the stall rule count only ok ones), beside main's line for the failure.
+    # shellcheck disable=SC2064 # expand now, as above
+    trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
+    findings_goal "$1" "${name}" "${since}" "${msg}.goal"
+  fi
   echo "told ${name}"
 }
 
