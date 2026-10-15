@@ -28,7 +28,9 @@ run inside herdr (`HERDR_ENV=1`), as does `swarm.sh conduct`. `swarm.sh init`, `
 It stops only when the user has to act: a draft design, epics or stories to approve, a `lead`
 story, a PR to merge, an expired login (`/login`), a proposed rule, or a `blocked` or `later`
 item (the user sets it `ready` or `active` to start it). After the user acts, run
-`/swarm-dev:swarm` again. The full table of stops and what to do is in README § When `/swarm-dev:swarm` stops for you.
+`/swarm-dev:swarm` again. A story that failed on Fable (`next` says `escalated <slug>`) is not a
+stop: the lead re-scopes it and runs `swarm.sh reset`, or runs `swarm.sh drop`, then tells the
+user why. The full table of stops and what to do is in README § When `/swarm-dev:swarm` stops for you.
 
 ## Commands
 
@@ -43,6 +45,7 @@ item (the user sets it `ready` or `active` to start it). After the user acts, ru
 | `swarm.sh dash --watch` | live dashboard: board, agents, recent events |
 | `swarm.sh conduct <epic>` | start a conductor that builds one epic |
 | `swarm.sh cost` | tokens and estimated cost per role |
+| `swarm.sh reset <slug> <reason>` | put an escalated story back in the queue, with its kind and no attempts |
 | `swarm.sh version` | the installed version, and whether a newer one is out |
 | `swarm.sh update` | fetch the newest version (restart Claude Code after) |
 

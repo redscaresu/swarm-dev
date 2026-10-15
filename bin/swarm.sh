@@ -19,6 +19,8 @@
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
+#   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block
+#   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
@@ -1634,6 +1636,8 @@ build_story() {
   story_brief "${slug}" "${src}" "${base}" "${epic_branch}" > "${prompt}"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
+  # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
+  [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
 }
 
 # epic_branch_for <repo-dir> <epic> <base> — epic/<epic>, fetched from origin; pushed there from
@@ -1865,11 +1869,13 @@ epic_has_stories() {
 #   plan-epic <epic>  an active epic has no stories yet
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
+#   escalated <slug>  a story whose Fable build failed (kind: lead with escalated_from:): the lead
+#                     re-scopes it and runs reset, or drops it
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting="" b open
+  local f slug epic kind story_epic src buildable="" waiting="" b open when
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -1944,6 +1950,17 @@ next_step() {
       draft) echo "hld ${slug}"; echo "the HLD ${slug} is still a draft"; return ;;
     esac
   done < <(board hld)
+  while IFS= read -r f; do
+    is_escalated "${f}" || continue
+    slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"
+    echo "escalated ${slug}"
+    if [[ -n "${when}" ]]; then
+      echo "${slug} failed on Fable again after its one reset (${when}): drop it with swarm.sh drop ${slug} <reason>, then tell the user why"
+    else
+      echo "${slug} failed on Fable: re-scope it and run swarm.sh reset ${slug} <reason>, or swarm.sh drop ${slug} <reason>, then tell the user why"
+    fi
+    return
+  done < <(board stories)
   waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
@@ -1951,14 +1968,19 @@ next_step() {
   echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
 }
 
-# waiting_on_user — one line per board item only the user can move: lead stories, blocked and later
-# items, and PRs awaiting the user's merge. Shared by next_step's gate and status.
+# is_escalated <story-file> — true for a story escalate_story handed to the lead: ready, kind: lead,
+# with escalated_from:. It is the lead's to decide (next's escalated step), never the user's.
+is_escalated() { [[ "$(fm "$1" status)" == ready && "$(fm "$1" kind)" == lead && -n "$(get_fm "$1" escalated_from)" ]]; }
+
+# waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
+# one, which is the lead's), blocked and later items, and PRs awaiting the user's merge. Shared by
+# next_step's gate, status and dash.
 waiting_on_user() {
   local f kind slug waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
-      ready) agent_kind "${kind}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
+      ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
       review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;
@@ -2017,6 +2039,54 @@ finish_item() {
   die "no story or epic '${slug}' in ${BOARD}"
 }
 
+# reset_at <slug> — when the slug was reset (its first ok reset line in events.tsv), or nothing. A story
+# is reset at most once.
+reset_at() { awk -F'\t' -v s="$1" '$2 == "reset" && $3 == s && index($5, "ok") == 1 { print $1; exit }' "${EVENTS_LOG}" 2>/dev/null || true; }
+
+# reset <slug> <reason> — put a story the lead re-scoped back in the build queue: drop attempts:,
+# put kind back from escalated_from: (no kind: line for NO_KIND_LINE) while the story still says
+# kind: lead, so a kind the lead re-scoped stays, drop escalated_from:, and remove escalate_story's
+# block. A story with
+# neither attempts: nor escalated_from: is refused, and so is a second reset (an ok reset line for the
+# slug in events.tsv): at most one per story. So is a block whose close marker is gone, which would
+# take the rest of the file with it. main logs the reason as the outcome.
+reset_story() {
+  local slug="$1" f from when put kind
+  [[ -n "${slug}" ]] || die "reset: <slug> is missing: swarm.sh reset <slug> <reason>"
+  [[ -n "${2//[[:space:]]/}" ]] || die "reset: <reason> is missing: swarm.sh reset ${slug} <reason>"
+  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "reset: bad slug '${slug}'"
+  f="${BOARD}/stories/${slug}.md"
+  [[ -f "${f}" ]] || die "reset: no story ${f}"
+  from="$(get_fm "${f}" escalated_from)"
+  [[ -n "${from}$(get_fm "${f}" attempts)" ]] || die "reset: ${slug} has neither attempts: nor escalated_from:, so there is nothing to reset"
+  when="$(reset_at "${slug}")"
+  [[ -z "${when}" ]] || die "reset: ${slug} was reset already, at ${when} (events.tsv); a story is reset at most once, so drop it: swarm.sh drop ${slug} <reason>"
+  awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } $0 == c { s = 0 } END { exit s }' "${f}" \
+    || die "reset: ${f} has the line '${ESCALATED_OPEN}' and no '${ESCALATED_CLOSE}' after it, so the block's end is unknown; put that line back where the block ends, then reset again"
+  put="${from}"; [[ "${from}" != "${NO_KIND_LINE}" ]] || put=""
+  [[ -z "${from}" || "$(get_fm "${f}" kind)" != lead ]] || set_fm "${f}" kind "${put}"
+  set_fm "${f}" escalated_from
+  set_fm "${f}" attempts
+  awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } !s { print } $0 == c { s = 0 }' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
+  kind="$(get_fm "${f}" kind)"
+  echo "reset: ${slug} (kind: ${kind:-none, so code}; no attempts:)"
+}
+
+# drop <slug> <reason> — the lead drops an escalated story (is_escalated): take it off the board as
+# finish does (delete it, or with finished = mark set status: done), so next stops naming it, and the
+# lead commits the change in a board PR. Any other story is
+# refused. main logs the reason as the outcome.
+drop_story() {
+  local f="${BOARD}/stories/$1.md"
+  [[ -n "$1" ]] || die "drop: <slug> is missing: swarm.sh drop <slug> <reason>"
+  [[ -n "${2//[[:space:]]/}" ]] || die "drop: <reason> is missing: swarm.sh drop $1 <reason>"
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "drop: bad slug '$1'"
+  [[ -f "${f}" ]] || die "drop: no story ${f}"
+  is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
+  finish_item "$1"
+  echo "dropped: $1; commit the change to the board in a board PR"
+}
+
 # item_file <slug> — the story or epic file for <slug>.
 item_file() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "bad slug '$1'"
@@ -2037,7 +2107,7 @@ set_status() {
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes with set_fm, which refuses any other.
 # reconcile puts them back as committed on an item whose PRs merged, so they never stop its pull.
-SET_FM_KEYS="attempts"
+SET_FM_KEYS="attempts kind escalated_from"
 
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
 # when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
@@ -3214,7 +3284,8 @@ archive_session() {
 # leave it open to read and only retire the agent. Either way, its session log is archived first.
 # A close that ends a failed build (failed_build, decided before anything closes, while the builder
 # can still be found) then raises the story's attempts: by one and clears the attempt away
-# (clear_build), so the next build starts fresh.
+# (clear_build), so the next build starts fresh. When that build was escalate, the story becomes the
+# lead's (escalate_story).
 close_agent() {
   local prs counted=0 f n
   archive_session "$1"
@@ -3231,6 +3302,50 @@ close_agent() {
   n=$((${n:-0} + 1))
   set_fm "${f}" attempts "${n}"
   clear_build "$1" "${n}" "${prs}"
+  escalate_story "$1" "${n}" "${prs}"
+}
+
+# ESCALATED_OPEN, ESCALATED_CLOSE: the markers around the lead's block, which escalate_story appends
+# to a story and reset_story removes.
+ESCALATED_OPEN="<!-- swarm.sh escalated: swarm.sh reset removes this block -->"
+ESCALATED_CLOSE="<!-- /swarm.sh escalated -->"
+# NO_KIND_LINE: escalated_from:'s value for a story that had no kind: line (built as code), so reset
+# takes the line out again and the file is its committed text.
+NO_KIND_LINE="code (default)"
+
+# escalate_story <slug> <attempt> <prs> — after a counted close of an escalate build (the role on
+# the newest agents.tsv line for the slug's agent), the story is the lead's to decide: kind: lead,
+# escalated_from: its kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block naming the lead's
+# choices and every attempt's PR from <prs> (failed_build's gh list; empty with pr_per = epic). A story
+# reset once already (reset_at) is offered only drop. The close of any other build changes nothing here.
+escalate_story() {
+  local f="${BOARD}/stories/$1.md" role from urls k=0 when put
+  role="$(awk -F'\t' -v n="$(agent_name "$1")" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null || true)"
+  [[ "${role}" == escalate ]] || return 0
+  from="$(get_fm "${f}" kind)"; from="${from:-${NO_KIND_LINE}}"
+  put="puts back \`kind: ${from}\`"
+  [[ "${from}" != "${NO_KIND_LINE}" ]] || put="takes the \`kind:\` line out again (it had none, so it builds as code)"
+  urls="$(json "'\n'.join('- ' + p['url'] for p in d)" <<< "${3:-[]}")"
+  [[ -z "${urls}" ]] || k="$(grep -c . <<< "${urls}")"
+  when="$(reset_at "$1")"
+  set_fm "${f}" kind lead
+  set_fm "${f}" escalated_from "${from}"
+  [[ -z "$(tail -c1 "${f}")" ]] || echo >> "${f}"
+  { echo "${ESCALATED_OPEN}"
+    echo
+    echo "**Escalated.** Attempt $2, built on Fable, failed, so no agent builds this story until the lead decides, then tells the user what it chose and why:"
+    echo
+    if [[ -n "${when}" ]]; then
+      echo "- It was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
+    else
+      echo "- Re-scope the story, then run \`swarm.sh reset $1 <reason>\`, which ${put} while it still says \`kind: lead\` (a kind you set yourself stays), and clears \`attempts:\`. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the re-scope as a board PR first (with pr_per = epic, then merge the base into epic/<epic>), then reset and pull the board in one go. At most one reset per story: after a second failed escalate build, drop it."
+      echo "- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
+    fi
+    echo
+    if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "No PR was found on story/$1."; fi
+    echo "${ESCALATED_CLOSE}"; } >> "${f}"
+  record_event escalated "$1" "ok (attempts $2, ${k} PRs)"
+  echo "escalated: $1 is kind: lead now, for the lead to reset or drop"
 }
 
 # failed_build <name> — succeed when closing <name> ends a failed build, and print gh's list of the
@@ -3496,6 +3611,8 @@ dispatch() {
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
+    reset)  reset_story "${1:-}" "${*:2}" ;;
+    drop)   drop_story "${1:-}" "${*:2}" ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
@@ -3554,11 +3671,12 @@ main_signal() {
 # outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
-# log one line per item themselves. A tell's command is tell:<kind>, so its target stays the slug.
+# log one line per item themselves. A tell's command is tell:<kind>, so its target stays the slug. A
+# reset or drop that succeeds logs ok (<reason>).
 main() {
   local rc why
   [[ "${1:-}" != init ]] || init_check
-  EV_CMD="${1:-}"; EV_TARGET=""; EV_ERR=/dev/null; EV_CHILD=""
+  EV_CMD="${1:-}"; EV_TARGET=""; EV_OK=""; EV_ERR=/dev/null; EV_CHILD=""
   if [[ -z "${EV_CMD}" || " ${READ_ONLY_COMMANDS} " == *" ${EV_CMD} "* || ( "${EV_CMD}" == tidy && "${2:-}" != --yes ) ]] \
      || ! is_command "${EV_CMD}"; then
     dispatch "$@"; return
@@ -3574,6 +3692,7 @@ main() {
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).
     tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
+    reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
@@ -3589,7 +3708,7 @@ main() {
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
   elif [[ "${EV_TARGET}" != + ]]; then
-    record_event "${EV_CMD}" "${EV_TARGET}"
+    record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   return "${rc}"
