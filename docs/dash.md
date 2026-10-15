@@ -6,7 +6,8 @@ when something changed. Press `q` to quit (Ctrl-C works too), `r` to redraw, `t`
 agents by herdr workspace and tab and back, and `l` to show the model per role; resizing the
 terminal redraws it at the new size. It works in any terminal, inside herdr or not: it only reads,
 so it asks herdr for the agents whenever `herdr` is on your PATH. It never changes the board, the
-state or the logs, and never opens or closes a pane.
+state or the logs, and never opens or closes a pane. In a folder with no board it stops with one line
+naming `swarm.sh init`.
 
 In a terminal at least 140 columns wide it splits into two columns: needs you and the epics on
 the left, recent as a timestamped log on the right, and a status bar on the last line. Narrower, it
