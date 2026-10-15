@@ -76,7 +76,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `/hld <title>` | Write a design with a co-author agent. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life and how long each running codex review has run. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
 | `swarm.sh cost` | Show where the tokens went. |
 | `swarm.sh outcomes` | One row per build: model, cost, review rounds, and whether it merged. |
 
