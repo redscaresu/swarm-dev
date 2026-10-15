@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # decisions_test.sh — `swarm.sh decisions` against a fixture: a builder whose story a merge deleted, a
-# conductor, a codex agent, a fixed finding (an old four-field row) and a declined one, nudges and
-# closes, one with a cause. gh is a stub on PATH. The export must be valid JSONL, null where the logs hold nothing, and
+# conductor, a codex agent, a fixed finding (an old four-field row) and a declined one, a six-field
+# declined row and a seven-field fixed one on a PR with no build, nudges and closes, one with a cause. gh is a stub on PATH. The export must be valid JSONL, null where the logs hold nothing, and
 # write nothing.
 set -euo pipefail
 
@@ -34,7 +34,9 @@ printf '%s\n' \
   $'2026-10-03T14:00:00Z\tclose:impossible\ts-one\tw:1\tok' > "${P}/.swarm/events.tsv"
 printf '%s\n' \
   $'2026-10-02\tvacuous-test\to/r#7\ta test that could not fail' \
-  $'2026-10-02\tout-of-scope\thttps://github.com/o/r/pull/7\tan edge case outside the story\tdeclined' > "${P}/.swarm/findings.tsv"
+  $'2026-10-02\tout-of-scope\thttps://github.com/o/r/pull/7\tan edge case outside the story\tdeclined' \
+  $'2026-10-02\tnit\to/r#8\ta reviewer named\tdeclined\tcodex' \
+  $'2026-10-02\tdenylist\to/r#8\ta column added later\tfixed\tlead\tlater' > "${P}/.swarm/findings.tsv"
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\n[ "$4" = story/s-one ] && printf "https://github.com/o/r/pull/7\\tMERGED\\n"\nexit 0\n' > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
@@ -64,6 +66,8 @@ model_choice|s-one|# Build s-one|null|{"effort": "xhigh", "kind": "claude", "mod
 model_choice|codex|None|null|{"effort": "high", "kind": "codex", "model": "default", "role": "codex"}|null
 finding_accept|o/r#7|a test that could not fail|["fixed", "declined"]|"fixed"|${O}
 finding_accept|https://github.com/o/r/pull/7|an edge case outside the story|["fixed", "declined"]|"declined"|${O}
+finding_accept|o/r#8|a reviewer named|["fixed", "declined"]|"declined"|null
+finding_accept|o/r#8|a column added later|["fixed", "declined"]|"fixed"|null
 nudge|s-one|None|null|"nudge"|${O}
 nudge|s-one|None|null|"tell:nudge"|${O}
 close|s-one|None|null|"close"|${O}

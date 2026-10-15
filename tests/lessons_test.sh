@@ -45,6 +45,30 @@ check "a declined finding is logged as declined" "out-of-scope	declined" "$(tail
 check "declined findings in 3 PRs are no candidate, nor listed" "no" \
   "$(grep -q "out-of-scope" <<< "$(sw lessons; sw lessons --all)" && echo yes || echo no)"
 
+# The reviewer that raised a finding is its sixth field; the flags go before the kind, in either order.
+F="${dir}/.swarm/findings.tsv"
+sw log-finding --reviewer codex rev-kind o/r#93 t >/dev/null || true
+check "--reviewer is logged after the outcome" "fixed	codex" "$(tail -1 "${F}" | cut -f5,6)"
+sw log-finding --declined --reviewer code-review rev-kind o/r#93 t >/dev/null || true
+check "--declined before --reviewer" "declined	code-review" "$(tail -1 "${F}" | cut -f5,6)"
+sw log-finding --reviewer code-review --declined rev-kind o/r#93 t >/dev/null || true
+check "--reviewer before --declined" "declined	code-review" "$(tail -1 "${F}" | cut -f5,6)"
+sw log-finding rev-kind o/r#93 t >/dev/null
+check "no --reviewer is logged as unknown" "unknown" "$(tail -1 "${F}" | cut -f6)"
+n="$(wc -l < "${F}")"
+check "an unknown reviewer is refused" "refused" "$(sw log-finding --reviewer bot rev-kind o/r#93 t >/dev/null && echo logged || echo refused)"
+check "a bare trailing --reviewer is refused" "refused" "$(sw log-finding --reviewer >/dev/null && echo logged || echo refused)"
+check "a refused reviewer appends nothing" "$((n))" "$(($(wc -l < "${F}")))"
+
+# finding_rows reads rows of any width from four fields up: a later column drops no row, and a bad
+# reviewer drops it.
+for w in 'o/r#101\tx' 'o/r#102\tx\tfixed\tcodex' 'o/r#103\tx\tfixed\tlead\ta later column'; do
+  printf '%s\twide\t%b\n' "$(date +%F)" "${w}" >> "${F}"
+  printf '%s\twide-bogus\t%b\n' "$(date +%F)" "${w/codex/bogus}" >> "${F}"
+done
+check "a kind fixed in 4-, 6- and 7-field rows on 3 PRs is a candidate" "yes" "$(has "candidate wide: fixed in 3 PRs" "$(sw lessons)")"
+check "a row whose reviewer is not one does not count" "no" "$(grep -q "candidate wide-bogus" <<< "$(sw lessons)" && echo yes || echo no)"
+
 # A malformed date never counts as recent.
 for pr in o/r#60 o/r#61 o/r#62; do printf 'soon\tbad-date\t%s\tx\n' "${pr}" >> "${dir}/.swarm/findings.tsv"; done
 check "a malformed date is not counted" "no" "$(grep -q "candidate bad-date" <<< "$(sw lessons)" && echo yes || echo no)"
@@ -111,7 +135,7 @@ check "a long brief is flagged" "yes" "$(has "long brief" "$(sw lessons)")"
 
 # Tabs and newlines in a finding cannot break the log's columns.
 sw log-finding tab-test o/r#7 "$(printf 'a\tb\nc')" >/dev/null
-check "a finding's tabs and newlines are flattened" "5" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
+check "a finding's tabs and newlines are flattened" "6" "$(tail -1 "${dir}/.swarm/findings.tsv" | awk -F'\t' '{print NF}')"
 
 # Recurring: with the rule on origin/HEAD since a date, only findings after it count. The findings that
 # made the kind a candidate must not flag the rule as failing the day it lands.

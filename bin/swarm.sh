@@ -11,7 +11,7 @@
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
-#   swarm.sh log-finding [--declined] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind (the outer loop)
+#   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -767,20 +767,27 @@ FINDINGS_LOG_NAME="findings.tsv"
 LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs is a candidate rule
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
+# Who raised a finding; ci is a PR review bot, check-run notes or code-scanning alerts (swarm.sh
+# findings), and unknown is any row logged without one. REPORT_PY's REVIEWERS keeps the same list.
+FINDING_REVIEWERS="codex code-review ci conductor lead unknown"
 
-# record_finding <kind> <pr-url> <text> <fixed|declined> — log one finding and what became of it.
-# A row is date, kind, PR, text, outcome; rows from before the outcome column have four fields and
-# were all fixed. lessons, outcomes and dash count only fixed rows; decisions reads both.
+# record_finding <kind> <pr-url> <text> <fixed|declined> <reviewer> — log one finding, who raised it
+# and what became of it. A row is date, kind, PR, text, outcome, reviewer; rows from before the
+# outcome column have four fields and were all fixed, and rows from before the reviewer column have
+# five. lessons, outcomes and dash count only fixed rows; decisions reads both.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4"
-  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] || die "usage: swarm.sh log-finding [--declined] <kind> <pr-url> <one line>"
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="$5"
+  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
+    || die "usage: swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <one line>"
+  [[ "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ]] \
+    || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
     || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
   text="${text:0:200}"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
@@ -788,8 +795,10 @@ record_finding() {
 # REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
 #   session_log(projects, session) is a session's .jsonl under Claude Code's projects dir, or "".
-#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome); a row
-#   from before the outcome column is "fixed". fixed_rows(path) is the fixed ones' first four fields.
+#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome, reviewer);
+#   a row from before the outcome column is "fixed", and one from before the reviewer column "unknown".
+#   Fields past the sixth are ignored, so a column appended later drops no row. fixed_rows(path) is
+#   the fixed ones' first four fields.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
@@ -797,6 +806,7 @@ import glob, json, os, re
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
+REVIEWERS = ("codex", "code-review", "ci", "conductor", "lead", "unknown")  # FINDING_REVIEWERS
 
 def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
@@ -809,8 +819,9 @@ def session_log(projects, session):
 def finding_rows(path):
     if not os.path.exists(path):
         return []
-    rows = (l.rstrip("\n").split("\t") for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
-    return [f if len(f) == 5 else f + ["fixed"] for f in rows if len(f) == 4 or (len(f) == 5 and f[4] in ("fixed", "declined"))]
+    rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
+    rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
+    return [f for f in rows if f[4] in ("fixed", "declined") and f[5] in REVIEWERS]
 
 def fixed_rows(path):
     return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
@@ -1130,7 +1141,7 @@ def joined(key, day):
     # The newest build of <key> started on or before <day>.
     return next((o for d, keys, o in reversed(builds) if key in keys and d <= day), None)
 
-for day, kind, pr, text, chosen in finding_rows(findings):
+for day, kind, pr, text, chosen, _ in finding_rows(findings):
     if day >= since:
         out.append(rec("finding_accept", day, pr, text, ["fixed", "declined"], chosen, joined(pr_key(pr), day)))
 for f in ([l.rstrip("\n").split("\t") for l in open(events, errors="ignore")] if os.path.exists(events) else []):
@@ -4279,8 +4290,12 @@ dispatch() {
     cost)   cost_report "${1:-}" ;;
     outcomes) outcomes_report "$@" ;;
     decisions) decisions_report "$@" ;;
-    log-finding) o=fixed; if [[ "${1:-}" == --declined ]]; then o=declined; shift; fi
-            record_finding "${1:-}" "${2:-}" "${*:3}" "${o}" ;;
+    # --declined and --reviewer <who> come before the kind, in either order.
+    log-finding) o=fixed; r=unknown
+            while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
+              if [[ "$1" == --declined ]]; then o=declined; shift; else r="${2:-}"; shift; [[ $# -eq 0 ]] || shift; fi
+            done
+            record_finding "${1:-}" "${2:-}" "${*:3}" "${o}" "${r}" ;;
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
@@ -4407,9 +4422,14 @@ main() {
   fi
   case "${EV_CMD}" in
     agent) [[ -z "${3:-}" ]] || EV_TARGET="$(agent_name "$3")" ;;
-    # A decline is logged as log-finding:declined, so its target stays <kind> <pr>, as for a fix.
-    log-finding) EV_TARGET="${2:-} ${3:-}"
-                 if [[ "${2:-}" == --declined ]]; then EV_CMD="log-finding:declined"; EV_TARGET="${3:-} ${4:-}"; fi
+    # A decline is logged as log-finding:declined, so its target stays <kind> <pr>, as for a fix; the
+    # flags (--declined, --reviewer <who>) are skipped as dispatch skips them.
+    log-finding) local a=("${@:2}") i=0
+                 while [[ "${a[i]:-}" == --declined || "${a[i]:-}" == --reviewer ]]; do
+                   if [[ "${a[i]}" == --declined ]]; then EV_CMD="log-finding:declined"; else i=$((i + 1)); fi
+                   i=$((i + 1))
+                 done
+                 EV_TARGET="${a[i]:-} ${a[i + 1]:-}"
                  EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     tidy) EV_TARGET=- ;;
