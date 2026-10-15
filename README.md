@@ -76,9 +76,11 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `/hld <title>` | Write a design with a co-author agent. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
-| `swarm.sh cost` | Show where the tokens went. |
-| `swarm.sh outcomes` | One row per build: model, cost, review rounds, and whether it merged. |
+| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life and how long each running codex review has run. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
+| `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
+| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. |
+| `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date. |
+| `swarm.sh outcomes` | One row per build: model, cost, review rounds, whether it merged, when it started, and its escalation steps. |
 
 Settings such as `merge = agent` go in `.claude/swarm/config`
 ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
@@ -96,7 +98,7 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a builder stopped `cleared-on-error` (its goal was refused or failed) | nothing: the wave stops, the story is held on the board (`held_for:`, unless the close printed `not held:`), and the lead decides whether to build it again and tells you why |
-| a PR waiting for you | merge it, or close it to send the story back |
+| a PR waiting for you | merge it, or ask the lead to (it runs `swarm.sh merge`), or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (`swarm.sh conduct` sets a `later` epic `active` itself) |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
@@ -125,6 +127,7 @@ escalated today, which attempt each Fable builder is on, and each escalation ste
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
+`cost`, `outcomes` and `decisions` read the copy once the original is gone.
 
 `/swarm-dev:swarm` tells you when a new version is out. To update, run
 `! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,

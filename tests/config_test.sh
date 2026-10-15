@@ -100,6 +100,10 @@ for v in 0 -1 1.5 two on; do
     "$(fails_with "${p}/.claude/swarm/config:1: goal must be off or a positive whole number" run "${p}" config)"
 done
 check "lead ships off" "off" "$(project "${p}"; run "${p}" config lead)"
+check "merge_admin ships false" "false" "$(project "${p}"; run "${p}" config merge_admin)"
+project "${p}" "merge_admin = yes"
+check "merge_admin = yes is refused, naming file and line" "yes" \
+  "$(fails_with "${p}/.claude/swarm/config:1: merge_admin must be true or false, not 'yes'" run "${p}" config)"
 project "${p}" "lead = session"
 check "lead = session is read" "session" "$(run "${p}" config lead)"
 project "${p}" "lead = on"
@@ -139,6 +143,9 @@ check "the table's goal row has the Default CFG_goal ships" "\`$(project "${p}";
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's codex_minutes row has the Default CFG_codex_minutes ships" "\`$(project "${p}"; run "${p}" config codex_minutes)\`" \
   "$(sed -n 's/^| `codex_minutes` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
+# shellcheck disable=SC2016 # the backticks are the table's
+check "the table's merge_admin row has the Default CFG_merge_admin ships" "\`$(project "${p}"; run "${p}" config merge_admin)\`" \
+  "$(sed -n 's/^| `merge_admin` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's lead row has the Default CFG_lead ships" "\`$(project "${p}"; run "${p}" config lead)\`" \
   "$(sed -n 's/^| `lead` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"

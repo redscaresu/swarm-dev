@@ -5,13 +5,14 @@
 #   swarm.sh story <slug>                                   build one <board>/stories/<slug>.md
 #   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
+#   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
-#   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
+#   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
-#   swarm.sh log-finding [--declined] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind (the outer loop)
+#   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -24,6 +25,7 @@
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
+#   swarm.sh merge [--board] [--head <sha>] <pr-url>        merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
@@ -131,6 +133,7 @@ CFG_repos_dir=""        # empty: the project dir's parent
 CFG_base_branches=""    # empty: origin's default branch
 CFG_finished=delete
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
+CFG_merge_admin=false   # true: swarm.sh merge passes --admin, after checking the base's required checks itself
 CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
@@ -143,7 +146,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge merge_admin review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -179,7 +182,7 @@ load_config() {
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
       review_bot)
         [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
-      sign_commits|keep_panes)
+      sign_commits|keep_panes|merge_admin)
         [[ "${value}" == true || "${value}" == false ]] || die "${where}: ${key} must be true or false, not '${value}'" ;;
       pr_per)
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
@@ -485,9 +488,14 @@ def stall_age(seen, slug, name, signs, now=None):
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
 # Only lines shaped like a tab record ("<pane> [name]", a pane id like w1:p6K) count: STATE_DIR also
-# holds codex briefs, watch-seen and .tmp files, and a list of those to skip would fail open.
+# holds codex briefs, watch-seen and .tmp files, and a list of those to skip would fail open. Only
+# regular files are read, since it also holds reconcile-backup/, and it always succeeds: a cat that
+# failed on that directory used to fail it under pipefail, so a caller reading its status saw none.
 own_panes() {
-  cat "${STATE_DIR}"/* 2>/dev/null | awk 'NF <= 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ {print $1}'
+  local f
+  for f in "${STATE_DIR}"/*; do
+    if [[ -f "${f}" ]]; then cat "${f}" 2>/dev/null || true; fi
+  done | awk 'NF <= 2 && $1 ~ /^[A-Za-z0-9]+:[A-Za-z0-9]+$/ {print $1}'
 }
 
 require_herdr() { [[ "${HERDR_ENV:-}" == 1 ]] || die "not running inside a herdr pane (HERDR_ENV != 1)"; }
@@ -696,6 +704,10 @@ CLAUDE_PROJECTS="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/pr
 # `cost` can attribute every token to a role. Beside state/, not in it: state/ holds tab records.
 AGENTS_LOG="${PROJECT_DIR}/.swarm/agents.tsv"
 
+# SESSIONS_DIR: archive_session's gzip copies of closed agents' session logs, which cost and outcomes
+# read once Claude Code has deleted the original.
+SESSIONS_DIR="${PROJECT_DIR}/.swarm/sessions"
+
 # session_for_pane <pane> — the Claude session id herdr reports for the agent in <pane>, or nothing.
 session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
@@ -768,33 +780,62 @@ FINDINGS_LOG_NAME="findings.tsv"
 LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs is a candidate rule
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
+# Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
+# code-scanning alerts (swarm.sh findings). A row logged without --reviewer says unknown. The reports
+# read this list as SWARM_FINDING_REVIEWERS, so a reviewer is added here alone.
+FINDING_REVIEWERS="codex code-review ci conductor lead"
 
-# record_finding <kind> <pr-url> <text> <fixed|declined> — log one finding and what became of it.
-# A row is date, kind, PR, text, outcome; rows from before the outcome column have four fields and
-# were all fixed. lessons, outcomes and dash count only fixed rows; decisions reads both.
+# finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
+# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REVIEWER to --reviewer's value (unset
+# without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies,
+# so main reads the events target with it before the command runs.
+finding_flags() {
+  local n
+  FINDING_OUTCOME=fixed; unset FINDING_REVIEWER; FINDING_SKIP=0
+  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
+    n=1
+    if [[ "$1" == --declined ]]; then FINDING_OUTCOME=declined; else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
+    shift "${n}"; FINDING_SKIP=$((FINDING_SKIP + n))
+  done
+}
+
+# record_finding <kind> <pr-url> <text> <fixed|declined> [reviewer] — log one finding, what became of
+# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A row is date,
+# kind, PR, text, outcome, reviewer; rows from before the outcome column have four fields and were
+# all fixed, and rows from before the reviewer column have five. lessons, outcomes and dash count
+# only fixed rows; decisions reads both.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4"
-  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] || die "usage: swarm.sh log-finding [--declined] <kind> <pr-url> <one line>"
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}"
+  [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
+    || die "usage: swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <one line>"
+  [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
+    || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
     || die "kind '${kind}' must be short kebab-case (32 characters at most), like vacuous-test"
   text="${text:0:200}"
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
 
 # REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
-#   session_log(projects, session) is a session's .jsonl under Claude Code's projects dir, or "".
-#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome); a row
-#   from before the outcome column is "fixed". fixed_rows(path) is the fixed ones' first four fields.
+#   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,
+#   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
+#   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
+#   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
+#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome, reviewer);
+#   a row from before the outcome column is "fixed", and one from before the reviewer column "unknown".
+#   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
+#   reads findings passes) or unknown. Fields past the sixth are ignored, so a column appended later
+#   drops no row. fixed_rows(path) is the fixed ones' first four fields.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
-import glob, json, os, re
+import glob, gzip, json, os, re, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -803,22 +844,37 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
-def session_log(projects, session):
-    paths = glob.glob(os.path.join(projects, "*", session + ".jsonl")) if session not in ("", "-") else []
+def session_log(projects, session, archive=""):
+    if session in ("", "-"):
+        return ""
+    # Escaped, so a project or config dir named with [, ], * or ? is a path, not a pattern.
+    paths = glob.glob(os.path.join(glob.escape(projects), "*", glob.escape(session) + ".jsonl"))
+    if not paths and archive:
+        paths = glob.glob(os.path.join(glob.escape(archive), f"*-{glob.escape(session)}.jsonl.gz"))
     return paths[0] if paths else ""
 
+def log_lines(path):
+    try:
+        with gzip.open(path, "rt", errors="ignore") if path.endswith(".gz") else open(path, errors="ignore") as f:
+            yield from f
+    except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
+        return
+
 def finding_rows(path):
+    # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
+    reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
     if not os.path.exists(path):
         return []
-    rows = (l.rstrip("\n").split("\t") for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
-    return [f if len(f) == 5 else f + ["fixed"] for f in rows if len(f) == 4 or (len(f) == 5 and f[4] in ("fixed", "declined"))]
+    rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
+    rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
+    return [f for f in rows if f[4] in ("fixed", "declined") and f[5] in reviewers]
 
 def fixed_rows(path):
     return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
-    for line in open(path, errors="ignore"):
+    for line in log_lines(path):
         try:
             m = json.loads(line).get("message") or {}
         except (ValueError, AttributeError):
@@ -852,7 +908,7 @@ lessons_report() {
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS}/${key//[^A-Za-z0-9]/-}/memory}"
   # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
   # is long by design and loaded by the agents themselves.
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}" <<'PY'
 import collections, datetime, glob, os, re, subprocess, sys
 exec(os.environ["SWARM_REPORT_PY"])
@@ -941,17 +997,22 @@ print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) 
 PY
 }
 
-# cost [since] — tokens and estimated cost per role, for every agent this project's swarm started
+# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started
 # (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
-# session logs, deduplicated by message id; codex agents are listed but not priced (not logged here).
+# session logs (or close's copy, once Claude Code deleted one), deduplicated by message id; codex
+# agents are listed but not priced (not logged here).
 cost_report() {
-  local lead=""
+  local lead="" since=""
+  # A bare date is the older form, still what dash passes.
+  if [[ $# -eq 1 ]]; then since="$1"; elif [[ $# -eq 2 && "$1" == --since ]]; then since="$2"; fi
+  [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
+    "${SESSIONS_DIR}" <<'PY'
 import os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, since, lead, projects = sys.argv[1:5]
+log, since, lead, projects, archive = sys.argv[1:6]
 agents = []
 if os.path.exists(log):
     for line in open(log):
@@ -964,7 +1025,7 @@ rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    path = session_log(projects, a["session"])
+    path = session_log(projects, a["session"], archive)
     if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
@@ -989,23 +1050,35 @@ PY
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
-# agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
+# Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
+# cause, and the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
+# drop). Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
+# was open when it was logged (by event order), any other to the build that started last at or before
+# it. A build with no session log starts at 00:00 local time on its agents.tsv day.
+# A build's PR is the last of the slug's PRs its session log names, so each attempt keeps its own;
+# with no log, the slug's PR when it has exactly one. With pr_per = epic, every build of an epic story
+# gets the epic's PR (builders open none).
+# agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
+# read from close's copy of the session log once Claude Code deleted it.
 outcomes_report() {
-  local since="" rows meta="" slug text kind src pr state
+  local since="" rows meta="" slug text kind src prs epic head
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts
+  # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts,
+  # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
+  # columns the report prints after attempts as they are: started to drop_at. No apostrophe in the
+  # python below: bash 3.2 matches quotes inside a heredoc in $(...), so an odd count breaks the script.
   rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
-    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" <<'PY'
-import collections, json, os, sys
+    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}" <<'PY'
+import collections, datetime, json, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, events, since, projects, roles = sys.argv[1:6]
+log, events, since, projects, roles, archive = sys.argv[1:7]
 
 def slug_of(path, name):
     # A builder runs in <repo>-wt/<slug>; any other cwd (or none logged) leaves the agents.tsv name.
-    for line in open(path, errors="ignore") if path else ():
+    for line in log_lines(path) if path else ():
         try:
             cwd = json.loads(line).get("cwd")
         except (ValueError, AttributeError):
@@ -1014,60 +1087,172 @@ def slug_of(path, name):
             return os.path.basename(cwd.rstrip("/")) if os.path.dirname(cwd.rstrip("/")).endswith("-wt") else name
     return name
 
-steer = collections.Counter()
-if os.path.exists(events):
-    for line in open(events, errors="ignore"):
-        f = line.rstrip("\n").split("\t")
-        # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings. Only an
-        # ok tell reached the builder: a refused or interrupted one is not counted.
-        c = {"tell": "tell:findings"}.get(f[1], f[1]) if len(f) == 5 else ""
-        # A close is counted whatever its cause (close:<cause>).
-        c = "close" if c.split(":")[0] == "close" else c
-        if c.split(":")[0] in ("tell", "close") and f[4] == "ok":
-            steer[c, f[2]] += 1
-attempts = collections.Counter()
+PULL = re.compile(r"https://github\.com/[^/\s\"\\]+/[^/\s\"\\]+/pull/\d+")
+def pulls(path):
+    # Each URL once, in the order of its last mention (pr_of wants only the last of the PRs of the slug), so
+    # a log that names hundreds keeps the row small enough for SWARM_ROWS. A log that reads as nothing
+    # (gone, or damaged from its start) is no log: "-".
+    named, read = {}, False
+    for line in log_lines(path) if path else ():
+        read = True
+        for u in PULL.findall(line):
+            named.pop(u, None)
+            named[u] = None
+    return " ".join(named) if read else "-"
+
+def started_of(path):
+    # The first timestamp in the session log, to the second as events.tsv writes times (both UTC), or "".
+    for line in log_lines(path) if path else ():
+        try:
+            ts = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(ts, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", ts):
+            return ts[:19] + "Z"
+    return ""
+
+def midnight(day):
+    # 00:00 local time on an agents.tsv day (a local date), in epoch seconds: where a build with no
+    # session log starts. None for a day that does not parse.
+    try:
+        return datetime.datetime.strptime(day, "%Y-%m-%d").timestamp()
+    except ValueError:
+        return None
+
+def secs(t):
+    # A UTC time as events.tsv and started write it, in epoch seconds; None when it does not parse.
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+
+builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
     f = line.rstrip("\n").split("\t")
     if len(f) != 7 or f[1] not in roles.split():
         continue
-    day, role, name, _, model, effort, session = f
-    path = session_log(projects, session)
-    slug = slug_of(path, name)
-    attempts[slug] += 1
+    path = session_log(projects, f[6], archive)
+    slug = slug_of(path, f[2])
+    tries[slug] += 1
+    started = started_of(path)
+    builds.append({"f": f, "path": path, "slug": slug, "n": tries[slug], "started": started,
+                   "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}})
+
+def of(target):
+    # The builds an events.tsv target names: by slug or agents.tsv name, and a build whose slug is
+    # unknown (no log, so it is the name) by the name agents.tsv keeps for the target, which cuts a slug
+    # over 32 characters. A build whose log names another slug with the same 32 is not this one.
+    cut = agent_name(target)
+    return [b for b in builds if b["t"] is not None
+            and (target in (b["slug"], b["f"][2]) or b["slug"] == b["f"][2] == cut)]
+
+STEPS = ("escalate", "dialog", "escalated", "reset", "drop")
+oks, escalates = [], collections.defaultdict(list)
+for line in open(events, errors="ignore") if os.path.exists(events) else ():
+    f = line.rstrip("\n").split("\t")
+    # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
+    # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
+    # line whose time does not parse goes to no build.
+    t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
+    if t is not None:
+        oks.append((t, f))
+        if f[1] == "escalate":
+            escalates[f[2]].append(t)
+cycle, seen = {}, collections.Counter()
+for t, f in oks:
+    # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings.
+    when, c, target = f[0], {"tell": "tell:findings"}.get(f[1], f[1]), f[2]
+    if c in STEPS:
+        # An escalate opens a cycle for the next escalate build of its target with none, in agents.tsv
+        # order, and each step until the next reset, drop or escalate belongs to that build (by event
+        # order, the last of a kind kept). build_story logs the escalate as its build starts, so a later
+        # build with a session log takes the cycle instead when this is the escalate of its target
+        # nearest its start (a tie to the earlier), and it started nearer than the first: a build whose
+        # brief was never taken up logged no escalate, and must not take the cycle of its retry.
+        if c == "escalate":
+            mine, seen[target] = seen[target], seen[target] + 1
+            near = lambda b: min(range(len(escalates[target])), key=lambda i: abs(b["t"] - escalates[target][i]))
+            free = [b for b in of(target) if b["f"][1] == "escalate" and "escalate" not in b["at"]]
+            own = [b for b in free[1:] if b["started"] and near(b) == mine]
+            cycle[target] = min(free[:1] + own, key=lambda b: abs(b["t"] - t), default=None)
+        b = cycle.pop(target, None) if c in ("reset", "drop") else cycle.get(target)
+        if b:
+            b["at"][c] = when
+            if c == "dialog":
+                m = re.fullmatch(r"ok \((accepted|dismissed)\)", f[4])
+                b["at"]["answer"] = m.group(1) if m else ""
+        continue
+    if c.split(":")[0] not in ("tell", "close"):
+        continue
+    # A tell or close goes to the build of its target that started last at or before it.
+    b = max((b for b in reversed(of(target)) if b["t"] <= t), key=lambda b: b["t"], default=None)
+    if b and c.split(":")[0] == "close":
+        # Counted whatever its cause (close:<cause>); close_cause is the cause of the last close (none: empty).
+        b["steer"]["close"] += 1
+        b["cause"] = c.partition(":")[2]
+    elif b:
+        b["steer"][c] += 1
+for b in builds:
+    day, role, _, _, model, effort, _ = b["f"]
     if day < since:
         continue
     cost = tokens = ""
-    if path:
-        tok, usd, _ = session_usage(path, set())
-        cost, tokens = f"{usd:.2f}", str(sum(tok))
-    targets = {slug, name}
-    counts = [str(sum(steer[c, t] for t in targets)) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
-    print("\t".join([day, slug, role, model, effort, cost, tokens] + counts + [str(attempts[slug])]))
+    tok = ["", "", "", ""]
+    if b["path"]:
+        t, usd, _ = session_usage(b["path"], set())
+        cost, tokens, tok = f"{usd:.2f}", str(sum(t)), [str(x) for x in t]
+    counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
+    steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
+    print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
+                    + tok + [b.get("cause", "")] + steps))
 PY
 )"
-  # Per slug: kind, risk and the PR, from the story (on the board, or its last version in git once a
-  # merge deleted it) and gh. A gh that fails leaves the PR empty; it never fails the run.
+  # Per slug: kind, risk, the epic whose PR its builds share (pr_per = epic) and every PR of its head
+  # (newest first, as `url state` pairs joined by commas), from the story (on the board, or its last
+  # version in git once a merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run.
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    text="$(story_text "${slug}")"; pr=""; state=""
+    text="$(story_text "${slug}")"; prs=""; epic=""; head="story/${slug}"
     kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
+    [[ "${CFG_pr_per}" != epic ]] || epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    [[ -z "${epic}" ]] || head="epic/${epic}"
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then
-      IFS=$'\t' read -r pr state <<< "$( (cd "${src}" && gh pr list --head "story/${slug}" --state all --limit 1 \
-        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null || true)"
+      prs="$( (cd "${src}" && gh pr list --head "${head}" --state all \
+        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null | tr '\t' ' ' | paste -sd, - || true)"
     fi
-    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${pr}"$'\t'"${state}"$'\n'
+    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${epic}"$'\t'"${prs}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
 import collections, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 5}
 fixed = collections.Counter(pr_key(f[2]) for f in fixed_rows(sys.argv[1]))
-print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
+
+def pr_of(epic, prs, pulls):
+    # (url, state) of a build's PR, or empty: see outcomes_report. pulls is the first python's column:
+    # "-" for no log.
+    prs = [tuple(p.split(" ", 1)) for p in prs.split(",") if " " in p]
+    if epic or pulls == "-":
+        return prs[0] if prs and (epic or len(prs) == 1) else ("", "")
+    keyed = {pr_key(u): (u, s) for u, s in prs}
+    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", ""))
+
+# Columns are only ever appended: decisions reads them by name.
+print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
+      "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
+      "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at")
 for line in os.environ["SWARM_ROWS"].splitlines():
-    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = line.split("\t")
-    kind, risk, pr, state = meta.get(slug, ("", "", "", ""))
+    f = line.split("\t")
+    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts, pulls = f[:13]
+    kind, risk, epic, prs = meta.get(slug, ("", "", "", ""))
+    pr, state = pr_of(epic, prs, pulls)
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
-                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
+                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts] + f[13:]))
 PY
 }
 
@@ -1083,7 +1268,7 @@ decisions_report() {
   [[ -z "${1:-}" ]] || since="$2"
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_ROWS="${rows}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" \
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" \
     "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${BUILDER_ROLES}" "${BOARD}" <<'PY'
 import json, os, subprocess, sys
 exec(os.environ["SWARM_REPORT_PY"])
@@ -1131,7 +1316,7 @@ def joined(key, day):
     # The newest build of <key> started on or before <day>.
     return next((o for d, keys, o in reversed(builds) if key in keys and d <= day), None)
 
-for day, kind, pr, text, chosen in finding_rows(findings):
+for day, kind, pr, text, chosen, _ in finding_rows(findings):
     if day >= since:
         out.append(rec("finding_accept", day, pr, text, ["fixed", "declined"], chosen, joined(pr_key(pr), day)))
 for f in ([l.rstrip("\n").split("\t") for l in open(events, errors="ignore")] if os.path.exists(events) else []):
@@ -1272,6 +1457,7 @@ PY
 
 # session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
 # REPORT_PY's session_log), which the session writes on every turn and tool call; empty when it has none.
+# Never close's copy (SESSIONS_DIR): an archive says nothing about a live agent.
 session_mtime() {
   SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" <<'PY' || true
 import os, sys
@@ -1423,13 +1609,20 @@ wait_agent() {
 # idle is not settled: wait on until its report exists, it is waiting on a prompt or gone, or its
 # login expired (wait_agent's auth).
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
+# <timeout-ms> 0 (`wait --until-report`) has no deadline: each wait_agent slice is
+# SWARM_CONDUCTOR_SLICE_MS (an hour), and a slice that ran out with the session still busy (or
+# unknown) waits again. Such a return before the slice ran out is herdr's wait failing, and ends it.
 wait_conductor() {
-  local name="$1" status deadline=$((SECONDS + $2 / 1000)) poll rc
+  local name="$1" forever="" status deadline=$((SECONDS + $2 / 1000)) poll rc ms t0
+  [[ $2 -ne 0 ]] || forever=1
   while :; do
-    rc=0; status="$(wait_agent "${name}" "$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))")" || rc=$?
+    ms=$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))
+    [[ -z "${forever}" ]] || ms="${SWARM_CONDUCTOR_SLICE_MS:-3600000}"
+    t0="$(now_ms)"; rc=0; status="$(wait_agent "${name}" "${ms}")" || rc=$?
+    [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
     [[ "${status}" =~ ^(idle|done)$ && ! -f "$(conductor_report "${name}")" ]] || break
-    [[ ${SECONDS} -lt ${deadline} ]] || break
-    poll="${SWARM_CONDUCTOR_POLL:-30}"; (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
+    [[ -n "${forever}" || ${SECONDS} -lt ${deadline} ]] || break
+    poll="${SWARM_CONDUCTOR_POLL:-30}"; [[ -n "${forever}" ]] || (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
     sleep "${poll}"
   done
   echo "${status}"
@@ -1522,7 +1715,7 @@ review_rule() {
   cat <<EOF
 A story is reviewed only when its latest head has passed \`$(codex_review_cmd '<base>')\`
 in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
-/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule) Send every real finding to the story's
+/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule)$(bump_rule) Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
 what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
@@ -1542,6 +1735,14 @@ codex_review_cmd() { printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR
 codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
+}
+# bump_rule — beside codex_rule, in a project that ships a plugin: an epic's release story makes the
+# plugin.json bump, so a story PR without one is not a finding. story_brief leaves it out of a one-off
+# story (no epic, so no release story) and of the release story itself (its touches name plugin.json).
+# The whole-epic review gets none: the epic PR carries the release story's bump.
+bump_rule() {
+  [[ -f "${PROJECT_DIR}/.claude-plugin/plugin.json" ]] || return 0
+  printf ' %s' "Do not bump plugin.json: the epic's release story (the one whose touches name it) does. On any other story a PR without the bump is not a finding; decline it."
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
@@ -1700,7 +1901,9 @@ send_goal() {
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before
+  local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before bump=""
+  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
+  [[ -z "${epic}" || "$(fm "${BOARD}/stories/${slug}.md" touches)" == *.claude-plugin/plugin.json* ]] || bump="$(bump_rule)"
   if [[ -n "${epic_branch}" ]]; then
     story_ref="${BOARD}/stories/${slug}.md"
     [[ ${BOARD_IN_REPO} == 1 && "${src}" == "${PROJECT_DIR}" ]] && story_ref="${BOARD#"${PROJECT_DIR}/"}/stories/${slug}.md"
@@ -1730,7 +1933,7 @@ Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. This project opens one PR per epic, so open no PR: commit on your branch,
 story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
 \`$(codex_review_cmd "${epic_branch}")\` before committing; fix real findings, decline
-nits with a reason, and converge on one clean pass. $(codex_rule) Run the repo's tests and make them pass. $(mutation_rule)
+nits with a reason, and converge on one clean pass. $(codex_rule)${bump} Run the repo's tests and make them pass. $(mutation_rule)
 $(reply_sentence epic)
 EOF
   else
@@ -1743,13 +1946,12 @@ Title your commit and PR with a plain description of the change.
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
-loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
+loop in the PR body. $(codex_rule)${bump} If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
 in the PR body. $(reply_sentence story)
 EOF
   fi
-  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || extra+="Before you ${before}, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
   [[ "${CFG_sign_commits}" != true ]] || extra+="$(sign_rule)"$'\n'
@@ -2072,7 +2274,7 @@ $(auth_rule)$(goal_rule_if_on)
 
 $(give_up_rule)
 
-When a builder reports, review its branch.$(rules_review_rule)
+When a builder reports, review its branch.$(bump_rule)$(rules_review_rule)
 
 Then, one story at a time, merge it into the epic branch
 in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
@@ -2588,6 +2790,436 @@ reconcile() {
     finish_item "${slug}"
     record_event reconcile "${slug}" "ok (finished)"
   done
+}
+
+MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
+MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL)
+MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear (SWARM_MERGE_CI_GRACE)
+MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
+MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
+
+# ci_gate head <owner/repo> <sha> [base] — succeed when <sha> is green: at least one check run, every
+# run completed as success, skipped or neutral, and every commit status success; with [base]
+# (merge_admin), also every status check the base's rulesets or branch protection require present
+# among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
+# block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
+# closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
+# ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
+# <poll> seconds, until the merge commit <sha> is green as above (with no check run needed of its own,
+# though with no workflow expected not before <grace> seconds),
+# every workflow whose `on: push` covers <base> and the files PR <pr> changes (read from
+# .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
+# read is a missed poll; three in a row end it. Prints ok (0), red <checks> (1), timeout (<what it
+# waited on>) (2) or error <why> (3); YAML it does not read is an error, never a skipped workflow.
+# ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
+# too; fails (3) unless there are <changed> of them.
+ci_gate() {
+  python3 - "$@" <<'PY'
+import json, re, subprocess, sys, time, urllib.parse
+OK = ("success", "skipped", "neutral")
+READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
+
+class Err(Exception):
+    """gh failed, or answered something unreadable: main_ci reads again."""
+
+class Unread(Exception):
+    """A workflow written in YAML this does not read: never retried, never skipped."""
+
+def gh(*args):
+    p = subprocess.run(("gh",) + args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    if p.returncode:
+        raise Err("gh %s: %s" % (" ".join(args), (p.stderr.strip().splitlines() or ["exit %d" % p.returncode])[-1]))
+    return p.stdout
+
+def docs(path):
+    """Each JSON document gh prints for path, one per page; none is an error."""
+    s, dec, i, out = gh("api", "--paginate", path), json.JSONDecoder(), 0, []
+    while True:
+        while i < len(s) and s[i].isspace():
+            i += 1
+        if i == len(s):
+            break
+        try:
+            d, i = dec.raw_decode(s, i)
+        except ValueError:
+            raise Err("unreadable answer for " + path)
+        out.append(d)
+    if not out:
+        raise Err("no answer for " + path)
+    return out
+
+def pages(path, key):
+    items, total = [], None
+    for d in docs(path):
+        if not (isinstance(d, dict) and isinstance(d.get(key), list) and isinstance(d.get("total_count"), int)):
+            raise Err("unreadable answer for " + path)
+        items += d[key]
+        total = d["total_count"] if total is None else total
+    if len(items) < total:
+        raise Err("%s: read %d of %d" % (path, len(items), total))
+    return items
+
+def judge(runs, red, wait):
+    for r in runs:
+        if r.get("status") != "completed":
+            wait.append("%s (%s)" % (r.get("name"), r.get("status")))
+        elif r.get("conclusion") not in OK:
+            red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
+
+def checks(repo, sha, required=(), need_run=True):
+    runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
+    sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
+    red, wait = [], ([] if runs or not need_run else ["no check runs"])
+    judge(runs, red, wait)
+    for s in sts:
+        if s.get("state") == "pending":
+            wait.append("%s (pending)" % s.get("context"))
+        elif s.get("state") != "success":
+            red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
+    # A required check bound to an app (not None or -1, any source) needs a run from that app.
+    have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
+    names = {n for n, _ in have} | {s.get("context") for s in sts}
+    wait += ["%s (required, absent)" % c for c, app in required
+             if (c not in names if app in (None, -1) else (c, app) not in have)]
+    return red, wait
+
+def required(repo, base):
+    """The status checks base requires, its rulesets' and its classic branch protection's, each as
+    (context, the app that must report it or None). The branch is one path segment, / encoded."""
+    out, base = [], urllib.parse.quote(base, safe="")
+    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, base)):
+        if not isinstance(d, list):
+            raise Err("unreadable rules for " + base)
+        for rule in d:
+            if rule["type"] == "required_status_checks":
+                out += [(c["context"], c.get("integration_id")) for c in rule["parameters"]["required_status_checks"]]
+    try:
+        rsc = json.loads(gh("api", "repos/%s/branches/%s/protection/required_status_checks" % (repo, base)))
+    except Err as e:
+        if "HTTP 404" in str(e):   # not protected, or no required checks
+            return out
+        raise
+    return out + [(c, None) for c in rsc["contexts"]] + [(c["context"], c.get("app_id")) for c in rsc["checks"]]
+
+def unq(s):
+    """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
+    match nothing and skip the workflow."""
+    s = s.strip()
+    if s and s[0] in "&*":
+        raise Unread("%s: YAML anchors and aliases are not read" % s)
+    return s.strip("'\"")
+
+def flow(v):
+    v = v.strip()
+    if v.startswith("{") or v.startswith("[") != v.endswith("]"):
+        raise Unread("%s: a {flow mapping} or a [list] over several lines is not read" % v)
+    if any("," in q for q in re.findall(r"'[^']*'|\"[^\"]*\"", v)):
+        raise Unread("%s: a quoted entry holding a comma is not read" % v)
+    return [unq(x) for x in v.strip("[]").split(",") if unq(x)]
+
+def push_filters(text):
+    """on: push's filters ({} for none), or None when there is no push trigger. Reads the forms
+    workflows use: on: push, on: [push, ...], and a block of events with block or [flow] lists."""
+    lines = [re.sub(r"(^|\s)#.*", "", l).rstrip() for l in text.splitlines()]
+    top = [i for i, l in enumerate(lines) if re.match(r"""^(on|"on"|'on'|true)\s*:""", l)]
+    if not top:
+        raise Unread("no on: key")
+    v = lines[top[0]].split(":", 1)[1]
+    if v.strip():
+        return {} if "push" in flow(v) else None
+    block = []
+    for l in lines[top[0] + 1:]:
+        if l and not l[0].isspace() and not l.startswith("-"):
+            break
+        if l.strip():
+            block.append(l)
+    ind = lambda l: len(l) - len(l.lstrip())
+    for j, l in enumerate(block):
+        k = l.strip()
+        if ind(l) != ind(block[0]):
+            continue
+        if k.startswith("-"):
+            if unq(k[1:]) == "push":
+                return {}
+            continue
+        key, _, rest = k.partition(":")
+        if unq(key) != "push":
+            continue
+        if rest.strip() not in ("", "{}", "null", "~"):
+            raise Unread("push: %s is not read" % rest.strip())
+        f, key = {}, None
+        for c in block[j + 1:]:
+            if ind(c) <= ind(l):
+                break
+            c = c.strip()
+            if c.startswith("-") and key:
+                f[key].append(unq(c[1:]))
+            elif ":" in c:
+                key, _, rest = c.partition(":")
+                key = unq(key)
+                f[key] = flow(rest)
+            else:
+                raise Unread("push: %s is not read" % c)
+        return f
+    return None
+
+def glob(p):
+    """A GitHub filter pattern as a regex: * stops at /, ** does not, **/ is zero or more directories,
+    ? and + repeat what precedes."""
+    out = ""
+    for t in re.findall(r"\*\*/|\*\*|\*|\[[^\]]*\]|[?+]|[^*?+\[]+", p):
+        out += {"**/": "(?:.*/)?", "**": ".*", "*": "[^/]*"}.get(t, t if t[0] in "?+[" else re.escape(t))
+    return re.compile(out + r"\Z")
+
+def match(s, pats):
+    """Whether s matches a filter list: the last pattern it matches decides, ! negating."""
+    hit = False
+    for p in pats:
+        neg = p.startswith("!")
+        if glob(p[1:] if neg else p).match(s):
+            hit = not neg
+    return hit
+
+def covers(f, base, files):
+    """Whether pushing files (None: not all known) to base runs a workflow whose push filters are f.
+    An unknown file list covers any path filter, so the wait fails closed."""
+    if f is None:
+        return False
+    if "branches" in f and not match(base, f["branches"]):
+        return False
+    if "branches-ignore" in f and match(base, f["branches-ignore"]):
+        return False
+    if not ("branches" in f or "branches-ignore" in f) and ("tags" in f or "tags-ignore" in f):
+        return False
+    if files is not None:
+        if "paths" in f and not any(match(x, f["paths"]) for x in files):
+            return False
+        if "paths-ignore" in f and all(match(x, f["paths-ignore"]) for x in files):
+            return False
+    return True
+
+def pr_files(repo, n, changed):
+    """Every path PR n changes, a renamed file's old one too, or None when fewer than its changed
+    count come back (the API lists 3000 at most)."""
+    got = []
+    for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
+        if not isinstance(d, list):
+            raise Err("unreadable files for #" + n)
+        got += d
+    if len(got) != changed:
+        return None
+    try:
+        return [p for f in got for p in (f["filename"], f.get("previous_filename")) if p]
+    except (KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable files for #%s: %r" % (n, e))
+
+def expected(repo, sha, base, n, changed):
+    try:
+        out = gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha))
+    except Err as e:
+        if "HTTP 404" in str(e):
+            return []
+        raise
+    # A truncated or odd answer is a failed read, retried like any other; only YAML is Unread.
+    try:
+        paths = [w["path"] for w in json.loads(out) if w["type"] == "file" and w["name"].endswith((".yml", ".yaml"))]
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise Err("unreadable .github/workflows listing at %s: %r" % (sha[:7], e))
+    want, files = [], pr_files(repo, n, changed)
+    for path in paths:
+        text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha))
+        try:
+            if covers(push_filters(text), base, files):
+                want.append(path)
+        except Unread as e:
+            raise Unread("%s: %s" % (path, e))
+    return want
+
+def main_ci(repo, sha, base, n, changed, secs, poll, grace):
+    """The merge commit needs no check run of its own: the expected workflows are what must run.
+    With none expected, ok waits out grace seconds, so an app's checks or a status that appear just
+    after the push are seen and judged. A gh error is a missed read, READ_TRIES in a row an error."""
+    want, start, missed = None, time.time(), 0
+    end, settled = start + secs, start + min(grace, secs)
+    while True:
+        try:
+            if want is None:
+                want = expected(repo, sha, base, n, changed)
+            runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
+                    if r.get("head_sha") == sha]
+            red, wait = checks(repo, sha, need_run=False)
+        except Err as e:
+            missed += 1
+            if missed == READ_TRIES:
+                raise Err("%s (%d reads in a row failed)" % (e, missed))
+            wait = ["a read failed: %s" % e]
+        else:
+            missed = 0
+            judge(runs, red, wait)
+            have = {(r.get("path") or "").split("@")[0] for r in runs}
+            wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
+            if red:
+                return 1, "red " + "; ".join(red)
+            if not wait and (want or time.time() >= settled):
+                return 0, "ok"
+        if time.time() >= end:
+            return 2, "timeout (%s)" % "; ".join(wait)
+        time.sleep(poll)
+
+try:
+    mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+    if mode == "head":
+        red, wait = checks(repo, args[0], required(repo, args[1]) if len(args) > 1 else ())
+        if red or wait:
+            print("; ".join(red + wait))
+            sys.exit(1 if red else 2)
+    elif mode == "files":
+        files = pr_files(repo, args[0], int(args[1]))
+        if not files:
+            raise Err("gh listed no files, or fewer than the PR changes")
+        print("\n".join(files))
+    else:
+        rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]))
+        print(msg)
+        sys.exit(rc)
+except Exception as e:
+    print("error %s" % (e or type(e).__name__))
+    sys.exit(3)
+PY
+}
+
+# merge_caller — why the pane running this may not merge, or nothing when it may. Outside herdr it
+# is the lead's own session, which merges for the user under merge = human too. Inside herdr the pane
+# must be one this project did not start (the lead's), or, with merge = agent, a conductor's; when the
+# pane cannot be identified (no HERDR_PANE_ID, an unreadable tab record, herdr cannot list its
+# agents) it may not. start_agent's guard blocks only a bare `gh pr merge`, so this is what stops a
+# builder merging through swarm.sh.
+merge_caller() {
+  local f agents panes
+  [[ -n "${HERDR_ENV:-}" ]] || return 0
+  [[ -n "${HERDR_PANE_ID:-}" ]] || { echo "inside herdr with no HERDR_PANE_ID, the pane running this is unknown"; return 0; }
+  [[ ! -e "${STATE_DIR}" || ( -r "${STATE_DIR}" && -x "${STATE_DIR}" ) ]] || { echo "cannot read ${STATE_DIR}, so whose pane this is is unknown"; return 0; }
+  for f in "${STATE_DIR}"/*; do
+    [[ ! -f "${f}" || -r "${f}" ]] || { echo "cannot read ${f}, so whose pane this is is unknown"; return 0; }
+  done
+  agents="$(herdr agent list 2>/dev/null)" || { echo "herdr cannot list its agents, so whose pane this is is unknown"; return 0; }
+  # A here-string, not a pipe: grep -q may exit before own_panes has written all of it, and pipefail
+  # would then read a match as none.
+  panes="$(own_panes)"
+  grep -qxF -- "${HERDR_PANE_ID}" <<< "${panes}" || return 0
+  if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
+    return 0
+  fi
+  echo "pane ${HERDR_PANE_ID} is one this project started, and only a conductor with merge = agent merges from one"
+}
+
+# merged_state <pr> <owner/repo> — "<state> <merge commit>" once the PR reads MERGED with one, read up
+# to MERGE_READS times, MERGE_READ_WAIT apart: GitHub may take a moment to say so, and a read may
+# fail. The state is unreadable when no read succeeded.
+merged_state() {
+  local try info state="" oid=""
+  for ((try = 1; try <= MERGE_READS; try++)); do
+    info="$(gh pr view "$1" --repo "$2" --json state,mergeCommit | json "d['state'] + ' ' + ((d['mergeCommit'] or {}).get('oid') or '')")" || info=unreadable
+    read -r state oid <<< "${info}"
+    [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]] || break
+    [[ ${try} -eq ${MERGE_READS} ]] || sleep "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}"
+  done
+  echo "${state:-unreadable} ${oid}"
+}
+
+# merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
+merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
+
+# merge [--board] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned: refuse unless
+# merge_caller allows it, the head is <sha> (with --head), a story or epic in review lists the URL
+# (with --board instead: the PR is in the board's own repo and every path it changes, old or new, is
+# on the board), and ci_gate passes on the head.
+# Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
+# merge_admin, --admin; never --auto. Then wait for CI on the merge commit and, without --board, run
+# reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
+# the slug (or the URL with --board): merge <why> for a refusal, merge unconfirmed (...) when gh pr
+# merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
+# reconcile's own. Fails on anything but a green main.
+merge_pr() {
+  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own req="" method oid admin=() why rc=0 rrc ran=1
+  while [[ $# -gt 1 ]]; do
+    case "$1" in
+      --board) board=1; shift ;;
+      --head) want="$2"; shift 2 ;;
+      *) break ;;
+    esac
+  done
+  url="${1:-}"; MERGE_TARGET="${url:--}"
+  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board] [--head <sha>] <pr-url>"
+  [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
+  repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
+  why="$(merge_caller)" || why="cannot tell whose pane this is"
+  [[ -z "${why}" ]] || merge_fail "${why}"
+  info="$(gh pr view "${n}" --repo "${repo}" --json state,headRefOid,baseRefName,changedFiles \
+    | json "'%s %s %s %d' % (d['state'], d['headRefOid'], d['baseRefName'], d['changedFiles'])")" \
+    || merge_fail "gh cannot read ${url}"
+  read -r state head base changed <<< "${info}"
+  [[ "${head}" =~ ^[0-9a-f]{40}$ && "${base}" =~ ^[A-Za-z0-9._/-]+$ && "${changed}" =~ ^[0-9]+$ ]] \
+    || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
+  [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
+  [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
+  if [[ -z "${board}" ]]; then
+    # Any item listing the URL may be the one in review: a done story (finished = mark) keeps prs:.
+    while IFS= read -r p; do
+      [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
+      [[ -n "${any}" ]] || any="${p}"
+      [[ "$(fm "${p}" status)" != review ]] || { f="${p}"; break; }
+    done < <(board stories; board epics)
+    [[ -n "${any}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
+    if [[ -z "${f}" ]]; then MERGE_TARGET="$(basename "${any}" .md)"; merge_fail "${MERGE_TARGET} is $(fm "${any}" status), not review"; fi
+    MERGE_TARGET="$(basename "${f}" .md)"
+  else
+    [[ ${BOARD_IN_REPO} == 1 ]] || merge_fail "--board: the board is not in the project's repo"
+    origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || merge_fail "--board: ${PROJECT_DIR}, the board's repo, has no origin"
+    own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
+      || merge_fail "--board: gh cannot tell which GitHub repo ${origin} is"
+    [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "--board: ${url} is not in ${own}, the board's repo"
+    rel="${BOARD#"${PROJECT_DIR}"/}"
+    # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
+    info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "--board: cannot list every file ${url} changes: ${info}"
+    while IFS= read -r p; do [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"; done <<< "${info}"
+  fi
+  if [[ "${CFG_merge_admin}" == true ]]; then admin=(--admin); req="${base}"; fi
+  why="$(ci_gate head "${repo}" "${head}" ${req:+"${req}"})" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
+    | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
+    || merge_fail "gh cannot read ${repo}'s merge methods"
+  [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
+  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
+  # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
+  read -r state oid <<< "$(merged_state "${n}" "${repo}")"
+  if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+    # A failed gh pr merge on a PR that still reads open or closed never reached a merge.
+    [[ -n "${ran}" || "${state}" == unreadable ]] || merge_fail "gh pr merge failed: ${why##*$'\n'}"
+    [[ "${state}" != MERGED ]] || state="MERGED, no merge commit"
+    merge_fail "unconfirmed (${state}): gh pr merge ran, but ${url} does not read as merged; check it by hand"
+  fi
+  record_event merge "${MERGE_TARGET}" ok
+  echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
+  if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
+      "${SWARM_MERGE_POLL:-${MERGE_POLL}}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
+    why=ok
+  else
+    rc=$?; why="${why:-error (exit ${rc})}"
+  fi
+  record_event main-ci "${MERGE_TARGET}" "${why}"
+  echo "main-ci: ${why}"
+  if [[ -z "${board}" ]]; then
+    # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
+    ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
+    wait $! || {
+      rrc=$?; why="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
+      record_event reconcile - "${why:-failed (exit ${rrc})}"
+      die "merge: reconcile failed after the merge; run swarm.sh reconcile"
+    }
+  fi
+  [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
 }
 
 # pull_board_repo — pull the main checkout fast-forward, never losing an edit. It stops, touching
@@ -3256,8 +3888,8 @@ for a in agents:
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
-  DASH_ESCALATE_AFTER="${CFG_escalate_after}" SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
-import collections, datetime, itertools, json, os, re, time
+  DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - <<'PY'
+import collections, datetime, glob, itertools, json, os, re, time
 E = os.environ
 exec(E["SWARM_REPORT_PY"])
 exec(E["SWARM_PANES_PY"])
@@ -3475,6 +4107,33 @@ if agents is not None:
 # Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
 shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
 idle = len(recs) - len(shown)
+
+# Running codex reviews (codex-review's markers): one row each, under the epic of its worktree's story
+# (or of its epic-<epic> worktree), never in needs you or the lead's queue. A marker whose pid is dead
+# or that is older than codex_minutes plus 1 shows nothing; dash only reads, so it leaves both.
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
+    try:
+        pid = int(path.rsplit(".", 1)[1])
+        t, base, cwd = open(path).read().rstrip("\n").split("\t", 2)
+        age = max(int(NOW - float(t)) // 60, 0)
+    except (OSError, ValueError):
+        continue
+    if pid <= 0 or not alive(pid) or NOW - float(t) > (int(E["DASH_CODEX_MIN"]) + 1) * 60:
+        continue
+    wt = os.path.basename(cwd.rstrip("/"))
+    # The name column is cut at name_w, so the base goes with the age, in the words.
+    shown.append({"name": f"codex review {wt}", "role": "codex", "model": "codex", "words": f"running {age}m vs {base}",
+                  "state": "codex", "sym": "working", "look": False, "open": False, "prs": "",
+                  "epic": epic_for("", None, re.sub(r"^epic-", "", wt))})
 
 # Needs you: only what you act on, each as a short action. With lead = session a lead session acts
 # for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft HLD) and
@@ -3872,13 +4531,13 @@ tab_label() {
 # machine, readable by its user only; nothing is redacted. An agent with no session (codex) has nothing to keep. A copy that
 # fails is reported and never stops the close: the session log itself is untouched.
 archive_session() {
-  local name session src dir
+  local name session src dir f
   name="$(agent_name "$1")"
   [[ -f "${AGENTS_LOG}" ]] || return 0
   session="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null || true)"
   [[ -n "${session}" && "${session}" != - ]] || return 0
-  dir="${PROJECT_DIR}/.swarm/sessions"
-  compgen -G "${dir}/*-${session}.jsonl.gz" >/dev/null && return 0
+  dir="${SESSIONS_DIR}"
+  for f in "${dir}"/*-"${session}".jsonl.gz; do [[ ! -e "${f}" ]] || return 0; done
   src="$(SWARM_REPORT_PY="${REPORT_PY}" python3 -c 'import os, sys; exec(os.environ["SWARM_REPORT_PY"]); print(session_log(*sys.argv[1:3]))' \
     "${CLAUDE_PROJECTS}" "${session}" 2>/dev/null || true)"
   [[ -n "${src}" ]] || return 0
@@ -4302,11 +4961,11 @@ dispatch() {
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
-    cost)   cost_report "${1:-}" ;;
+    cost)   cost_report "$@" ;;
     outcomes) outcomes_report "$@" ;;
     decisions) decisions_report "$@" ;;
-    log-finding) o=fixed; if [[ "${1:-}" == --declined ]]; then o=declined; shift; fi
-            record_finding "${1:-}" "${2:-}" "${*:3}" "${o}" ;;
+    log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
+            record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
@@ -4315,6 +4974,7 @@ dispatch() {
     dialog) dialog_answered "${1:-}" "${2:-}" ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
+    merge)  merge_pr "$@" ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
     init)   init_project ;;
@@ -4325,11 +4985,17 @@ dispatch() {
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
+    _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
+    _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
-    wait)   require_herdr; stall=""; if [[ "${1:-}" == --stall ]]; then stall=--stall; shift; fi
+    wait)   require_herdr; stall=""; until=""
+            case "${1:-}" in --stall) stall=--stall; shift ;; --until-report) until=1; shift ;; esac
             n="$(agent_name "${1:?name}")"
-            if [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
+            if [[ -n "${until}" ]]; then
+              [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
+              wait_conductor "${n}" 0
+            elif [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
             else wait_agent "${n}" "${2:-3600000}" "${stall}"; fi ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
@@ -4340,7 +5006,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -4384,9 +5050,21 @@ stop_codex() {
 # HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid left rc=0
+  local pid left rc=0 m
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
+  # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
+  # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
+  mkdir -p "${STATE_DIR}"
+  for m in "${STATE_DIR}"/codex-review.*; do
+    # Only a pid suffix: retire rewrites every state file through <file>.tmp.
+    [[ -f "${m}" && "${m##*.}" =~ ^[0-9]+$ ]] || continue
+    kill -0 "${m##*.}" 2>/dev/null || rm -f "${m}"
+  done
+  m="${STATE_DIR}/codex-review.$$"
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
+  # shellcheck disable=SC2064 # this run's marker, fixed now
+  trap "rm -f $(printf %q "${m}")" EXIT
   codex exec review --base "origin/$1" < /dev/null &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
@@ -4410,7 +5088,7 @@ main_signal() {
     # swarm.sh exits only once codex is gone.
     kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
   elif [[ -n "${EV_CHILD:-}" ]]; then kill_tree "${EV_CHILD}"; fi
-  record_event "${EV_CMD}" "${EV_TARGET#+}" interrupted
+  record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   trap - "$1"
   kill -"$1" "$$"
@@ -4420,8 +5098,9 @@ main_signal() {
 # outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
-# log one line per item themselves. A tell's command is tell:<kind>, and a close's close:<cause>, so
-# the target stays the slug. A reset or drop that succeeds logs ok (<reason>); a reset that lifts a
+# log one line per item themselves, and merge (target !) every line it writes, so main logs none
+# for it but an interrupt. A tell's command is tell:<kind>, and a close's close:<cause>, so the
+# target stays the slug. A reset or drop that succeeds logs ok (<reason>); a reset that lifts a
 # hold (held_for:) logs as reset:held.
 main() {
   local rc why
@@ -4433,11 +5112,13 @@ main() {
   fi
   case "${EV_CMD}" in
     agent) [[ -z "${3:-}" ]] || EV_TARGET="$(agent_name "$3")" ;;
-    # A decline is logged as log-finding:declined, so its target stays <kind> <pr>, as for a fix.
-    log-finding) EV_TARGET="${2:-} ${3:-}"
-                 if [[ "${2:-}" == --declined ]]; then EV_CMD="log-finding:declined"; EV_TARGET="${3:-} ${4:-}"; fi
-                 EV_TARGET="${EV_TARGET# }"; EV_TARGET="${EV_TARGET% }" ;;
+    # A decline is logged as log-finding:declined, so its target stays <kind> <pr>, as for a fix; the
+    # flags are skipped as dispatch skips them (finding_flags).
+    log-finding) finding_flags "${@:2}"
+                 [[ "${FINDING_OUTCOME}" == fixed ]] || EV_CMD="log-finding:declined"
+                 EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
+    merge) EV_TARGET='!' ;;
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).
@@ -4460,7 +5141,9 @@ main() {
   wait "${EV_CHILD}"; rc=$?
   set -e
   trap - INT TERM HUP
-  if [[ ${rc} -ne 0 ]]; then
+  if [[ "${EV_TARGET}" == '!' ]]; then
+    :
+  elif [[ ${rc} -ne 0 ]]; then
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
   elif [[ "${EV_TARGET}" != + ]]; then

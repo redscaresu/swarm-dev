@@ -92,6 +92,10 @@ appends "reconcile, one per item" 2 reconcile '*' ok reconcile
 check "reconcile says which it finished and which it reopened" bash -c "grep -q \$'reconcile\tm1\tw:me\tok (finished)' '${LOG}' && grep -q \$'reconcile\tc1\tw:me\tok (reopened)' '${LOG}'"
 appends "finish" 1 finish s1 ok finish s1
 appends "log-finding" 1 log-finding "vacuous-test ${U}/9" ok log-finding vacuous-test "${U}/9" "a line"
+# The flags before the kind, in either order, leave the target <kind> <pr>; a decline goes with the command.
+appends "log-finding --reviewer then --declined" 1 log-finding:declined "k ${U}/9" ok log-finding --reviewer codex --declined k "${U}/9" t
+appends "log-finding --declined then --reviewer" 1 log-finding:declined "k ${U}/9" ok log-finding --declined --reviewer lead k "${U}/9" t
+appends "log-finding --reviewer" 1 log-finding "k ${U}/9" ok log-finding --reviewer conductor k "${U}/9" t
 appends "a failed story" 1 story nope "no story" story nope
 appends "a failed conduct" 1 conduct nope "no epic" conduct nope
 appends "a failed agent, logged by its agent name" 1 agent n1-x "no prompt file" agent t "N1 x" "${P}" code "${P}/missing.md"
@@ -134,7 +138,7 @@ check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}
 
 # The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
 # that changes state (story, say) cannot be declared read-only without this test changing too.
-RO_EXPECTED="base cost config dash decisions findings lessons next outcomes policy status wait watch _base _label _name _role _pane _target _trusted"
+RO_EXPECTED="base cost config dash decisions findings lessons next outcomes policy status wait watch _base _label _name _role _pane _target _trusted _mtime"
 ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
 check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"

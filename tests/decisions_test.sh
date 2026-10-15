@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # decisions_test.sh — `swarm.sh decisions` against a fixture: a builder whose story a merge deleted, a
-# conductor, a codex agent, a fixed finding (an old four-field row) and a declined one, nudges and
-# closes, one with a cause. gh is a stub on PATH. The export must be valid JSONL, null where the logs hold nothing, and
-# write nothing.
+# conductor, a codex agent, a fixed finding (an old four-field row) and a declined one, a six-field
+# declined row and a seven-field fixed one on a PR with no build, nudges and closes, one with a cause, and
+# a story built twice whose builds each opened their own PR, the first closed and the second merged. gh
+# is a stub on PATH. The export must be valid JSONL, null where the logs hold nothing, and write nothing.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -21,10 +22,18 @@ printf -- '---\nkind: code\nstatus: ready\n---\n# Edited after the build\n' > "$
 
 printf '{"cwd":"%s/repo-wt/s-one","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}\n' \
   "${dir}" > "${dir}/projects/p/s1.jsonl"
+# Each build's session log names the PR it opened.
+printf '{"type":"user","message":{"content":"https://github.com/o/r/pull/7\\n"}}\n' >> "${dir}/projects/p/s1.jsonl"
+for n in 1 2; do
+  printf '{"cwd":"%s/repo-wt/s-two"}\n{"type":"user","message":{"content":"https://github.com/o/r/pull/1%s\\n"}}\n' \
+    "${dir}" "${n}" > "${dir}/projects/p/t${n}.jsonl"
+done
 printf '%s\n' \
   $'2026-10-01\tconduct\tconduct-e\tclaude\topus\thigh\ts9' \
   $'2026-10-02\tcode\ts-one\tclaude\topus\txhigh\ts1' \
-  $'2026-10-02\tcodex\tcodex\tcodex\tdefault\thigh\t-' > "${P}/.swarm/agents.tsv"
+  $'2026-10-02\tcodex\tcodex\tcodex\tdefault\thigh\t-' \
+  $'2026-10-05\tcode\ts-two\tclaude\topus\thigh\tt1' \
+  $'2026-10-06\tescalate\ts-two\tclaude\tfable\txhigh\tt2' > "${P}/.swarm/agents.tsv"
 printf '%s\n' \
   $'2026-10-02T10:00:00Z\tnudge\ts-one\tw:1\tok' \
   $'2026-10-02T11:00:00Z\ttell:nudge\ts-one\tw:1\tok' \
@@ -34,9 +43,11 @@ printf '%s\n' \
   $'2026-10-03T14:00:00Z\tclose:impossible\ts-one\tw:1\tok' > "${P}/.swarm/events.tsv"
 printf '%s\n' \
   $'2026-10-02\tvacuous-test\to/r#7\ta test that could not fail' \
-  $'2026-10-02\tout-of-scope\thttps://github.com/o/r/pull/7\tan edge case outside the story\tdeclined' > "${P}/.swarm/findings.tsv"
+  $'2026-10-02\tout-of-scope\thttps://github.com/o/r/pull/7\tan edge case outside the story\tdeclined' \
+  $'2026-10-02\tnit\to/r#8\ta reviewer named\tdeclined\tcodex' \
+  $'2026-10-02\tdenylist\to/r#8\ta column added later\tfixed\tlead\tlater' > "${P}/.swarm/findings.tsv"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\n[ "$4" = story/s-one ] && printf "https://github.com/o/r/pull/7\\tMERGED\\n"\nexit 0\n' > "${dir}/bin/gh"
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\n[ "$4" = story/s-one ] && printf "https://github.com/o/r/pull/7\\tMERGED\\n"\n[ "$4" = story/s-two ] && printf "https://github.com/o/r/pull/12\\tMERGED\\n" && case " $* " in *" --limit 1 "*) ;; *) printf "https://github.com/o/r/pull/11\\tCLOSED\\n" ;; esac\nexit 0\n' > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
 
 decisions() { (cd "${P}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" decisions "$@"); }
@@ -56,6 +67,9 @@ check() { # <name> <output> <exact expected output>
 }
 before="$(ls -lR "${P}/.swarm")"
 out="$(decisions)"
+T='"tells_findings": 0, "tells_nudge": 0, "tells_resume": 0}'
+T1='{"attempts": 1, "cost_usd": 0.0, "findings": 0, "merged": false, "pr": "https://github.com/o/r/pull/11", '"${T}"
+T2='{"attempts": 2, "cost_usd": 0.0, "findings": 0, "merged": true, "pr": "https://github.com/o/r/pull/12", '"${T}"
 O='{"attempts": 1, "cost_usd": 4.0, "findings": 1, "merged": true, "pr": "https://github.com/o/r/pull/7", "tells_findings": 0, "tells_nudge": 1, "tells_resume": 0}'
 check "one object per model choice, finding (fixed and declined), nudge and close (close:impossible a close), null where the logs hold nothing" \
   "$(summary <<< "${out}")" "$(cat <<EOF
@@ -64,15 +78,20 @@ model_choice|s-one|# Build s-one|null|{"effort": "xhigh", "kind": "claude", "mod
 model_choice|codex|None|null|{"effort": "high", "kind": "codex", "model": "default", "role": "codex"}|null
 finding_accept|o/r#7|a test that could not fail|["fixed", "declined"]|"fixed"|${O}
 finding_accept|https://github.com/o/r/pull/7|an edge case outside the story|["fixed", "declined"]|"declined"|${O}
+finding_accept|o/r#8|a reviewer named|["fixed", "declined"]|"declined"|null
+finding_accept|o/r#8|a column added later|["fixed", "declined"]|"fixed"|null
 nudge|s-one|None|null|"nudge"|${O}
 nudge|s-one|None|null|"tell:nudge"|${O}
 close|s-one|None|null|"close"|${O}
 close|conduct-e|None|null|"close"|null
 close|s-one|None|null|"close:impossible"|${O}
+model_choice|s-two|None|null|{"effort": "high", "kind": "claude", "model": "opus", "role": "code"}|${T1}
+model_choice|s-two|None|null|{"effort": "xhigh", "kind": "claude", "model": "fable", "role": "escalate"}|${T2}
+retry|s-two|None|null|{"effort": "xhigh", "model": "fable", "role": "escalate"}|${T2}
 EOF
 )"
 check "it writes nothing" "$(ls -lR "${P}/.swarm")" "${before}"
-check "--since leaves earlier decisions out" "$(decisions --since 2026-10-03 | summary | cut -d'|' -f1,2 | paste -sd' ' -)" "close|conduct-e close|s-one"
+check "--since leaves earlier decisions out" "$(decisions --since 2026-10-03 | summary | cut -d'|' -f1,2 | paste -sd' ' -)" "close|conduct-e close|s-one model_choice|s-two model_choice|s-two retry|s-two"
 if decisions --since yesterday >/dev/null 2>&1; then
   echo "FAIL a bad --since is refused"; fails=$((fails + 1))
 else echo "ok   a bad --since is refused"; fi

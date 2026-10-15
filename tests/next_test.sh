@@ -339,6 +339,72 @@ if [[ "${got}" == idle && $((SECONDS - start)) -ge 4 && ! -e "${dir}/prompts" ]]
   echo "ok   an idle conductor with no report is not nudged, and wait returns at the timeout"; else
   echo "FAIL an idle conductor with no report is not nudged, and wait returns at the timeout: got '${got}' after $((SECONDS - start))s, prompts: $(cat "${dir}/prompts" 2>/dev/null)"; fails=$((fails + 1)); fi
 
+# `wait --until-report` has no deadline: it holds past any timeout until the report lands, and
+# returns at once on waiting or auth. The no-nudge checks are regression guards: wait never prompts a
+# conductor, even with an API error on its pane (the api-error stub above).
+quiet() { [[ ! -e "${dir}/prompts" ]] && ! grep -q nudge "${dir}/.swarm/events.tsv" 2>/dev/null; }
+rm -f "${dir}/prompts" "${dir}/.swarm/events.tsv"; start=${SECONDS}
+(sleep 4; echo report > "${dir}/.swarm/conduct-e1.report.md") &
+got="$(SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null; echo "exit $?")"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == "idle"$'\n'"exit 0" && "${reported}" == yes && $((SECONDS - start)) -ge 4 ]] && quiet; then
+  echo "ok   wait --until-report on an idle conductor holds until its report, and never nudges"; else
+  echo "FAIL wait --until-report on an idle conductor holds until its report, and never nudges: got '${got}' after $((SECONDS - start))s, report: ${reported}, prompts: $(cat "${dir}/prompts" 2>/dev/null)"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
+# Busy across several 1 s slices: a slice that ends busy waits again, not returns.
+session busy; start=${SECONDS}
+(sleep 3; echo report > "${dir}/.swarm/conduct-e1.report.md"; session idle) &
+got="$(SWARM_CONDUCTOR_SLICE_MS=1000 SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null; echo "exit $?")"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == "idle"$'\n'"exit 0" && "${reported}" == yes && $((SECONDS - start)) -ge 3 ]]; then
+  echo "ok   wait --until-report on a busy conductor waits across slices until it reports"; else
+  echo "FAIL wait --until-report on a busy conductor waits across slices until it reports: got '${got}' after $((SECONDS - start))s, report: ${reported}"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
+# A slice that runs out with the session unknown (claude agents --json failing) waits again too.
+rm -f "${dir}/claude.json"; start=${SECONDS}
+(sleep 3; echo report > "${dir}/.swarm/conduct-e1.report.md"; session idle) &
+got="$(SWARM_CONDUCTOR_SLICE_MS=1000 SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null; echo "exit $?")"
+reported=no; [[ -f "${dir}/.swarm/conduct-e1.report.md" ]] && reported=yes
+wait
+if [[ "${got}" == "idle"$'\n'"exit 0" && "${reported}" == yes && $((SECONDS - start)) -ge 3 ]]; then
+  echo "ok   wait --until-report on a conductor of unknown state waits across slices until it reports"; else
+  echo "FAIL wait --until-report on a conductor of unknown state waits across slices until it reports: got '${got}' after $((SECONDS - start))s, report: ${reported}"; fails=$((fails + 1)); fi
+rm -f "${dir}/.swarm/conduct-e1.report.md"
+# A herdr wait that fails other than by timing out is not a slice running out: it ends the wait.
+mv "${dir}/bin/herdr" "${dir}/bin/herdr.real"
+# shellcheck disable=SC2016 # the stub's $1/$2/$@ are its own arguments, written literally
+printf '#!/bin/sh\n[ "$1 $2" = "agent wait" ] && { echo "{\\"error\\":\\"socket closed\\"}" >&2; exit 1; }\nexec "%s" "$@"\n' "${dir}/bin/herdr.real" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"; session busy; start=${SECONDS}
+got="$(cd "${dir}" && SWARM_CONDUCTOR_SLICE_MS=10000 HERDR_ENV=1 CLAUDE_STUB_AGENTS="${dir}/claude.json" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+  perl -e 'alarm 30; exec @ARGV' bash "${SWARM}" wait --until-report conduct-e1 2>/dev/null; echo "exit $?")"   # a slice well above startup; alarm: a retry loop fails, not hangs
+mv "${dir}/bin/herdr.real" "${dir}/bin/herdr"
+if [[ "${got}" == "busy"$'\n'"exit 1" && $((SECONDS - start)) -lt 10 ]]; then
+  echo "ok   wait --until-report on a busy conductor ends when herdr's wait fails"; else
+  echo "FAIL wait --until-report on a busy conductor ends when herdr's wait fails: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
+session waiting "permission prompt"
+got="$(SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null || true)"
+if [[ "${got}" == "waiting: permission prompt" ]] && quiet; then
+  echo "ok   wait --until-report on a conductor waiting on a prompt returns it, and never nudges"; else
+  echo "FAIL wait --until-report on a conductor waiting on a prompt returns it, and never nudges: got '${got}'"; fails=$((fails + 1)); fi
+session idle; cp "${fixture}" "${dir}/projects/p/sess-c1.jsonl"
+got="$(SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null || true)"
+if [[ "${got}" == auth ]] && quiet; then
+  echo "ok   wait --until-report on a conductor whose login expired returns auth, and never nudges"; else
+  echo "FAIL wait --until-report on a conductor whose login expired returns auth, and never nudges: got '${got}'"; fails=$((fails + 1)); fi
+grep -v authentication_failed "${fixture}" > "${dir}/projects/p/sess-c1.jsonl"
+got="$(waitc --until-report s1 2>&1; echo "exit $?")"
+if [[ "${got}" == *"only on a conductor (conduct-<epic>)"* && "${got}" == *"exit 1" ]]; then
+  echo "ok   wait --until-report on a builder fails naming conductors"; else
+  echo "FAIL wait --until-report on a builder fails naming conductors: got '${got}'"; fails=$((fails + 1)); fi
+# /swarm's wait step runs the deadline-free wait, so an epic over an hour is not cut short.
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+step="$(sed -n '/^   - `wait <agent>`:/,/^     If any `wait` here/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+if [[ "${step}" == *"swarm.sh wait --until-report <agent>"* && "${step}" != *"an hour"* ]]; then
+  echo "ok   commands/swarm.md's wait step runs wait --until-report, with no hour"; else
+  echo "FAIL commands/swarm.md's wait step runs wait --until-report, with no hour: got '${step}'"; fails=$((fails + 1)); fi
+
 # A conductor of the same name started by another project is refused, never waited on.
 printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub
 got="$(waitc conduct-e1 3000 2>&1; echo "exit $?")"
