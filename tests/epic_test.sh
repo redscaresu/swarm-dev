@@ -201,6 +201,12 @@ nx() { (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}
 item "${b}" epics/e.md "status: active"
 for s in s1 s2 s3 s4; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: e" "repo: svc"; done
 item "${b}" stories/o1.md "status: ready" "kind: code" "repo: svc"
+# A project that ships a plugin: its epic's release story bumps plugin.json, so a story PR need not.
+BUMP="the epic's release story (the one whose touches name it) does"
+# bumped <text> — whether <text> carries the bump line; missing when <text> is empty, so a check for
+# its absence cannot pass on a brief or paragraph that was never written.
+bumped() { if [[ -z "$1" ]]; then echo missing; elif grep -qF -- "${BUMP}" <<< "$1"; then echo yes; else echo no; fi; }
+mkdir -p "${p}/.claude-plugin"; echo '{"version": "1.0.0"}' > "${p}/.claude-plugin/plugin.json"
 run conduct e >/dev/null
 check "the conductor opens a tab named for the epic" "yes" "$(has "tab create --workspace w --cwd ${p} --label e --no-focus" "$(log)")"
 check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor" "$(log)")"
@@ -216,7 +222,12 @@ check "the conductor gives up on a builder with close, accepts a Fable dialog it
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
-for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
+for s in s1 s2 s3; do run story "${s}" >/dev/null; done
+mv "${p}/.claude-plugin/plugin.json" "${ROOT}/plugin.json"; run story s4 >/dev/null; mv "${ROOT}/plugin.json" "${p}/.claude-plugin/plugin.json"
+check "with plugin.json, the story-mode builder and conductor say a missing bump is not a finding; without it, no line" "yes|yes|no" \
+  "$(has "${BUMP}" "$(cat "${p}/.swarm/briefs/s1.md")")|$(has "${BUMP}" "$(para "A story is reviewed only when" "${cbrief}")")|$(bumped "$(cat "${p}/.swarm/briefs/s4.md" 2>/dev/null)")"
+check "the story-mode conductor's line keeps the release story's own PR to the bump" "yes" \
+  "$(has "On any other story a PR without the bump is not a finding" "$(para "A story is reviewed only when" "${cbrief}")")"
 check "the story-mode builder and conductor run codex-review in the background, and know what a timeout means" "yes|yes|yes|yes|yes|yes" \
   "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(codex_form '<base>' "$(para "A story is reviewed only when" "${cbrief}")")"
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
@@ -230,6 +241,7 @@ check "the fourth pane splits the second, and the fifth opens <epic>-2" "yes|yes
   "$(has "pane split w:2 --direction down" "$(log)")|$(has "--label e-2 " "$(log)")"
 run story o1 >/dev/null
 check "a story outside any epic gets a tab of its own" "yes" "$(has "--label o1 " "$(log)")"
+check "a one-off story has no release story, so its brief has no bump line" "no" "$(bumped "$(cat "${p}/.swarm/briefs/o1.md" 2>/dev/null)")"
 : > "${ROOT}/herdr.log"
 run close s1 >/dev/null
 check "closing a story closes its pane and leaves the epic's tab" "yes|no|no" \
@@ -368,6 +380,13 @@ check "the story brief opens no PR and names the epic branch" "yes|yes|yes" \
 check "the epic-mode builder runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" "$(codex_form epic/f "${brief}")"
 check "the epic story brief asks for a mutation" "yes" \
   "$(has "prove each new or changed test can fail" "${brief}")"
+check "the epic-mode builder says a missing bump is not a finding" "yes" "$(has "${BUMP}" "${brief}")"
+# The release story does the bump, so its brief must not tell it not to.
+item "${b}" stories/f3.md "status: ready" "kind: code" "epic: f" "repo: svc" "touches: [.claude-plugin/plugin.json]"
+run story f3 >/dev/null
+check "a story whose touches name plugin.json (the release story) gets no bump line" "no" \
+  "$(bumped "$(cat "${p}/.swarm/briefs/f3.md" 2>/dev/null)")"
+rm -f "${b}/stories/f3.md"
 # Someone merged into the epic branch: the next story starts from there, and the repo is listed once.
 "${GIT[@]}" -C "${ROOT}/svc" fetch -q origin && "${GIT[@]}" -C "${ROOT}/svc" checkout -q -b m origin/epic/f
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m f1 && "${GIT[@]}" -C "${ROOT}/svc" push -q origin m:epic/f
@@ -402,6 +421,10 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
   "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
+check "the epic-mode conductor's per-story review says a missing bump is not a finding; its whole-epic review, which must see the bump, does not" "yes|no" \
+  "$(has "${BUMP}" "$(para "When a builder reports, review its branch." "${brief}")")|$(bumped "$(para "review the whole epic" "${brief}")")"
+check "the epic-mode conductor's line keeps the release story's own branch to the bump" "yes" \
+  "$(has "On any other story a PR without the bump is not a finding" "$(para "When a builder reports, review its branch." "${brief}")")"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
 check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \

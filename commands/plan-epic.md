@@ -84,5 +84,5 @@ story, what each needs from the user (its **You:** steps), and, with `merge = hu
 merges the resulting PRs. Ask before
 writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready` or `blocked` with `blocked_by`, `epic: $1`, `depends_on`, `touches`, `risk` when
-high; body: scope and **Done when**; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
+high; body: scope and **Done when**; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass (a board-only PR needs no version bump), and `swarm.sh close
 scope-$1`. Waves are then built with `swarm.sh story <slug>`.
