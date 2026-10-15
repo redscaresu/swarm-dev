@@ -276,13 +276,14 @@ cannot read the agents changes nothing. herdr lists every project's agents, so
 opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
 **The goal.** With `goal = N`, once the builder has taken up its brief, `story` sends it `/goal`
-followed by the condition in `.swarm/briefs/<slug>.goal.md`, once, through `herdr agent prompt`. The
-builder is mid-turn by then; Claude Code still sets the goal straight away, and runs one extra short
-turn after the brief's turn ends. From then on Claude Code's judge keeps the builder working until
-the story's **Done when** holds, the builder replies `IMPOSSIBLE: <why>`, or N more turns have
-passed. The judge records all three as met, and only its reason text tells them apart. `story`
-looks for the goal in the builder's session log and does not read the pane: it waits up to a minute
-for a `goal_status` entry with that condition, written after the send. If Claude Code refused
+followed by the condition in `.swarm/briefs/<slug>.goal.md`, joined onto one line, once, through
+`herdr agent prompt`. The builder is mid-turn by then; Claude Code still sets the goal straight
+away, and runs one extra short turn after the brief's turn ends. From then on Claude Code's judge
+keeps the builder working until the story's **Done when** holds, the builder replies
+`IMPOSSIBLE: <why>`, or N more turns have passed. The judge records all three as met, and only its
+reason text tells them apart. `story` looks for the goal in the builder's session log and does not
+read the pane: it waits up to a minute for a `goal_status` entry with that condition (whitespace
+aside), written after the send. If Claude Code refused
 the goal (hooks restricted by settings or policy, or a folder it does not trust), or no entry came,
 `story` fails, names the story and the reason, and leaves the builder open for the lead to look at.
 It never sends the `/goal` again, because a second one would reset a goal that had set.

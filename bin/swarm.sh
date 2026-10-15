@@ -1568,13 +1568,16 @@ PY
 
 # send_goal <slug> <goal-file> — send <slug>'s builder `/goal <condition>` once (deliver_prompt's
 # once mode) and confirm it set from its session log (goal_entry, for this condition), polling up to
-# PROMPT_TIMEOUT_MS. Any goal_status newer than the send means it set: the judge may already have
+# PROMPT_TIMEOUT_MS. The condition goes on one line: the spike only saw a one-line /goal set, and a
+# multi-line paste could be split or become a "[Pasted text]" placeholder; goal_entry compares it
+# whitespace aside. Any goal_status newer than the send means it set: the judge may already have
 # written its own after the sentinel. A refusal, or no entry, fails naming the story and why, and
 # leaves the builder open for the lead to read.
 send_goal() {
-  local slug="$1" goal="$2" name since entry deadline
+  local slug="$1" goal="$2" name since entry deadline cond
   name="$(agent_name "${slug}")"; since="$(date +%s)"
-  deliver_prompt "${name}" <(printf '/goal %s' "$(cat "${goal}")") "" once   # read once, so a pipe will do
+  cond="$(tr -s '[:space:]' ' ' < "${goal}")"; cond="${cond# }"; cond="${cond% }"
+  deliver_prompt "${name}" <(printf '/goal %s' "${cond}") "" once   # read once, so a pipe will do
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
   while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ -z "${entry}" && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
   case "${entry}" in

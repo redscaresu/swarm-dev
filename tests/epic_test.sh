@@ -212,9 +212,11 @@ rc=0; out="$(run story gl1)" || rc=$?
 [[ ${rc} -eq 0 ]] || echo "story gl1: ${out}"
 check "with goal = 7, story writes the condition: Done when, From review, the brief's reply, the escape and the bound" \
   "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
-check "with goal = 7 and the goal set, a second prompt follows the brief, /goal and the .goal.md, and story exits 0" \
-  "0|2|/goal|same" "${rc}|$(prompts)|$(grep '^agent prompt ' "${ROOT}/herdr.log" | sed -n '2s/^agent prompt [^ ]* \(\/goal\) .*/\1/p')|$(
-    [[ "$(cat "${ROOT}/goal.txt" 2>/dev/null)" == "/goal $(cat "${p}/.swarm/briefs/gl1.goal.md")" ]] && echo same || echo differs)"
+sent="$(cat "${ROOT}/goal.txt" 2>/dev/null || true)"
+check "with goal = 7 and the goal set, a second prompt follows the brief: /goal and the .goal.md on one line; story exits 0" \
+  "0|2|/goal|one line|same" "${rc}|$(prompts)|$(grep '^agent prompt ' "${ROOT}/herdr.log" | sed -n '2s/^agent prompt [^ ]* \(\/goal\) .*/\1/p')|$(
+    [[ "${sent}" == *$'\n'* ]] && echo "has a newline" || echo "one line")|$(
+    [[ "${sent}" == "/goal $(python3 -c 'import sys; print(" ".join(open(sys.argv[1]).read().split()))' "${p}/.swarm/briefs/gl1.goal.md")" ]] && echo same || echo differs)"
 # A goal that does not set fails story, naming it and why, with the one /goal sent and the builder left open.
 goal_story "${b}" gl4 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
