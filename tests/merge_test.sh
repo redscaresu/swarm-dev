@@ -243,6 +243,10 @@ fresh; rm "${S}"; merge --board "${URL}"
 is "--board: exits 0" 0 "${rc}"
 check "--board: merged" merged
 is "--board: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+# Another story in review, whose PR the stub also reports merged: reconcile would finish it.
+fresh; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge --board "${URL}"
+is "--board runs no reconcile: only merge and main-ci lines" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+check "--board runs no reconcile: the other story stays in review" grep -qx 'status: review' "${S}"
 fresh; rm "${S}"; echo '[{"path":"docs/stories/s.md"},{"path":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
 merge --board "${URL}"; refused "--board with a file off the board" "changes bin/swarm.sh, outside docs/"
 fresh; rm "${S}"; echo 2 > "${FX}/nfiles"; merge --board "${URL}"; refused "--board with files missing from gh's list" "cannot list every file"
