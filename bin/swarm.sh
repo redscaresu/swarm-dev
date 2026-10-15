@@ -1894,13 +1894,17 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
   Run \`swarm.sh close <slug> bound\` and start the story again in a later wave.
 - paused: the goal is still set, with no met entry since, and the builder is idle.
   Send it one \`swarm.sh tell <slug> resume <file>\` and wait on it again.
-  If it stops paused again, run \`swarm.sh close <slug> paused\`.
+  If it stops paused again, run \`swarm.sh close <slug> paused\`. It counts nothing, so do not start
+  the story again: list it for the lead, as for cleared-on-error.
 - cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
   stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
   ends on an API error; or \`swarm.sh story\` failed on a refused goal.
   Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
   the lead, who decides whether to build it again. The story stays \`ready\` with nothing on it to say
   so: do not start it again in a later wave. It waits for the lead.
+- none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose
+  reason is not the stop-after clause): run \`swarm.sh close <slug> stalled\`, which counts the
+  attempt so escalate_after bounds the retries, and start the story again in a later wave.
 EOF
 }
 

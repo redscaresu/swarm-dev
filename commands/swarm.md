@@ -116,13 +116,17 @@ Repeat until a step below says stop:
        `swarm.sh close <slug> bound`, then start it again.
      - `paused`: the goal is still set with no met entry since, and the builder is idle. Send one
        `swarm.sh tell <slug> resume <file>` and wait again; if it stops paused again,
-       `swarm.sh close <slug> paused`.
+       `swarm.sh close <slug> paused`. That counts nothing, so do not start it again: decide
+       yourself what happens to it, as for `cleared-on-error`, and tell the user what you chose.
      - `cleared-on-error`: the transcript holds a `/goal` refusal (a `system` `local_command` entry
        whose stdout refuses `/goal`, with no `goal_status` after it), or the goal is gone and the
        transcript ends on an API error; or `swarm.sh story` failed on a refused goal.
        `swarm.sh close <slug> cleared-on-error`, start nothing more, and decide yourself whether to
        build it again; tell the user what you chose. The story stays `ready` with nothing on it to
        say so, and `next` will name it again: do not start it again until you have decided.
+     - None of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry
+       whose reason is not the stop-after clause): `swarm.sh close <slug> stalled`, which counts the
+       attempt so `escalate_after` bounds the retries, then start it again.
 
      If `wait` prints `waiting: dialog open` for an escalate build (`swarm.sh _role <slug>` prints
      `escalate`), it may be Fable's usage-credits consent, and accepting that is yours, not the
