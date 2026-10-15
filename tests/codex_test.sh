@@ -112,8 +112,11 @@ check "a KILL to codex-review's process group leaves neither the stub nor its ch
 stub 'echo "P1: x.sh:3 drops the error"; exit 0'
 sh -c 'exit 0' & dead=$!; wait "${dead}" || true
 printf '1\tmain\t/x\n' > "${P}/.swarm/state/codex-review.${dead}"
+# A half-rewritten marker (retire writes every state file through <file>.tmp) is no pid's: kept.
+printf '1\tmain\t/x\n' > "${P}/.swarm/state/codex-review.123.tmp"
 review
-check "a run removes a dead pid's marker and leaves none of its own" "" "$(markers)"
+check "a run removes a dead pid's marker, leaves none of its own and keeps a .tmp" "${P}/.swarm/state/codex-review.123.tmp" "$(markers)"
+rm "${P}/.swarm/state/codex-review.123.tmp"
 check "a codex that finishes passes its exit and findings through" "0|yes" "${rc}|$(has "P1: x.sh:3 drops the error" "${out}")"
 check "codex runs as exec review --base origin/main, with no prompt" "[exec][review][--base][origin/main]" "$(cat "${BIN}/args")"
 check "codex reads /dev/null, never the caller's stdin" "" "$(cat "${BIN}/stdin")"

@@ -895,16 +895,20 @@ citem stories/c-you.md '**You:** create the user' 'status: ready' 'kind: lead'
 citem stories/c-lead.md 'The lead runs it.' 'status: ready' 'kind: lead'
 # The live pids are this test's own sleeps, off its stdout so no pipe waits on them, killed on exit.
 sleep 300 >/dev/null 2>&1 & live1=$!; sleep 300 >/dev/null 2>&1 & live2=$!; sleep 300 >/dev/null 2>&1 & live3=$!
-trap 'kill "${live1}" "${live2}" "${live3}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+sleep 300 >/dev/null 2>&1 & live4=$!
+trap 'kill "${live1}" "${live2}" "${live3}" "${live4}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
 sh -c 'exit 0' & dead=$!; wait "${dead}" || true
-marker() { printf '%s\t%s\t%s\n' "$(( $(date +%s) - $2 * 60 ))" main "${ROOT}/repo-wt/$3" > "${S}/codex-review.$1"; }   # <pid> <minutes ago> <worktree>
+marker() { printf '%s\t%s\t%s\n' "$(( $(date +%s) - $2 * 60 ))" "${4:-main}" "${ROOT}/repo-wt/$3" > "${S}/codex-review.$1"; }   # <pid> <minutes ago> <worktree> [base]
 marker "${live1}" 7 cs-one; marker "${live2}" 3 epic-beta; marker "${dead}" 2 dead-one; marker "${live3}" 12 old-one
+# A long slug on an epic base: the name column is cut, never the base or the age.
+citem stories/a-rather-long-story-slug.md '' 'status: ready' 'epic: alpha'
+marker "${live4}" 4 a-rather-long-story-slug epic/alpha
 before="$(cksum "${S}"/codex-review.*)"
 for cols in 100 160; do
   out="$(fresh; cd "${C}" || exit 1; env -u HERDR_ENV -u SWARM_PROJECT COLUMNS="${cols}" PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
   # under <row text> — the epic header (a progress bar's line) above that row.
   under() { awk -v r="$1" '/[█░]/ { e = $0 } index($0, r) { print e; exit }' <<< "${out}" | grep -oE '(alpha|beta) '; }
-  check "codex row at ${cols} columns: a story worktree's review shows with its 7m age" grep -qE 'codex review cs-one vs main.*7m' <<< "${out}"
+  check "codex row at ${cols} columns: a story worktree's review shows with its 7m age and base" grep -qE 'codex review cs-one .*running 7m vs main' <<< "${out}"
   check "codex row at ${cols} columns: a story worktree's review sits under its story's epic" test "$(under 'codex review cs-one')" = "alpha "
   check "codex row at ${cols} columns: an epic worktree's review sits under that epic" test "$(under 'codex review epic-beta')" = "beta "
   check "codex row at ${cols} columns: a dead pid's marker shows no row" lacks "codex review dead-one" "${out}"
@@ -912,6 +916,7 @@ for cols in 100 160; do
   check "codex row at ${cols} columns: not in needs you" lacks "codex review" "$(lbox "needs you" "${out}")"
   check "codex row at ${cols} columns: not in the lead's queue" lacks "codex review" "$(lbox "lead's queue" "${out}")"
 done
+check "codex row at 160 columns: a long slug's row keeps its base and age" grep -qE 'codex review a-rather.*running 4m vs epic/alpha' <<< "${out}"
 check "dash leaves every codex-review marker, dead or overdue, as it was" test "$(cksum "${S}"/codex-review.*)" = "${before}"
 
 # --- A git repo with no board: dash and dash --watch stop at once and name swarm.sh init.

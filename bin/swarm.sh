@@ -3231,7 +3231,7 @@ for a in agents:
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
   DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
-import collections, datetime, itertools, json, os, re, time
+import collections, datetime, glob, itertools, json, os, re, time
 E = os.environ
 exec(E["SWARM_REPORT_PY"])
 exec(E["SWARM_PANES_PY"])
@@ -3472,7 +3472,8 @@ for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
     if pid <= 0 or not alive(pid) or NOW - float(t) > (int(E["DASH_CODEX_MIN"]) + 1) * 60:
         continue
     wt = os.path.basename(cwd.rstrip("/"))
-    shown.append({"name": f"codex review {wt} vs {base}", "role": "codex", "model": "codex", "words": f"running {age}m",
+    # The name column is cut at name_w, so the base goes with the age, in the words.
+    shown.append({"name": f"codex review {wt}", "role": "codex", "model": "codex", "words": f"running {age}m vs {base}",
                   "state": "codex", "sym": "working", "look": False, "open": False, "prs": "",
                   "epic": epic_for("", None, re.sub(r"^epic-", "", wt))})
 
@@ -4391,7 +4392,9 @@ codex_review() {
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
   mkdir -p "${STATE_DIR}"
   for m in "${STATE_DIR}"/codex-review.*; do
-    [[ ! -f "${m}" ]] || kill -0 "${m##*.}" 2>/dev/null || rm -f "${m}"
+    # Only a pid suffix: retire rewrites every state file through <file>.tmp.
+    [[ -f "${m}" && "${m##*.}" =~ ^[0-9]+$ ]] || continue
+    kill -0 "${m##*.}" 2>/dev/null || rm -f "${m}"
   done
   m="${STATE_DIR}/codex-review.$$"
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
