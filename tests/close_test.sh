@@ -206,16 +206,22 @@ is "reset of a story with neither attempts: nor escalated_from: fails, naming it
 # The role decides, not the count: a code build at attempts: 2 (an older escalate line before it) stays code.
 item c2 "status: ready" "kind: code" "attempts: 2"; built c2 escalate; built c2 code; started c2 w:p34; close c2
 is "a code build closed at attempts: 2 writes attempts: 3 and no kind: lead or block" "code||3|ready|" "$(state c2)|$(block c2)"
-# A chore round-trips; a story with no kind: escalates from code and comes back as kind: code (intended).
+# A chore round-trips, and so does a story with no kind: line (escalated_from: code (default)).
 item ch "status: ready" "kind: chore"; cp "${P}/docs/stories/ch.md" "${ROOT}/ch.orig"
 item ch "status: ready" "kind: chore" "attempts: 2"; built ch escalate; started ch w:p35; close ch
 is "a chore escalates from chore" "lead|chore|3|ready" "$(state ch)"
 sw reset ch why >/dev/null
 is "and reset returns it as it was" "" "$(diff "${ROOT}/ch.orig" "${P}/docs/stories/ch.md")"
+item nk "status: ready"; cp "${P}/docs/stories/nk.md" "${ROOT}/nk.orig"
 item nk "status: ready" "attempts: 2"; built nk escalate; started nk w:p36; close nk
-is "a story with no kind: escalates from code" "lead|code|3|ready" "$(state nk)"
+is "a story with no kind: line escalates from code (default)" "lead|code (default)|3|ready" "$(state nk)"
 sw reset nk why >/dev/null
-is "and reset gives it kind: code" "code|||ready" "$(state nk)"
+is "and reset returns it byte for byte, with no kind: line" "" "$(diff "${ROOT}/nk.orig" "${P}/docs/stories/nk.md")"
+# The lead re-scoped the kind in the file itself (the board outside the repo): reset keeps it.
+item rk "status: ready" "kind: code" "attempts: 2"; built rk escalate; started rk w:p40; close rk
+awk '{ sub(/^kind: lead$/, "kind: docs") } 1' "${P}/docs/stories/rk.md" > "${ROOT}/rk.tmp" && mv "${ROOT}/rk.tmp" "${P}/docs/stories/rk.md"
+sw reset rk why >/dev/null
+is "a kind the lead set itself survives reset; escalated_from: and attempts: go" "docs|||ready" "$(state rk)"
 item vf "status: ready" "kind: lead" "escalated_from: verify" "attempts: 3"; sw reset vf why >/dev/null
 is "escalated_from: verify resets to kind: verify" "verify|||ready" "$(state vf)"
 # With no PR on the branch it says so; with gh failing the close counts nothing, so nothing escalates.
