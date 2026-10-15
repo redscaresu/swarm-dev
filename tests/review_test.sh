@@ -99,11 +99,15 @@ check "the gate names the PR to merge" "yes" "$(has "awaiting your merge: a ${U}
 printf '%s\n' "${U}/1 MERGED" "${U}/2 CLOSED" "${U}/3 OPEN" "${U}/4 MERGED" > "${ROOT}/gh/prs"
 item "${b}" stories/c.md "status: review" "kind: code" "prs: ${U}/2"
 echo "prs: a line in the body" >> "${b}/stories/c.md"
+item "${b}" stories/c2.md "status: review" "kind: code" "attempts: 1" "prs: ${U}/2"
 item "${b}" epics/e2.md "status: review" "prs: ${U}/1 ${U}/3"
 item "${b}" epics/e3.md "status: review" "prs: ${U}/1 ${U}/4"
 out="$(run reconcile)"
 check "a merged story is finished" "gone" "$([[ -e "${b}/stories/a.md" ]] && echo there || echo gone)"
 check "a closed PR sends its story back to ready" "ready" "$(sed -n 's/^status: //p' "${b}/stories/c.md")"
+check "and writes no attempts: line: a PR closed unmerged is not a failed build" "" "$(grep '^attempts:' "${b}/stories/c.md" || true)"
+check "a story sent back to ready keeps its attempts: as it was" "ready|1" \
+  "$(sed -n 's/^status: //p' "${b}/stories/c2.md")|$(sed -n 's/^attempts: //p' "${b}/stories/c2.md")"
 check "its prs: line goes, and a body line like it stays" "prs: a line in the body" "$(grep '^prs:' "${b}/stories/c.md")"
 check "reconcile says which PR closed" "yes" "$(has "back to ready: c (closed without merging: ${U}/2)" "${out}")"
 check "an epic with one of two PRs merged stays in review" "review" "$(sed -n 's/^status: //p' "${b}/epics/e2.md")"
@@ -111,7 +115,8 @@ check "an epic with both PRs merged is finished" "gone" "$([[ -e "${b}/epics/e3.
 check "its dependent unblocks once it is finished" "ready: n" "$(run unblock)"
 
 # --- A board in the project repo: the merged PR took the story off itself. reconcile undoes its
-# own review edit so the pull goes through, and if the pull cannot, keeps the item in review.
+# own edits (the review status, a retry's attempts:) so the pull goes through, and if the pull
+# cannot, keeps the item in review as it was.
 "${GIT[@]}" init -q --bare "${ROOT}/app.git"
 "${GIT[@]}" clone -q "${ROOT}/app.git" "${ROOT}/app" 2>/dev/null
 item "${ROOT}/app/docs" stories/r.md "status: ready" "kind: code"
@@ -121,6 +126,8 @@ item "${ROOT}/app/docs" stories/s.md "status: ready" "kind: code"
 "${GIT[@]}" clone -q "${ROOT}/app.git" "${ROOT}/pr"
 "${GIT[@]}" -C "${ROOT}/pr" rm -q docs/stories/r.md && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "the PR"
 inrepo() { (cd "${ROOT}/app" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# r was retried: close left attempts: 1 in the main checkout, uncommitted, and its PR deletes r.
+perl -pi -e 's/^kind: code$/kind: code\nattempts: 1/' "${ROOT}/app/docs/stories/r.md"
 inrepo review r "${U}/1" >/dev/null
 inrepo review s "${U}/4" >/dev/null
 "${GIT[@]}" -C "${ROOT}/app" commit -q --allow-empty -m "diverged"
@@ -128,6 +135,7 @@ inrepo review s "${U}/4" >/dev/null
 inrepo reconcile >/dev/null || true
 check "a pull that fails keeps merged items in review, with their PRs" "review ${U}/1|review ${U}/4" \
   "$(sed -n 's/^status: //p;s/^prs: //p' "${ROOT}/app/docs/stories/r.md" | paste -sd' ' -)|$(sed -n 's/^status: //p;s/^prs: //p' "${ROOT}/app/docs/stories/s.md" | paste -sd' ' -)"
+check "and keeps a merged retry's attempts:" "1" "$(sed -n 's/^attempts: //p' "${ROOT}/app/docs/stories/r.md")"
 "${GIT[@]}" -C "${ROOT}/app" reset -q --keep HEAD~1
 inrepo reconcile >/dev/null || true
 gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
