@@ -44,10 +44,16 @@ gives_up() {
 }
 GIVES_UP="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes"
 # goal_on <brief> — goal_rule's parts, as has prints them: the six causes, the impossible close, one
-# resume tell for a pause and then the paused close, cleared-on-error stopping the wave, and the
-# goal-on give-up (no 'after wait's nudges', a stalled close).
+# resume tell for a pause and then the paused close, cleared-on-error stopping the wave and its story
+# left for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line,
+# and the goal-on give-up (no 'after wait's nudges', a stalled close). No invented `failed` entry.
 goal_on() {
   local c
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  printf '%s|' "$(has "\`${CLAUDE_PROJECTS_DIR}/*/<session>.jsonl\`" "$1")" \
+    "$(has "whose name (field 3) is the builder's agent name" "$1")" \
+    "$(has 'do not start it again in a later wave. It waits for the lead.' "$1")" \
+    "$(grep -qF 'with `failed`' <<< "$1" && echo failed || echo "no failed")"
   # shellcheck disable=SC2016 # the backticks are the brief's
   for c in '- met: ' '- impossible: ' '- stalled: ' '- bound: ' '- paused: ' '- cleared-on-error: ' \
     'Run `swarm.sh close <slug> impossible`' 'Send it one `swarm.sh tell <slug> resume <file>`' \
@@ -57,7 +63,7 @@ goal_on() {
   done
   grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
 }
-GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
+GOAL_ON="yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
 # goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
 goal_off() {
   printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"

@@ -1878,10 +1878,11 @@ EOF
 goal_rule() {
   cat <<EOF
 Each builder works to a goal (goal = ${CFG_goal}). When \`swarm.sh wait\` returns idle for a builder
-short of its reply, read why it stopped from its reply and its transcript, never its pane: the
-transcript is the session .jsonl named by field 7 of the builder's line in .swarm/agents.tsv
-(\`~/.claude/projects/*/<session>.jsonl\`). Read the reply first: \`IMPOSSIBLE:\` or the story's
-reply. Then read the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the cause:
+short of its reply, read why it stopped from its reply and its transcript, never its pane. The
+transcript is \`${CLAUDE_PROJECTS}/*/<session>.jsonl\`, where <session> is field 7 of the last line in
+.swarm/agents.tsv whose name (field 3) is the builder's agent name (its slug, cut to 32 characters):
+that line is the current build. Read the reply first: \`IMPOSSIBLE:\` or the story's reply. Then read
+the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the cause:
 - met: the story's reply is there. Review it as below; the closes after review or merge stay bare.
 - impossible: the reply starts \`IMPOSSIBLE:\`.
   Run \`swarm.sh close <slug> impossible\`, which makes the story \`kind: lead\`, and list it for the lead.
@@ -1892,10 +1893,12 @@ reply. Then read the \`reason\` of the last \`goal_status\` entry with \`met:tru
 - paused: the goal is still set, with no met entry since, and the builder is idle.
   Send it one \`swarm.sh tell <slug> resume <file>\` and wait on it again.
   If it stops paused again, run \`swarm.sh close <slug> paused\`.
-- cleared-on-error: the goal was refused or failed (a \`goal_status\` with \`failed\`, a \`/goal\`
-  refusal), or \`swarm.sh story\` failed on a refused goal.
+- cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
+  stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
+  ends on an API error; or \`swarm.sh story\` failed on a refused goal.
   Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
-  the lead, who decides whether to build it again.
+  the lead, who decides whether to build it again. The story stays \`ready\` with nothing on it to say
+  so: do not start it again in a later wave. It waits for the lead.
 EOF
 }
 
@@ -2100,8 +2103,9 @@ epic_has_stories() {
 #   plan-epic <epic>  an active epic has no stories yet
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
-#   escalated <slug>  a story whose Fable build failed (kind: lead with escalated_from:): the lead
-#                     re-scopes it and runs reset, or drops it
+#   escalated <slug>  a story whose Fable build failed, or whose builder called its Done when
+#                     impossible (kind: lead with escalated_from:): the lead re-scopes it and runs
+#                     reset, or drops it
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
