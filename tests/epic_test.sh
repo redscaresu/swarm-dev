@@ -73,6 +73,7 @@ EPIC_REPLY="When your branch is pushed, reply with the branch, what changed in t
 
 # herdr: logs every call; each new pane is w:<n>, each new tab t<n>, and tab list shows their labels.
 # agent start makes the session's .jsonl; a /goal prompt is kept in goal.txt and writes its entry.
+# listfail makes agent list fail.
 mkdir -p "${ROOT}/bin"
 cat > "${ROOT}/bin/herdr" <<EOF
 #!/bin/sh
@@ -115,7 +116,8 @@ PY
                       echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename")     [ -e "$H/norename" ] && exit 1
                       [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
-  "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+  "agent list")       [ -e "$H/listfail" ] && exit 1
+                      awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
   "agent wait")       [ -e "$H/swap" ] && mv "$H/swap" "$H/claude.json"   # the session changes while herdr waits
@@ -129,11 +131,13 @@ esac
 EOF
 chmod +x "${ROOT}/bin/herdr"
 log() { cat "${ROOT}/herdr.log"; }
-# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs.
+# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs; pr view <url> gives the state on
+# <url>'s line in ${ROOT}/pr-states.
 gh_stub() {
   printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
   # shellcheck disable=SC2016 # the stub's own shell expands these
-  printf '%s\n' 'echo "$*" >> "$H/gh.log"' 'case "$1 $2" in "pr list") cat "$H/prs.json" 2>/dev/null || echo "[]" ;; esac' >> "${ROOT}/bin/gh"
+  printf '%s\n' 'echo "$*" >> "$H/gh.log"' 'case "$1 $2" in "pr list") cat "$H/prs.json" 2>/dev/null || echo "[]" ;;' \
+    '  "pr view") echo "{\"state\":\"$(awk -v u="$3" '\''$1 == u { print $2 }'\'' "$H/pr-states")\"}" ;; esac' >> "${ROOT}/bin/gh"
   chmod +x "${ROOT}/bin/gh"
 }
 gh_stub
@@ -698,6 +702,65 @@ got="$(sed -n 's/^kind: //p' "${b}/stories/y1.md")|$(run reset y1 its Done when 
 check "close y1 impossible leaves it kind: lead; reset y1 succeeds, and then story y1 succeeds" "lead|ok|ok" \
   "${got}|$(run story y1 >/dev/null && echo ok || echo failed)"
 rm -f "${b}/stories/x1.md" "${b}/stories/y1.md" "${ROOT}/prs.json"
+
+# --- reconcile clears a story's build before the pull: once its PR merged always, closing its open
+# builder first (in review, so the close counts nothing); once its PR closed unmerged only when no
+# builder is open. built <slug> <n> — build the story, push story/<slug> and put it in review with PR <n>.
+printf '%s\n' "base_branches = dev main" "finished = mark" > "${p}/.claude/swarm/config"
+UR="https://github.com/o/svc/pull"
+built() {
+  item "${b}" "stories/$1.md" "status: ready" "kind: code" "repo: svc" "attempts: 1"
+  run story "$1" >/dev/null
+  "${GIT[@]}" -C "${ROOT}/svc-wt/$1" commit -q --allow-empty -m "$1" && "${GIT[@]}" -C "${ROOT}/svc-wt/$1" push -q origin "story/$1"
+  run review "$1" "${UR}/$2" >/dev/null
+}
+fmv() { sed -n "s/^$2: //p" "${b}/stories/$1.md"; }   # <slug> <key>
+built ru1 11; run close ru1 >/dev/null; echo "${UR}/11 CLOSED" >> "${ROOT}/pr-states"
+run reconcile >/dev/null
+check "a PR closed unmerged with no builder open: reconcile clears its worktree and both branches" "|ready" "$(left ru1)|$(fmv ru1 status)"
+rc=0; run story ru1 >/dev/null || rc=$?
+"${GIT[@]}" -C "${ROOT}/svc-wt/ru1" commit -q --allow-empty -m again
+check "and story builds it again, and its builder can push story/ru1" "0|pushed" \
+  "${rc}|$(git -C "${ROOT}/svc-wt/ru1" push -q origin story/ru1 2>/dev/null && echo pushed || echo refused)"
+built ru2 12; echo "${UR}/12 CLOSED" >> "${ROOT}/pr-states"
+rout="$(run reconcile)"
+check "with its builder still open, reconcile leaves the worktree and both branches, naming the story" " worktree branch origin|yes|ready" \
+  "$(left ru2)|$(has "build kept: ru2" "${rout}")|$(fmv ru2 status)"
+built ru3 16; echo "${UR}/16 CLOSED" >> "${ROOT}/pr-states"; touch "${ROOT}/listfail"
+rout="$(run reconcile)"; rm "${ROOT}/listfail"
+check "when herdr cannot list its agents, the builder may be open: reconcile keeps the build, saying why" " worktree branch origin|yes" \
+  "$(left ru3)|$(has "build kept: herdr cannot list its agents, so ru3's builder may be open" "${rout}")"
+built rm1 13; echo "${UR}/13 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"; : > "${ROOT}/gh.log"
+run reconcile >/dev/null
+check "a merged story with its builder open: reconcile closes it, clears its build and finishes it, counting nothing and closing no PR" \
+  "closed|gone||done|1|0" \
+  "$(closes)|$(grep -q '^rm1 ' "${ROOT}/agents" && echo open || echo gone)|$(left rm1)|$(fmv rm1 status)|$(fmv rm1 attempts)|$(grep -c '^pr close' "${ROOT}/gh.log" || true)"
+# Outside herdr no builder is open, and herdr is never called.
+built rm2 14; run close rm2 >/dev/null; echo "${UR}/14 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"
+(cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile >/dev/null 2>&1)
+check "a merged story with no builder open still loses its worktree and both branches, and outside herdr no herdr call is made" "|done|" \
+  "$(left rm2)|$(fmv rm2 status)|$(cat "${ROOT}/herdr.log")"
+# The board in the project repo, goal = 5, and the review status uncommitted: the builder is closed
+# while the story still says review (with goal on, closing a ready story with no cause is refused), then
+# the pull takes the story off as its PR did. A second reconcile does nothing, and leaves qy (never
+# built) alone.
+q="${ROOT}/q"
+"${GIT[@]}" init -q --bare "${q}.git" && "${GIT[@]}" clone -q "${q}.git" "${q}" 2>/dev/null
+mkdir -p "${q}/.claude/swarm"; echo "goal = 5" > "${q}/.claude/swarm/config"
+goal_story "${q}/docs" qz "status: ready" "kind: code"; item "${q}/docs" stories/qy.md "status: ready" "kind: code"
+"${GIT[@]}" -C "${q}" add docs && "${GIT[@]}" -C "${q}" commit -q -m board && "${GIT[@]}" -C "${q}" push -q origin main
+qrun() { (cd "${q}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+qrun story qz >/dev/null
+"${GIT[@]}" -C "${q}-wt/qz" rm -q docs/stories/qz.md && "${GIT[@]}" -C "${q}-wt/qz" commit -q -m qz
+"${GIT[@]}" -C "${q}-wt/qz" push -q origin story/qz story/qz:main   # the PR, merged
+qrun review qz "${UR}/15" >/dev/null; echo "${UR}/15 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"
+rc=0; qrun reconcile >/dev/null || rc=$?
+check "goal = 5, board in the repo, review uncommitted: reconcile exits 0, closes the builder, clears its build and pulls" \
+  "0|closed|||gone" \
+  "${rc}|$(closes)|$([[ -d "${q}-wt/qz" ]] && echo worktree)|$(git -C "${q}" show-ref --heads story/qz; git -C "${q}.git" show-ref --heads story/qz)|$([[ -e "${q}/docs/stories/qz.md" ]] && echo there || echo gone)"
+: > "${ROOT}/herdr.log"; rc=0; rout="$(qrun reconcile)" || rc=$?
+check "a second reconcile is a no-op" "0|||ready" "${rc}|${rout}|$(cat "${ROOT}/herdr.log")|$(sed -n "s/^status: //p" "${q}/docs/stories/qy.md")"
+rm -f "${b}"/stories/r[um][123].md
 
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
 printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"

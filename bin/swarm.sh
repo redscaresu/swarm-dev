@@ -2316,8 +2316,24 @@ mark_review() {
   echo "review: $(basename "${f}" .md) $*"
 }
 
+# builder_state <slug> — open when this project's builder for <slug> is open in herdr, none when it is
+# not, unknown when herdr cannot list its agents. Outside herdr (HERDR_ENV unset) it is none, and herdr
+# is never called.
+builder_state() {
+  local agents
+  [[ "${HERDR_ENV:-}" == 1 ]] || { echo none; return; }
+  # One list, read as agent_field reads it: a pane this project opened, under the builder's name.
+  agents="$(herdr agent list 2>/dev/null)" \
+    && SWARM_NAME="$(agent_name "$1")" SWARM_PANES="$(own_panes)" json "'open' if any(a.get('name') == e['SWARM_NAME'] and a.get('pane_id') in e['SWARM_PANES'].split() for a in d['result']['agents']) else 'none'" <<< "${agents}" 2>/dev/null \
+    || echo unknown
+}
+
 # reconcile — for each item in review: finish it once every PR it lists has merged; send it back to
-# ready, saying which, if any closed without merging; otherwise leave it waiting.
+# ready, saying which, if any closed without merging; otherwise leave it waiting. A story's build is
+# cleared (clear_build) before the pull, while its file still names its repo: always once it merged,
+# after closing its builder if one is open (still in review, so close counts nothing); after a
+# closed PR only when no builder is open (one may be fixing it; so may one herdr cannot list), so the
+# story can be built again.
 reconcile() {
   local f slug url state closed waiting urls merged=()
   while IFS= read -r f; do
@@ -2337,10 +2353,21 @@ reconcile() {
       esac
     done
     if [[ -n "${closed}" ]]; then
+      if [[ "${f}" == "${BOARD}/stories/"* ]]; then
+        case "$(builder_state "${slug}")" in
+          none) clear_build "${slug}" "the PR of ${slug} closed unmerged" "[]" </dev/null ;;
+          open) echo "build kept: ${slug}'s builder is still open, so its worktree and story/${slug} stay" ;;
+          *) echo "build kept: herdr cannot list its agents, so ${slug}'s builder may be open; its worktree and story/${slug} stay" ;;
+        esac
+      fi
       set_status "${f}" ready
       record_event reconcile "${slug}" "ok (reopened)"
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
+      if [[ "${f}" == "${BOARD}/stories/"* ]]; then
+        [[ "$(builder_state "${slug}")" != open ]] || close_agent "${slug}" </dev/null   # stdin is this loop's list
+        clear_build "${slug}" "the PR of ${slug} merged" "[]" </dev/null
+      fi
       merged+=("${slug}")
     fi
   done < <(board stories; board epics)
@@ -3618,7 +3645,8 @@ failed_build() {
   printf '%s\n' "${prs}"
 }
 
-# clear_build <slug> <why> <prs> — clear a failed build away, so the next one starts fresh: in
+# clear_build <slug> <why> <prs> — clear a build away (a failed one, or one reconcile found merged or
+# closed), so the next one starts fresh: in
 # the story's repo, its worktree and story/<slug>; each of <prs> (failed_build's gh list) still open,
 # closed unmerged with a comment saying <why> (the attempt, or the cause); then story/<slug> on origin. A step that fails
 # is said on stderr, and the rest still run.
