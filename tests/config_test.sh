@@ -72,6 +72,12 @@ project "${p}" "stall_minutes = 0"
 check "stall_minutes must be a positive whole number" "yes" "$(fails_with 'config:1: stall_minutes must be' run "${p}" config)"
 project "${p}" "stall_minutes = 45"
 check "stall_minutes is read" "45" "$(run "${p}" config stall_minutes)"
+check "codex_minutes ships on, at 10" "10" "$(project "${p}"; run "${p}" config codex_minutes)"
+for v in 0 abc; do
+  project "${p}" "codex_minutes = ${v}"
+  check "codex_minutes = ${v} is refused, naming file and line" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: codex_minutes must be a positive whole number" run "${p}" config)"
+done
 for v in -1 x 2.5 04; do
   project "${p}" "sonnet_share = ${v}"
   check "sonnet_share = ${v} is refused, naming the key" "yes" "$(fails_with 'config:1: sonnet_share must be a non-negative whole number' run "${p}" config)"
@@ -130,6 +136,9 @@ check "no key is missing from load_config's case arms" "" "$(absent "${arm_keys}
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's goal row has the Default CFG_goal ships" "\`$(project "${p}"; run "${p}" config goal)\`" \
   "$(sed -n 's/^| `goal` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
+# shellcheck disable=SC2016 # the backticks are the table's
+check "the table's codex_minutes row has the Default CFG_codex_minutes ships" "\`$(project "${p}"; run "${p}" config codex_minutes)\`" \
+  "$(sed -n 's/^| `codex_minutes` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's lead row has the Default CFG_lead ships" "\`$(project "${p}"; run "${p}" config lead)\`" \
   "$(sed -n 's/^| `lead` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"

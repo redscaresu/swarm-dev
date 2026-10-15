@@ -71,12 +71,16 @@ Repeat until a step below says stop:
      agent and no PR, the build died: tell the user, and stop.
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
-     builder, `codex exec review` plus `/code-review <PR>` when it changes code (log each fixed
+     builder, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree, run in the
+     background (Bash `run_in_background`) and waited for, since it can outlast a foreground Bash
+     call, plus `/code-review <PR>` when it changes code (log each fixed
      finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`, and
      each declined one with `log-finding --declined <kind> <PR URL> "<the finding, and why>"`), with findings
      sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing
      substantive
-     (method.md § Building).
+     (method.md § Building). If codex reports a usage limit, or codex-review stops it and prints
+     `codex skipped: timed out`, do not run it again: review the diff yourself and write
+     `codex skipped: usage limit` or `codex skipped: timed out` in the PR.
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
      `agent`, merge it, and wait until the PR has merged (a queued merge, auto-merge or a merge

@@ -27,6 +27,14 @@ check() { # <name> <want> <got>
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 first() { printf '%s' "${1%%$'\n'*}"; }
+# codex_form <base> <text> — <text> runs codex through codex-review against <base>, with the config's
+# project, in the background (a foreground Bash call ends before the limit), and says what a timeout means.
+codex_form() {
+  printf '%s|%s|%s' "$(has "SWARM_PROJECT=${p} ${SWARM} codex-review $1\`" "$2")" \
+    "$(has "Run codex-review in the background (Bash run_in_background) and wait for it to finish" "$2")" "$(has "codex skipped: timed out" "$2")"
+}
+# para <pattern> <text> — the paragraph of <text> that starts on the line matching <pattern>.
+para() { awk -v pat="$1" 'index($0, pat) { on = 1 } on && /^$/ { exit } on' <<< "$2"; }
 # gives_up <brief> — give_up_rule's parts, as has prints them: the give-up close of a code, docs or
 # chore story, a retry on the model swarm.sh picks (Fable after escalate_after, 2 here), Fable's consent
 # accepted through send-keys only on an escalate build and logged, a dialog never closed or counted,
@@ -217,7 +225,7 @@ check "the conductor's brief watches only its own epic's PRs" "yes" \
 cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
-  "$(has "codex exec review --base" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
+  "$(has "codex-review <base>" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
 check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
@@ -226,6 +234,8 @@ check "with goal off, the story-mode conductor waits out wait's nudges, and has 
 check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
+check "the story-mode builder and conductor run codex-review in the background, and know what a timeout means" "yes|yes|yes|yes|yes|yes" \
+  "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(codex_form '<base>' "$(para "A story is reviewed only when" "${cbrief}")")"
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
   "$(grep -q "Rules checked:" "${p}/.swarm/briefs/s1.md" && echo yes || echo no)|$(grep -q "rules-unchecked" <<< "${cbrief}" && echo yes || echo no)"
 sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
@@ -377,7 +387,8 @@ check "epic/<epic> is made from the base (dev), and the story branches from it" 
 check "the epic lists the repo" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md")"
 brief="$(cat "${p}/.swarm/briefs/f1.md")"
 check "the story brief opens no PR and names the epic branch" "yes|yes|yes" \
-  "$(has "open no PR" "${brief}")|$(has "codex exec review --base origin/epic/f" "${brief}")|$(has "Before you reply, also run the epic's check" "${brief}")"
+  "$(has "open no PR" "${brief}")|$(has "codex-review epic/f" "${brief}")|$(has "Before you reply, also run the epic's check" "${brief}")"
+check "the epic-mode builder runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" "$(codex_form epic/f "${brief}")"
 check "the epic story brief asks for a mutation" "yes" \
   "$(has "prove each new or changed test can fail" "${brief}")"
 # Someone merged into the epic branch: the next story starts from there, and the repo is listed once.
@@ -412,6 +423,8 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
+check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
+  "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
 check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
   "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
 check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \
@@ -901,6 +914,13 @@ check "builder_subagent_model: the builder's start sets it; a survey's and a con
   "$(started sub1)|$(started sv1)|$(started conduct-sube)"
 rm -f "${b}"/stories/r[04]-*.md "${b}"/stories/s4-*.md "${b}/stories/sub1.md" "${b}/epics/sube.md"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+
+# --- Every codex run goes through codex-review: the arm is the one place that runs codex's review.
+REPO="$(dirname "${SWARM}")/.."
+check "only codex-review runs codex exec review, and no command tells anyone to" "1|" \
+  "$(grep -c 'codex exec review' "${SWARM}")|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
+check "/swarm-dev:swarm runs the lead's codex-review in the background" "yes" \
+  "$(has "swarm.sh codex-review <base>\` in its worktree, run in the background (Bash \`run_in_background\`)" "$(tr -s '[:space:]' ' ' < "${REPO}/commands/swarm.md")")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
