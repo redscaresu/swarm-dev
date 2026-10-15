@@ -395,7 +395,11 @@ fails the command.
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
 and tokens from the session's own log, the tells it took by kind (`tells_findings`, `tells_nudge`, `tells_resume`; a bare `tell` from older logs counts as findings, and a refused tell, which never reached it, is not counted) and its `close` lines in this log (any cause), the findings logged
 against its PR, the PR and its state from `gh`, and which attempt at the story it was. The slug comes
-from the session's worktree, because agents.tsv cuts names at 32 characters. A story that merged and
+from the session's worktree, because agents.tsv cuts names at 32 characters. Each build gets its own
+PR: the last of the story's PRs that its session log names, so a retried story shows the first build's
+closed PR beside the retry's merged one. A build whose log names none of them has no PR, and a build
+with no log left gets the story's PR only when it has exactly one. With `pr_per = epic`, builders open
+no PR, so every build of an epic story gets the epic's PR. A story that merged and
 left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
 
 `swarm.sh decisions [--since YYYY-MM-DD]` exports the same logs as training data for a small

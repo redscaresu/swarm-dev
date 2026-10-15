@@ -1042,15 +1042,19 @@ PY
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
+# A build's PR is the last of the slug's PRs its session log names, so each attempt keeps its own;
+# with no log, the slug's PR when it has exactly one. With pr_per = epic, every build of an epic story
+# gets the epic's PR (builders open none).
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
 # read from close's copy of the session log once Claude Code deleted it.
 outcomes_report() {
-  local since="" rows meta="" slug text kind src pr state
+  local since="" rows meta="" slug text kind src prs epic head
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts
+  # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts,
+  # pulls (the github pull URLs its session log names, or - when there is no log to read)
   rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}" <<'PY'
 import collections, json, os, sys
@@ -1067,6 +1071,19 @@ def slug_of(path, name):
         if cwd:
             return os.path.basename(cwd.rstrip("/")) if os.path.dirname(cwd.rstrip("/")).endswith("-wt") else name
     return name
+
+PULL = re.compile(r"https://github\.com/[^/\s\"\\]+/[^/\s\"\\]+/pull/\d+")
+def pulls(path):
+    # Each URL once, in the order of its last mention (pr_of wants only the last of the PRs of the slug), so
+    # a log that names hundreds keeps the row small enough for SWARM_ROWS. A log that reads as nothing
+    # (gone, or damaged from its start) is no log: "-".
+    named, read = {}, False
+    for line in log_lines(path) if path else ():
+        read = True
+        for u in PULL.findall(line):
+            named.pop(u, None)
+            named[u] = None
+    return " ".join(named) if read else "-"
 
 steer = collections.Counter()
 if os.path.exists(events):
@@ -1096,30 +1113,44 @@ for line in open(log, errors="ignore"):
         cost, tokens = f"{usd:.2f}", str(sum(tok))
     targets = {slug, name}
     counts = [str(sum(steer[c, t] for t in targets)) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
-    print("\t".join([day, slug, role, model, effort, cost, tokens] + counts + [str(attempts[slug])]))
+    print("\t".join([day, slug, role, model, effort, cost, tokens] + counts + [str(attempts[slug]), pulls(path)]))
 PY
 )"
-  # Per slug: kind, risk and the PR, from the story (on the board, or its last version in git once a
-  # merge deleted it) and gh. A gh that fails leaves the PR empty; it never fails the run.
+  # Per slug: kind, risk, the epic whose PR its builds share (pr_per = epic) and every PR of its head
+  # (newest first, as `url state` pairs joined by commas), from the story (on the board, or its last
+  # version in git once a merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run.
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    text="$(story_text "${slug}")"; pr=""; state=""
+    text="$(story_text "${slug}")"; prs=""; epic=""; head="story/${slug}"
     kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
+    [[ "${CFG_pr_per}" != epic ]] || epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    [[ -z "${epic}" ]] || head="epic/${epic}"
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then
-      IFS=$'\t' read -r pr state <<< "$( (cd "${src}" && gh pr list --head "story/${slug}" --state all --limit 1 \
-        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null || true)"
+      prs="$( (cd "${src}" && gh pr list --head "${head}" --state all \
+        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null | tr '\t' ' ' | paste -sd, - || true)"
     fi
-    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${pr}"$'\t'"${state}"$'\n'
+    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${epic}"$'\t'"${prs}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
 import collections, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 5}
 fixed = collections.Counter(pr_key(f[2]) for f in fixed_rows(sys.argv[1]))
+
+def pr_of(epic, prs, pulls):
+    # (url, state) of a build's PR, or empty: see outcomes_report. pulls is the first python's column:
+    # "-" for no log.
+    prs = [tuple(p.split(" ", 1)) for p in prs.split(",") if " " in p]
+    if epic or pulls == "-":
+        return prs[0] if prs and (epic or len(prs) == 1) else ("", "")
+    keyed = {pr_key(u): (u, s) for u, s in prs}
+    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", ""))
+
 print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
 for line in os.environ["SWARM_ROWS"].splitlines():
-    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = line.split("\t")
-    kind, risk, pr, state = meta.get(slug, ("", "", "", ""))
+    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts, pulls = line.split("\t")
+    kind, risk, epic, prs = meta.get(slug, ("", "", "", ""))
+    pr, state = pr_of(epic, prs, pulls)
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
 PY

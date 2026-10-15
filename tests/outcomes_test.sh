@@ -3,7 +3,8 @@
 # deleted (its slug longer than the 32 characters agents.tsv keeps), built twice, with findings fixed (old
 # four-field rows and new ones) and one declined, which is not counted; a docs story still on
 # the board; a conductor and a codex agent (not builders, left out). gh is a stub on PATH. Then the same
-# builds read from close's copies of their session logs once Claude Code deleted them.
+# builds read from close's copies of their session logs once Claude Code deleted them. Last, each build
+# of a retried story gets its own PR: the last of the slug's PRs its own session log names.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -18,13 +19,16 @@ printf -- '---\nkind: docs\nstatus: ready\n---\n' > "${P}/docs/stories/docs-stor
 git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm stories
 git -C "${P}" rm -q "docs/stories/${LONG}.md" && git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm merged
 
-session() { # <session id> <slug> <model> <input> <output> — a session log: its worktree cwd, then one message
+session() { # <session id> <slug> <model> <input> <output> [pull URL...] — a session log: its worktree cwd,
+  # one message, then a tool result naming each URL (as gh pr create prints it)
+  local u
   printf '{"type":"user","cwd":"%s/repo-wt/%s"}\n' "${dir}" "$2"
   printf '{"cwd":"%s/repo-wt/%s","message":{"id":"m-%s","model":"%s","usage":{"input_tokens":%s,"output_tokens":%s}}}\n' "${dir}" "$2" "$1" "$3" "$4" "$5"
+  for u in "${@:6}"; do printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"%s\\n"}]}}\n' "${u}"; done
 }
-session s1 "${LONG}" claude-opus-5-5 1000000 0 > "${dir}/projects/p/s1.jsonl"
-session s2 docs-story claude-sonnet-5-5 0 1000000 > "${dir}/projects/p/s2.jsonl"
-session s3 "${LONG}" claude-fable-5-1 1000000 0 > "${dir}/projects/p/s3.jsonl"
+session s1 "${LONG}" claude-opus-5-5 1000000 0 https://github.com/o/r/pull/7 > "${dir}/projects/p/s1.jsonl"
+session s2 docs-story claude-sonnet-5-5 0 1000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"
+session s3 "${LONG}" claude-fable-5-1 1000000 0 https://github.com/o/r/pull/7 > "${dir}/projects/p/s3.jsonl"
 printf '%s\n' \
   $'2026-10-01\tcode-risky\t'"${CUT}"$'\tclaude\topus\txhigh\ts1' \
   $'2026-10-01\tconduct\tconduct-e\tclaude\topus\thigh\ts9' \
@@ -86,7 +90,7 @@ run() { (cd "${P}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bas
 snap() { (cd "${P}/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
 run _archive "${CUT}"; run _archive docs-story
 check "the live log is a sign of life" "$(run _mtime docs-story | grep -c '^[0-9][0-9]*$')" 1
-session s2 docs-story claude-sonnet-5-5 0 2000000 > "${dir}/projects/p/s2.jsonl"
+session s2 docs-story claude-sonnet-5-5 0 2000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"
 live() { awk -F'\t' -v OFS='\t' '{ $8 = "20.00"; $9 = 2000000 } 1' <<< "$1"; }
 check "with both the live log and close's copy, the live log wins" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(live "${R2}")" "${R3}")"
@@ -99,7 +103,7 @@ check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${P}/.swarm/sessions/"*
 # With neither, cost and tokens are empty and the slug is agents.tsv's cut name, whose story is unknown.
 R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	1	0			1"
-check "with neither, the cells are empty and nothing fails" \
+check "with neither, the cells are empty, a slug with one PR keeps it, and nothing fails" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(awk -F'\t' -v OFS='\t' '{ $8 = ""; $9 = "" } 1' <<< "${R2}")" "${R3N}")"
 # A damaged copy (not gzip at all for s2, cut short for s3) reads as what it held before the damage:
 # nothing here, so no usage and no cwd; every other row is intact.
@@ -108,6 +112,61 @@ session s3 "${LONG}" claude-fable-5-1 1000000 0 | gzip -c | head -c 20 > "${P}/.
 zero() { awk -F'\t' -v OFS='\t' '{ $8 = "0.00"; $9 = 0 } 1' <<< "$1"; }
 check "a damaged copy stops neither the report nor the other rows" \
   "$(outcomes "${dir}/bin" 2>&1; echo "exit $?")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(zero "${R2}")" "$(zero "${R3N}")" "exit 0")"
+
+# --- Each build's own PR, in a second project. gh answers from prs/<head with / as _>: its
+# `url<TAB>state` lines, newest first as gh lists them, the first only with --limit 1.
+Q="${dir}/two"; U=https://github.com/o/r/pull
+mkdir -p "${Q}/.swarm" "${Q}/docs/stories" "${dir}/projects/q" "${dir}/prs" "${dir}/bin2"
+git -C "${Q}" init -q
+for s in retried shared late foreign; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${Q}/docs/stories/${s}.md"; done
+printf -- '---\nkind: code\nepic: e1\nstatus: ready\n---\n' > "${Q}/docs/stories/in-epic.md"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\nn=99; case " $* " in *" --limit 1 "*) n=1 ;; esac\nhead -n "$n" "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" > "${dir}/bin2/gh"
+chmod +x "${dir}/bin2/gh"
+printf '%s\t%s\n' "${U}/2" MERGED "${U}/1" CLOSED > "${dir}/prs/story_retried"
+printf '%s\t%s\n' "${U}/3" OPEN > "${dir}/prs/story_shared"
+printf '%s\t%s\n' "${U}/4" OPEN > "${dir}/prs/story_late"
+printf '%s\t%s\n' "${U}/6" OPEN > "${dir}/prs/story_foreign"
+printf '%s\t%s\n' "${U}/10" OPEN > "${dir}/prs/epic_e1"
+qs() { # <session id> <slug> <model> [pull URL...] — a session log for the second project
+  local id="$1" slug="$2" model="$3"; shift 3
+  session "${id}" "${slug}" "${model}" 1000000 0 "$@" > "${dir}/projects/q/${id}.jsonl"
+}
+# The retry's brief names the first attempt's PR before it opens its own, so the last one counts. The
+# foreign build names only another head's PR; a build in the epic names a story PR it never opened.
+qs r1 retried claude-opus-5-5 "${U}/1"; qs r2 retried claude-fable-5-1 "${U}/1" "${U}/2/files"
+qs h1 shared claude-opus-5-5 "${U}/3"; qs h2 shared claude-opus-5-5 "${U}/3"
+# A long session names its PR thousands of times; each URL reaches the report once, or the rows would
+# pass the size an environment string may have (128 KiB on Linux, about 1 MiB in all on macOS).
+printf '{"type":"user","message":{"content":"%s"}}\n' "$(printf "${U}/3 %.0s" $(seq 40000))" >> "${dir}/projects/q/h2.jsonl"
+qs l1 late claude-opus-5-5; qs l2 late claude-fable-5-1 "${U}/4"
+qs f1 foreign claude-opus-5-5 "${U}/1"
+qs e1 in-epic claude-opus-5-5 "${U}/5"; qs e2 in-epic claude-fable-5-1
+printf '%s\n' \
+  $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tr1' $'2026-10-02\tescalate\tretried\tclaude\tfable\txhigh\tr2' \
+  $'2026-10-01\tcode\tshared\tclaude\topus\thigh\th1' $'2026-10-02\tcode\tshared\tclaude\topus\thigh\th2' \
+  $'2026-10-03\tcode\tlate\tclaude\topus\thigh\tl1' $'2026-10-03\tescalate\tlate\tclaude\tfable\txhigh\tl2' \
+  $'2026-10-03\tcode\tforeign\tclaude\topus\thigh\tf1' \
+  $'2026-10-04\tcode\tin-epic\tclaude\topus\thigh\te1' $'2026-10-05\tescalate\tin-epic\tclaude\tfable\txhigh\te2' > "${Q}/.swarm/agents.tsv"
+two() { # slug, model, pr, pr_state and attempts of each row
+  (cd "${Q}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | cut -f2,6,15-17)
+}
+check "each build gets the last of its slug's PRs its own log names (named 40000 times or once); none, or another head's, leaves it empty" \
+  "$(two | grep -v in-epic)" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
+    "retried	opus	${U}/1	CLOSED	1" "retried	fable	${U}/2	MERGED	2" \
+    "shared	opus	${U}/3	OPEN	1" "shared	opus	${U}/3	OPEN	2" \
+    "late	opus			1" "late	fable	${U}/4	OPEN	2" "foreign	opus			1")"
+check "with pr_per = story, an epic story's builds take their PR from their logs too" \
+  "$(two | grep in-epic | cut -f3 | paste -sd, -)" ","
+mkdir -p "${Q}/.claude/swarm"; echo "pr_per = epic" > "${Q}/.claude/swarm/config"
+check "with pr_per = epic, every build of an epic story gets the epic's PR, and the rest are unchanged" \
+  "$(two)" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
+    "retried	opus	${U}/1	CLOSED	1" "retried	fable	${U}/2	MERGED	2" \
+    "shared	opus	${U}/3	OPEN	1" "shared	opus	${U}/3	OPEN	2" \
+    "late	opus			1" "late	fable	${U}/4	OPEN	2" "foreign	opus			1" \
+    "in-epic	opus	${U}/10	OPEN	1" "in-epic	fable	${U}/10	OPEN	2")"
+printf '%s\t%s\n' "${U}/10" MERGED > "${dir}/prs/epic_e1"
+check "and MERGED once the epic's PR merges" "$(two | grep in-epic | cut -f4 | paste -sd' ' -)" "MERGED MERGED"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
