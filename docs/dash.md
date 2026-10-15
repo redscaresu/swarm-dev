@@ -28,8 +28,10 @@ is one column, top to bottom:
   mode, the summary and who is on call move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
-  on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled builder (working for `stall_minutes`, 30
-  by default, with no commit, PR update or swarm action), `agree` a draft HLD. When nothing does,
+  on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
+  by default, with no sign of life: for a builder no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
+  for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
+  pane, nudges and failed tells excepted), `agree` a draft HLD. When nothing does,
   it is one line.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
   many open stories are in each status. An agent's status is its Claude session's (`claude agents
@@ -45,9 +47,11 @@ is one column, top to bottom:
   a root `*.md`, and names no `board/`, `close/` or `epic/` branch),
   the swarm's logged `finish`, or a last status of `done` or `review` or a `prs:` line. A story
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
-  when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. From
+  when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. A working
+  agent's status carries how long since its last sign of life (`working 12m`), and past
+  `stall_minutes` it reads `stalled 40m`, marked `!`. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
-  a working agent shows how long ago it started (its `story`, `conduct` or `agent` line in
+  a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
   `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it
   started, from its newest `escalate` line (`attempt 3 · 14:02`). Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
@@ -56,7 +60,8 @@ is one column, top to bottom:
   workspace and tab instead.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
-  fixed (✎, one row per PR and day), agents, conductors and builders started (▶), escalation
+  fixed (✎, one row per PR and day, so a fix's `log-finding` line is not shown again), declined
+  findings (a run of them on one PR is one row, `8 findings declined on #133`), agents, conductors and builders started (▶), escalation
   steps (▲: `escalate`, `dialog`, `escalated`, `reset` and `drop`), and the swarm's other actions
   (·); a failed one is ✗. It fills the rest of the screen. From 140 columns it is
   the right column, and its time column is the clock instead (`14:05` today, `10-03` before then;
