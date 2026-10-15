@@ -794,13 +794,13 @@ record_finding() {
 #   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
-#   open_log(path) opens either as text.
+#   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
 #   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome); a row
 #   from before the outcome column is "fixed". fixed_rows(path) is the fixed ones' first four fields.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
-import glob, gzip, json, os, re
+import glob, gzip, json, os, re, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -812,13 +812,18 @@ def pr_key(pr):
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
         return ""
-    paths = glob.glob(os.path.join(projects, "*", session + ".jsonl"))
+    # Escaped, so a project or config dir named with [, ], * or ? is a path, not a pattern.
+    paths = glob.glob(os.path.join(glob.escape(projects), "*", glob.escape(session) + ".jsonl"))
     if not paths and archive:
-        paths = glob.glob(os.path.join(archive, f"*-{session}.jsonl.gz"))
+        paths = glob.glob(os.path.join(glob.escape(archive), f"*-{glob.escape(session)}.jsonl.gz"))
     return paths[0] if paths else ""
 
-def open_log(path):
-    return gzip.open(path, "rt", errors="ignore") if path.endswith(".gz") else open(path, errors="ignore")
+def log_lines(path):
+    try:
+        with gzip.open(path, "rt", errors="ignore") if path.endswith(".gz") else open(path, errors="ignore") as f:
+            yield from f
+    except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
+        return
 
 def finding_rows(path):
     if not os.path.exists(path):
@@ -831,7 +836,7 @@ def fixed_rows(path):
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
-    for line in open_log(path):
+    for line in log_lines(path):
         try:
             m = json.loads(line).get("message") or {}
         except (ValueError, AttributeError):
@@ -1021,7 +1026,7 @@ log, events, since, projects, roles, archive = sys.argv[1:7]
 
 def slug_of(path, name):
     # A builder runs in <repo>-wt/<slug>; any other cwd (or none logged) leaves the agents.tsv name.
-    for line in open_log(path) if path else ():
+    for line in log_lines(path) if path else ():
         try:
             cwd = json.loads(line).get("cwd")
         except (ValueError, AttributeError):
@@ -3864,13 +3869,13 @@ tab_label() {
 # machine, readable by its user only; nothing is redacted. An agent with no session (codex) has nothing to keep. A copy that
 # fails is reported and never stops the close: the session log itself is untouched.
 archive_session() {
-  local name session src dir
+  local name session src dir f
   name="$(agent_name "$1")"
   [[ -f "${AGENTS_LOG}" ]] || return 0
   session="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null || true)"
   [[ -n "${session}" && "${session}" != - ]] || return 0
   dir="${SESSIONS_DIR}"
-  compgen -G "${dir}/*-${session}.jsonl.gz" >/dev/null && return 0
+  for f in "${dir}"/*-"${session}".jsonl.gz; do [[ ! -e "${f}" ]] || return 0; done
   src="$(SWARM_REPORT_PY="${REPORT_PY}" python3 -c 'import os, sys; exec(os.environ["SWARM_REPORT_PY"]); print(session_log(*sys.argv[1:3]))' \
     "${CLAUDE_PROJECTS}" "${session}" 2>/dev/null || true)"
   [[ -n "${src}" ]] || return 0

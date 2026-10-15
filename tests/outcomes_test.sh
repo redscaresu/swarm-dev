@@ -101,6 +101,13 @@ rm "${P}/.swarm/sessions/"*
 R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	1	0			1"
 check "with neither, the cells are empty and nothing fails" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(awk -F'\t' -v OFS='\t' '{ $8 = ""; $9 = "" } 1' <<< "${R2}")" "${R3N}")"
+# A damaged copy (not gzip at all for s2, cut short for s3) reads as what it held before the damage:
+# nothing here, so no usage and no cwd; every other row is intact.
+echo 'not gzip' > "${P}/.swarm/sessions/2026-10-01-docs-story-s2.jsonl.gz"
+session s3 "${LONG}" claude-fable-5-1 1000000 0 | gzip -c | head -c 20 > "${P}/.swarm/sessions/2026-10-01-${CUT}-s3.jsonl.gz"
+zero() { awk -F'\t' -v OFS='\t' '{ $8 = "0.00"; $9 = 0 } 1' <<< "$1"; }
+check "a damaged copy stops neither the report nor the other rows" \
+  "$(outcomes "${dir}/bin" 2>&1; echo "exit $?")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(zero "${R2}")" "$(zero "${R3N}")" "exit 0")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
