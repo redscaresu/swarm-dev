@@ -223,8 +223,8 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   answers its usage-credits consent (`accepted` or `dismissed`), `escalated <slug>` at the close
   (`ok (attempts <n>, <k> PRs)`), and `reset` or `drop <slug>` with `ok (<reason>)`.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
-  session) in `.swarm/agents.tsv`, and `swarm.sh cost` turns that and Claude Code's logs into
-  tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
+  session) in `.swarm/agents.tsv`, and `swarm.sh cost [--since YYYY-MM-DD]` turns that and Claude
+  Code's logs into tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
 - **The conductor is Opus at `high`, one fresh session per epic**, on the standard context window,
   never 1M. A conductor re-reads its whole context every turn: on the project this came from, one
   long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M
@@ -412,6 +412,10 @@ is copied, gzip'd, to `.swarm/sessions/<date>-<agent>-<session>.jsonl.gz`, once 
 agent has none to keep. Nothing is redacted, because a list of what to scrub misses whatever it
 doesn't list, so the copy holds whatever the session held. The copy is readable by its owner only,
 and `.swarm/` is git-ignored: the archive stays on the machine, and is never committed or uploaded.
+`cost`, `outcomes` and `decisions` read a session's live log while it exists and this copy once
+Claude Code has deleted it, matching the copy on its session id, so their tokens, cost and slugs
+outlast the 30 days. The stall rule, the goal check and `dash` never read the copy: an archive is
+no sign that an agent is alive.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green), the epic's `check:` command when it has one

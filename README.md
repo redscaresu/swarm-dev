@@ -78,7 +78,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life and how long each running codex review has run. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh cost` | Show where the tokens went. |
+| `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date. |
 | `swarm.sh outcomes` | One row per build: model, cost, review rounds, and whether it merged. |
 
 Settings such as `merge = agent` go in `.claude/swarm/config`
@@ -126,6 +126,7 @@ escalated today, which attempt each Fable builder is on, and each escalation ste
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
+`cost`, `outcomes` and `decisions` read the copy once the original is gone.
 
 `/swarm-dev:swarm` tells you when a new version is out. To update, run
 `! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,
