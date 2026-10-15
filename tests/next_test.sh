@@ -109,6 +109,25 @@ expect "lead story is a gate" "gate" \
 expect "an escalated story is the lead's to decide, ahead of gate" "escalated b" \
   "item stories/a.md 'status: ready' 'kind: lead'" \
   "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'"
+# shellcheck disable=SC2016 # the setup is eval'd inside the fixture
+expect "once the lead drops it, next no longer names it" "gate" \
+  "item stories/a.md 'status: ready' 'kind: lead'" \
+  "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'" \
+  'bash "${SWARM}" drop b "two Fable builds failed" >/dev/null'
+# The escalated story is the lead's, so status's Waiting on you lists the plain lead story, not it.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item stories/a.md 'status: ready' 'kind: lead' \
+  && item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code')
+waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Waiting on you$/,/^$/p')"
+if grep -qx '  lead: a' <<< "${waiting}" && ! grep -q 'b$' <<< "${waiting}"; then echo "ok   status lists a plain lead story under Waiting on you, never an escalated one"
+else echo "FAIL status lists a plain lead story under Waiting on you, never an escalated one: got '${waiting}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+# /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+got=""; for w in 'swarm.sh reset <slug> <reason>' 'swarm.sh drop <slug> <reason>' 'not a stop' 'tell the user'; do grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's escalated arm resets or drops, is not a stop, and tells the user"
+else echo "FAIL commands/swarm.md's escalated arm:${got}"; fails=$((fails + 1)); fi
 expect "ready story in a later epic waits" "gate" \
   "item epics/e1.md 'status: later'" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"

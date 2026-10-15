@@ -191,6 +191,12 @@ is "reset is logged with its reason" "1" "$(grep -c $'\treset\te1\tw:me\tok (re-
 item e1 "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"; rc=0; out="$(sw reset e1 again)" || rc=$?
 is "a second reset of e1 fails, naming the first, and leaves it kind: lead" "1|yes|lead" \
   "${rc}|$(grep -qF 'reset: e1 was reset already, at ' <<< "${out}" && echo yes)|$(fmv e1 kind)"
+# A block whose close marker was edited away: reset would take the rest of the file with it, so it refuses.
+item cm "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"
+printf '%s\n' "<!-- swarm.sh escalated: swarm.sh reset removes this block -->" "the lead's choices" "the lead's re-scope" >> "${P}/docs/stories/cm.md"
+cp "${P}/docs/stories/cm.md" "${ROOT}/cm.before"; rc=0; out="$(sw reset cm why)" || rc=$?
+is "reset of a block with no close marker fails, naming the marker, and changes nothing" "1|yes|" \
+  "${rc}|$(grep -qF "no '<!-- /swarm.sh escalated -->' after it" <<< "${out}" && echo yes)|$(diff "${ROOT}/cm.before" "${P}/docs/stories/cm.md")"
 item n2 "status: ready" "kind: code"; rc=0; out="$(sw reset n2 why)" || rc=$?
 is "reset of a story with neither attempts: nor escalated_from: fails, naming it" "1|yes" \
   "${rc}|$(grep -qF 'reset: n2 has neither attempts: nor escalated_from:' <<< "${out}" && echo yes)"

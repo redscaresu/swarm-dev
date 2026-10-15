@@ -224,7 +224,11 @@ check "its failed close logs escalated x1, ok (attempts 3, 2 PRs)" logged escala
 appends "reset with no reason fails, naming it" 1 reset x1 "reset: <reason> is missing" reset x1
 appends "drop with a blank reason fails, naming it" 1 drop x1 "drop: <reason> is missing" drop x1 " "
 appends "reset logs the lead's reason" 1 reset x1 "ok (re-scoped to the parser alone)" reset x1 re-scoped to the parser alone
-appends "drop logs the lead's reason" 1 drop x1 "ok (failed on Fable after a reset)" drop x1 "failed on Fable after a reset"
+appends "drop of a story that is not escalated fails, naming it" 1 drop x1 "drop: x1 is not an escalated story" drop x1 why
+appends "drop of a missing story fails, naming it" 1 drop nope "drop: no story ${P}/docs/stories/nope.md" drop nope why
+item stories/z1.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'
+appends "drop logs the lead's reason" 1 drop z1 "ok (failed on Fable after a reset)" drop z1 "failed on Fable after a reset"
+check "drop takes the story off the board" test ! -e "${P}/docs/stories/z1.md"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -90,11 +90,28 @@ Repeat until a step below says stop:
    - `hld <hld>`: the HLD is a draft, and only the user can write it. Follow `/hld` to resume it
      (the title is in the file): the user works in the co-author's pane, and the review and the
      agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
+   - `escalated <slug>`: Fable's build of the story failed too. Deciding what happens to it is yours,
+     not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
+     PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
+     or two what you chose and why:
+     - Re-scope it: change the story so a fresh build can succeed, then run
+       `swarm.sh reset <slug> <reason>`. A builder reads the story in its own worktree, so when the
+       board is in the story's repo the new scope has to reach the branch builds start from first:
+       make the change in a board PR, leave the main checkout's copy alone, and run `reset` only
+       once that PR has merged and, with `pr_per = epic`, once you have merged the base into
+       `epic/<epic>` and pushed it. Until then `next` names the story again: that is a wait on the
+       PR's merge, so say so and stop. A story is reset at most once (`reset` refuses a second), so
+       after its second failed escalate build, drop it.
+     - Drop it: `swarm.sh drop <slug> <reason>` takes it off the board; open a board PR with that
+       deletion.
+
+     Then go back to 1.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
      story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a PR
-     awaiting your merge: merge it, or close it to send the story back to `ready`). Stop.
+     awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
+     story is never in that list: it is yours, and `next` names it first. Stop.
    - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
      about five lines (a design written with you, split into epics, split into stories, built by
