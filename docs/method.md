@@ -136,6 +136,7 @@ prints every setting and where it came from.
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
 | `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
+| `codex_minutes` | `10` | `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The
@@ -233,9 +234,10 @@ story file is written. About ten agents per run, so scope deliberately.
 
 **Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge
 changes no behaviour; a separate `lead` story turns it on. Bundled, a failure cannot say whether
-the code or the switch broke it, and the rollback has to undo both. One exception:
+the code or the switch broke it, and the rollback has to undo both. Two exceptions:
 `escalate_after` ships on, at `2`, by the user's decision of 2026-10-13. It changes nothing until a
-story has failed twice.
+story has failed twice. `codex_minutes` ships on, at `10`, because without a limit a codex review
+can hang for good.
 
 A story's **Done when** names what the builder's session can show (a test run, a command's output, a file), never something only the conductor or a merge can show, so a goal's judge can see it.
 
@@ -398,7 +400,7 @@ doesn't list, so the copy holds whatever the session held. The copy is readable 
 and `.swarm/` is git-ignored: the archive stays on the machine, and is never committed or uploaded.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop, reply with the PR URL when CI is green), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from
 `.claude/swarm/brief.md`. When those rules include tagged ones (`<!-- lesson: <kind> -->`), the
 brief adds a last step: before opening the PR, the builder walks its diff against each one and gives
@@ -417,6 +419,15 @@ that finds only nits, edge cases outside the story, or points already declined c
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With
 `pr_per = epic`, stories have no PR: each epic PR gets `/code-review`, fixed on the epic branch. Each builder
 also proves its tests can fail: it breaks its fix, watches a test fail, and restores the fix.
+
+Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
+<base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
+reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
+beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. When codex reports a
+usage limit, or codex-review prints `codex skipped: timed out`, no one waits or runs it again: a
+builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
+skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes of `/plan-hld` and
+`/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding <kind> <PR> "<one line>"`, where the kind names the class of mistake
@@ -487,8 +498,8 @@ trusting its CI; a branch that conflicts gets no CI at all, which looks like a h
 `epic/<epic>` there from the repo's base branch, and adds the repo to the epic's `repos:` line.
 Each story branches from `epic/<epic>`, and its builder pushes `story/<slug>` and opens no PR. The
 conductor reviews each branch, merges it into `epic/<epic>` with `git merge --no-ff`, runs the tests
-and the epic's `check:`, and finishes the story. When the last story is in, it runs codex over the
-whole epic against the base (`swarm.sh base <repo>` prints it) and opens one PR per repo, written
+and the epic's `check:`, and finishes the story. When the last story is in, it runs `swarm.sh
+codex-review <base>` over the whole epic (`swarm.sh base <repo>` prints the base) and opens one PR per repo, written
 for a reader who knows nothing of the stories. Those PRs then go through the same green and merge
 rules as any other. If a conductor stops before the PRs, `next` sees an active epic with a
 `repos:` line and no open story, and starts a fresh one, which picks up there. Stories outside any

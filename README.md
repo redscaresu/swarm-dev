@@ -23,7 +23,8 @@ terminal pane. The run stops whenever a decision is yours.
    worktree and pane. With `goal` on, each builder also gets a Claude Code `/goal` made from its
    story's **Done when**, which keeps it working until that holds or a set number of turns pass.
    Each PR is reviewed by codex and `/code-review`, and the builder fixes what they find
-   (with `goal` on, under a fresh goal that holds until the fixes are in).
+   (with `goal` on, under a fresh goal that holds until the fixes are in). A codex review that
+   runs past 10 minutes (`codex_minutes`) is stopped, and the PR says codex was skipped.
 4. Green, reviewed PRs wait for you to merge. The next `/swarm-dev:swarm` starts the stories that were waiting on them.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, and handles
