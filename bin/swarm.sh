@@ -1073,9 +1073,16 @@ def slug_of(path, name):
 
 PULL = re.compile(r"https://github\.com/[^/\s\"\\]+/[^/\s\"\\]+/pull/\d+")
 def pulls(path):
-    # A log that reads as nothing (gone, or damaged from its start) is no log.
-    lines = list(log_lines(path)) if path else []
-    return " ".join(u for l in lines for u in PULL.findall(l)) if lines else "-"
+    # Each URL once, in the order of its last mention (pr_of wants only the last of the PRs of the slug), so
+    # a log that names hundreds keeps the row small enough for SWARM_ROWS. A log that reads as nothing
+    # (gone, or damaged from its start) is no log: "-".
+    named, read = {}, False
+    for line in log_lines(path) if path else ():
+        read = True
+        for u in PULL.findall(line):
+            named.pop(u, None)
+            named[u] = None
+    return " ".join(named) if read else "-"
 
 steer = collections.Counter()
 if os.path.exists(events):
@@ -1130,7 +1137,8 @@ meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].sp
 fixed = collections.Counter(pr_key(f[2]) for f in fixed_rows(sys.argv[1]))
 
 def pr_of(epic, prs, pulls):
-    # (url, state) of a build's PR, or empty: see outcomes_report.
+    # (url, state) of a build's PR, or empty: see outcomes_report. pulls is the first python's column:
+    # "-" for no log.
     prs = [tuple(p.split(" ", 1)) for p in prs.split(",") if " " in p]
     if epic or pulls == "-":
         return prs[0] if prs and (epic or len(prs) == 1) else ("", "")

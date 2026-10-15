@@ -136,6 +136,9 @@ qs() { # <session id> <slug> <model> [pull URL...] — a session log for the sec
 # foreign build names only another head's PR; a build in the epic names a story PR it never opened.
 qs r1 retried claude-opus-5-5 "${U}/1"; qs r2 retried claude-fable-5-1 "${U}/1" "${U}/2/files"
 qs h1 shared claude-opus-5-5 "${U}/3"; qs h2 shared claude-opus-5-5 "${U}/3"
+# A long session names its PR thousands of times; each URL reaches the report once, or the rows would
+# pass the size an environment string may have (128 KiB on Linux, about 1 MiB in all on macOS).
+printf '{"type":"user","message":{"content":"%s"}}\n' "$(printf "${U}/3 %.0s" $(seq 40000))" >> "${dir}/projects/q/h2.jsonl"
 qs l1 late claude-opus-5-5; qs l2 late claude-fable-5-1 "${U}/4"
 qs f1 foreign claude-opus-5-5 "${U}/1"
 qs e1 in-epic claude-opus-5-5 "${U}/5"; qs e2 in-epic claude-fable-5-1
@@ -148,7 +151,7 @@ printf '%s\n' \
 two() { # slug, model, pr, pr_state and attempts of each row
   (cd "${Q}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | cut -f2,6,15-17)
 }
-check "each build gets the last of its slug's PRs its own log names; none, or another head's, leaves it empty" \
+check "each build gets the last of its slug's PRs its own log names (named 40000 times or once); none, or another head's, leaves it empty" \
   "$(two | grep -v in-epic)" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
     "retried	opus	${U}/1	CLOSED	1" "retried	fable	${U}/2	MERGED	2" \
     "shared	opus	${U}/3	OPEN	1" "shared	opus	${U}/3	OPEN	2" \
