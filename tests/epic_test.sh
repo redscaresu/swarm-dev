@@ -628,6 +628,10 @@ touch -t "$(mins_ago 120)" "${wt}/wip.txt"
 check "the same file edited 2 hours ago is no sign of life: wait --stall exits 3, stalled" "exit 3" "$(stallrc)"
 rm "${wt}/wip.txt"
 check "a clean worktree with an old commit is stalled, as before" "exit 3" "$(stallrc)"
+# Its session log (sess-a2, the newer agents.tsv line) written a minute ago is a sign of life too.
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
+rm "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 rm -rf "${wt}" "${b}/stories/a.md"; printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"

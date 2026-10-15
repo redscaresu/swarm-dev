@@ -78,6 +78,9 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 # A chore agent whose log cannot be read: it counts, with no model, and the ladder still draws.
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
+# A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
+# escalation block's fixed now (DASH_NOW, 2026-10-10 noon).
+touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
 for i in 1 2 3 4 5; do printf '2026-10-04\tkind%s\thttps://github.com/o/r/pull/8\tfinding %s\n' "${i}" "${i}" >> "${P}/.swarm/findings.tsv"; done
@@ -95,8 +98,8 @@ printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"},{"name":"plan-e9","agent_status":"working","pane_id":"w2:p9"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"},{"pane_id":"w2:p9"}]}}' ;;
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
     [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
     [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
@@ -382,7 +385,10 @@ check "--watch refuses a bad interval" bash -c "cd '${P}' && ! bash '${SWARM}' d
 check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${before}"
 
 # --- Stalls. s-three's builder is working, and its story was started 2 hours ago with nothing since:
-# no worktree commit, no PR. After the snapshot, since a stall's age changes every minute.
+# no worktree commit, no PR, its session log last written then. After the snapshot, since a stall's
+# age changes every minute.
+mins_ago() { python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M", time.localtime(time.time() - 60 * int(sys.argv[1]))))' "$1"; }
+touch -t "$(mins_ago 120)" "${ROOT}/projects/p/sess-today.jsonl"
 printf '%s\tstory\ts-three\tw1:p1\tok\n' "$(ago 120)" >> "${P}/.swarm/events.tsv"
 printf '%s\tconduct\te1\tw1:p1\tok\n' "$(ago 4)" >> "${P}/.swarm/events.tsv"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
@@ -402,7 +408,6 @@ rm "${P}/.claude/swarm/config"
 # working, not stalled. Aged past stall_minutes, it is not: stalled again.
 wt="${P}-wt/s-three"; git init -q "${wt}"
 GIT_COMMITTER_DATE="@$(($(date +%s) - 7200))" git -C "${wt}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m old
-mins_ago() { python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M", time.localtime(time.time() - 60 * int(sys.argv[1]))))' "$1"; }
 echo wip > "${wt}/wip.txt"; touch -t "$(mins_ago 1)" "${wt}/wip.txt"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder with a file edited a minute ago in its worktree is working, not stalled" grep -qE '● s-three .*working' <<< "${out}"
@@ -481,6 +486,21 @@ echo "stall_minutes = 3" > "${P}/.claude/swarm/config"
 out="$(COLUMNS=100 agedash)"
 check "a conductor past stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "${out}"
 check "a stalled conductor needs you" grep -qE '! look at conduct-e1: working [45] min with no swarm action' <<< "${out}"
+# A session log written a minute ago is a sign of life for any agent with a Claude session: the
+# conductor (sess-1) and a planner (plan-e9, no story and no events.tsv line) are working. With the
+# logs written 10 minutes ago, past stall_minutes, both are stalled.
+printf 'w2:p9 plan-e9\n' > "${P}/.swarm/state/plan-e9"
+printf '%s\tplan\tplan-e9\tclaude\topus\thigh\tsess-plan\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
+printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-today","status":"busy"},{"sessionId":"sess-plan","status":"busy"}]' > "${ROOT}/claude-plan.json"
+for s in sess-1 sess-plan; do echo '{}' > "${ROOT}/projects/p/${s}.jsonl"; touch -t "$(mins_ago 1)" "${ROOT}/projects/p/${s}.jsonl"; done
+out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude-plan.json" COLUMNS=100 agedash)"
+check "a conductor whose session log was written a minute ago is working" grep -qE '● conduct-e1 +conduct +opus·high +working [12]m +│$' <<< "${out}"
+check "a planner whose session log was written a minute ago is working" grep -qE '● plan-e9 +plan +opus·high +working [12]m +│$' <<< "${out}"
+touch -t "$(mins_ago 10)" "${ROOT}/projects/p/sess-1.jsonl" "${ROOT}/projects/p/sess-plan.jsonl"
+out="$(CLAUDE_STUB_AGENTS="${ROOT}/claude-plan.json" COLUMNS=100 agedash)"
+check "a conductor whose session log is older than stall_minutes is stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "${out}"
+check "a planner whose session log is older than stall_minutes is stalled" grep -qE '! plan-e9 +plan +opus·high +stalled (9|10|11)m +│$' <<< "${out}"
+rm "${P}/.swarm/state/plan-e9" "${ROOT}/projects/p/sess-1.jsonl" "${ROOT}/projects/p/sess-plan.jsonl"
 # A nudge its pane sent a minute ago (wait's, or the lead's tell:nudge) and a tell that never reached
 # anyone are not signs of life (STALL_PY's rule): the conductor stays stalled.
 printf '%s\tnudge\ts-one\tw1:p1\tok\n%s\ttell:nudge\ts-one\tw1:p1\tok\n%s\ttell:findings\ts-one\tw1:p1\tfailed (exit 1)\n' "$(ago 1)" "$(ago 1)" "$(ago 1)" >> "${P}/.swarm/events.tsv"

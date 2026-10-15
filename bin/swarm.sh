@@ -1264,21 +1264,34 @@ else:
 PY
 }
 
+# session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
+# REPORT_PY's session_log), which the session writes on every turn and tool call; empty when it has none.
+session_mtime() {
+  SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" <<'PY' || true
+import os, sys
+exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
+sid = session_id(sys.argv[1], sys.argv[2])
+path = session_log(sys.argv[3], sid) if sid else ""
+print(int(os.path.getmtime(path)) if path else "")
+PY
+}
+
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
-# stall_minutes (STALL_PY), counting <since> (epoch: when the wait began) as one, print how many
+# stall_minutes (STALL_PY), counting <since> (epoch: when the wait began), its worktree's last commit
+# or edit (story_work_time) and its session log's mtime (session_mtime) as signs, print how many
 # minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
 # stalled, so gh is rarely called.
 agent_stalled() {
-  local slug url age ct prs=()
+  local slug url age ct sl prs=()
   slug="$(stall_py story "$1")"
   [[ -n "${slug}" ]] || return 1
-  ct="$(story_work_time "${slug}")"
-  age="$(stall_py age "${slug}" "$1" "$2" "${ct}")"
+  ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
+  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
   done
-  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${prs[@]+"${prs[@]}"}")"
+  age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}" "${prs[@]+"${prs[@]}"}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   echo "${age}"
 }
@@ -3250,11 +3263,14 @@ if agents is not None:
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
             if st == "working":
+                # Any agent with a Claude session: its session log, written on every turn and tool call.
+                log = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
+                logged = os.path.getmtime(log) if log else None
                 if slug:
-                    signs = [commit_of.get(slug, "")] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
+                    signs = [commit_of.get(slug, ""), logged] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
                     age, lack = stall_age(seen, slug, base, signs, NOW), "no commit or PR update"
                 else:
-                    age, lack = stall_age(seen, epic_of.get(base), base, [since, ran.get(pane)] if since else [], NOW), "no swarm action"
+                    age, lack = stall_age(seen, epic_of.get(base), base, ([since, ran.get(pane)] if since else []) + [logged], NOW), "no swarm action"
                 if age is not None and age >= int(E["DASH_STALL_MIN"]):
                     st, look, words = "stalled", True, f"stalled {age}m"
                     stalled.append((name, age, lack))
