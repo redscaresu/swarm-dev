@@ -8,7 +8,7 @@
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
-#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
+#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
@@ -440,7 +440,8 @@ def session_state(log, name, listing):
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
 #   sign_time(f) -> an events.tsv line's (fields) epoch when it is a sign of life, else None. A
-#     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, and so
+#     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
+#     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
@@ -465,7 +466,7 @@ def epoch(x):
             return None
 def sign_time(f):
     t = epoch(f[0]) if len(f) == 5 else None
-    if t is None or f[1] in ("nudge", "tell:nudge") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+    if t is None or f[1] in ("nudge", "tell:nudge", "tell:note") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
         return None
     return t
 def last_seen(events):
@@ -1628,8 +1629,8 @@ wait_conductor() {
   return "${rc}"
 }
 
-# is_tell_kind <word> — true for a kind tell takes: findings, nudge or resume.
-is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1; }
+# is_tell_kind <word> — true for a kind tell takes: findings, nudge, resume or note.
+is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; return 1; }
 
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
@@ -1637,14 +1638,26 @@ is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1;
 # read as a flag. Only an idle agent is told (read_state): it refuses one mid-turn (findings sent then
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
+# A note goes only to a live conductor of this project, and never as a prompt: it is appended to
+# .swarm/inbox/<name>.md, which the conductor reads after each wait (conduct_brief), busy or not.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since
-  is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)"
+  local kind="$2" f="$3" name msg state since inbox
+  is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
+  [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
+    || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
   if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
     die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
+  fi
+  if [[ "${kind}" == note ]]; then
+    inbox="$(conductor_inbox "${name}").md"; mkdir -p "${inbox%/*}"
+    # Built first, then one append: the conductor's mv between the open and a slow write would
+    # take the note into a copy it has already read.
+    msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
+    printf '%s\n\n' "${msg}" >> "${inbox}"
+    echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
   case "${state}" in
@@ -2086,7 +2099,8 @@ add_epic_repo() {
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
 conduct_brief() {
-  local epic="$1"
+  local epic="$1" inbox
+  inbox="$(conductor_inbox "$(agent_name "conduct-$1")")"
   cat <<EOF
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
@@ -2098,6 +2112,13 @@ EOF
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
+
+The lead may leave you notes while you work, in ${inbox}.md. After each
+\`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
+cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
+it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a new file),
+read the moved copy, act on it, and delete it. Do all this once more just before you write your report,
+so a note left after your last wait is not lost.
 EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
@@ -2295,6 +2316,8 @@ hld_workspace() {
 
 # conductor_report <agent> — where a conductor writes its report as its last act.
 conductor_report() { echo "${PROJECT_DIR}/.swarm/conduct-$(conduct_epic "$1").report.md"; }
+# conductor_inbox <name> — the conductor's inbox, without its .md: notes are <it>.md, a read in progress <it>.reading.md.
+conductor_inbox() { echo "${PROJECT_DIR}/.swarm/inbox/$1"; }
 
 # conduct_epic <agent> — the epic a conductor's agent name is for. The name may be cut at 32
 # characters, so it is matched against the conductors started here (their briefs), which outlive
@@ -2311,7 +2334,7 @@ conduct_epic() {
 }
 
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox
   [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
   [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
   hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
@@ -2326,6 +2349,9 @@ start_conductor() {
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
   HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
+  # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
+  # must leave a live conductor's notes; this one reads its inbox only after its first wait.
+  inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
   echo "workspace ${hld} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # An uncommitted board edit, as unblock's are; any other status is left as it is. The conductor is

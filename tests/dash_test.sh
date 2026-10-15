@@ -505,6 +505,18 @@ rm "${P}/.swarm/state/plan-e9" "${ROOT}/projects/p/sess-1.jsonl" "${ROOT}/projec
 # anyone are not signs of life (STALL_PY's rule): the conductor stays stalled.
 printf '%s\tnudge\ts-one\tw1:p1\tok\n%s\ttell:nudge\ts-one\tw1:p1\tok\n%s\ttell:findings\ts-one\tw1:p1\tfailed (exit 1)\n' "$(ago 1)" "$(ago 1)" "$(ago 1)" >> "${P}/.swarm/events.tsv"
 check "a conductor whose only recent pane lines are nudges is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "$(COLUMNS=100 agedash)"
+# A note the lead left the conductor a minute ago (tell:note, from the lead's pane) is no sign of
+# life: with its session log older than stall_minutes it stays stalled. The same line as tell:resume is.
+echo '{}' > "${ROOT}/projects/p/sess-1.jsonl"; touch -t "$(mins_ago 10)" "${ROOT}/projects/p/sess-1.jsonl"
+cp "${P}/.swarm/events.tsv" "${ROOT}/events.bak"
+for k in note resume; do
+  cp "${ROOT}/events.bak" "${P}/.swarm/events.tsv"
+  printf '%s\ttell:%s\tconduct-e1\tw0:p1\tok\n' "$(ago 1)" "${k}" >> "${P}/.swarm/events.tsv"
+  out="$(COLUMNS=100 agedash)"
+  if [[ ${k} == note ]]; then check "a conductor whose only recent line is a note to it is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "${out}"
+  else check "a conductor whose only recent line is a resume tell to it is working" grep -qE '● conduct-e1 +conduct +opus·high +working [12]m +│$' <<< "${out}"; fi
+done
+cp "${ROOT}/events.bak" "${P}/.swarm/events.tsv"; rm "${ROOT}/projects/p/sess-1.jsonl"
 # A command its own pane ran a minute ago (a review of s-one, not naming it) is a sign of life.
 printf '%s\treview\ts-one\tw1:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
 check "a line from a conductor's own pane is a sign of life" grep -qE '● conduct-e1 +conduct +opus·high +working [12]m +│$' <<< "$(COLUMNS=100 agedash)"

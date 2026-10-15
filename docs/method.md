@@ -384,7 +384,8 @@ exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stal
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
-reached the builder. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
+reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about
+whether the conductor is working. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
 no cause as plain `close`. A close with an unknown cause is refused and logged as plain `close`,
 and the word that was given never reaches the log. `reconcile` and `unblock` write a line
 per item they move. `merge` writes all its own lines, under the story's or epic's slug (the PR URL
@@ -460,7 +461,16 @@ codex and, if it changes code, the `/code-review` skill. The conductor sends the
 `swarm.sh tell <slug> findings <file>` and reviews the new head again. The kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. The conductor closes a builder only after both
+session is gone or unknown. To reach a busy conductor, the lead runs
+`swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
+`.swarm/inbox/conduct-<epic>.md`, without sending a prompt or reading the conductor's state, and
+only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
+inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added meanwhile starts a new
+file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
+so the conductor reads and deletes it first. It does all of this once more just before it writes its
+report, so a note left after its last wait is still read. Once a new conductor has started,
+`conduct` clears both files, so it never acts on notes left for the one before. A `conduct` refused
+because the epic's conductor is still running leaves them alone. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With

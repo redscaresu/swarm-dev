@@ -77,6 +77,19 @@ goal_on() {
   grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
 }
 GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
+# inbox_rule <epic> <brief> — conduct_brief's inbox rule, as has prints them: the inbox; after each
+# wait or watch, an interrupted read's copy first; then the mv to that exact copy, read, act and delete;
+# and all of it once more before the report.
+INBOX_RULE="yes|yes|yes|yes|yes"
+inbox_rule() {
+  local b i=".swarm/inbox/conduct-$1"; b="$(tr '\n' ' ' <<< "$2")"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  printf '%s|%s|%s|%s|%s' "$(has "${i}.md. After each \`swarm.sh wait\` or \`swarm.sh watch\` returns: if " "${b}")" \
+    "$(has "${i}.reading.md is there (a read cut off before its delete), read it, act on it and delete it first." "${b}")" \
+    "$(has 'Then, if the inbox exists, `mv` it to ' "${b}")" \
+    "$(has "${i}.reading.md (atomic, so a note the lead adds meanwhile starts a new file), read the moved copy, act on it, and delete it." "${b}")" \
+    "$(has "Do all this once more just before you write your report, so a note left after your last wait is not lost." "${b}")"
+}
 # goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
 goal_off() {
   printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"
@@ -207,7 +220,10 @@ BUMP="the epic's release story (the one whose touches name it) does"
 # its absence cannot pass on a brief or paragraph that was never written.
 bumped() { if [[ -z "$1" ]]; then echo missing; elif grep -qF -- "${BUMP}" <<< "$1"; then echo yes; else echo no; fi; }
 mkdir -p "${p}/.claude-plugin"; echo '{"version": "1.0.0"}' > "${p}/.claude-plugin/plugin.json"
+mkdir -p "${p}/.swarm/inbox"; echo "a note for the last run" | tee "${p}/.swarm/inbox/conduct-e.md" > "${p}/.swarm/inbox/conduct-e.reading.md"
 run conduct e >/dev/null
+check "a new conductor starts with no inbox or reading copy left from the run before" "no|no" \
+  "$([[ -e "${p}/.swarm/inbox/conduct-e.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/inbox/conduct-e.reading.md" ]] && echo yes || echo no)"
 check "the conductor opens a tab named for the epic" "yes" "$(has "tab create --workspace w --cwd ${p} --label e --no-focus" "$(log)")"
 check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor" "$(log)")"
 check "the conductor's brief watches only its own epic's PRs" "yes" \
@@ -221,6 +237,7 @@ check "the conductor's brief says what a builder's auth means and to resume it a
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
+check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3; do run story "${s}" >/dev/null; done
 mv "${p}/.claude-plugin/plugin.json" "${ROOT}/plugin.json"; run story s4 >/dev/null; mv "${ROOT}/plugin.json" "${p}/.claude-plugin/plugin.json"
@@ -259,6 +276,12 @@ echo "goal = 5" > "${p}/.claude/swarm/config"
 run conduct e >/dev/null || true
 check "with goal = 5, the story-mode conductor reads why a builder stopped and closes it with that cause" \
   "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
+# A second conduct e, refused while conduct-e's session is busy, leaves the live conductor's notes.
+mkdir -p "${p}/.swarm/inbox"; echo "a note for the live conductor" | tee "${p}/.swarm/inbox/conduct-e.md" > "${p}/.swarm/inbox/conduct-e.reading.md"
+out="$(CLAUDE_STUB_AGENTS="${ROOT}/started.json" run conduct e || true)"
+check "a refused second conduct leaves the live conductor's inbox and reading copy" "yes|yes|yes" \
+  "$(has "still working" "${out}")|$([[ -e "${p}/.swarm/inbox/conduct-e.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/inbox/conduct-e.reading.md" ]] && echo yes || echo no)"
+rm -f "${p}/.swarm/inbox/conduct-e.md" "${p}/.swarm/inbox/conduct-e.reading.md"
 run close conduct-e >/dev/null; : > "${p}/.claude/swarm/config"
 # goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
 # prompts and goals count the herdr agent prompt calls since herdr.log was emptied, and the /goal ones.
@@ -432,6 +455,7 @@ check "the one-PR-per-epic conductor's brief says what a builder's auth means, t
 check "the one-PR-per-epic conductor gives up with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${brief}")"
 check "with goal off, the one-PR-per-epic conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${brief}")"
+check "the one-PR-per-epic conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule f "${brief}")"
 printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 5" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 check "with goal = 5, the one-PR-per-epic conductor reads why a builder stopped and closes it with that cause" \
