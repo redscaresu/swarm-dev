@@ -407,6 +407,10 @@ is copied, gzip'd, to `.swarm/sessions/<date>-<agent>-<session>.jsonl.gz`, once 
 agent has none to keep. Nothing is redacted, because a list of what to scrub misses whatever it
 doesn't list, so the copy holds whatever the session held. The copy is readable by its owner only,
 and `.swarm/` is git-ignored: the archive stays on the machine, and is never committed or uploaded.
+`cost`, `outcomes` and `decisions` read a session's live log while it exists and this copy once
+Claude Code has deleted it, matching the copy on its session id, so their tokens, cost and slugs
+outlast the 30 days. The stall rule, the goal check and `dash` never read the copy: an archive is
+no sign that an agent is alive.
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
 codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green), the epic's `check:` command when it has one

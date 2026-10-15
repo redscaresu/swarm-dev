@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # cost_test.sh — `swarm.sh cost` against a fixture: two roles, a message logged twice (counted
-# once), a codex agent (listed, not priced), and an agent older than the `since` date (left out).
+# once), a codex agent (listed, not priced), and an agent older than the `since` date (left out); then
+# the same agents read from close's copies of their session logs once Claude Code deleted them.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -22,10 +23,14 @@ printf '%s\n' \
   $'2026-09-29\tcodex\tcodex\tcodex\tdefault\thigh\t-' \
   $'2026-09-01\tcode\tstory-old\tclaude\topus\thigh\ts-old' > "${dir}/repo/.swarm/agents.tsv"
 
-out="$(cd "${dir}/repo" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" cost 2026-09-15)"
+run() { (cd "${dir}/repo" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" "$@"); }
+out="$(run cost 2026-09-15)"
 fails=0
 check() { # <name> <line that must appear>
   if grep -qF -- "$2" <<< "${out}"; then echo "ok   $1"; else echo "FAIL $1: no line '$2'"; fails=$((fails + 1)); fi
+}
+same() { # <name> <output> <exact expected output>
+  if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 # opus: 1M input x $4 + 1M output x $20 = $24, once despite the duplicate message
 check "duplicate message counted once" "| code | 1 | claude-opus-5-5 | 1.0M | 0k | 0k | 1.0M | 24.00 |"
@@ -33,6 +38,21 @@ check "duplicate message counted once" "| code | 1 | claude-opus-5-5 | 1.0M | 0k
 check "cache reads priced" "| survey | 1 | claude-sonnet-5 | 0k | 0k | 10.0M | 0k | 2.00 |"
 check "codex listed, not priced" "| codex | 1 (1 not in the logs) | - |"
 check "older than since is left out" "| **total** | 3 | | 1.0M | 0k | 10.0M | 1.0M | 26.00 |"
+
+# close's copies (written by archive_session, through its _archive test hook).
+live="${out}"
+run _archive story-a; run _archive survey-lands
+usage m4 claude-opus-5-5 0 0 0 1000000 > "${dir}/projects/p/s-code.jsonl"
+out="$(run cost 2026-09-15)"
+check "with both the live log and close's copy, the live log wins" "| code | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
+rm "${dir}/projects/p/s-code.jsonl" "${dir}/projects/p/s-survey.jsonl"
+snap() { (cd "${dir}/repo/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
+before="$(snap)"
+same "with only close's copies, the same totals as the live logs" "$(run cost 2026-09-15)" "${live}"
+same "reading creates no file and no events.tsv line" "$(snap)" "${before}"
+rm "${dir}/repo/.swarm/sessions/"*
+out="$(run cost 2026-09-15)"
+check "with neither, the agent is listed and not priced" "| code | 1 (1 not in the logs) | - | 0k | 0k | 0k | 0k | 0.00 |"
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

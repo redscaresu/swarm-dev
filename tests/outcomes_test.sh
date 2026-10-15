@@ -2,7 +2,8 @@
 # outcomes_test.sh — `swarm.sh outcomes` against a fixture: a merged code story whose file the merge
 # deleted (its slug longer than the 32 characters agents.tsv keeps), built twice, with findings fixed (old
 # four-field rows and new ones) and one declined, which is not counted; a docs story still on
-# the board; a conductor and a codex agent (not builders, left out). gh is a stub on PATH.
+# the board; a conductor and a codex agent (not builders, left out). gh is a stub on PATH. Then the same
+# builds read from close's copies of their session logs once Claude Code deleted them.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -78,6 +79,28 @@ check "a failing gh leaves pr and pr_state empty and still prints every row" \
 if outcomes "${dir}/bin" --since yesterday >/dev/null 2>&1; then
   echo "FAIL a bad --since is refused"; fails=$((fails + 1))
 else echo "ok   a bad --since is refused"; fi
+
+# close's copy of a session log (written by archive_session, through its _archive test hook) stands in
+# once Claude Code deletes the log: s3 (the long slug's newest build) and s2 (docs-story's).
+run() { (cd "${P}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" "$@"); }
+snap() { (cd "${P}/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
+run _archive "${CUT}"; run _archive docs-story
+check "the live log is a sign of life" "$(run _mtime docs-story | grep -c '^[0-9][0-9]*$')" 1
+session s2 docs-story claude-sonnet-5-5 0 2000000 > "${dir}/projects/p/s2.jsonl"
+live() { awk -F'\t' -v OFS='\t' '{ $8 = "20.00"; $9 = 2000000 } 1' <<< "$1"; }
+check "with both the live log and close's copy, the live log wins" \
+  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(live "${R2}")" "${R3}")"
+rm "${dir}/projects/p/s2.jsonl" "${dir}/projects/p/s3.jsonl"
+before="$(snap)"
+check "with only close's copy: the same long slug, tokens and cost as the live log" \
+  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
+check "close's copy is no sign of life for the stall rule" "$(run _mtime docs-story)" ""
+check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
+rm "${P}/.swarm/sessions/"*
+# With neither, cost and tokens are empty and the slug is agents.tsv's cut name, whose story is unknown.
+R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	1	0			1"
+check "with neither, the cells are empty and nothing fails" \
+  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(awk -F'\t' -v OFS='\t' '{ $8 = ""; $9 = "" } 1' <<< "${R2}")" "${R3N}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
