@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # cost_test.sh — `swarm.sh cost` against a fixture: two roles, a message logged twice (counted
-# once), a codex agent (listed, not priced), and an agent older than the `since` date (left out); then
-# the same agents read from close's copies of their session logs once Claude Code deleted them. The
-# project and Claude's projects dir carry [x] in their names, which must be read as paths, not patterns.
+# once), a codex agent (listed, not priced), an agent older than the `since` date (left out), the
+# arguments cost refuses; then the same agents read from close's copies of their session logs once
+# Claude Code deleted them. The project and Claude's projects dir carry [x] in their names, which
+# must be read as paths, not patterns.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -40,6 +41,23 @@ check "duplicate message counted once" "| code | 1 | claude-opus-5-5 | 1.0M | 0k
 check "cache reads priced" "| survey | 1 | claude-sonnet-5 | 0k | 0k | 10.0M | 0k | 2.00 |"
 check "codex listed, not priced" "| codex | 1 (1 not in the logs) | - |"
 check "older than since is left out" "| **total** | 3 | | 1.0M | 0k | 10.0M | 1.0M | 26.00 |"
+
+# --since names the same date the bare positional does
+since_out="$(run cost --since 2026-09-15)" && since_rc=0 || since_rc=$?
+if [[ ${since_rc} -eq 0 && "${since_out}" == "${out}" ]]; then echo "ok   --since prints the same table"
+else echo "FAIL --since exited ${since_rc} or its table differs"; fails=$((fails + 1)); fi
+
+# An argument cost does not understand is refused before any table
+for args in "--since" "--since 2026-9-15" "bogus" "2026-09-15 extra"; do
+  # shellcheck disable=SC2086 # word-split on purpose: each case is several arguments
+  if bad="$(run cost ${args} 2>&1)"; then
+    echo "FAIL cost ${args}: exited 0"; fails=$((fails + 1))
+  elif ! grep -qF "usage: swarm.sh cost [--since YYYY-MM-DD]" <<< "${bad}" || grep -qF "**total**" <<< "${bad}"; then
+    echo "FAIL cost ${args}: no usage line, or a table: ${bad}"; fails=$((fails + 1))
+  else
+    echo "ok   cost ${args} refused"
+  fi
+done
 
 # close's copies (written by archive_session, through its _archive test hook).
 live="${out}"
