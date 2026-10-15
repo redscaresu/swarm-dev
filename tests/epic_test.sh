@@ -527,6 +527,27 @@ got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/
 check "an unreadable transcript is not auth, and wait prints no traceback" "idle|3|0" \
   "${got%%|*}|$(nudges)|$(grep -c Traceback "${ROOT}/wait.err" || true)"
 chmod 600 "${tr}"
+# With goal on, a builder whose session log holds a goal set and not yet met retries on its own:
+# wait returns idle at once, with no nudge. One with no goal entry, or whose goal is met, is nudged
+# as with goal off. The goal_status shapes are the ones Claude Code 2.1.299 wrote in the goal spike.
+item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "goal = 5" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+gs() { # <met> <sentinel> — a goal_status entry
+  printf '{"type":"attachment","timestamp":"2026-10-14T10:00:00.000Z","attachment":{"type":"goal_status","met":%s,"sentinel":%s,"condition":"DW-ONE holds"}}\n' "$1" "$2"
+}
+{ grep -v authentication_failed "${fixture}"; gs false true; gs false false; } > "${tr}"
+: > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "goal = 5 and a goal set in the session log: the idle builder with no PR is not nudged, nor logged" "idle|exit 0|0|0" \
+  "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)"
+grep -v authentication_failed "${fixture}" > "${tr}"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "goal = 5 and no goal entry in the session log: the builder is nudged IDLE_NUDGES times" "idle|3|3" \
+  "${got%%|*}|$(nudges)|$(nudged)"
+{ grep -v authentication_failed "${fixture}"; gs false true; gs true false; } > "${tr}"
+: > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "goal = 5 and the goal met: the builder is nudged as with goal off" "idle|3|3" "${got%%|*}|$(nudges)|$(nudged)"
 rm -f "${ROOT}/screen" "${b}/stories/a.md" "${tr}"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.

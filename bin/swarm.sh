@@ -1332,8 +1332,9 @@ settle() {
 # state; at the timeout, print the last one and fail. A builder whose session is idle before its
 # story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
 # to IDLE_NUDGES times. An idle agent whose transcript ends on an expired login (login_expired) is
-# never nudged: wait prints `auth`, with a line on stderr naming it. A nudge herdr could not deliver is neither logged nor counted: wait stops
-# nudging and returns the idle state. With --stall, a builder that shows no sign of life
+# never nudged: wait prints `auth`, with a line on stderr naming it. Nor, with goal on, is a builder
+# whose session log holds a goal not yet met (goal_entry): it returns idle. A nudge herdr could not
+# deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
 wait_agent() {
@@ -1350,6 +1351,8 @@ wait_agent() {
     fi
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
     [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
+    # A builder with a goal (set and not yet met) retries on its own; the conductor reads why it stopped.
+    [[ "${CFG_goal}" == off ]] || case "$(goal_entry "${name}" 0)" in set|continuing) break ;; esac
     reason="$(nudge_reason "${name}")" || break
     if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
       >/dev/null 2>&1; then
