@@ -377,11 +377,11 @@ rm -rf "${dir}"
 # now (new), an hour ago (old), or none, showing the goal on the pane instead (pane).
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
-(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state projects/p && echo "w:1 s1" > .swarm/state/t)
+(cd "${dir}" && git init -q && mkdir -p docs/stories bin .swarm/state projects/p && printf 'w:1 s1\nw:2 conduct-e\n' > .swarm/state/t)
 cat > "${dir}/bin/herdr" <<EOF
 #!/bin/sh
 case "\$1 \$2" in
-  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\",\"pane_id\":\"\${TELL_PANE:-w:1}\"}]}}" ;;
+  "agent list") echo "{\"result\":{\"agents\":[{\"name\":\"s1\",\"agent_status\":\"\${TELL_STATUS}\",\"pane_id\":\"\${TELL_PANE:-w:1}\"},{\"name\":\"conduct-e\",\"agent_status\":\"working\",\"pane_id\":\"w:2\"}]}}" ;;
   "agent prompt") st=\$(sed -n 's/.*"sess-s1","status":"\([a-z]*\)".*/\1/p' "${dir}/claude.json")
     case "\$4" in
       "/goal "*) printf '%s\nstate: %s\n--\n' "\$4" "\$st" >> "${dir}/sent"
@@ -498,6 +498,32 @@ refused "tell refuses one herdr reports as working" "still working" working find
 refused "tell refuses one herdr reports as blocked on a prompt" "waiting on a prompt" blocked findings findings.md
 # herdr giving no status (agent_field reads it as unknown): refused as unknown, never as another project's.
 refused "tell refuses its own agent with no session and no herdr status as unknown" "herdr gives no state for it (unknown)" "" findings findings.md
+# `tell conduct-e note <file>` appends the file to the conductor's inbox while its session is busy,
+# sends no prompt, and logs tell:note; a second note appends after the first. A note to a builder,
+# or to a conductor this project never started, is refused and writes no inbox.
+inbox="${dir}/.swarm/inbox/conduct-e.md"
+printf '2026-10-13\tconduct\tconduct-e\tclaude\topus\thigh\tsess-c\n' >> "${dir}/.swarm/agents.tsv"
+echo '[{"sessionId":"sess-c","status":"busy"}]' > "${dir}/claude.json"
+noteout() { rm -f "${dir}/sent"; (cd "${dir}" && HERDR_ENV=1 TMPDIR="${dir}/tmp" CLAUDE_STUB_AGENTS="${dir}/claude.json" PATH="${dir}/bin:${PATH}" bash "${SWARM}" tell "$@" 2>&1; echo "exit $?"); }
+printf 'first note\n' > "${dir}/n1.md"; printf 'second note\n' > "${dir}/n2.md"
+out="$(noteout conduct-e note n1.md)"
+if [[ "${out}" == *"noted conduct-e"*"exit 0" && "$(cat "${inbox}" 2>/dev/null)" == *"first note"* && ! -f "${dir}/sent" \
+      && "$(tail -1 "${dir}/.swarm/events.tsv" | cut -f2,3,5)" == $'tell:note\tconduct-e\tok' ]]; then echo "ok   tell note leaves a busy conductor the file in its inbox, prompts nothing, and logs tell:note ok"; else
+  echo "FAIL tell note leaves a busy conductor the file in its inbox: got '${out}', inbox '$(cat "${inbox}" 2>/dev/null)', sent '$(cat "${dir}/sent" 2>/dev/null)', events '$(tail -1 "${dir}/.swarm/events.tsv")'"; fails=$((fails + 1)); fi
+out="$(noteout conduct-e note n2.md)"
+if [[ "${out}" == *"exit 0" && "$(grep -v '^From the lead' "${inbox}" | grep .)" == $'first note\nsecond note' ]]; then echo "ok   a second note appends after the first"; else
+  echo "FAIL a second note appends after the first: got '${out}', inbox '$(cat "${inbox}")'"; fails=$((fails + 1)); fi
+rm -f "${inbox}"
+for who in s1 conduct-zz; do
+  out="$(noteout "${who}" note n1.md)"
+  want="a note goes only to a conductor"; [[ ${who} == s1 ]] || want="could not reach conduct-zz"
+  if [[ "${out}" == *"${want}"*"exit 1" && ! -e "${inbox%/*}/${who}.md" \
+        && "$(tail -1 "${dir}/.swarm/events.tsv" | cut -f2,3,5)" != *ok ]]; then echo "ok   tell note refuses ${who}, writes no inbox and logs no ok"; else
+    echo "FAIL tell note refuses ${who}: got '${out}', inbox '$(ls "${inbox%/*}" 2>/dev/null)'"; fails=$((fails + 1)); fi
+done
+out="$(noteout conduct-e bogus n1.md)"
+if [[ "${out}" == *"findings, nudge or resume, not 'bogus' (or note, to a conductor)"*"exit 1" ]]; then echo "ok   an unknown kind's refusal lists note with findings, nudge and resume"; else
+  echo "FAIL an unknown kind's refusal lists note with findings, nudge and resume: got '${out}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
 # conduct on a later epic sets it active, says so, and status stops listing it as waiting on you; an

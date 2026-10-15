@@ -7,7 +7,7 @@
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's), required with goal on while the story is ready
-#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume
+#   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost [YYYY-MM-DD]                              tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
@@ -460,7 +460,7 @@ def epoch(x):
             return None
 def sign_time(f):
     t = epoch(f[0]) if len(f) == 5 else None
-    if t is None or f[1] in ("nudge", "tell:nudge") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+    if t is None or f[1] in ("nudge", "tell:nudge", "tell:note") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
         return None
     return t
 def last_seen(events):
@@ -1433,8 +1433,8 @@ wait_conductor() {
   return "${rc}"
 }
 
-# is_tell_kind <word> — true for a kind tell takes: findings, nudge or resume.
-is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1; }
+# is_tell_kind <word> — true for a kind tell takes: findings, nudge, resume or note.
+is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; return 1; }
 
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
@@ -1442,14 +1442,26 @@ is_tell_kind() { case "$1" in findings|nudge|resume) return 0 ;; esac; return 1;
 # read as a flag. Only an idle agent is told (read_state): it refuses one mid-turn (findings sent then
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
+# A note goes only to a live conductor of this project, and never as a prompt: it is appended to
+# .swarm/inbox/<name>.md, which the conductor reads after each wait (conduct_brief), busy or not.
 tell_agent() {
-  local kind="$2" f="$3" name msg state since
-  is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (swarm.sh tell <slug> <kind> <file>)"
+  local kind="$2" f="$3" name msg state since inbox
+  is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
+  [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
+    || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
   if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
     die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
+  fi
+  if [[ "${kind}" == note ]]; then
+    inbox="${PROJECT_DIR}/.swarm/inbox/${name}.md"; mkdir -p "${inbox%/*}"
+    # Built first, then one append: the conductor's mv between the open and a slow write would
+    # take the note into a copy it has already read.
+    msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
+    printf '%s\n\n' "${msg}" >> "${inbox}"
+    echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
   case "${state}" in
@@ -1887,6 +1899,11 @@ EOF
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
+
+The lead may leave you notes while you work, in ${PROJECT_DIR}/.swarm/inbox/$(agent_name "conduct-${epic}").md. After each
+\`swarm.sh wait\` or \`swarm.sh watch\` returns, if that file exists, \`mv\` it aside to a .reading.md beside it
+(atomic, so a note the lead adds meanwhile starts a new file), then read the moved copy, act on it,
+and delete it.
 EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"

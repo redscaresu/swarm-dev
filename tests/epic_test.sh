@@ -69,6 +69,15 @@ goal_on() {
   grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
 }
 GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
+# inbox_rule <epic> <brief> — conduct_brief's inbox rule, as has prints them: the inbox, the mv aside
+# after each wait or watch, then read, act and delete.
+INBOX_RULE="yes|yes|yes"
+inbox_rule() {
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  printf '%s|%s|%s' "$(has ".swarm/inbox/conduct-$1.md" "$2")" \
+    "$(has '`swarm.sh wait` or `swarm.sh watch` returns, if that file exists, `mv` it aside' "$(tr '\n' ' ' <<< "$2")")" \
+    "$(has "then read the moved copy, act on it, and delete it" "$(tr '\n' ' ' <<< "$2")")"
+}
 # goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
 goal_off() {
   printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"
@@ -207,6 +216,7 @@ check "the conductor's brief says what a builder's auth means and to resume it a
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
+check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
@@ -396,6 +406,7 @@ check "the one-PR-per-epic conductor's brief says what a builder's auth means, t
 check "the one-PR-per-epic conductor gives up with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${brief}")"
 check "with goal off, the one-PR-per-epic conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${brief}")"
+check "the one-PR-per-epic conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule f "${brief}")"
 printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 5" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 check "with goal = 5, the one-PR-per-epic conductor reads why a builder stopped and closes it with that cause" \

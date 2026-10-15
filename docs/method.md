@@ -367,7 +367,8 @@ exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stal
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
-reached the builder. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
+reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about
+whether the conductor is working. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
 no cause as plain `close`. A close with an unknown cause is refused and logged as plain `close`,
 and the word that was given never reaches the log. `reconcile` and `unblock` write a line
 per item they move. A `story` that starts an `escalate` build, and the `close` that hands its story to
@@ -414,7 +415,12 @@ changes code, the `/code-review` skill. The conductor sends the findings to the 
 `swarm.sh tell <slug> findings <file>` and reviews the new head again. The kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
-session is gone or unknown. The conductor closes a builder only after both
+session is gone or unknown. To reach a busy conductor, the lead runs
+`swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
+`.swarm/inbox/conduct-<epic>.md`, without sending a prompt or reading the conductor's state, and
+only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
+inbox aside with `mv` (so a note added meanwhile starts a new file), reads the moved copy, acts on
+it and deletes it. The conductor closes a builder only after both
 reviews pass, so the fixes are made by the agent that wrote the code, with its context. A pass
 that finds only nits, edge cases outside the story, or points already declined counts as passing: a
 reviewer built to find edge cases never comes back empty, so waiting for an empty pass never ends. With
