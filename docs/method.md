@@ -174,6 +174,19 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   then starts fresh, and the third runs on Fable. A close after `review`, after a merge or after
   the builder has gone counts nothing, and `reconcile` sending a story back to `ready` never
   counts. If gh cannot list the PRs, the close counts and clears nothing and says why on stderr.
+  `swarm.sh close <slug> <cause>` also says why the builder stopped: `met`, `stalled` and `bound`
+  count as above, while `impossible`, `paused` and `cleared-on-error` are not attempts. Those three
+  clear the build away under the same conditions and leave `attempts:` as it was. An unknown cause
+  is refused before anything closes, and with `goal` on, so is a close with no cause while the story
+  is `ready`. `impossible` means the builder replied `IMPOSSIBLE:`, so the **Done when** cannot be
+  met: the story becomes `kind: lead` with `escalated_from:` and a block whose **You:** step is the
+  user's (fix the **Done when**, then `swarm.sh reset <slug> <reason>`). Because of that step,
+  `next` lists it under waiting on you, not as the lead's `escalated` step. `impossible` hands on
+  any story still `ready` of a kind an agent builds, verify included, and clears its worktree and
+  `story/<slug>` here and on origin so a reset builds it again. When the close finds no build to count
+  (its builder is gone, gh cannot list its PRs, or it is a verify story), it closes no PR, and its
+  block says the PRs were not listed, so the user looks before resetting. Any other story, and a name
+  with no story file, is refused before anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs
@@ -335,7 +348,9 @@ exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stal
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
-reached the builder. `reconcile` and `unblock` write a line
+reached the builder. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
+no cause as plain `close`. A close with an unknown cause is refused and logged as plain `close`,
+and the word that was given never reaches the log. `reconcile` and `unblock` write a line
 per item they move. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
@@ -343,7 +358,7 @@ fails the command.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
-and tokens from the session's own log, the tells it took by kind (`tells_findings`, `tells_nudge`, `tells_resume`; a bare `tell` from older logs counts as findings, and a refused tell, which never reached it, is not counted) and its `close` lines in this log, the findings logged
+and tokens from the session's own log, the tells it took by kind (`tells_findings`, `tells_nudge`, `tells_resume`; a bare `tell` from older logs counts as findings, and a refused tell, which never reached it, is not counted) and its `close` lines in this log (any cause), the findings logged
 against its PR, the PR and its state from `gh`, and which attempt at the story it was. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. A story that merged and
 left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
@@ -351,7 +366,8 @@ left the board is read from git history. If `gh` fails, the PR columns stay empt
 `swarm.sh decisions [--since YYYY-MM-DD]` exports the same logs as training data for a small
 decision model. It prints one JSON object per line for each decision the logs record: a
 `model_choice` per agent started, a `retry` per later attempt at a story, a `finding_accept` per
-finding fixed or declined, a `nudge` per `nudge` or `tell:nudge` line, and a `close` per `close` line.
+finding fixed or declined, a `nudge` per `nudge` or `tell:nudge` line, and a `close` per `close` or
+`close:<cause>` line, with the command as its `chosen`.
 Each object has `decision`, `time`, `subject`, `context` (a builder's story as committed to the board
 by the end of the day it started, or the finding's text), `options`, `chosen`, and `outcome`, which is
 that build's `outcomes` row: merged, PR, `tells_findings` (its review rounds), `tells_nudge`,

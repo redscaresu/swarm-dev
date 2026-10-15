@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # decisions_test.sh — `swarm.sh decisions` against a fixture: a builder whose story a merge deleted, a
 # conductor, a codex agent, a fixed finding (an old four-field row) and a declined one, nudges and
-# closes. gh is a stub on PATH. The export must be valid JSONL, null where the logs hold nothing, and
+# closes, one with a cause. gh is a stub on PATH. The export must be valid JSONL, null where the logs hold nothing, and
 # write nothing.
 set -euo pipefail
 
@@ -30,7 +30,8 @@ printf '%s\n' \
   $'2026-10-02T11:00:00Z\ttell:nudge\ts-one\tw:1\tok' \
   $'2026-10-02T12:00:00Z\treview\ts-one\tw:1\tok' \
   $'2026-10-02T13:00:00Z\tclose\ts-one\tw:1\tok' \
-  $'2026-10-03T13:00:00Z\tclose\tconduct-e\tw:1\tok' > "${P}/.swarm/events.tsv"
+  $'2026-10-03T13:00:00Z\tclose\tconduct-e\tw:1\tok' \
+  $'2026-10-03T14:00:00Z\tclose:impossible\ts-one\tw:1\tok' > "${P}/.swarm/events.tsv"
 printf '%s\n' \
   $'2026-10-02\tvacuous-test\to/r#7\ta test that could not fail' \
   $'2026-10-02\tout-of-scope\thttps://github.com/o/r/pull/7\tan edge case outside the story\tdeclined' > "${P}/.swarm/findings.tsv"
@@ -56,7 +57,7 @@ check() { # <name> <output> <exact expected output>
 before="$(ls -lR "${P}/.swarm")"
 out="$(decisions)"
 O='{"attempts": 1, "cost_usd": 4.0, "findings": 1, "merged": true, "pr": "https://github.com/o/r/pull/7", "tells_findings": 0, "tells_nudge": 1, "tells_resume": 0}'
-check "one object per model choice, finding (fixed and declined), nudge and close, null where the logs hold nothing" \
+check "one object per model choice, finding (fixed and declined), nudge and close (close:impossible a close), null where the logs hold nothing" \
   "$(summary <<< "${out}")" "$(cat <<EOF
 model_choice|conduct-e|None|null|{"effort": "high", "kind": "claude", "model": "opus", "role": "conduct"}|null
 model_choice|s-one|# Build s-one|null|{"effort": "xhigh", "kind": "claude", "model": "opus", "role": "code"}|${O}
@@ -67,10 +68,11 @@ nudge|s-one|None|null|"nudge"|${O}
 nudge|s-one|None|null|"tell:nudge"|${O}
 close|s-one|None|null|"close"|${O}
 close|conduct-e|None|null|"close"|null
+close|s-one|None|null|"close:impossible"|${O}
 EOF
 )"
 check "it writes nothing" "$(ls -lR "${P}/.swarm")" "${before}"
-check "--since leaves earlier decisions out" "$(decisions --since 2026-10-03 | summary | cut -d'|' -f1,2)" "close|conduct-e"
+check "--since leaves earlier decisions out" "$(decisions --since 2026-10-03 | summary | cut -d'|' -f1,2 | paste -sd' ' -)" "close|conduct-e close|s-one"
 if decisions --since yesterday >/dev/null 2>&1; then
   echo "FAIL a bad --since is refused"; fails=$((fails + 1))
 else echo "ok   a bad --since is refused"; fi

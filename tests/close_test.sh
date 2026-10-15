@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # close_test.sh — close shuts every tab that carries the agent's label, one id per herdr call, even
 # when two tabs share it, and archives the agent's session log once; closing the open builder of a
-# ready story counts a failed build. herdr and gh are stubs on PATH: herdr records each tab close and
+# ready story counts a failed build, and close takes a cause. herdr and gh are stubs on PATH: herdr records each tab close and
 # lists the agents in ${ROOT}/agents ("<name> <pane>" lines); gh answers pr list from ${ROOT}/prs.json.
 set -euo pipefail
 
@@ -232,5 +232,85 @@ touch "${ROOT}/ghfail"
 item gf "status: ready" "kind: code" "attempts: 2"; built gf escalate; started gf w:p38; close gf
 rm "${ROOT}/ghfail"
 is "with gh failing the close counts nothing: no attempt, no kind: lead, no block" "code||2|ready|" "$(state gf)|$(block gf)"
+
+# --- close <name> <cause>: met, stalled and bound count as above; impossible, paused and
+# cleared-on-error count nothing and still clear the build away, and impossible hands the story to the
+# user. An unknown cause is refused before anything closes; with goal on, so is a missing one while the
+# name's story is ready.
+cs() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "$@" 2>&1); }
+CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
+echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.json"
+item i1 "status: ready" "kind: code" "attempts: 1"; started i1 w:p41; cs i1 impossible >/dev/null
+is "close i1 impossible, its builder open: kind: lead, escalated_from: code, attempts: 1, still ready" "lead|code|1|ready" "$(state i1)"
+b="$(block i1)"
+is "its block has a **You:** line naming Done when, the epic branch step, and the PR" "1|yes|yes" \
+  "$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "${b}")|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
+is "and its build is cleared away" "" "$(left i1)"
+# impossible hands a ready story an agent builds to the user, and clears its worktree and branches so
+# a reset builds it again, even when the close finds no build to count: with no builder open, gh
+# failing, or a verify story (no PR tells its pass from a failure). Then it closes no PR, and the block
+# says the PRs were not listed. Any other story, and a name with no story file, is refused before
+# anything closes.
+unlisted() { grep -qxF "swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo." <<< "$(block "$1")" && echo yes; }
+closed_prs="$(grep -c '^pr close' "${ROOT}/gh.log")"
+item i2 "status: ready" "kind: code" "attempts: 1"; started i2
+rc=0; cs i2 impossible >/dev/null || rc=$?
+is "close i2 impossible with no builder open hands it on and clears its build; the block says its PRs were not listed" \
+  "0|lead|code|1|ready|yes|" "${rc}|$(state i2)|$(unlisted i2)|$(left i2)"
+item i3 "status: ready" "kind: code" "attempts: 1"; started i3 w:p57; touch "${ROOT}/ghfail"
+rc=0; out="$(cs i3 impossible)" || rc=$?; rm "${ROOT}/ghfail"
+is "with gh failing, close i3 impossible closes its pane, hands it on and clears its build; stderr says gh failed" \
+  "0|closed|lead|code|1|ready|yes|yes|" \
+  "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(unlisted i3)|$(left i3)"
+item v1 "status: ready" "kind: verify" "attempts: 1"; echo "w:p14 v1" > "${P}/.swarm/state/v1"
+rc=0; cs v1 impossible >/dev/null || rc=$?
+is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, a **You:** block, its build cleared" \
+  "0|lead|verify|1|ready|1|yes|" "${rc}|$(state v1)|$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "$(block v1)")|$(unlisted v1)|$(left v1)"
+is "and none of the three closes a PR, since none was listed" "${closed_prs}" "$(grep -c '^pr close' "${ROOT}/gh.log")"
+echo '[]' > "${ROOT}/prs.json"; item i4 "status: ready" "kind: code"; started i4 w:p61; cs i4 impossible >/dev/null
+is "when gh lists no PR on story/i4, the block says none was found" "lead|yes" "$(fmv i4 kind)|$(grep -qx 'No PR was found on story/i4.' <<< "$(block i4)" && echo yes)"
+echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.json"
+item ir "status: review" "kind: code"; started ir w:p58
+item il "status: ready" "kind: lead"; started il w:p59
+started ix w:p60   # no story file
+got=""
+for s in ir il ix; do
+  rc=0; out="$(cs "${s}" impossible)" || rc=$?
+  got+="${rc}|$(grep -qF "close: ${s} cannot be closed impossible, because" <<< "${out}" && echo named || echo unnamed)|$(grep -qsx "w:p[0-9]* ${s}" "${P}/.swarm/state/${s}" && echo open || echo closed) "
+done
+is "close impossible on a story in review, a lead story or a name with no story file is refused, naming it; its pane stays" \
+  "1|named|open 1|named|open 1|named|open " "${got}"
+is "and the stories are as they were: ir in review, il kind: lead with no escalated_from: or block" "review|lead||" \
+  "$(fmv ir status)|$(fmv il kind)|$(fmv il escalated_from)|$(block il)"
+n=42
+for c in met stalled bound paused cleared-on-error; do
+  item "c-${c}" "status: ready" "kind: code" "attempts: 1"; started "c-${c}" "w:p${n}"; n=$((n + 1)); cs "c-${c}" "${c}" >/dev/null
+done
+is "met, stalled and bound raise attempts: by one; paused and cleared-on-error leave it" "2|2|2|1|1" \
+  "$(attempts c-met)|$(attempts c-stalled)|$(attempts c-bound)|$(attempts c-paused)|$(attempts c-cleared-on-error)"
+is "each clears its build away" "||||" "$(left c-met)|$(left c-stalled)|$(left c-bound)|$(left c-paused)|$(left c-cleared-on-error)"
+is "an uncounted close closes the open PR with a comment naming its cause, not an attempt" "1" \
+  "$(grep -c "^pr close ${U}/9 --comment swarm.sh close: the build of c-paused stopped (paused), which is not an attempt" "${ROOT}/gh.log")"
+item u1 "status: ready" "kind: code" "attempts: 1"; started u1 w:p50
+rc=0; out="$(cs u1 maybe)" || rc=$?
+is "close u1 maybe fails naming the six causes, not the word; the pane stays and nothing is counted" "1|yes|0|yes|1" \
+  "${rc}|$(grep -qF "${CAUSES}" <<< "${out}" && echo yes)|$(grep -c maybe <<< "${out}")|$(grep -qx 'w:p50 u1' "${P}/.swarm/state/u1" && echo yes)|$(attempts u1)"
+is "events.tsv logs it as command close, target u1, with no 'maybe' in the line" "1|0" \
+  "$(grep -c $'\tclose\tu1\tw:me\tclose: the cause must be ' "${P}/.swarm/events.tsv")|$(grep -c maybe "${P}/.swarm/events.tsv")"
+echo "goal = 5" > "${P}/.claude/swarm/config"
+item g5 "status: ready" "kind: code" "attempts: 1"; started g5 w:p51
+rc=0; out="$(cs g5)" || rc=$?
+is "with goal = 5, close g5 on a ready story fails naming the causes, and closes nothing" "1|yes|yes|1|worktree branch origin" \
+  "${rc}|$(grep -qF "${CAUSES}" <<< "${out}" && echo yes)|$(grep -qx 'w:p51 g5' "${P}/.swarm/state/g5" && echo yes)|$(attempts g5)|$(left g5)"
+item gr "status: review" "kind: code"; started gr w:p52; started gd w:p53   # gd has no story file
+started conduct-g w:p54; started hld-g w:p55; started plan-g w:p56; got=""
+for s in gr gd conduct-g hld-g plan-g; do
+  rc=0; cs "${s}" >/dev/null || rc=$?; got+="${rc}$([[ -e "${P}/.swarm/state/${s}" ]] && echo open || echo closed) "
+done
+is "with goal = 5 and no cause, a story in review, a name with no story file, conduct-, hld- and plan- close" \
+  "0closed 0closed 0closed 0closed 0closed " "${got}"
+: > "${P}/.claude/swarm/config"
+rc=0; cs g5 >/dev/null || rc=$?
+is "with goal off, close g5 with no cause closes and counts as today" "0|2|" "${rc}|$(attempts g5)|$(left g5)"
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
