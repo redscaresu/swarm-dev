@@ -122,7 +122,7 @@ goal_parts() {
 }
 GOAL_PARTS="yes|yes|yes|yes|yes|yes|yes"
 # The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
-MAPPING="<who> is the reviewer that raised it: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead for one the lead sent."
+MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
 # and text and run as written: the outcome and reviewer of the row each logs, then has for MAPPING.
 logs_findings() {
@@ -971,7 +971,7 @@ check "every log-finding line of commands/swarm.md and method.md names --reviewe
 # shellcheck disable=SC2016 # the backticks are the Markdown's
 check "/swarm-dev:swarm maps each reviewer to its --reviewer value, the lead's own reading to lead" "yes" \
   "$(has '`codex` for codex-review'"'"'s, `code-review` for /code-review'"'"'s, `ci` for the review bot'"'"'s or a `swarm.sh findings` note'"'"'s, or `lead` for your own reading' "$(tr -s '[:space:]' ' ' < "${REPO}/commands/swarm.md")")"
-check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(grep -c "<who> is the reviewer that raised it: codex for a finding from" "${SWARM}")"
+check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(grep -c "<who> is the reviewer that first raised it, whoever passed it on" "${SWARM}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

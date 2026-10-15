@@ -782,7 +782,9 @@ LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recent
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
 # code-scanning alerts (swarm.sh findings). A row logged without --reviewer says unknown. The reports
-# read this list as SWARM_FINDING_REVIEWERS, so a reviewer is added here alone.
+# read this list as SWARM_FINDING_REVIEWERS. A new reviewer also needs its line in finding_rule's
+# mapping and in the story arm of commands/swarm.md, which tell whoever logs a finding which value
+# names which reviewer.
 FINDING_REVIEWERS="codex code-review ci conductor lead"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
@@ -1787,9 +1789,10 @@ Log each finding that was fixed, and each one declined (rebutted with a reason),
     SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
     SWARM_PROJECT=${proj} ${sw} log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
 
-<who> is the reviewer that raised it: codex for a finding from \`swarm.sh codex-review\`, code-review
-for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one
-from your own reading of the diff, and lead for one the lead sent.
+<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
+\`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a
+\`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
+one from the lead's own reading.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
