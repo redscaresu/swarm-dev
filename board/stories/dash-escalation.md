@@ -16,4 +16,4 @@ dash_render (python heredoc) only, no shell change: the inputs are already expor
 **From review (binding; overrides the scope above where they differ):**
 - Add DASH_ESCALATE_AFTER="${CFG_escalate_after}" to dash's env block; dash_render cannot otherwise tell escalation is off (DASH_POLICY always carries the escalate row). Drop the 'no shell change' claim.
 - At 100 columns the header has no room (budget 91): put `on call: …` and the count on the summary line below 140 columns and in the status bar at 140 and over; say whether a zero count shows. Done when checks those positions.
-- Fixture escalate lines are minutes old (ago 1..30) or DASH_CLOCK/TZ is pinned, so 'today' cannot drift across midnight. A failed reset, drop or dialog line still shows ✗; add that check.
+- 'Today' must not drift across midnight: the renderer takes its 'now' from an env override (e.g. DASH_NOW, epoch seconds) that the test fixes, and fixture lines are built relative to that fixed time; DASH_CLOCK only changes displayed text and TZ does not freeze time. A failed reset, drop or dialog line still shows ✗; add that check.

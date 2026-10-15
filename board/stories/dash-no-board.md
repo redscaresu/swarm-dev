@@ -15,3 +15,4 @@ Absorbed into this epic by slug: keep board/stories/dash-no-board.md, add `epic:
 
 **From review (binding; overrides the scope above where they differ):**
 - Put its test in its own file (tests/dash_noboard_test.sh) or at the end of tests/dash_test.sh, never next to the header regex at :151 that dash-escalation rewrites. `next` does not die in a git repo with no board, so do not cite it as the model; dash dies with its own message.
+- Existing tests/dash_test.sh fixture projects P, S and Q (and R, which copies Q) have no stories/README.md; this story adds it to each, so the guard leaves the existing suite green.
