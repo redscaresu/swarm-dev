@@ -1471,7 +1471,7 @@ review_rule() {
   cat <<EOF
 A story is reviewed only when its latest head has passed \`$(codex_review_cmd '<base>')\`
 in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
-/code-review skill on its PR (\`/code-review <PR>\`). $(codex_skip_rule) Send every real finding to the story's
+/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule) Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
 what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
@@ -1485,8 +1485,11 @@ EOF
 # codex_review_cmd <base> — how a brief runs codex: through codex-review, which stops it after
 # codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config.
 codex_review_cmd() { printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"; }
-# codex_skip_rule — what a usage limit or a timeout means, for a builder, a conductor and the lead alike.
-codex_skip_rule() {
+# codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
+# conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
+# Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
+codex_rule() {
+  printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
 
@@ -1676,7 +1679,7 @@ Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. This project opens one PR per epic, so open no PR: commit on your branch,
 story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
 \`$(codex_review_cmd "${epic_branch}")\` before committing; fix real findings, decline
-nits with a reason, and converge on one clean pass. $(codex_skip_rule) Run the repo's tests and make them pass. $(mutation_rule)
+nits with a reason, and converge on one clean pass. $(codex_rule) Run the repo's tests and make them pass. $(mutation_rule)
 $(reply_sentence epic)
 EOF
   else
@@ -1689,7 +1692,7 @@ Title your commit and PR with a plain description of the change.
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
-loop in the PR body. $(codex_skip_rule) If \`gh pr view --json mergeable\` says
+loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
 in the PR body. $(reply_sentence story)
@@ -2019,7 +2022,7 @@ and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\`
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
 line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
 \`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
-$(codex_skip_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
+$(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
 waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
 keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
@@ -4239,43 +4242,48 @@ is_command() {
     d && match($0, /^    [a-z_|-]+\)/) { n = split(substr($0, 5, RLENGTH - 5), a, "|"); for (i = 1; i <= n; i++) if (a[i] == want) exit 0 }' "$0"
 }
 
-# tree_pids <pid> — a process and everything under it, children first.
-tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
-
-# kill_tree <pid> [signal] — TERM (or <signal>) a process and everything under it, children first, so
-# nothing is orphaned.
+# kill_tree <pid> — TERM a process and everything under it, children first, so nothing is orphaned.
+# shellcheck disable=SC2317,SC2329 # called from main_signal
 kill_tree() {
-  local pids; pids="$(tree_pids "$1")"
-  # shellcheck disable=SC2086 # one pid per word
-  kill -"${2:-TERM}" ${pids} 2>/dev/null || true
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "${c}"; done
+  kill -TERM "$1" 2>/dev/null || true
 }
 
 CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it is KILLed
 
+# stop_codex <pgid> — TERM codex's process group, give it CODEX_GRACE seconds, then KILL what is left.
+# The group also holds a helper whose parent has died, which a walk down from codex would miss.
+# Stderr is off, so bash prints no "Terminated" line for the job.
+stop_codex() {
+  local left
+  {
+    kill -TERM -- "-$1"
+    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 -- "-$1" || break; sleep 1; done
+    kill -KILL -- "-$1"
+    wait "$1"
+  } 2>/dev/null || true
+}
+
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
-# beside --base) and stdin from /dev/null, so it never waits on input. It is stopped after
-# codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests): TERM to its whole tree, CODEX_GRACE
-# seconds, then KILL to each process left and whatever is now under it (a TERM trap can start more).
-# The timeout dies, so events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
+# beside --base) and stdin from /dev/null, so it never waits on input. It runs in a process group of
+# its own (job control on for its start only), which stop_codex stops after codex_minutes
+# (SWARM_CODEX_SECONDS overrides it, for tests) or when this command is sent TERM or HUP: main_signal
+# turns an interrupt into a TERM, and a background job never sees INT. The timeout dies, so
+# events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid pids p left rc=0
+  local pid left rc=0
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
-  codex exec review --base "origin/$1" < /dev/null &
-  pid=$!
+  set -m; codex exec review --base "origin/$1" < /dev/null & pid=$!; set +m
+  # shellcheck disable=SC2064 # this codex's pid, fixed now
+  trap "stop_codex ${pid}; exit 143" TERM HUP
   while ((left-- > 0)) && kill -0 "${pid}" 2>/dev/null; do sleep 1; done
   if ! kill -0 "${pid}" 2>/dev/null; then
     wait "${pid}" || rc=$?
     return "${rc}"
   fi
-  pids="$(tree_pids "${pid}")"   # before the TERM: an orphan is no longer under codex after it
-  {   # stderr off, so bash prints no "Terminated" line for the job
-    kill_tree "${pid}"
-    # shellcheck disable=SC2086 # one pid per word
-    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 ${pids} || break; sleep 1; done
-    for p in ${pids}; do kill_tree "${p}" KILL; done
-    wait "${pid}" || true
-  } 2>/dev/null
+  stop_codex "${pid}"
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 

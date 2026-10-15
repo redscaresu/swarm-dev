@@ -136,7 +136,7 @@ prints every setting and where it came from.
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
 | `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
-| `codex_minutes` | `10` | `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic) |
+| `codex_minutes` | `10` | `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to codex's process group, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
@@ -426,7 +426,10 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
-beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. When codex reports a
+beside `--base`) and stdin from `/dev/null`, in a process group of its own, and stops that group
+after `codex_minutes`, or when codex-review itself is interrupted. Every brief says to run it in the
+background (Bash `run_in_background`) and wait for it: Claude Code stops a foreground Bash call at 2
+minutes by default and 10 at most, before the limit could apply. When codex reports a
 usage limit, or codex-review prints `codex skipped: timed out`, no one waits or runs it again: a
 builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes of `/plan-hld` and

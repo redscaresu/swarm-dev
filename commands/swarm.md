@@ -71,8 +71,9 @@ Repeat until a step below says stop:
      agent and no PR, the build died: tell the user, and stop.
    - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
      check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
-     builder, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree plus
-     `/code-review <PR>` when it changes code (log each fixed
+     builder, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree, run in the
+     background (Bash `run_in_background`) and waited for, since it can outlast a foreground Bash
+     call, plus `/code-review <PR>` when it changes code (log each fixed
      finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`, and
      each declined one with `log-finding --declined <kind> <PR URL> "<the finding, and why>"`), with findings
      sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing

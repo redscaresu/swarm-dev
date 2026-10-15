@@ -29,17 +29,24 @@ stub() {
   chmod +x "${BIN}/codex"
 }
 # review — codex-review main from the project, with text on its stdin, timed: sets out, rc and took
-# (seconds). Its output goes through a file: a stub left running would hold a $(...) open for good.
+# (seconds). Its output goes through a file, since a stub left running would hold a $(...) open for
+# good, and after REVIEW_CAP seconds the stubs are KILLed, so a codex-review that hangs fails the
+# timing checks instead of hanging the test.
+REVIEW_CAP=20
 review() {
-  local t0=${SECONDS}
-  rc=0; (cd "${P}" && env -u SWARM_PROJECT -u HERDR_ENV SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main \
-    <<< "typed at the prompt" > "${ROOT}/out" 2>&1) || rc=$?
+  local t0=${SECONDS} spid i
+  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main \
+    <<< "typed at the prompt" > "${ROOT}/out" 2>&1) &
+  spid=$!
+  for ((i = 0; i < REVIEW_CAP * 5; i++)); do kill -0 "${spid}" 2>/dev/null || break; sleep 0.2; done
+  kill -0 "${spid}" 2>/dev/null && { pkill -KILL -f "${BIN}/" || true; }
+  rc=0; wait "${spid}" || rc=$?
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
 }
-# gone — "yes" once no stub process is left, polled for up to 2 s.
+# gone [seconds] — "yes" once no stub process is left, polled for up to <seconds> (2).
 gone() {
-  local _
-  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "${BIN}/" >/dev/null || { echo yes; return; }; sleep 0.2; done
+  local i
+  for ((i = 0; i < ${1:-2} * 5; i++)); do pgrep -f "${BIN}/" >/dev/null || { echo yes; return; }; sleep 0.2; done
   echo "no: $(pgrep -fl "${BIN}/" | tr '\n' ' ')"
 }
 last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv"; }
@@ -58,6 +65,23 @@ review
 check "a codex that ignores TERM is stopped within the limit plus the grace" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 1)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
+
+# --- The grace is real: a codex that exits on its own a second after TERM is not KILLed.
+stub "trap 'sleep 1; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+review
+check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
+  "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
+
+# --- An interrupted codex-review stops codex as its timeout does: TERM, the grace, then KILL.
+stub "trap 'echo TERM ignored' TERM; touch \"\${d}/ready\"; while :; do \"\${d}/stubsleep\" 60; done"
+rm -f "${BIN}/ready"
+(cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV SWARM_CODEX_SECONDS=60 bash "${SWARM}" codex-review main < /dev/null > "${ROOT}/out" 2>&1) &
+spid=$!
+for ((i = 0; i < 50; i++)); do [[ -e "${BIN}/ready" ]] && break; sleep 0.2; done
+sleep 1; { kill -TERM "${spid}"; wait "${spid}"; } 2>/dev/null || true   # stderr off: no "Terminated" notice
+check "codex-review sent TERM leaves neither a TERM-trapping stub nor its child" "yes|yes" \
+  "$([[ -e "${BIN}/ready" ]] && echo yes || echo "no stub started")|$(gone $((GRACE + 2)))"
+check "events.tsv's codex-review line says it was interrupted" "main|interrupted" "$(last_event)"
 
 # --- A codex that finishes: its findings and exit come through, run with exactly these args.
 stub 'echo "P1: x.sh:3 drops the error"; exit 0'
