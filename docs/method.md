@@ -420,8 +420,9 @@ the PR body (its reply, with `pr_per = epic`) a `Rules checked:` section, one li
 what it checked (file:line) or `n/a: <why>`. With no tagged rule there is no step. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
 
-**Review before closing.** A PR that changes only board files (no code) gets one `swarm.sh codex-review` pass plus the lead's own reading, not repeated passes. A story is reviewed when its latest head has passed codex and, if it
-changes code, the `/code-review` skill. The conductor sends the findings to the story's builder with
+**Review before closing.** A PR that changes only board files (no code) gets one
+`swarm.sh codex-review` pass plus the lead's own reading, not repeated passes. A story is reviewed when its latest head has passed
+codex and, if it changes code, the `/code-review` skill. The conductor sends the findings to the story's builder with
 `swarm.sh tell <slug> findings <file>` and reviews the new head again. The kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
