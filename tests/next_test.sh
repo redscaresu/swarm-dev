@@ -160,6 +160,7 @@ got=""
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 for w in '`swarm.sh close <slug>' 'stalled` for a stall' '`swarm.sh close <slug> met` when review has not converged' \
          "whose name (field 3) is the builder's agent name" 'do not start it again until you have decided' \
+         'an `s` in front unless it starts with a' 'the restart above is only for a stall or a review that has not converged' \
          '- `met`:' '- `impossible`:' '- `stalled`:' '- `bound`:' '- `paused`:' '- `cleared-on-error`:'; do
   grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
 # shellcheck disable=SC2016 # the backticks are literal Markdown

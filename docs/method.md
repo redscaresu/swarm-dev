@@ -272,7 +272,7 @@ whose session goes idle while its story is `ready` and has no open or merged PR 
 earlier attempt's; for an epic's story with `pr_per = epic`, before `story/<slug>` is pushed) has stopped early, perhaps on a failed request, and nothing else would wake it. `wait` tells it
 why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at
 least a slice apart unless the session turns busy in between. If herdr cannot deliver a nudge,
-`wait` stops there and returns idle, and logs nothing for it. With `goal` on, a builder whose session log shows a goal set and not yet met is not nudged: the goal keeps it going, so `wait` returns idle and the conductor reads why it stopped. Only code, docs and chore stories are
+`wait` stops there and returns idle, and logs nothing for it. With `goal` on, `wait` nudges no builder, whatever its session log shows: a nudge would bury the reply and the goal entry the conductor reads the cause from, so `wait` returns idle and the conductor reads why it stopped. Only code, docs and chore stories are
 nudged, never a verify story, a conductor or a planner, and a gh or git call that fails counts as a
 PR. An idle agent whose transcript (its session's `.jsonl`, the file `cost` reads) ends on Claude
 Code's "Login expired · Please run /login", with no message sent to it since, is never nudged or

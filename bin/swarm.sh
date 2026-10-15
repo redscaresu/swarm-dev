@@ -1336,8 +1336,9 @@ settle() {
 # state; at the timeout, print the last one and fail. A builder whose session is idle before its
 # story has a PR (nudge_reason) has not settled: tell it why, log `nudge <name>`, and wait again, up
 # to IDLE_NUDGES times. An idle agent whose transcript ends on an expired login (login_expired) is
-# never nudged: wait prints `auth`, with a line on stderr naming it. Nor, with goal on, is a builder
-# whose session log holds a goal not yet met (goal_entry): it returns idle. A nudge herdr could not
+# never nudged: wait prints `auth`, with a line on stderr naming it. With goal on, no builder is
+# nudged: a nudge would bury the reply and goal entry the conductor reads the cause from, so wait
+# returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
@@ -1355,8 +1356,8 @@ wait_agent() {
     fi
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
     [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
-    # A builder with a goal (set and not yet met) retries on its own; the conductor reads why it stopped.
-    [[ "${CFG_goal}" == off ]] || case "$(goal_entry "${name}" 0)" in set|continuing) break ;; esac
+    # With goal on, the conductor reads why the builder stopped from its reply and session log.
+    [[ "${CFG_goal}" == off ]] || break
     reason="$(nudge_reason "${name}")" || break
     if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
       >/dev/null 2>&1; then
@@ -1880,8 +1881,9 @@ goal_rule() {
 Each builder works to a goal (goal = ${CFG_goal}). When \`swarm.sh wait\` returns idle for a builder
 short of its reply, read why it stopped from its reply and its transcript, never its pane. The
 transcript is \`${CLAUDE_PROJECTS}/*/<session>.jsonl\`, where <session> is field 7 of the last line in
-.swarm/agents.tsv whose name (field 3) is the builder's agent name (its slug, cut to 32 characters):
-that line is the current build. Read the reply first: \`IMPOSSIBLE:\` or the story's reply. Then read
+.swarm/agents.tsv whose name (field 3) is the builder's agent name: its slug lowercased, each
+character outside a-z, 0-9, _ and - made -, an s in front unless it starts with a letter, then cut
+to 32 characters. That line is the current build. Read the reply first: \`IMPOSSIBLE:\` or the story's reply. Then read
 the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the cause:
 - met: the story's reply is there. Review it as below; the closes after review or merge stay bare.
 - impossible: the reply starts \`IMPOSSIBLE:\`.
@@ -1906,12 +1908,15 @@ EOF
 # answers Fable's usage-credits consent, which is not giving up. With goal on, an idle builder is the
 # goal rule's, and the stall close names its cause.
 give_up_rule() {
-  local retry idle="it is idle with no PR
-(with one PR per epic, no pushed story/<slug>) after wait's nudges" close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes."
+  local retry idle="when it is idle with no PR
+(with one PR per epic, no pushed story/<slug>) after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
   if [[ "${CFG_goal}" != off ]]; then
-    one="It and the goal rule's closes are the only ones before a review passes."
-    idle="it is idle short of its reply: follow the goal rule"
-    close="\`swarm.sh close <slug> stalled\` (\`close <slug> met\` when review has not converged)"
+    idle=""
+    close="\`swarm.sh close <slug> stalled\` for a stall, or \`swarm.sh close <slug> met\` when review has not converged"
+    one="Those and the goal rule's closes are the only ones before a review passes."
+    goal="
+A builder idle short of its reply is not one to give up on here: it is the goal rule's, which picks
+its close and whether the story is started again."
   fi
   if (( CFG_escalate_after > 0 )); then
     retry="swarm.sh picks Fable for build $((CFG_escalate_after + 1)) (escalate_after = ${CFG_escalate_after})."
@@ -1920,10 +1925,10 @@ give_up_rule() {
 (\`attempts: 2\`), do not start it again: report it to the lead."
   fi
   cat <<EOF
-Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, when ${idle}, or when review has not converged
-in the rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
-counts the attempt and clears its worktree, branch and PR. ${one} Start the story again in a later wave with \`swarm.sh story <slug>\`, and never choose a
-model: ${retry}
+Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, ${idle}or when review has
+not converged in the rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
+counts the attempt and clears its worktree, branch and PR. ${one} Start the story again in a later
+wave with \`swarm.sh story <slug>\`, and never choose a model: ${retry}${goal}
 A story that comes back \`kind: lead\` with \`escalated_from:\` is the lead's to decide: report it
 to the lead, and do not count it as waiting on the user.
 

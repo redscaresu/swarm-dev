@@ -99,12 +99,14 @@ Repeat until a step below says stop:
      `ready` story is refused, so the give-up closes name their cause: `swarm.sh close <slug>
      stalled` for a stall, and `swarm.sh close <slug> met` when review has not converged. A builder
      idle short of its reply is not nudged and is not given up on as above: read why it stopped and
-     close it with that cause, `swarm.sh close <slug> <cause>`, as the list below says.
+     close it with that cause, `swarm.sh close <slug> <cause>`. The list below also says whether to
+     start it again; the restart above is only for a stall or a review that has not converged.
      Read its reply and its transcript, never its pane. The transcript is
      `<projects>/*/<session>.jsonl`, where `<projects>` is `$CLAUDE_PROJECTS_DIR`, or
      `${CLAUDE_CONFIG_DIR:-~/.claude}/projects`, and `<session>` is field 7 of the last line in
-     `.swarm/agents.tsv` whose name (field 3) is the builder's agent name (its slug, cut to 32
-     characters): that line is the current build. The reply comes first (`IMPOSSIBLE:` or the
+     `.swarm/agents.tsv` whose name (field 3) is the builder's agent name: its slug lowercased, each
+     character outside `a-z`, `0-9`, `_` and `-` made `-`, an `s` in front unless it starts with a
+     letter, then cut to 32 characters. That line is the current build. The reply comes first (`IMPOSSIBLE:` or the
      story's reply), then the `reason` of the last `goal_status` entry with `met:true`.
      - `met`: the reply is there. Review it as above; the closes after review or merge stay bare.
      - `impossible`: the reply starts `IMPOSSIBLE:`. `swarm.sh close <slug> impossible` makes the

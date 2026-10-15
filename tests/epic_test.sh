@@ -45,14 +45,17 @@ gives_up() {
 GIVES_UP="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes"
 # goal_on <brief> — goal_rule's parts, as has prints them: the six causes, the impossible close, one
 # resume tell for a pause and then the paused close, cleared-on-error stopping the wave and its story
-# left for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line,
-# and the goal-on give-up (no 'after wait's nudges', a stalled close). No invented `failed` entry.
+# left for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line
+# (agent_name described in full), and the goal-on give-up: only a stall or an unconverged review,
+# an idle builder left to the goal rule, no 'after wait's nudges', a stalled close. No `failed` entry.
 goal_on() {
   local c
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|' "$(has "\`${CLAUDE_PROJECTS_DIR}/*/<session>.jsonl\`" "$1")" \
     "$(has "whose name (field 3) is the builder's agent name" "$1")" \
     "$(has 'do not start it again in a later wave. It waits for the lead.' "$1")" \
+    "$(has 'an s in front unless it starts with a letter, then cut' "$1")" \
+    "$(has 'returns stalled, or when review has' "$1")" "$(has "it is the goal rule's, which picks" "$1")" \
     "$(grep -qF 'with `failed`' <<< "$1" && echo failed || echo "no failed")"
   # shellcheck disable=SC2016 # the backticks are the brief's
   for c in '- met: ' '- impossible: ' '- stalled: ' '- bound: ' '- paused: ' '- cleared-on-error: ' \
@@ -63,7 +66,7 @@ goal_on() {
   done
   grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
 }
-GOAL_ON="yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
+GOAL_ON="yes|yes|yes|yes|yes|yes|no failed|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
 # goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
 goal_off() {
   printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"
@@ -575,9 +578,8 @@ got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/
 check "an unreadable transcript is not auth, and wait prints no traceback" "idle|3|0" \
   "${got%%|*}|$(nudges)|$(grep -c Traceback "${ROOT}/wait.err" || true)"
 chmod 600 "${tr}"
-# With goal on, a builder whose session log holds a goal set and not yet met retries on its own:
-# wait returns idle at once, with no nudge. One with no goal entry, or whose goal is met, is nudged
-# as with goal off. The goal_status shapes are the ones Claude Code 2.1.299 wrote in the goal spike.
+# With goal on, wait nudges no builder: whether its goal is set, met or missing, it returns idle at
+# once, with no nudge and no nudge line in events.tsv, so the reply and goal entry stay last. The goal_status shapes are the ones Claude Code 2.1.299 wrote in the goal spike.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "goal = 5" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
 gs() { # <met> <sentinel> — a goal_status entry
@@ -590,12 +592,12 @@ check "goal = 5 and a goal set in the session log: the idle builder with no PR i
   "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)"
 grep -v authentication_failed "${fixture}" > "${tr}"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "goal = 5 and no goal entry in the session log: the builder is nudged IDLE_NUDGES times" "idle|3|3" \
+check "goal = 5 and no goal entry in the session log: the idle builder with no PR is not nudged, nor logged" "idle|0|0" \
   "${got%%|*}|$(nudges)|$(nudged)"
 { grep -v authentication_failed "${fixture}"; gs false true; gs true false; } > "${tr}"
 : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "goal = 5 and the goal met: the builder is nudged as with goal off" "idle|3|3" "${got%%|*}|$(nudges)|$(nudged)"
+check "goal = 5 and the goal met: the idle builder with no PR is not nudged, nor logged" "idle|0|0" "${got%%|*}|$(nudges)|$(nudged)"
 rm -f "${ROOT}/screen" "${b}/stories/a.md" "${tr}"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
