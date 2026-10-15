@@ -140,7 +140,8 @@ CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal"
+CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -188,6 +189,8 @@ load_config() {
         [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: builder_subagent_model must be a model name such as haiku, not '${value}'" ;;
       goal)
         [[ "${value}" == off || "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: goal must be off or a positive whole number of turns, not '${value}'" ;;
+      lead)
+        [[ "${value}" == off || "${value}" == session ]] || die "${where}: lead must be off or session, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -2968,8 +2971,10 @@ dash_reexec() {
   SWARM_PROJECT="${PROJECT_DIR}" exec "${script}" "$@"
 }
 
-# dash_fields <file> — a board item's status, prs, epic, kind and title (its first "# " heading),
-# tab-separated, in one fork. The keys are read from the front matter only (a leading ---, up to the
+# dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading) and who
+# its step waits on, tab-separated, in one fork. The last is `you` for a body line starting **You:**
+# (an escalated story: one in its lead block, you_step's rule), `escalated` for an escalated story
+# without one (escalated_from: set; is_escalated's other tests are dash's), else empty. The keys are read from the front matter only (a leading ---, up to the
 # next; CRLF tolerated), by fm's rule: a key's first line wins, an empty value too. dash_finished's
 # front() reads them the same way.
 dash_fields() {
@@ -2980,8 +2985,13 @@ dash_fields() {
     n == 1 && !hp && sub(/^prs: */, "") { hp = 1; p = $0; next }
     n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
     n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
+    n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
+    n != 1 && $0 == o { b = 1 }
+    n != 1 && $0 == c { b = 0 }
+    n != 1 && index($0, "**You:**") == 1 { y = 1; yb = yb || b }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
-    END { printf "%s\t%s\t%s\t%s\t%s", s, p, e, k, t }' "$1"
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (yb ? "you" : "escalated") : (y ? "you" : "")) }' \
+    o="${ESCALATED_OPEN}" c="${ESCALATED_CLOSE}" "$1"
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -2995,7 +3005,7 @@ dash_render() {
       && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
-  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title.
+  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you.
   for d in hld epics stories; do
     while IFS= read -r f; do
       r="$(basename "${f}" .md)"; x="$(dash_fields "${f}")"
@@ -3032,7 +3042,7 @@ for a in agents:
   # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
   # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
   DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
-  DASH_MERGE="${CFG_merge}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
+  DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
@@ -3120,8 +3130,8 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title.
-board = [(l.split("\t") + [""] * 9)[:9] for l in lines("DASH_BOARD")]
+# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you (dash_fields').
+board = [(l.split("\t") + [""] * 10)[:10] for l in lines("DASH_BOARD")]
 stories = [b for b in board if b[0] == "stories"]
 story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
@@ -3204,7 +3214,7 @@ def epic_for(base, slug, tab):
         return story_by_slug[slug][6] or None
     if tab in epics:
         return tab
-    return (story_by_slug.get(tab) or [""] * 9)[6] or None
+    return (story_by_slug.get(tab) or [""] * 10)[6] or None
 
 if agents is not None:
     by_session, by_name = {}, {}
@@ -3252,9 +3262,19 @@ if agents is not None:
 shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
 idle = len(recs) - len(shown)
 
-# Needs you: only what you act on, each as a short action.
+# Needs you: only what you act on, each as a short action. With lead = session a lead session acts
+# for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft HLD) and
+# the rest goes to the lead's queue (lq); with lead off, lq is needs you.
 need, blocked, later, green, need_slugs = [], 0, 0, 0, set()
+LEAD = E.get("DASH_LEAD") == "session"
+queue = []
+lq = queue if LEAD else need
 bang = [sym("look")]
+
+def story_title(slug):
+    title = (story_by_slug.get(slug) or [""] * 10)[8]
+    return f": {title[:1].lower()}{title[1:]}" if title and title != slug else ""
+
 for l in lines("DASH_WAITING"):
     l = l.strip()
     if l.startswith("blocked:"):
@@ -3268,34 +3288,39 @@ for l in lines("DASH_WAITING"):
         what = ("epic " if m.group(1) else "") + m.group(2)
         urls = list(URL.finditer(m.group(3)))
         if not urls:
-            need.append(bang + [(f"merge {what}: no PR on its file", "")])
+            lq.append(bang + [(f"merge {what}: no PR on its file", "")])
         for u in urls:
             st = pr_state(u.group(0))
             if st is None:
-                need.append(bang + [(f"merge {what}: ", ""), (u.group(0), "dim")])
+                lq.append(bang + [(f"merge {what}: ", ""), (u.group(0), "dim")])
                 continue
             green += st[0] == "done"
-            need.append(bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")])
+            lq.append(bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")])
         continue
     m = re.match(r"(\S+): (\S+)$", l)
     if m:
         need_slugs.add(m.group(2))
-        title = (story_by_slug.get(m.group(2)) or [""] * 9)[8]
-        title = f": {title[:1].lower()}{title[1:]}" if title and title != m.group(2) else ""
-        need.append(bang + [(f"run {m.group(1)} story {m.group(2)}{title}", "")])
+        you = (story_by_slug.get(m.group(2)) or [""] * 10)[9] == "you"
+        (need if you else lq).append(bang + [(f"run {m.group(1)} story {m.group(2)}{story_title(m.group(2))}", "")])
     else:
-        need.append(bang + [(l, "")])
+        lq.append(bang + [(l, "")])
+# An escalated lead story with no **You:** step is the lead's (next's escalated step): waiting_on_user
+# leaves it out, so only the lead's queue shows it. Once reset (reset_at's ok line), drop is all that is left.
+was_reset = {f[2] for f in read_tsv(E["DASH_EVENTS"], 5) if f[1] == "reset" and f[4].startswith("ok")}
+queue += [bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
+                  (("" if b[1] in was_reset else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
+          for b in stories if LEAD and b[2] == "ready" and b[7] == "lead" and b[9] == "escalated"]
 for r in recs:
     if r["state"] == "WAITING":
         why = f" (waiting on {r['why']})" if r.get("why") else ""
-        need.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
+        lq.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
     elif r["state"] == "auth":
         need.append(bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm-dev:swarm tells it to resume", "")])
     elif r["state"] == "EMPTY":
-        need.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
+        lq.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
     elif r["state"] in ("gone", "unknown") and r["look"]:
-        need.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
-need += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
+        lq.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
+lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
 need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
@@ -3559,6 +3584,8 @@ if drift:
 # The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
 # left column, LW wide.
 left = box("needs you", [l for r in need for l in wrap(r, LW - 4)], LW, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], LW)]
+if queue:
+    left += box("lead's queue", [l for r in queue for l in wrap(r, LW - 4)], LW, "warn")
 if E.get("DASH_TREE") == "1":
     left += box("agents by workspace and tab", tree_view(), LW)
 elif epic_view:

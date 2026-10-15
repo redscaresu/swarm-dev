@@ -33,6 +33,11 @@ is one column, top to bottom:
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
   pane, nudges and failed tells excepted), `agree` a draft HLD. When nothing does,
   it is one line.
+- **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
+  you keeps only your steps (`run` a story with a **You:** line, `auth`, `agree` a draft HLD) and
+  everything else from the list above moves to this box under it: every `merge`, `answer`, `close`
+  and `look at` row, a `lead` story with no **You:** line, and `decide` for an escalated `lead`
+  story with no **You:** line (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
 - **Epics**: one row per active epic, with a bar of its finished stories out of all of them and how
   many open stories are in each status. An agent's status is its Claude session's (`claude agents
   --json`, read once a frame): busy is working, idle is idle, waiting shows what it waits for, and a
