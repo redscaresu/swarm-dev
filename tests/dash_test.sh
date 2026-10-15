@@ -883,6 +883,37 @@ check "lead off: the legend says ! is needs you" has "! needs you (session gone 
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 
+# --- A running codex review (codex-review's marker, .swarm/state/codex-review.<pid>: start epoch, base,
+# cwd) is a row under its worktree's epic, with its age, in neither needs you nor the lead's queue. A
+# marker whose pid is dead, or older than codex_minutes (10) plus 1, shows nothing, and dash leaves both.
+C="${ROOT}/codex"; S="${C}/.swarm/state"; mkdir -p "${S}" "${C}/.claude/swarm" "${C}/docs/epics" "${C}/docs/stories"; git -C "${C}" init -q
+touch "${C}/docs/stories/README.md"; echo "lead = session" > "${C}/.claude/swarm/config"
+citem() { local path="${C}/docs/$1" body="$2" title; title="$(basename "$1" .md)"; shift 2; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; echo; echo "${body}"; } > "${path}"; }
+citem epics/alpha.md '' 'status: active'; citem epics/beta.md '' 'status: active'
+citem stories/cs-one.md '' 'status: ready' 'epic: alpha'
+citem stories/c-you.md '**You:** create the user' 'status: ready' 'kind: lead'
+citem stories/c-lead.md 'The lead runs it.' 'status: ready' 'kind: lead'
+# The live pids are this test's own sleeps, off its stdout so no pipe waits on them, killed on exit.
+sleep 300 >/dev/null 2>&1 & live1=$!; sleep 300 >/dev/null 2>&1 & live2=$!; sleep 300 >/dev/null 2>&1 & live3=$!
+trap 'kill "${live1}" "${live2}" "${live3}" 2>/dev/null; rm -rf "${ROOT}"' EXIT
+sh -c 'exit 0' & dead=$!; wait "${dead}" || true
+marker() { printf '%s\t%s\t%s\n' "$(( $(date +%s) - $2 * 60 ))" main "${ROOT}/repo-wt/$3" > "${S}/codex-review.$1"; }   # <pid> <minutes ago> <worktree>
+marker "${live1}" 7 cs-one; marker "${live2}" 3 epic-beta; marker "${dead}" 2 dead-one; marker "${live3}" 12 old-one
+before="$(cksum "${S}"/codex-review.*)"
+for cols in 100 160; do
+  out="$(fresh; cd "${C}" && env -u HERDR_ENV -u SWARM_PROJECT COLUMNS="${cols}" PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+  # under <row text> — the epic header (a progress bar's line) above that row.
+  under() { awk -v r="$1" '/[█░]/ { e = $0 } index($0, r) { print e; exit }' <<< "${out}" | grep -oE '(alpha|beta) '; }
+  check "codex row at ${cols} columns: a story worktree's review shows with its 7m age" grep -qE 'codex review cs-one vs main.*7m' <<< "${out}"
+  check "codex row at ${cols} columns: a story worktree's review sits under its story's epic" test "$(under 'codex review cs-one')" = "alpha "
+  check "codex row at ${cols} columns: an epic worktree's review sits under that epic" test "$(under 'codex review epic-beta')" = "beta "
+  check "codex row at ${cols} columns: a dead pid's marker shows no row" lacks "codex review dead-one" "${out}"
+  check "codex row at ${cols} columns: a marker past codex_minutes plus 1 shows no row" lacks "codex review old-one" "${out}"
+  check "codex row at ${cols} columns: not in needs you" lacks "codex review" "$(lbox "needs you" "${out}")"
+  check "codex row at ${cols} columns: not in the lead's queue" lacks "codex review" "$(lbox "lead's queue" "${out}")"
+done
+check "dash leaves every codex-review marker, dead or overdue, as it was" test "$(cksum "${S}"/codex-review.*)" = "${before}"
+
 # --- A git repo with no board: dash and dash --watch stop at once and name swarm.sh init.
 N="${ROOT}/noboard"; mkdir -p "${N}"; git -C "${N}" init -q
 for args in "" "--watch 1"; do

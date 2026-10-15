@@ -3230,7 +3230,7 @@ for a in agents:
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
-  DASH_ESCALATE_AFTER="${CFG_escalate_after}" SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
+  DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_REPORT_PY="${REPORT_PY}" python3 - <<'PY'
 import collections, datetime, itertools, json, os, re, time
 E = os.environ
 exec(E["SWARM_REPORT_PY"])
@@ -3449,6 +3449,32 @@ if agents is not None:
 # Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
 shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
 idle = len(recs) - len(shown)
+
+# Running codex reviews (codex-review's markers): one row each, under the epic of its worktree's story
+# (or of its epic-<epic> worktree), never in needs you or the lead's queue. A marker whose pid is dead
+# or that is older than codex_minutes plus 1 shows nothing; dash only reads, so it leaves both.
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
+    try:
+        pid = int(path.rsplit(".", 1)[1])
+        t, base, cwd = open(path).read().rstrip("\n").split("\t", 2)
+        age = max(int(NOW - float(t)) // 60, 0)
+    except (OSError, ValueError):
+        continue
+    if pid <= 0 or not alive(pid) or NOW - float(t) > (int(E["DASH_CODEX_MIN"]) + 1) * 60:
+        continue
+    wt = os.path.basename(cwd.rstrip("/"))
+    shown.append({"name": f"codex review {wt} vs {base}", "role": "codex", "model": "codex", "words": f"running {age}m",
+                  "state": "codex", "sym": "working", "look": False, "open": False, "prs": "",
+                  "epic": epic_for("", None, re.sub(r"^epic-", "", wt))})
 
 # Needs you: only what you act on, each as a short action. With lead = session a lead session acts
 # for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft HLD) and
@@ -4358,9 +4384,19 @@ stop_codex() {
 # HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid left rc=0
+  local pid left rc=0 m
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
+  # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
+  # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
+  mkdir -p "${STATE_DIR}"
+  for m in "${STATE_DIR}"/codex-review.*; do
+    [[ ! -f "${m}" ]] || kill -0 "${m##*.}" 2>/dev/null || rm -f "${m}"
+  done
+  m="${STATE_DIR}/codex-review.$$"
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
+  # shellcheck disable=SC2064 # this run's marker, fixed now
+  trap "rm -f $(printf %q "${m}")" EXIT
   codex exec review --base "origin/$1" < /dev/null &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
