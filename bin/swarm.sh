@@ -1714,20 +1714,30 @@ EOF
 # give_up_rule — when a conductor stops waiting on a builder and builds the story again, and how it
 # answers Fable's usage-credits consent, which is not giving up.
 give_up_rule() {
+  local retry
+  if (( CFG_escalate_after > 0 )); then
+    retry="swarm.sh picks Fable for build $((CFG_escalate_after + 1)) (escalate_after = ${CFG_escalate_after})."
+  else
+    retry="escalation is off (escalate_after = 0), so once a story has failed twice
+(\`attempts: 2\`), do not start it again: report it to the lead."
+  fi
   cat <<EOF
 Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, when it is idle with no PR
 (with one PR per epic, no pushed story/<slug>) after wait's nudges, or when review has not converged
-in the rounds you allow. Run \`swarm.sh close <slug>\`: on a story still \`ready\` it counts the
-attempt and clears its worktree, branch and PR. That is the one close before a review passes. Start
-the story again in a later wave with \`swarm.sh story <slug>\`; swarm.sh picks Fable for the third
-build, so never choose a model. A story that comes back \`kind: lead\` with \`escalated_from:\` is the
-lead's to decide: report it to the lead, and do not count it as waiting on the user.
+in the rounds you allow. Run \`swarm.sh close <slug>\`: on a code, docs or chore story still \`ready\` it
+counts the attempt and clears its worktree, branch and PR. That is the one close before a review
+passes. Start the story again in a later wave with \`swarm.sh story <slug>\`, and never choose a
+model: ${retry}
+A story that comes back \`kind: lead\` with \`escalated_from:\` is the lead's to decide: report it
+to the lead, and do not count it as waiting on the user.
 
-A builder whose wait prints \`waiting: dialog open\` is on Fable's usage-credits consent. Accept it
-yourself, in its pane (\`swarm.sh _target <slug>\` prints it): read the dialog with
-\`herdr agent read <pane>\`, send the keys that accept with \`herdr pane send-keys <pane> <key>...\`,
-then run \`swarm.sh dialog <slug> accepted\` (or \`dismissed\` if it would not accept: the build goes
-on on the default model), and wait on it again. Never close or tell it over a dialog: a dialog is not an attempt.
+A builder whose wait prints \`waiting: dialog open\` may be on Fable's usage-credits consent. Answer it
+only when it is an escalate build (\`swarm.sh _role <slug>\` prints \`escalate\`) and its pane
+(\`swarm.sh _target <slug>\` prints it) shows that consent in \`herdr agent read <pane>\`. Then accept it
+with \`herdr pane send-keys <pane> <key>...\`, run \`swarm.sh dialog <slug> accepted\` (or \`dismissed\`
+if it would not accept, and tell the lead), and wait on it again. Never close or tell it over a
+dialog: a dialog is not an attempt. Any other dialog, and every permission or tool prompt, is not
+yours to answer: never send keys to it; leave it for the lead.
 EOF
 }
 
@@ -2112,9 +2122,9 @@ drop_story() {
   echo "dropped: $1; commit the change to the board in a board PR"
 }
 
-# dialog <slug> <accepted|dismissed> — a conductor answered a builder's Fable usage-credits consent
-# dialog (wait printed `waiting: dialog open`). It changes nothing: main logs `dialog <slug>` with the
-# result as the outcome, so each escalation step is in events.tsv with its time.
+# dialog <slug> <accepted|dismissed> — a conductor answered an escalate builder's Fable usage-credits
+# consent (wait printed `waiting: dialog open`). It changes nothing: main logs `dialog <slug>` with
+# `ok (<result>)` as the outcome, so each escalation step is in events.tsv with its time.
 dialog_answered() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "dialog: bad slug '$1': swarm.sh dialog <slug> <accepted|dismissed>"
   [[ -f "${BOARD}/stories/$1.md" ]] || die "dialog: no story ${BOARD}/stories/$1.md"
@@ -3729,7 +3739,7 @@ main() {
     # old form, tell <slug> <file>, would put a path there).
     tell) EV_TARGET="${2:-}"; if is_tell_kind "${3:-}"; then EV_CMD="tell:$3"; fi ;;
     reset|drop) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
-    dialog) EV_TARGET="${2:-}"; EV_OK="${3:-}" ;;
+    dialog) EV_TARGET="${2:-}"; EV_OK="ok (${3:-})" ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null

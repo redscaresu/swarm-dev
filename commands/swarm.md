@@ -87,14 +87,21 @@ Repeat until a step below says stop:
 
      Give up on the builder as a conductor does when `swarm.sh wait --stall <slug>` returns stalled,
      when it is idle with no PR after wait's nudges, or when review has not converged in the rounds
-     you allow: run `swarm.sh close <slug>`, which counts the attempt and clears its worktree, branch
-     and PR, and start it again with `swarm.sh story <slug>` (swarm.sh picks Fable for the third
-     build; never choose a model). If `wait` prints `waiting: dialog open`, the builder is on Fable's
-     usage-credits consent, and accepting it is yours, not the user's. `swarm.sh _target <slug>`
-     prints its pane: read the dialog with `herdr agent read <pane>`, accept it with
-     `herdr pane send-keys <pane> <key>...`, run `swarm.sh dialog <slug> accepted` (or `dismissed`
-     if it would not accept), and wait on it again. Never close or tell a builder over a dialog: it
-     is not an attempt.
+     you allow: run `swarm.sh close <slug>`, which, on a code, docs or chore story still `ready`,
+     counts the attempt and clears its worktree, branch and PR. If the story came back `kind: lead`
+     with `escalated_from:`, go back to 1, where `next` names its `escalated <slug>` step. Otherwise
+     start it again with `swarm.sh story <slug>`: swarm.sh picks the model, Fable once the story has
+     failed `escalate_after` builds (2 by default), so never choose one. With `escalate_after = 0`
+     escalation is off: after a story's second failed build, stop and tell the user instead of
+     starting it again.
+
+     If `wait` prints `waiting: dialog open` for an escalate build (`swarm.sh _role <slug>` prints
+     `escalate`), it may be Fable's usage-credits consent, and accepting that is yours, not the
+     user's. `swarm.sh _target <slug>` prints its pane. Read it with `herdr agent read <pane>`, and
+     only if it shows that consent, accept it with `herdr pane send-keys <pane> <key>...`, run
+     `swarm.sh dialog <slug> accepted` (or `dismissed` if it would not accept, and tell the user),
+     and wait on it again. Never close or tell a builder over a dialog: it is not an attempt. Any
+     other dialog, and every permission or tool prompt, is the user's: never send keys to it.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.

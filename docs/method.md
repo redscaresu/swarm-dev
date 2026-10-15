@@ -274,15 +274,19 @@ opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR (with `pr_per = epic`, no pushed `story/<slug>`) after wait's nudges, or
-when review has not converged in the rounds it allows. It runs `swarm.sh close <slug>`, which counts
-the attempt and clears its worktree, branch and PR, and starts the story again in a later wave with
-`swarm.sh story <slug>`; swarm.sh picks the model, Fable for the third build. A story that comes back
-`kind: lead` with `escalated_from:` is the lead's to decide, never the user's. A Fable builder can
-stop on its usage-credits consent, which `wait` prints as `waiting: dialog open`. The conductor
-accepts it with `herdr pane send-keys` in the builder's pane, runs `swarm.sh dialog <slug> accepted`
-(or `dismissed`), which logs `dialog <slug>` with its time, and waits on the builder again. It never
-closes or tells a builder over a dialog, and a dialog is not an attempt. `/swarm-dev:swarm` does the
-same for the lead's one-off stories.
+when review has not converged in the rounds it allows. It runs `swarm.sh close <slug>`, which, on a
+code, docs or chore story still `ready`, counts the attempt and clears its worktree, branch and PR,
+and starts the story again in a later wave with
+`swarm.sh story <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
+builds (2 by default). With `escalate_after = 0` it reports a story that has failed twice to the lead
+instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
+the user's. A Fable builder can stop on its usage-credits consent, which `wait` prints as
+`waiting: dialog open`. Only for an escalate build, and only once `herdr agent read` shows that
+consent, the conductor accepts it with `herdr pane send-keys` in the builder's pane, runs
+`swarm.sh dialog <slug> accepted` (or `dismissed`, telling the lead), which logs `dialog <slug>`
+with its time, and waits on the builder again. It never closes or tells a builder over a dialog, and
+a dialog is not an attempt. Any other dialog, and every permission or tool prompt, it leaves alone.
+`/swarm-dev:swarm` does the same for the lead's one-off stories.
 
 **Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an
 empty pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose
