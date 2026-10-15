@@ -1042,6 +1042,11 @@ PY
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
+# Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
+# cause, and the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
+# drop). Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
+# was open when it was logged (by event order), any other to the build that started last at or before
+# it. A build with no session log starts at 00:00 local time on its agents.tsv day.
 # A build's PR is the last of the slug's PRs its session log names, so each attempt keeps its own;
 # with no log, the slug's PR when it has exactly one. With pr_per = epic, every build of an epic story
 # gets the epic's PR (builders open none).
@@ -1054,10 +1059,12 @@ outcomes_report() {
   [[ -z "${1:-}" ]] || since="$2"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts,
-  # pulls (the github pull URLs its session log names, or - when there is no log to read)
+  # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
+  # columns the report prints after attempts as they are: started to drop_at. No apostrophe in the
+  # python below: bash 3.2 matches quotes inside a heredoc in $(...), so an odd count breaks the script.
   rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}" <<'PY'
-import collections, json, os, sys
+import collections, datetime, json, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 log, events, since, projects, roles, archive = sys.argv[1:7]
 
@@ -1085,35 +1092,116 @@ def pulls(path):
             named[u] = None
     return " ".join(named) if read else "-"
 
-steer = collections.Counter()
-if os.path.exists(events):
-    for line in open(events, errors="ignore"):
-        f = line.rstrip("\n").split("\t")
-        # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings. Only an
-        # ok tell reached the builder: a refused or interrupted one is not counted.
-        c = {"tell": "tell:findings"}.get(f[1], f[1]) if len(f) == 5 else ""
-        # A close is counted whatever its cause (close:<cause>).
-        c = "close" if c.split(":")[0] == "close" else c
-        if c.split(":")[0] in ("tell", "close") and f[4] == "ok":
-            steer[c, f[2]] += 1
-attempts = collections.Counter()
+def started_of(path):
+    # The first timestamp in the session log, to the second as events.tsv writes times (both UTC), or "".
+    for line in log_lines(path) if path else ():
+        try:
+            ts = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(ts, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", ts):
+            return ts[:19] + "Z"
+    return ""
+
+def midnight(day):
+    # 00:00 local time on an agents.tsv day (a local date), in epoch seconds: where a build with no
+    # session log starts. None for a day that does not parse.
+    try:
+        return datetime.datetime.strptime(day, "%Y-%m-%d").timestamp()
+    except ValueError:
+        return None
+
+def secs(t):
+    # A UTC time as events.tsv and started write it, in epoch seconds; None when it does not parse.
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+
+builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
     f = line.rstrip("\n").split("\t")
     if len(f) != 7 or f[1] not in roles.split():
         continue
-    day, role, name, _, model, effort, session = f
-    path = session_log(projects, session, archive)
-    slug = slug_of(path, name)
-    attempts[slug] += 1
+    path = session_log(projects, f[6], archive)
+    slug = slug_of(path, f[2])
+    tries[slug] += 1
+    started = started_of(path)
+    builds.append({"f": f, "path": path, "slug": slug, "n": tries[slug], "started": started,
+                   "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}})
+
+def of(target):
+    # The builds an events.tsv target names: by slug or agents.tsv name, and a build whose slug is
+    # unknown (no log, so it is the name) by the name agents.tsv keeps for the target, which cuts a slug
+    # over 32 characters. A build whose log names another slug with the same 32 is not this one.
+    cut = agent_name(target)
+    return [b for b in builds if b["t"] is not None
+            and (target in (b["slug"], b["f"][2]) or b["slug"] == b["f"][2] == cut)]
+
+STEPS = ("escalate", "dialog", "escalated", "reset", "drop")
+oks, escalates = [], collections.defaultdict(list)
+for line in open(events, errors="ignore") if os.path.exists(events) else ():
+    f = line.rstrip("\n").split("\t")
+    # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
+    # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
+    # line whose time does not parse goes to no build.
+    t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
+    if t is not None:
+        oks.append((t, f))
+        if f[1] == "escalate":
+            escalates[f[2]].append(t)
+cycle, seen = {}, collections.Counter()
+for t, f in oks:
+    # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings.
+    when, c, target = f[0], {"tell": "tell:findings"}.get(f[1], f[1]), f[2]
+    if c in STEPS:
+        # An escalate opens a cycle for the next escalate build of its target with none, in agents.tsv
+        # order, and each step until the next reset, drop or escalate belongs to that build (by event
+        # order, the last of a kind kept). build_story logs the escalate as its build starts, so a later
+        # build with a session log takes the cycle instead when this is the escalate of its target
+        # nearest its start (a tie to the earlier), and it started nearer than the first: a build whose
+        # brief was never taken up logged no escalate, and must not take the cycle of its retry.
+        if c == "escalate":
+            mine, seen[target] = seen[target], seen[target] + 1
+            near = lambda b: min(range(len(escalates[target])), key=lambda i: abs(b["t"] - escalates[target][i]))
+            free = [b for b in of(target) if b["f"][1] == "escalate" and "escalate" not in b["at"]]
+            own = [b for b in free[1:] if b["started"] and near(b) == mine]
+            cycle[target] = min(free[:1] + own, key=lambda b: abs(b["t"] - t), default=None)
+        b = cycle.pop(target, None) if c in ("reset", "drop") else cycle.get(target)
+        if b:
+            b["at"][c] = when
+            if c == "dialog":
+                m = re.fullmatch(r"ok \((accepted|dismissed)\)", f[4])
+                b["at"]["answer"] = m.group(1) if m else ""
+        continue
+    if c.split(":")[0] not in ("tell", "close"):
+        continue
+    # A tell or close goes to the build of its target that started last at or before it.
+    b = max((b for b in reversed(of(target)) if b["t"] <= t), key=lambda b: b["t"], default=None)
+    if b and c.split(":")[0] == "close":
+        # Counted whatever its cause (close:<cause>); close_cause is the cause of the last close (none: empty).
+        b["steer"]["close"] += 1
+        b["cause"] = c.partition(":")[2]
+    elif b:
+        b["steer"][c] += 1
+for b in builds:
+    day, role, _, _, model, effort, _ = b["f"]
     if day < since:
         continue
     cost = tokens = ""
-    if path:
-        tok, usd, _ = session_usage(path, set())
-        cost, tokens = f"{usd:.2f}", str(sum(tok))
-    targets = {slug, name}
-    counts = [str(sum(steer[c, t] for t in targets)) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
-    print("\t".join([day, slug, role, model, effort, cost, tokens] + counts + [str(attempts[slug]), pulls(path)]))
+    tok = ["", "", "", ""]
+    if b["path"]:
+        t, usd, _ = session_usage(b["path"], set())
+        cost, tokens, tok = f"{usd:.2f}", str(sum(t)), [str(x) for x in t]
+    counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
+    steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
+    print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
+                    + tok + [b.get("cause", "")] + steps))
 PY
 )"
   # Per slug: kind, risk, the epic whose PR its builds share (pr_per = epic) and every PR of its head
@@ -1146,13 +1234,17 @@ def pr_of(epic, prs, pulls):
     keyed = {pr_key(u): (u, s) for u, s in prs}
     return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", ""))
 
-print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts")
+# Columns are only ever appended: decisions reads them by name.
+print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
+      "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
+      "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at")
 for line in os.environ["SWARM_ROWS"].splitlines():
-    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts, pulls = line.split("\t")
+    f = line.split("\t")
+    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts, pulls = f[:13]
     kind, risk, epic, prs = meta.get(slug, ("", "", "", ""))
     pr, state = pr_of(epic, prs, pulls)
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
-                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts]))
+                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts] + f[13:]))
 PY
 }
 

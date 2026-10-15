@@ -394,13 +394,29 @@ fails the command.
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
 and tokens from the session's own log, the tells it took by kind (`tells_findings`, `tells_nudge`, `tells_resume`; a bare `tell` from older logs counts as findings, and a refused tell, which never reached it, is not counted) and its `close` lines in this log (any cause), the findings logged
-against its PR, the PR and its state from `gh`, and which attempt at the story it was. The slug comes
+against its PR, the PR and its state from `gh`, and which attempt at the story it was. Then come
+`started` (the first timestamp in the session log, in UTC, or empty with no log), the tokens by type
+(`tokens_input`, `tokens_cache_write`, `tokens_cache_read` and `tokens_output`, which add up to
+`tokens`), `close_cause` (the cause on the build's last close, empty for a plain `close`), and when
+each escalation step was logged: `escalate_at`, `dialog_at` with `dialog` (`accepted` or `dismissed`,
+otherwise empty), `escalated_at`, `reset_at` and `drop_at`. The reason given to a reset or drop is
+never printed. New columns go on the end, so `decisions`, which reads them by name, keeps working. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. Each build gets its own
 PR: the last of the story's PRs that its session log names, so a retried story shows the first build's
 closed PR beside the retry's merged one. A build whose log names none of them has no PR, and a build
 with no log left gets the story's PR only when it has exactly one. With `pr_per = epic`, builders open
 no PR, so every build of an epic story gets the epic's PR. A story that merged and
 left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
+
+Each `events.tsv` line counts for one build, so a retried story's tells and closes are split among
+its builds. A line whose time does not parse counts for none. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
+story's next escalate build in agents.tsv that has none yet. A later escalate build takes the cycle
+instead when its session log started nearer this `escalate` than any other of the story's, and nearer
+than that first build. So a build whose brief was never taken up (it logged no `escalate`) cannot take
+its retry's cycle, and a build whose log is gone keeps its own. The cycle runs until the
+story's next `reset`, `drop` or `escalate`, and every step logged in between belongs to that build.
+If a step repeats in one cycle, the last one counts. A tell or close goes to the story's build that started last at or before it. A build whose
+session log is gone starts at 00:00 local time on its agents.tsv day, converted to UTC.
 
 `swarm.sh decisions [--since YYYY-MM-DD]` exports the same logs as training data for a small
 decision model. It prints one JSON object per line for each decision the logs record: a
