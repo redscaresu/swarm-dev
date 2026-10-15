@@ -271,6 +271,7 @@ file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, a
 ```bash
 swarm.sh story <slug>      # worktree on story/<slug>, a pane, the agent, its brief
 swarm.sh wait <slug>       # in the background: returns when it settles
+swarm.sh wait --until-report conduct-<epic>   # in the background: returns when the conductor reports
 swarm.sh watch             # in the background: returns when a story PR needs the lead
 ```
 
@@ -281,6 +282,10 @@ STALL_POLL_MS slices (a minute); after each wake or slice `wait` reads the sessi
 herdr's word for it. A session Claude Code gives no state for (`unknown`, or the list call failed)
 is waited on, said once on stderr. At the timeout `wait` prints the last state and exits 1, and so
 it does at once when herdr's wait fails other than by timing out and the session has not settled.
+A conductor is idle whenever it waits on its own builders, so `wait` on one holds until its report
+exists, its session is waiting or gone, or its login expired. `wait --until-report`, which
+`/swarm-dev:swarm` runs, does that with no timeout: an epic that takes more than an hour is not cut
+short. It takes only a conductor's name and fails on any other.
 A codex agent, or one with no recorded session, is waited on through herdr's status. A builder
 whose session goes idle while its story is `ready` and has no open or merged PR (a closed one is an
 earlier attempt's; for an epic's story with `pr_per = epic`, before `story/<slug>` is pushed) has stopped early, perhaps on a failed request, and nothing else would wake it. `wait` tells it
