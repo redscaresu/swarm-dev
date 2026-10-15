@@ -1591,7 +1591,7 @@ codex_rule() {
 # The whole-epic review gets none: the epic PR carries the release story's bump.
 bump_rule() {
   [[ -f "${PROJECT_DIR}/.claude-plugin/plugin.json" ]] || return 0
-  printf ' %s' "Do not bump plugin.json: the epic's release story does. A PR without the bump is not a finding; decline it."
+  printf ' %s' "Do not bump plugin.json: the epic's release story (the one whose touches name it) does. On any other story a PR without the bump is not a finding; decline it."
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
