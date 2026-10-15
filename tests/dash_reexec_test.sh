@@ -20,7 +20,7 @@ MARK="REEXEC-MARKER-0.2.0"
 T="${ROOT}/cache"
 for v in 0.1.0 0.2.0 dev; do mkdir -p "${T}/${v}" && cp -R "${SRC}/bin" "${SRC}/.claude-plugin" "${T}/${v}/"; done
 sed -i.bak "s/^dash_render() {\$/&\\
-  echo ${MARK}/" "${T}/0.2.0/bin/swarm.sh" && rm "${T}/0.2.0/bin/swarm.sh.bak"
+  echo \"${MARK} project=\${SWARM_PROJECT:-}\"/" "${T}/0.2.0/bin/swarm.sh" && rm "${T}/0.2.0/bin/swarm.sh.bak"
 grep -qF "${MARK}" "${T}/0.2.0/bin/swarm.sh" || { echo "FAIL the marker went into 0.2.0's swarm.sh"; exit 1; }
 
 export CLAUDE_CONFIG_DIR="${ROOT}/config" TMPDIR="${ROOT}/tmp" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
@@ -49,8 +49,9 @@ chmod +x "${ROOT}/bin/"*
 unset COLUMNS LINES
 export PATH="${ROOT}/bin:${PATH}"
 
-watch() { # <copy> <out>: dash --watch 1 --tree from that copy, off a terminal, in the background
-  (cd "${P}" && exec env -u HERDR_ENV "${T}/$1/bin/swarm.sh" dash --watch 1 --tree > "$2" 2>&1) &
+watch() { # <copy> <out> [<dir>]: dash --watch 1 --tree from that copy, off a terminal, in the
+  # background, started in <dir> (default the project)
+  (cd "${3:-${P}}" && exec env -u HERDR_ENV "${T}/$1/bin/swarm.sh" dash --watch 1 --tree > "$2" 2>&1) &
   WPID=$!; pids+=("${WPID}")
 }
 within() { # <seconds> <test...>: true once the test passes, checked every 0.2 seconds
@@ -63,7 +64,9 @@ alive() { kill -0 "$1" 2>/dev/null; }
 
 # The installed copy, 0.1.0: no marker until its own install's version becomes 0.2.0.
 installed 0.1.0 0.1.0
-watch 0.1.0 "${ROOT}/a.out"; A="${WPID}"
+# It starts in a subdirectory that is then removed: the new script must still find the project.
+mkdir "${P}/sub"
+watch 0.1.0 "${ROOT}/a.out" "${P}/sub"; A="${WPID}"
 sleep 3
 check "0.1.0's watch draws its frame" grep -qF "agents by workspace and tab" "${ROOT}/a.out"
 check "0.1.0's watch shows no marker" bash -c "! grep -qF '${MARK}' '${ROOT}/a.out'"
@@ -71,9 +74,11 @@ check "0.1.0's watch shows no marker" bash -c "! grep -qF '${MARK}' '${ROOT}/a.o
 installed 0.1.0 0.2.0
 sleep 3
 check "another install's version change does not re-exec" bash -c "! grep -qF '${MARK}' '${ROOT}/a.out'"
+rmdir "${P}/sub"
 installed 0.2.0 0.2.0
 check "the version swap re-execs 0.2.0's swarm.sh within 10s" within 10 marked "${ROOT}/a.out"
 check "the re-exec'd frame still shows the tree" bash -c "sed -n '/${MARK}/,\$p' '${ROOT}/a.out' | grep -qF 'agents by workspace and tab'"
+check "the re-exec'd script watches the same project, its start directory gone" grep -qF "${MARK} project=${P}" "${ROOT}/a.out"
 check "the re-exec keeps the PID" alive "${A}"
 check "the PID runs 0.2.0's swarm.sh" bash -c "ps -o args= -p '${A}' | grep -qF '${T}/0.2.0/bin/swarm.sh'"
 kill "${A}" 2>/dev/null || true

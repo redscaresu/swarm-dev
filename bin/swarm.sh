@@ -2819,7 +2819,7 @@ dash_watch() {
   while :; do
     if [[ -n "${inst}" ]]; then
       IFS=$'\t' read -r _ path now <<< "$(dash_installed "${inst}")"
-      [[ -z "${now}" || "${now}" == "${ver}" ]] || dash_reexec "${path}/bin/swarm.sh" "${every}"
+      [[ -z "${now}" || "${now}" == "${ver}" ]] || dash_reexec "${path}/bin/swarm.sh" "${every}" "${tty}"
     fi
     [[ ${tty} == 0 ]] || dash_size
     dash_slow   # the cache file decides whether this asks gh again
@@ -2882,16 +2882,18 @@ except Exception:
 PY
 }
 
-# dash_reexec <script> <seconds> — exec the newly installed <script> as `dash --watch <seconds>`, with
-# the tree and ladder as they stand now. exec keeps the PID and skips the EXIT trap; the new process
-# enters the alternate screen itself. A script that is not an executable file is ignored.
+# dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
+# on this project (the cwd may be gone), with the tree and ladder as they stand now. exec keeps the
+# PID and skips the EXIT trap, so a terminal is restored first, in case the new script dies before
+# it enters the alternate screen again. A script that is not an executable file is ignored.
 dash_reexec() {
   [[ -f "$1" && -x "$1" ]] || return 0
   local script="$1"
+  [[ $3 == 0 ]] || printf '\033[?25h\033[?1049l'
   set -- dash --watch "$2"
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
-  exec "${script}" "$@"
+  SWARM_PROJECT="${PROJECT_DIR}" exec "${script}" "$@"
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind and title (its first "# " heading),
