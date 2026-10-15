@@ -182,9 +182,11 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   met: the story becomes `kind: lead` with `escalated_from:` and a block whose **You:** step is the
   user's (fix the **Done when**, then `swarm.sh reset <slug> <reason>`). Because of that step,
   `next` lists it under waiting on you, not as the lead's `escalated` step. `impossible` hands on
-  any story still `ready` of a kind an agent builds, verify included, even when there is no build to
-  clear (its builder is gone, gh cannot list its PRs, or it is a verify story); its block then says
-  no PR was found. Any other story, and a name with no story file, is refused before anything closes.
+  any story still `ready` of a kind an agent builds, verify included, and clears its worktree and
+  `story/<slug>` here and on origin so a reset builds it again. When the close finds no build to count
+  (its builder is gone, gh cannot list its PRs, or it is a verify story), it closes no PR, and its
+  block says the PRs were not listed, so the user looks before resetting. Any other story, and a name
+  with no story file, is refused before anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs

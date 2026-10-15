@@ -3414,8 +3414,10 @@ close_agent() {
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
   if [[ "${cause}" == impossible ]]; then
-    [[ ${counted} != 1 ]] || clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs}"
-    impossible_story "$1" "${prs}"
+    # The build is cleared even when failed_build declined (a verify story, a builder gone, gh down),
+    # so the story builds again after reset; only PRs failed_build listed are closed.
+    clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs:-[]}"
+    impossible_story "$1" "${prs}" "${counted}"
     return 0
   fi
   [[ ${counted} == 1 ]] || return 0
@@ -3478,22 +3480,24 @@ escalate_story() {
   echo "escalated: $1 is kind: lead now, for the lead to reset or drop"
 }
 
-# impossible_story <slug> <prs> — after `close <slug> impossible`, the builder replied IMPOSSIBLE: the
-# story's **Done when** cannot be met, so it is the user's to fix: a lead_block whose **You:** step
-# says how, with <prs> (failed_build's list, or nothing when there was no build to clear).
-# attempts: stays as it was.
+# impossible_story <slug> <prs> <listed> — after `close <slug> impossible`, the builder replied
+# IMPOSSIBLE: the story's **Done when** cannot be met, so it is the user's to fix: a lead_block whose
+# **You:** step says how, with <prs> (failed_build's list). Unless <listed> is 1, failed_build listed
+# no PRs, and the block says so. attempts: stays as it was.
 impossible_story() {
-  local when you
+  local when you none=""
   when="$(reset_at "$1")"
   you="**You:** fix its **Done when** (the judge called it impossible from the builder's session), then run \`swarm.sh reset $1 <reason>\`, which puts its kind back so it is built again. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the fix as a board PR first (with pr_per = epic, then merge the base into epic/<epic>), then reset and pull the board in one go."
   [[ -z "${when}" ]] || you="**You:** fix its **Done when** (the judge called it impossible from the builder's session) in a new story: this one was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it with \`swarm.sh drop $1 <reason>\`."
-  lead_block "$1" "**Impossible.** The builder replied \`IMPOSSIBLE:\`, so no agent builds this story until its **Done when** changes. This build was not counted as an attempt."$'\n\n'"${you}" "$2" >/dev/null
+  [[ "$3" == 1 ]] || none="swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo."
+  lead_block "$1" "**Impossible.** The builder replied \`IMPOSSIBLE:\`, so no agent builds this story until its **Done when** changes. This build was not counted as an attempt."$'\n\n'"${you}" "$2" "${none}" >/dev/null
   echo "impossible: $1 is kind: lead now, for you to fix its Done when"
 }
 
-# lead_block <slug> <text> <prs> — no agent builds the story now: kind: lead, escalated_from: its kind
-# (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text> and
-# every PR in <prs> (failed_build's gh list; empty with pr_per = epic). Prints how many PRs it named.
+# lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
+# kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
+# and every PR in <prs> (failed_build's gh list; empty with pr_per = epic), or [none] when <prs> has
+# none (by default, that no PR was found). Prints how many PRs it named.
 lead_block() {
   local f="${BOARD}/stories/$1.md" from urls k=0
   from="$(get_fm "${f}" kind)"
@@ -3506,7 +3510,7 @@ lead_block() {
     echo
     printf '%s\n' "$2"
     echo
-    if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "No PR was found on story/$1."; fi
+    if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "${4:-No PR was found on story/$1.}"; fi
     echo "${ESCALATED_CLOSE}"; } >> "${f}"
   echo "${k}"
 }

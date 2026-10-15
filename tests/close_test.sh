@@ -246,24 +246,30 @@ b="$(block i1)"
 is "its block has a **You:** line naming Done when, the epic branch step, and the PR" "1|yes|yes" \
   "$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "${b}")|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
 is "and its build is cleared away" "" "$(left i1)"
-# impossible hands a ready story an agent builds to the user whether or not its build could be
-# cleared: with no builder open, gh failing, or a verify story (no PR tells its pass from a failure),
-# the block says no PR was found and the build is left as it was. Any other story, and a name with no
-# story file, is refused before anything closes.
+# impossible hands a ready story an agent builds to the user, and clears its worktree and branches so
+# a reset builds it again, even when the close finds no build to count: with no builder open, gh
+# failing, or a verify story (no PR tells its pass from a failure). Then it closes no PR, and the block
+# says the PRs were not listed. Any other story, and a name with no story file, is refused before
+# anything closes.
+unlisted() { grep -qxF "swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo." <<< "$(block "$1")" && echo yes; }
+closed_prs="$(grep -c '^pr close' "${ROOT}/gh.log")"
 item i2 "status: ready" "kind: code" "attempts: 1"; started i2
 rc=0; cs i2 impossible >/dev/null || rc=$?
-is "close i2 impossible with no builder open still hands it on, with no PR found; exit 0, nothing cleared" \
-  "0|lead|code|1|ready|yes|worktree branch origin" \
-  "${rc}|$(state i2)|$(grep -qx 'No PR was found on story/i2.' <<< "$(block i2)" && echo yes)|$(left i2)"
+is "close i2 impossible with no builder open hands it on and clears its build; the block says its PRs were not listed" \
+  "0|lead|code|1|ready|yes|" "${rc}|$(state i2)|$(unlisted i2)|$(left i2)"
 item i3 "status: ready" "kind: code" "attempts: 1"; started i3 w:p57; touch "${ROOT}/ghfail"
 rc=0; out="$(cs i3 impossible)" || rc=$?; rm "${ROOT}/ghfail"
-is "with gh failing, close i3 impossible closes its pane and hands it on; stderr says gh failed, nothing cleared" \
-  "0|closed|lead|code|1|ready|yes|worktree branch origin" \
-  "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(left i3)"
+is "with gh failing, close i3 impossible closes its pane, hands it on and clears its build; stderr says gh failed" \
+  "0|closed|lead|code|1|ready|yes|yes|" \
+  "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(unlisted i3)|$(left i3)"
 item v1 "status: ready" "kind: verify" "attempts: 1"; echo "w:p14 v1" > "${P}/.swarm/state/v1"
 rc=0; cs v1 impossible >/dev/null || rc=$?
-is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, a **You:** block" \
-  "0|lead|verify|1|ready|1" "${rc}|$(state v1)|$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "$(block v1)")"
+is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, a **You:** block, its build cleared" \
+  "0|lead|verify|1|ready|1|yes|" "${rc}|$(state v1)|$(grep -c '^\*\*You:\*\* fix its \*\*Done when\*\*' <<< "$(block v1)")|$(unlisted v1)|$(left v1)"
+is "and none of the three closes a PR, since none was listed" "${closed_prs}" "$(grep -c '^pr close' "${ROOT}/gh.log")"
+echo '[]' > "${ROOT}/prs.json"; item i4 "status: ready" "kind: code"; started i4 w:p61; cs i4 impossible >/dev/null
+is "when gh lists no PR on story/i4, the block says none was found" "lead|yes" "$(fmv i4 kind)|$(grep -qx 'No PR was found on story/i4.' <<< "$(block i4)" && echo yes)"
+echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.json"
 item ir "status: review" "kind: code"; started ir w:p58
 item il "status: ready" "kind: lead"; started il w:p59
 started ix w:p60   # no story file
