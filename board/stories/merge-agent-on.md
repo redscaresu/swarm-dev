@@ -14,7 +14,7 @@ After the release is published, the lead runs `claude plugin update swarm-dev@sw
 
 **Done when:**
 - On main, `swarm.sh config merge` in swarm-dev prints agent (from .claude/swarm/config), and in infrafactory prints human.
-- In the first conductor run after the switch, the session .jsonl shows at least one merge by literal PR number with `--match-head-commit`, followed by reconcile and the start of a story that unblock readied in the same run. Otherwise the lead files a story naming what the conductor did instead.
+- In the first conductor run after the switch, the session .jsonl shows at least one merge by literal PR number with `--match-head-commit`, followed by reconcile and the start of a story that unblock readied in the same run. Until a run shows all three, this story stays open: the lead files a fix story naming what the conductor did instead, and checks the next run.
 
 **From review (binding; overrides the scope above where they differ):**
 - No restart is needed: the lead runs `claude plugin update swarm-dev@swarm-dev` and calls the new script directly. The lead merges the config PR under its standing authority, so nothing here waits on the user.
