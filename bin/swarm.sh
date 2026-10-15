@@ -1139,17 +1139,28 @@ story_text() {
   [[ -z "${c}" ]] || git -C "${BOARD}" show "${c}^:./stories/$1.md" 2>/dev/null || true
 }
 
-# deliver_prompt <name> <prompt-file> — submit the brief and confirm the agent acted on it.
+# PROMPT_TIMEOUT_MS: how long a prompt has to be taken up (deliver_prompt), and a /goal to show in
+# the session log (send_goal).
+PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
+
+# deliver_prompt <name> <prompt-file> [<pane>] [once] — submit the brief and confirm the agent acted on it.
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), retries once, and fails loudly rather than reporting success.
+# With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
+# a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
   local name="$1" prompt_file="$2" status target="${3:-}"
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
+  if [[ "${4:-}" == once ]]; then
+    herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
+      || die "${name}: herdr could not send it the prompt; see herdr agent read ${name}"
+    return
+  fi
   for _ in 1 2; do
     status=$(herdr agent prompt "${target}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
-      --timeout 60000 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
+      --timeout "${PROMPT_TIMEOUT_MS}" 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
     case "${status}" in
       working|blocked) return 0 ;;
     esac
@@ -1512,6 +1523,69 @@ goal_condition() {
 }
 GOAL_MAX_CHARS=4000   # Claude Code's own cap on a /goal condition
 
+# goal_entry <name> <since-epoch> [<goal-file>] — the kind of the newest goal entry written at or
+# after <since> in <name>'s session log (its agents.tsv session id, REPORT_PY's session_log under
+# CLAUDE_PROJECTS), or nothing. Never the pane. The kinds, as the goal spike (Claude Code 2.1.299)
+# found them: set (goal_status with sentinel:true), continuing (the judge's met:false), met (the
+# judge's met:true, which is also how a turn bound and an IMPOSSIBLE escape are written), and
+# `refused: <Claude Code's reason>` (a system/local_command whose stdout is a /goal refusal, as with
+# hooks restricted or an untrusted folder; no goal_status follows). The spike saw no entry for a
+# stalled, paused or errored goal, so none is read. With <goal-file>, a goal_status for another
+# condition (whitespace aside) is skipped.
+goal_entry() {
+  SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "${3:-}" <<'PY'
+import datetime, json, os, re, sys
+exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
+log, name, projects, since, cond = sys.argv[1:6]
+want = " ".join(open(cond, encoding="utf-8").read().split()) if cond else None
+sid = session_id(log, name)
+path, kind = session_log(projects, sid) if sid else "", ""
+for l in open(path, encoding="utf-8", errors="replace") if path else []:
+    if "goal_status" not in l and "local_command" not in l:
+        continue
+    try:
+        d = json.loads(l)
+        t = datetime.datetime.fromisoformat(str(d.get("timestamp")).replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError):
+        continue
+    a = d.get("attachment")
+    if d.get("type") == "attachment" and isinstance(a, dict) and a.get("type") == "goal_status":
+        if want is not None and " ".join(str(a.get("condition") or "").split()) != want:
+            continue
+        k = "set" if a.get("sentinel") else "met" if a.get("met") else "continuing"
+    elif d.get("type") == "system" and d.get("subtype") == "local_command":
+        m = re.match(r"<local-command-stdout>(/goal [^<]*)", str(d.get("content") or ""))
+        if not m:
+            continue
+        k = "refused: " + " ".join(m.group(1).split())
+    else:
+        continue
+    if t >= float(since):
+        kind = k
+print(kind)
+PY
+}
+
+# send_goal <slug> <goal-file> — send <slug>'s builder `/goal <condition>` once (deliver_prompt's
+# once mode) and confirm it set from its session log (goal_entry, for this condition), polling up to
+# PROMPT_TIMEOUT_MS. The condition goes on one line: the spike only saw a one-line /goal set, and a
+# multi-line paste could be split or become a "[Pasted text]" placeholder; goal_entry compares it
+# whitespace aside. Any goal_status newer than the send means it set: the judge may already have
+# written its own after the sentinel. A refusal, or no entry, fails naming the story and why, and
+# leaves the builder open for the lead to read.
+send_goal() {
+  local slug="$1" goal="$2" name since entry deadline cond
+  name="$(agent_name "${slug}")"; since="$(date +%s)"
+  cond="$(tr -s '[:space:]' ' ' < "${goal}")"; cond="${cond# }"; cond="${cond% }"
+  deliver_prompt "${name}" <(printf '/goal %s' "${cond}") "" once   # read once, so a pipe will do
+  deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
+  while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ -z "${entry}" && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
+  case "${entry}" in
+    refused:*) die "${slug}: Claude Code refused its /goal (${entry#refused: }); its builder is still open" ;;
+    "") die "${slug}: its session log shows no goal set for its condition $((PROMPT_TIMEOUT_MS / 1000))s after the /goal; its builder is still open" ;;
+  esac
+}
+
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
   local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before
@@ -1679,11 +1753,13 @@ build_story() {
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" "${epic_branch}" > "${prompt}"
-  [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"   # goal-delivery sends it
+  [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
+  # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
+  [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md"
 }
 
 # epic_branch_for <repo-dir> <epic> <base> — epic/<epic>, fetched from origin; pushed there from
