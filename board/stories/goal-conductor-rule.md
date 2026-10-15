@@ -4,7 +4,7 @@ status: blocked
 blocked_by: [close-takes-a-cause, goal-wait-no-nudge, goal-on-findings, conductor-give-up-rule]
 epic: goal-for-builders
 depends_on: [close-takes-a-cause, goal-wait-no-nudge, goal-on-findings, conductor-give-up-rule]
-touches: [bin/swarm.sh:goal_rule (new), bin/swarm.sh:give_up_rule (goal-on wording), bin/swarm.sh:conduct_story_mode, bin/swarm.sh:conduct_epic_mode, commands/swarm.md (story arm), tests/epic_test.sh (conductor's-brief checks in the Layout and pr_per = epic blocks), README.md (§ When /swarm stops for you), docs/method.md (§ Building, the give-up paragraph)]
+touches: [bin/swarm.sh:close_agent (impossible block text), bin/swarm.sh:next_step and waiting_on_user (impossible stories), tests/close_test.sh, tests/next_test.sh, bin/swarm.sh:goal_rule (new), bin/swarm.sh:give_up_rule (goal-on wording), bin/swarm.sh:conduct_story_mode, bin/swarm.sh:conduct_epic_mode, commands/swarm.md (story arm), tests/epic_test.sh (conductor's-brief checks in the Layout and pr_per = epic blocks), README.md (§ When /swarm stops for you), docs/method.md (§ Building, the give-up paragraph)]
 ---
 
 # With goal on, conductors and /swarm read why a builder stopped and close it with that cause; cleared-on-error stops the wave
@@ -20,3 +20,8 @@ A goal_rule heredoc beside auth_rule and give_up_rule, which conduct_story_mode 
 **From the spike (binding; overrides the scope above where they differ; report: .swarm/goal-spike.report.md, Claude Code 2.1.299; user chose form 1, bound 5, on 2026-10-14):**
 - goal_rule tells the conductor how to read the cause as in close-takes-a-cause's spike note: the reply first (`IMPOSSIBLE:` or the story's reply), then the final `goal_status met:true` entry's `reason`.
 - The judge's tokens are outside `swarm.sh cost`; the report for goal-on-for-infrafactory sums `goal_status.tokens` from met entries as a count, with no price.
+
+**From the lead (binding, 2026-10-15; the user said escalation decisions are the lead's, not theirs):**
+- An `impossible` story is the lead's, like a failed Fable build: close_agent's impossible block carries no **You:** step; it tells the lead to re-scope **Done when** and run `swarm.sh reset <slug> <reason>`, or `swarm.sh drop <slug> <reason>`. next_step and waiting_on_user treat it as `escalated <slug>` for the lead, as for other escalated stories (undo #131's routing to the user). tests/close_test.sh and tests/next_test.sh change to pin that, and each check fails with the old routing restored.
+- cleared-on-error is listed for the lead too, not the user: the lead decides whether to retry.
+- docs/method.md: #131 says impossible "closes no PR". When failed_build lists an open PR, clear_build runs `gh pr close` on it; when no PR is listed, no `gh pr close` runs, but deleting origin story/<slug> makes GitHub close any open PR on that branch. Say both.
