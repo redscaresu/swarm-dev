@@ -22,8 +22,9 @@ with `goal` on, closing a `ready` story's builder needs one). `impossible`, `pau
 `cleared-on-error` are not counted in `attempts:`.
 
 When the builder says the **Done when** cannot be met (`impossible`), the story becomes `kind: lead`
-with `escalated_from: <its kind>`, and its block's **You:** step asks you to fix the **Done when** and
-run `swarm.sh reset <slug> <reason>`.
+with `escalated_from: <its kind>`, and a block with the lead's choices: re-scope the **Done when** and
+run `swarm.sh reset <slug> <reason>`, or drop it. As with a failed Fable build, the lead decides,
+so the block has no **You:** step.
 
 If the Fable build fails too, `swarm.sh close` turns the story into `kind: lead` with
 `escalated_from: <its kind>` (`code (default)` when it had no `kind:` line), and appends a block

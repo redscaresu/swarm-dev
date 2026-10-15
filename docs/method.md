@@ -179,14 +179,17 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   clear the build away under the same conditions and leave `attempts:` as it was. An unknown cause
   is refused before anything closes, and with `goal` on, so is a close with no cause while the story
   is `ready`. `impossible` means the builder replied `IMPOSSIBLE:`, so the **Done when** cannot be
-  met: the story becomes `kind: lead` with `escalated_from:` and a block whose **You:** step is the
-  user's (fix the **Done when**, then `swarm.sh reset <slug> <reason>`). Because of that step,
-  `next` lists it under waiting on you, not as the lead's `escalated` step. `impossible` hands on
+  met: the story becomes `kind: lead` with `escalated_from:` and a block with the lead's choices
+  (re-scope the **Done when**, then `swarm.sh reset <slug> <reason>`, or `swarm.sh drop <slug>
+  <reason>`). Like a failed Fable build it is the lead's, with no **You:** step, so `next` prints
+  `escalated <slug>` for it and it is never under waiting on you. `impossible` hands on
   any story still `ready` of a kind an agent builds, verify included, and clears its worktree and
-  `story/<slug>` here and on origin so a reset builds it again. When the close finds no build to count
-  (its builder is gone, gh cannot list its PRs, or it is a verify story), it closes no PR, and its
-  block says the PRs were not listed, so the user looks before resetting. Any other story, and a name
-  with no story file, is refused before anything closes.
+  `story/<slug>` here and on origin so a reset builds it again. When the close lists the story's PRs,
+  it closes each open one with `gh pr close`. When it lists none (its builder is gone, gh cannot list
+  them, or it is a verify story), it runs no `gh pr close`, but deleting `story/<slug>` on origin makes
+  GitHub close any PR still open on that branch. The block then says the PRs were not listed, so the
+  lead looks before resetting. Any other story, and a name with no story file, is refused before
+  anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs
@@ -319,7 +322,10 @@ and starts the story again in a later wave with
 `swarm.sh story <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
 builds (2 by default). With `escalate_after = 0` it reports a story that has failed twice to the lead
 instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
-the user's. A Fable builder can stop on its usage-credits consent, which `wait` prints as
+the user's. With `goal` on, a builder idle short of its reply is not nudged: the conductor reads the
+cause from its reply and the last met `goal_status` entry's `reason` in its session log, closes it with
+`swarm.sh close <slug> <cause>` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
+in the wave and lists the story for the lead. A Fable builder can stop on its usage-credits consent, which `wait` prints as
 `waiting: dialog open`. Only for an escalate build, and only once `herdr agent read` shows that
 consent, the conductor accepts it with `herdr pane send-keys` in the builder's pane, runs
 `swarm.sh dialog <slug> accepted` (or `dismissed`, telling the lead), which logs `dialog <slug>`

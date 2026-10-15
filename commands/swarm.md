@@ -95,6 +95,24 @@ Repeat until a step below says stop:
      escalation is off: after a story's second failed build, stop and tell the user instead of
      starting it again.
 
+     With `goal` on (`swarm.sh config goal` is not `off`), a builder idle short of its reply is not
+     nudged, so read why it stopped and close it with that cause: `swarm.sh close <slug> <cause>`.
+     Read its reply and its transcript, never its pane: the session .jsonl named by field 7 of its
+     line in `.swarm/agents.tsv`. The reply comes first (`IMPOSSIBLE:` or the story's reply), then
+     the `reason` of the last `goal_status` entry with `met:true`.
+     - `met`: the reply is there. Review it as above; the closes after review or merge stay bare.
+     - `impossible`: the reply starts `IMPOSSIBLE:`. `swarm.sh close <slug> impossible` makes the
+       story `kind: lead`; go back to 1, where `next` names its `escalated <slug>` step.
+     - `stalled`: `wait --stall` returned stalled. `swarm.sh close <slug> stalled`, then start it again.
+     - `bound`: no reply, and the met entry's reason says the stop-after clause applied.
+       `swarm.sh close <slug> bound`, then start it again.
+     - `paused`: the goal is still set with no met entry since, and the builder is idle. Send one
+       `swarm.sh tell <slug> resume <file>` and wait again; if it stops paused again,
+       `swarm.sh close <slug> paused`.
+     - `cleared-on-error`: the goal was refused or failed, or `swarm.sh story` failed on a refused
+       goal. `swarm.sh close <slug> cleared-on-error`, start nothing more, and decide yourself
+       whether to build it again; tell the user what you chose.
+
      If `wait` prints `waiting: dialog open` for an escalate build (`swarm.sh _role <slug>` prints
      `escalate`), it may be Fable's usage-credits consent, and accepting that is yours, not the
      user's. `swarm.sh _target <slug>` prints its pane. Read it with `herdr agent read <pane>`, and

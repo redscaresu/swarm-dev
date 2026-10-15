@@ -43,6 +43,27 @@ gives_up() {
   has "for the user, unless it has \`escalated_from:\`: that one is the lead's" "$1"
 }
 GIVES_UP="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes"
+# goal_on <brief> — goal_rule's parts, as has prints them: the six causes, the impossible close, one
+# resume tell for a pause and then the paused close, cleared-on-error stopping the wave, and the
+# goal-on give-up (no 'after wait's nudges', a stalled close).
+goal_on() {
+  local c
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  for c in '- met: ' '- impossible: ' '- stalled: ' '- bound: ' '- paused: ' '- cleared-on-error: ' \
+    'Run `swarm.sh close <slug> impossible`' 'Send it one `swarm.sh tell <slug> resume <file>`' \
+    'If it stops paused again, run `swarm.sh close <slug> paused`.' \
+    'Run `swarm.sh close <slug> cleared-on-error`, start nothing more in this wave' 'Run `swarm.sh close <slug> stalled`'; do
+    printf '%s|' "$(has "${c}" "$1")"
+  done
+  grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
+}
+GOAL_ON="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|no nudges"
+# goal_off <brief> — with goal off, give_up_rule as conductor-give-up-rule left it, and no goal rule.
+goal_off() {
+  printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  grep -qF 'close <slug> impossible`' <<< "$1" && echo yes || echo no
+}
 
 item() { # <board> <path> <front-matter line>...
   local path="$1/$2" title; shift 2
@@ -174,6 +195,7 @@ check "the conductor's brief says what a builder's auth means and to resume it a
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${cbrief}")"
+check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
@@ -200,6 +222,11 @@ check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5"
 run conduct e >/dev/null || true
 rm "${ROOT}/idle"
 check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
+echo "goal = 5" > "${p}/.claude/swarm/config"
+run conduct e >/dev/null || true
+check "with goal = 5, the story-mode conductor reads why a builder stopped and closes it with that cause" \
+  "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
+run close conduct-e >/dev/null; : > "${p}/.claude/swarm/config"
 # goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
 # prompts and goals count the herdr agent prompt calls since herdr.log was emptied, and the /goal ones.
 prompts() { grep -c '^agent prompt ' "${ROOT}/herdr.log" || true; }
@@ -357,6 +384,12 @@ check "the one-PR-per-epic conductor's brief says what a builder's auth means, t
   "$(has "stopped on an expired login, which only the user's" "${brief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${brief}")"
 check "the one-PR-per-epic conductor gives up with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
   "${GIVES_UP}" "$(gives_up "${brief}")"
+check "with goal off, the one-PR-per-epic conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${brief}")"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 5" > "${p}/.claude/swarm/config"
+run conduct f >/dev/null || true
+check "with goal = 5, the one-PR-per-epic conductor reads why a builder stopped and closes it with that cause" \
+  "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
 printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
