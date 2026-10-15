@@ -139,7 +139,8 @@ CFG_stall_minutes=30    # a builder working this long with no commit, PR update 
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model"
+CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
+CONFIG_KEYS="board_dir repos_dir base_branches finished merge review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -185,6 +186,8 @@ load_config() {
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
       builder_subagent_model)
         [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: builder_subagent_model must be a model name such as haiku, not '${value}'" ;;
+      goal)
+        [[ "${value}" == off || "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: goal must be off or a positive whole number of turns, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
@@ -514,24 +517,25 @@ PY
 # MIN_CLAUDE: the oldest Claude Code with both `--session-id` and `claude agents --json`, which every
 # Claude agent's state is read through (pinned by experiment; README's Requirements names it too).
 MIN_CLAUDE=2.1.145
+GOAL_MIN_CLAUDE=2.1.269   # the oldest with /goal, which goal = N needs (the epic's floor; the spike ran 2.1.299)
 CLAUDE_CHECKED=""   # set once require_claude passes, so a run checks once
 
-# require_claude — stop unless the installed Claude Code is MIN_CLAUDE or later (`claude --version`
-# prints `2.1.145 (Claude Code)`). When the caller is a Claude session herdr knows (the pane it runs
+# require_claude [min] — stop unless the installed Claude Code is <min> (default MIN_CLAUDE) or later
+# (`claude --version` prints `2.1.145 (Claude Code)`). When the caller is a Claude session herdr knows (the pane it runs
 # in), that session must also be in Claude Code's own list (require_listed), or the readers would
 # find no agent there. From a plain shell with no session, only the version is checked. Once a
-# check passes, later calls in the same run return at once: `story` checks before its worktree,
-# then start_agent asks again.
+# check passes, later calls in the same run return at once: `story` checks before its worktree (with
+# goal on, for GOAL_MIN_CLAUDE), then start_agent asks again.
 require_claude() {
-  local have session
+  local min="${1:-${MIN_CLAUDE}}" have session
   [[ -z "${CLAUDE_CHECKED:-}" ]] || return 0
-  command -v claude >/dev/null || die "Claude Code (claude) is not on PATH; swarm.sh needs ${MIN_CLAUDE} or later."
+  command -v claude >/dev/null || die "Claude Code (claude) is not on PATH; swarm.sh needs ${min} or later."
   have="$(claude --version 2>/dev/null)" || have=""
   python3 -c '
 import re, sys
 m = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", sys.argv[1])
-sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "${have}" "${MIN_CLAUDE}" \
-    || die "swarm.sh needs Claude Code ${MIN_CLAUDE} or later, and claude --version says '${have%%$'\n'*}'. Update it (claude update), then try again."
+sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "${have}" "${min}" \
+    || die "swarm.sh needs Claude Code ${min} or later, and claude --version says '${have%%$'\n'*}'. Update it (claude update), then try again."
   session="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -z "${session}" ]] || require_listed "${session}"
   CLAUDE_CHECKED=1
@@ -1475,6 +1479,39 @@ mutation_rule() {
   printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and note which test failed and how."
 }
 
+# reply_sentence <epic|story> — what a builder replies, and when: the brief's rule on finishing, and
+# what its goal condition waits for. One sentence per mode, so the two cannot drift.
+reply_sentence() {
+  if [[ "$1" == epic ]]; then
+    printf '%s' "When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
+  else
+    printf '%s' "When CI is green, reply with the PR URL, what changed in three lines, and the codex findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR."
+  fi
+}
+
+# goal_condition <slug> <epic|story> — the builder's /goal: the story's **Done when** and **From
+# review** blocks, the reply its brief asks for in that mode, an escape for a story that cannot be
+# done, and the goal's turn bound. A block runs from its bold heading to the first blank line after
+# its content, or to the next bold line. Fails, printing why, with no Done when or none under it.
+goal_condition() {
+  local blocks
+  blocks="$(awk '
+    /^\*\*(Done when|From review)/ {
+      if (on) print ""
+      on = 1; dw = /^\*\*Done when/; rest = $0; sub(/^\*\*[^*]*\*\*[[:space:]]*/, "", rest)
+      has = (rest != ""); if (has && dw) items = 1
+      print; next
+    }
+    on && /^\*\*/ { on = 0; print ""; next }
+    on && /^[[:space:]]*$/ { if (has) { on = 0; print "" }; next }
+    on { has = 1; if (dw) items = 1; print }
+    END { exit !items }' "${BOARD}/stories/$1.md")" \
+    || { echo "$1 has no **Done when** with an item under it, so its goal would have nothing to meet"; return 1; }
+  printf '%s\n\n%s\n\n%s\n' "${blocks}" "$(reply_sentence "$2")" \
+    "If the story cannot be done, reply \`IMPOSSIBLE: <why>\` and stop; that reply meets this goal. The goal is met once all of the above holds and you have replied, or stop after ${CFG_goal} more turns."
+}
+GOAL_MAX_CHARS=4000   # Claude Code's own cap on a /goal condition
+
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
   local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before
@@ -1509,8 +1546,7 @@ story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
 \`codex exec review --base origin/${epic_branch}\` before committing; fix real findings, decline
 nits with a reason, and converge on one clean pass. If codex reports a usage limit, do not wait for
 it to reset: carry on without it and say so. Run the repo's tests and make them pass. $(mutation_rule)
-When your branch is pushed, reply with the branch, what changed in three lines, the codex findings
-and the mutation, then stop.
+$(reply_sentence epic)
 EOF
   else
     before="open the PR"
@@ -1526,8 +1562,7 @@ loop in the PR body. If codex reports a usage limit, do not wait for it to reset
 and write "codex skipped: usage limit" in the PR body. If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
-in the PR body. When CI is green, reply with the PR URL, what changed in three lines, and the codex
-findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR.
+in the PR body. $(reply_sentence story)
 EOF
   fi
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
@@ -1607,7 +1642,7 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch
+  local slug="$1" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" mode=story
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -1621,12 +1656,20 @@ build_story() {
   role="$(story_role "${slug}")" || die "${role}"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
+  # Decided once: the epic branch below, the brief's reply (keyed on that branch) and the goal's.
+  epic="$(fm "${story}" epic)"
+  [[ "${CFG_pr_per}" != epic || -z "${epic}" ]] || mode=epic
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
-  require_claude
+  if [[ "${CFG_goal}" == off ]]; then require_claude; else
+    goal="$(goal_condition "${slug}" "${mode}")" || die "${goal}"
+    (( ${#goal} <= GOAL_MAX_CHARS )) \
+      || die "${slug}: its goal condition is ${#goal} characters, over Claude Code's ${GOAL_MAX_CHARS}; shorten its **Done when** or **From review**"
+    require_claude "${GOAL_MIN_CLAUDE}"
+  fi
   base="$(base_for "${src}")"
-  epic="$(fm "${story}" epic)"; from="origin/${base}"; epic_branch=""
-  if [[ "${CFG_pr_per}" == epic && -n "${epic}" ]]; then
+  from="origin/${base}"; epic_branch=""
+  if [[ "${mode}" == epic ]]; then
     [[ -f "${BOARD}/epics/${epic}.md" ]] || die "${slug}: no epic ${BOARD}/epics/${epic}.md"
     epic_branch="$(epic_branch_for "${src}" "${epic}" "${base}")"; from="origin/${epic_branch}"
     add_epic_repo "${epic}" "${repo:-$(basename "${PROJECT_DIR}")}"
@@ -1634,7 +1677,9 @@ build_story() {
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
   git -C "${src}" worktree add -q -b "${branch}" "${wt}" "${from}"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
+  rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
   story_brief "${slug}" "${src}" "${base}" "${epic_branch}" > "${prompt}"
+  [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"   # goal-delivery sends it
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.

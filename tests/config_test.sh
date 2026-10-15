@@ -85,6 +85,14 @@ for v in -1 1.5 two; do
     "$(fails_with "${p}/.claude/swarm/config:1: escalate_after must be a non-negative whole number" run "${p}" config)"
 done
 check "escalate_after ships on, at 2" "2" "$(project "${p}"; run "${p}" config escalate_after)"
+check "goal ships off" "off" "$(project "${p}"; run "${p}" config goal)"
+project "${p}" "goal = 10"
+check "goal = 10 is read" "10" "$(run "${p}" config goal)"
+for v in 0 -1 1.5 two on; do
+  project "${p}" "goal = ${v}"
+  check "goal = ${v} is refused, naming file and line" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: goal must be off or a positive whole number" run "${p}" config)"
+done
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
@@ -113,6 +121,9 @@ check "the three key lists were all read" "yes" \
 check "no key is missing from the method's config table" "" "$(absent "${table_keys}")"
 check "no key is missing from CONFIG_KEYS" "" "$(absent "${list_keys}")"
 check "no key is missing from load_config's case arms" "" "$(absent "${arm_keys}")"
+# shellcheck disable=SC2016 # the backticks are the table's
+check "the table's goal row has the Default CFG_goal ships" "\`$(project "${p}"; run "${p}" config goal)\`" \
+  "$(sed -n 's/^| `goal` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
 
 # --- A non-git project whose board is outside it, and repos in repos_dir.
 remote "${ROOT}/svc.git" main main dev
@@ -333,6 +344,19 @@ CLAUDE_STUB_AGENTS="${rc}/with-caller.json"
 check "at the minimum, a caller session in the list starts" "started" "$(started)"
 HERDR_CALLER="" CLAUDE_STUB_AGENTS="${AGENTS_FIXTURE}"
 check "at the minimum, with no caller session, the version alone starts" "started" "$(started)"
+
+# goal = N needs /goal, so story asks for GOAL_MIN_CLAUDE; with goal off the same version builds.
+item "${ROOT}/elsewhere/board" stories/goal-claude.md "status: ready" "kind: code" "repo: svc"
+printf '\n**Done when:**\n- it holds\n' >> "${ROOT}/elsewhere/board/stories/goal-claude.md"
+cfg="$(cat "${kb}/.claude/swarm/config")"
+CLAUDE_STUB_VERSION="2.1.268 (Claude Code)"
+printf '%s\n' "${cfg}" "goal = 5" > "${kb}/.claude/swarm/config"
+check "story with goal = 5: one below the goal minimum is refused, naming that version, before any pane or worktree" "yes|0|no worktree" \
+  "$(fails_with "needs Claude Code 2.1.269 or later, and claude --version says '2.1.268 (Claude Code)'" in_herdr "${rc}/bin:${PATH}" story goal-claude)|$(panes)|$([[ -e "${ROOT}/repos/svc-wt/goal-claude" ]] && echo worktree || echo no worktree)"
+printf '%s\n' "${cfg}" > "${kb}/.claude/swarm/config"
+out="$(in_herdr "${rc}/bin:${PATH}" story goal-claude)" && out=started
+check "story with goal off: the same version builds" "started" "${out}"
+CLAUDE_STUB_VERSION="2.1.145 (Claude Code)"
 
 no_claude="${rc}/bin"; IFS=: read -r -a dirs <<< "${PATH}"
 for d in "${dirs[@]}"; do [[ -x "${d}/claude" ]] || no_claude+=":${d}"; done

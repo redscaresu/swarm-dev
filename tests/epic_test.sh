@@ -47,6 +47,26 @@ item() { # <board> <path> <front-matter line>...
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
 
+# goal_story <board> <slug> <front-matter line>... — a story with a Done when and a From review block,
+# and a From the spike block that is not part of a goal.
+goal_story() {
+  local bd="$1" slug="$2"; shift 2
+  item "${bd}" "stories/${slug}.md" "$@"
+  printf '%s\n' "" "Scope." "" "**Done when:**" "- DW-ONE holds" "- DW-TWO holds" "" \
+    "**From review (binding; overrides the scope above where they differ):**" "- FR-ONE holds" "" \
+    "**From the spike (binding):**" "- SPIKE-ONE" >> "${bd}/stories/${slug}.md"
+}
+# goal_parts <goal file> <reply sentence> <bound> — has for each part a goal condition holds.
+goal_parts() {
+  local g; g="$(cat "$1" 2>&1)"
+  printf '%s|' "$(has "- DW-ONE holds" "${g}")" "$(has "- DW-TWO holds" "${g}")" "$(has "- FR-ONE holds" "${g}")" \
+    "$(grep -q SPIKE-ONE <<< "${g}" && echo spike || echo yes)" "$(has "$2" "${g}")" "$(has "IMPOSSIBLE: <why>" "${g}")"
+  has "or stop after $3 more turns" "${g}"
+}
+GOAL_PARTS="yes|yes|yes|yes|yes|yes|yes"
+STORY_REPLY="When CI is green, reply with the PR URL, what changed in three lines, and the codex findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR."
+EPIC_REPLY="When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
+
 # herdr: logs every call; each new pane is w:<n>, each new tab t<n>, and tab list shows their labels.
 mkdir -p "${ROOT}/bin"
 cat > "${ROOT}/bin/herdr" <<EOF
@@ -152,6 +172,31 @@ check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5"
 run conduct e >/dev/null || true
 rm "${ROOT}/idle"
 check "a conductor that fails to start still closes the placeholder tab" "yes" "$(has "tab close t0" "$(log)")"
+# goal: off writes no goal file; goal = N writes the condition beside the brief, with the brief's reply.
+goal_story "${b}" gl0 "status: ready" "kind: code" "repo: svc"
+mkdir -p "${p}/.swarm/briefs"; echo "an earlier build's condition" > "${p}/.swarm/briefs/gl0.goal.md"
+run story gl0 >/dev/null
+check "with goal off, story writes no .goal.md (and drops an earlier one), and the brief holds the story-mode reply" "no|yes" \
+  "$([[ -e "${p}/.swarm/briefs/gl0.goal.md" ]] && echo yes || echo no)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl0.md")")"
+echo "goal = 7" > "${p}/.claude/swarm/config"
+goal_story "${b}" gl1 "status: ready" "kind: code" "repo: svc"
+run story gl1 >/dev/null
+check "with goal = 7, story writes the condition: Done when, From review, the brief's reply, the escape and the bound" \
+  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
+# A blank line under a heading does not end its block; the next bold line that is not one does.
+item "${b}" stories/gl2.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "" "**Done when:**" "" "- DW-ONE holds" "- DW-TWO holds" "**Out of scope:** OUT-ONE" "" \
+  "**From review (binding):**" "- FR-ONE holds" "**From the spike (binding):**" "- SPIKE-ONE" "**You:** YOU-ONE" >> "${b}/stories/gl2.md"
+rc=0; out="$(run story gl2)" || rc=$?   # the exit is checked: a refusal shows as a FAIL, not an abort
+[[ ${rc} -eq 0 ]] || echo "story gl2: ${out}"
+g="$(cat "${p}/.swarm/briefs/gl2.goal.md" 2>&1 || true)"
+check "a blank line before the first item keeps the items; a bold line straight after a block is not copied" "0|yes|yes|yes|no|no|no" \
+  "${rc}|$(has "- DW-ONE holds" "${g}")|$(has "- DW-TWO holds" "${g}")|$(has "- FR-ONE holds" "${g}")|$(grep -qE 'OUT-ONE|SPIKE-ONE' <<< "${g}" && echo yes || echo no)|$(grep -q 'YOU-ONE' <<< "${g}" && echo yes || echo no)|$(grep -q 'Out of scope' <<< "${g}" && echo yes || echo no)"
+item "${b}" stories/gl3.md "status: ready" "kind: code" "repo: svc"
+printf '%s\n' "" "**Done when:**" "" "**Out of scope:** OUT-ONE" >> "${b}/stories/gl3.md"
+check "a Done when with no item under it fails like a missing one, before any worktree" "yes|no" \
+  "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-3].md
 
 # --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
 echo "keep_panes = true" > "${p}/.claude/swarm/config"
@@ -221,6 +266,26 @@ merged="$(tip "${ROOT}/svc" HEAD)"
 run story f2 >/dev/null
 check "a later story branches from the epic branch as it is now" "${merged}|${merged}" "$(tip "${ROOT}/svc-wt/f2" HEAD)|$(tip "${ROOT}/svc.git" epic/f)"
 check "the repo is listed once" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md")"
+check "with goal off, the epic story brief holds the epic-mode reply, and no .goal.md is written" "yes|no" \
+  "$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/f2.md")")|$([[ -e "${p}/.swarm/briefs/f2.goal.md" ]] && echo yes || echo no)"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"
+goal_story "${b}" gf1 "status: ready" "kind: code" "epic: f" "repo: svc"
+run story gf1 >/dev/null
+check "with goal = 7 and pr_per = epic, the condition carries the epic-mode reply the brief holds" \
+  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gf1.goal.md" "${EPIC_REPLY}" 7)|$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/gf1.md")")"
+# A condition over Claude Code's 4000 characters is refused before the epic branch or worktree exists.
+item "${b}" epics/gx.md "status: active"; cp "${b}/epics/gx.md" "${ROOT}/gx-epic.md"
+goal_story "${b}" gx1 "status: ready" "kind: code" "epic: gx" "repo: svc"
+python3 -c 'print("**Done when:**"); print("\n".join("- line %d of a long acceptance" % i for i in range(200)))' > "${ROOT}/long.md"
+python3 - "${b}/stories/gx1.md" "${ROOT}/long.md" <<'PY2'
+import sys; s = open(sys.argv[1]).read(); open(sys.argv[1], "w").write(s.replace("**Done when:**", open(sys.argv[2]).read().rstrip("\n"), 1))
+PY2
+out="$(run story gx1 || true)"
+check "with goal on, an over-long condition fails naming the story, and leaves no worktree, branch, epic branch or epic edit" \
+  "yes|no|no|no|no|same" \
+  "$(has "gx1: its goal condition is" "${out}")|$([[ -e "${ROOT}/svc-wt/gx1" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify refs/heads/story/gx1 && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/story/gx1 && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/epic/gx && echo yes || echo no)|$(cmp -s "${ROOT}/gx-epic.md" "${b}/epics/gx.md" && echo same || echo changed)"
+printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
+rm -f "${b}/stories/gf1.md" "${b}/stories/gx1.md" "${b}/epics/gx.md"
 run conduct f >/dev/null
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
