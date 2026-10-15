@@ -435,8 +435,8 @@ def session_state(log, name, listing):
 #     A nudge is not a sign of life, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are
 #     skipped, and so is any other tell whose outcome is not ok: it never reached the builder.
 #   stall_age(seen, slug, name, signs) -> minutes since the newest of: seen[slug] or seen[name]
-#     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit, the
-#     time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
+#     (started, findings sent ...) and each of signs: epoch seconds (a worktree's last commit or edit,
+#     the time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 STALL_PY='
 import datetime, re, time
@@ -1202,12 +1202,34 @@ nudge_reason() {
   echo "you are idle and story/${slug} has no PR"
 }
 
-# story_commit_time <slug> — the epoch time of the last commit in a story's worktree; empty when it
-# has none (not started, or its repo is not here).
-story_commit_time() {
-  local src
+# STALL_PATHS: how many of a worktree's changed and untracked files story_work_time reads the mtime of.
+STALL_PATHS=300
+
+# story_work_time <slug> — the epoch time a story's worktree last showed work: the newer of its last
+# commit and the newest mtime among its changed and untracked files (git status, the first
+# STALL_PATHS of them), so a builder holding its diff uncommitted is not stalled; empty when it has
+# neither (not started, or its repo is not here).
+story_work_time() {
+  local src wt ct
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo 2>/dev/null)")" || return 0
-  git -C "$(worktree_for "${src}" "$1")" log -1 --format=%ct 2>/dev/null || true
+  wt="$(worktree_for "${src}" "$1")"
+  ct="$(git -C "${wt}" log -1 --format=%ct 2>/dev/null || true)"
+  { GIT_OPTIONAL_LOCKS=0 git -C "${wt}" status --porcelain -z --untracked-files=all 2>/dev/null || true; } \
+    | python3 -c '
+import os, sys
+wt, cap, best = sys.argv[1], int(sys.argv[2]), [float(sys.argv[3])] if sys.argv[3] else []
+es, i = sys.stdin.read().split("\0"), 0
+while i < len(es) and cap > 0:
+    e, i = es[i], i + 1
+    if len(e) < 4:
+        continue
+    i += e[0] in "RC"   # a rename or copy: its source path follows
+    cap -= 1
+    try:
+        best.append(os.lstat(os.path.join(wt, e[3:])).st_mtime)
+    except OSError:   # deleted
+        pass
+print(int(max(best)) if best else "")' "${wt}" "${STALL_PATHS}" "${ct}" || echo "${ct}"
 }
 
 # story_rows — one "slug<TAB>agent name<TAB>status<TAB>prs" line per story, for STALL_PY's story_for.
@@ -1245,7 +1267,7 @@ agent_stalled() {
   local slug url age ct prs=()
   slug="$(stall_py story "$1")"
   [[ -n "${slug}" ]] || return 1
-  ct="$(story_commit_time "${slug}")"
+  ct="$(story_work_time "${slug}")"
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}")"
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
@@ -2997,9 +3019,9 @@ dash_render() {
       board+="${d}"$'\t'"${r}"$'\t'"${x%%$'\t'*}"$'\t'"$(cut -f2 <<< "${x}")"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\t'"$(cut -f3- <<< "${x}")"$'\n'
     done < <(board "${d}")
   done
-  # The last worktree commit of each working builder's story (STALL_PY's story_for), for the stall rule.
+  # The last worktree commit or edit of each working builder's story (STALL_PY's story_for), for the stall rule.
   while IFS= read -r r; do
-    [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_commit_time "${r}")"$'\n'
+    [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_work_time "${r}")"$'\n'
   done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
     | SWARM_STALL_PY="${STALL_PY}" SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
       DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" python3 -c '

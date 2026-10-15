@@ -398,6 +398,18 @@ mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "stall_minutes sets the threshold" lacks "look at s-three" "${out}"
 rm "${P}/.claude/swarm/config"
+# A file edited a minute ago in s-three's worktree (its last commit 2 hours old) is a sign of life:
+# working, not stalled. Aged past stall_minutes, it is not: stalled again.
+wt="${P}-wt/s-three"; git init -q "${wt}"
+GIT_COMMITTER_DATE="@$(($(date +%s) - 7200))" git -C "${wt}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false commit -q --allow-empty -m old
+mins_ago() { python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M", time.localtime(time.time() - 60 * int(sys.argv[1]))))' "$1"; }
+echo wip > "${wt}/wip.txt"; touch -t "$(mins_ago 1)" "${wt}/wip.txt"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "a builder with a file edited a minute ago in its worktree is working, not stalled" grep -qE '● s-three .*working' <<< "${out}"
+touch -t "$(mins_ago 120)" "${wt}/wip.txt"
+fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+check "the same file edited 2 hours ago leaves it stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
+rm -rf "${P}-wt"
 
 # --- Escalation. DASH_NOW fixes dash's now at local noon on 2026-10-10, and every line here is
 # minutes before it, so "today" cannot drift across midnight. Two ok escalate builds today (x-esc's
