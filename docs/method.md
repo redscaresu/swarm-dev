@@ -277,7 +277,7 @@ waited on: `wait` prints `auth` at once,
 with a line on stderr naming it, for a builder and a conductor alike. Only the user's `/login` clears
 it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a conductor tells the same
 to each builder whose `wait` printed `auth`. `wait` does not read the pane. `wait --stall
-<slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit or PR update`, when the
+<slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, session-log write or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
 worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks

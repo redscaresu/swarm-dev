@@ -437,8 +437,8 @@ def session_state(log, name, listing):
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
-#     worktree's last commit or edit, the time a wait began) or ISO times (a PR's updatedAt). None when
-#     there is no sign at all.
+#     worktree's last commit or edit, an agent's session log write, the time a wait began) or ISO
+#     times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 STALL_PY='
 import datetime, re, time
@@ -1272,7 +1272,10 @@ import os, sys
 exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
 sid = session_id(sys.argv[1], sys.argv[2])
 path = session_log(sys.argv[3], sid) if sid else ""
-print(int(os.path.getmtime(path)) if path else "")
+try:
+    print(int(os.path.getmtime(path)) if path else "")
+except OSError:   # removed since the glob: no sign
+    print("")
 PY
 }
 
@@ -1319,7 +1322,7 @@ herdr_wait() {
     timed_out "${err}" || break
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      rm -f "${err}"; echo "stalled: working ${min} min with no commit or PR update"; return
+      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
     fi
   done
   rm -f "${err}"
@@ -1363,7 +1366,7 @@ settle() {
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      state="stalled: working ${min} min with no commit or PR update"; break
+      state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
     fi
     t0="$(now_ms)"
     if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
@@ -3265,10 +3268,13 @@ if agents is not None:
             if st == "working":
                 # Any agent with a Claude session: its session log, written on every turn and tool call.
                 log = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
-                logged = os.path.getmtime(log) if log else None
+                try:
+                    logged = os.path.getmtime(log) if log else None
+                except OSError:   # removed since the glob: no sign
+                    logged = None
                 if slug:
                     signs = [commit_of.get(slug, ""), logged] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
-                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit or PR update"
+                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit, edit, session-log write or PR update"
                 else:
                     age, lack = stall_age(seen, epic_of.get(base), base, ([since, ran.get(pane)] if since else []) + [logged], NOW), "no swarm action"
                 if age is not None and age >= int(E["DASH_STALL_MIN"]):

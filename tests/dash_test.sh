@@ -396,7 +396,7 @@ check "at 160 columns a working agent's card shows its state age, then the time 
 check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +opus·high +stalled 1(19|20|21)m +│' <<< "${out}"
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
-check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
+check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit, edit, session-log write or PR update' <<< "${out}"
 check "the summary counts the stall" has " · 1 stalled · " "$(sed -n 2p <<< "${out}")"
 check "recent shows a start minutes ago, newest first" grep -qE '^│    4m ago  ▶ conduct e1 ' <<< "$(sed -n '/^╭─ recent/{n;p;}' <<< "${out}")"
 check "recent shows hours ago" grep -qE '^│    2h ago  ▶ story s-three ' <<< "${out}"
@@ -479,7 +479,7 @@ check "at 160 columns a stalled builder still shows stalled" grep -qE '! s-three
 out="$(COLUMNS=100 agedash)"
 check "at 100 columns a working builder shows its state age" grep -qE '● aaaaaaaaaa-bbbbbbbbbb-ccccccc… .* working 1[23]m +│$' <<< "${out}"
 check "at 100 columns a stalled builder still shows stalled" grep -qE '! s-three .*stalled 1(19|20|21)m +│$' <<< "${out}"
-check "a stalled builder still needs you, in the same words" grep -qE '! look at s-three: working 1(19|20|21) min with no commit or PR update' <<< "${out}"
+check "a stalled builder still needs you, in the same words" grep -qE '! look at s-three: working 1(19|20|21) min with no commit, edit, session-log write or PR update' <<< "${out}"
 check "a conductor below stall_minutes is working, not stalled" grep -qE '● conduct-e1 +conduct +opus·high +working [45]m +│$' <<< "${out}"
 # The conductor's newest sign (its start, from its own pane) is 4 minutes old: past stall_minutes = 3.
 echo "stall_minutes = 3" > "${P}/.claude/swarm/config"
@@ -562,7 +562,7 @@ check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<<
 # the session is busy, and busy is what the stall rule reads.
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
-check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit or PR update$' <<< "${out}"
+check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit, edit, session-log write or PR update$' <<< "${out}"
 # A nudge is wait's doing, not a sign of life: a fresh `nudge s-three` line leaves the builder stalled.
 printf '%s\tnudge\ts-three\tw1:p1\tok\n' "$(ago 0)" >> "${P}/.swarm/events.tsv"
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
