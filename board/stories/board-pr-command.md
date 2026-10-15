@@ -13,6 +13,7 @@ The lead edits the board through a PR many times a day (unblocks, new stories, r
 
 **Done when:**
 - tests/board_pr_test.sh with a stub gh and a bare origin: `start x` creates the worktree on board/x from origin/main and prints its path; a second `start x` refuses and changes nothing; the main checkout's files are byte-identical before and after a full start, edit, open and done cycle.
+- Failure cases, each refusing with no path printed, exit non-zero and the main checkout's tracked files unchanged: the target directory already exists (no branch); the target resolves to the main checkout (a symlink or `..` path); `git worktree add` fails (a bad base ref). Each check fails with its guard removed.
 - `open x` refuses when a changed file is outside the board dir (e.g. bin/swarm.sh), opens nothing and logs the refusal; with only board files, it pushes board/x and calls gh pr create once.
 - `done x` refuses while the PR is open; after the stub reports MERGED, it removes the worktree and both branches.
 - Each events.tsv line exists with its outcome; a refusal leaves exactly one line.
