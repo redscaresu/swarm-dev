@@ -79,8 +79,11 @@ Repeat until a step below says stop:
      (method.md § Building).
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
-     `agent`, merge it; then, if the story is still open on the board, `swarm.sh finish <slug>`;
-     then `swarm.sh unblock` and `swarm.sh close <slug>`.
+     `agent`, merge it, and wait until the PR has merged (a queued merge, auto-merge or a merge
+     queue, has not merged yet). Then run `swarm.sh review <slug> <PR URL>` and `swarm.sh reconcile`,
+     never a plain `git pull`: reconcile first puts back a retry's `attempts:`, which would stop the
+     pull, then pulls the board and finishes the story. Then `swarm.sh unblock` and
+     `swarm.sh close <slug>`: closing a story that is still `ready` counts a failed build.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.

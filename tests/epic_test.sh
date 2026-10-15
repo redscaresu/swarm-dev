@@ -233,6 +233,10 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "with merge = agent, the conductor waits out a queued merge, then pulls and finishes through review and reconcile" "yes|yes|yes" \
   "$(has "A queued merge (auto-merge, a merge queue) has not" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\` and" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
+# shellcheck disable=SC2016 # the backticks are the Markdown's
+oneoff="$(sed -n '/`story <slug>`: a one-off/,/`plan-epic <epic>`/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+check "/swarm-dev:swarm's one-off merge = agent step waits for the merge, then reviews and reconciles" "yes|yes|yes" \
+  "$(has "wait until the PR has merged" "${oneoff}")|$(has "\`swarm.sh review <slug> <PR URL>\` and \`swarm.sh reconcile\`" "${oneoff}")|$(has "never a plain \`git pull\`" "${oneoff}")"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"

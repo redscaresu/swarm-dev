@@ -26,6 +26,7 @@ case "$1 $2" in
                      END { print "]}}" }' "$A" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$A" > "$A.tmp" && mv "$A.tmp" "$A" ;;
   "pane list") echo '{"result":{"panes":[]}}' ;;
+  "pane close") echo "$3" >> "$H/panes-closed" ;;
 esac
 STUB
 cat >> "${ROOT}/bin/gh" <<'STUB'
@@ -137,6 +138,22 @@ rm "${ROOT}/prs.json"; touch "${ROOT}/ghfail"
 close g1
 rm "${ROOT}/ghfail"
 is "a gh call that fails is said on stderr" "1" "$(grep -c "g1: could not list the PRs on story/g1" "${ROOT}/close.out")"
+item x2 "status: ready" "kind: code" "repo: nosuch"; started x2 w:p15
+close x2
+is "a repo that cannot be found counts nothing, and stderr names it" "|1" "$(attempts x2)|$(grep -c "x2: no repo at ${ROOT}/nosuch" "${ROOT}/close.out")"
+# A slug over 32 characters: herdr knows its builder by the cut agent name; its pane record, in an
+# epic's tab beside another pane, keeps the full slug, as start_agent writes it.
+L=a-story-whose-slug-runs-well-past-thirty-two-characters
+LN="$(cd "${P}" && bash "${SWARM}" _name "${L}")"
+item "${L}" "status: ready" "kind: code" "epic: e1"; started "${L}" w:p20
+awk -v l="${L}" -v n="${LN}" '$1 == l { $1 = n } { print }' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
+rm "${P}/.swarm/state/${L}"; printf 'w:p19 conductor\nw:p20 %s\n' "${L}" > "${P}/.swarm/state/e1"
+echo '[]' > "${ROOT}/prs.json"; : > "${ROOT}/panes-closed"
+close "${L}"
+is "a slug over 32 characters (agent ${#LN} long) is counted once, cleared, and its pane closed" "1||w:p20|w:p19 conductor" \
+  "$(attempts "${L}")|$(left "${L}")|$(cat "${ROOT}/panes-closed")|$(cat "${P}/.swarm/state/e1")"
+close "${L}"
+is "and closing it again leaves 1" "1" "$(attempts "${L}")"
 for s in r1:"a story in review" v1:"a ready verify story (no PR tells its pass from a failure)" d1:"a deleted story" m1:"a story whose PR merged" q1:"a story whose open PR has auto-merge set" \
          g1:"a story whose gh call fails" \
          n1:"a ready story with no builder open" h1:"a ready story whose builder's pane was closed by hand" \

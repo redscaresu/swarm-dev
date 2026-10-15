@@ -3219,6 +3219,9 @@ close_agent() {
   local prs counted=0 f n
   archive_session "$1"
   if prs="$(failed_build "$1")"; then counted=1; fi
+  # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
+  # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
+  # matches. Passing close_panes the cut name would leave a long slug's pane open.
   if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
   [[ ${counted} == 1 ]] || return 0
   f="${BOARD}/stories/$1.md"; n="$(get_fm "${f}" attempts)"
@@ -3245,7 +3248,9 @@ failed_build() {
   [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
   # The conductor finishes an epic's story before closing it, so a ready one never merged.
   [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0
-  if ! src="$(repo_dir "$(fm "${f}" repo)")" || ! url="$(git -C "${src}" remote get-url origin)" \
+  src="$(repo_dir "$(fm "${f}" repo)")" \
+    || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; return 1; }
+  if ! url="$(git -C "${src}" remote get-url origin)" \
      || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url,autoMergeRequest)" \
      || ! merging="$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")"; then
     echo "swarm: ${slug}: could not list the PRs on story/${slug}, so this close counts no failed build and clears nothing" >&2
