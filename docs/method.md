@@ -173,6 +173,29 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   then starts fresh, and the third runs on Fable. A close after `review`, after a merge or after
   the builder has gone counts nothing, and `reconcile` sending a story back to `ready` never
   counts. If gh cannot list the PRs, the close counts and clears nothing and says why on stderr.
+- **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
+  hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
+  had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs
+  (from the same `gh pr list`) and the lead's two choices. It has no **You:** step, because by the
+  user's decision of 2026-10-15 the lead decides and then tells the user what it chose and why.
+  `next` prints `escalated <slug>` for it, ahead of `gate`. The lead either re-scopes the story and
+  runs `swarm.sh reset <slug> <reason>`, which removes `attempts:`, `escalated_from:` and the block,
+  or drops it. While the story still says `kind: lead`, reset puts its kind back (no `kind:` line
+  for `code (default)`), so the file is its committed text again; a kind the lead set itself stays.
+  A builder reads its story in its worktree, so when the board is in the story's repo the re-scope
+  merges as a board PR first (and with `pr_per = epic`, the base is merged into `epic/<epic>` too).
+  Then the lead runs `reset` and pulls the board in one go: `reset` puts the file back to its
+  committed text, so the pull brings in the re-scope, and `story` reads its kind, repo, epic and
+  risk from that. `swarm.sh drop <slug> <reason>` takes a dropped story off the board as `finish`
+  does (deleted, or `status: done` with `finished = mark`), and the lead commits the change in a
+  board PR; it refuses any story that is not escalated. A story is reset at most once: `reset`
+  refuses a slug that events.tsv already shows reset, and names when, and a story that escalates
+  again after its reset is offered only drop, in its block and in `next`. `reset` also refuses a
+  block whose closing marker is gone, rather than remove everything after the opening one. An
+  escalated story is the lead's, so it is not listed under waiting on you (`status`, `dash`,
+  `gate`). Each step is a line in events.tsv with its UTC time, for the training data:
+  `escalate <slug>` when the build starts (`ok (attempt <n>)`), `escalated <slug>` at the close
+  (`ok (attempts <n>, <k> PRs)`), and `reset` or `drop <slug>` with `ok (<reason>)`.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost` turns that and Claude Code's logs into
   tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
@@ -280,7 +303,8 @@ lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. `reconcile` and `unblock` write a line
-per item they move. The log is local to the machine and append-only,
+per item they move. A `story` that starts an `escalate` build, and the `close` that hands its story to
+the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command.
 

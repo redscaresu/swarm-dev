@@ -162,5 +162,75 @@ for s in r1:"a story in review" v1:"a ready verify story (no PR tells its pass f
 done
 is "no story file is written for a name with none" "" "$(cd "${P}/docs/stories" && ls d1.md conduct-x.md hld-x.md plan-x.md 2>/dev/null)"
 is "no PR is closed but s1's" "1" "$(grep -c '^pr close' "${ROOT}/gh.log")"
+
+# --- A counted close of an escalate build (the role on the newest agents.tsv line for the story's
+# agent) makes the story the lead's: kind: lead, escalated_from: its kind, still ready, and a marked
+# block naming the lead's choices and the attempts' PRs. reset puts the story back as it was.
+sw() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+built() { printf '2026-10-15\t%s\t%s\tclaude\topus\thigh\tsess-%s\n' "$2" "$1" "$1" >> "${P}/.swarm/agents.tsv"; }   # <slug> <role>
+fmv() { awk -v k="$2" '/^---$/ && ++n == 2 { exit } n == 1 && index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "${P}/docs/stories/$1.md"; }
+state() { echo "$(fmv "$1" kind)|$(fmv "$1" escalated_from)|$(fmv "$1" attempts)|$(fmv "$1" status)"; }
+block() { sed -n '/^<!-- swarm.sh escalated/,/^<!-- \/swarm.sh escalated -->$/p' "${P}/docs/stories/$1.md"; }
+echo "[{\"number\":7,\"state\":\"CLOSED\",\"url\":\"${U}/7\"},{\"number\":8,\"state\":\"OPEN\",\"url\":\"${U}/8\"}]" > "${ROOT}/prs.json"
+item e1 "status: ready" "kind: code"; cp "${P}/docs/stories/e1.md" "${ROOT}/e1.orig"
+for i in 1 2; do started e1 "w:p3${i}"; built e1 code; close e1; done
+is "a counted close of a code build at attempts: 1 leaves kind: code" "code||2|ready" "$(state e1)"
+started e1 w:p33; built e1 escalate; close e1
+is "a counted close of an escalate build at attempts: 2: kind: lead, escalated_from: code, attempts: 3, still ready" \
+  "lead|code|3|ready" "$(state e1)"
+b="$(block e1)"
+is "its block names the lead's choices, reset and drop, at most one reset, and both PRs gh listed" "yes|yes|yes|yes|yes" \
+  "$(grep -qF 'swarm.sh reset e1 <reason>' <<< "${b}" && echo yes)|$(grep -qF 'swarm.sh drop e1 <reason>' <<< "${b}" && echo yes)|$(grep -qF 'At most one reset per story' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/7" <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/8" <<< "${b}" && echo yes)"
+is "the escalated story has no **You:** step" "0" "$(grep -c '\*\*You:\*\*' "${P}/docs/stories/e1.md")"
+is "the escalation is logged with the attempts and the PR count" "1" \
+  "$(grep -c $'\tescalated\te1\tw:me\tok (attempts 3, 2 PRs)$' "${P}/.swarm/events.tsv")"
+sw reset e1 re-scoped to the parser alone >/dev/null
+is "reset returns the story to what it was before its first counted close" "" "$(diff "${ROOT}/e1.orig" "${P}/docs/stories/e1.md")"
+is "after reset, the story is built as code" "code" "$(sw _role e1)"
+is "reset is logged with its reason" "1" "$(grep -c $'\treset\te1\tw:me\tok (re-scoped to the parser alone)$' "${P}/.swarm/events.tsv")"
+item e1 "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"; rc=0; out="$(sw reset e1 again)" || rc=$?
+is "a second reset of e1 fails, naming the first, and leaves it kind: lead" "1|yes|lead" \
+  "${rc}|$(grep -qF 'reset: e1 was reset already, at ' <<< "${out}" && echo yes)|$(fmv e1 kind)"
+item e1 "status: ready" "kind: code" "attempts: 2"; built e1 escalate; started e1 w:p39; close e1; b="$(block e1)"
+is "escalated again after its reset, e1's block offers only drop" "yes|0|yes" \
+  "$(grep -qF 'It was reset once already' <<< "${b}" && echo yes)|$(grep -c 'swarm.sh reset e1' <<< "${b}")|$(grep -qF 'swarm.sh drop e1 <reason>' <<< "${b}" && echo yes)"
+# A block whose close marker was edited away: reset would take the rest of the file with it, so it refuses.
+item cm "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"
+printf '%s\n' "<!-- swarm.sh escalated: swarm.sh reset removes this block -->" "the lead's choices" "the lead's re-scope" >> "${P}/docs/stories/cm.md"
+cp "${P}/docs/stories/cm.md" "${ROOT}/cm.before"; rc=0; out="$(sw reset cm why)" || rc=$?
+is "reset of a block with no close marker fails, naming the marker, and changes nothing" "1|yes|" \
+  "${rc}|$(grep -qF "no '<!-- /swarm.sh escalated -->' after it" <<< "${out}" && echo yes)|$(diff "${ROOT}/cm.before" "${P}/docs/stories/cm.md")"
+item n2 "status: ready" "kind: code"; rc=0; out="$(sw reset n2 why)" || rc=$?
+is "reset of a story with neither attempts: nor escalated_from: fails, naming it" "1|yes" \
+  "${rc}|$(grep -qF 'reset: n2 has neither attempts: nor escalated_from:' <<< "${out}" && echo yes)"
+# The role decides, not the count: a code build at attempts: 2 (an older escalate line before it) stays code.
+item c2 "status: ready" "kind: code" "attempts: 2"; built c2 escalate; built c2 code; started c2 w:p34; close c2
+is "a code build closed at attempts: 2 writes attempts: 3 and no kind: lead or block" "code||3|ready|" "$(state c2)|$(block c2)"
+# A chore round-trips, and so does a story with no kind: line (escalated_from: code (default)).
+item ch "status: ready" "kind: chore"; cp "${P}/docs/stories/ch.md" "${ROOT}/ch.orig"
+item ch "status: ready" "kind: chore" "attempts: 2"; built ch escalate; started ch w:p35; close ch
+is "a chore escalates from chore" "lead|chore|3|ready" "$(state ch)"
+sw reset ch why >/dev/null
+is "and reset returns it as it was" "" "$(diff "${ROOT}/ch.orig" "${P}/docs/stories/ch.md")"
+item nk "status: ready"; cp "${P}/docs/stories/nk.md" "${ROOT}/nk.orig"
+item nk "status: ready" "attempts: 2"; built nk escalate; started nk w:p36; close nk
+is "a story with no kind: line escalates from code (default)" "lead|code (default)|3|ready" "$(state nk)"
+sw reset nk why >/dev/null
+is "and reset returns it byte for byte, with no kind: line" "" "$(diff "${ROOT}/nk.orig" "${P}/docs/stories/nk.md")"
+# The lead re-scoped the kind in the file itself (the board outside the repo): reset keeps it.
+item rk "status: ready" "kind: code" "attempts: 2"; built rk escalate; started rk w:p40; close rk
+awk '{ sub(/^kind: lead$/, "kind: docs") } 1' "${P}/docs/stories/rk.md" > "${ROOT}/rk.tmp" && mv "${ROOT}/rk.tmp" "${P}/docs/stories/rk.md"
+sw reset rk why >/dev/null
+is "a kind the lead set itself survives reset; escalated_from: and attempts: go" "docs|||ready" "$(state rk)"
+item vf "status: ready" "kind: lead" "escalated_from: verify" "attempts: 3"; sw reset vf why >/dev/null
+is "escalated_from: verify resets to kind: verify" "verify|||ready" "$(state vf)"
+# With no PR on the branch it says so; with gh failing the close counts nothing, so nothing escalates.
+echo '[]' > "${ROOT}/prs.json"
+item np "status: ready" "kind: code" "attempts: 2"; built np escalate; started np w:p37; close np
+is "with no PR on story/np, the block says none was found" "lead|yes" "$(fmv np kind)|$(grep -qx 'No PR was found on story/np.' <<< "$(block np)" && echo yes)"
+touch "${ROOT}/ghfail"
+item gf "status: ready" "kind: code" "attempts: 2"; built gf escalate; started gf w:p38; close gf
+rm "${ROOT}/ghfail"
+is "with gh failing the close counts nothing: no attempt, no kind: lead, no block" "code||2|ready|" "$(state gf)|$(block gf)"
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

@@ -18,6 +18,13 @@ that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 closes the builder of a code, docs or chore story that is still `ready`; once it reaches `escalate_after` (2 by default) the
 story is built on Fable (swarm-dev `docs/method.md` § Model and effort).
 
+If the Fable build fails too, `swarm.sh close` turns the story into `kind: lead` with
+`escalated_from: <its kind>` (`code (default)` when it had no `kind:` line), and appends a block
+with the lead's choices and the attempts' PRs. The lead re-scopes it and runs
+`swarm.sh reset <slug> <reason>`, which puts the kind back if it still says `kind: lead` and
+removes `attempts:`, `escalated_from:` and the block, or drops it with `swarm.sh drop <slug> <reason>`,
+which takes it off the board, and commits the change in a PR.
+
 A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the files it
 `touches`, which is how a wave avoids two agents editing the same file. A story whose work lands
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
