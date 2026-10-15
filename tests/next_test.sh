@@ -500,5 +500,33 @@ refused "tell refuses one herdr reports as blocked on a prompt" "waiting on a pr
 refused "tell refuses its own agent with no session and no herdr status as unknown" "herdr gives no state for it (unknown)" "" findings findings.md
 rm -rf "${dir}"
 
+# conduct on a later epic sets it active, says so, and status stops listing it as waiting on you; an
+# active epic is left as it is, silently. An epic file that cannot be written stays later, conduct says
+# so and still succeeds. herdr is a stub whose one answer has every field conduct reads.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p bin && item stories/s.md 'status: ready' 'kind: code' 'epic: e')
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
+for st in later active; do
+  (cd "${dir}" && item epics/e.md "status: ${st}")
+  out="$(conduct)"; rm -rf "${dir}/.swarm/state"
+  said=no; grep -q '^epic e: status later -> active' <<< "${out}" && said=yes
+  # The whole output, then grep: grep -q can close the pipe on status, which fails under pipefail.
+  waits=no; grep -q 'later epic: e' <<< "$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status)" && waits=yes
+  got="$(sed -n 's/^status: //p' "${dir}/docs/epics/e.md")|${said}|${waits}"
+  want="active|no|no"; [[ ${st} == later ]] && want="active|yes|no"
+  if [[ "${got}" == "${want}" ]]; then echo "ok   conduct on a ${st} epic leaves it active (active|said|waits on you: ${got})"; else
+    echo "FAIL conduct on a ${st} epic: want '${want}', got '${got}': ${out}"; fails=$((fails + 1)); fi
+done
+(cd "${dir}" && item epics/e.md "status: later"); chmod a-w "${dir}/docs/epics"
+out="$(conduct; echo "exit $?")"; rm -rf "${dir}/.swarm/state"; chmod u+w "${dir}/docs/epics"
+got="$(sed -n 's/^status: //p' "${dir}/docs/epics/e.md")|$(ls "${dir}/docs/epics")"
+if [[ "${got}" == "later|e.md" && "${out}" == *"epic e: could not write "*"/docs/epics/e.md, so it is still later"*"exit 0" ]]; then
+  echo "ok   conduct on a later epic it cannot write leaves it later, says so, and exits 0"; else
+  echo "FAIL conduct on a later epic it cannot write: got '${got}': ${out}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
