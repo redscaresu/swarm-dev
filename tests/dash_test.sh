@@ -837,6 +837,13 @@ done
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
 check "lead = session: an escalated story reset once offers only drop" \
   has "! decide escalated story esc: swarm.sh drop esc" "$(joined "$(lbox "lead's queue" "$(ldash 100)")")"
+# A held story (held_for:) can always lift its hold with reset, as next says, even after a reset.
+litem stories/esc-held.md "$(printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**Held (paused).** lift or drop' '<!-- /swarm.sh escalated -->')" \
+  'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
+printf '2026-10-14T10:00:00Z\treset\tesc-held\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
+check "lead = session: a held story offers reset (lift the hold) or drop, though reset before" \
+  has "! decide escalated story esc-held: swarm.sh reset esc-held or swarm.sh drop esc-held" "$(joined "$(lbox "lead's queue" "$(ldash 100)")")"
+rm "${L}/docs/stories/esc-held.md"
 rm "${L}/.claude/swarm/config"
 out="$(ldash 100)"
 check "lead off: no lead's queue" lacks "lead's queue" "${out}"

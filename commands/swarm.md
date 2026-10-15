@@ -124,7 +124,9 @@ Repeat until a step below says stop:
        `swarm.sh close <slug> cleared-on-error`, and start nothing more. The close holds the story
        (`kind: lead` with `held_for: <cause>`), so go back to 1, where `next` names its
        `escalated <slug>` step: lift the hold with `swarm.sh reset <slug> <reason>` to build it
-       again, or drop it, and tell the user what you chose.
+       again, or drop it, and tell the user what you chose. If either close prints `not held:`
+       instead of `held:`, the story stays `ready` with nothing on it to say so, and `next` will
+       name it again: do not start it again until you have decided.
      - None of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry
        whose reason is not the stop-after clause): `swarm.sh close <slug> stalled`, which counts the
        attempt so `escalate_after` bounds the retries, then start it again.

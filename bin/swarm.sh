@@ -1910,6 +1910,8 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
   Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
   the lead, who decides whether to build it again. The close holds the story for the lead
   (\`kind: lead\`, \`held_for: cleared-on-error\`), so no wave builds it until the lead lifts the hold.
+  If either close prints no \`held:\` line (it prints \`not held:\` instead), the story stays \`ready\`
+  with nothing on it to say so: do not start it again in a later wave. It waits for the lead.
 - none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose
   reason is not the stop-after clause): run \`swarm.sh close <slug> stalled\`, which counts the
   attempt so escalate_after bounds the retries, and start the story again in a later wave.
@@ -3104,7 +3106,7 @@ dash_reexec() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading) and who
-# its step waits on, tab-separated, in one fork. The last is `escalated` for an escalated story
+# its step waits on, tab-separated, in one fork. The last is `held` for a held story (held_for: too), `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
 # else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
 # names the convention, "has no **You:** step", is no step), else empty. The keys are read from the front matter only (a leading ---, up to the next; CRLF
@@ -3119,9 +3121,10 @@ dash_fields() {
     n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
     n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
     n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
+    n == 1 && !hh && sub(/^held_for: */, "") { hh = 1; h = $0; next }
     n != 1 && /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/ { y = 1 }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? "escalated" : (y ? "you" : "")) }' "$1"
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")) }' "$1"
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -3437,11 +3440,12 @@ for l in lines("DASH_WAITING"):
     else:
         lq.append(bang + [(l, "")])
 # An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
-# leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left.
+# leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left, except for a
+# held story, whose hold reset always lifts (as next says).
 if LEAD:
     queue += [bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
-                      (("" if b[1] in was_reset else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
-              for b in stories if b[2] == "ready" and b[7] == "lead" and b[9] == "escalated"]
+                      (("" if b[1] in was_reset and b[9] != "held" else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
+              for b in stories if b[2] == "ready" and b[7] == "lead" and b[9] in ("escalated", "held")]
 for r in recs:
     if r["state"] == "WAITING":
         why = f" (waiting on {r['why']})" if r.get("why") else ""
@@ -3848,10 +3852,14 @@ close_agent() {
   case "${cause}" in paused|cleared-on-error)
     # Held, its build cleared so it builds again once the hold is lifted, when the close ends a build
     # (counted), or closes the open builder of a ready verify story, whose close never counts. A story
-    # whose PR merged or is merging, or whose PRs gh could not list, is left as it was.
-    [[ ${counted} == 1 || ( -n "${open}" && "$(fm "${f}" kind)" == verify && "$(fm "${f}" status)" == ready ) ]] || return 0
-    clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
-    held_story "$1" "${cause}" "${prs:-[]}" "${counted}"
+    # whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
+    # an agent builds the close says so (not held:).
+    if [[ ${counted} == 1 || ( -n "${open}" && -f "${f}" && "$(fm "${f}" kind)" == verify && "$(fm "${f}" status)" == ready ) ]]; then
+      clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
+      held_story "$1" "${cause}" "${prs:-[]}" "${counted}"
+    elif ! impossible_refused "$1" >/dev/null; then
+      echo "not held: $1 (${cause}) ended no build here (no builder open, a PR merged or merging, or gh could not list its PRs), so its story is as it was: list it for the lead and do not start it again"
+    fi
     return 0 ;;
   esac
   [[ ${counted} == 1 ]] || return 0
@@ -3930,8 +3938,8 @@ impossible_story() {
 # is not the story's one reset (main logs it as reset:held, which reset_at does not read).
 held_story() {
   local why="it paused on its goal" none=""
-  # As in impossible_story: unless <listed> is 1, failed_build listed no PRs (a verify story).
-  [[ "$4" == 1 ]] || none="swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo."
+  # Unless <listed> is 1, failed_build listed no PRs: the story is verify, which has none.
+  [[ "$4" == 1 ]] || none="A verify story has no PRs."
   [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
   lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" "${none}" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for "$2"

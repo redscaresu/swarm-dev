@@ -302,16 +302,20 @@ for c in paused cleared-on-error; do
     "lead|code|1|ready|${c}|0|yes|yes" \
     "$(state "c-${c}")|$(fmv "c-${c}" held_for)|$(grep -c '\*\*You:\*\*' <<< "${b}")|$(grep -qF -- "- Lift the hold: run \`swarm.sh reset c-${c} <reason>\`" <<< "${b}" && echo yes)|$(grep -qF -- "- Or drop it: run \`swarm.sh drop c-${c} <reason>\`" <<< "${b}" && echo yes)"
   item "h-${c}" "status: ready" "kind: code" "attempts: 1"; started "h-${c}"; cp "${P}/docs/stories/h-${c}.md" "${ROOT}/h.md"
-  cs "h-${c}" "${c}" >/dev/null
-  is "close h-${c} ${c} with no builder open leaves the story file unchanged" "same" "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/h-${c}.md" && echo same)"
+  out="$(cs "h-${c}" "${c}")"
+  is "close h-${c} ${c} with no builder open leaves the story file unchanged, and says it is not held" "same|1" \
+    "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/h-${c}.md" && echo same)|$(grep -c "^not held: h-${c} (${c}) .*list it for the lead and do not start it again$" <<< "${out}")"
   item "hg-${c}" "status: ready" "kind: code" "attempts: 1"; started "hg-${c}" w:p77; cp "${P}/docs/stories/hg-${c}.md" "${ROOT}/h.md"
-  touch "${ROOT}/ghfail"; cs "hg-${c}" "${c}" >/dev/null; rm "${ROOT}/ghfail"
-  is "close hg-${c} ${c} with gh failing (a merging PR cannot be ruled out) leaves the story file and its build alone" "same|worktree branch origin" \
-    "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/hg-${c}.md" && echo same)|$(left "hg-${c}")"
+  touch "${ROOT}/ghfail"; out="$(cs "hg-${c}" "${c}")"; rm "${ROOT}/ghfail"
+  is "close hg-${c} ${c} with gh failing (a merging PR cannot be ruled out) leaves the story file and its build alone, and says it is not held" \
+    "same|worktree branch origin|1" "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/hg-${c}.md" && echo same)|$(left "hg-${c}")|$(grep -c "^not held: hg-${c} " <<< "${out}")"
   item "hv-${c}" "status: ready" "kind: verify" "attempts: 1"; started "hv-${c}" w:p76
   cs "hv-${c}" "${c}" >/dev/null
-  is "close hv-${c} ${c} on a verify story, its builder open (no build counts): held all the same, its PRs not listed, its build cleared" \
-    "lead|verify|1|ready|${c}|yes|" "$(state "hv-${c}")|$(fmv "hv-${c}" held_for)|$(unlisted "hv-${c}")|$(left "hv-${c}")"
+  is "close hv-${c} ${c} on a verify story, its builder open (no build counts): held all the same, its block says it has no PRs, its build cleared" \
+    "lead|verify|1|ready|${c}|1|0|" "$(state "hv-${c}")|$(fmv "hv-${c}" held_for)|$(grep -cx 'A verify story has no PRs.' <<< "$(block "hv-${c}")")|$(grep -c 'gh pr list' <<< "$(block "hv-${c}")")|$(left "hv-${c}")"
+  started "conduct-h${c}" w:p79; out="$(cs "conduct-h${c}" "${c}")"
+  is "close conduct-h${c} ${c}, a name with no story file and its pane open: no read error, no held or not held line" "0" \
+    "$(grep -c "No such file\|can't read\|held" <<< "${out}")"
 done
 # Lifting a hold is not the story's one reset: paused, reset, paused again and reset again each
 # succeed with attempts: 1 kept, a failed build then counts from there, and the reset-once rule for
