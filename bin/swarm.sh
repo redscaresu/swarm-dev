@@ -135,7 +135,7 @@ CFG_sign_commits=false  # true: every commit and merge is signed, or the agent s
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
 CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
-CFG_stall_minutes=30    # a builder working this long with no commit, PR update or swarm action is stalled?
+CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
@@ -3322,6 +3322,13 @@ def agent_cols(r):
 def agent_row(r):
     return [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")] + agent_cols(r)
 
+if WIDE:
+    # The left column takes what its widest agent card needs from recent's, down to a third of the
+    # screen, so a card's state age never cuts the escalation time after it.
+    grow = min(max((sum(len(t) for t, _ in agent_row(r)) + 4 for r in shown), default=0) - LW, RW - W // 3)
+    if grow > 0:
+        LW, RW = LW + grow, RW - grow
+
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
 
@@ -3433,11 +3440,10 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     ok = f[4].startswith("ok")
     if f[1] == "log-finding" and ok:
         continue
-    pr = (f[2].split() or [""])[-1]
+    pr = pr_key((f[2].split() or [""])[-1])
     if f[1] == "log-finding:declined" and ok and run and run[1] == pr:
         run[2] += 1
-        m = re.search(r"(\d+)\D*$", pr)
-        events[run[0]] = (f[0], f[3], f"{run[2]} findings declined on #{m.group(1) if m else pr}", "action")
+        events[run[0]] = (f[0], f[3], f"{run[2]} findings declined on #{pr.rsplit('#', 1)[-1]}", "action")
         continue
     run = [len(events), pr, 1] if f[1] == "log-finding:declined" and ok else None
     events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"),

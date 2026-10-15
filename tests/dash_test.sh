@@ -429,8 +429,7 @@ escdash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}
 out="$(COLUMNS=160 escdash)"
 check "at 160 columns the status bar says who is on call" has "on call: fable·xhigh" "$(tail -2 <<< "${out}")"
 check "at 160 columns the status bar counts today's ok escalate builds, not yesterday's or a failed one" has " · 2 escalations today" "$(tail -2 <<< "${out}")"
-# The card's column is narrower than 100 here: its state age leaves the time cut (attempt 3 · 11…).
-check "at 160 columns an escalated builder's card shows its state age and attempt" grep -qE "● x-esc +escalate +fable·xhigh +working 40m  attempt 3 · " <<< "${out}"
+check "at 160 columns an escalated builder's card shows its state age, attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m  attempt 3 · ${esc_at} +│" <<< "${out}"
 out="$(COLUMNS=100 escdash)"
 check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 3p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
 check "at 100 columns an escalated builder's row shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m +attempt 3 · ${esc_at} +│" <<< "${out}"
@@ -483,12 +482,18 @@ rm "${P}/.claude/swarm/config"
   for i in 1 2 3; do printf '%s\tlog-finding:declined\tkind-x https://github.com/o/r/pull/133\tw1:p1\tok\n' "$(ago $((20 - i)))"; done
   printf '%s\tlog-finding:declined\tkind-y https://github.com/o/r/pull/134\tw1:p1\tok\n' "$(ago 16)"
   printf '%s\tlog-finding:declined\tkind-x https://github.com/o/r/pull/133\tw1:p1\tfailed (exit 1)\n' "$(ago 15)"
+  # One PR written three ways: one run, numbered from the PR, never from a commit or path after it.
+  printf '%s\ttell\tt-split2\tw1:p1\tok\n' "$(ago 14)"
+  for t in o/r#136 https://github.com/o/r/pull/136/files https://github.com/o/r/pull/136/commits/abc123; do
+    printf '%s\tlog-finding:declined\tkind-w %s\tw1:p1\tok\n' "$(ago 13)" "${t}"
+  done
 } >> "${P}/.swarm/events.tsv"
 (cd "${P}" && env -u HERDR_PANE_ID bash "${SWARM}" log-finding kind-z https://github.com/o/r/pull/135 "the fixed one" >/dev/null)
 recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "$(COLUMNS=100 agedash)")"
 check "eight consecutive declined findings on one PR are one recent row" test "$(grep -c '· 8 findings declined on #133 ' <<< "${recent}")" -eq 1
 check "a tell between two runs of declined findings splits them" has "· 3 findings declined on #133 " "${recent}"
 check "a declined run is one row: no single declined line on #133 is left" lacks "log-finding:declined kind-x https://github.com/o/r/pull/133 " "${recent}"
+check "a PR's URL, its subpaths and owner/repo#N fold into one declined run" has "· 3 findings declined on #136 " "${recent}"
 check "a lone declined finding reads as before" has "· log-finding:declined kind-y https://github.com/o/r/pull/134 " "${recent}"
 check "a failed log-finding line stays its own ✗ row" has "✗ log-finding:declined kind-x https://github.com/o/r/pull/133: fail" "${recent}"
 check "a fix logged through log-finding shows once in recent" test "$(grep -c 'the fixed one' <<< "${recent}")" -eq 1
