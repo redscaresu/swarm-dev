@@ -3,9 +3,12 @@
 # deleted (its slug longer than the 32 characters agents.tsv keeps), built twice, with findings fixed (old
 # four-field rows and new ones) and one declined, which is not counted; a docs story still on
 # the board; a conductor and a codex agent (not builders, left out). gh is a stub on PATH. Then the same
-# builds read from close's copies of their session logs once Claude Code deleted them. Last, each build
-# of a retried story gets its own PR: the last of the slug's PRs its own session log names.
+# builds read from close's copies of their session logs once Claude Code deleted them. Then each build
+# of a retried story gets its own PR: the last of the slug's PRs its own session log names. Last, each
+# build gets its own start, tokens by type, tells, closes and escalation steps. TZ is UTC, so a build
+# with no session log starts at a known time, except where a check sets another zone.
 set -euo pipefail
+export TZ=UTC
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -19,16 +22,17 @@ printf -- '---\nkind: docs\nstatus: ready\n---\n' > "${P}/docs/stories/docs-stor
 git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm stories
 git -C "${P}" rm -q "docs/stories/${LONG}.md" && git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm merged
 
-session() { # <session id> <slug> <model> <input> <output> [pull URL...] — a session log: its worktree cwd,
-  # one message, then a tool result naming each URL (as gh pr create prints it)
-  local u
-  printf '{"type":"user","cwd":"%s/repo-wt/%s"}\n' "${dir}" "$2"
+session() { # <session id> <slug> <model> <input> <output> [pull URL...] — a session log: its worktree cwd
+  # (timestamped TS when that is set), one message, then a tool result naming each URL (as gh pr create prints it)
+  local u ts=""
+  [[ -z "${TS:-}" ]] || ts=",\"timestamp\":\"${TS}\""
+  printf '{"type":"user","cwd":"%s/repo-wt/%s"%s}\n' "${dir}" "$2" "${ts}"
   printf '{"cwd":"%s/repo-wt/%s","message":{"id":"m-%s","model":"%s","usage":{"input_tokens":%s,"output_tokens":%s}}}\n' "${dir}" "$2" "$1" "$3" "$4" "$5"
   for u in "${@:6}"; do printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"%s\\n"}]}}\n' "${u}"; done
 }
-session s1 "${LONG}" claude-opus-5-5 1000000 0 https://github.com/o/r/pull/7 > "${dir}/projects/p/s1.jsonl"
-session s2 docs-story claude-sonnet-5-5 0 1000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"
-session s3 "${LONG}" claude-fable-5-1 1000000 0 https://github.com/o/r/pull/7 > "${dir}/projects/p/s3.jsonl"
+TS=2026-10-01T09:00:00.123Z session s1 "${LONG}" claude-opus-5-5 1000000 0 https://github.com/o/r/pull/7 > "${dir}/projects/p/s1.jsonl"
+TS=2026-10-02T08:00:00Z session s2 docs-story claude-sonnet-5-5 0 1000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"
+TS=2026-10-04T09:00:00Z session s3 "${LONG}" claude-fable-5-1 1000000 0 https://github.com/o/r/pull/7 > "${dir}/projects/p/s3.jsonl"
 printf '%s\n' \
   $'2026-10-01\tcode-risky\t'"${CUT}"$'\tclaude\topus\txhigh\ts1' \
   $'2026-10-01\tconduct\tconduct-e\tclaude\topus\thigh\ts9' \
@@ -37,7 +41,8 @@ printf '%s\n' \
   $'2026-10-04\tescalate\t'"${CUT}"$'\tclaude\tfable\txhigh\ts3' > "${P}/.swarm/agents.tsv"
 # A tell is logged as tell:<kind>; a bare tell is from a log written before kinds, and counts as
 # findings. A refused tell (its outcome is not ok) never reached the builder and is not counted. A
-# close is counted whatever its cause (close:<cause>).
+# close is counted whatever its cause (close:<cause>). Every line here is the first build's: the
+# escalate build started after them.
 printf '%s\n' \
   $'2026-10-01T10:00:00Z\ttell\t'"${LONG}"$'\tw:1\tok' \
   $'2026-10-01T11:00:00Z\ttell:findings\t'"${LONG}"$'\tw:1\tok' \
@@ -68,12 +73,15 @@ fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
+# The first 17 columns, as they were before the rest were appended.
 HEAD=$'date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts'
+HEAD+=$'\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at'
+E6=$'\t\t\t\t\t\t'   # six empty columns, each after its tab: the escalation steps
 # opus 1M input = $4; sonnet 1M output = $10; fable 1M input = $10.
-R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1"
-R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1"
-R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	2"
-check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells by kind (bare as findings, refused left out), closes (close:stalled among them), findings, attempts" \
+R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}"
+R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}"
+R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	2	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}"
+check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells by kind (bare as findings, refused left out), closes (close:stalled among them), findings, attempts, start to the second, tokens by type" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
 check "--since leaves earlier rows out, and attempts still count them" \
   "$(outcomes "${dir}/bin" --since 2026-10-03)" "$(printf '%s\n' "${HEAD}" "${R3}")"
@@ -90,26 +98,28 @@ run() { (cd "${P}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" bas
 snap() { (cd "${P}/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
 run _archive "${CUT}"; run _archive docs-story
 check "the live log is a sign of life" "$(run _mtime docs-story | grep -c '^[0-9][0-9]*$')" 1
-session s2 docs-story claude-sonnet-5-5 0 2000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"
-live() { awk -F'\t' -v OFS='\t' '{ $8 = "20.00"; $9 = 2000000 } 1' <<< "$1"; }
+TS=2026-10-02T08:00:00Z session s2 docs-story claude-sonnet-5-5 0 2000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"
+live() { awk -F'\t' -v OFS='\t' '{ $8 = "20.00"; $9 = 2000000; $22 = 2000000 } 1' <<< "$1"; }
 check "with both the live log and close's copy, the live log wins" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(live "${R2}")" "${R3}")"
 rm "${dir}/projects/p/s2.jsonl" "${dir}/projects/p/s3.jsonl"
 before="$(snap)"
-check "with only close's copy: the same long slug, tokens and cost as the live log" \
+check "with only close's copy: the same long slug, started, tokens by type and cost as the live log" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
 check "close's copy is no sign of life for the stall rule" "$(run _mtime docs-story)" ""
 check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${P}/.swarm/sessions/"*
-# With neither, cost and tokens are empty and the slug is agents.tsv's cut name, whose story is unknown.
-R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	1	0			1"
+# With neither, cost, tokens and started are empty and the slug is agents.tsv's cut name, whose story
+# is unknown. The close sent to that name is still the first build's, which started before it.
+R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}"
+nolog() { awk -F'\t' -v OFS='\t' '{ $8 = $9 = $18 = $19 = $20 = $21 = $22 = "" } 1' <<< "$1"; }
 check "with neither, the cells are empty, a slug with one PR keeps it, and nothing fails" \
-  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(awk -F'\t' -v OFS='\t' '{ $8 = ""; $9 = "" } 1' <<< "${R2}")" "${R3N}")"
+  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nolog "${R2}")" "${R3N}")"
 # A damaged copy (not gzip at all for s2, cut short for s3) reads as what it held before the damage:
 # nothing here, so no usage and no cwd; every other row is intact.
 echo 'not gzip' > "${P}/.swarm/sessions/2026-10-01-docs-story-s2.jsonl.gz"
 session s3 "${LONG}" claude-fable-5-1 1000000 0 | gzip -c | head -c 20 > "${P}/.swarm/sessions/2026-10-01-${CUT}-s3.jsonl.gz"
-zero() { awk -F'\t' -v OFS='\t' '{ $8 = "0.00"; $9 = 0 } 1' <<< "$1"; }
+zero() { awk -F'\t' -v OFS='\t' '{ $8 = "0.00"; $9 = $19 = $20 = $21 = $22 = 0; $18 = "" } 1' <<< "$1"; }
 check "a damaged copy stops neither the report nor the other rows" \
   "$(outcomes "${dir}/bin" 2>&1; echo "exit $?")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(zero "${R2}")" "$(zero "${R3N}")" "exit 0")"
 
@@ -167,6 +177,78 @@ check "with pr_per = epic, every build of an epic story gets the epic's PR, and 
     "in-epic	opus	${U}/10	OPEN	1" "in-epic	fable	${U}/10	OPEN	2")"
 printf '%s\t%s\n' "${U}/10" MERGED > "${dir}/prs/epic_e1"
 check "and MERGED once the epic's PR merges" "$(two | grep in-epic | cut -f4 | paste -sd' ' -)" "MERGED MERGED"
+
+# --- Each build's own start, tokens by type, tells, closes and escalation steps, in a third project.
+# A retried story; a story whose second build has no session log; a story built twice as code, then
+# escalated twice: a reset ends the first cycle, whose dialog is answered late (nearer the second
+# build's start than the first's), and a drop the second. Before the first, an escalate build whose
+# brief was never taken up (no log, no escalate line) takes no cycle. Last, a story escalated twice whose
+# first build's log is gone keeps its cycle: the second build's log started nearer the first escalate
+# than midnight does, but nearer still to its own. A reset's or drop's reason never shows.
+A="${dir}/three"; mkdir -p "${A}/.swarm" "${dir}/projects/a"; git -C "${A}" init -q
+as() { # <session id> <slug> <first timestamp> — a session log: one input, cache write, cache read and output count each
+  printf '{"type":"user","cwd":"%s/repo-wt/%s","timestamp":"%s"}\n' "${dir}" "$2" "$3"
+  printf '{"timestamp":"2026-10-09T00:00:00Z","message":{"id":"m-%s","model":"claude-opus-5-5","usage":{"input_tokens":1,"cache_creation_input_tokens":20,"cache_read_input_tokens":300,"output_tokens":4000}}}\n' "$1"
+}
+as ta1 retried 2026-10-01T10:00:00Z > "${dir}/projects/a/ta1.jsonl"; as ta2 retried 2026-10-01T14:00:00Z > "${dir}/projects/a/ta2.jsonl"
+as tn1 nolog 2026-10-01T10:00:00Z > "${dir}/projects/a/tn1.jsonl"
+as tc1 esc 2026-10-02T01:00:00Z > "${dir}/projects/a/tc1.jsonl"; as tc2 esc 2026-10-02T03:00:00Z > "${dir}/projects/a/tc2.jsonl"
+as te1 esc 2026-10-02T10:00:00Z > "${dir}/projects/a/te1.jsonl"; as te2 esc 2026-10-02T20:00:00Z > "${dir}/projects/a/te2.jsonl"
+as tl2 lost 2026-10-04T14:00:00Z > "${dir}/projects/a/tl2.jsonl"
+printf '%s\n' \
+  $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tta1' $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tta2' \
+  $'2026-10-01\tcode\tnolog\tclaude\topus\thigh\ttn1' \
+  $'2026-10-02\tcode\tesc\tclaude\topus\thigh\ttc1' $'2026-10-02\tcode\tesc\tclaude\topus\thigh\ttc2' \
+  $'2026-10-02\tescalate\tesc\tclaude\tfable\txhigh\tte0' \
+  $'2026-10-02\tescalate\tesc\tclaude\tfable\txhigh\tte1' $'2026-10-02\tescalate\tesc\tclaude\tfable\txhigh\tte2' \
+  $'2026-10-03\tcode\tnolog\tclaude\topus\thigh\ttn9' \
+  $'2026-10-04\tescalate\tlost\tclaude\tfable\txhigh\ttl1' $'2026-10-04\tescalate\tlost\tclaude\tfable\txhigh\ttl2' > "${A}/.swarm/agents.tsv"
+# A failed drop (not ok) neither ends the first cycle nor fills drop_at. The 03:00Z nudge is before
+# the log-less build's day starts in a zone five hours behind UTC.
+printf '%s\n' \
+  $'2026-10-01T11:00:00Z\ttell:findings\tretried\tw:1\tok' \
+  $'2026-10-01T12:00:00Z\tclose:stalled\tretried\tw:1\tok' \
+  $'2026-10-01T15:00:00Z\ttell:findings\tretried\tw:1\tok' \
+  $'2026-10-02T09:59:00Z\tescalate\tesc\tw:1\tok (attempt 3)' \
+  $'2026-10-02T10:01:00Z\tdialog\tesc\tw:1\tok (dismissed)' \
+  $'2026-10-02T12:00:00Z\tescalated\tesc\tw:1\tok (attempts 3, 2 PRs)' \
+  $'2026-10-02T17:00:00Z\tdrop\tesc\tw:1\tfailed (exit 1)' \
+  $'2026-10-02T18:00:00Z\tdialog\tesc\tw:1\tok (accepted)' \
+  $'2026-10-02T18:30:00Z\treset\tesc\tw:1\tok (SENTINEL-REASON)' \
+  $'2026-10-02T19:59:00Z\tescalate\tesc\tw:1\tok (attempt 3)' \
+  $'2026-10-02T20:01:00Z\tdialog\tesc\tw:1\tok (anything else)' \
+  $'2026-10-02T21:00:00Z\tescalated\tesc\tw:1\tok (attempts 3, 2 PRs)' \
+  $'2026-10-02T22:00:00Z\tdrop\tesc\tw:1\tok (SENTINEL-REASON)' \
+  $'2026-10-03T03:00:00Z\ttell:nudge\tnolog\tw:1\tok' \
+  $'2026-10-03T09:00:00Z\ttell:findings\tnolog\tw:1\tok' \
+  $'2026-10-04T10:00:00Z\tescalate\tlost\tw:1\tok (attempt 2)' \
+  $'2026-10-04T11:00:00Z\tescalated\tlost\tw:1\tok (attempts 2, 1 PRs)' \
+  $'2026-10-04T12:00:00Z\treset\tlost\tw:1\tok (SENTINEL-REASON)' \
+  $'2026-10-04T13:59:30Z\tescalate\tlost\tw:1\tok (attempt 2)' \
+  $'2026-10-04T15:00:00Z\tescalated\tlost\tw:1\tok (attempts 2, 1 PRs)' > "${A}/.swarm/events.tsv"
+three() { (cd "${A}" && env -u HERDR_ENV CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/nobin:${PATH}" bash "${SWARM}" outcomes); }
+out="$(three)"
+check "a retried slug's tells, closes and close cause count per build, not per slug" \
+  "$(awk -F'\t' '$2 == "retried"' <<< "${out}" | cut -f10,13,23)" "$(printf '%s\n' $'1\t1\tstalled' $'1\t0\t')"
+check "started is each session's first timestamp, and empty with no log" \
+  "$(tail -n +2 <<< "${out}" | cut -f2,18 | paste -sd' ' -)" \
+  "$(printf '%s\n' "retried	2026-10-01T10:00:00Z" "retried	2026-10-01T14:00:00Z" "nolog	2026-10-01T10:00:00Z" \
+    "esc	2026-10-02T01:00:00Z" "esc	2026-10-02T03:00:00Z" "esc	" "esc	2026-10-02T10:00:00Z" "esc	2026-10-02T20:00:00Z" "nolog	" "lost	" "lost	2026-10-04T14:00:00Z" | paste -sd' ' -)"
+check "the four tokens columns are the log's per-type usage and sum to tokens" \
+  "$(awk -F'\t' 'NR > 1 && $18 != ""' <<< "${out}" | cut -f9,19-22 | sort -u)" $'4321\t1\t20\t300\t4000'
+check "a build with no log takes the tells logged from 00:00 UTC on its day" \
+  "$(awk -F'\t' '$2 == "nolog"' <<< "${out}" | cut -f10,11 | paste -sd' ' -)" $'0\t0 1\t1'
+check "and from 00:00 local time, in a zone five hours behind UTC" \
+  "$(TZ=EST5 three | awk -F'\t' '$2 == "nolog"' | cut -f10,11 | paste -sd' ' -)" $'0\t1 1\t0'
+check "escalation steps go to the escalate build whose cycle was open, by event order; a build that never took up its brief takes none, and one whose log is gone keeps its own; the last dialog of a cycle counts, and an answer other than accepted or dismissed is empty" \
+  "$(tail -n +2 <<< "${out}" | cut -f2,5,24-29)" "$(printf '%s\n' "retried	code${E6}" "retried	code${E6}" "nolog	code${E6}" \
+    "esc	code${E6}" "esc	code${E6}" "esc	escalate${E6}" \
+    "esc	escalate	2026-10-02T09:59:00Z	2026-10-02T18:00:00Z	accepted	2026-10-02T12:00:00Z	2026-10-02T18:30:00Z	" \
+    "esc	escalate	2026-10-02T19:59:00Z	2026-10-02T20:01:00Z		2026-10-02T21:00:00Z		2026-10-02T22:00:00Z" \
+    "nolog	code${E6}" \
+    "lost	escalate	2026-10-04T10:00:00Z			2026-10-04T11:00:00Z	2026-10-04T12:00:00Z	" \
+    "lost	escalate	2026-10-04T13:59:30Z			2026-10-04T15:00:00Z		")"
+check "a reset's or drop's reason is nowhere in the report" "$(grep -c SENTINEL-REASON <<< "${out}" || true)" 0
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -79,7 +79,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life and how long each running codex review has run. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
 | `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date. |
-| `swarm.sh outcomes` | One row per build: model, cost, review rounds, and whether it merged. |
+| `swarm.sh outcomes` | One row per build: model, cost, review rounds, whether it merged, when it started, and its escalation steps. |
 
 Settings such as `merge = agent` go in `.claude/swarm/config`
 ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
