@@ -129,6 +129,7 @@ prints every setting and where it came from.
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main` |
 | `finished` | `delete` | `mark` keeps a finished item on the board as `status: done` |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
+| `merge_admin` | `false` | `true`: `swarm.sh merge` passes `--admin`, which bypasses every rule on the base branch: required reviews and the rest as well as required status checks. `merge` re-checks only the status checks (each one the base's rulesets or branch protection require must have passed on the head), and nothing checks the other rules, so this ships off |
 | `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
 | `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
 | `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
@@ -386,7 +387,11 @@ skips `tell:nudge`, since it is a nudge too, and any tell that ended other than 
 reached the builder. A `close` with a cause is logged the same way, as `close:<cause>`, and one with
 no cause as plain `close`. A close with an unknown cause is refused and logged as plain `close`,
 and the word that was given never reaches the log. `reconcile` and `unblock` write a line
-per item they move. A `story` that starts an `escalate` build, and the `close` that hands its story to
+per item they move. `merge` writes all its own lines, under the story's or epic's slug (the PR URL
+with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
+else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
+(<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
+or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command.
@@ -539,7 +544,36 @@ blocked story once every slug in both its `blocked_by` and its `depends_on` is f
 It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
 and `swarm.sh reconcile`, which pull the board the way they do for you, putting back a retry's
 `attempts:` first, and finish the story, closing its builder. The conductor never closes the builder
-before that, because closing a story that is still `ready` counts a failed build:
+before that, because closing a story that is still `ready` counts a failed build. The lead merges
+with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
+`merge = human` too.
+
+`swarm.sh merge [--board] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
+unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
+lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
+board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
+under the board instead. The head must be green: at least one check run, every run
+completed as success, skipped or neutral, and every commit status a success. It reads every page,
+and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
+when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
+after the check stops the merge. It never passes `--auto`, and passes `--admin` only with
+`merge_admin = true`, after checking that every status check the base's rulesets or branch
+protection require passed on the head, from the app it names when it names one. `--admin` also
+bypasses required reviews and every other rule on the base, which nothing checks.
+
+It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
+merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
+unconfirmed, for you to check by hand: it may well have merged. Only a failed `gh pr merge` on a PR
+that still reads open or closed is a refusal. Then it waits up to 30 minutes for CI on the merge
+commit, so run it in the background: each workflow whose `on: push` filters cover the base and the
+files the PR changes must have a run on that commit, and every run and check there must pass. The
+commit needs no check run of its own when no workflow is expected on it, but then it waits a minute
+before calling main green, for checks other apps post just after the push. A failed read is a
+missed poll, and three in a row end the wait as an error. Without
+`--board` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
+exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
+from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
+pane it cannot identify is refused.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.

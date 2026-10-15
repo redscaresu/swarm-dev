@@ -465,8 +465,9 @@ check "with escalate_after = 0, the conductor stops retrying a story that failed
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
 # shellcheck disable=SC2016 # the backticks are the Markdown's
 oneoff="$(sed -n '/`story <slug>`: a one-off/,/`plan-epic <epic>`/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
-check "/swarm-dev:swarm's one-off merge = agent step waits for the merge, then reviews and reconciles" "yes|yes|yes" \
-  "$(has "wait until the PR has merged" "${oneoff}")|$(has "\`swarm.sh review <slug> <PR URL>\` and \`swarm.sh reconcile\`" "${oneoff}")|$(has "never a plain \`git pull\`" "${oneoff}")"
+oneoff_flat="$(tr -s '[:space:]' ' ' <<< "${oneoff}")"
+check "/swarm-dev:swarm's one-off merge = agent step reviews, then merges the reviewed head with swarm.sh merge, in the background, which reconciles" "yes|yes|yes|yes" \
+  "$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare \`gh pr merge\`" "${oneoff_flat}")|$(has "Run it in the background (Bash \`run_in_background\`) and wait for it" "${oneoff_flat}")|$(has "runs \`swarm.sh reconcile\`" "${oneoff_flat}")|$(has "a red or timed-out CI on the base means the PR merged" "${oneoff_flat}")"
 check "/swarm-dev:swarm's one-off step gives up with close, sends an escalated story to its step, and answers only Fable's consent" "yes|yes|yes|yes|yes|yes" \
   "$(has "run \`swarm.sh close <slug>\`, which, on a code, docs or chore story still \`ready\`," "${oneoff}")|$(has "go back to 1, where \`next\` names its \`escalated <slug>\` step" "${oneoff}")|$(has "\`waiting: dialog open\` for an escalate build" "${oneoff}")|$(has "only if it shows that consent" "${oneoff}")|$(has "\`swarm.sh dialog <slug> accepted\`" "${oneoff}")|$(has "every permission or tool prompt, is the user's: never send keys to it" "${oneoff}")"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
