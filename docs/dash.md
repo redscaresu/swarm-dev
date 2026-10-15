@@ -20,9 +20,12 @@ is one column, top to bottom:
 
 - **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm-dev:swarm` does next, and the
   time of the last refresh. Under it, one summary line: epics active, agents working, PRs green and
-  waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today); then a
+  waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today). After
+  it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
+  call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
+  today` too), on the same line when they fit there and on the next line when they don't. Then a
   warning when the main checkout has board edits not committed yet. From 140 columns the merge
-  mode and the summary move to the status bar.
+  mode, the summary and who is on call move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled builder (working for `stall_minutes`, 30
@@ -45,15 +48,17 @@ is one column, top to bottom:
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent shows how long ago it started (its `story`, `conduct` or `agent` line in
-  `events.tsv`). Idle and
+  `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it
+  started, from its newest `escalate` line (`attempt 3 · 14:02`). Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. Active
   epics with no open story share one line. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
   days, `today`, `yesterday`, `3d ago`): merges on the base branch (⇡), review findings
-  fixed (✎, one row per PR and day), agents, conductors and builders started (▶), and the swarm's
-  other actions (·); a failed one is ✗. It fills the rest of the screen. From 140 columns it is
+  fixed (✎, one row per PR and day), agents, conductors and builders started (▶), escalation
+  steps (▲: `escalate`, `dialog`, `escalated`, `reset` and `drop`), and the swarm's other actions
+  (·); a failed one is ✗. It fills the rest of the screen. From 140 columns it is
   the right column, and its time column is the clock instead (`14:05` today, `10-03` before then;
   a finding dated today reads `today`).
 - **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on,
@@ -65,8 +70,8 @@ is one column, top to bottom:
 - **Legend**: one status vocabulary throughout: ● working, ○ ready, ◐ review or CI running, ✓ done
   or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown, or whose login expired), and ?
   for a herdr state dash does not know (with herdr's word for it).
-- **Status bar**, from 140 columns, on the last line: the merge mode, the summary's counts, today's
-  cost and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
+- **Status bar**, from 140 columns, on the last lines: the merge mode, the summary's counts, today's
+  cost, who is on call and today's escalations, and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
 
 It fits the terminal: it truncates with … rather than wraps, except that a needs-you action wraps
 onto an indented line so it is never cut. Under 100 columns it drops the role, model and actor
@@ -80,6 +85,7 @@ still shows the board and says the agents are unavailable. At 100 columns, from 
 ```text
 infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:48:02
 9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $427.69 today
+on call: fable·xhigh · 0 escalations today
 board: 2 uncommitted edits in the main checkout (reconcile pulls first)
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! merge fakeaws#71 (✓ green)  fakeaws-subnet-overlap-refused                                     │
