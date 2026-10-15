@@ -755,6 +755,10 @@ litem() { # <path under docs> <body> <front-matter line>...
 mkdir -p "${L}/docs/stories"; touch "${L}/docs/stories/README.md"
 litem stories/you-ask.md 'After the release merges. **You:** create the read-only user' 'status: ready' 'kind: lead'
 litem stories/no-you.md 'The lead runs the migration.' 'status: ready' 'kind: lead'
+# Prose that names the convention is no step: this story is the lead's.
+litem stories/talks.md 'The lead does it all, so there is no **You:** step.' 'status: ready' 'kind: lead'
+# A kind waiting_on_user lists that dash's rows do not parse: a verbatim line.
+litem stories/v-odd.md '' 'status: ready' 'kind: by hand'
 litem stories/esc.md "$(printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' 'Failed on Fable: re-scope or drop.' '<!-- /swarm.sh escalated -->')" \
   'status: ready' 'kind: lead' 'escalated_from: code'
 # An impossible story (#144's block) is the lead's too, even with a **You:** line in its body.
@@ -763,6 +767,7 @@ litem stories/esc-imp.md "$(printf '%s\n' '**You:** a step from before it escala
 litem stories/m-green.md '' 'status: review' 'prs: https://github.com/o/l/pull/1'
 litem stories/m-fail.md '' 'status: review' 'prs: https://github.com/o/l/pull/2'
 litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
+litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
 litem hld/2026-10-01-d.md '' 'status: draft'
 printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
@@ -779,12 +784,13 @@ case "$1 $2" in
   *) exit 1 ;;
 esac
 STUB
-# gh: PR 1 is green, PR 2 failing, and PR 3 gh cannot read (unknown).
+# gh: PR 1 is green, PR 2 failing, PR 3 gh cannot read (unknown), and PR 4's CI is running.
 cat > "${ROOT}/lbin/gh" <<'STUB'
 #!/bin/sh
 case "$1 $2 $3" in
   "pr view https://github.com/o/l/pull/1") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   "pr view https://github.com/o/l/pull/2") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
+  "pr view https://github.com/o/l/pull/4") echo '{"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -805,7 +811,8 @@ print("\n".join(out))' "$1" <<< "$2"
 }
 joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
 YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft HLD 2026-10-01-d: /hld 2026-10-01-d")
-LEADS=("! merge l#1 (✓ green) m-green" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! run lead story no-you"
+LEADS=("! merge l#1 (✓ green) m-green" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+  "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
   "! look at l-gone: session ended" "! look at l-stall: working 1")
 echo "lead = session" > "${L}/.claude/swarm/config"
@@ -824,6 +831,7 @@ for cols in 100 160; do
     check "lead = session at ${cols} columns: the lead's queue holds '${want}'" has "${want}" "$(joined "${queue}")"
     check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
   done
+  check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"
 done
 # Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
@@ -832,6 +840,7 @@ check "lead = session: an escalated story reset once offers only drop" \
 rm "${L}/.claude/swarm/config"
 out="$(ldash 100)"
 check "lead off: no lead's queue" lacks "lead's queue" "${out}"
+check "lead off: the legend says ! is needs you" has "! needs you (session gone or unknown)" "${out}"
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 

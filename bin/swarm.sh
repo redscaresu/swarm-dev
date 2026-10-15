@@ -3024,8 +3024,8 @@ dash_reexec() {
 # dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading) and who
 # its step waits on, tab-separated, in one fork. The last is `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
-# else `you` for a **You:** step anywhere in the body (stories write it mid-paragraph too), else
-# empty. The keys are read from the front matter only (a leading ---, up to the next; CRLF
+# else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
+# names the convention, "has no **You:** step", is no step), else empty. The keys are read from the front matter only (a leading ---, up to the next; CRLF
 # tolerated), by fm's rule: a key's first line wins, an empty value too. dash_finished's front()
 # reads them the same way.
 dash_fields() {
@@ -3037,7 +3037,7 @@ dash_fields() {
     n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
     n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
     n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
-    n != 1 && index($0, "**You:**") { y = 1 }
+    n != 1 && /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/ { y = 1 }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
     END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? "escalated" : (y ? "you" : "")) }' "$1"
 }
@@ -3233,8 +3233,10 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
         started[f[2]] = t
 # Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
 ESCALATION = ("escalate", "dialog", "escalated", "reset", "drop")
-escalations, escalated_at = 0, {}
+escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
 for f in read_tsv(E["DASH_EVENTS"], 5):
+    if f[1] == "reset" and f[4].startswith("ok"):
+        was_reset.add(f[2])
     t = epoch(f[0]) if f[1] == "escalate" else None
     m = re.match(r"ok \(attempt (\d+)\)", f[4])
     if t is None or not f[4].startswith("ok"):
@@ -3353,11 +3355,11 @@ for l in lines("DASH_WAITING"):
     else:
         lq.append(bang + [(l, "")])
 # An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
-# leaves it out, so only the lead's queue shows it. Once reset (reset_at's ok line), drop is all that is left.
-was_reset = {f[2] for f in read_tsv(E["DASH_EVENTS"], 5) if f[1] == "reset" and f[4].startswith("ok")}
-queue += [bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
-                  (("" if b[1] in was_reset else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
-          for b in stories if LEAD and b[2] == "ready" and b[7] == "lead" and b[9] == "escalated"]
+# leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left.
+if LEAD:
+    queue += [bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
+                      (("" if b[1] in was_reset else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
+              for b in stories if b[2] == "ready" and b[7] == "lead" and b[9] == "escalated"]
 for r in recs:
     if r["state"] == "WAITING":
         why = f" (waiting on {r['why']})" if r.get("why") else ""
@@ -3644,7 +3646,8 @@ if blocked or later:
 # The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
 KEYWORDS = "q quit · t tree · l ladder · r redraw"
 legend, cur = [], ""
-for item in LEGEND + ([KEYWORDS] if KEYS and not WIDE else []):
+# With lead = session most ! rows are the lead's queue, so the legend says so.
+for item in [l.replace("! needs you", "! needs you or the lead") if LEAD else l for l in LEGEND] + ([KEYWORDS] if KEYS and not WIDE else []):
     if cur and len(cur) + 3 + len(item) > W:
         legend.append(cur); cur = item
     else:
