@@ -695,6 +695,10 @@ CLAUDE_PROJECTS="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/pr
 # `cost` can attribute every token to a role. Beside state/, not in it: state/ holds tab records.
 AGENTS_LOG="${PROJECT_DIR}/.swarm/agents.tsv"
 
+# SESSIONS_DIR: archive_session's gzip copies of closed agents' session logs, which cost and outcomes
+# read once Claude Code has deleted the original.
+SESSIONS_DIR="${PROJECT_DIR}/.swarm/sessions"
+
 # session_for_pane <pane> — the Claude session id herdr reports for the agent in <pane>, or nothing.
 session_for_pane() {
   herdr agent list 2>/dev/null | json "next(((a.get('agent_session') or {}).get('value','') for a in d['result']['agents'] if a.get('pane_id')=='$1'),'')" 2>/dev/null || true
@@ -787,13 +791,16 @@ record_finding() {
 
 # REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
-#   session_log(projects, session) is a session's .jsonl under Claude Code's projects dir, or "".
+#   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,
+#   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
+#   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
+#   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
 #   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome); a row
 #   from before the outcome column is "fixed". fixed_rows(path) is the fixed ones' first four fields.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
-import glob, json, os, re
+import glob, gzip, json, os, re, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -802,9 +809,21 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
-def session_log(projects, session):
-    paths = glob.glob(os.path.join(projects, "*", session + ".jsonl")) if session not in ("", "-") else []
+def session_log(projects, session, archive=""):
+    if session in ("", "-"):
+        return ""
+    # Escaped, so a project or config dir named with [, ], * or ? is a path, not a pattern.
+    paths = glob.glob(os.path.join(glob.escape(projects), "*", glob.escape(session) + ".jsonl"))
+    if not paths and archive:
+        paths = glob.glob(os.path.join(glob.escape(archive), f"*-{glob.escape(session)}.jsonl.gz"))
     return paths[0] if paths else ""
+
+def log_lines(path):
+    try:
+        with gzip.open(path, "rt", errors="ignore") if path.endswith(".gz") else open(path, errors="ignore") as f:
+            yield from f
+    except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
+        return
 
 def finding_rows(path):
     if not os.path.exists(path):
@@ -817,7 +836,7 @@ def fixed_rows(path):
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
-    for line in open(path, errors="ignore"):
+    for line in log_lines(path):
         try:
             m = json.loads(line).get("message") or {}
         except (ValueError, AttributeError):
@@ -942,15 +961,17 @@ PY
 
 # cost [since] — tokens and estimated cost per role, for every agent this project's swarm started
 # (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
-# session logs, deduplicated by message id; codex agents are listed but not priced (not logged here).
+# session logs (or close's copy, once Claude Code deleted one), deduplicated by message id; codex
+# agents are listed but not priced (not logged here).
 cost_report() {
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" <<'PY'
+  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${1:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
+    "${SESSIONS_DIR}" <<'PY'
 import os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, since, lead, projects = sys.argv[1:5]
+log, since, lead, projects, archive = sys.argv[1:6]
 agents = []
 if os.path.exists(log):
     for line in open(log):
@@ -963,7 +984,7 @@ rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    path = session_log(projects, a["session"])
+    path = session_log(projects, a["session"], archive)
     if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
@@ -988,7 +1009,8 @@ PY
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
-# agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part).
+# agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
+# read from close's copy of the session log once Claude Code deleted it.
 outcomes_report() {
   local since="" rows meta="" slug text kind src pr state
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
@@ -997,14 +1019,14 @@ outcomes_report() {
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts
   rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
-    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" <<'PY'
+    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}" <<'PY'
 import collections, json, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, events, since, projects, roles = sys.argv[1:6]
+log, events, since, projects, roles, archive = sys.argv[1:7]
 
 def slug_of(path, name):
     # A builder runs in <repo>-wt/<slug>; any other cwd (or none logged) leaves the agents.tsv name.
-    for line in open(path, errors="ignore") if path else ():
+    for line in log_lines(path) if path else ():
         try:
             cwd = json.loads(line).get("cwd")
         except (ValueError, AttributeError):
@@ -1030,7 +1052,7 @@ for line in open(log, errors="ignore"):
     if len(f) != 7 or f[1] not in roles.split():
         continue
     day, role, name, _, model, effort, session = f
-    path = session_log(projects, session)
+    path = session_log(projects, session, archive)
     slug = slug_of(path, name)
     attempts[slug] += 1
     if day < since:
@@ -1271,6 +1293,7 @@ PY
 
 # session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
 # REPORT_PY's session_log), which the session writes on every turn and tool call; empty when it has none.
+# Never close's copy (SESSIONS_DIR): an archive says nothing about a live agent.
 session_mtime() {
   SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" <<'PY' || true
 import os, sys
@@ -3873,13 +3896,13 @@ tab_label() {
 # machine, readable by its user only; nothing is redacted. An agent with no session (codex) has nothing to keep. A copy that
 # fails is reported and never stops the close: the session log itself is untouched.
 archive_session() {
-  local name session src dir
+  local name session src dir f
   name="$(agent_name "$1")"
   [[ -f "${AGENTS_LOG}" ]] || return 0
   session="$(awk -F'\t' -v n="${name}" 'NF == 7 && $3 == n { s = $7 } END { print s }' "${AGENTS_LOG}" 2>/dev/null || true)"
   [[ -n "${session}" && "${session}" != - ]] || return 0
-  dir="${PROJECT_DIR}/.swarm/sessions"
-  compgen -G "${dir}/*-${session}.jsonl.gz" >/dev/null && return 0
+  dir="${SESSIONS_DIR}"
+  for f in "${dir}"/*-"${session}".jsonl.gz; do [[ ! -e "${f}" ]] || return 0; done
   src="$(SWARM_REPORT_PY="${REPORT_PY}" python3 -c 'import os, sys; exec(os.environ["SWARM_REPORT_PY"]); print(session_log(*sys.argv[1:3]))' \
     "${CLAUDE_PROJECTS}" "${session}" 2>/dev/null || true)"
   [[ -n "${src}" ]] || return 0
@@ -4326,6 +4349,8 @@ dispatch() {
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
+    _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
+    _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
     wait)   require_herdr; stall=""; if [[ "${1:-}" == --stall ]]; then stall=--stall; shift; fi
@@ -4341,7 +4366,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
