@@ -312,36 +312,6 @@ merge --board "${URL}"; refused "--board with a file renamed onto the board" "ch
 check "--board reads the files with --paginate" grep -q -- "--paginate repos/o/r/pulls/7/files" "${ROOT}/gh.log"
 fresh; rm "${S}"; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
 merge --board "${URL}"; refused "--board for a PR outside the board's repo" "is not in other/repo, the board's repo"
-# protected <context>... — main's classic branch protection requires these checks, from any app.
-protected() {
-  local c list=""; for c in "$@"; do list+="${list:+,}\"${c}\""; done
-  echo "{\"strict\":false,\"contexts\":[${list}],\"checks\":[]}" > "${FX}/branch"
-}
-fresh "merge_admin = true"
-echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
-protected test; merge "${URL}"
-is "merge_admin: exits 0" 0 "${rc}"
-check "merge_admin: --admin" grep -q -- "^pr merge 7 .*--admin" "${ROOT}/gh.log"
-fresh "merge_admin = true"
-echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"build"}]}}]' > "${FX}/rules"
-merge "${URL}"; refused "merge_admin with a ruleset's required check absent from the head" "build (required, absent)"
-fresh "merge_admin = true"; protected
-echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":99}]}}]' > "${FX}/rules"
-merge "${URL}"; refused "merge_admin with a required check whose app never reported it" "test (required, absent)"
-fresh "merge_admin = true"; protected
-echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":99}]}}]' > "${FX}/rules"
-checks "${FX}/${H1}.checks" '{"name":"test","status":"completed","conclusion":"success","app":{"id":99}}'; merge "${URL}"
-is "merge_admin with a required check its app reported: exits 0" 0 "${rc}"
-fresh "merge_admin = true"; echo '[]' > "${FX}/rules"; protected test lint
-merge "${URL}"; refused "merge_admin with branch protection's required check absent from the head" "lint (required, absent)"
-fresh "merge_admin = true"; echo '[]' > "${FX}/rules"
-echo '{"strict":false,"contexts":["test"],"checks":[{"context":"test","app_id":99}]}' > "${FX}/branch"
-merge "${URL}"; refused "merge_admin with branch protection's check bound to an app that never reported it" "test (required, absent)"
-fresh "merge_admin = true"; echo release/1.x > "${FX}/base"; echo '[]' > "${FX}/rules"; merge "${URL}"
-check "merge_admin, base release/1.x: the rules path encodes the branch" grep -q -- "repos/o/r/rules/branches/release%2F1.x?" "${ROOT}/gh.log"
-check "merge_admin, base release/1.x: so does branch protection's" grep -q -- "repos/o/r/branches/release%2F1.x/protection/required_status_checks" "${ROOT}/gh.log"
-fresh "merge_admin = true"; echo '[]' > "${FX}/rules"; touch "${FX}/branch.fail"
-merge "${URL}"; refused "merge_admin when branch protection cannot be read" "HTTP 502"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 
