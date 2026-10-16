@@ -29,10 +29,11 @@ is one column, top to bottom:
 
 - **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm-dev:swarm` does next, and the
   time of the last refresh. Under it, at every width, the speedometer: `2.0 merged/day over 7 days`
-  is the number of stories whose PR merged in the last 7 days, divided by 7. dash reads the merge
-  times from `swarm.sh outcomes --since <7 days ago>`, once a minute, and shows `?` with no `gh`,
-  or when outcomes fails or takes longer than the gh lookups and 10 seconds. A merge counts on the day it merged. A
-  story that was dropped or rescoped never merged a PR, so it never counts. Two lights follow it,
+  is the number of stories whose PR merged in the last 7 days, divided by 7. Once a minute dash asks
+  gh for the PRs merged in the project's repo and in each open story's repo, and counts each
+  `story/<slug>` branch once, on the day it merged. A story that was dropped or rescoped never
+  merged a PR, so it never counts. It shows `?` when there is no `gh`, or no repo with an origin
+  that gh answered for. Two lights follow it,
   each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
   (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
@@ -136,16 +137,19 @@ Each model has a colour of its own, the same wherever it appears (agent rows, th
 ladder): Fable pink, Opus orange, Sonnet blue, Haiku green, codex grey. Colour only on a terminal,
 and none at all when `NO_COLOR` is set or the output goes to a pipe or a file; the symbols carry
 the same meaning in plain text. If herdr is missing or gives no answer, it
-still shows the board and says the agents are unavailable. At 100 columns, from a real project:
+still shows the board and says the agents are unavailable. At 100 columns, from a real project
+(the speedometer's numbers are made up for this example):
 
 ```text
 infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:48:02
+1.6 merged/day over 7 days · ! 2 waiting on you, oldest 4h05m · ✓ 0 escaped in 7 days
 9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $427.69 today
 on call: fable·xhigh · 0 escalations today
-board: 2 uncommitted edits in the main checkout (reconcile pulls first)
+board: 2 uncommitted edits in the main checkout: stories/prod-read-seam-reader-user.md, stories/fak…
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! merge fakeaws#71 (✓ green)  fakeaws-subnet-overlap-refused                                     │
 │ ! run lead story prod-read-seam-reader-user: create the read-only reader user and its key file   │
+│   waits for: the lead                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! prod-read-seam          ██████████░░ 12/15  1 ready · 2 blocked                                │

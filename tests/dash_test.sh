@@ -154,7 +154,7 @@ for panel in "needs you" "epics" "recent"; do
   check "panel ${panel}" has "╭─ ${panel} ─" "${out}"
 done
 check "the header is one line: project, version, merge, next, clock" grep -qE '^proj  swarm-dev [0-9.]+  merge human  next wait conduct-e1 +[0-9]{2}:[0-9]{2}:[0-9]{2}$' <<< "$(head -1 <<< "${out}")"
-check "the speedometer is the line under the header" grep -qE '^0[.]0 merged/day over 7 days · ! [0-9]+ waiting on you, oldest [0-9hmd]+ · ✓ 0 escaped in 7 days$' <<< "$(sed -n 2p <<< "${out}")"
+check "the speedometer is the line under the header, ? with no origin to ask" grep -qE '^[?] merged/day over 7 days · ! [0-9]+ waiting on you, oldest [0-9hmd]+ · ✓ 0 escaped in 7 days$' <<< "$(sed -n 2p <<< "${out}")"
 check "the summary line counts epics, working agents, green PRs, stalls and cost" test "$(sed -n 3p <<< "${out}")" == "1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · \$24.00 today"
 check "below 140 columns, on call and today's escalations follow the summary, on a line of their own when it is full" test "$(sed -n 4p <<< "${out}")" == "on call: fable·xhigh · 0 escalations today"
 check "uncommitted board edits are one line under the summary, naming each file" test "$(sed -n 5p <<< "${out}")" == "board: 2 uncommitted edits in the main checkout: stories/s-three.md, stories/s-two.md"
@@ -912,40 +912,39 @@ check "lead off: needs you still lists merges, agents to look at and lead storie
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 
 # --- The speedometer, in a project of its own (SPD, lead = session): stories merged per day over 7
-# days, from outcomes' merged_at (a gh stub answers pr list from SPD/prs), and two lights.
-SPD="${ROOT}/speed"; mkdir -p "${SPD}/.swarm" "${SPD}/.claude/swarm" "${SPD}/docs/stories" "${SPD}/prs" "${ROOT}/qbin"
-git -C "${SPD}" init -q; touch "${SPD}/docs/stories/README.md"; echo "lead = session" > "${SPD}/.claude/swarm/config"
+# days, from its origin's merged PRs (a gh stub answers pr list --state merged), and two lights.
+SPD="${ROOT}/speed"; mkdir -p "${SPD}/.swarm" "${SPD}/.claude/swarm" "${SPD}/docs/stories" "${ROOT}/qbin"
+git -C "${SPD}" init -q; git -C "${SPD}" remote add origin https://github.com/o/q
+touch "${SPD}/docs/stories/README.md"; echo "lead = session" > "${SPD}/.claude/swarm/config"
 GSP=(git -C "${SPD}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
 sitem() { local path="${SPD}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
-day6="$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=6))')"
-# 14 stories merged in the last 7 days, one dropped with no PR merged, and one merged 8 days ago:
-# every file is deleted, the old one's only yesterday.
-for i in $(seq 1 14); do
-  sitem "stories/m${i}.md" 'status: review'
-  printf 'https://github.com/o/q/pull/%s\tMERGED\t%s\n' "${i}" "$(ago $((i * 600)))" > "${SPD}/prs/story_m${i}"
-done
+# 14 stories merged in the last 7 days (m1 twice: a retry), a board PR, and one story merged 8 days
+# ago whose file was deleted only yesterday; a dropped story merged no PR, so gh lists none for it.
+{ for i in $(seq 1 14); do printf '{"headRefName":"story/m%s","mergedAt":"%s"}\n' "${i}" "$(ago $((i * 600)))"; done
+  printf '{"headRefName":"story/m1","mergedAt":"%s"}\n{"headRefName":"board/tidy","mergedAt":"%s"}\n' "$(ago 30)" "$(ago 30)"
+  printf '{"headRefName":"story/m-old","mergedAt":"%s"}\n' "$(ago $((8 * 1440)))"; } | python3 -c 'import json, sys; print(json.dumps([json.loads(l) for l in sys.stdin]))' > "${SPD}/merged.json"
 sitem stories/m-drop.md 'status: ready'; sitem stories/m-old.md 'status: review'
-printf 'https://github.com/o/q/pull/40\tMERGED\t%s\n' "$(ago $((8 * 1440)))" > "${SPD}/prs/story_m-old"
-for i in $(seq 1 14) -drop -old; do printf '%s\tcode\tm%s\tclaude\topus\thigh\t-\n' "${day6}" "${i}" >> "${SPD}/.swarm/agents.tsv"; done
 "${GSP[@]}" add docs && "${GSP[@]}" commit -qm board
-"${GSP[@]}" rm -q docs/stories/m[0-9]*.md docs/stories/m-drop.md && "${GSP[@]}" commit -qm "finish and drop"
+"${GSP[@]}" rm -q docs/stories/m-drop.md && "${GSP[@]}" commit -qm "drop m-drop"
 GIT_COMMITTER_DATE="$(ago 1440)" "${GSP[@]}" rm -q docs/stories/m-old.md && GIT_COMMITTER_DATE="$(ago 1440)" "${GSP[@]}" commit -qm "clean m-old"
-# A held story whose builder was closed paused 3 hours ago, and a story in review: the lead's two items.
-sitem stories/q-held.md 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
+# A held story whose builder was closed paused 3 hours ago, and a story in review: the lead's two
+# items. The held slug is over 32 characters, so its close line names its agent, cut to 32.
+held=q-held-with-a-slug-longer-than-thirty-two
+sitem "stories/${held}.md" 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
 sitem stories/q-rev.md 'status: review' 'prs: https://github.com/o/q/pull/50'
 "${GSP[@]}" add docs && "${GSP[@]}" commit -qm "held and review"
-printf '%s\tclose:paused\tq-held\tw5:p1\tok\n' "$(ago 180)" > "${SPD}/.swarm/events.tsv"
+printf '%s\tclose:paused\t%s\tw5:p1\tok\n' "$(ago 180)" "${held:0:32}" > "${SPD}/.swarm/events.tsv"
 # Three identical lines in a row: one recent row, ×3.
 for _ in 1 2 3; do printf '%s\ttell:nudge\tq-rev\tw5:p1\tok\n' "$(ago 5)" >> "${SPD}/.swarm/events.tsv"; done
 # A fixed finding far longer than recent's column: its text is cut, never its (#PR).
 printf '%s\tlong\thttps://github.com/o/q/pull/42\t%s\n' "$(date +%F)" "$(printf 'word %.0s' $(seq 1 40))" > "${SPD}/.swarm/findings.tsv"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${SPD}" > "${ROOT}/qbin/gh"
+printf '#!/bin/sh\ncase "$1 $2 $3 $4 $5 $6" in\n  "pr list -R https://github.com/o/q --state merged") cat "%s/merged.json" ;;\n  *) exit 1 ;;\nesac\n' "${SPD}" > "${ROOT}/qbin/gh"
 chmod +x "${ROOT}/qbin/gh"
 spdash() { fresh; (cd "${SPD}" || exit 1; env -u HERDR_ENV COLUMNS=100 PATH="${ROOT}/qbin:${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
 out="$(spdash)"; top="$(sed -n 2p <<< "${out}")"
-check "speedometer: 14 stories merged in 7 days are 2.0 a day; a drop and a merge 8 days ago do not count" has "2.0 merged/day over 7 days" "${top}"
-check "speedometer: a held story closed 3h ago and a review story light the first light, 2 items, oldest 3h" \
+check "speedometer: 14 stories merged in 7 days are 2.0 a day; a retry, a board PR, a drop and a merge 8 days ago do not change it" has "2.0 merged/day over 7 days" "${top}"
+check "speedometer: a held story closed 3h ago (its close line naming its 32-character agent) and a review story light the first light, 2 items, oldest 3h" \
   grep -qE '! 2 waiting on you or the lead, oldest 3h0[01]m' <<< "${top}"
 check "speedometer: with no escaped finding the second light is unlit" has "✓ 0 escaped in 7 days" "${top}"
 recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
@@ -957,10 +956,10 @@ printf '%s\tmissed\thttps://github.com/o/q/pull/3\tescaped %s\tescaped\tescaped\
   "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=2))')" two \
   "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=9))')" nine >> "${SPD}/.swarm/findings.tsv"
 check "speedometer: one escaped finding 2 days old lights the second light" has "! 1 escaped in 7 days" "$(sed -n 2p <<< "$(spdash)")"
-# With no agents.tsv nothing was built: 0.0.
-mv "${SPD}/.swarm/agents.tsv" "${SPD}/.swarm/agents.tsv.bak"
-check "speedometer: with no agents.tsv it shows 0.0" has "0.0 merged/day" "$(sed -n 2p <<< "$(spdash)")"
-mv "${SPD}/.swarm/agents.tsv.bak" "${SPD}/.swarm/agents.tsv"
+# An uncommitted board file whose name has a space is named as it is, unquoted.
+echo x > "${SPD}/docs/stories/notes 1.md"
+check "the board line names a file with a space unquoted" has "board: 1 uncommitted edit in the main checkout: stories/notes 1.md" "$(spdash)"
+rm "${SPD}/docs/stories/notes 1.md"
 
 # --- A running codex review (codex-review's marker, .swarm/state/codex-review.<pid>: start epoch, base,
 # cwd) is a row under its worktree's epic, with its age, in neither needs you nor the lead's queue. A

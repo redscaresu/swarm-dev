@@ -841,6 +841,7 @@ record_finding() {
 
 # REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
+#   agent_name(n) is bash agent_name: the name agents.tsv and events.tsv keep for a slug.
 #   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
@@ -864,6 +865,10 @@ PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4
 def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
+
+def agent_name(n):
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
 
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
@@ -1167,11 +1172,6 @@ def secs(t):
         return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
-
-def agent_name(n):
-    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
-    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
-    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
 
 builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
@@ -4441,12 +4441,9 @@ dash_base_ref() {
 # only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
 # view per PR that matches, each with the same limit; how many stories of each epic finished
 # (dash_finished); and how many distinct stories merged in the 7 days before now (DASH_NOW, else the
-# clock): `swarm.sh outcomes --since <7 days ago>` read by column name, a slug counted when its
-# merged_at falls in those 7 days. outcomes asks gh about every story built that week, which takes
-# a minute on a busy project, so it runs detached (5 minutes at most) and its output is kept beside
-# the cache: a copy over 10 minutes old starts a new run, and the old copy is read meanwhile. With no
-# copy yet, a one-shot dash waits for it until the gh views end or for 10 seconds, whichever is
-# later; a watch (DASH_SLOW_WAIT=0) never waits. No copy, or no gh, leaves the count out (dash shows ?).
+# clock): per repo (the project's and each open story's, named from its origin), one gh pr list of
+# PRs merged since 8 days ago, a story/<slug> head counted once when its mergedAt falls in those 7
+# days. With no repo answering, or no gh, the count is left out (dash shows ?).
 dash_slow() {
   local cache f r urls pairs
   # -4: the cache gained the merged line; a name of its own, so an older swarm.sh's cache is never read.
@@ -4463,8 +4460,7 @@ dash_slow() {
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
       if command -v gh >/dev/null 2>&1; then
-        SWARM_PAIRS="${pairs}" SWARM_SELF="${SWARM_HOME}/bin/swarm.sh" SWARM_AGENTS="${AGENTS_LOG}" SWARM_OUTCOMES="${cache}-outcomes" \
-          python3 - ${urls} <<'PY'
+        SWARM_PAIRS="${pairs}" SWARM_REPO="${PROJECT_DIR}" python3 - ${urls} <<'PY'
 import datetime, json, os, signal, subprocess, sys, time
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 def gh(args):
@@ -4475,39 +4471,6 @@ def gh(args):
         os.killpg(p.pid, signal.SIGKILL); p.communicate()
         return None
     return out if p.returncode == 0 else None
-NOW = float(os.environ.get("DASH_NOW") or time.time())
-WEEK = 7 * 86400
-OUT = os.environ["SWARM_OUTCOMES"]
-def age(path):
-    try:
-        return time.time() - os.path.getmtime(path)
-    except OSError:
-        return None
-# The detached run: outcomes into a temporary file, renamed into place once it ends well.
-JOB = """
-import os, signal, subprocess, sys
-out, cmd = sys.argv[1], sys.argv[2:]
-p = subprocess.Popen(cmd, stdout=open(out + ".tmp", "w"), stderr=subprocess.DEVNULL, start_new_session=True)
-try:
-    ok = p.wait(timeout=300) == 0
-except subprocess.TimeoutExpired:
-    os.killpg(p.pid, signal.SIGKILL); ok = False
-if ok:
-    os.replace(out + ".tmp", out)
-for f in (out + ".tmp", out + ".run"):
-    if os.path.exists(f):
-        os.remove(f)
-"""
-built = os.path.exists(os.environ["SWARM_AGENTS"])   # no agents.tsv: nothing was built, so nothing merged
-job = None
-stale = age(OUT) is None or age(OUT) >= 600
-running = age(OUT + ".run") is not None and age(OUT + ".run") < 600   # a run left behind by a crash is retried after 10 minutes
-if built and stale and not running:
-    open(OUT + ".run", "w").close()
-    since = (datetime.date.fromtimestamp(NOW) - datetime.timedelta(days=7)).isoformat()
-    job = subprocess.Popen([sys.executable, "-c", JOB, OUT, os.environ["SWARM_SELF"], "outcomes", "--since", since],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-deadline = time.time() + 10
 for url in sys.argv[1:]:
     out = gh(["pr", "view", url, "--json", FIELDS])
     if out is not None:
@@ -4516,9 +4479,11 @@ slugs = {}
 for l in os.environ["SWARM_PAIRS"].splitlines():
     repo, _, slug = l.partition("\t")
     slugs.setdefault(repo, set()).add(slug)
-for repo, mine in slugs.items():
+def origin_of(repo):
     # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
-    origin = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+    return subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+for repo, mine in slugs.items():
+    origin = origin_of(repo)
     # ponytail: only the newest 200 open PRs per repo are read, so a builder's older PR in a repo with
     # more shows as no PR yet; query each unmatched story/<slug> head if a repo ever has that many.
     try:
@@ -4533,24 +4498,27 @@ for repo, mine in slugs.items():
             out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
             if out is not None:
                 print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
-while job and job.poll() is None and age(OUT) is None and time.time() < deadline and os.environ.get("DASH_SLOW_WAIT") != "0":
-    time.sleep(0.1)
-try:
-    out = open(OUT).read() if built else ""
-except OSError:
-    out = None
-if out is not None:
-    rows = [l.split("\t") for l in out.splitlines()]
-    col = {n: i for i, n in enumerate(rows[0])} if rows else {}
-    slugs = set()
-    for r in rows[1:]:
+NOW = float(os.environ.get("DASH_NOW") or time.time())
+WEEK = 7 * 86400
+since = datetime.datetime.fromtimestamp(NOW - WEEK - 86400, datetime.timezone.utc).date().isoformat()
+merged, answered = set(), False
+for origin in sorted({origin_of(r) for r in {os.environ["SWARM_REPO"]} | set(slugs)} - {""}):
+    # ponytail: the newest 200 merged PRs per repo since then; raise the limit if a week ever merges more.
+    try:
+        prs = json.loads(gh(["pr", "list", "-R", origin, "--state", "merged", "--search", f"merged:>={since}",
+                             "--limit", "200", "--json", "headRefName,mergedAt"]) or "null")
+    except ValueError:
+        continue
+    answered = answered or isinstance(prs, list)
+    for pr in prs if isinstance(prs, list) else []:
         try:
-            slug, t = r[col["slug"]], datetime.datetime.fromisoformat(r[col["merged_at"]].replace("Z", "+00:00")).timestamp()
-        except (KeyError, IndexError, ValueError):
+            head, t = str(pr["headRefName"]), datetime.datetime.fromisoformat(str(pr["mergedAt"]).replace("Z", "+00:00")).timestamp()
+        except (TypeError, KeyError, ValueError):
             continue
-        if 0 <= NOW - t <= WEEK:
-            slugs.add(slug)
-    print(f"merged\t{len(slugs)}")
+        if head.startswith("story/") and 0 <= NOW - t <= WEEK:
+            merged.add(head[len("story/"):])
+if answered:
+    print(f"merged\t{len(merged)}")
 PY
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
@@ -4656,8 +4624,6 @@ dash_watch() {
   # The installed copy this runs from, if it is one: its scope and project, to re-read each frame. A
   # dev checkout matches no entry, so it never jumps to the installed copy.
   IFS=$'\t' read -r inst path ver <<< "$(dash_installed)"
-  # A frame never waits for dash_slow's outcomes run, nor does each --project's frame.
-  export DASH_SLOW_WAIT=0
   if [[ ${tty} == 1 ]]; then
     trap 'printf "\033[?25h\033[?1049l"' EXIT
     printf '\033[?1049h\033[?25l'
@@ -4815,10 +4781,13 @@ for a in agents:
     merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 40 --format='%cI%x09%an%x09%s' "$(dash_base_ref)" 2>/dev/null || true)"
     # The board files edited and not committed in the main checkout, a rename by its new name, each
     # relative to the board; no optional locks, so status writes no index.
-    drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" -c core.quotePath=false status --porcelain --untracked-files=all -- "${BOARD}" 2>/dev/null \
-      | cut -c4- | sed 's/.* -> //' || true)"
+    # -z: paths as they are, never quoted; a rename or copy is followed by its old path, skipped.
     x="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null || true)"
-    [[ -z "${drift}" ]] || drift="$(while IFS= read -r f; do printf '%s\n' "${f#"${x}"}"; done <<< "${drift}")"
+    drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" status --porcelain -z --untracked-files=all -- "${BOARD}" 2>/dev/null \
+      | while IFS= read -r -d '' f; do
+          if [[ "${f:0:1}" == [RC] ]]; then IFS= read -r -d '' _ || true; fi
+          f="${f:3}"; printf '%s\n' "${f#"${x}"}"
+        done || true)"
   fi
   # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
   # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
@@ -5418,9 +5387,9 @@ def recent_box(w, n, clock=False):
             if findings > max(1, n // 3):
                 continue
         room = max(w - 4 - tw - 2 - 2 - (actor_w + 2 if actor_w else 0), 0)
-        # A finding's (#PR) is kept whole: its text is cut instead.
+        # A finding's (#PR) is kept whole, its text cut instead, while the column has room for more than it.
         pr = re.search(r" \(#\d+\)$", text) if kind == "finding" else None
-        text = cut(text[:pr.start()], room - len(pr.group(0))) + pr.group(0) if pr and len(text) > room else cut(text, room)
+        text = cut(text[:pr.start()], room - len(pr.group(0))) + pr.group(0) if pr and room > len(pr.group(0)) and len(text) > room else cut(text, room)
         row = [(f"{stamp(raw, t) if clock else ago:>{tw}}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (text.ljust(room), "")]
         if actor_w:
             row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
@@ -5511,16 +5480,19 @@ def running_view():
 # review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
     d, slug = item
-    if slug in moved:
-        return moved[slug]
+    # A review or escalated line names the slug; a close names its agent (retired: -done<N>).
+    t = max(moved.get(slug, 0), moved.get(agent_name(slug), 0))
+    if t:
+        return t
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
 moved = {}
 for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0]) if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
-    if t is not None and t > moved.get(f[2], 0):
-        moved[f[2]] = t
+    who = re.sub(r"-done\d*$", "", f[2]) if f[1].startswith("close:") else f[2]
+    if t is not None and t > moved.get(who, 0):
+        moved[who] = t
 
 def days_ago(day):
     try:
