@@ -623,8 +623,8 @@ skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `code-review`, `ci` (a
-PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`. Each finding declined is logged with `log-finding --declined --reviewer <who>`, with the
-reason in its line; `lessons` counts only the fixed ones, `outcomes` counts the two apart, and `decisions` exports both. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
+PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR. A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
+reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `lessons` counts only the fixed ones, and `outcomes` counts the two apart. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `lessons_file` (default `.claude/swarm/brief.md`) has no rule for is a `candidate`. So is a lead
 memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
 frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
