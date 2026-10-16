@@ -21,7 +21,7 @@
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree]  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
-#   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
+#   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
@@ -31,12 +31,12 @@
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
-#   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
+#   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
-#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes
+#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -138,11 +138,8 @@ CFG_repos_dir=""        # empty: the project dir's parent
 CFG_base_branches=""    # empty: origin's default branch
 CFG_finished=delete
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
-CFG_merge_admin=false   # true: swarm.sh merge passes --admin, after checking the base's required checks itself
-CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
-CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
@@ -151,7 +148,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge merge_admin review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir base_branches merge pr_per lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -181,14 +178,8 @@ load_config() {
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
       base_branches)
         [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches: not branch names: ${value}" ;;
-      finished)
-        [[ "${value}" == delete || "${value}" == mark ]] || die "${where}: finished must be delete or mark, not '${value}'" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
-      review_bot)
-        [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
-      sign_commits|keep_panes|merge_admin)
-        [[ "${value}" == true || "${value}" == false ]] || die "${where}: ${key} must be true or false, not '${value}'" ;;
       pr_per)
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes|codex_minutes)
@@ -289,10 +280,11 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,verify,escalate conducting:conduct"
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
-# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model).
-BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ }"
+# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
+# plus verify: nothing starts it now, but agents.tsv keeps the verify builds made before it went.
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } verify"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -308,7 +300,6 @@ policy() {
     code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
-    verify)     echo "claude haiku medium" ;;  # run tests or commands and report
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
     *) die "unknown role '$1' ($(roles))" ;;
@@ -788,35 +779,54 @@ LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
-# code-scanning alerts (swarm.sh findings). A row logged without --reviewer says unknown. The reports
-# read this list as SWARM_FINDING_REVIEWERS. A new reviewer also needs its line in finding_rule's
-# mapping and in the story arm of commands/swarm.md, which tell whoever logs a finding which value
-# names which reviewer.
-FINDING_REVIEWERS="codex code-review ci conductor lead"
+# code-scanning alerts (swarm.sh findings). skeptic and critic are the plan reviewers, logging on a
+# board PR; escaped is a defect a later fix found in merged work, logged against the original PR. A
+# row logged without --reviewer says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
+# A new reviewer a conductor logs also needs its line in finding_rule's mapping and in the story arm
+# of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
+FINDING_REVIEWERS="codex code-review ci conductor lead skeptic critic escaped"
+# Why a finding was declined (log-finding --declined <reason>).
+FINDING_REASONS="out-of-scope nit wrong"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
-# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REVIEWER to --reviewer's value (unset
-# without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies,
-# so main reads the events target with it before the command runs.
+# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REASON to --declined's reason (empty
+# when the next word is a flag or missing), FINDING_REVIEWER to --reviewer's value (unset without
+# one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
+# reads the events target with it before the command runs.
 finding_flags() {
   local n
-  FINDING_OUTCOME=fixed; unset FINDING_REVIEWER; FINDING_SKIP=0
+  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER; FINDING_SKIP=0
   while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
     n=1
-    if [[ "$1" == --declined ]]; then FINDING_OUTCOME=declined; else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
+    if [[ "$1" == --declined ]]; then
+      FINDING_OUTCOME=declined
+      [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
+    else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
     shift "${n}"; FINDING_SKIP=$((FINDING_SKIP + n))
   done
 }
 
 # record_finding <kind> <pr-url> <text> <fixed|declined> [reviewer] — log one finding, what became of
-# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A row is date,
-# kind, PR, text, outcome, reviewer; rows from before the outcome column have four fields and were
-# all fixed, and rows from before the reviewer column have five. lessons, outcomes and dash count
-# only fixed rows; decisions reads both.
+# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A declined one's
+# reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
+# text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
+# have four fields and were all fixed, and rows from before the reviewer column have five. An
+# escaped defect's outcome is escaped, so outcomes and review-yield, which count what review raised,
+# leave it out; lessons and dash count fixed and escaped rows, never declined ones.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}"
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
-    || die "usage: swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <one line>"
+    || die "usage: swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <one line>"
+  # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
+  if [[ "${reviewer}" == escaped ]]; then
+    [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined: drop --declined"
+    outcome=escaped
+  fi
+  if [[ "${outcome}" == declined ]]; then
+    [[ "${FINDING_REASON:-}" =~ ^[a-z-]+$ && " ${FINDING_REASONS} " == *" ${FINDING_REASON} "* ]] \
+      || die "--declined needs a reason, one of: ${FINDING_REASONS}"
+    reason=$'\t'"${FINDING_REASON}"
+  fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
@@ -825,7 +835,7 @@ record_finding() {
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
@@ -836,11 +846,14 @@ record_finding() {
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
 #   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
-#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome, reviewer);
-#   a row from before the outcome column is "fixed", and one from before the reviewer column "unknown".
+#   finding_rows(path[, outcomes]) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome,
+#   reviewer) whose outcome is one of outcomes (fixed and declined: what review raised, so an escaped
+#   row is not one); a row from before the outcome column is "fixed", and one from before the reviewer
+#   column "unknown".
 #   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
-#   reads findings passes) or unknown. Fields past the sixth are ignored, so a column appended later
-#   drops no row. fixed_rows(path) is the fixed ones' first four fields.
+#   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
+#   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
+#   escaped ones: both are a mistake someone fixed, so both are lessons.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
@@ -869,17 +882,17 @@ def log_lines(path):
     except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
         return
 
-def finding_rows(path):
+def finding_rows(path, outcomes=("fixed", "declined")):
     # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
     reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
     if not os.path.exists(path):
         return []
     rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
     rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
-    return [f for f in rows if f[4] in ("fixed", "declined") and f[5] in reviewers]
+    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
 
 def fixed_rows(path):
-    return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
+    return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
@@ -1006,35 +1019,55 @@ print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) 
 PY
 }
 
-# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started
-# (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
-# session logs (or close's copy, once Claude Code deleted one), deduplicated by message id; codex
-# agents are listed but not priced (not logged here).
+# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started,
+# and as "lead" the calling session when run inside herdr plus every session in the project's own
+# Claude Code directory that agents.tsv does not name (with --since, those that started on or after it).
+# Usage comes from Claude Code's own session logs (or close's copy, once Claude Code deleted one),
+# deduplicated by session and message id; codex agents are listed but not priced (not logged here).
 cost_report() {
-  local lead="" since=""
+  local lead="" since="" own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   # A bare date is the older form, still what dash passes.
   if [[ $# -eq 1 ]]; then since="$1"; elif [[ $# -eq 2 && "$1" == --since ]]; then since="$2"; fi
   [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  [[ -f "${AGENTS_LOG}" || -n "${lead}" || -d "${own}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
-    "${SESSIONS_DIR}" <<'PY'
-import os, sys
+    "${SESSIONS_DIR}" "${own}" <<'PY'
+import datetime, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, since, lead, projects, archive = sys.argv[1:6]
-agents = []
+log, since, lead, projects, archive, own = sys.argv[1:7]
+agents, named = [], set()
 if os.path.exists(log):
     for line in open(log):
         f = line.rstrip("\n").split("\t")
-        if len(f) == 7 and f[0] >= since:
-            agents.append({"role": f[1], "kind": f[3], "session": f[6]})
-if lead:
+        if len(f) == 7:
+            named.add(f[6])
+            if f[0] >= since:
+                agents.append({"role": f[1], "kind": f[3], "session": f[6]})
+if lead and lead not in named:  # a conductor's own pane is already its agents.tsv row
     agents.append({"role": "lead", "kind": "claude", "session": lead})
+    named.add(lead)
+
+def started(path):
+    # The first timestamp's local day, as since and agents.tsv's dates are, or "".
+    for line in log_lines(path):
+        try:
+            ts = json.loads(line).get("timestamp")
+            return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return ""
+
+# The lead's own sessions: Claude Code keeps them under the project's path, all but letters and digits turned into -.
+for path in sorted(glob.glob(os.path.join(glob.escape(own), "*.jsonl"))):
+    session = os.path.basename(path)[:-len(".jsonl")]
+    if session not in named and (since == "0000-00-00" or started(path) >= since):
+        agents.append({"role": "lead", "kind": "claude", "session": session, "path": path})
 rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    path = session_log(projects, a["session"], archive)
+    path = a.get("path") or session_log(projects, a["session"], archive)
     if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
@@ -1875,10 +1908,6 @@ stop_rule() {
 }
 sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
-review_bot_rule() {
-  [[ "${CFG_review_bot}" == auto ]] || return 0
-  printf '\n\nThen run the PR review bot of the repo as %s/docs/review.md says, and clear its findings the same way.' "${SWARM_HOME}"
-}
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
 # review_rule — for pr_per=story, where each story has its own PR and its builder stays open.
@@ -1897,9 +1926,13 @@ $(finding_rule)
 EOF
 }
 
-# codex_review_cmd <base> — how a brief runs codex: through codex-review, which stops it after
-# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config.
-codex_review_cmd() { printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"; }
+# codex_review_cmd <base> [slug] — how a brief runs codex: through codex-review, which stops it after
+# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config;
+# SWARM_STORY, given a slug, so codex reviews against that story.
+codex_review_cmd() {
+  [[ -z "${2:-}" ]] || printf 'SWARM_STORY=%q ' "$2"
+  printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"
+}
 # codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
 # conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
 # Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
@@ -1917,7 +1950,7 @@ bump_rule() {
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
-# logged too, for `decisions`, and never count as lessons.
+# logged too, with their reason, and never count as lessons.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -1925,12 +1958,16 @@ finding_rule() {
 Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
     SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
-    SWARM_PROJECT=${proj} ${sw} log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined <reason> --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
 
+<reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
+it is real but not worth the change, and wrong when it is mistaken.
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
 \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
 one from the lead's own reading.
+When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
+PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
@@ -1992,9 +2029,10 @@ fix or list it for the lead, and say so in your report.
 EOF
 }
 
-# A test that passes with its fix removed proves nothing; a builder shows each one can fail.
+# A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
+# findings names each new test whose FAIL line the PR body lacks.
 mutation_rule() {
-  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and note which test failed and how."
+  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
 }
 
 # reply_sentence <epic|story> — what a builder replies, and when: the brief's rule on finishing, and
@@ -2221,7 +2259,7 @@ project_rules() {
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
 # lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
 agent_kind() {
-  case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
+  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
 }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
@@ -2467,7 +2505,7 @@ A PR is green only when every check on its head has passed and you have triaged 
 \`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
 conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert.$(review_bot_rule)
+never dismiss an alert.
 EOF
 }
 
@@ -2576,7 +2614,7 @@ $(green_rule)
 
 $(review_rule)
 
-$(conduct_merge_rule)$(sign_rule_if_on)
+$(conduct_merge_rule)
 EOF
 }
 
@@ -2868,7 +2906,7 @@ waiting_on_user() {
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
-      blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
+      blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
       review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;
     esac
@@ -2885,42 +2923,61 @@ waiting_on_user() {
 # open_item <file> — true while a board item is still open: its file exists and is not status: done.
 open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
 
-# unblock — a finished story is deleted or marked done, so a blocked story whose every blocked_by and
-# depends_on slug (either list may be empty) is no open story or epic, and names no hand step, is
-# ready. Prints each story it flips.
+# story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets,
+# quotes, a trailing # comment and trailing whitespace (a CR too) gone.
+story_deps() {
+  local v
+  v="$(get_fm "$1" depends_on)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+  v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
+  printf '%s' "${v//\'/}"
+}
+
+# open_deps <slugs> — the slugs (story_deps') still open: a story or epic on the board and not done,
+# or not a plain slug (a hand step such as "operator:planted-leak-proof" is cleared by hand, never by
+# a merge).
+open_deps() {
+  local b open=""
+  for b in $1; do
+    if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then
+      open+=" ${b}"
+    fi
+  done
+  printf '%s' "${open# }"
+}
+
+# blocked_why <story> — why a blocked story waits: its open depends_on slugs, or that none are left.
+blocked_why() {
+  local deps open
+  deps="$(story_deps "$1")"; open="$(open_deps "${deps}")"
+  if [[ -n "${open}" ]]; then echo "by ${open}"
+  elif [[ -n "${deps// /}" ]]; then echo "its depends_on is finished: swarm.sh unblock readies it"
+  else echo "by hand: no depends_on"
+  fi
+}
+
+# unblock — a finished story is deleted or marked done, so a blocked story whose every depends_on
+# slug is finished, and names no hand step, is ready. An old blocked_by line stays; nothing reads it.
+# Prints each story it flips.
 unblock() {
-  local story slug blockers b open
+  local story deps
   while IFS= read -r story; do
     grep -q '^status: blocked$' "${story}" || continue
-    # Both lists count: blocked_by may name only some of what the story waits on. YAML quotes go.
-    blockers=$(sed -n -e 's/^blocked_by: *\[\(.*\)\]$/\1/p' -e 's/^depends_on: *\[\(.*\)\]$/\1/p' "${story}" | tr ',\n' '  ' | tr -d "\"'")
-    [[ -n "${blockers// /}" ]] || continue   # blocked for a reason no merge clears
-    open=0
-    for b in ${blockers}; do
-      # Open while its story exists, its epic exists, or it is not a plain slug (a hand step such
-      # as "operator:planted-leak-proof" is cleared by hand, never by a merge).
-      if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then open=1; fi
-    done
-    [[ ${open} -eq 0 ]] || continue
-    sed -i.bak -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "${story}" && rm -f "${story}.bak"
+    deps=$(story_deps "${story}")
+    [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
+    [[ -z "$(open_deps "${deps}")" ]] || continue
+    sed -i.bak -e 's/^status: blocked$/status: ready/' "${story}" && rm -f "${story}.bak"
     record_event unblock "$(basename "${story}" .md)"
     echo "ready: $(basename "${story}" .md)"
   done < <(board stories)
 }
 
-# finish <slug> — take a merged story or epic off the board: delete its file, or with
-# finished = mark set its status to done and keep it.
+# finish <slug> — take a merged story or epic off the board: delete its file.
 finish_item() {
   local slug="$1" f
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "bad slug '${slug}'"
   for f in "${BOARD}/stories/${slug}.md" "${BOARD}/epics/${slug}.md"; do
     [[ -f "${f}" ]] || continue
-    if [[ "${CFG_finished}" == mark ]]; then
-      awk '!d && /^status: /{print "status: done"; d=1; next} {print}' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
-      echo "done: ${f}"
-    else
-      rm "${f}"; echo "deleted: ${f}"
-    fi
+    rm "${f}"; echo "deleted: ${f}"
     return
   done
   die "no story or epic '${slug}' in ${BOARD}"
@@ -2964,7 +3021,7 @@ reset_story() {
 }
 
 # drop <slug> <reason> — the lead drops an escalated story (is_escalated): take it off the board as
-# finish does (delete it, or with finished = mark set status: done), so next stops naming it, and the
+# finish does (delete it), so next stops naming it, and the
 # lead commits the change in a board PR. Any other story is
 # refused. main logs the reason as the outcome.
 drop_story() {
@@ -3006,10 +3063,10 @@ set_status() {
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
-# SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status, prs and
-# blocked_by too, which review and unblock write. reconcile puts them back as committed on an item
+# SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
+# too, which review and unblock write. reconcile puts them back as committed on an item
 # whose PRs merged, and carries another board file's edit to them over its pull, so they never stop it.
-SET_FM_KEYS="attempts kind escalated_from held_for status prs blocked_by"
+SET_FM_KEYS="attempts kind escalated_from held_for status prs"
 
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
 # when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
@@ -3131,10 +3188,9 @@ MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get t
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 
-# ci_gate head <owner/repo> <sha> [base] — succeed when <sha> is green: at least one check run, every
-# run completed as success, skipped or neutral, and every commit status success; with [base]
-# (merge_admin), also every status check the base's rulesets or branch protection require present
-# among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
+# ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
+# run completed as success, skipped or neutral, and every commit status success. Else print which
+# checks and fail (1 red, 2 pending). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -3148,7 +3204,7 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 # too; fails (3) unless there are <changed> of them.
 ci_gate() {
   python3 - "$@" <<'PY'
-import json, re, subprocess, sys, time, urllib.parse
+import json, re, subprocess, sys, time
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 
@@ -3199,7 +3255,7 @@ def judge(runs, red, wait):
         elif r.get("conclusion") not in OK:
             red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
 
-def checks(repo, sha, required=(), need_run=True):
+def checks(repo, sha, need_run=True):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
     red, wait = [], ([] if runs or not need_run else ["no check runs"])
@@ -3209,30 +3265,7 @@ def checks(repo, sha, required=(), need_run=True):
             wait.append("%s (pending)" % s.get("context"))
         elif s.get("state") != "success":
             red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
-    # A required check bound to an app (not None or -1, any source) needs a run from that app.
-    have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
-    names = {n for n, _ in have} | {s.get("context") for s in sts}
-    wait += ["%s (required, absent)" % c for c, app in required
-             if (c not in names if app in (None, -1) else (c, app) not in have)]
     return red, wait
-
-def required(repo, base):
-    """The status checks base requires, its rulesets' and its classic branch protection's, each as
-    (context, the app that must report it or None). The branch is one path segment, / encoded."""
-    out, base = [], urllib.parse.quote(base, safe="")
-    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, base)):
-        if not isinstance(d, list):
-            raise Err("unreadable rules for " + base)
-        for rule in d:
-            if rule["type"] == "required_status_checks":
-                out += [(c["context"], c.get("integration_id")) for c in rule["parameters"]["required_status_checks"]]
-    try:
-        rsc = json.loads(gh("api", "repos/%s/branches/%s/protection/required_status_checks" % (repo, base)))
-    except Err as e:
-        if "HTTP 404" in str(e):   # not protected, or no required checks
-            return out
-        raise
-    return out + [(c, None) for c in rsc["contexts"]] + [(c["context"], c.get("app_id")) for c in rsc["checks"]]
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -3402,7 +3435,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
-        red, wait = checks(repo, args[0], required(repo, args[1]) if len(args) > 1 else ())
+        red, wait = checks(repo, args[0])
         if red or wait:
             print("; ".join(red + wait))
             sys.exit(1 if red else 2)
@@ -3467,14 +3500,14 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge_caller allows it, the head is <sha> (with --head), a story or epic in review lists the URL
 # (with --board instead: the PR is in the board's own repo and every path it changes, old or new, is
 # on the board), and ci_gate passes on the head.
-# Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
-# merge_admin, --admin; never --auto. Then wait for CI on the merge commit and, without --board, run
+# Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
+# --admin or --auto. Then wait for CI on the merge commit and, without --board, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own req="" method oid admin=() why rc=0 rrc ran=1
+  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board) board=1; shift ;;
@@ -3498,7 +3531,7 @@ merge_pr() {
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   if [[ -z "${board}" ]]; then
-    # Any item listing the URL may be the one in review: a done story (finished = mark) keeps prs:.
+    # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
       [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
       [[ -n "${any}" ]] || any="${p}"
@@ -3518,13 +3551,12 @@ merge_pr() {
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "--board: cannot list every file ${url} changes: ${info}"
     while IFS= read -r p; do [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"; done <<< "${info}"
   fi
-  if [[ "${CFG_merge_admin}" == true ]]; then admin=(--admin); req="${base}"; fi
-  why="$(ci_gate head "${repo}" "${head}" ${req:+"${req}"})" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
   [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
-  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
+  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" 2>&1)" || ran=""
   # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
   read -r state oid <<< "$(merged_state "${n}" "${repo}")"
   if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -3585,7 +3617,7 @@ origin_has() {
 # no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why sign=()
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -3637,8 +3669,7 @@ board_pr() {
       git -C "${wt}" add -A
       if ! git -C "${wt}" diff --cached --quiet; then
         msg="$3"; f="$(brief_trailers)"; [[ -z "${f}" ]] || msg+=$'\n\n'"${f}"
-        [[ "${CFG_sign_commits}" != true ]] || sign=(-S)
-        git -C "${wt}" commit -q ${sign[@]+"${sign[@]}"} -m "${msg}" || die "board-pr: the commit failed in ${wt}"
+        git -C "${wt}" commit -q -m "${msg}" || die "board-pr: the commit failed in ${wt}"
       fi
       git -C "${wt}" push -q -u origin "${b}" || die "board-pr: cannot push ${b}"
       [[ -n "${url}" ]] || url="$(gh pr create -R "$(git -C "${PROJECT_DIR}" remote get-url origin)" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \
@@ -3767,14 +3798,14 @@ swarm_edit() {
 }
 
 # key_clash <path> — the first SET_FM_KEYS key the unstaged board file <path> changes from HEAD's that
-# the base changed to another value too, or, when the edit changes status, blocked_by or depends_on
-# if the base changed it (a status is not set again over a new dependency); nothing when there is
+# the base changed to another value too, or, when the edit changes status, depends_on if the base
+# changed it (a status is not set again over a new dependency); nothing when there is
 # none, or the base deleted <path>.
 key_clash() {
   local k l h u head up deps=""
   up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)" || return 0
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
-  [[ "$(get_fm "${PROJECT_DIR}/$1" status)" == "$(get_fm - status <<< "${head}")" ]] || deps="blocked_by depends_on"
+  [[ "$(get_fm "${PROJECT_DIR}/$1" status)" == "$(get_fm - status <<< "${head}")" ]] || deps="depends_on"
   for k in ${SET_FM_KEYS} ${deps}; do
     l="$(get_fm "${PROJECT_DIR}/$1" "${k}")"; h="$(get_fm - "${k}" <<< "${head}")"; u="$(get_fm - "${k}" <<< "${up}")"
     [[ "${u}" == "${h}" || "${u}" == "${l}" ]] && continue
@@ -3841,6 +3872,58 @@ for a in json.load(sys.stdin):
   else
     echo "  code scanning: not available on ${full}"
   fi
+  fail_lines "${full}" "$2"
+}
+
+# fail_lines <owner/repo> <pr> — a rules-unchecked line for each test named on a line the PR's diff
+# adds (Go func TestX, Python def test_x, a check line in tests/*_test.sh, a JS it or test call) when
+# no line of the PR body holds both FAIL and its name: the builder's proof that the test can fail.
+fail_lines() {
+  local pr diff
+  pr="$(gh pr view "$2" --repo "$1" --json body,url)" || die "findings: cannot read the body of $1#$2"
+  # GitHub refuses a diff over 20,000 lines or 300 files (HTTP 406); the notes above still stand.
+  diff="$(gh pr diff "$2" --repo "$1")" \
+    || { echo "  FAIL lines: not checked, gh pr diff failed on $1#$2 (a diff over 20,000 lines or 300 files is refused)"; return 0; }
+  PR="${pr}" python3 -c '
+import json, os, re, sys
+pr = json.loads(os.environ["PR"])
+body = [l for l in (pr.get("body") or "").splitlines() if "FAIL" in l]
+tests = [  # (path pattern, pattern whose group n is the test name)
+    (r"_test\.go$", r"func (?P<n>Test(?!Main\b)\w*)"),  # TestMain runs the tests; it is not one
+    (r"(^|/)(test_[^/]*|[^/]*_test)\.py$", r"\s*(async\s+)?def (?P<n>test\w*)"),
+    (r"(^|/)tests/[^/]*_test\.sh$", r"\s*check\s+\x22(?P<n>(\\.|[^\x22\\])*)\x22"),
+    (r"\.(test|spec)\.[cm]?[jt]sx?$", r".*?\b(it|test)\(\s*(?P<q>[\x22\x27`])(?P<n>(\\.|(?!(?P=q))[^\\])*)(?P=q)"),
+]
+path, names, end = "", [], None
+for line in sys.stdin.read().splitlines():
+    if line.startswith("+++ "):
+        path, end = line[4:], None  # b/<path>: each pattern ends at $ or starts at (^|/)
+    elif line.startswith("@@"):
+        end = None  # ponytail: a hunk that opens inside a heredoc reads its fixture as tests
+    elif line[:1] in ("+", " "):
+        # A heredoc in a shell file is a fixture, not tests: skip to its end word, on context
+        # lines as on added ones.
+        if end:
+            end = None if line[1:].strip() == end else end
+            continue
+        if path.endswith(".sh"):
+            h = re.search(r"(?<!<)<<(?!<)-?\s*[\x22\x27]?([A-Za-z_]\w*)", line[1:])  # not 1<<3
+            end = h and h[1]
+        if line[0] != "+":
+            continue
+        for p, t in tests:
+            m = re.search(p, path) and re.match(t, line[1:])
+            if m and m["n"] not in names:
+                names.append(m["n"])
+for n in names:
+    # The whole name as the test prints it: each unescaped expansion (a dollar sign, \x24, then a
+    # word, braces or parentheses) stands for what it expands to, maybe nothing, and the rest is
+    # unescaped.
+    parts = re.split(r"(?<!\\)\x24(?:\{[^}]*\}|\([^)]*\)|\w+)", n)
+    parts = [re.escape(re.sub(r"\\(\W)", r"\1", x)) for x in parts]
+    pat = r"(?<!\w)" + ".*".join(parts) + r"(?!\w)"
+    if not any(re.search(pat, l) for l in body):
+        print("  rules-unchecked: %s has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked %s …)" % (n, pr["url"]))' <<< "${diff}"
 }
 
 # watch [--epic <slug>] [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print
@@ -5150,8 +5233,8 @@ CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
 is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
-# close_agent <name> [cause] — close what was opened for <name> (close_panes), or with keep_panes = true
-# leave it open to read and only retire the agent. Either way, its session log is archived first.
+# close_agent <name> [cause] — close what was opened for <name> (close_panes), its session log
+# archived first.
 # An unknown cause is refused before anything closes, and so, with goal on, is a missing one while
 # <name>'s story is still ready (its builder is giving up), and so is impossible for a story that
 # cannot be handed on (impossible_refused). A close that ends a failed build (failed_build, decided
@@ -5160,9 +5243,9 @@ CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or 
 # the story's attempts: by one, and when that build was escalate, the story becomes the lead's
 # (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
 # the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
-# hold it for the lead (held_story) when the close ends a build, or a ready verify story's open builder.
+# hold it for the lead (held_story) when the close ends a build.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why open
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -5173,13 +5256,12 @@ close_agent() {
   fi
   archive_session "$1"
   if prs="$(failed_build "$1")"; then counted=1; fi
-  open="$(agent_field "$(agent_name "$1")" pane_id)"
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
-  if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
+  close_panes "$1"
   if [[ "${cause}" == impossible ]]; then
-    # The build is cleared even when failed_build declined (a verify story, a builder gone, gh down),
+    # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
     clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs:-[]}"
     impossible_story "$1" "${prs}" "${counted}"
@@ -5187,12 +5269,11 @@ close_agent() {
   fi
   case "${cause}" in paused|cleared-on-error)
     # Held, its build cleared so it builds again once the hold is lifted, when the close ends a build
-    # (counted), or closes the open builder of a ready verify story, whose close never counts. A story
-    # whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
+    # (counted). A story whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
     # an agent builds the close says so (not held:).
-    if [[ ${counted} == 1 || ( -n "${open}" && -f "${f}" && "$(fm "${f}" kind)" == verify && "$(fm "${f}" status)" == ready ) ]]; then
+    if [[ ${counted} == 1 ]]; then
       clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
-      held_story "$1" "${cause}" "${prs:-[]}" "${counted}"
+      held_story "$1" "${cause}" "${prs:-[]}"
     elif ! impossible_refused "$1" >/dev/null; then
       echo "not held: $1 (${cause}) ended no build here (no builder open, a PR merged or merging, or gh could not list its PRs), so its story is as it was: list it for the lead and do not start it again"
     fi
@@ -5268,23 +5349,21 @@ impossible_story() {
   echo "impossible: $1 is kind: lead now, for the lead to re-scope or drop"
 }
 
-# held_story <slug> <cause> <prs> <listed> — after `close <slug> paused` or `close <slug> cleared-on-error`
-# ends a build, or closes a ready verify story's open builder, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
+# held_story <slug> <cause> <prs> — after `close <slug> paused` or `close <slug> cleared-on-error`
+# ends a build, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
 # no conductor or /swarm-dev:swarm run builds it again. attempts: stays as it was. Lifting the hold with reset
 # is not the story's one reset (main logs it as reset:held, which reset_at does not read).
 held_story() {
-  local why="it paused on its goal" none=""
-  # Unless <listed> is 1, failed_build listed no PRs: the story is verify, which has none.
-  [[ "$4" == 1 ]] || none="A verify story has no PRs."
+  local why="it paused on its goal"
   [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
-  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" "${none}" >/dev/null
+  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for "$2"
   echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
 # kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
-# and every PR in <prs> (failed_build's gh list; empty with pr_per = epic), or [none] when <prs> has
+# and every PR in <prs> (failed_build's gh list), or [none] when <prs> has
 # none (by default, that no PR was found). Prints how many PRs it named.
 lead_block() {
   local f="${BOARD}/stories/$1.md" from urls k=0
@@ -5375,9 +5454,8 @@ close_panes() {
   close_tabs "$1"
 }
 
-# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
-# keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
-# `lead`) failed and left an empty pane. herdr's holder decides first: with none, the name is free,
+# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken), so a second run
+# reusing a name still held (a second epic's `lead`) would fail and leave an empty pane. herdr's holder decides first: with none, the name is free,
 # whatever an old session says. A holder this project started is retired only when it has finished
 # (read_state: idle, its session gone, or herdr's idle or done) and refused in any other state,
 # naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
@@ -5443,11 +5521,11 @@ retire_agent() {
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
     awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
-  echo "kept $1 open (keep_panes)"
+  echo "retired $1 as ${new}"
 }
 
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
-# (a start that failed) or a retired agent (<name>-done, left open by keep_panes). Lists them; with
+# (a start that failed) or a retired agent (<name>-done, left open by retire_agent). Lists them; with
 # --yes, closes them and drops them from the tab records. Working, waiting and idle agents are never
 # touched, nor the pane this runs in. Run it when nothing is starting: a pane whose agent is still
 # starting has no agent yet, so it looks empty.
@@ -5647,15 +5725,44 @@ stop_codex() {
   } 2>/dev/null || true
 }
 
+# story_items <story file> <heading> — the items under a story's bold **<heading>** line: any text on
+# that line, then the non-blank lines under it, up to the next bold line or markdown heading.
+story_items() {
+  awk -v h="$2" 'index($0, "**" h) == 1 { on = 1; sub(/^\*\*[^*]*\*\*[[:space:]]*/, ""); if ($0 != "") print; next }
+    on && /^(\*\*|#+[[:space:]])/ { exit } on && /[^[:space:]]/' "$1"
+}
+# codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
+# the story's touches, its **Done when** and **From review** items (the builder's acceptance, as in
+# goal_condition), and that work outside them is not a finding. Fails with no Done when item.
+codex_story_prompt() {
+  local done_when from_review
+  done_when="$(story_items "$2" 'Done when')"
+  [[ -n "${done_when}" ]] || return 1
+  from_review="$(story_items "$2" 'From review')"
+  [[ -z "${from_review}" ]] || from_review=$'\n\nIts From review:\n'"${from_review}"
+  printf 'Review the changes on this branch against origin/%s (git diff origin/%s...HEAD). They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. Work outside them is not a finding.' \
+    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}"
+}
+
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
-# beside --base) and stdin from /dev/null, so it never waits on input. codex stays in the caller's
-# process group, so a harness that kills that group kills codex too. stop_codex stops it after
-# codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent TERM or
-# HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
+# beside --base) and stdin from /dev/null, so it never waits on input. With SWARM_STORY=<slug>, a
+# prompt instead of --base (codex_story_prompt), so codex reviews against that story. codex stays in
+# the caller's process group, so a harness that kills that group kills codex too. stop_codex stops it
+# after codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent
+# TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid left rc=0 m
+  local pid left rc=0 m args story prompt
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
+  args=(--base "origin/$1")
+  if [[ -n "${SWARM_STORY:-}" ]]; then
+    [[ "${SWARM_STORY}" =~ ^[a-z0-9-]+$ ]] || die "SWARM_STORY: bad slug '${SWARM_STORY}'"
+    story="${BOARD}/stories/${SWARM_STORY}.md"
+    [[ -f "${story}" ]] || die "SWARM_STORY=${SWARM_STORY}: no story file ${story}"
+    prompt="$(codex_story_prompt "$1" "${story}")" \
+      || die "SWARM_STORY=${SWARM_STORY}: ${story} has no **Done when** with an item under it"
+    args=("${prompt}")
+  fi
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
@@ -5669,7 +5776,7 @@ codex_review() {
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
   # shellcheck disable=SC2064 # this run's marker, fixed now
   trap "rm -f $(printf %q "${m}")" EXIT
-  codex exec review --base "origin/$1" < /dev/null &
+  codex exec review "${args[@]}" < /dev/null &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
