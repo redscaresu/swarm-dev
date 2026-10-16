@@ -552,7 +552,7 @@ for k in nudge resume; do told "tell takes the kind ${k}" idle "${k}" findings.m
 # and finds it set in sess-s1's log after the tell began; a nudge or resume tell, or goal off, sends one record.
 # The events log holds one ok tell:findings line, and when the goal step fails, its failure after it.
 records() { grep -c '^--$' "${dir}/sent" 2>/dev/null || true; }
-reply() { local f; f="$(awk '/^reply_sentence\(\)/,/^}$/' "${SWARM}")"; (eval "${f}"; reply_sentence "$1"); }
+reply() { local f; f="$(awk '/^reply_sentence\(\)/,/^}$/' "${SWARM}")"; (eval "${f}"; reply_sentence); }
 goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal or the refusal> <tell args...>
   # A refusal leaves $NREC records (2: the /goal was sent) and says the findings must not be sent again.
   local name="$1" rc="$2" want="$3" out goal ev; shift 3
@@ -572,7 +572,7 @@ onerecord() { # <name> <tell args...> — the tell sends one record, no goal
     echo "FAIL ${name}: sent '$(cat "${dir}/sent" 2>/dev/null)'"; fails=$((fails + 1)); fi
 }
 mkdir -p "${dir}/.claude/swarm"; echo "goal = 4" > "${dir}/.claude/swarm/config"
-TELL_GOAL=new goalcase "goal on: a findings tell sends the findings, then mid-turn a /goal with the story reply, and finds it set" 0 "$(reply story)" findings findings.md
+TELL_GOAL=new goalcase "goal on: a findings tell sends the findings, then mid-turn a /goal with the story reply, and finds it set" 0 "$(reply)" findings findings.md
 TELL_GOAL=old goalcase "goal on: only a set entry older than the tell fails the tell, naming s1" 1 "the findings were delivered, but its session log shows no goal set" findings findings.md
 TELL_GOAL=pane goalcase "goal on: a goal on the pane with no new entry fails the tell, naming s1" 1 "the findings were delivered, but its session log shows no goal set" findings findings.md
 # The /goal goes only into a turn that has started, never into a dialog: nothing is typed otherwise.
@@ -590,8 +590,6 @@ tsession idle; first="$(TELL_GOAL=new tellout idle findings findings.md)"; tsess
 out="$(TELL_GOAL=pane tellout idle findings findings.md)"
 if [[ "${first}" == *"exit 0" && "${out}" == *"s1: the findings were delivered, but its session log shows no goal set"*"exit 1" ]]; then echo "ok   goal on: a repeated findings tell does not count the previous tell's goal"; else
   echo "FAIL goal on: a repeated findings tell does not count the previous tell's goal: got '${out}'"; fails=$((fails + 1)); fi
-printf -- '---\nkind: code\nstatus: ready\nepic: e1\n---\n' > "${dir}/docs/stories/s1.md"; printf 'goal = 4\npr_per = epic\n' > "${dir}/.claude/swarm/config"
-TELL_GOAL=new goalcase "goal on, pr_per = epic: the /goal holds the epic-mode reply" 0 "$(reply epic)" findings findings.md
 rm -rf "${dir}/.claude" "${dir}/docs/stories/s1.md"
 onerecord "goal off: a findings tell sends no goal" findings findings.md
 refused "tell with no kind fails, listing the three" "findings, nudge or resume, not ''" idle

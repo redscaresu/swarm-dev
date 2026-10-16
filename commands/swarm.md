@@ -121,16 +121,15 @@ Repeat until a step below says stop:
        story in its own worktree, from the branch builds start from, so the new scope has to reach
        that branch first: make the change in a board PR (`swarm.sh board-pr`) and leave the main
        checkout's copy alone.
-       Once that PR has merged (and, with `pr_per = epic`, once you have merged the base into
-       `epic/<epic>` and pushed it), run `swarm.sh reset <slug> <reason> && git pull --ff-only` in
+       Once that PR has merged, run `swarm.sh reset <slug> <reason> && git pull --ff-only` in
        the board's repo, in one go: `reset` puts the file back to its committed text, so the pull
        brings in the re-scope (its kind, repo, epic and risk included) before anything builds it.
        Until the PR merges, `next` names the story again: that is a wait on the user's merge,
        so name the board PR, show what `swarm.sh status` lists under Waiting on you, and stop.
        A story is reset at most once (`reset` refuses a second, and `next` then says to drop it),
        so after its second failed escalate build, drop it.
-     - Drop it: `swarm.sh drop <slug> <reason>` takes it off the board (deleted, or `status: done`
-       with `finished = mark`); open a board PR with the change.
+     - Drop it: `swarm.sh drop <slug> <reason>` deletes it from the board; open a board PR with
+       the change.
 
      Then go back to 1.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
