@@ -18,3 +18,14 @@ status: active
 **Checks before every stage:** every PR passes shellcheck bin/swarm.sh tests/*.sh, every tests/*_test.sh and `claude plugin validate .`; shows each new check failing with its code removed; and ran humanizer over changed README/docs prose and its description, saying so.
 
 **Your part:** none; the user approved the stories on 2026-10-15.
+
+## Counts (training-export-counts, 2026-10-16)
+
+`swarm.sh export` from main at #182, run from each project's root into the lead's scratchpad (not committed).
+
+| project | agents.tsv builder lines | jsonl rows | tsv rows | empty started | empty pr | session from archive |
+|---|---|---|---|---|---|---|
+| swarm-dev | 76 | 76 | 76 | 0 | 4 | 0 |
+| infrafactory | 132 | 132 | 132 | 0 | 1 | 0 |
+
+Every jsonl line parses, and every tsv row has the header's 33 columns, with the same names as the jsonl keys. Three finding texts sampled from each project's findings.tsv (first, middle and last line) appear in neither file. The rows with no PR are builds that opened none. In swarm-dev those are pin-claude-version (verify), goal-spike-a (a spike), fable-check (an escalate check) and the first wait-until-report build, closed as stalled. In infrafactory it is dash-readable. No session log has been deleted yet, so no row read close's archive copy. That path is covered by cost_test and outcomes_test.
