@@ -69,9 +69,11 @@ Repeat until a step below says stop:
      (`gh pr list --head story/<slug>`, run in the story's repo: the project, or
      `swarm.sh config repos_dir`/`<repo:>` when the story names one) and handle it as for `story`. If there is no
      agent and no PR, the build died: tell the user, and stop.
-   - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR: every
-     check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before you close the
-     builder, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree, run in the
+   - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR. If
+     `swarm.sh config merge` is `agent`, first note the PR's head SHA
+     (`gh pr view <PR URL> --json headRefOid --jq .headRefOid`): that is the head you review. The
+     review: every check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before the
+     builder is closed, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree, run in the
      background (Bash `run_in_background`) and waited for, since it can outlast a foreground Bash
      call, plus `/code-review <PR>` when it changes code (log each fixed
      finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding --reviewer <who> <kind> <PR URL> "<one line>"`, and
@@ -85,17 +87,19 @@ Repeat until a step below says stop:
      `codex skipped: usage limit` or `codex skipped: timed out` in the PR.
      Then, if `swarm.sh config merge` is `human` (the default), run
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
-     `agent`, run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
+     `agent`, read the head SHA again once review passes; if it moved from the one you noted, review
+     the new head. Then run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
      reviewed> <PR URL>`, never a bare `gh pr merge`. Run it in the background (Bash
      `run_in_background`) and wait for it, as with codex-review: it can wait 30 minutes for CI on the
      base, longer than a foreground Bash call lasts, and killed after the merge it never runs
-     reconcile. It merges that head only when every check on it passed, waits for CI on the base
-     branch, and runs `swarm.sh reconcile`, which puts back a retry's `attempts:`, pulls the board and
-     finishes the story. If it exits non-zero, read why: a refusal before `gh pr merge` ran merged
+     reconcile. It merges that head by the literal PR number with `--match-head-commit`, never
+     `--auto`, only when every check on it passed, waits for CI on the base branch, and runs
+     `swarm.sh reconcile`, which puts back a retry's `attempts:`, pulls the board, finishes the story
+     and closes its builder. If it exits non-zero, read why: a refusal before `gh pr merge` ran merged
      nothing; `unconfirmed` means `gh pr merge` ran but the PR never read as merged, so check it by
      hand; a red or timed-out CI on the base means the PR merged and the base needs a fix. Then
-     `swarm.sh unblock` and `swarm.sh close <slug>`: closing a story that is still `ready` counts a
-     failed build.
+     `swarm.sh unblock`; reconcile has closed the builder, so leave it, unless it printed
+     `build cleared: <slug>`: then run `swarm.sh close <slug>` as it says.
 
      Give up on the builder as a conductor does when `swarm.sh wait --stall <slug>` returns stalled,
      when it is idle with no PR after wait's nudges, or when review has not converged in the rounds

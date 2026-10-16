@@ -572,11 +572,23 @@ Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/`
 reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
 again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
-blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead.
-It waits out a queued merge (auto-merge, a merge queue), then runs `swarm.sh review <slug> <PR URL>`
-and `swarm.sh reconcile`, which pull the board the way they do for you, putting back a retry's
-`attempts:` first, and finish the story, closing its builder. The conductor never closes the builder
-before that, because closing a story that is still `ready` counts a failed build. The lead merges
+blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead, and it is the only agent that can: every other
+agent still starts unable to run `gh pr merge`. It notes a PR's head SHA before it reviews it and
+reads it again after; if the head moved, it reviews the new one. Then it runs `swarm.sh review <slug>
+<PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
+with `--match-head-commit`, never `--auto`, waits for CI on the base, and runs `swarm.sh reconcile`.
+That pulls the board the way it does for you, putting back a retry's `attempts:` first, and finishes
+the story, closing its builder. The conductor never closes the builder before that, because closing
+a story that is still `ready` counts a failed build. It runs one `swarm.sh merge` at a time, and starts
+the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
+run, starts each story of the epic that unblock printed as `ready:` and whose `touches` do not
+overlap a running one. A build cleared on error or given up on stops that: it starts nothing more in
+the wave. It reports once no story of the epic that it may start is ready and none is running. If
+CI on the base goes red or times out, it merges nothing more and stops: it finds the pair of PRs
+that broke it, each green alone, opens the fix or lists it for you, and says so in its report. With
+`pr_per = epic` it notes the head of each epic branch before the whole-epic review, puts the epic in
+review with every PR, and merges them the same way, checking each PR's head first. It stops only once they have all merged, or when what is left needs the lead: a story only
+the lead can finish, or a merge that `swarm.sh merge` refused or could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
 `merge = human` too.
 

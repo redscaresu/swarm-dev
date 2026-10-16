@@ -26,6 +26,8 @@ terminal pane. The run stops whenever a decision is yours.
    (with `goal` on, under a fresh goal that holds until the fixes are in). A codex review that
    runs past 10 minutes (`codex_minutes`) is stopped, and the PR says codex was skipped.
 4. Green, reviewed PRs wait for you to merge. The next `/swarm-dev:swarm` starts the stories that were waiting on them.
+   With `merge = agent` the conductor merges each one itself, pinned to the head it reviewed, and
+   starts the stories it unblocked in the same run.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, and handles
 `kind: lead` stories: real cloud, credentials and anything hard to undo. Your steps in those
@@ -108,7 +110,8 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 
 Every agent is a full Claude Code session, on a model chosen by its role, and planning one epic
 starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
-touch real cloud or credentials. By default no agent merges.
+touch real cloud or credentials. By default no agent merges; with `merge = agent` only the conductor
+does.
 
 When `swarm.sh close` closes the builder of a code, docs or chore story that is still `ready`, it
 counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
