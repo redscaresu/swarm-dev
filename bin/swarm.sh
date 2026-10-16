@@ -2873,11 +2873,12 @@ waiting_on_user() {
 # open_item <file> — true while a board item is still open: its file exists and is not status: done.
 open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
 
-# story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets and
-# quotes gone.
+# story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets,
+# quotes, a trailing # comment and trailing whitespace (a CR too) gone.
 story_deps() {
   local v
-  v="$(get_fm "$1" depends_on)"; v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
+  v="$(get_fm "$1" depends_on)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+  v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
   printf '%s' "${v//\'/}"
 }
 

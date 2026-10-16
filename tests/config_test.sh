@@ -250,6 +250,17 @@ check "a blocked story whose depends_on is finished says unblock readies it" "ye
   "$(grep -qxF '  blocked: deps-done (its depends_on is finished: swarm.sh unblock readies it)' <<< "${all}" && echo yes || echo "no, got: ${all}")"
 check "a depends_on line in the body never unblocks a story" "ready: deps-done" "$(run "${p}" unblock)"
 rm "${b}/stories/body-deps.md" "${b}/stories/deps-done.md"
+# Trailing whitespace, a CR or a # comment after the list is not part of its last slug.
+item "${b}" stories/gap3.md "status: ready" "kind: code"
+item "${b}" stories/trail.md "status: blocked" "kind: code" "depends_on: [gap3, x] "
+item "${b}" stories/trail-cr.md "status: blocked" "kind: code" $'depends_on: [x]\r'
+item "${b}" stories/trail-note.md "status: blocked" "kind: code" "depends_on: [x]  # after gap3"
+check "a depends_on list with trailing space names its slugs, not 'x]'" "yes" \
+  "$(grep -qxF '  blocked: trail (by gap3)' <<< "$(run "${p}" status --all)" && echo yes || echo "no, got: $(run "${p}" status --all)")"
+run "${p}" finish gap3 >/dev/null
+check "a depends_on list ending in a space, a CR or a # comment unblocks once its slugs finish" $'ready: trail\nready: trail-cr\nready: trail-note' \
+  "$(run "${p}" unblock | sort)"
+rm "${b}/stories/trail.md" "${b}/stories/trail-cr.md" "${b}/stories/trail-note.md"
 # Quoted slugs (YAML allows both kinds).
 item "${b}" stories/gap2.md "status: ready" "kind: code"
 item "${b}" stories/only-deps.md "status: blocked" "kind: code" "depends_on: [\"gap2\", 'x']"
