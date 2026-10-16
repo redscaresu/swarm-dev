@@ -188,6 +188,10 @@ for a in '   - `resume <slug>`:' '   - `story <slug>`:'; do
   part="$(awk -v a="${a}" 'index($0, a) == 1 { on = 1; print; next } on && /^   - `/ { exit } on' <<< "${arm}")"
   for w in 'swarm.sh conduct --backlog' 'not started:'; do grep -qF -- "${w}" <<< "${part}" || got+=" ${a# *- } missing '${w}'"; done
 done
+# The resume arm stops on a dead build, naming its worktree; the story arm stops on any unchanged report.
+# shellcheck disable=SC2016 # the backticks are literal Markdown
+for w in 'name its worktree' 'whatever the report says: start no' '`find <board> -newer'; do
+  grep -qF -- "${w}" <<< "$(tr -s '[:space:]' ' ' <<< "${arm}")" || got+=" missing '${w}'"; done
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog and stop on not started:"
 else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.

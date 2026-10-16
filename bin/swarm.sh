@@ -1870,7 +1870,9 @@ merge_rule() {
 # waits out every running build, or with pr_per = epic, the epic's PRs. The backlog conductor has
 # no Done when: it stops once its stories are all started and finished.
 stop_rule() {
-  if [[ "$1" == backlog ]]; then echo "Stop when no ready story with no \`epic:\` that you may start is left and none is running."
+  if [[ "$1" == backlog ]]; then
+    printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
+    if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when CI on the base is red or timed out."; fi
   elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
   elif [[ "${CFG_pr_per}" == epic ]]; then echo "Stop when every PR from epic/$1 has merged and the epic's **Done when** holds, or when what is left needs the lead: a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running; a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch; or CI on the base red or timed out."
   else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
@@ -1938,12 +1940,13 @@ denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
 EOF
 }
-# conduct_merge_rule [scope] — how a conductor hands over or merges a reviewed PR. <scope> is "of this
-# epic" (the default) or "with no epic" for the backlog conductor, which has no epic to review or finish.
+# conduct_merge_rule [backlog] — how a conductor hands over or merges a reviewed PR: an epic's, or
+# with backlog the backlog conductor's, whose stories have no epic to review or finish.
 conduct_merge_rule() {
-  local scope="${1:-of this epic}" epic_end=""
+  local scope="of this epic" epic_end="" backlog=""
+  [[ "${1:-}" != backlog ]] || { backlog=1; scope="with no epic"; }
   if [[ "${CFG_merge}" == human ]]; then
-    [[ "${scope}" != "of this epic" ]] || epic_end=" When every story left
+    [[ -n "${backlog}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
 \`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge."
     cat <<EOF
@@ -1953,7 +1956,7 @@ When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\`
 stays blocked until the human merges and \`/swarm-dev:swarm\` reconciles the board.${epic_end}
 EOF
   else
-    [[ "${scope}" != "of this epic" ]] || epic_end=" When the
+    [[ -n "${backlog}" ]] || epic_end=" When the
 epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`."
     cat <<EOF
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
@@ -2623,7 +2626,7 @@ $(green_rule)
 
 $(review_rule)
 
-$(conduct_merge_rule "with no epic")$(sign_rule_if_on)
+$(conduct_merge_rule backlog)$(sign_rule_if_on)
 EOF
 }
 

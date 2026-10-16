@@ -107,15 +107,23 @@ eb="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the backlog brief's review paragraph is the epic conductor's" "same" \
   "$([[ -n "$(para "A story is reviewed only when" "${bl}")" && "$(para "A story is reviewed only when" "${bl}")" == "$(para "A story is reviewed only when" "${eb}")" ]] && echo same || echo differs)"
 check "the epic conductor keeps its scope and drops 'or verify'" "yes|no" "$(has "Stay inside this epic" "${eb}")|$(hasnt "or verify" "${eb}")"
+check "with merge = human, the epic conductor still puts the epic in review" "yes" "$(has "swarm.sh review <epic> <every PR URL still waiting>" "${eb}")"
 run close conduct-e >/dev/null
 
 # --- merge = agent: the conductor merges each pinned head.
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null
 bl="$(cat "${brief}")"
+check "with merge = agent, the backlog conductor also stops when CI on the base is red or timed out" "yes" \
+  "$(has 'that you may start is left and none is running, or when CI on the base is red or timed out.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
   "$(has 'swarm.sh merge --head <the SHA you reviewed> <PR URL>' "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
+
+run close conduct-backlog >/dev/null
+run conduct e >/dev/null
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has 'take the epic off the board with `swarm.sh finish <epic>`' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
