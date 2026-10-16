@@ -41,9 +41,10 @@ also run one by one, and which each wait for the user's approval:
 | Stories | `/plan-epic <epic-slug>` | `docs/stories/<slug>.md` per story, after approval |
 | Build | `swarm.sh conduct <epic-slug>` | a fresh conductor that builds the epic, and merges it only with `merge = agent` |
 
-Useful while it runs: `swarm.sh status [--all]` (agents that need a look, including empty panes where a start failed, and what waits on the user; `--all` lists idle agents and blocked stories too), `swarm.sh dash [--watch [seconds]]` (the board, agents, model ladder and recent events on one read-only screen), `swarm.sh tidy [--yes]` (close empty panes and retired agents' panes; lists them first), `swarm.sh next` (the next step, without doing it), `swarm.sh cost [since]`
-(tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh tell <slug> <kind> <file>` (kind: findings, nudge or resume)
-(send a builder review findings), `swarm.sh log-finding <kind> <pr> <text>` and `swarm.sh lessons [--all]` (the outer
+Useful while it runs: `swarm.sh status [--all]` (agents that need a look, including empty panes where a start failed, and what waits on the user; `--all` lists idle agents and blocked stories too), `swarm.sh dash [--watch [seconds]]` (the board, agents, model ladder and recent events on one read-only screen), `swarm.sh tidy [--yes]` (close empty panes and retired agents' panes; lists them first), `swarm.sh next` (the next step, without doing it), `swarm.sh cost [--since YYYY-MM-DD]`
+(tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh tell <slug> <kind> <file>` (findings, nudge or resume
+sends an idle builder a file; note leaves a conductor a note, busy or not), `swarm.sh merge [--board] <pr-url>`
+(merge a green PR in review with its head pinned, wait for CI on main, then reconcile), `swarm.sh log-finding <kind> <pr> <text>` and `swarm.sh lessons [--all]` (the outer
 loop: log fixed findings by kind; list kinds recurring in 3+ PRs with no brief rule yet), `swarm.sh watch`
 (returns when a story PR needs the lead), `herdr agent read <name> --source recent-unwrapped`
 (what an agent is doing).
@@ -56,7 +57,8 @@ loop: log fixed findings by kind; list kinds recurring in 3+ PRs with no brief r
   default), never merge at all: `swarm.sh review <slug> <PR URL>` hands it to the user.
 - Never hand a `kind: lead` story (real cloud, credentials, or a step that is the user's) to an
   agent. List them for the user.
-- One conductor at a time, and only the lead edits the shared files `AGENTS.md` names.
+- One conductor per epic. Two epics run side by side only when their stories touch different files;
+  otherwise one story `depends_on` the other. Only the lead edits the shared files `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
 
 ## Working on this repository
@@ -91,6 +93,6 @@ never `[[wikilinks]]`.
 `bin/swarm.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`. Bump `version` in
-`.claude-plugin/plugin.json` in any PR that changes what a user installs: `claude plugin update`
-fetches nothing while the version is unchanged. Merging a version bump to `main` publishes the release and its
+`.claude-plugin/plugin.json` once per epic, in its release story (a PR outside any epic bumps it itself): `claude plugin update` fetches
+nothing while the version is unchanged. A story PR without a bump is not a review finding. Merging a version bump to `main` publishes the release and its
 `v<version>` tag (`.github/workflows/release.yml`); a merge without one publishes nothing.

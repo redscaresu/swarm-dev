@@ -783,7 +783,9 @@ LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recent
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
 # code-scanning alerts (swarm.sh findings). A row logged without --reviewer says unknown. The reports
-# read this list as SWARM_FINDING_REVIEWERS, so a reviewer is added here alone.
+# read this list as SWARM_FINDING_REVIEWERS. A new reviewer also needs its line in finding_rule's
+# mapping and in the story arm of commands/swarm.md, which tell whoever logs a finding which value
+# names which reviewer.
 FINDING_REVIEWERS="codex code-review ci conductor lead"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
@@ -1052,8 +1054,10 @@ PY
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
 # Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
-# cause, and the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
-# drop). Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
+# cause, the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
+# drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
+# unknown), the findings declined, and both counts by reviewer. A finding goes to the latest build on
+# its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
 # A build's PR is the last of the slug's PRs its session log names, so each attempt keeps its own;
@@ -1062,7 +1066,7 @@ PY
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
 # read from close's copy of the session log once Claude Code deleted it.
 outcomes_report() {
-  local since="" rows meta="" slug text kind src prs epic head
+  local since="" rows meta="" slug text kind from src prs epic story_epic head got asked
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
@@ -1213,47 +1217,76 @@ for b in builds:
                     + tok + [b.get("cause", "")] + steps))
 PY
 )"
-  # Per slug: kind, risk, the epic whose PR its builds share (pr_per = epic) and every PR of its head
-  # (newest first, as `url state` pairs joined by commas), from the story (on the board, or its last
-  # version in git once a merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run.
+  # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, the epic whose PR
+  # its builds share (pr_per = epic), every PR of its head (newest first, as `url state mergedAt`
+  # triples joined by commas), its epic: and whether gh answered (1, or empty), from the story (on the
+  # board, or its last version in git once a merge deleted it) and gh. A gh that fails leaves no PR; it
+  # never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    text="$(story_text "${slug}")"; prs=""; epic=""; head="story/${slug}"
+    text="$(story_text "${slug}")"; prs=""; epic=""; head="story/${slug}"; asked=""
     kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
-    [[ "${CFG_pr_per}" != epic ]] || epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
+    [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
+    story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    [[ "${CFG_pr_per}" != epic ]] || epic="${story_epic}"
     [[ -z "${epic}" ]] || head="epic/${epic}"
-    if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then
-      prs="$( (cd "${src}" && gh pr list --head "${head}" --state all \
-        --json url,state --jq '.[] | [.url, .state] | @tsv') 2>/dev/null | tr '\t' ' ' | paste -sd, - || true)"
+    if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
+      && got="$( (cd "${src}" && gh pr list --head "${head}" --state all \
+        --json url,state,mergedAt --jq '.[] | [.url, .state, .mergedAt // ""] | @tsv') 2>/dev/null)"; then
+      prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
-    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${epic}"$'\t'"${prs}"$'\n'
+    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${epic}"$'\t'"${prs}"
+    meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
 import collections, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 5}
-fixed = collections.Counter(pr_key(f[2]) for f in fixed_rows(sys.argv[1]))
+meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 7}
+
+def parsed(prs):
+    # The (url, state, mergedAt) of each PR in the meta column; a stub or older gh may leave out mergedAt.
+    return [(p.split(" ") + [""])[:3] for p in prs.split(",") if " " in p]
 
 def pr_of(epic, prs, pulls):
-    # (url, state) of a build's PR, or empty: see outcomes_report. pulls is the first python's column:
-    # "-" for no log.
-    prs = [tuple(p.split(" ", 1)) for p in prs.split(",") if " " in p]
+    # (url, state, mergedAt) of a build's PR, or empty: see outcomes_report. pulls is the first python's
+    # column: "-" for no log.
+    prs = parsed(prs)
     if epic or pulls == "-":
-        return prs[0] if prs and (epic or len(prs) == 1) else ("", "")
-    keyed = {pr_key(u): (u, s) for u, s in prs}
-    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", ""))
+        return prs[0] if prs and (epic or len(prs) == 1) else ("", "", "")
+    keyed = {pr_key(u): (u, s, m) for u, s, m in prs}
+    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", "", ""))
+
+rows = []
+for line in os.environ["SWARM_ROWS"].splitlines():
+    f = line.split("\t")
+    kind, risk, epic, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", "", ""))
+    rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(epic, prs, f[12])))
+# Each finding goes to the latest build on its PR that started on or before the finding (both are
+# local dates), so a PR two builds share counts each finding once.
+found = [collections.Counter() for _ in rows]
+for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
+    on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
+    if on:
+        found[on[-1]][(outcome, reviewer)] += 1
+
+def by(c, outcome):
+    return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
 
 # Columns are only ever appended: decisions reads them by name.
 print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
-      "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at")
-for line in os.environ["SWARM_ROWS"].splitlines():
-    f = line.split("\t")
-    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts, pulls = f[:13]
-    kind, risk, epic, prs = meta.get(slug, ("", "", "", ""))
-    pr, state = pr_of(epic, prs, pulls)
+      "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
+      "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by")
+for (f, kind, risk, story_epic, asked, prs, pr, state, merged), c in zip(rows, found):
+    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
+    # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
+    story_merged = ("true" if any(s == "MERGED" for _, s, _ in parsed(prs)) else "false") if asked else ""
+    fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
-                     str(fixed[pr_key(pr)]) if pr else "0", pr, state, attempts] + f[13:]))
+                     str(fixed), pr, state, attempts] + f[13:]
+                     + [story_epic, merged if asked and state == "MERGED" else "", story_merged, str(declined),
+                        by(c, "fixed"), by(c, "declined")]))
 PY
 }
 
@@ -1761,9 +1794,13 @@ finding_rule() {
   cat <<EOF
 Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
-    SWARM_PROJECT=${proj} ${sw} log-finding <kind> <PR URL> "<one line>"
-    SWARM_PROJECT=${proj} ${sw} log-finding --declined <kind> <PR URL> "<the finding, and why it was declined>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
 
+<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
+\`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a
+\`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
+one from the lead's own reading.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.

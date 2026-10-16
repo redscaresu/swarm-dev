@@ -76,8 +76,10 @@ Repeat until a step below says stop:
      builder is closed, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree, run in the
      background (Bash `run_in_background`) and waited for, since it can outlast a foreground Bash
      call, plus `/code-review <PR>` when it changes code (log each fixed
-     finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding <kind> <PR URL> "<one line>"`, and
-     each declined one with `log-finding --declined <kind> <PR URL> "<the finding, and why>"`), with findings
+     finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding --reviewer <who> <kind> <PR URL> "<one line>"`, and
+     each declined one with `log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why>"`,
+     where `<who>` is the reviewer that raised it: `codex` for codex-review's, `code-review` for /code-review's,
+     `ci` for the review bot's or a `swarm.sh findings` note's, or `lead` for your own reading), with findings
      sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing
      substantive
      (method.md § Building). If codex reports a usage limit, or codex-review stops it and prints
