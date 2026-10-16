@@ -2559,7 +2559,8 @@ leave the rest to their own conductor.
   \`swarm.sh agent <tab> <child> <worktree> <role> <brief>\`, where <tab> is the child's \`epic:\` (its
   slug when it has none), <role> is what \`swarm.sh _role <child>\` prints, and the brief says the
   same and to reply with the PR URL. Any review of the child from before that merge is stale: review
-  the new head.
+  the new head. The line stays until the child pushes the merge, so send each merge once: until the
+  child's builder replies to that tell (or brief), skip a line for the same child and ref.
 - \`<child>: lost story/<p>\`: on a ready child whose builder is open, run \`swarm.sh close <child>
   paused\`, which holds it for the lead. If the line ends \`(no builder)\`, or close prints
   \`not held:\`, the child stays ready on a dead parent: do not start it, and list it in your report
@@ -4053,8 +4054,9 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   done
 }
 
-# not_in <repo-dir> <ref> <branch> — <ref>'s head is not in <branch>. A git error is not a no.
-not_in() { local rc=0; git -C "$1" merge-base --is-ancestor "$2" "$3" 2>/dev/null || rc=$?; [[ ${rc} == 1 ]]; }
+# ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when
+# git cannot tell (a missing ref).
+ref_in() { local rc=0; git -C "$1" merge-base --is-ancestor "$2" "$3" 2>/dev/null || rc=$?; (( rc <= 1 )) || rc=2; return "${rc}"; }
 
 # fetch_branch <repo-dir> <branch> — fetch origin's <branch> into origin/<branch>; returns 2 when
 # origin answered and has no such branch, 1 for any other failure.
@@ -4069,11 +4071,13 @@ fetch_branch() {
 # stacked_parents <child> — the parents the child's current build stacked on: the `stacked <child>`
 # event just before its last ok `story <child>` (main logs story once the build is done), or one
 # with no story after it yet (a build still starting). A later ok build with no stacked event
-# (rebuilt from the base) has none.
+# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
+# follows belongs to no build: a failed or abandoned start.
 stacked_parents() {
   awk -F'\t' -v s="$1" '$3 != s { next }
     $2 == "stacked" && index($5, "ok (on ") == 1 { pend = substr($5, 8, length($5) - 8) }
-    $2 == "story" && index($5, "ok") == 1 { cur = pend; pend = "" }
+    $2 == "story" && index($5, "ok") == 1 { cur = pend; pend = ""; next }
+    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
     END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
@@ -4093,7 +4097,8 @@ stacked_parent() {
     *)
       fetch_branch "${src}" "story/${p}" || rc=$?
       case ${rc} in 0) ;; 2) echo "lost story/${p}"; return ;; *) return 1 ;; esac
-      ! not_in "${src}" "origin/story/${p}" "${have}" || echo "merge origin/story/${p}" ;;
+      rc=0; ref_in "${src}" "origin/story/${p}" "${have}" || rc=$?
+      case ${rc} in 0) ;; 1) echo "merge origin/story/${p}" ;; *) return 1 ;; esac ;;
   esac
 }
 
@@ -4115,27 +4120,35 @@ stacked_child() {
     *) echo "${child}: could not check story/${child} on origin${builder}"; return 0 ;;
   esac
   for p in ${parents//,/ }; do
-    [[ "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+    if [[ ! "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then echo "${child}: could not check ${p}${builder}"; continue; fi
     line="$(stacked_parent "${src}" "${have}" "${p}")" || line="could not check ${p}"
     case "${line}" in merged) done_ps+="${done_ps:+, }${p}" ;; ?*) echo "${child}: ${line}${builder}" ;; esac
   done
   [[ -n "${done_ps}" ]] || return 0
   # ponytail: caches the last repo's base only; boards span few repos, so a miss is one more fetch.
   [[ "${STACKED_SRC}" == "${src}" ]] || { STACKED_BASE="$(base_for "${src}" 2>/dev/null)" || STACKED_BASE=""; STACKED_SRC="${src}"; }
-  if [[ -z "${STACKED_BASE}" ]]; then echo "${child}: could not check the base for ${done_ps}${builder}"
-  elif not_in "${src}" "origin/${STACKED_BASE}" "${have}"; then echo "${child}: merge origin/${STACKED_BASE} (${done_ps} merged)${builder}"
-  fi
+  rc=2; [[ -z "${STACKED_BASE}" ]] || { rc=0; ref_in "${src}" "origin/${STACKED_BASE}" "${have}" || rc=$?; }
+  case ${rc} in
+    0) ;;
+    1) echo "${child}: merge origin/${STACKED_BASE} (${done_ps} merged)${builder}" ;;
+    *) echo "${child}: could not check the base for ${done_ps}${builder}" ;;
+  esac
 }
 
 # stacked_lines — one line per parent of a stacked build that needs action (stacked_child): a ready
 # or blocked story with a worktree whose current build stacked on parents. A line ends (no builder)
 # when herdr shows no builder open for the child; a gh or git call that fails gives a `could not
-# check` line. herdr, gh and git read no stdin, which feeds the loop.
+# check` line. herdr, gh and git read no stdin, which feeds the loop, and git never prompts for a
+# credential or an ssh passphrase on the terminal: status must not hang, so such a fetch fails into
+# a could-not-check line.
 stacked_lines() {
   local story
   STACKED_SRC=""; STACKED_BASE=""
   while IFS= read -r story; do
-    case "$(fm "${story}" status)" in ready|blocked) stacked_child "${story}" </dev/null ;; esac
+    case "$(fm "${story}" status)" in
+      ready|blocked)
+        GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes" stacked_child "${story}" </dev/null ;;
+    esac
   done < <(board stories)
 }
 

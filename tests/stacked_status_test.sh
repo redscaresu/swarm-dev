@@ -131,6 +131,19 @@ event 3 story ok
 is "a later build with no stacked event (rebuilt from main) has no parents" "" "$(stacked)"
 event 4 stacked 'ok (on p)'
 is "a later stacked build has its parents again" "child: lost story/p" "$(stacked)"
+: > "${P}/.swarm/events.tsv"; event 1 stacked 'ok (on p)'; event 2 story 'swarm: story failed'; event 3 reset 'ok (retry)'; event 4 story ok
+is "a stacked start that failed, then a reset and a build from main: no parents" "" "$(stacked)"
+: > "${P}/.swarm/events.tsv"; event 1 stacked 'ok (on p)'; event 2 story 'swarm: story failed'; event 3 story ok
+is "a stacked start that failed, then a build from main: no parents" "" "$(stacked)"
+: > "${P}/.swarm/events.tsv"; event 1 stacked 'ok (on p)'; event 2 close:stalled ok; event 3 story ok
+is "a stacked start closed, then a build from main: no parents" "" "$(stacked)"
+: > "${P}/.swarm/events.tsv"; event 1 stacked 'ok (on p Bad!)'
+is "a parent that is not a slug could not be checked" "child: lost story/p"$'\n'"child: could not check Bad!" "$(stacked)"
+echo "${STACKED}" > "${P}/.swarm/events.tsv"
+git -C "${UP}" push -q origin story/p
+git -C "${UP}" push -q origin --delete story/child
+git -C "${P}" update-ref -d refs/heads/story/child
+is "git cannot tell (the child's branch is gone): could not check" "child: could not check p" "$(stacked)"
 
 # --- Both conductor briefs, story mode (an epic) and backlog mode, carry the stacked rule.
 Q="${ROOT}/conductors"; mkdir -p "${Q}/.claude/swarm" "${Q}/docs/epics" "${Q}/docs/stories" "${ROOT}/cbin"
@@ -159,7 +172,7 @@ for mode in e backlog; do
   [[ "${mode}" != backlog ]] || mine='a story with no `epic:`'
   for want in "start what it readies that is yours (${mine};" 'act only on a line whose <child> is yours' \
       'If the line ends `(no builder)`, or close prints `not held:`, the child stays ready on a dead parent: do not start it, and list it in your report for the lead.' \
-      '`<child>: could not check <what>`' 'and after a builder opens a PR, run `swarm.sh unblock`' 'run `swarm.sh status` and read its Stacked lines' \
+      '`<child>: could not check <what>`' 'so send each merge once: until the child'"'"'s builder replies to that tell (or brief), skip a line for the same child and ref.' 'and after a builder opens a PR, run `swarm.sh unblock`' 'run `swarm.sh status` and read its Stacked lines' \
       'saying to merge <ref> into its branch, re-run the tests and push, and send it with `swarm.sh tell <child> findings <file>`' \
       'On a line that ends `(no builder)`, first start a builder in the child'"'"'s worktree' '`swarm.sh agent <tab> <child> <worktree> <role> <brief>`' \
       'review the new head' 'run `swarm.sh close <child> paused`'; do
