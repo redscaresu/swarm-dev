@@ -301,8 +301,13 @@ ready stories with no `epic:` (the one-offs) the way an epic's conductor builds 
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
-`not started: <slug> (<why>)`. `/swarm-dev:swarm` runs it for a `story` or `resume` step, and does
-not run it again for a story it reported not started until the board changes.
+`not started: <slug> (<why>)`. `/swarm-dev:swarm` runs it for a `story` or `resume` step. While
+that report is newer than every Markdown file on the board, `/swarm-dev:swarm` starts no
+new one, whatever the report says, and tells you why the story waits. For a `resume` step it also
+stops when the report lists the story under `not started:` (a build that died), even after the board
+changes. A fix that changes no board file, such as a code PR that turns CI on the base green or a
+dead worktree you removed by hand, does not clear the stop: delete
+`.swarm/conduct-backlog.report.md` once the cause is fixed.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.

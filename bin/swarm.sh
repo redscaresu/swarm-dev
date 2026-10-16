@@ -2614,7 +2614,15 @@ EOF
 }
 
 # The backlog conductor: every ready story with no epic, a PR per story, reviewed as an epic's are.
+# With merge = human its own one-off in review leaves review only once /swarm-dev:swarm reconciles, after this
+# conductor reports, so a refusal naming one is reported, never waited on.
 conduct_backlog_mode() {
+  local own=""
+  [[ "${CFG_merge}" != human ]] || own="
+
+A \`swarm.sh story --strict\` refusal that names another story with no epic (\`(epic none) is open\`)
+names one of yours in review, and it cannot merge while you run: do not wait for it. Report the
+refused story as \`not started: <slug> (waits on <other>'s merge)\`."
   cat <<EOF
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as method.md
 § Building describes: pick waves of them whose \`touches\` do not overlap, start each with
@@ -2628,7 +2636,7 @@ background, then review its PR as below. If it has no builder and no PR, the bui
 start it, and report it as not started, with the reason \`build died\`.
 
 List each ready story with no \`epic:\` that you could not start in your report, one line each:
-\`not started: <slug> (<the refusal's first line>)\`.
+\`not started: <slug> (<the refusal's first line>)\`.${own}
 
 $(auth_rule)$(goal_rule_if_on)
 

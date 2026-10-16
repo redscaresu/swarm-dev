@@ -93,6 +93,10 @@ run `swarm.sh story` for it again.' "${bl}")|$(has 'report it as not started, wi
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = human, the backlog brief hands over with swarm.sh review, never swarm.sh merge, and stops when nothing is left" "yes|no|yes|no" \
   "$(has 'run `swarm.sh review <slug> <PR URL>`' "${bl}")|$(hasnt "swarm.sh merge" "${bl}")|$(has 'Stop when no ready story with no `epic:` that you may start is left and none is running.' "${bl}")|$(hasnt "swarm.sh review <epic>" "${bl}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
+  "$(has "Report the
+refused story as \`not started: <slug> (waits on <other>'s merge)\`." "${bl}")"
 check "the backlog conductor reports to conduct-backlog.report.md" "yes" "$(has "${p}/.swarm/conduct-backlog.report.md" "${bl}")"
 nx="$(run next)"
 check "with conduct-backlog alive, next waits on it" "wait conduct-backlog" "${nx%%$'\n'*}"
@@ -114,6 +118,7 @@ run close conduct-e >/dev/null
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null
 bl="$(cat "${brief}")"
+check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does" "no" "$(hasnt "waits on <other>'s merge" "${bl}")"
 check "with merge = agent, the backlog conductor also stops when CI on the base is red or timed out" "yes" \
   "$(has 'that you may start is left and none is running, or when CI on the base is red or timed out.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's

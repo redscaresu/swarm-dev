@@ -79,18 +79,21 @@ Repeat until a step below says stop:
      `.swarm/conduct-backlog.report.md` lists `<slug>` under `not started:` (a build that died
      leaves a worktree with no builder and no PR), start no new conductor: `next` names it again for
      as long as the worktree is there. Tell the user why it could not start, name its worktree
-     (`<repo>-wt/<slug>`, beside its repo), and stop. Otherwise handle it as `story <slug>`, which runs
-     `swarm.sh conduct --backlog`: the backlog conductor waits on a story whose worktree exists,
-     and never starts it again.
+     (`<repo>-wt/<slug>`, beside its repo), and say what clears this stop: once the cause is fixed
+     (the worktree removed, say), delete `.swarm/conduct-backlog.report.md`. Then stop. Otherwise
+     handle it as `story <slug>`, which runs `swarm.sh conduct --backlog`: the backlog conductor
+     waits on a story whose worktree exists, and never starts it again.
    - `story <slug>`: a one-off (a ready story with no `epic:`). The backlog conductor builds every
      one-off as a conductor builds an epic: it reviews each PR, and hands it to the user or merges
-     it as `swarm.sh config merge` says. If `.swarm/conduct-backlog.report.md` exists and nothing on
-     the board has changed since it was written (`find <board> -newer
+     it as `swarm.sh config merge` says. If `.swarm/conduct-backlog.report.md` exists and no board
+     item has changed since it was written (`find <board> -name '*.md' -newer
      .swarm/conduct-backlog.report.md` prints nothing), the last backlog conductor stopped on the
      board as it is now, and a new one would stop the same way, whatever the report says: start no
      new conductor. Tell the user why `<slug>` is still waiting (its `not started:` line, or what
      the report says is left: CI on the base red or timed out, a story escalated to the lead), show
-     what `swarm.sh status` lists under Waiting on you, and stop. Otherwise run
+     what `swarm.sh status` lists under Waiting on you, and say what clears this stop: a change to
+     a board item, or, for a fix that changes none (a code PR that turns CI on the base green),
+     deleting `.swarm/conduct-backlog.report.md` once the cause is fixed. Then stop. Otherwise run
      `swarm.sh conduct --backlog`, then handle it as `wait conduct-backlog`.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
