@@ -779,35 +779,54 @@ LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
-# code-scanning alerts (swarm.sh findings). A row logged without --reviewer says unknown. The reports
-# read this list as SWARM_FINDING_REVIEWERS. A new reviewer also needs its line in finding_rule's
-# mapping and in the story arm of commands/swarm.md, which tell whoever logs a finding which value
-# names which reviewer.
-FINDING_REVIEWERS="codex code-review ci conductor lead"
+# code-scanning alerts (swarm.sh findings). skeptic and critic are the plan reviewers, logging on a
+# board PR; escaped is a defect a later fix found in merged work, logged against the original PR. A
+# row logged without --reviewer says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
+# A new reviewer a conductor logs also needs its line in finding_rule's mapping and in the story arm
+# of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
+FINDING_REVIEWERS="codex code-review ci conductor lead skeptic critic escaped"
+# Why a finding was declined (log-finding --declined <reason>).
+FINDING_REASONS="out-of-scope nit wrong"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
-# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REVIEWER to --reviewer's value (unset
-# without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies,
-# so main reads the events target with it before the command runs.
+# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REASON to --declined's reason (empty
+# when the next word is a flag or missing), FINDING_REVIEWER to --reviewer's value (unset without
+# one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
+# reads the events target with it before the command runs.
 finding_flags() {
   local n
-  FINDING_OUTCOME=fixed; unset FINDING_REVIEWER; FINDING_SKIP=0
+  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER; FINDING_SKIP=0
   while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
     n=1
-    if [[ "$1" == --declined ]]; then FINDING_OUTCOME=declined; else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
+    if [[ "$1" == --declined ]]; then
+      FINDING_OUTCOME=declined
+      [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
+    else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
     shift "${n}"; FINDING_SKIP=$((FINDING_SKIP + n))
   done
 }
 
 # record_finding <kind> <pr-url> <text> <fixed|declined> [reviewer] — log one finding, what became of
-# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A row is date,
-# kind, PR, text, outcome, reviewer; rows from before the outcome column have four fields and were
-# all fixed, and rows from before the reviewer column have five. lessons, outcomes and dash count
-# only fixed rows; decisions reads both.
+# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A declined one's
+# reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
+# text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
+# have four fields and were all fixed, and rows from before the reviewer column have five. An
+# escaped defect's outcome is escaped, so outcomes and review-yield, which count what review raised,
+# leave it out; lessons and dash count fixed and escaped rows, never declined ones.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}"
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
-    || die "usage: swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <one line>"
+    || die "usage: swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <one line>"
+  # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
+  if [[ "${reviewer}" == escaped ]]; then
+    [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined: drop --declined"
+    outcome=escaped
+  fi
+  if [[ "${outcome}" == declined ]]; then
+    [[ "${FINDING_REASON:-}" =~ ^[a-z-]+$ && " ${FINDING_REASONS} " == *" ${FINDING_REASON} "* ]] \
+      || die "--declined needs a reason, one of: ${FINDING_REASONS}"
+    reason=$'\t'"${FINDING_REASON}"
+  fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
@@ -816,7 +835,7 @@ record_finding() {
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
@@ -827,11 +846,14 @@ record_finding() {
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
 #   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
-#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome, reviewer);
-#   a row from before the outcome column is "fixed", and one from before the reviewer column "unknown".
+#   finding_rows(path[, outcomes]) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome,
+#   reviewer) whose outcome is one of outcomes (fixed and declined: what review raised, so an escaped
+#   row is not one); a row from before the outcome column is "fixed", and one from before the reviewer
+#   column "unknown".
 #   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
-#   reads findings passes) or unknown. Fields past the sixth are ignored, so a column appended later
-#   drops no row. fixed_rows(path) is the fixed ones' first four fields.
+#   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
+#   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
+#   escaped ones: both are a mistake someone fixed, so both are lessons.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
@@ -860,17 +882,17 @@ def log_lines(path):
     except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
         return
 
-def finding_rows(path):
+def finding_rows(path, outcomes=("fixed", "declined")):
     # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
     reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
     if not os.path.exists(path):
         return []
     rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
     rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
-    return [f for f in rows if f[4] in ("fixed", "declined") and f[5] in reviewers]
+    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
 
 def fixed_rows(path):
-    return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
+    return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
@@ -1928,7 +1950,7 @@ bump_rule() {
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
-# logged too, for `decisions`, and never count as lessons.
+# logged too, with their reason, and never count as lessons.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -1936,12 +1958,16 @@ finding_rule() {
 Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
     SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
-    SWARM_PROJECT=${proj} ${sw} log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined <reason> --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
 
+<reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
+it is real but not worth the change, and wrong when it is mistaken.
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
 \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
 one from the lead's own reading.
+When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
+PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.

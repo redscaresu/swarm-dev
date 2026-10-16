@@ -40,10 +40,10 @@ check "denylist is now a candidate" "yes" "$(has "candidate denylist" "$(sw less
 
 # A declined finding is logged with its outcome, and never counts toward a lesson.
 check "a fixed finding is logged as fixed" "fixed" "$(grep -m1 denylist "${dir}/.swarm/findings.tsv" | cut -f5)"
-for pr in o/r#90 o/r#91 o/r#92; do sw log-finding --declined out-of-scope "${pr}" "an edge case the story leaves out" >/dev/null; done
-check "a declined finding is logged as declined" "out-of-scope	declined" "$(tail -1 "${dir}/.swarm/findings.tsv" | cut -f2,5)"
+for pr in o/r#90 o/r#91 o/r#92; do sw log-finding --declined out-of-scope edge-case "${pr}" "an edge case the story leaves out" >/dev/null; done
+check "a declined finding is logged as declined" "edge-case	declined" "$(tail -1 "${dir}/.swarm/findings.tsv" | cut -f2,5)"
 check "declined findings in 3 PRs are no candidate, nor listed" "no" \
-  "$(grep -q "out-of-scope" <<< "$(sw lessons; sw lessons --all)" && echo yes || echo no)"
+  "$(grep -q "edge-case" <<< "$(sw lessons; sw lessons --all)" && echo yes || echo no)"
 
 # The reviewer that raised a finding is its sixth field; the flags go before the kind, in either order.
 F="${dir}/.swarm/findings.tsv"
@@ -60,8 +60,27 @@ refused() {
   if sw log-finding "$@" >/dev/null; then echo "exited 0"; elif [[ "$(wc -l < "${F}")" -ne "${n}" ]]; then echo "appended a row"; else echo refused; fi
 }
 check "--reviewer is logged after the outcome" "fixed	codex" "$(logged --reviewer codex rev-kind o/r#93 t)"
-check "--declined before --reviewer" "declined	code-review" "$(logged --declined --reviewer code-review rev-kind o/r#93 t)"
-check "--reviewer before --declined" "declined	code-review" "$(logged --reviewer code-review --declined rev-kind o/r#93 t)"
+check "--declined before --reviewer" "declined	code-review" "$(logged --declined wrong --reviewer code-review rev-kind o/r#93 t)"
+check "--reviewer before --declined" "declined	code-review" "$(logged --reviewer code-review --declined wrong rev-kind o/r#93 t)"
+for who in skeptic critic; do
+  check "--reviewer ${who} is logged in field 6" "fixed	${who}" "$(logged --reviewer "${who}" rev-kind o/r#93 t)"
+done
+# An escaped defect is no finding review raised: its outcome is escaped, and it is never declined.
+check "--reviewer escaped is logged in field 6, with outcome escaped" "escaped	escaped" "$(logged --reviewer escaped rev-kind o/r#93 t)"
+check "--declined with --reviewer escaped is refused" "refused" "$(refused --declined nit --reviewer escaped rev-kind o/r#93 t)"
+check "--declined with no reason and --reviewer escaped says escaped is never declined" "refused|yes" \
+  "$(refused --declined --reviewer escaped rev-kind o/r#93 t)|$(has "never declined" "$(sw log-finding --declined --reviewer escaped rev-kind o/r#93 t || true)")"
+for pr in o/r#95 o/r#96 o/r#97; do sw log-finding --reviewer escaped late-kind "${pr}" t >/dev/null; done
+check "escaped defects in 3 PRs are a lesson candidate" "yes" "$(has "candidate late-kind: fixed in 3 PRs" "$(sw lessons)")"
+# A declined row carries its reason as a 7th field; a missing or unknown reason is refused, naming the three.
+check "--declined nit appends a 7-field row ending declined, codex, nit" "7|declined	codex	nit" \
+  "$(sw log-finding --declined nit --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')|$(tail -1 "${F}" | cut -f5-)"
+check "a fixed row stays at 6 fields" "6" "$(sw log-finding --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')"
+REASONS="--declined needs a reason, one of: out-of-scope nit wrong"
+check "--declined with no reason is refused, naming the reasons" "refused|yes" \
+  "$(refused --declined --reviewer codex k o/r#94 t)|$(has "${REASONS}" "$(sw log-finding --declined --reviewer codex k o/r#94 t || true)")"
+check "--declined maybe is refused, naming the reasons" "refused|yes" \
+  "$(refused --declined maybe k o/r#94 t)|$(has "${REASONS}" "$(sw log-finding --declined maybe k o/r#94 t || true)")"
 check "no --reviewer is logged as unknown" "fixed	unknown" "$(logged rev-kind o/r#93 t)"
 check "a reviewer not in the list is refused" "refused" "$(refused --reviewer bot rev-kind o/r#93 t)"
 check "a bare trailing --reviewer is refused" "refused" "$(refused --reviewer)"
@@ -69,7 +88,7 @@ check "an empty --reviewer is refused" "refused" "$(refused --reviewer '' k o/r#
 check "unknown is not a --reviewer value" "refused" "$(refused --reviewer unknown k o/r#1 t)"
 check "two reviewers in one value are refused" "refused" "$(refused --reviewer 'conductor lead' k o/r#1 t)"
 check "the refusal lists the reviewers, not unknown" "yes" \
-  "$(has "must be one of: codex code-review ci conductor lead" "$(sw log-finding --reviewer unknown k o/r#1 t || true)")"
+  "$(has "must be one of: codex code-review ci conductor lead skeptic critic escaped" "$(sw log-finding --reviewer unknown k o/r#1 t || true)")"
 
 # finding_rows reads rows of any width from four fields up: a later column drops no row, an unknown
 # reviewer is read, and a bad one drops the row.
