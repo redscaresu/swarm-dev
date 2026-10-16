@@ -267,7 +267,7 @@ review="$(para "A story is reviewed only when" "${cbrief}")"
 check "the review paragraph starts a review agent per green PR without waiting, waits on each, and declines out-of-scope findings" "yes|yes|yes|yes|yes" \
   "$(has "${SWARM} review-agent <slug> <PR URL>" "${review}")|$(has "Do not wait for other PRs or reviews: start one for each green PR" "${review}")|$(has "swarm.sh wait review-<slug>" "${review}")|$(has "log-finding --declined out-of-scope --reviewer <who>" "${review}")|$(has "${p}/.swarm/reviews/<slug>.md" "${review}")"
 check "the review paragraph has the conductor read the diff itself when a review agent reports codex skipped, and never run codex-review itself" "yes|0" \
-  "$(has "When a review agent reports \`codex skipped: <why>\`, read the diff yourself in codex's place." "${review}")|$(grep -c 'Run codex-review in the background' <<< "${review}" || true)"
+  "$(has "When a review agent reports \`codex skipped: <why>\` (its file's second line says so too), read the diff yourself in codex's place." "${review}")|$(grep -c 'Run codex-review in the background' <<< "${review}" || true)"
 check "the review paragraph closes the review agent whatever it found, logs its out-of-scope section as declined, and checks the reviewed head before a merge" "yes|yes|yes" \
   "$(has "then close the review
 agent (\`swarm.sh close review-<slug>\`) whatever it found." "${review}")|$(has "Log each item of the out-of-scope section with" "${review}")|$(has "compare the file's \`head:\` line with the PR's head" "${review}")"

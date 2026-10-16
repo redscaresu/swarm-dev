@@ -618,13 +618,20 @@ runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/c
 It judges the PR against the story's touches and **Done when** only: work outside them is not a
 finding. Its brief carries the project's own rules, as a builder's does. It writes to the absolute
 path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the
-project), and replies with that path. The file starts with `head: <SHA>`, the PR's head, which
-`review-agent` reads from `gh` and writes before the agent starts. Under it go the findings, each
-with its reviewer and file:line, then an out-of-scope section for points raised outside the story.
+project), and replies with that path. It writes the file in one go once both reviews are done,
+after `review-agent` has removed the one from an earlier head. The file starts with `head: <SHA>`,
+the PR's head, which `review-agent` reads from `gh` and puts in the brief, then `codex skipped:
+<why>` when codex was skipped. Under them go the findings,
+each with its reviewer and file:line, then an out-of-scope section for points raised outside the
+story.
 `review-agent` refuses, starting nothing and touching no file, when the board has a story named
 `review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
-head, or when `review-<slug>` is still working. The conductor waits on each review in the background
-with `swarm.sh wait review-<slug>`, triages that story's file, and closes the review agent whatever
+head or has uncommitted changes, or when `review-<slug>` is still working or still open with no
+findings file (idle while its codex runs, not finished). The conductor waits on each review in the background
+with `swarm.sh wait review-<slug>`. A review agent goes idle while its codex runs in the
+background, so for an agent agents.tsv records as role `review`, that wait, like a conductor's,
+holds on until the findings file exists, and fails if it times out without one. The conductor
+then triages that story's file, and closes the review agent whatever
 it found. It sends the real findings to the story's builder with `swarm.sh tell <slug> findings
 <file>`, and logs each out-of-scope item with `log-finding --declined out-of-scope --reviewer <who>`.
 It starts a new review agent on the builder's next head. Before a story merges or goes to review, it
@@ -652,7 +659,8 @@ Every codex review a builder, a conductor or the lead runs goes through `swarm.s
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
 beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. With
 `SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
-against `origin/<base>`, lists the story's touches with its **Done when** and **From review** items,
+against `origin/<base>`, uncommitted changes and untracked files included, so a builder's review
+before its first commit sees its work. It lists the story's touches with its **Done when** and **From review** items,
 and says that work outside them is not a finding. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,

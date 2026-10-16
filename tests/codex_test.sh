@@ -135,7 +135,7 @@ args="$(cat "${BIN}/args")"
 check "with SWARM_STORY, codex runs as exec review <prompt>, with no --base" "0|[exec][review][|no" \
   "${rc}|${args:0:15}|$(grep -qF -- '--base' <<< "${args}" && echo yes || echo no)"
 for want in "origin/main" "bin/a.sh:fn_one" "tests/a_test.sh" "- the first item holds" "- the second item holds" \
-  "Its From review:" "- the review item holds" "not a finding"; do
+  "Its From review:" "- the review item holds" "not a finding" "committed or not" "each untracked file git status --porcelain lists"; do
   check "the story prompt holds ${want}" "yes" "$(has "${want}" "${args}")"
 done
 check "a markdown heading ends the Done when items" "no|no" \

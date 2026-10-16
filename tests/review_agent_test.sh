@@ -108,6 +108,11 @@ echo 0123456789abcdef0123456789abcdef01234567 > "${ROOT}/head"
 check "a PR head the worktree is not at makes review-agent s1 fail with nothing started" "1|yes|0" \
   "$(set +e; o="$(run review-agent s1 "${PR}")"; echo "$?|$(has "not the PR's head 0123456789abcdef" "${o}")")|$(started)"
 echo "${HEAD_SHA}" > "${ROOT}/head"
+# Uncommitted work in the worktree would be reviewed as if it were the head.
+echo wip > "${ROOT}/svc-wt/s1/wip.txt"
+check "a worktree with uncommitted changes makes review-agent s1 fail with nothing started" "1|yes|0" \
+  "$(set +e; o="$(run review-agent s1 "${PR}")"; echo "$?|$(has "has uncommitted changes" "${o}")")|$(started)"
+rm "${ROOT}/svc-wt/s1/wip.txt"
 
 # --- One review agent: started in s1's worktree with role review, its brief scoped to s1.
 check "review-agent s1 returns at once, its agent still working" "back:0" "$(start s1)"
@@ -121,7 +126,8 @@ check "the brief holds s1's touches, each Done when item, SWARM_STORY=s1, /code-
   "$(has "bin/s1.sh:fn_s1" "${brief}")|$(has "- s1 DONE-ONE holds" "${brief}")|$(has "- s1 DONE-TWO holds" "${brief}")|$(has "SWARM_STORY=s1 " "${brief}")|$(has "/code-review ${PR}" "${brief}")|$(has "not a finding" "${brief}")|$(has "${p}/.swarm/reviews/s1.md" "${brief}")"
 check "the brief names the head it reviews, lists out-of-scope points apart, and carries the project's brief" "yes|yes|yes" \
   "$(has "at its head ${HEAD_SHA}" "${brief}")|$(has '## Out of scope' "${brief}")|$(has "A PROJECT RULE every agent reads." "${brief}")"
-check "the reviews file exists and starts with the head reviewed" "head: ${HEAD_SHA}" "$(cat "${p}/.swarm/reviews/s1.md")"
+check "the brief has the agent write the file, starting with the head reviewed and any codex skip, and the reviews directory exists" "yes|yes|yes" \
+  "$(has "Its first line is \`head: ${HEAD_SHA}\`; when codex was skipped, its second is \`codex skipped: <why>\`." "${brief}")|$(has "prints nothing" "${brief}")|$([[ -d "${p}/.swarm/reviews" ]] && echo yes || echo no)"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals')" "s1	ok" \
   "$(awk -F'\t' '$2 == "review-agent" { l = $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
 
@@ -133,11 +139,15 @@ check "with review-s1 still working, review-agent s1 fails, starts nothing, and 
 
 # --- Four at once: each start returns while every agent still works (herdr's wait would block),
 # and each is waited on alone.
-back=""
+back=""; echo "head: STALE" > "${p}/.swarm/reviews/s2.md"
 for s in s2 s3 s4; do back+="${s}:$(start "${s}") "; done
+check "a start removes the story's findings file from an earlier head, so its wait cannot end on it" "no" \
+  "$([[ -e "${p}/.swarm/reviews/s2.md" ]] && echo yes || echo no)"
 check "review-agent s2 to s4 each return within 10s while no review is done" "s2:back:0 s3:back:0 s4:back:0 " "${back}"
 check "herdr lists review-s1 to review-s4 working at once" "review-s1 working|review-s2 working|review-s3 working|review-s4 working" "$(working)"
-done_agent review-s3
+# done_review <slug> — the agent writes its findings file, then goes idle.
+done_review() { echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/$1.md"; done_agent "review-$1"; }
+done_review s3
 check "the stub's log shows four starts before any review is marked done" "4" \
   "$(awk '/^done / { exit } /^agent start review-s[1-4] / { n++ } END { print n + 0 }' "${ROOT}/herdr.log")"
 check "with review-s3 done first, wait review-s3 returns idle" "idle" "$(run wait review-s3 5000)"
@@ -148,8 +158,38 @@ for s in s1 s2 s3 s4; do
   check "review-${s}'s brief names only its own story's reviews file" "${p}/.swarm/reviews/${s}.md" \
     "$(grep -o "${p}/.swarm/reviews/[a-z0-9-]*\.md" "${p}/.swarm/briefs/review-${s}.md" | sort -u | paste -sd' ' -)"
 done
-for s in s1 s2 s4; do done_agent "review-${s}"; done
+# An idle review agent with no findings file has not finished (its codex runs in the background):
+# wait holds on until the file is written or the timeout.
+done_agent review-s4
+check "an idle review-s4 with no findings file is still waited on, to the timeout, and then fails" "yes|yes|1" \
+  "$(t0=${SECONDS}; o="$(SWARM_CONDUCTOR_POLL=1 run wait review-s4 2500)"; rc=$?; echo "$(has "idle with no findings file" "${o}")|$( (( SECONDS - t0 >= 2 )) && echo yes || echo no)|${rc}")"
+echo mark >> "${ROOT}/herdr.log"
+check "and review-agent s4 again refuses to replace it while it has no findings file, starting nothing" "1|yes|0" \
+  "$(set +e; o="$(run review-agent s4 "${PR}")"; echo "$?|$(has "review-s4 is still reviewing" "${o}")")|$(started)"
+for s in s1 s2; do done_review "${s}"; done
 wait
+
+# fast_wait <name> — wait on <name> (3s timeout, polling each second): its state, and fast when it
+# returned within 2s.
+fast_wait() {
+  local t0=${SECONDS} o
+  o="$(SWARM_CONDUCTOR_POLL=1 run wait "$1" 3000)"
+  echo "${o}|$( (( SECONDS - t0 < 2 )) && echo fast || echo slow)"
+}
+# --- A slug long enough that review-<slug> is cut at 32 characters: its wait still finds the file.
+sl=s5-a-long-slug-past-the-name-cut
+sed "s/s4/${sl}/g" "${b}/stories/s4.md" > "${b}/stories/${sl}.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b "story/${sl}" "${ROOT}/svc-wt/${sl}" origin/main
+check "review-agent on a long slug returns at once" "back:0" "$(start "${sl}")"
+cut="$(run _name "review-${sl}")"
+echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/${sl}.md"; done_agent "${cut}"
+check "its name is cut, and wait review-<long slug> returns once the full slug's file exists" "yes|idle|fast" \
+  "$([[ ${#cut} -eq 32 && "review-${sl}" != "${cut}" ]] && echo yes || echo no)|$(fast_wait "review-${sl}")"
+# --- A builder whose slug starts review- is waited on as a builder, not held for a findings file.
+echo brief > "${ROOT}/builder-brief.md"
+run agent e review-s9 "${ROOT}/svc" code "${ROOT}/builder-brief.md" >/dev/null || { echo "FAIL agent review-s9 failed"; exit 1; }
+done_agent review-s9
+check "a code agent named review-s9, idle, is not held for a findings file" "idle|fast" "$(fast_wait review-s9)"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 
