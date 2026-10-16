@@ -87,7 +87,7 @@ A story is `kind: lead`, never an agent's, when it:
   prepares the PR or the request, and checks the result after.
 
 A merge is never a story of its own: with `merge = human` every merge is yours already. A `kind`
-that is none of code, docs, chore, verify or lead (a typo, or `operator` from older boards) is
+that is none of code, docs, chore or lead (a typo, or `operator` from older boards) is
 never built: `swarm.sh` stops and names it.
 
 **Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
@@ -185,9 +185,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   it, so it runs on Fable at `xhigh`.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
   critic run at `high`, because a skeptic is the only gate a story passes before it is built.
-- **Reading is Sonnet, running is Haiku.** Surveys read and cite at `high`, since they feed the
-  lead, and docs run on Sonnet at `medium`. Verification and chores run on Haiku at `medium`:
-  their result is a command's output or a mechanical diff, checked by the conductor.
+- **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the
+  lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
+  mechanical diff, checked by the conductor.
 - **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`. To find out
   whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories on
   Sonnet at `high` (`code-sonnet`). The slug fixes the pick, a retry goes back to Opus, and each
@@ -254,7 +254,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   (`ok (attempts <n>, <k> PRs)`), and `reset` or `drop <slug>` with `ok (<reason>)`.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost [--since YYYY-MM-DD]` turns that and Claude
-  Code's logs into tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
+  Code's logs into tokens and estimated cost per role. The lead's own sessions count too, under
+  `lead`: every session in the project's Claude Code directory that agents.tsv does not name. Change
+  `policy()` from that table, not from a guess.
 - **The conductor is Opus at `high`, one fresh session per epic**, on the standard context window,
   never 1M. A conductor re-reads its whole context every turn: on the project this came from, one
   long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M
@@ -612,7 +614,11 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
-beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. An interrupted
+beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. With
+`SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
+against `origin/<base>`, lists the story's touches with its **Done when** and **From review** items,
+and says that work outside them is not a finding. If `SWARM_STORY` is not a slug, names no story file,
+or names a story with no **Done when** item, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's

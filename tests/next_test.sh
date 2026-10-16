@@ -105,6 +105,19 @@ expect "old operator kind is a gate, not built" "gate" \
   "item stories/a.md 'status: ready' 'kind: operator'"
 expect "lead story is a gate" "gate" \
   "item stories/a.md 'status: ready' 'kind: lead'"
+# verify is no longer a kind an agent builds: a ready verify story gets no conduct or story step, and
+# status --all lists it under Waiting on you, as for a typo.
+expect "a verify one-off is a gate, not a story step" "gate" \
+  "item stories/v.md 'status: ready' 'kind: verify'"
+expect "an epic's verify story is a gate, not a conduct step" "gate" \
+  "item epics/e1.md 'status: active'" \
+  "item stories/v.md 'status: ready' 'kind: verify' 'epic: e1'"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item stories/v.md 'status: ready' 'kind: verify')
+waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status --all | sed -n '/^Waiting on you$/,/^$/p')"
+if grep -qx '  verify: v' <<< "${waiting}"; then echo "ok   status --all lists a ready verify story under Waiting on you"
+else echo "FAIL status --all lists a ready verify story under Waiting on you: got '${waiting}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
 # A story whose Fable build failed is the lead's to decide, so next names it instead of the gate.
 expect "an escalated story is the lead's to decide, ahead of gate" "escalated b" \
   "item stories/a.md 'status: ready' 'kind: lead'" \

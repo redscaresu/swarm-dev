@@ -36,7 +36,7 @@
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
-#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes
+#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -280,10 +280,11 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,verify,escalate conducting:conduct"
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
-# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model).
-BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ }"
+# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
+# plus verify: nothing starts it now, but agents.tsv keeps the verify builds made before it went.
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } verify"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -299,7 +300,6 @@ policy() {
     code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
-    verify)     echo "claude haiku medium" ;;  # run tests or commands and report
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
     *) die "unknown role '$1' ($(roles))" ;;
@@ -997,35 +997,55 @@ print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) 
 PY
 }
 
-# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started
-# (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
-# session logs (or close's copy, once Claude Code deleted one), deduplicated by message id; codex
-# agents are listed but not priced (not logged here).
+# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started,
+# and as "lead" the calling session when run inside herdr plus every session in the project's own
+# Claude Code directory that agents.tsv does not name (with --since, those that started on or after it).
+# Usage comes from Claude Code's own session logs (or close's copy, once Claude Code deleted one),
+# deduplicated by session and message id; codex agents are listed but not priced (not logged here).
 cost_report() {
-  local lead="" since=""
+  local lead="" since="" own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   # A bare date is the older form, still what dash passes.
   if [[ $# -eq 1 ]]; then since="$1"; elif [[ $# -eq 2 && "$1" == --since ]]; then since="$2"; fi
   [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  [[ -f "${AGENTS_LOG}" || -n "${lead}" || -d "${own}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
-    "${SESSIONS_DIR}" <<'PY'
-import os, sys
+    "${SESSIONS_DIR}" "${own}" <<'PY'
+import datetime, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, since, lead, projects, archive = sys.argv[1:6]
-agents = []
+log, since, lead, projects, archive, own = sys.argv[1:7]
+agents, named = [], set()
 if os.path.exists(log):
     for line in open(log):
         f = line.rstrip("\n").split("\t")
-        if len(f) == 7 and f[0] >= since:
-            agents.append({"role": f[1], "kind": f[3], "session": f[6]})
-if lead:
+        if len(f) == 7:
+            named.add(f[6])
+            if f[0] >= since:
+                agents.append({"role": f[1], "kind": f[3], "session": f[6]})
+if lead and lead not in named:  # a conductor's own pane is already its agents.tsv row
     agents.append({"role": "lead", "kind": "claude", "session": lead})
+    named.add(lead)
+
+def started(path):
+    # The first timestamp's local day, as since and agents.tsv's dates are, or "".
+    for line in log_lines(path):
+        try:
+            ts = json.loads(line).get("timestamp")
+            return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return ""
+
+# The lead's own sessions: Claude Code keeps them under the project's path, all but letters and digits turned into -.
+for path in sorted(glob.glob(os.path.join(glob.escape(own), "*.jsonl"))):
+    session = os.path.basename(path)[:-len(".jsonl")]
+    if session not in named and (since == "0000-00-00" or started(path) >= since):
+        agents.append({"role": "lead", "kind": "claude", "session": session, "path": path})
 rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    path = session_log(projects, a["session"], archive)
+    path = a.get("path") or session_log(projects, a["session"], archive)
     if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
@@ -1888,9 +1908,13 @@ $(finding_rule)
 EOF
 }
 
-# codex_review_cmd <base> — how a brief runs codex: through codex-review, which stops it after
-# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config.
-codex_review_cmd() { printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"; }
+# codex_review_cmd <base> [slug] — how a brief runs codex: through codex-review, which stops it after
+# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config;
+# SWARM_STORY, given a slug, so codex reviews against that story.
+codex_review_cmd() {
+  [[ -z "${2:-}" ]] || printf 'SWARM_STORY=%q ' "$2"
+  printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"
+}
 # codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
 # conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
 # Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
@@ -2219,7 +2243,7 @@ project_rules() {
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
 # lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
 agent_kind() {
-  case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
+  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
 }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
@@ -5129,7 +5153,7 @@ close_agent() {
     # an agent builds the close says so (not held:).
     if [[ ${counted} == 1 ]]; then
       clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
-      held_story "$1" "${cause}" "${prs:-[]}" "${counted}"
+      held_story "$1" "${cause}" "${prs:-[]}"
     elif ! impossible_refused "$1" >/dev/null; then
       echo "not held: $1 (${cause}) ended no build here (no builder open, a PR merged or merging, or gh could not list its PRs), so its story is as it was: list it for the lead and do not start it again"
     fi
@@ -5205,23 +5229,21 @@ impossible_story() {
   echo "impossible: $1 is kind: lead now, for the lead to re-scope or drop"
 }
 
-# held_story <slug> <cause> <prs> <listed> — after `close <slug> paused` or `close <slug> cleared-on-error`
-# ends a build, or closes a ready verify story's open builder, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
+# held_story <slug> <cause> <prs> — after `close <slug> paused` or `close <slug> cleared-on-error`
+# ends a build, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
 # no conductor or /swarm-dev:swarm run builds it again. attempts: stays as it was. Lifting the hold with reset
 # is not the story's one reset (main logs it as reset:held, which reset_at does not read).
 held_story() {
-  local why="it paused on its goal" none=""
-  # Unless <listed> is 1, failed_build listed no PRs: the story is verify, which has none.
-  [[ "$4" == 1 ]] || none="A verify story has no PRs."
+  local why="it paused on its goal"
   [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
-  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" "${none}" >/dev/null
+  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for "$2"
   echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
 # kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
-# and every PR in <prs> (failed_build's gh list; empty with pr_per = epic), or [none] when <prs> has
+# and every PR in <prs> (failed_build's gh list), or [none] when <prs> has
 # none (by default, that no PR was found). Prints how many PRs it named.
 lead_block() {
   local f="${BOARD}/stories/$1.md" from urls k=0
@@ -5583,15 +5605,44 @@ stop_codex() {
   } 2>/dev/null || true
 }
 
+# story_items <story file> <heading> — the items under a story's bold **<heading>** line: any text on
+# that line, then the non-blank lines under it, up to the next bold line or markdown heading.
+story_items() {
+  awk -v h="$2" 'index($0, "**" h) == 1 { on = 1; sub(/^\*\*[^*]*\*\*[[:space:]]*/, ""); if ($0 != "") print; next }
+    on && /^(\*\*|#+[[:space:]])/ { exit } on && /[^[:space:]]/' "$1"
+}
+# codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
+# the story's touches, its **Done when** and **From review** items (the builder's acceptance, as in
+# goal_condition), and that work outside them is not a finding. Fails with no Done when item.
+codex_story_prompt() {
+  local done_when from_review
+  done_when="$(story_items "$2" 'Done when')"
+  [[ -n "${done_when}" ]] || return 1
+  from_review="$(story_items "$2" 'From review')"
+  [[ -z "${from_review}" ]] || from_review=$'\n\nIts From review:\n'"${from_review}"
+  printf 'Review the changes on this branch against origin/%s (git diff origin/%s...HEAD). They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. Work outside them is not a finding.' \
+    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}"
+}
+
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
-# beside --base) and stdin from /dev/null, so it never waits on input. codex stays in the caller's
-# process group, so a harness that kills that group kills codex too. stop_codex stops it after
-# codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent TERM or
-# HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
+# beside --base) and stdin from /dev/null, so it never waits on input. With SWARM_STORY=<slug>, a
+# prompt instead of --base (codex_story_prompt), so codex reviews against that story. codex stays in
+# the caller's process group, so a harness that kills that group kills codex too. stop_codex stops it
+# after codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent
+# TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid left rc=0 m
+  local pid left rc=0 m args story prompt
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
+  args=(--base "origin/$1")
+  if [[ -n "${SWARM_STORY:-}" ]]; then
+    [[ "${SWARM_STORY}" =~ ^[a-z0-9-]+$ ]] || die "SWARM_STORY: bad slug '${SWARM_STORY}'"
+    story="${BOARD}/stories/${SWARM_STORY}.md"
+    [[ -f "${story}" ]] || die "SWARM_STORY=${SWARM_STORY}: no story file ${story}"
+    prompt="$(codex_story_prompt "$1" "${story}")" \
+      || die "SWARM_STORY=${SWARM_STORY}: ${story} has no **Done when** with an item under it"
+    args=("${prompt}")
+  fi
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
@@ -5605,7 +5656,7 @@ codex_review() {
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
   # shellcheck disable=SC2064 # this run's marker, fixed now
   trap "rm -f $(printf %q "${m}")" EXIT
-  codex exec review --base "origin/$1" < /dev/null &
+  codex exec review "${args[@]}" < /dev/null &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
