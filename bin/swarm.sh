@@ -3019,9 +3019,12 @@ builder_state() {
 # after closing its builder if one is open (still in review, so close counts nothing), and saying so
 # when herdr cannot tell whether one is; after a
 # closed PR only when no builder is open (one may be fixing it; so may one herdr cannot list), so the
-# story can be built again.
+# story can be built again. With no item merged, it still pulls the main checkout when that is behind
+# its upstream (a PR merged with no review item), and dies as a failed pull below does; a failed fetch
+# is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
+# cannot be read: said on stderr, naming it.
 reconcile() {
-  local f slug url state closed waiting urls builder merged=()
+  local f slug url state closed waiting urls builder unread="" merged=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -3030,7 +3033,7 @@ reconcile() {
     closed=""; waiting=0
     for url in "${urls[@]}"; do
       if ! state="$(gh pr view "${url}" --json state | json "d['state']")"; then
-        echo "cannot read ${url}; ${slug} stays in review"; waiting=1; continue
+        echo "cannot read ${url}; ${slug} stays in review"; waiting=1; unread+="${unread:+, }${url} (${slug})"; continue
       fi
       case "${state}" in
         MERGED) ;;
@@ -3060,9 +3063,22 @@ reconcile() {
       merged+=("${slug}")
     fi
   done < <(board stories; board epics)
-  [[ ${#merged[@]} -gt 0 ]] || return 0
+  # A pull is due after an item merged when there is an upstream, and otherwise when the checkout is
+  # behind it (a PR merged with no review item: a board PR, a one-off). It is held after an unread PR:
+  # if that merged, the pull would take its file before its build is cleared.
+  local due=1 held=0
+  if [[ ${#merged[@]} -gt 0 ]]; then has_upstream || due=0; else behind_upstream || due=0; fi
+  if [[ ${due} == 1 && -n "${unread}" ]]; then
+    echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
+    due=0; held=1
+  fi
+  if [[ ${#merged[@]} -eq 0 ]]; then
+    [[ ${due} == 0 ]] || pull_board_repo \
+      || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
+    return 0
+  fi
   local i k committed saved=()
-  if [[ ${BOARD_IN_REPO} == 1 ]]; then
+  if [[ ${BOARD_IN_REPO} == 1 && ${held} == 0 ]]; then
     # The board is in the project repo, and a merged PR may itself have taken the item off it or
     # changed it. Our own edits (each SET_FM_KEYS key, such as the review status or a retry's
     # attempts:) would block that pull, so put them back as committed first, and the whole file as it
@@ -3073,7 +3089,7 @@ reconcile() {
         for k in ${SET_FM_KEYS}; do set_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
       fi
     done
-    if git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null && ! pull_board_repo; then
+    if [[ ${due} == 1 ]] && ! pull_board_repo; then
       for i in "${!merged[@]}"; do printf '%s' "${saved[i]%.}" > "$(item_file "${merged[i]}")"; done
       die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
     fi
@@ -3084,6 +3100,18 @@ reconcile() {
     finish_item "${slug}"
     record_event reconcile "${slug}" "ok (finished)"
   done
+}
+
+# has_upstream — true when the board is in the project repo and its main checkout has an upstream.
+has_upstream() { [[ ${BOARD_IN_REPO} == 1 ]] && git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null; }
+
+# behind_upstream — true when the main checkout has an upstream and, once fetched, is behind it. A
+# failed fetch is false, said on stderr.
+behind_upstream() {
+  has_upstream || return 1
+  git -C "${PROJECT_DIR}" fetch -q \
+    || { echo "reconcile: cannot fetch ${PROJECT_DIR}, so it may be behind its upstream" >&2; return 1; }
+  [[ -n "$(git -C "${PROJECT_DIR}" rev-list -1 'HEAD..@{upstream}')" ]]
 }
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
