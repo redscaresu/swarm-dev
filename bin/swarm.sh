@@ -2077,31 +2077,42 @@ build_story() {
 
 # touches_overlap <slug> [strict] — warn on stderr for each story of another epic (no epic counts as
 # another) that is open, in review or with its builder open, and whose touches overlap <slug>'s; with
-# strict, die naming it. builder_state runs only for overlapping stories (touches_rows finds them);
-# strict refuses when it is unknown, and plain mode warns that it cannot tell.
+# strict, die naming it. builder_state runs only for overlapping ready stories (touches_rows finds
+# them; no other status can have a builder). When it is unknown, or touches_rows fails, strict
+# refuses and plain mode warns that it cannot tell.
 touches_overlap() {
-  local slug="$1" strict="${2:-}" other epic status entry state
+  local slug="$1" strict="${2:-}" rows other epic status entry state
+  if ! rows="$(touches_rows "${slug}")"; then
+    [[ -z "${strict}" ]] || die "${slug}: cannot read the board's touches, so cannot tell whether another epic's open story overlaps it"
+    echo "warning: cannot read the board's touches, so cannot tell whether another epic's open story overlaps ${slug}" >&2; return 0
+  fi
   while IFS=$'\t' read -r other epic status entry; do
-    state=open; [[ "${status}" == review ]] || state="$(builder_state "${other}" </dev/null)"
+    case "${status}" in
+      review) state=open ;;
+      ready) state="$(builder_state "${other}" </dev/null)" ;;
+      *) continue ;;
+    esac
     case "${state}" in
       open) [[ -z "${strict}" ]] || die "${slug}: ${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges"
             echo "warning: ${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges" >&2 ;;
       unknown) [[ -z "${strict}" ]] || die "${slug}: cannot tell whether ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents); start ${slug} after it merges"
                echo "warning: cannot tell whether ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents)" >&2 ;;
     esac
-  done < <(touches_rows "${slug}")
+  done <<< "${rows}"
 }
 
 # touches_rows <slug> — a line per story of another epic whose touches overlap <slug>'s: slug, epic
 # (none for no epic), status and its overlapping entries. Touches are a bracketed list split on commas
-# outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]; one with no / or .
-# before its : is a fn of the previous entry's file, and also a file of that name (Makefile).
-# (repo, file, fn) are compared: fn exactly, and a file-only entry overlaps the whole file. Its own
-# function, not inside a <(...): bash 3.2 misreads the parentheses in a heredoc there.
+# outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]. One with no / or .
+# before its : is a fn of the previous entry's file and repo, unless that head is a file in its own
+# repo's checkout (Makefile, Makefile:lint). (repo, file, fn) are compared: fn exactly, and a file-only entry
+# overlaps the whole file. An empty status prints as -. Its own function, not inside a <(...):
+# bash 3.2 misreads the parentheses in a heredoc there.
 touches_rows() {
-  python3 - "${BOARD}/stories" "$1" "$(basename "${PROJECT_DIR}")" <<'PY'
+  python3 - "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" <<'PY'
 import glob, os, re, sys
-stories, me, project = sys.argv[1:]
+stories, me, project_dir, repos_dir = sys.argv[1:]
+project = os.path.basename(project_dir)
 
 def front(path):
     lines, out = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}
@@ -2131,17 +2142,18 @@ def entries(fm):
     out = []
     for p in (p.strip() for p in parts):
         m = re.match(r"([A-Za-z0-9._-]+): (.*)", p)
-        r, p = (m.group(1), m.group(2).strip()) if m else (repo, p)
+        r, p = (m.group(1), m.group(2).strip()) if m else (None, p)
         if not p:
             continue
-        r = "" if r == project else r
-        head = p.split(":", 1)[0]
-        if out and "/" not in head and "." not in head:
-            # Also a root file with no extension (Makefile), listed first: out[-1] keeps the real file.
-            out += [(r, p, ""), (r, out[-1][1], p)]
-        else:
-            f, _, fn = p.partition(":")
-            out.append((r, f.strip(), fn.strip()))
+        head, fr = p.split(":", 1)[0].strip(), repo if r is None else r   # a file's repo: its prefix, else the story's
+        if out and "/" not in head and "." not in head \
+                and not os.path.isfile(os.path.join(project_dir if fr in ("", project) else os.path.join(repos_dir, fr), head)):
+            r = out[-1][0] if r is None else r
+            out.append(("" if r == project else r, out[-1][1], p))
+            continue
+        r = fr
+        f, _, fn = p.partition(":")
+        out.append(("" if r == project else r, f.strip(), fn.strip()))
     return out
 
 def overlap(a, b):
@@ -2154,7 +2166,7 @@ for slug, fm in sorted(fms.items()):
         continue
     hit = [e for e in entries(fm) if any(overlap(e, m) for m in mine)]
     if hit:
-        print("\t".join([slug, fm.get("epic") or "none", fm.get("status", ""),
+        print("\t".join([slug, fm.get("epic") or "none", fm.get("status") or "-",
                          ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))
 PY
 }
@@ -2302,7 +2314,7 @@ its close and whether the story is started again."
 Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, ${idle}or when review has
 not converged in the rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
 counts the attempt and clears its worktree, branch and PR. ${one} Start the story again in a later
-wave with \`swarm.sh story <slug>\`, and never choose a model: ${retry}${goal}
+wave with \`swarm.sh story --strict <slug>\`, and never choose a model: ${retry}${goal}
 A story that comes back \`kind: lead\` with \`escalated_from:\` is the lead's to decide: report it
 to the lead, and do not count it as waiting on the user.
 
@@ -2325,7 +2337,7 @@ conduct_story_mode() {
   cat <<EOF
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
-start each with \`${SWARM_HOME}/bin/swarm.sh story <slug>\`, wait with \`swarm.sh wait\` and
+start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
 
@@ -2354,7 +2366,7 @@ merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <ever
     merge_step="Merge each PR once it is green and reviewed, then run \`swarm.sh finish ${epic}\`."
   fi
   cat <<EOF
-This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story <slug>\`
+This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`
 starts each builder on story/<slug>, branched from epic/${epic}; builders push their branch and open
 no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) as method.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
@@ -5042,7 +5054,10 @@ dispatch() {
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
     agent)  require_herdr; start_agent "$@" ;;
-    story)  require_herdr; if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict; else build_story "${1:?slug}"; fi ;;
+    story)  require_herdr; [[ $# -le 2 ]] || die "story: too many arguments: $*"
+            if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict
+            elif [[ "${2:-}" == --strict ]]; then build_story "$1" strict
+            else [[ -z "${2:-}" ]] || die "story: unknown argument '$2'"; build_story "${1:?slug}"; fi ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;

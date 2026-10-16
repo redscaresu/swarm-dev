@@ -271,20 +271,21 @@ file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, a
 
 A wave only sees its own epic, so `story` also looks across epics. Before it makes anything, it
 compares the story's `touches` with those of every story in another epic (a story with no epic
-counts as another). If one of them is open (in review, or with its builder open) and touches the
+counts as another). If one of them is open (in review, or `ready` with its builder open) and touches the
 same function or file, `story` prints `warning: <other> (epic <e>) is open and touches <entry>;
 start <slug> after it merges` and starts the story anyway. `story --strict` refuses instead, naming
 the other story, and leaves no branch, worktree, pane or brief behind. It also refuses when herdr
-cannot list its agents, where plain `story` warns that it cannot tell. Conductors always pass
+cannot list its agents or the board's `touches` cannot be read, where plain `story` warns that it
+cannot tell. `--strict` may come before or after the slug. Conductors always pass
 `--strict`. With `pr_per = epic` the check misses stories already merged into an epic branch: they
 are finished on the board, though their changes have not reached the base.
 
 A `<file>:<fn>` entry matches the same fn in the same file, and a file-only entry matches anything
-in that file. An entry with no `/` or `.` before its `:` names a fn in the previous entry's file, so
-`bin/swarm.sh:config defaults, CONFIG_KEYS` covers `bin/swarm.sh:CONFIG_KEYS`. It also counts as a
-file of that name, so `Makefile` after another entry still matches `Makefile`. A `<repo>: ` prefix
-sets the entry's repo, and otherwise the story's `repo:` does; the same file in another repo does
-not match. Parentheticals are dropped.
+in that file. An entry with no `/` or `.` before its `:` names a fn in the previous entry's file and
+repo, so `bin/swarm.sh:config defaults, CONFIG_KEYS` covers `bin/swarm.sh:CONFIG_KEYS`. When the
+entry's own repo (its prefix, or the story's `repo:`) has a file of that name, it is that file
+instead, so `Makefile` or `Makefile:lint` after another entry still matches. A `<repo>: ` prefix sets the entry's repo, and otherwise the
+story's `repo:` does; the same file in another repo does not match. Parentheticals are dropped.
 
 ```bash
 swarm.sh story [--strict] <slug>   # worktree on story/<slug>, a pane, the agent, its brief
@@ -356,7 +357,7 @@ when it is idle with no PR (with `pr_per = epic`, no pushed `story/<slug>`) afte
 when review has not converged in the rounds it allows. It runs `swarm.sh close <slug>`, which, on a
 code, docs or chore story still `ready`, counts the attempt and clears its worktree, branch and PR,
 and starts the story again in a later wave with
-`swarm.sh story <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
+`swarm.sh story --strict <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
 builds (2 by default). With `escalate_after = 0` it reports a story that has failed twice to the lead
 instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
 the user's. With `goal` on, a builder idle short of its reply is not nudged: the conductor reads the

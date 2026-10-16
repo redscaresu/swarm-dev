@@ -243,6 +243,7 @@ check "the story-mode conductor moves its inbox aside after each wait, then read
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
 check "the story-mode conductor starts every story with --strict, and after the named story merges on a refusal" "yes|yes" \
   "$(has "${STRICT_RULE}" "${cbrief}")|$(has "start yours in a later wave, after the named story merges" "${cbrief}")"
+check "the story-mode conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${cbrief}" || true)"
 for s in s1 s2 s3; do run story "${s}" >/dev/null; done
 mv "${p}/.claude-plugin/plugin.json" "${ROOT}/plugin.json"; run story s4 >/dev/null; mv "${ROOT}/plugin.json" "${p}/.claude-plugin/plugin.json"
 check "with plugin.json, the story-mode builder and conductor say a missing bump is not a finding; without it, no line" "yes|yes|no" \
@@ -301,9 +302,22 @@ check "a parenthetical with commas and semicolons stays in its entry" \
 other "status: review" "epic: e2" "touches: [bin/swarm.sh:x, FOO, CONFIG_KEYS]"; subject xe "[bin/swarm.sh:CONFIG_KEYS]"
 check "an entry with no file inherits the previous entry's, after another such entry too" \
   "warning: xb (epic e2) is open and touches bin/swarm.sh:CONFIG_KEYS; start xe after it merges" "$(warns xe)"
+touch "${ROOT}/svc/Makefile"   # a bare head is a file only when the repo's checkout has it
 other "status: review" "epic: e2" "touches: [Makefile]"; subject xk "[src/app.go, Makefile]"
 check "an extensionless root file after another entry is still a file" \
   "warning: xb (epic e2) is open and touches Makefile; start xk after it merges" "$(warns xk)"
+other "status: review" "epic: e2" "touches: [Makefile:lint]"; subject xl "[src/app.go, Makefile:lint]"
+check "and so is one with a function" \
+  "warning: xb (epic e2) is open and touches Makefile:lint; start xl after it merges" "$(warns xl)"
+other "status: review" "epic: e2" "touches: [Makefile]"; subject xr "[other: src/a.go, Makefile]"
+check "an unprefixed file after another repo's entry is in the story's repo" \
+  "warning: xb (epic e2) is open and touches Makefile; start xr after it merges" "$(warns xr)"
+rm -f "${ROOT}/svc/Makefile"
+other "status: review" "epic: e2" "touches: [tests/x_test.sh:setup, main]"; subject xm "[bin/swarm.sh:dispatch, main]"
+check "a shorthand that names no file is a function only, so the same name in other files does not overlap" "none" "$(warns xm)"
+other "status: review" "epic: e2" "touches: [other: src/a.go:y]"; subject xn "[other: src/a.go:x, y]"
+check "a shorthand inherits the previous entry's repo with its file" \
+  "warning: xb (epic e2) is open and touches src/a.go:y; start xn after it merges" "$(warns xn)"
 other "status: review" "epic: e2" "touches: [other: docs/y.md]"; subject xf "[docs/y.md]"
 check "the same file in another repo does not overlap" "none" "$(warns xf)"
 other "status: review" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; subject xg "[bin/swarm.sh]"
@@ -325,7 +339,26 @@ item "${b}" stories/xj.md "status: ready" "kind: code" "repo: svc" "touches: [bi
 # xj, with no epic, also warns about e1's open builders above; only xb's line is this check's.
 check "two stories with no epic are of different epics" \
   "warning: xb (epic none) is open and touches bin/swarm.sh:tell_agent; start xj after it merges" "$(warns xj | grep '^warning: xb ')"
-for s in xa xc1 xc2 xc3 xd xe xk xf xg xb xh xi xj; do run close "${s}" >/dev/null 2>&1 || true; rm -f "${b}/stories/${s}.md"; done
+# A board the parse cannot read fails closed under --strict: a directory named like a story.
+mkdir "${b}/stories/xbroken.md"; subject xo "[bin/swarm.sh:merge_cmd]"; : > "${ROOT}/herdr.log"
+rc=0; out="$(run story --strict xo)" || rc=$?
+check "when the touches cannot be read, --strict refuses and starts nothing, and plain story warns" "fail|yes|not started|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xo: cannot read the board's touches" "${out}")|$(started_x xo)|$(
+  has "warning: cannot read the board's touches, so cannot tell whether another epic's open story overlaps xo" "$(run story xo)")"
+rmdir "${b}/stories/xbroken.md"
+# Only a ready story can have a builder: a blocked or done one is never asked about, even when herdr fails.
+touch "${ROOT}/listfail"
+subject xp-blocked "[bin/swarm.sh:merge_cmd]"; subject xp-done "[bin/swarm.sh:merge_cmd]"
+check "an overlapping blocked or done story is not open, even when herdr cannot list agents" "ok|ok" \
+  "$(other "status: blocked" "epic: e2" "touches: [bin/swarm.sh:merge_cmd]"; run story --strict xp-blocked >/dev/null && echo ok || echo refused)|$(
+  other "status: done" "epic: e2" "touches: [bin/swarm.sh:merge_cmd]"; run story --strict xp-done >/dev/null && echo ok || echo refused)"
+rm -f "${ROOT}/listfail"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:merge_cmd]"; subject xq "[bin/swarm.sh:merge_cmd]"; : > "${ROOT}/herdr.log"
+rc=0; out="$(run story xq --strict)" || rc=$?
+check "--strict after the slug is strict too; any other extra argument stops story" "fail|yes|not started|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xq: xb (epic e2) is open and touches bin/swarm.sh:merge_cmd" "${out}")|$(started_x xq)|$(
+  has "story: unknown argument '--strct'" "$(run story xq --strct || true)")"
+for s in xa xc1 xc2 xc3 xd xe xk xl xr xm xn xf xg xb xh xi xj xo xp-blocked xp-done xq; do run close "${s}" >/dev/null 2>&1 || true; rm -f "${b}/stories/${s}.md"; done
 # A conductor that never takes its brief (an agent not logged in) must not leave the placeholder behind.
 : > "${ROOT}/herdr.log"; touch "${ROOT}/idle"
 run conduct e >/dev/null || true
@@ -503,6 +536,7 @@ check "the conductor merges stories into the epic branch, then opens one PR per 
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
 check "the one-PR-per-epic conductor starts every story with --strict, and after the named story merges on a refusal" "yes|yes" \
   "$(has "${STRICT_RULE}" "${brief}")|$(has "start yours in a later wave, after the named story merges" "${brief}")"
+check "the one-PR-per-epic conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${brief}" || true)"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
   "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
 check "the epic-mode conductor's per-story review says a missing bump is not a finding; its whole-epic review, which must see the bump, does not" "yes|no" \
