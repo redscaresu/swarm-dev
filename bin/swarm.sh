@@ -2868,7 +2868,7 @@ waiting_on_user() {
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
-      blocked) waiting+="  blocked: ${slug} (by $(open_deps "${f}"))"$'\n' ;;
+      blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
       review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;
     esac
@@ -2885,15 +2885,20 @@ waiting_on_user() {
 # open_item <file> — true while a board item is still open: its file exists and is not status: done.
 open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
 
-# story_deps <story> — its depends_on slugs, space-separated, YAML quotes gone.
-story_deps() { sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' "$1" | head -1 | tr ',' ' ' | tr -d "\"'"; }
+# story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets and
+# quotes gone.
+story_deps() {
+  local v
+  v="$(get_fm "$1" depends_on)"; v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
+  printf '%s' "${v//\'/}"
+}
 
-# open_deps <story> — the story's depends_on slugs still open: a story or epic on the board and not
-# done, or not a plain slug (a hand step such as "operator:planted-leak-proof" is cleared by hand,
-# never by a merge).
+# open_deps <slugs> — the slugs (story_deps') still open: a story or epic on the board and not done,
+# or not a plain slug (a hand step such as "operator:planted-leak-proof" is cleared by hand, never by
+# a merge).
 open_deps() {
   local b open=""
-  for b in $(story_deps "$1"); do
+  for b in $1; do
     if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then
       open+=" ${b}"
     fi
@@ -2901,8 +2906,18 @@ open_deps() {
   printf '%s' "${open# }"
 }
 
+# blocked_why <story> — why a blocked story waits: its open depends_on slugs, or that none are left.
+blocked_why() {
+  local deps open
+  deps="$(story_deps "$1")"; open="$(open_deps "${deps}")"
+  if [[ -n "${open}" ]]; then echo "by ${open}"
+  elif [[ -n "${deps// /}" ]]; then echo "its depends_on is finished: swarm.sh unblock readies it"
+  else echo "by hand: no depends_on"
+  fi
+}
+
 # unblock — a finished story is deleted or marked done, so a blocked story whose every depends_on
-# slug is finished, and names no hand step, is ready. A legacy blocked_by line goes with the flip.
+# slug is finished, and names no hand step, is ready. An old blocked_by line stays; nothing reads it.
 # Prints each story it flips.
 unblock() {
   local story deps
@@ -2910,8 +2925,8 @@ unblock() {
     grep -q '^status: blocked$' "${story}" || continue
     deps=$(story_deps "${story}")
     [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
-    [[ -z "$(open_deps "${story}")" ]] || continue
-    sed -i.bak -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "${story}" && rm -f "${story}.bak"
+    [[ -z "$(open_deps "${deps}")" ]] || continue
+    sed -i.bak -e 's/^status: blocked$/status: ready/' "${story}" && rm -f "${story}.bak"
     record_event unblock "$(basename "${story}" .md)"
     echo "ready: $(basename "${story}" .md)"
   done < <(board stories)
@@ -3761,10 +3776,9 @@ pull_board_repo() {
   rm -rf "${bak}"; rmdir "${STATE_DIR}/reconcile-backup" 2>/dev/null || true
 }
 
-# fm_rest <file> — <file> without the SET_FM_KEYS lines of its front matter, nor a legacy blocked_by
-# line, which unblock drops; <file> may be - for stdin.
+# fm_rest <file> — <file> without the SET_FM_KEYS lines of its front matter; <file> may be - for stdin.
 fm_rest() {
-  awk -v keys=" ${SET_FM_KEYS} blocked_by " '/^---$/ { n++ }
+  awk -v keys=" ${SET_FM_KEYS} " '/^---$/ { n++ }
     n == 1 && match($0, /^[a-z_]+:/) && index(keys, " " substr($0, 1, RLENGTH - 1) " ") { next }
     { print }' "$1"
 }

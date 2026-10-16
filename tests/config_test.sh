@@ -229,7 +229,7 @@ item "${b}" stories/gap.md "status: ready" "kind: code"
 item "${b}" stories/read-set.md "status: blocked" "kind: code" "blocked_by: [x]" "depends_on: [gap, x]"
 check "an open depends_on slug that blocked_by leaves out keeps a story blocked" "" "$(run "${p}" unblock)"
 run "${p}" finish gap >/dev/null
-check "it unblocks once depends_on is finished, and its blocked_by line goes" "ready: read-set|" \
+check "it unblocks once depends_on is finished, and leaves its blocked_by line as it is" "ready: read-set|blocked_by: [x]" \
   "$(run "${p}" unblock)|$(grep blocked_by "${b}/stories/read-set.md")"
 rm "${b}/stories/read-set.md" "${b}/stories/gap.md"
 # No blocked_by line at all: depends_on [a] waits while a is open, and the waiting list names a.
@@ -241,6 +241,17 @@ check "status --all names its open depends_on slugs" "yes" \
 rm "${b}/stories/a.md"
 check "and is ready once a's file is gone" "ready: wait" "$(run "${p}" unblock)"
 rm "${b}/stories/wait.md"
+# depends_on is read from the front matter only: a body line that looks like it is not the list.
+item "${b}" stories/body-deps.md "status: blocked" "kind: code"
+echo "depends_on: [x]" >> "${b}/stories/body-deps.md"
+item "${b}" stories/deps-done.md "status: blocked" "kind: code" "depends_on: [x]"
+all="$(run "${p}" status --all)"
+check "a blocked story with no depends_on in its front matter says it is held by hand" "yes" \
+  "$(grep -qxF '  blocked: body-deps (by hand: no depends_on)' <<< "${all}" && echo yes || echo "no, got: ${all}")"
+check "a blocked story whose depends_on is finished says unblock readies it" "yes" \
+  "$(grep -qxF '  blocked: deps-done (its depends_on is finished: swarm.sh unblock readies it)' <<< "${all}" && echo yes || echo "no, got: ${all}")"
+check "a depends_on line in the body never unblocks a story" "ready: deps-done" "$(run "${p}" unblock)"
+rm "${b}/stories/body-deps.md" "${b}/stories/deps-done.md"
 # Quoted slugs (YAML allows both kinds).
 item "${b}" stories/gap2.md "status: ready" "kind: code"
 item "${b}" stories/only-deps.md "status: blocked" "kind: code" "depends_on: [\"gap2\", 'x']"

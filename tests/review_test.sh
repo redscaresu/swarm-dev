@@ -215,7 +215,7 @@ check "the merged item stays in review" "review" "$(sed -n 's/^status: //p' "${R
 # --- reconcile carries the board's own uncommitted front-matter edits over a pull that changes the
 # file. setup_flip <name>: a bare origin whose board has k, z, and x and y blocked on t (not on the
 # board; x also depends on it); its main checkout <name>, with k in review (its PR merged), z in review (its PR open), and
-# x and y flipped to ready by unblock, all uncommitted (x had a legacy blocked_by line, which unblock drops); and a clone <name>-up for the base's changes.
+# x and y flipped to ready by unblock, all uncommitted (x keeps a legacy blocked_by line, which nothing reads); and a clone <name>-up for the base's changes.
 setup_flip() {
   local d="${ROOT}/$1"
   "${GIT[@]}" init -q --bare "${d}.git"
@@ -257,6 +257,19 @@ echo "a local note" >> "${ROOT}/fh/docs/stories/x.md"; cp "${ROOT}/fh/docs/stori
 out="$(at fh reconcile || true)"
 check "a hand edit to x stops the pull, named, and x is byte for byte as it was" "yes|same" \
   "$(has "docs/stories/x.md" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fh-x" "${ROOT}/fh/docs/stories/x.md")"
+# The base changes x's legacy blocked_by under its flip: no key of swarm.sh's, so the pull goes through.
+setup_flip fc
+perl -pi -e 's/^blocked_by: \[t\]$/blocked_by: [w]/' "${ROOT}/fc-up/docs/stories/x.md"; push_up fc
+out="$(at fc reconcile; echo "exit $?")"
+check "the base changed x's legacy blocked_by: reconcile pulls, and x has it with status: ready" "yes|same" \
+  "$(has "exit 0" "${out}")|$(same <(flipped "${ROOT}/fc-up/docs/stories/x.md") "${ROOT}/fc/docs/stories/x.md")"
+# A hand edit to x's legacy blocked_by is a hand edit: it stops the pull, named, and x stays as it was.
+setup_flip fb
+echo "the base's line" >> "${ROOT}/fb-up/docs/stories/x.md"; push_up fb
+perl -pi -e 's/^blocked_by: \[t\]$/blocked_by: [u]/' "${ROOT}/fb/docs/stories/x.md"; cp "${ROOT}/fb/docs/stories/x.md" "${ROOT}/fb-x"
+out="$(at fb reconcile || true)"
+check "a hand edit to x's blocked_by stops the pull, named, and x is as it was" "yes|same" \
+  "$(has "docs/stories/x.md" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fb-x" "${ROOT}/fb/docs/stories/x.md")"
 # The base adds w to x's depends_on: x's flip to ready is not set again over it.
 setup_flip fp
 perl -pi -e 's/^depends_on: \[t\]$/depends_on: [t, w]/' "${ROOT}/fp-up/docs/stories/x.md"; push_up fp
