@@ -99,6 +99,16 @@ you is a new `lead` story, added to the board, not done quietly.
 network) in its body, and each **You:** step says how the lead learns it is done (you tell it, or
 it sees the merge). A status or flag raised for you says who clears it and how.
 
+**The lead is woken when its queue grows.** While a conductor works, `/swarm-dev:swarm` waits on it, and
+`swarm.sh next` names that conductor first. A story held or escalated mid-epic would sit unseen
+until the conductor reports; on 2026-10-16, three held stories waited two hours that way. So the
+lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seconds
+(`SWARM_LEAD_POLL`) it reads the board, and it returns as soon as a new item appears: a held story
+(`held_for:`), an escalated one, or, with `merge = human`, a story or epic in review whose PR heads
+are all green. It prints one line per item and logs one `lead-woken` line for each in events.tsv.
+The lead handles each line at once and starts it again. It never nudges an agent and never
+edits the board.
+
 ## Writing the HLD
 
 Everything starts here, and it is the one stage you do by hand: the HLD decides what every epic,

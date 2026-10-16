@@ -6,6 +6,7 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its HLD; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or (merge = human) a green PR in review; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
@@ -5841,10 +5842,72 @@ for t in json.load(sys.stdin)['result']['tabs']:
   done
 }
 
-# wait_command [--stall | --until-report] <name> [timeout-ms] — the wait command: a conductor's wait,
-# with no timeout under --until-report, or any other agent's.
+LEAD_POLL="${SWARM_LEAD_POLL:-30}"   # seconds between wait --lead's reads of the board
+
+# heads_green <pr-url>... — true when there is at least one PR and every one's head is green (ci_gate head).
+heads_green() {
+  local url repo head
+  [[ $# -gt 0 ]] || return 1
+  for url in "$@"; do
+    [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 1
+    repo="${BASH_REMATCH[1]}"
+    head="$(gh pr view "${BASH_REMATCH[2]}" --repo "${repo}" --json headRefOid --jq .headRefOid 2>/dev/null)" || return 1
+    [[ "${head}" =~ ^[0-9a-f]{40}$ ]] && ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || return 1
+  done
+}
+
+# lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
+# for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human
+# `merge: <slug> <PR URL>...` for a story or epic in review (waiting_on_user) whose every PR head is green.
+lead_queue() {
+  local f held line slug prs
+  while IFS= read -r f; do
+    held="$(get_fm "${f}" held_for)"
+    if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
+    elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
+  done < <(board stories)
+  [[ "${CFG_merge}" == human ]] || return 0
+  # waiting_on_user's last line has no newline.
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == "  awaiting your merge: "* ]] || continue
+    line="${line#  awaiting your merge: }"; line="${line#epic }"
+    slug="${line%% *}"; prs="${line#"${slug}"}"
+    # shellcheck disable=SC2086 # prs: is a space-separated list of URLs
+    if heads_green ${prs}; then echo "merge: ${slug}${prs}"; fi
+  done < <(waiting_on_user)
+}
+
+# wait_lead [timeout-ms] — wait --lead: read the lead's queue (lead_queue) every LEAD_POLL seconds and
+# return 0 as soon as it holds an item it did not on the read before, printing each new one and logging
+# `lead-woken <slug>` for it. At the timeout (default an hour) it fails with nothing printed. It nudges
+# no one and edits no board file.
+wait_lead() {
+  local timeout="${1:-3600000}" start seen now line new=""
+  [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
+  [[ "${LEAD_POLL}" =~ ^[0-9]+$ ]] || die "SWARM_LEAD_POLL is in seconds, not '${LEAD_POLL}'"
+  start=$(date +%s); seen="$(lead_queue)"
+  while (( ($(date +%s) - start) * 1000 < timeout )); do
+    sleep "${LEAD_POLL}"
+    now="$(lead_queue)"
+    while IFS= read -r line; do
+      [[ -z "${line}" || $'\n'"${seen}"$'\n' == *$'\n'"${line}"$'\n'* ]] || new+="${line}"$'\n'
+    done <<< "${now}"
+    if [[ -n "${new}" ]]; then
+      while IFS= read -r line; do
+        echo "${line}"; line="${line#*: }"; record_event lead-woken "${line%% *}"
+      done <<< "${new%$'\n'}"
+      return 0
+    fi
+    seen="${now}"
+  done
+  return 1
+}
+
+# wait_command [--stall | --until-report] <name> [timeout-ms] | --lead [timeout-ms] — the wait command:
+# a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's (wait_lead).
 wait_command() {
   local stall until n
+  [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""
   case "${1:-}" in --stall) stall=--stall; shift ;; --until-report) until=1; shift ;; esac
   n="$(agent_name "${1:?name}")"
