@@ -91,6 +91,12 @@ check "a listed session there counts under its own role" "| code | 1 | claude-op
 check "each counted once" "| **total** | 4 | | 0k | 0k | 0k | 2.0M | 40.00 |"
 out="$(run cost --since 2026-09-21)"
 check "with --since after its first timestamp, the lead session is left out" "| **total** | 3 | | 0k | 0k | 0k | 1.0M | 20.00 |"
+# --since is a local date: a session started at 23:30 UTC on the 20th started on the 21st in Paris (UTC+2).
+usage m7 claude-opus-5-5 0 0 0 1000000 | stamp 2026-09-20T23:30:00.000Z > "${E}/s-late.jsonl"
+out="$(TZ=Europe/Paris run cost --since 2026-09-21)"
+check "a lead session counts from its first timestamp's local day" "| lead | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
+out="$(TZ=UTC run cost --since 2026-09-21)"
+check "in UTC the same session started the day before" "| **total** | 3 | | 0k | 0k | 0k | 1.0M | 20.00 |"
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

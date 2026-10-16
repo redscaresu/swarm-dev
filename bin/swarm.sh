@@ -1020,7 +1020,7 @@ cost_report() {
   [[ -f "${AGENTS_LOG}" || -n "${lead}" || -d "${own}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
     "${SESSIONS_DIR}" "${own}" <<'PY'
-import os, sys
+import datetime, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 log, since, lead, projects, archive, own = sys.argv[1:7]
 agents, named = [], set()
@@ -1036,26 +1036,25 @@ if lead:
     named.add(lead)
 
 def started(path):
-    # The first timestamp's UTC day, or "".
+    # The first timestamp's local day, as since and agents.tsv's dates are, or "".
     for line in log_lines(path):
         try:
             ts = json.loads(line).get("timestamp")
-        except (ValueError, AttributeError):
+            return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
+        except (ValueError, AttributeError, TypeError):
             continue
-        if isinstance(ts, str):
-            return ts[:10]
     return ""
 
 # The lead's own sessions: Claude Code keeps them under the project's path, all but letters and digits turned into -.
 for path in sorted(glob.glob(os.path.join(glob.escape(own), "*.jsonl"))):
     session = os.path.basename(path)[:-len(".jsonl")]
     if session not in named and (since == "0000-00-00" or started(path) >= since):
-        agents.append({"role": "lead", "kind": "claude", "session": session})
+        agents.append({"role": "lead", "kind": "claude", "session": session, "path": path})
 rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
     r["agents"] += 1
-    path = session_log(projects, a["session"], archive)
+    path = a.get("path") or session_log(projects, a["session"], archive)
     if a["kind"] != "claude" or not path:
         r["unpriced"] += 1
         continue
