@@ -4039,8 +4039,8 @@ PY
 # Each --project <dir> (repeatable) draws that project's frame in turn (dash_frame) in place of this
 # project's, so it runs from any git repo; every dir is checked before anything is drawn.
 dash() {
-  local every="" tty=0 i d b
-  DASH_LADDER=0; DASH_TREE=0; DASH_DIRS=(); DASH_ENV_W="${DASH_W:-}"; DASH_ENV_H="${DASH_H:-}"
+  local every="" tty=0 i d b c
+  DASH_LADDER=0; DASH_TREE=0; DASH_DIRS=(); DASH_LEAD_ANY=off; DASH_ENV_W="${DASH_W:-}"; DASH_ENV_H="${DASH_H:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --watch)
@@ -4063,15 +4063,17 @@ dash() {
     d="$(cd "${DASH_DIRS[i]}" 2>/dev/null && pwd -P)" || d=""
     [[ -n "${d}" && -f "${d}/.claude/swarm/config" ]] \
       || die "dash --project ${DASH_DIRS[i]}: not a swarm project (no .claude/swarm/config)"
-    b="$(SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" config board_dir)" || b=""
+    c="$(SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" config)" || c=""
+    b="$(sed -n 's/^board_dir = \(.*\)    (.*)$/\1/p' <<< "${c}")"
     [[ -n "${b}" && -f "${b}/stories/README.md" ]] || die "dash --project ${DASH_DIRS[i]}: no board at ${b}; run swarm.sh init there"
+    [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
     DASH_DIRS[i]="${d}"
   done
   [[ ! -t 1 ]] || tty=1
-  # Several projects share the height only on a terminal, in a watch, or when DASH_H says so: a
-  # one-shot dash into a file or a pager is never cut.
+  # Several projects share the height only in a watch on a terminal, or when DASH_H says so: a
+  # one-shot dash, or one into a file or a pager, is never cut.
   DASH_SHARE=0
-  if [[ ${tty} == 1 || -n "${every}" || -n "${DASH_ENV_H}" ]]; then DASH_SHARE=1; fi
+  if [[ ( ${tty} == 1 && -n "${every}" ) || -n "${DASH_ENV_H}" ]]; then DASH_SHARE=1; fi
   if [[ -z "${DASH_COLOR:-}" ]]; then
     DASH_COLOR=0
     [[ ${tty} == 0 || -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
@@ -4105,29 +4107,65 @@ dash_size() {
   DASH_W="${c}"; DASH_H="${r}"
 }
 
+# DASH_LEGEND_PY — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
+# few lines as w columns allow, with a watch's keys at the end under 140 columns (wide puts them in
+# the status bar). With lead = session most ! rows are the lead's queue, so the legend says so.
+DASH_LEGEND_PY='
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
+KEYWORDS = "q quit · t tree · l ladder · r redraw"
+def legend_lines(w, keys, wide, lead):
+    rows, cur = [], ""
+    for item in [l.replace("! needs you", "! needs you or the lead") if lead else l for l in LEGEND] + ([KEYWORDS] if keys and not wide else []):
+        if cur and len(cur) + 3 + len(item) > w:
+            rows.append(cur); cur = item
+        else:
+            cur = f"{cur}   {item}" if cur else item
+    rows.append(cur)
+    return rows
+'
+
+# dash_legend — the legend dash_frame draws once under several projects: legend_lines, then from 140
+# columns the keys on a line of their own; dim when DASH_COLOR is 1.
+dash_legend() {
+  SWARM_LEGEND_PY="${DASH_LEGEND_PY}" python3 -c '
+import os, sys
+exec(os.environ["SWARM_LEGEND_PY"])
+w, keys, lead, color = max(int(sys.argv[1]), 40), sys.argv[2] == "1", sys.argv[3] == "session", sys.argv[4] == "1"
+rows = legend_lines(w, keys, w >= 140, lead) + (["   " + KEYWORDS + ("" if keys else " (with --watch)")] if w >= 140 else [])
+rows = [r if len(r) <= w else r[:w - 1] + "…" for r in rows]
+print("\n".join(f"\033[2m{r}\033[0m" if color else r for r in rows))' "${DASH_W}" "${DASH_KEYS:-0}" "${DASH_LEAD_ANY}" "${DASH_COLOR}"
+}
+
 # dash_frame — one frame: this project's (after dash_slow), or with --project each project's in turn,
-# each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder,
-# and (DASH_SHARE) the height shared out between them. Only the last draws the legend, so each share
-# starts with its project's header. A project whose frame fails stops it, naming the project.
+# each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder
+# and no legend, then the legend once (dash_legend). With DASH_SHARE the height, less the legend's,
+# is shared out between them; with too little room for a line each the legend goes. A project whose
+# frame fails shows its error line in its place, the others are still drawn, and it returns 1.
 dash_frame() {
   if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then dash_render; return; fi
-  local d out frames="" h=0 n=0 legend=0
-  if [[ ${DASH_SHARE} == 1 ]]; then
-    h=$((DASH_H / ${#DASH_DIRS[@]}))
+  local d out frames="" legend rows=0 h=0 failed=0 n=${#DASH_DIRS[@]}
+  legend="$(dash_legend)"
+  if [[ ${DASH_SHARE} == 1 && ${DASH_H} -gt 0 ]]; then
+    rows=$((DASH_H - $(wc -l <<< "${legend}")))
+    [[ ${rows} -ge ${n} ]] || { legend=""; rows=${DASH_H}; }
+    h=$((rows / n))
     # A known height is never shared down to 0, which would mean no limit.
-    [[ ${DASH_H} -eq 0 || ${h} -gt 0 ]] || h=1
+    [[ ${h} -gt 0 ]] || h=1
   fi
   set -- dash
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
   for d in "${DASH_DIRS[@]}"; do
-    n=$((n + 1)); [[ ${n} -lt ${#DASH_DIRS[@]} ]] || legend=1
-    out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND="${legend}" \
-      "${SWARM_HOME}/bin/swarm.sh" "$@")" || die "dash --project ${d}: its frame failed"
+    if ! out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND=0 \
+        "${SWARM_HOME}/bin/swarm.sh" "$@" 2>&1)"; then
+      out="${out##*$'\n'}"; out="$(basename "${d}")  could not draw: ${out#swarm: }"; failed=1
+    fi
     frames+="${out}"$'\n'
   done
   # More projects than lines: the 1-line shares still add up to no more than the height.
-  if [[ ${h} -gt 0 ]]; then sed -n "1,${DASH_H}p" <<< "${frames%$'\n'}"; else printf '%s' "${frames}"; fi
+  if [[ ${h} -gt 0 ]]; then frames="$(sed -n "1,${rows}p" <<< "${frames%$'\n'}")"$'\n'; fi
+  printf '%s%s' "${frames}" "${legend:+${legend}$'\n'}"
+  return "${failed}"
 }
 
 # dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
@@ -4434,7 +4472,7 @@ for a in agents:
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
-  DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
+  DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
@@ -4470,7 +4508,7 @@ def model_style(model, label=False):
     k = next((m for m in MODEL_COLOR if m in model.lower()), None)
     return (k + "-label" if label else k) if k else "dim"
 
-LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
+exec(E["SWARM_LEGEND_PY"])
 out = []
 
 def paint(t, s):
@@ -5018,19 +5056,10 @@ elif epic_view:
 if blocked or later:
     left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
-# The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
-# DASH_LEGEND=0 (every --project frame but the last, dash_frame) leaves the legend and the keys out.
-KEYWORDS = "q quit · t tree · l ladder · r redraw"
+# The legend; from 140 columns the keys go to the status bar. DASH_LEGEND=0 (a --project frame,
+# whose legend dash_frame draws once under them all) leaves the legend and the keys out.
 LEGEND_ON = E.get("DASH_LEGEND") != "0"
-legend, cur = [], ""
-# With lead = session most ! rows are the lead's queue, so the legend says so.
-for item in [l.replace("! needs you", "! needs you or the lead") if LEAD else l for l in LEGEND] + ([KEYWORDS] if KEYS and not WIDE else []):
-    if cur and len(cur) + 3 + len(item) > W:
-        legend.append(cur); cur = item
-    else:
-        cur = f"{cur}   {item}" if cur else item
-legend.append(cur)
-foot = [fit([(cut(l, W), "dim")], W) for l in legend] if LEGEND_ON else []
+foot = [fit([(cut(l, W), "dim")], W) for l in legend_lines(W, KEYS, WIDE, LEAD)] if LEGEND_ON else []
 if WIDE:
     foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
                  + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)

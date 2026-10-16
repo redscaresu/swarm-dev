@@ -11,11 +11,12 @@ naming `swarm.sh init`.
 
 To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
 ~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
-name, with the legend once at the bottom. On a terminal or with `--watch` each gets its share of
-the terminal's height; written to a file or a pager, nothing is cut. `--watch` redraws them
-together, as one screen. It checks every folder before it draws anything, and stops at the first
-one that has no `.claude/swarm/config` or no board, naming it. With `--project` it shows only the
-projects you name, so you can run it from any git repo, even one with no board of its own.
+name, with the legend once at the bottom. `--watch` on a terminal redraws them together as one
+screen, each with its share of the height left above the legend. Anywhere else nothing is cut, as
+with plain `dash`. If one project's screen fails to draw, its error takes its place and the others
+still show. It checks every folder before it draws anything, and stops at the first one that has
+no `.claude/swarm/config` or no board, naming it. With `--project` it shows only the projects you
+name, so you can run it from any git repo, even one with no board of its own.
 
 When `claude plugin update` installs a new version while `--watch` runs from the installed plugin,
 the watch switches to the new version's `swarm.sh` before its next frame and keeps your `t` and `l`

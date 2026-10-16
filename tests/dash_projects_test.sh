@@ -83,22 +83,47 @@ check "with DASH_H=40, alpha's frame is at most 20 lines" test "$(frame_of alpha
 check "with DASH_H=40, bravo's frame is at most 20 lines" test "$(frame_of bravo "${out}" | wc -l)" -le 20
 check "both frames are drawn with DASH_H=40" bash -c "[ -n \"\$1\" ] && [ -n \"\$2\" ]" _ "$(frame_of alpha "${out}")" "$(frame_of bravo "${out}")"
 out="$(DASH_H=1 dash --project "${A}" --project "${B}")"
-check "with fewer lines than projects (DASH_H=1), the frames fit the 1 line" test "$(wc -l <<< "${out}")" -le 1
+one_line() { [ -n "$1" ] && [ "$(wc -l <<< "$1")" -eq 1 ]; }
+check "with fewer lines than projects (DASH_H=1), one line is drawn" one_line "${out}"
 check "with DASH_H=1, the line drawn is alpha's header" grep -q '^alpha  swarm-dev ' <<< "${out}"
-# Three lines each: every share starts with its project's header, and the legend shows once.
+# The legend's 2 lines (at 100 columns) come off the height first: 2 lines each, then the legend once.
 out="$(DASH_H=6 dash --project "${A}" --project "${B}")"
-check "with DASH_H=6, the frames fit 6 lines" test "$(wc -l <<< "${out}")" -le 6
+check "with DASH_H=6, the frames and legend fit 6 lines" test "$(wc -l <<< "${out}")" -le 6
 check "with DASH_H=6, alpha's share starts with its header" grep -q '^alpha  swarm-dev ' <<< "$(sed -n 1p <<< "${out}")"
-check "with DASH_H=6, bravo's share starts with its header" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 4p <<< "${out}")"
-check "with DASH_H=6, the legend shows at most once" test "$(grep -c '● working' <<< "${out}")" -le 1
-# Two lines each: bravo's legend alone would fill its share, and its header still comes first.
-out="$(DASH_H=4 dash --project "${A}" --project "${B}")"
-check "with DASH_H=4, bravo's share starts with its header, ahead of the legend" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 3p <<< "${out}")"
+check "with DASH_H=6, bravo's share starts with its header" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 3p <<< "${out}")"
+legend_at() { [ "$(grep -c '● working' <<< "$2")" -eq 1 ] && sed -n "$1p" <<< "$2" | grep -q '● working'; } # <line> <out>: once, there
+check "with DASH_H=6, the legend shows once, at the bottom" legend_at 5 "${out}"
+# At 160 columns each frame has a status bar at its foot; a 1-line share still shows the header.
+out="$(DASH_W=160 DASH_H=4 dash --project "${A}" --project "${B}")"
+check "at 160 columns with DASH_H=4, alpha's 1-line share is its header" grep -q '^alpha  swarm-dev ' <<< "$(sed -n 1p <<< "${out}")"
+check "at 160 columns with DASH_H=4, bravo's 1-line share is its header" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 2p <<< "${out}")"
 # A height measured off a terminal (LINES here; /dev/tty for a real one) is not shared out: a
-# one-shot dash into a file or a pager is never cut.
+# one-shot dash into a file or a pager is never cut, nor is a watch.
 out="$(LINES=10 dash --project "${A}" --project "${B}")"
 check "off a terminal, a measured height does not cut alpha's frame" test "$(frame_of alpha "${out}" | wc -l)" -gt 20
 check "off a terminal, a measured height still draws bravo's frame" grep -q '^bravo  swarm-dev ' <<< "${out}"
+# On a terminal, a one-shot dash is not cut either: it scrolls, as plain dash does.
+ptyrun() { # <command...>: run it with stdout and stderr on a new pty; print what it wrote, plain
+  python3 -I -c '
+import os, re, subprocess, sys
+m, s = os.openpty()
+p = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=s, stderr=s)
+os.close(s)
+out = b""
+while True:
+    try:
+        b = os.read(m, 65536)
+    except OSError:
+        break
+    if not b:
+        break
+    out += b
+p.wait()
+sys.stdout.write(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", out.decode("utf-8", "replace").replace("\r", "")))' "$@"
+}
+out="$(cd "${G}" && LINES=10 ptyrun env -u HERDR_ENV "${SWARM}" dash --project "${A}" --project "${B}")"
+check "on a terminal, a one-shot dash does not cut alpha's frame" test "$(frame_of alpha "${out}" | wc -l)" -gt 20
+check "on a terminal, a one-shot dash draws bravo's frame" grep -q '^bravo  swarm-dev ' <<< "${out}"
 esc=$'\033['
 out="$(DASH_COLOR=1 dash --project "${A}" --project "${B}")"
 check "with DASH_COLOR set, the frames carry colour codes" has "${esc}" "${out}"
@@ -122,6 +147,20 @@ check "the changed tick draws alpha's frame" test "$(grep -c '^alpha  swarm-dev 
 check "the changed tick draws bravo's frame after alpha's" grep -q '^bravo  swarm-dev ' <<< "${last}"
 check "the changed tick's bravo frame shows the change" has late-epic-of-bravo "${last}"
 check "the changed tick's alpha frame lists alpha's epic" has epic-of-alpha "${last}"
+# bravo's frame then fails (its board goes): its error takes its place, and alpha is still drawn.
+rm "${B}/board/stories/README.md"
+check "bravo's failure shows in its place within 15s" within 15 grep -q '^bravo  could not draw: dash: no board at ' "${ROOT}/watch.out"
+sleep 1
+last="$(awk '/^alpha  swarm-dev / { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }' "${ROOT}/watch.out")"
+check "the failing tick still draws alpha's frame" has epic-of-alpha "${last}"
+check "the failing tick shows bravo's error after alpha's frame" grep -q '^bravo  could not draw: ' <<< "${last}"
+echo "# Stories" > "${B}/board/stories/README.md"
+
+# --watch off a terminal shares no measured height either: every frame is printed whole.
+(cd "${G}" && exec env -u HERDR_ENV LINES=10 "${SWARM}" dash --watch 1 --project "${A}" --project "${B}" > "${ROOT}/watch2.out" 2>&1) &
+pids+=("$!")
+check "a watch off a terminal draws both frames" within 15 grep -q '^bravo  swarm-dev ' "${ROOT}/watch2.out"
+check "a watch off a terminal does not cut alpha's frame to LINES" test "$(frame_of alpha "$(cat "${ROOT}/watch2.out")" | wc -l)" -gt 20
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
