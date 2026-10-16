@@ -4146,9 +4146,10 @@ dash_base_ref() {
 # under .swarm), so a one-shot dash reuses it too: today's estimated cost (the total line of
 # cost_report), each open board item's PR checks, merge state, last update and whether it is open, one gh pr view per
 # PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), each
-# open story's open story/<slug> PR in that story's own repo, one gh pr list per repo with the same
-# limit (a builder's PR, which its story lists only from review on), and how many stories of each
-# epic finished (dash_finished).
+# open story's open story/<slug> PR in that story's own repo (a builder's PR, which its story lists
+# only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
+# view per PR that matches, each with the same limit; and how many stories of each epic finished
+# (dash_finished).
 dash_slow() {
   local cache f r urls pairs
   # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
@@ -4167,8 +4168,8 @@ dash_slow() {
       if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 - ${urls} <<'PY'
 import json, os, signal, subprocess, sys
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
-def gh(args, cwd=None):
-    p = subprocess.Popen(["gh"] + args, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+def gh(args):
+    p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
         out, _ = p.communicate(timeout=5)
     except subprocess.TimeoutExpired:
@@ -4184,17 +4185,21 @@ for l in os.environ["SWARM_PAIRS"].splitlines():
     repo, _, slug = l.partition("\t")
     slugs.setdefault(repo, set()).add(slug)
 for repo, mine in slugs.items():
+    # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
+    origin = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
     # ponytail: only the newest 200 open PRs per repo are read, so a builder's older PR in a repo with
     # more shows as no PR yet; query each unmatched story/<slug> head if a repo ever has that many.
     try:
-        prs = json.loads(gh(["pr", "list", "--state", "open", "--limit", "200", "--json", "url,headRefName," + FIELDS], repo) or "[]")
+        prs = json.loads(gh(["pr", "list", "-R", origin, "--state", "open", "--limit", "200", "--json", "url,headRefName"]) or "[]") if origin else []
     except ValueError:
         continue
     for pr in prs if isinstance(prs, list) else []:
         head = str(pr.get("headRefName")) if isinstance(pr, dict) else ""
         if head.startswith("story/") and head[len("story/"):] in mine and pr.get("url") not in sys.argv[1:]:
             print("head\t" + head[len("story/"):] + "\t" + pr["url"])
-            print(pr["url"] + "\t" + json.dumps(pr))
+            out = gh(["pr", "view", pr["url"], "--json", FIELDS])
+            if out is not None:
+                print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
 PY
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
@@ -4644,7 +4649,8 @@ def scan_tail(entries):
         if not isinstance(d, dict):
             continue
         t = t or d.get("timestamp")
-        content = (d.get("message") or {}).get("content") if d.get("type") == "assistant" else None
+        msg = d.get("message") if d.get("type") == "assistant" else None
+        content = msg.get("content") if isinstance(msg, dict) else None
         for c in reversed(content) if isinstance(content, list) else []:
             if isinstance(c, dict) and c.get("type") == "tool_use" and tool is None:
                 tool = str(c.get("name") or "")
@@ -4654,11 +4660,12 @@ def scan_tail(entries):
             break
     return t, tool, reply
 
-def tail_of(rec):
+def tail_of(rec, reply_wanted):
     # An agent's last activity from its session log (agents.tsv's session), read from its last 64 KB
     # so every frame can afford it, and from 4 times as much while that misses the newest timestamp,
-    # tool or reply (a big Write entry is cut there): (the newest entry's timestamp, the newest tool it
-    # ran, whether its newest reply starts IMPOSSIBLE:). (None, "", False) with no log.
+    # tool or (when reply_wanted: only an idle one-off builder's IMPOSSIBLE check needs it) reply, as a
+    # big Write entry cut there does: (the newest entry's timestamp, the newest tool it ran, whether
+    # its newest reply starts IMPOSSIBLE:). (None, "", False) with no log.
     # ponytail: at most the last 4 MB per frame; a tool or reply older than that is not found.
     path = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
     size = 65536
@@ -4668,7 +4675,7 @@ def tail_of(rec):
             while True:
                 f.seek(max(end - size, 0))
                 t, tool, reply = scan_tail(f.read().decode("utf-8", "replace").splitlines())
-                if (t and tool is not None and reply is not None) or size >= min(end, 1 << 22):
+                if (t and tool is not None and (reply is not None or not reply_wanted)) or size >= min(end, 1 << 22):
                     break
                 size *= 4
     except OSError:
@@ -4716,7 +4723,7 @@ if agents is not None:
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
                      look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3] or HEADS.get(slug or "", ""),
                      open=bool(slug) and story_by_slug[slug][2] != "done",
-                     since=since, day=rec[0] if rec else "", tail=tail_of(rec),
+                     since=since, day=rec[0] if rec else "", tail=tail_of(rec, bool(slug) and st in ("idle", "done") and epic_for(base, slug, label) not in epics),
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
@@ -4824,7 +4831,7 @@ def is_open(url):
 
 def one_off(r):
     # An idle one-off builder (its story on no epic) says what it waits on, never a bare idle.
-    if not r.get("slug") or r["state"] not in ("idle", "done"):
+    if r.get("epic") in epics or not r.get("slug") or r["state"] not in ("idle", "done"):
         return r
     pr = next((m for m in URL.finditer(r["prs"]) if is_open(m.group(0))), None)
     ref = f"#{pr.group(3)} " if pr else ""
@@ -4832,7 +4839,7 @@ def one_off(r):
             else "waits for review" if pr else "no PR yet")
     return dict(r, words=ref + wait)
 
-shown = [r if r["epic"] in epics else one_off(r) for r in shown]   # before any width is measured
+shown = [one_off(r) for r in shown]   # before any width is measured
 groups = collections.OrderedDict((s, []) for s, b in epics.items() if b[2] == "active")
 for r in shown:
     groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
@@ -4932,7 +4939,7 @@ def tree_view():
             rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
             for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
-                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(r)
+                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(one_off(r))
                 rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim")])
     return rows or [[("no agents open in this project's panes", "dim")]]
 

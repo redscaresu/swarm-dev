@@ -942,6 +942,8 @@ check "dash leaves every codex-review marker, dead or overdue, as it was" test "
 # --- Running now, in a project of its own (D) whose panes are w5's: two epic builders at work, three
 # idle one-off builders (their stories on no epic) and one held story.
 D="${ROOT}/running"; mkdir -p "${D}/.swarm/state" "${D}/docs/epics" "${D}/docs/stories" "${ROOT}/dbin"; git -C "${D}" init -q
+# An upstream remote beside origin: gh is asked about origin by name, never left to pick.
+git -C "${D}" remote add upstream https://github.com/up/d.git && git -C "${D}" remote add origin https://github.com/o/d.git
 touch "${D}/docs/stories/README.md"
 ditem() { local path="${D}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
 ditem epics/re.md 'status: active'
@@ -965,9 +967,15 @@ dlog drb2 12 '{"type":"text","text":"reading"},{"type":"tool_use","name":"Read",
 dlog drb2 10 "{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"content\":\"$(head -c 81920 /dev/zero | tr '\0' x)\"}}"
 printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"ok"}]}}\n' "$(ago 9)" >> "${ROOT}/projects/p/drb2.jsonl"
 dlog dro1 30 '{"type":"text","text":"Opened the PR."}'
+# A newest line whose message is not an object costs nothing: ro-review's row still reads.
+echo '{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":"odd"}' >> "${ROOT}/projects/p/dro1.jsonl"
 dlog dro2 30 '{"type":"text","text":"Done; the PR is in review."}'
 dlog dro3 40 '{"type":"text","text":"The plan first."}'
 dlog dro3 20 '{"type":"text","text":"IMPOSSIBLE: the API has no such call"}'
+# Then 80 KB of hook output and a small tool call: the reply is past the 64 KB read first, so dash
+# reads further back for an idle one-off builder, the one row that needs it.
+printf '{"type":"attachment","timestamp":"%s","content":"%s"}\n' "$(ago 19)" "$(head -c 81920 /dev/zero | tr '\0' x)" >> "${ROOT}/projects/p/dro3.jsonl"
+dlog dro3 18 '{"type":"tool_use","name":"Bash","input":{}}'
 printf '[{"sessionId":"drb1","status":"busy"},{"sessionId":"drb2","status":"busy"},{"sessionId":"dro1","status":"idle"},{"sessionId":"dro2","status":"idle"},{"sessionId":"dro3","status":"idle"}]' > "${ROOT}/d.json"
 cat > "${ROOT}/dbin/herdr" <<'STUB'
 #!/bin/sh
@@ -978,13 +986,16 @@ case "$1 $2" in
   *) exit 1 ;;
 esac
 STUB
-# gh: PR 11 is green, PR 12 failing, PR 14 green, and the open PR list has PR 13 on story/ro-review, CI running.
+# gh: PR 11 is green, PR 12 failing, PR 14 green, and origin's open PR list (url and head only) has
+# PR 13 on story/ro-review, whose CI is running.
 cat > "${ROOT}/dbin/gh" <<'STUB'
 #!/bin/sh
 case "$1 $2 $3" in
   "pr view https://github.com/o/d/pull/11"|"pr view https://github.com/o/d/pull/14") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   "pr view https://github.com/o/d/pull/12") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
-  "pr list --state") echo '[{"url":"https://github.com/o/d/pull/13","headRefName":"story/ro-review","state":"OPEN","statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]},{"url":"https://github.com/o/d/pull/15","headRefName":"other","state":"OPEN"}]' ;;
+  "pr list -R") [ "$4" = https://github.com/o/d.git ] || exit 1
+    echo '[{"url":"https://github.com/o/d/pull/13","headRefName":"story/ro-review"},{"url":"https://github.com/o/d/pull/15","headRefName":"other"}]' ;;
+  "pr view https://github.com/o/d/pull/13") echo '{"state":"OPEN","statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -1008,6 +1019,9 @@ sys.exit(not (t[r - 1].startswith("╰") and "╭─ epics" in "".join(t[:r]) if
   check "one-off builder at ${cols} columns: a last reply of IMPOSSIBLE: reads IMPOSSIBLE" grep -qE 'ro-imp .*IMPOSSIBLE' <<< "${epicp}"
   check "running now at ${cols} columns: a builder with no PR says so" grep -qE '! ro-imp .*no PR yet|✓ ro-imp .*no PR yet' <<< "${run}"
   check "no agent row at ${cols} columns reads a bare idle" lacks " idle " "${out}"
+  out="$(fresh; cd "${D}" || exit 1; env -u HERDR_ENV COLUMNS="${cols}" CLAUDE_STUB_AGENTS="${ROOT}/d.json" PATH="${ROOT}/dbin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)"
+  check "--tree at ${cols} columns: an idle one-off builder says what it waits on" grep -qE 'ro-review .*#13 waits for review' <<< "${out}"
+  check "--tree at ${cols} columns: no agent row reads a bare idle" lacks " idle " "${out}"
 done
 
 # --- A git repo with no board: dash and dash --watch stop at once and name swarm.sh init.
