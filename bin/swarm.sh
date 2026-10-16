@@ -1701,13 +1701,14 @@ findings_goal() {
 # The merge, signing and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
-  else echo "Never merge (the conductor or the lead merges, with swarm.sh merge)."; fi
+  else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
-# stop_rule — when a conductor stops. With merge = agent it merges its own PRs, so it also waits out
-# every running build.
+# stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
+# waits out every running build, or with pr_per = epic, the epic's PRs.
 stop_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
-  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when the base is red."; fi
+  elif [[ "${CFG_pr_per}" == epic ]]; then echo "Stop when every PR from epic/$1 has merged and the epic's **Done when** holds, or when what is left needs the lead: a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running; a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch; or CI on the base red or timed out."
+  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
 }
 sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
@@ -1786,7 +1787,8 @@ printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says
 Then run \`swarm.sh unblock\`, and in this run start each story of this epic it prints as \`ready:\`
 whose \`touches\` do not overlap a running one, with \`swarm.sh story <slug>\`. After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
-story of this epic that is yours to start is ready and none is running, or the base is red. When the
+story of this epic that is yours to start is ready and none is running, or CI on the base is red or
+timed out. When the
 epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`.
 EOF
   fi
@@ -2142,7 +2144,7 @@ EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
-for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule)
+for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
 
 The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read

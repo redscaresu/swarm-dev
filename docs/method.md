@@ -561,9 +561,11 @@ a story that is still `ready` counts a failed build. It then runs `swarm.sh unbl
 run, starts each story of the epic that unblock printed as `ready:` and whose `touches` do not
 overlap a running one. A build cleared on error or given up on stops that: it starts nothing more in
 the wave. It reports once no story of the epic that it may start is ready and none is running. If
-CI on the base goes red, it merges nothing more: it finds the pair of PRs that broke it, each green
-alone, opens the fix or lists it for you, and says so in its report. With `pr_per = epic` it puts
-the epic in review with every PR, then merges them the same way, one at a time. The lead merges
+CI on the base goes red or times out, it merges nothing more and stops: it finds the pair of PRs
+that broke it, each green alone, opens the fix or lists it for you, and says so in its report. With
+`pr_per = epic` it puts the epic in review with every PR, then merges them the same way, one at a
+time. It stops only once they have all merged, or when what is left needs the lead: a story only
+the lead can finish, or a merge that `swarm.sh merge` refused or could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
 `merge = human` too.
 

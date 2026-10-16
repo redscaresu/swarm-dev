@@ -324,7 +324,7 @@ echo "merge = agent" > "${p}/.claude/swarm/config"
 check "merge = agent keeps the guard on a story agent, and starts only the conductor without it" "yes|no" \
   "$(has "${GUARD}" "$(start g2)")|$(grep -qF -- "${GUARD}" <<< "$(conductor e)" && echo yes || echo no)"
 check "a builder's brief says who merges: a human, or with merge = agent the conductor or the lead" "yes|yes" \
-  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
+  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
 # --- Starting an agent: a taken name, a failed start, codex's update check.
