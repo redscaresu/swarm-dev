@@ -51,6 +51,16 @@ Repeat until a step below says stop:
      nudges a conductor. When it returns, go back to 1. Never
      close a conductor that has not reported.
 
+     In the same response, also run `swarm.sh wait --lead` in the background. It returns when
+     something new lands in your queue while the conductor works, one line per item. For a
+     `held: <slug> (<cause>)` or `escalated: <slug>` line, do the `escalated <slug>` step for that slug at once, without waiting for `next`:
+     `next` names the running conductor first and would not get to it. For a
+     `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. Then start
+     `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
+     `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
+     time: a new one stops the earlier one, which then ends with nothing printed; that needs
+     nothing from you. A new run first reports anything that landed while none was running.
+
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
      tell the user to run `/login` and nothing else. Once they say it is done, write a file
