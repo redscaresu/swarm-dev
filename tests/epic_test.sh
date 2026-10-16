@@ -123,6 +123,22 @@ goal_parts() {
   has "or stop after $3 more turns" "${g}"
 }
 GOAL_PARTS="yes|yes|yes|yes|yes|yes|yes"
+# The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
+MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
+# logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
+# and text and run as written: the outcome and reviewer of the row each logs, then has for MAPPING.
+logs_findings() {
+  local f="${p}/.swarm/findings.tsv" line n
+  while IFS= read -r line; do
+    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"
+    line="${line%%\"<*}\"text\""   # the text placeholder is the last word
+    n=0; [[ ! -f "${f}" ]] || n="$(wc -l < "${f}")"
+    if ! (cd "${ROOT}" && env -u SWARM_PROJECT bash -c "${line}" >/dev/null 2>&1); then printf 'failed: %s|' "${line}"; continue; fi
+    [[ "$(wc -l < "${f}")" -eq $((n + 1)) ]] && printf '%s|' "$(tail -1 "${f}" | cut -f5,6 | tr '\t' ' ')" || printf 'no row|'
+  done < <(grep -E '^    SWARM_PROJECT=.* log-finding ' <<< "$1")
+  has "${MAPPING}" "$(tr -s '[:space:]' ' ' <<< "$1")"
+}
+LOGS_FINDINGS="fixed codex|declined codex|yes"
 STORY_REPLY="When CI is green, reply with the PR URL, what changed in three lines, and the codex findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR."
 EPIC_REPLY="When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
 
@@ -232,6 +248,7 @@ check "the conductor's brief watches only its own epic's PRs" "yes" \
   "$(grep -q 'swarm.sh watch --epic e`' "${p}/.swarm/briefs/conduct-e.md" && echo yes || echo no)"
 cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
+check "the story-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
   "$(has "codex-review <base>" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
 check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
@@ -537,6 +554,7 @@ check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(
 check "the one-PR-per-epic conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
   "$(has "${STRICT_RULE}" "${brief}")|$(has "start yours in a later wave, after the named story merges" "${brief}")|$(has "nothing is known to be open: retry the story in a later wave" "${brief}")"
 check "the one-PR-per-epic conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${brief}" || true)"
+check "the epic-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${brief}")"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
   "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
 check "the epic-mode conductor's per-story review says a missing bump is not a finding; its whole-epic review, which must see the bump, does not" "yes|no" \
@@ -1040,6 +1058,15 @@ check "only codex-review runs codex exec review, and no command tells anyone to"
   "$(grep -c 'codex exec review' "${SWARM}")|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
 check "/swarm-dev:swarm runs the lead's codex-review in the background" "yes" \
   "$(has "swarm.sh codex-review <base>\` in its worktree, run in the background (Bash \`run_in_background\`)" "$(tr -s '[:space:]' ' ' < "${REPO}/commands/swarm.md")")"
+
+# notreviewed <file> — how many of <file>'s log-finding lines lack --reviewer, or none when it has none.
+notreviewed() { if ! grep -q 'log-finding' "$1"; then echo none; else grep 'log-finding' "$1" | grep -vc -- '--reviewer' || true; fi; }
+check "every log-finding line of commands/swarm.md and method.md names --reviewer" "0|0" \
+  "$(notreviewed "${REPO}/commands/swarm.md")|$(notreviewed "${REPO}/docs/method.md")"
+# shellcheck disable=SC2016 # the backticks are the Markdown's
+check "/swarm-dev:swarm maps each reviewer to its --reviewer value, the lead's own reading to lead" "yes" \
+  "$(has '`codex` for codex-review'"'"'s, `code-review` for /code-review'"'"'s, `ci` for the review bot'"'"'s or a `swarm.sh findings` note'"'"'s, or `lead` for your own reading' "$(tr -s '[:space:]' ' ' < "${REPO}/commands/swarm.md")")"
+check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(grep -c "<who> is the reviewer that first raised it, whoever passed it on" "${SWARM}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

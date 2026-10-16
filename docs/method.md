@@ -263,8 +263,8 @@ that `conduct` reports in one line), so `status` and `next` stop listing it as w
 runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
 it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
-story gets a tab of its own. Run one conductor at a time: `watch` reports every story PR, and shared
-files are the lead's alone.
+story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
+`watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
@@ -425,13 +425,21 @@ against its PR, the PR and its state from `gh`, and which attempt at the story i
 `tokens`), `close_cause` (the cause on the build's last close, empty for a plain `close`), and when
 each escalation step was logged: `escalate_at`, `dialog_at` with `dialog` (`accepted` or `dismissed`,
 otherwise empty), `escalated_at`, `reset_at` and `drop_at`. The reason given to a reset or drop is
-never printed. New columns go on the end, so `decisions`, which reads them by name, keeps working. The slug comes
+never printed. After those: `epic` (the story's `epic:`), `merged_at` (when the build's PR merged),
+`story_merged` (`true` on every row of a story when any of its PRs merged, `false` when `gh` found
+none merged, and empty when that is unknown: the story is gone, it names no repo here, or `gh`
+failed), `findings_declined`, and `findings_fixed_by` and `findings_declined_by`, which count each by
+reviewer as `<reviewer>:<n>` pairs in name order (`unknown` for rows logged before the reviewer
+column). A story the lead holds after an escalation (`kind: lead` with `escalated_from:`) shows the
+kind it was built as. New columns go on the end, so `decisions`, which reads them by name, keeps working. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. Each build gets its own
 PR: the last of the story's PRs that its session log names, so a retried story shows the first build's
 closed PR beside the retry's merged one. A build whose log names none of them has no PR, and a build
 with no log left gets the story's PR only when it has exactly one. With `pr_per = epic`, builders open
 no PR, so every build of an epic story gets the epic's PR. A story that merged and
-left the board is read from git history. If `gh` fails, the PR columns stay empty. It writes nothing.
+left the board is read from git history. If `gh` fails, the PR columns stay empty. Each finding counts
+for one build: the latest build on its PR that started on or before the day it was logged, so a
+retry that reuses a PR doesn't count the first build's findings again. It writes nothing.
 
 Each `events.tsv` line counts for one build, so a retried story's tells and closes are split among
 its builds. A line whose time does not parse counts for none. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
@@ -514,8 +522,8 @@ skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `code-review`, `ci` (a
-PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`. Each finding declined is logged with `log-finding --declined`, with the
-reason in its line; `lessons` and `outcomes` count only the fixed ones, and `decisions` exports both. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
+PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`. Each finding declined is logged with `log-finding --declined --reviewer <who>`, with the
+reason in its line; `lessons` counts only the fixed ones, `outcomes` counts the two apart, and `decisions` exports both. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `lessons_file` (default `.claude/swarm/brief.md`) has no rule for is a `candidate`. So is a lead
 memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
 frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
