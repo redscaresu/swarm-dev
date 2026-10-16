@@ -123,7 +123,7 @@ check "with merge = agent, the backlog conductor also stops when CI on the base 
   "$(has 'that you may start is left and none is running, or when CI on the base is red or timed out.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
-  "$(has 'swarm.sh merge --head <the SHA you reviewed> <PR URL>' "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
+  "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
 
 run close conduct-backlog >/dev/null
 run conduct e >/dev/null
