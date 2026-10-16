@@ -550,8 +550,8 @@ check "findings prints a failure note on a successful check" "yes" \
   "$(has "check CodeQL (success): failure a.py:3 Clear-text logging of sensitive information" "${out}")"
 check "findings prints open code-scanning alerts" "yes" "$(has "alert #5 high py/clear-text-logging a.py:3 This logs a password." "${out}")"
 
-# --- watch --epic: a conductor wakes only for its own epic's PRs. Two epics share a repo; the other
-# epic's PR comes first and has finished its checks too.
+# --- watch --epic and --backlog: a conductor wakes only for its own stories' PRs. Two epics and a
+# one-off share a repo; the PRs it must skip come first and have finished their checks too.
 w="${ROOT}/watch"
 mkdir -p "${w}/.claude/swarm" "${ROOT}/wrepos"
 echo "repos_dir = ${ROOT}/wrepos" > "${w}/.claude/swarm/config"
@@ -560,17 +560,16 @@ item "${w}/docs" epics/mine.md "status: active"
 item "${w}/docs" epics/other.md "status: active"
 item "${w}/docs" stories/a.md "status: ready" "kind: code" "epic: mine" "repo: svc"
 item "${w}/docs" stories/b.md "status: ready" "kind: code" "epic: other" "repo: svc"
+item "${w}/docs" stories/c.md "status: ready" "kind: code" "repo: svc"
 cat > "${ROOT}/gh/prlist.json" <<'EOF'
 [{"number": 1, "headRefName": "story/b", "headRefOid": "head1", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
- {"number": 2, "headRefName": "epic/mine", "headRefOid": "head2", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
+ {"number": 2, "headRefName": "epic/mine", "headRefOid": "head2", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
+ {"number": 3, "headRefName": "story/a", "headRefOid": "head3", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
+ {"number": 4, "headRefName": "story/c", "headRefOid": "head4", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
 EOF
-check "watch --epic skips another epic's PR in the same repo" "o/svc #2 epic/mine checks finished on head2" \
-  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
-# One PR per epic: the stories are finished (deleted) before the epic PR opens, so only the epic's
-# repos: line still names the repo.
-rm "${w}/docs/stories/a.md" "${w}/.swarm/state/watch-seen"
-printf -- '---\nstatus: active\nrepos: svc\n---\n\n# mine\n' > "${w}/docs/epics/mine.md"
-check "watch --epic finds the repo from the epic's repos: line once its stories are gone" "o/svc #2 epic/mine checks finished on head2" \
+check "watch --backlog reports a no-epic story's PR and skips every epic story's PR in the same repo" "o/svc #4 story/c checks finished on head4" \
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --backlog 2>&1)"
+check "watch --epic skips another epic's PR and the epic/<slug> head in the same repo" "o/svc #3 story/a checks finished on head3" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
 
 # watch reports this project's agents whose session is waiting, with what each waits for; herdr

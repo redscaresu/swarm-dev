@@ -46,5 +46,5 @@ Start the HLD `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr,
    it over: write "The reviewer has finished: read D/review.md, summarise it for the user and go
    through it together." to a file and run `swarm.sh tell hld-<slug> nudge <file>`.
 5. Still in the background: wait until `D/agreed` exists. Then set `status: agreed`, open a PR for
-   the HLD with one `swarm.sh codex-review` pass (a board-only PR needs no version bump), `swarm.sh close hld`, and tell the user the design
+   the HLD with one `swarm.sh codex-review` pass, `swarm.sh close hld`, and tell the user the design
    is agreed and that `/swarm-dev:swarm` decomposes it next (`/plan-hld <file>`).
