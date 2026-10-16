@@ -3089,7 +3089,8 @@ builder_state() {
 # after closing its builder if one is open (still in review, so close counts nothing), and saying so
 # when herdr cannot tell whether one is; after a
 # closed PR only when no builder is open (one may be fixing it; so may one herdr cannot list), so the
-# story can be built again.
+# story can be built again. With no item merged, it still pulls the main checkout when that is behind
+# its upstream (a PR merged with no review item), and dies as a failed pull below does.
 reconcile() {
   local f slug url state closed waiting urls builder merged=()
   while IFS= read -r f; do
@@ -3130,7 +3131,12 @@ reconcile() {
       merged+=("${slug}")
     fi
   done < <(board stories; board epics)
-  [[ ${#merged[@]} -gt 0 ]] || return 0
+  if [[ ${#merged[@]} -eq 0 ]]; then
+    # A PR merged with no review item (a board PR, a one-off) still leaves the main checkout behind.
+    ! behind_upstream || pull_board_repo \
+      || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
+    return 0
+  fi
   local i k committed saved=()
   if [[ ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in the project repo, and a merged PR may itself have taken the item off it or
@@ -3154,6 +3160,13 @@ reconcile() {
     finish_item "${slug}"
     record_event reconcile "${slug}" "ok (finished)"
   done
+}
+
+# behind_upstream — true when the board is in the project repo and its main checkout, once fetched, is
+# behind its upstream.
+behind_upstream() {
+  [[ ${BOARD_IN_REPO} == 1 ]] && git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null \
+    && git -C "${PROJECT_DIR}" fetch -q && [[ -n "$(git -C "${PROJECT_DIR}" rev-list -1 'HEAD..@{upstream}')" ]]
 }
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
