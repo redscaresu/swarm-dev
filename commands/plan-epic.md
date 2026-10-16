@@ -34,10 +34,11 @@ credentials. Cite evidence as file:line. Keep free text short.*
 
 **0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
 planned by the lead alone: you write the stories in a board-PR worktree (`swarm.sh board-pr start scope-$1`),
-not the main checkout, run one `swarm.sh codex-review` pass over them there so codex sees them, and report
-as below, asking before you open the PR. Skip steps 1 to 3, and start no agent. A larger or riskier epic gets the full run.
+not the main checkout, commit them there, since codex sees only committed changes, run one `swarm.sh codex-review`
+pass over them in that worktree, and report as below. A board outside the project's repo is edited where it is
+(`board-pr` refuses it): write the stories there and skip the worktree and the commit. Skip steps 1 to 3, and start no agent. A larger or riskier epic gets the full run.
 
-**1. Survey** — role `survey`, in parallel: one agent (lands, constraints and overlaps together) unless the epic spans more than one repo (its stories' `repo:` or `touches` name another), three then (one, when a survey already exists; see below). Output `{summary, facts:[{fact, evidence}]}`.
+**1. Survey** — role `survey`, in parallel: one agent (lands, constraints and overlaps together) unless the epic's text names another repo, three then (one, when a survey already exists; see below). The single agent is named `survey`, so its output is `.swarm/$1/survey.json`. Output `{summary, facts:[{fact, evidence}]}`.
 - `survey-lands`: where the change lands — packages, functions, tests, fixtures, golden files,
   and which existing tests must change.
 - `survey-constraints`: the project's ADRs, policies, safety rules and
@@ -84,10 +85,12 @@ tell you which of the two broke something, and cannot be rolled back one half at
   real-cloud step hidden inside an agent story. A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
-the plan does not answer; the surviving stories with `kind`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain; then **What you will do**: every `lead`
+the plan does not answer; the surviving stories with `kind`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain (the lead checks chain depth over the whole graph, since skeptics are capped); then **What you will do**: every `lead`
 story, what each needs from the user (its **You:** steps), and, with `merge = human`, that the user
 merges the resulting PRs. Ask before
-writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
+writing anything. (The small path has already written and committed the stories and run codex: it asks before
+`swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
+has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `touches`, `risk` when
 high; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:

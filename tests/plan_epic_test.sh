@@ -24,14 +24,17 @@ flat=$(tr '\n' ' ' < "$F" | tr -s ' ')
 risk=$(printf '%s' "$flat" | grep -oE 'risk: high` only[^;]*;' || true)
 
 has small-epic 'at most 3 stories with no `risk: high` is planned by the lead alone' "$flat"
-has small-epic-codex 'one `swarm.sh codex-review` pass over them'
+has small-epic-codex 'one `swarm.sh codex-review` pass over them' "$flat"
 has chain-depth 'at most 3 stories deep' "$flat"
 has depends-on-names 'what it needs from each `depends_on`: the file or the function' "$flat"
 has report-chain 'longest chain'
 has critic-in-step-3 'role `critic`' "$step3"
 has risk-clause 'real-cloud, teardown, credentials and safety' "$risk"
 if [ -n "$risk" ]; then hasnt risk-hygiene 'hygiene' "$risk"; else echo "FAIL risk-hygiene"; fails=$((fails + 1)); fi
-has one-survey 'one agent \(lands, constraints and overlaps together\) unless the epic spans more than one repo' "$flat"
+has one-survey 'one agent \(lands, constraints and overlaps together\) unless the epic.s text names another repo' "$flat"
+has survey-name 'named `survey`' "$flat"
+has small-worktree 'board-pr start scope-.*commit them there' "$flat"
+has small-open 'board-pr open scope-.*board-pr done scope-' "$flat"
 has skeptic-chain 'depends_on` chain through it more than 3 stories deep' "$flat"
 has declined-reasons '`out-of-scope`, `nit` or `wrong`' "$flat"
 has folded 'folded into'
@@ -42,6 +45,7 @@ hasnt no-verify 'verify'
 hasnt no-version-bump 'needs no version bump'
 
 m=$(awk '/^## Scoping an epic/{on=1;next} /^## /{on=0} on' "$M")
+if [ -z "$m" ]; then echo "FAIL method-section"; fails=$((fails + 1)); fi
 hasnt method-three-surveys 'three surveys' "$m"
 hasnt method-then-critic 'then a critic' "$m"
 
