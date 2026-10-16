@@ -2,10 +2,11 @@
 # features_test.sh — `swarm.sh features` against a fixture features.tsv (SWARM_FEATURES) and logs:
 # an event: feature used within 30 days shows its count; one whose only use is older, and one with
 # no metric, show delete?; an unlogged: one with a metric does not, and role:, agent: and reviewer:
-# uses count from agents.tsv and findings.tsv; an interrupted events line is no use. Landing: one
-# landed 5 days ago, a #PR whose commit (git log of the features file's repo) is 5 days old, and an
-# epic still on the board are never stale; a #PR merged long ago, an epic gone from the board, and an
-# impossible date (with a warning) are judged by their uses. Then docs/features.tsv itself: every row
+# uses count from agents.tsv and findings.tsv; an interrupted events line is no use, and an event
+# counts by its local day. Landing, read in the features file's own repo: one landed 5 days ago, a #PR
+# whose commit subject is 5 days old, an epic on its board, and one deleted from it 5 days ago are
+# never stale; a #PR merged in 2020 (a later body naming it does not count), an epic deleted in
+# 2020, one it never had, and an impossible date (with a warning) are judged by their uses. Then docs/features.tsv itself: every row
 # has a metric, a uses entry and a baseline (a value, or unavailable:), and every role: is one policy accepts.
 set -euo pipefail
 
@@ -13,16 +14,22 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
-P="${dir}/repo"; mkdir -p "${P}/.swarm" "${P}/docs/epics"; git -C "${P}" init -q
-echo '# Some epic' > "${P}/docs/epics/some-epic.md"
+P="${dir}/repo"; mkdir -p "${P}/.swarm" "${P}/docs"; git -C "${P}" init -q
 now="$(date -u +%Y-%m-%d)"; old=2020-01-01
 fresh="$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=5))')"
-# The features file's repo: #2 merged in 2020, #7 five days ago.
-F="${dir}/plugin"; mkdir -p "${F}"; git -C "${F}" init -q
-for c in "${old} Old feature (#2)" "${fresh} New feature (#7)"; do
-  GIT_COMMITTER_DATE="${c%% *}T12:00:00" git -C "${F}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
-    commit -q --allow-empty -m "${c#* }"
-done
+# The features file's repo, where its PRs and epics are (its board is board/): #2 merged in 2020, a
+# later commit names (#2) only in its body, #7 merged five days ago; epic some-epic is on its board,
+# old-gone-epic left it in 2020 and new-gone-epic five days ago. The reported project's board has none.
+F="${dir}/plugin"; mkdir -p "${F}/docs" "${F}/board/epics" "${F}/.claude/swarm"; git -C "${F}" init -q
+echo 'board_dir = board' > "${F}/.claude/swarm/config"
+fc() { GIT_COMMITTER_DATE="$1T12:00:00" git -C "${F}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty "${@:2}"; }
+touch "${F}/board/epics/old-gone-epic.md" "${F}/board/epics/new-gone-epic.md"; git -C "${F}" add -A
+fc "${old}" -m "Old feature (#2)"
+git -C "${F}" rm -q board/epics/old-gone-epic.md; fc "${old}" -m "old-gone-epic is done"
+fc "${fresh}" -m "A later fix" -m "It follows up on (#2)"
+fc "${fresh}" -m "New feature (#7)"
+git -C "${F}" rm -q board/epics/new-gone-epic.md; fc "${fresh}" -m "new-gone-epic is done"
+mkdir -p "${F}/board/epics"; echo "# Some epic" > "${F}/board/epics/some-epic.md"
 printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' \
   "used"$'\t'"${old}"$'\tflow: stacked\t0 (flow)\tevent:story' \
   "stale"$'\t'"${old}"$'\tflow: stacked\t0 (flow)\tevent:drop' \
@@ -34,14 +41,16 @@ printf '%s\n' $'feature\tlanded\tmetric\tbaseline\tuses' \
   "refused"$'\t'"${old}"$'\tflow: stacked\t0 (flow)\tevent:tidy' \
   $'old-pr\t#2\tflow: stacked\t0 (flow)\tevent:stacked' \
   $'new-pr\t#7\tflow: stacked\t0 (flow)\tevent:stacked' \
-  $'gone-epic\told-epic\tflow: stacked\t0 (flow)\tevent:stacked' \
-  $'bad-date\t2026-02-30\tflow: stacked\t0 (flow)\tevent:stacked' > "${F}/features.tsv"
+  $'old-gone\told-gone-epic\tflow: stacked\t0 (flow)\tevent:stacked' \
+  $'new-gone\tnew-gone-epic\tflow: stacked\t0 (flow)\tevent:stacked' \
+  $'never\tno-such-epic\tflow: stacked\t0 (flow)\tevent:stacked' \
+  $'bad-date\t2026-02-30\tflow: stacked\t0 (flow)\tevent:stacked' > "${F}/docs/features.tsv"
 printf '%s\n' "${now}T10:00:00Z"$'\tstory\ta\tw:1\tok' "${now}T11:00:00Z"$'\tstory\tb\tw:1\tok' \
   "${old}T10:00:00Z"$'\tdrop\ta\tw:1\tok (gone)' "${now}T12:00:00Z"$'\ttidy\t-\tw:1\tinterrupted' > "${P}/.swarm/events.tsv"
 printf '%s\n' "${now}"$'\tcode\ta\tclaude\topus\thigh\t-' "${now}"$'\tconduct\tconduct-e\tclaude\topus\thigh\t-' > "${P}/.swarm/agents.tsv"
 printf '%s\n' "${now}"$'\tnit\to/r#1\tt\tdeclined\tcodex' > "${P}/.swarm/findings.tsv"
 
-run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FEATURES="${F}/features.tsv" bash "${SWARM}" features "$@"); }
+run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FEATURES="${F}/docs/features.tsv" bash "${SWARM}" features "$@"); }
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
@@ -58,12 +67,20 @@ check "uses in 30 days, delete? for a stale or unmeasured feature, unlogged judg
   $'refused\t0\tflow: stacked\t0 (flow)\tdelete?' \
   $'old-pr\t0\tflow: stacked\t0 (flow)\tdelete?' \
   $'new-pr\t0\tflow: stacked\t0 (flow)\t' \
-  $'gone-epic\t0\tflow: stacked\t0 (flow)\tdelete?' \
+  $'old-gone\t0\tflow: stacked\t0 (flow)\tdelete?' \
+  $'new-gone\t0\tflow: stacked\t0 (flow)\t' \
+  $'never\t0\tflow: stacked\t0 (flow)\tdelete?' \
   $'bad-date\t0\tflow: stacked\t0 (flow)\tdelete?')"
 check "an impossible landed date is warned about, once, on stderr" "$(run 2>&1 >/dev/null)" \
   "swarm.sh features: bad-date: landed '2026-02-30' is not a date, a #PR git log knows, or an epic; judged by its uses"
 check "--since counts the older use, and the verdict still reads the last 30 days" \
   "$(run --since "${old}" 2>/dev/null | grep '^stale')" $'stale\t1\tflow: stacked\t0 (flow)\tdelete?'
+# In UTC-7, an event at 03:00Z on the first day of the 30 is the day before locally, so outside them.
+edge="$(TZ=America/Los_Angeles python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=30))')"
+printf '%s\n' "${edge}T03:00:00Z"$'\tedgecmd\t-\tw:1\tok' >> "${P}/.swarm/events.tsv"
+printf '%s\n' "edge"$'\t'"${old}"$'\tflow: stacked\t0 (flow)\tevent:edgecmd' >> "${F}/docs/features.tsv"
+check "an event counts by its local day: 03:00Z in UTC-7 falls before the last 30 days" \
+  "$(TZ=America/Los_Angeles run 2>/dev/null | grep '^edge')" $'edge\t0\tflow: stacked\t0 (flow)\tdelete?'
 check "a bad flag prints the usage" "$(run --since 2>&1 || true)" "swarm: usage: swarm.sh features [--since YYYY-MM-DD]"
 
 # docs/features.tsv: a metric, a uses entry and a baseline on every row; each role: one policy knows.

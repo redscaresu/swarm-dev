@@ -97,22 +97,27 @@ check "an epic named all keeps its row; a build and its event late on --until's 
 all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1
 all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1'
 
-# A third project: m's first build (10:00-10:30Z) was never closed and its retry has no session log,
-# so the retry starts when the first ended, and the close at 15:30Z is the retry's alone. n's two
-# builds have no session log on one day: the first is bounded by the second, so only the second
-# takes n's close. Neither epic ever runs two builders at once.
+# A third project. m's first build (logged 10:00-11:50Z) takes its own close at 12:00Z; its log-less
+# retry starts when it ended and takes the next close (15:30Z), while z runs 12:00-15:30Z beside it.
+# n's two log-less builds on one day take a close each (12:00Z, 18:00Z), so both run. p's first build
+# (10:00-11:00Z) is never closed and its two log-less retries find no close after it: the third must
+# not start at 00:00 and take the stray close at 08:00Z.
 R="${dir}/r"; mkdir -p "${R}/.swarm" "${R}/docs/stories"; git -C "${R}" init -q
-printf -- '---\nkind: code\nstatus: ready\nepic: e6\n---\n' > "${R}/docs/stories/m.md"
-printf -- '---\nkind: code\nstatus: ready\nepic: e7\n---\n' > "${R}/docs/stories/n.md"
-printf '{"cwd":"%s/r-wt/m","timestamp":"2026-10-01T10:00:00Z"}\n{"timestamp":"2026-10-01T10:30:00Z"}\n' "${dir}" > "${dir}/projects/p/sm.jsonl"
-printf '%s\n' $'2026-10-01\tcode\tm\tclaude\topus\thigh\tsm' $'2026-10-01\tcode\tm\tclaude\topus\thigh\t-' \
-  $'2026-10-01\tcode\tn\tclaude\topus\thigh\t-' $'2026-10-01\tcode\tn\tclaude\topus\thigh\t-' > "${R}/.swarm/agents.tsv"
-printf '%s\n' $'2026-10-01T12:00:00Z\tclose\tn\tw:1\tok' $'2026-10-01T15:30:00Z\tclose\tm\tw:1\tok' > "${R}/.swarm/events.tsv"
-check "a build's close is bounded by its slug's next build in agents.tsv order, and a log-less retry starts when the last one ended" \
+for x in m:e6 z:e6 n:e7 p:e8; do printf -- '---\nkind: code\nstatus: ready\nepic: %s\n---\n' "${x#*:}" > "${R}/docs/stories/${x%%:*}.md"; done
+lg() { printf '{"cwd":"%s/r-wt/%s","timestamp":"2026-10-01T%s:00Z"}\n{"timestamp":"2026-10-01T%s:00Z"}\n' "${dir}" "$1" "$2" "$3" > "${dir}/projects/p/s$1.jsonl"; }
+lg m 10:00 11:50; lg z 12:00 15:30; lg p 10:00 11:00
+B=$'\tcode\t'; O=$'\tclaude\topus\thigh\t'
+printf '%s\n' "2026-10-01${B}m${O}sm" "2026-10-01${B}m${O}-" "2026-10-01${B}z${O}sz" "2026-10-01${B}n${O}-" "2026-10-01${B}n${O}-" \
+  "2026-10-01${B}p${O}sp" "2026-10-01${B}p${O}-" "2026-10-01${B}p${O}-" > "${R}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T08:00:00Z\tclose\tp\tw:1\tok' $'2026-10-01T12:00:00Z\tclose\tm\tw:1\tok' \
+  $'2026-10-01T12:00:00Z\tclose\tn\tw:1\tok' $'2026-10-01T15:30:00Z\tclose\tm\tw:1\tok' \
+  $'2026-10-01T18:00:00Z\tclose\tn\tw:1\tok' > "${R}/.swarm/events.tsv"
+check "each close goes to one build of its slug, in agents.tsv order, and a log-less retry starts when the slug's last known build ended" \
   "$(cd "${R}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow 2>&1)" "${H}"$'
-e6\t2\t1.00\t1\t1\t1\t1.0\t\t\t0
+e6\t3\t1.64\t2\t2\t1\t2.0\t\t\t0
 e7\t2\t1.00\t1\t1\t1\t1.0\t\t\t0
-all\t4\t1.13\t2\t2\t1\t2.0\t\t\t0'
+e8\t3\t1.00\t1\t1\t1\t1.0\t\t\t0
+all\t8\t1.56\t3\t4\t1\t4.0\t\t\t0'
 for d in --since=9999-12-31 --until=2026-02-30; do
   check "flow ${d%%=*} ${d#*=}, not a real date with a day after it, prints the usage" \
     "$(run flow "${d%%=*}" "${d#*=}" 2>&1 || true)" "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"

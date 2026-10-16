@@ -486,10 +486,10 @@ session log is gone starts at 00:00 local time on its agents.tsv day, converted 
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and
 the `events.tsv` lines whose local day is in it. `--since` and `--until` must be real dates. `builders_mean` and `builders_max` say how many builds ran at once,
 weighted by time, from the first build's start to the last one's end. A build runs from its
-`outcomes` `started` until its first `close` after that and before the story's next build in
-agents.tsv starts, or else its session log's last entry, and never past local midnight at the end of
+`outcomes` `started` until its first `close` after that which no earlier build of the story took,
+and before the story's next build with a known start, or else its session log's last entry, and never past local midnight at the end of
 the `--until` day. A build with no `started` starts at 00:00 local time on its agents.tsv day, or
-when the story's previous build ended if that is later. A build whose start can't be read is left
+when the story's last build with a known end ended, if that is later. A build whose start can't be read is left
 out.
 `stories` counts the slugs built, `longest_chain` is the longest `depends_on` chain among them (each
 story is read from the board or from git history, so merged stories count), and
@@ -504,17 +504,19 @@ row comes last, so an epic named `all` still gets its own row above it. It write
 `docs/features.tsv` lists every feature with when it landed (a date, a `#PR` or an epic), the metric it
 should move (as `flow`, `outcomes`, `review-yield` or `cost` reports it), that metric's baseline
 from before it landed (a value naming the command and window it came from, or `unavailable: <why>`),
-and its uses. A use is an `ok` `event:<command>` line in events.tsv (a `tell` also matches
+and its uses. A use is an `ok` `event:<command>` line in events.tsv, by its local day (a `tell` also matches
 `tell:findings`), a `role:<role>` or `agent:<name>` line in agents.tsv, or a `reviewer:<who>` row in
 findings.tsv. A read-only command leaves no events line, so its uses say `unlogged: <why>`. The
 report prints each feature's uses in the last 30 days (or since `--since`), its metric and its
 baseline, and marks `delete?` a feature with no metric, or one whose logged uses have none in the
 last 30 days. A feature still settling in is never marked `delete?` for having no uses: one that
-landed in the last 30 days, or whose `landed` names an epic still on the board. A `#PR` landed on the
-day of the commit whose subject ends `(#N)` in the git log of the repo holding the features file.
-The installed plugin is not a git checkout, so `docs/features.tsv` itself uses dates. An epic gone
-from the board is judged by its uses, and so is a `landed` that can't be read, with a warning on
-stderr. An unlogged feature is judged on its metric alone. It writes nothing.
+landed in the last 30 days, or whose `landed` names an epic still on the board. Both are read in the
+repo that holds the features file, since its PRs and epics are there and not in the project being
+reported on. A `#PR` landed on the day of the oldest commit whose subject ends `(#N)`. An epic is on
+the board while `<board_dir>/epics/<name>.md` exists there, and landed on the day git log shows that
+file deleted. The installed plugin carries its board but is not a git checkout, so
+`docs/features.tsv` itself gives dates. An epic with neither is judged by its uses, and so is a
+`landed` that can't be read, with a warning on stderr. An unlogged feature is judged on its metric alone. It writes nothing.
 
 `swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]` shows what review yields, so the
 reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate`,

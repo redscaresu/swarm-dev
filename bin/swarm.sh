@@ -1329,8 +1329,8 @@ PY
 # is in it. builds; builders_mean and builders_max, how many builds ran at once, time-weighted over
 # the span from the first build's start to the last one's end: a build runs from its outcomes started
 # (without one, 00:00 local on its agents.tsv day, or when its slug's previous build ended if later)
-# to its first close after that and before its slug's next build in agents.tsv, else its session
-# log's last entry, and never past --until's local midnight; stories (its builds' slugs), the longest
+# to its first close after that which no earlier build of its slug took, before its slug's next
+# build with a known start, else its session log's last entry, and never past --until's local midnight; stories (its builds' slugs), the longest
 # depends_on chain among them (read with story_text, so merged stories count) and stories_per_chain;
 # review_wait_min, the mean minutes from each PR's createdAt (gh) to the first review-agent event for
 # its slug (before the slug's next PR, if a retry opened one); for a PR with none,
@@ -1403,19 +1403,23 @@ stop = (datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).tim
 # A build whose start does not parse (a damaged agents.tsv date and no session log) is left out.
 built = [(r, a, t) for r, a in zip(rows, agents) for t in [secs(r["started"] or r["date"] + "T00:00:00")] if t is not None]
 project, groups = [], collections.defaultdict(list)   # apart, so an epic named all is still an epic
-ended = {}   # slug -> when its last build so far (agents.tsv order) ended
+ended, taken = {}, set()   # slug -> when its last build so far (agents.tsv order) ended; closes taken
 for i, (r, a, start) in enumerate(built):
     # A log-less build starts at 00:00, so a retry could seem to start before the build it retries:
     # it starts no earlier than that one ended.
     if not r["started"] and ended.get(r["slug"]):
         start = max(start, ended[r["slug"]])
-    # Its first close before the slug's next build in agents.tsv order starts: a build never closed
-    # must not take its retry's.
-    upto = next((t for o, _, t in built[i + 1:] if o["slug"] == r["slug"]), float("inf"))
+    # Its first close after its start that no earlier build of the slug took, and before the slug's
+    # next build with a known start: a build never closed must not take its retry's. A log-less
+    # retry bounds nothing, as its start is only known once this build's end is.
+    upto = next((t for o, _, t in built[i + 1:] if o["slug"] == r["slug"] and o["started"]), float("inf"))
     names = (r["slug"], a[2])
-    end = min((t for t, x in closes if x in names and start <= t < upto), default=None)
-    end = end or last_entry(session_log(projects, a[6], archive))
-    ended[r["slug"]] = end
+    got = min(((t, k) for k, (t, x) in enumerate(closes) if x in names and start <= t < upto and k not in taken),
+              default=None)
+    if got:
+        taken.add(got[1])
+    end = got[0] if got else last_entry(session_log(projects, a[6], archive))
+    ended[r["slug"]] = end or ended.get(r["slug"])
     if not since <= r["date"] <= until:
         continue
     b = {"slug": r["slug"], "pr": r["pr"], "start": start, "end": min(end, stop) if end else None}
@@ -1476,10 +1480,13 @@ PY
 # features [--since YYYY-MM-DD] — FEATURES_FILE joined with this project's logs: per feature, its uses
 # since --since (default the last 30 days), its metric and its baseline, and `delete?` for a feature
 # with no metric, or with logged uses and none in the last 30 days. A feature still settling in is never
-# stale: one that landed within the last 30 days (a date, or a #PR: the day git log of the features
-# file's repo shows the commit whose subject ends `(#N)`), or whose landed is an epic still on the
-# board (epics/<name>.md). An epic gone from the board, or a landed that cannot be read (a warning on
-# stderr), is judged by its uses. A use is an ok events.tsv line of an
+# stale: one that landed within the last 30 days, or whose landed is an epic still on the board.
+# Both are read in the features file's own repo (the parent of its directory), where its PRs and
+# epics are: a #PR landed on the day of the oldest commit whose subject ends `(#N)`, and an epic is
+# on the board while <board_dir>/epics/<name>.md is there (board_dir from that repo's
+# .claude/swarm/config), and landed the day git log shows it deleted. An epic with neither, or a
+# landed that cannot be read (a warning on stderr), is judged by its uses. A use is an ok events.tsv
+# line (by its local day) of an
 # `event:<command>` (or <command>:<anything>), an agents.tsv line of a `role:<role>` or
 # `agent:<name>`, or a findings.tsv row of a `reviewer:<who>`. An `unlogged: <why>` feature (a
 # read-only command leaves no events line) shows `-` and is judged on its metric alone. It writes nothing.
@@ -1489,17 +1496,23 @@ features_report() {
     || die "usage: swarm.sh features [--since YYYY-MM-DD]"
   [[ -f "${FEATURES_FILE}" ]] || die "no feature list at ${FEATURES_FILE}"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${FEATURES_FILE}" "${AGENTS_LOG}" \
-    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" "${BOARD}" <<'PY'
+    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" <<'PY'
 import datetime, os, re, subprocess, sys
 exec(os.environ["SWARM_REPORT_PY"])
-features, agents, events, findings, since, board = sys.argv[1:7]
+features, agents, events, findings, since = sys.argv[1:6]
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
 
 def rows(path):
     return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []
 
 # (source, name, day) for every use the logs hold.
-uses = [("event", f[1], f[0][:10]) for f in rows(events) if len(f) == 5 and f[4].startswith("ok")]
+def local_day(t):
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone().date().isoformat()
+    except ValueError:
+        return None
+
+uses = [("event", f[1], local_day(f[0])) for f in rows(events) if len(f) == 5 and f[4].startswith("ok") and local_day(f[0])]
 uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
 uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
 
@@ -1511,25 +1524,40 @@ def count(sources, after):
                  and (name == want or kind == "event" and name.startswith(want + ":")))
     return n
 
+root = os.path.dirname(os.path.dirname(os.path.abspath(features)))   # the features file's repo
+def git(*args):
+    got = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+    return got.stdout if got.returncode == 0 else ""
+
+# The oldest commit day of each #N in a subject's last `(#N)`.
+merged = {}
+for line in git("log", "--format=%cs %s", "HEAD").splitlines():
+    m = re.fullmatch(r"(\S+) .*\(#(\d+)\)", line)
+    if m:
+        merged["#" + m.group(2)] = m.group(1)
+try:
+    board_dir = re.search(r"^\s*board_dir\s*=\s*(\S+)", open(os.path.join(root, ".claude/swarm/config")).read(), re.M).group(1)
+except (OSError, AttributeError):
+    board_dir = "docs"
+
 def landed_day(landed):
     # The day a date or #PR landed, or None when it cannot be read.
-    m = re.fullmatch(r"#(\d+)", landed)
-    if m:
-        got = subprocess.run(["git", "-C", os.path.dirname(os.path.abspath(features)), "log", "-1", "--format=%cs",
-                              f"--grep=(#{m.group(1)})$", "HEAD"], capture_output=True, text=True)
-        landed = got.stdout.strip() if got.returncode == 0 else ""
     try:
-        return datetime.date.fromisoformat(landed).isoformat()
+        return datetime.date.fromisoformat(merged.get(landed, landed)).isoformat()
     except ValueError:
         return None
 
 def settled(feature, landed):
     # Whether its uses can judge it: landed 30 days ago or more, or an epic that has left the board.
     day = landed_day(landed)
+    if not day and re.fullmatch(r"[a-z][a-z0-9_-]*", landed):
+        epic = os.path.join(board_dir, "epics", landed + ".md")
+        if os.path.exists(os.path.join(root, epic)):
+            return False
+        day = git("log", "-1", "--diff-filter=D", "--format=%cs", "HEAD", "--", epic).strip()
+        return day < recent if day else True
     if day:
         return day < recent
-    if re.fullmatch(r"[a-z][a-z0-9_-]*", landed):
-        return not os.path.exists(os.path.join(board, "epics", landed + ".md"))
     print(f"swarm.sh features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
           file=sys.stderr)
     return True
