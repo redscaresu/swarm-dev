@@ -29,11 +29,10 @@ is one column, top to bottom:
 
 - **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm-dev:swarm` does next, and the
   time of the last refresh. Under it, at every width, the speedometer: `2.0 merged/day over 7 days`
-  is the number of stories whose PR merged in the last 7 days, divided by 7. Once a minute dash asks
-  gh for the PRs merged in the project's repo and in each open story's repo, and counts each
-  `story/<slug>` branch once, on the day it merged. A story that was dropped or rescoped never
-  merged a PR, so it never counts. It shows `?` when there is no `gh`, or no repo with an origin
-  that gh answered for. Two lights follow it,
+  is the number of stories the swarm finished in the last 7 days, divided by 7. dash reads them from
+  `events.tsv`: a `finish` line, or `reconcile`'s `finished` line once a story's PR merged, each slug
+  counted once. A story that was dropped or rescoped writes neither, so it never counts. It asks gh
+  nothing. Two lights follow it,
   each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
   (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits

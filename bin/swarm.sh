@@ -841,7 +841,6 @@ record_finding() {
 
 # REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
-#   agent_name(n) is bash agent_name: the name agents.tsv and events.tsv keep for a slug.
 #   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
@@ -865,10 +864,6 @@ PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4
 def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
-
-def agent_name(n):
-    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
-    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
 
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
@@ -1172,6 +1167,11 @@ def secs(t):
         return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
+
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
 
 builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
@@ -4439,15 +4439,12 @@ dash_base_ref() {
 # PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), each
 # open story's open story/<slug> PR in that story's own repo (a builder's PR, which its story lists
 # only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
-# view per PR that matches, each with the same limit; how many stories of each epic finished
-# (dash_finished); and how many distinct stories merged in the 7 days before now (DASH_NOW, else the
-# clock): per repo (the project's and each open story's, named from its origin), one gh pr list of
-# PRs merged since 8 days ago, a story/<slug> head counted once when its mergedAt falls in those 7
-# days. With no repo answering, or no gh, the count is left out (dash shows ?).
+# view per PR that matches, each with the same limit; and how many stories of each epic finished
+# (dash_finished).
 dash_slow() {
   local cache f r urls pairs
-  # -4: the cache gained the merged line; a name of its own, so an older swarm.sh's cache is never read.
-  cache="${TMPDIR:-/tmp}/swarm-dash-4-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
+  cache="${TMPDIR:-/tmp}/swarm-dash-3-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
   if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
     urls="$( { board stories; board epics; } | while IFS= read -r f; do
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
@@ -4459,9 +4456,8 @@ dash_slow() {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
-      if command -v gh >/dev/null 2>&1; then
-        SWARM_PAIRS="${pairs}" SWARM_REPO="${PROJECT_DIR}" python3 - ${urls} <<'PY'
-import datetime, json, os, signal, subprocess, sys, time
+      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 - ${urls} <<'PY'
+import json, os, signal, subprocess, sys
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 def gh(args):
     p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
@@ -4479,11 +4475,9 @@ slugs = {}
 for l in os.environ["SWARM_PAIRS"].splitlines():
     repo, _, slug = l.partition("\t")
     slugs.setdefault(repo, set()).add(slug)
-def origin_of(repo):
-    # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
-    return subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
 for repo, mine in slugs.items():
-    origin = origin_of(repo)
+    # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
+    origin = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
     # ponytail: only the newest 200 open PRs per repo are read, so a builder's older PR in a repo with
     # more shows as no PR yet; query each unmatched story/<slug> head if a repo ever has that many.
     try:
@@ -4498,27 +4492,6 @@ for repo, mine in slugs.items():
             out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
             if out is not None:
                 print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
-NOW = float(os.environ.get("DASH_NOW") or time.time())
-WEEK = 7 * 86400
-since = datetime.datetime.fromtimestamp(NOW - WEEK - 86400, datetime.timezone.utc).date().isoformat()
-merged, answered = set(), False
-for origin in sorted({origin_of(r) for r in {os.environ["SWARM_REPO"]} | set(slugs)} - {""}):
-    # ponytail: the newest 200 merged PRs per repo since then; raise the limit if a week ever merges more.
-    try:
-        prs = json.loads(gh(["pr", "list", "-R", origin, "--state", "merged", "--search", f"merged:>={since}",
-                             "--limit", "200", "--json", "headRefName,mergedAt"]) or "null")
-    except ValueError:
-        continue
-    answered = answered or isinstance(prs, list)
-    for pr in prs if isinstance(prs, list) else []:
-        try:
-            head, t = str(pr["headRefName"]), datetime.datetime.fromisoformat(str(pr["mergedAt"]).replace("Z", "+00:00")).timestamp()
-        except (TypeError, KeyError, ValueError):
-            continue
-        if head.startswith("story/") and 0 <= NOW - t <= WEEK:
-            merged.add(head[len("story/"):])
-if answered:
-    print(f"merged\t{len(merged)}")
 PY
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
@@ -4527,7 +4500,6 @@ PY
   DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
   DASH_HEADS="$(awk -F'\t' '$1 == "head" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
-  DASH_MERGED="$(awk -F'\t' '$1 == "merged" { print $2 }' "${cache}" 2>/dev/null || true)"
 }
 
 # dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
@@ -4781,11 +4753,12 @@ for a in agents:
     merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 40 --format='%cI%x09%an%x09%s' "$(dash_base_ref)" 2>/dev/null || true)"
     # The board files edited and not committed in the main checkout, a rename by its new name, each
     # relative to the board; no optional locks, so status writes no index.
-    # -z: paths as they are, never quoted; a rename or copy is followed by its old path, skipped.
+    # -z: paths as they are, never quoted; a rename or copy (R or C in either column) is followed by
+    # its old path, skipped.
     x="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null || true)"
     drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" status --porcelain -z --untracked-files=all -- "${BOARD}" 2>/dev/null \
       | while IFS= read -r -d '' f; do
-          if [[ "${f:0:1}" == [RC] ]]; then IFS= read -r -d '' _ || true; fi
+          if [[ "${f:0:2}" == *[RC]* ]]; then IFS= read -r -d '' _ || true; fi
           f="${f:3}"; printf '%s\n' "${f#"${x}"}"
         done || true)"
   fi
@@ -4797,7 +4770,7 @@ for a in agents:
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
-  DASH_FINISHED="${DASH_FINISHED:-}" DASH_MERGED="${DASH_MERGED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
+  DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
   DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - <<'PY'
@@ -5473,26 +5446,28 @@ def running_view():
     rows = [[c[0]] + [(t.ljust(width[i] + 2) if i < 4 else t, s) for i, (t, s) in enumerate(c) if i] for c in cells]
     return rows + [[sym("blocked"), (f"held {b[1]}: {held_cause(b[1]) or '?'}", "")] for b in stories if b[9] == "held"]
 
-# The speedometer: stories merged per day over 7 days (dash_slow's count, ? when it has none), and
-# two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
+# The speedometer: stories merged per day over 7 days, the distinct slugs events.tsv says were
+# finished in the last 7 days (finish, or reconcile's "finished" once a PR merged; a drop or a
+# rescope writes neither), and two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
 # needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
 # waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
 # review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
     d, slug = item
-    # A review or escalated line names the slug; a close names its agent (retired: -done<N>).
-    t = max(moved.get(slug, 0), moved.get(agent_name(slug), 0))
-    if t:
-        return t
+    if slug in moved:
+        return moved[slug]
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
-moved = {}
+moved, merged = {}, set()
 for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = epoch(f[0]) if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
-    who = re.sub(r"-done\d*$", "", f[2]) if f[1].startswith("close:") else f[2]
-    if t is not None and t > moved.get(who, 0):
-        moved[who] = t
+    t = epoch(f[0])
+    # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
+    if t is not None and NOW - t <= 7 * 86400 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
+        merged.add(f[2])
+    t = t if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
+    if t is not None and t > moved.get(f[2], 0):
+        moved[f[2]] = t
 
 def days_ago(day):
     try:
@@ -5503,8 +5478,7 @@ def days_ago(day):
 n_waiting = len(need) + len(queue) + more
 since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
 escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
-merged = E.get("DASH_MERGED", "")
-speed = [(f"{int(merged) / 7:.1f}" if merged.isdigit() else "?", "b"), (" merged/day over 7 days", "")]
+speed = [(f"{len(merged) / 7:.1f}", "b"), (" merged/day over 7 days", "")]
 for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
                  (escaped, "escaped in 7 days")):
     speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
