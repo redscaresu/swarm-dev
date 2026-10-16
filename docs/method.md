@@ -433,16 +433,21 @@ a dialog is not an attempt. Any other dialog, and every permission or tool promp
 **Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an
 empty pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose
 login expired, which only your `/login` clears), what waits on you, and the next step. A Stacked
-section, shown only when it has a line, lists each stacked build that has to catch up with a parent:
+section, shown only when it has a line, lists each stacked build that has to catch up with a parent.
+It reads the parents the child's current build stacked on, and compares them with the child's branch
+on origin, so a merge the child has not pushed still shows:
 `<child>: merge origin/story/<p>` when the parent's open PR has commits the child lacks,
 `<child>: merge origin/<base> (<p> merged)` once the parent merged and the child lacks the base's
-head (after a squash merge, the child takes the base), and `<child>: lost story/<p>` when the
-parent's PR closed unmerged or its branch is gone. A line ends `(no builder)` when the child has no
-builder open. After each wait, watch and new PR, the conductor runs `unblock`, starts what it
-readies, and runs `status`. It tells each child with a merge line to merge that ref, re-run the
-tests and push, first starting a builder in the child's worktree when the line says `(no builder)`,
-and reviews the new head, since a review from before the merge is stale. It closes a lost ready
-child with `paused`, which holds it for the lead. `next` says
+head (one line for all the merged parents; after a squash merge, the child takes the base), and
+`<child>: lost story/<p>` when the parent's PR closed unmerged, the parent was dropped, or its
+branch is gone. A gh or git call that fails gives a `could not check` line. Inside
+herdr, a line ends `(no builder)` when the child has no builder open. After each wait, watch and new
+PR, the conductor runs `unblock`, starts what it readies, and runs `status`, acting only on its own
+stories: its epic's, or for the backlog conductor those with no epic. It tells each child with a
+merge line to merge that ref, re-run the tests and push, first starting a builder in the child's
+worktree when the line says `(no builder)`, and reviews the new head, since a review from before the
+merge is stale. It closes a lost ready child whose builder is open with `paused`, which holds it for
+the lead. It lists for the lead a lost child that has no builder or that close did not hold. `next` says
 `auth` too when the conductor's login expired. A Claude agent's state comes from its own session in `claude agents --json`, read once per
 run: busy is working, idle is idle, waiting is WAITING with what it waits for, and a recorded
 session with no entry in the list (`gone`: the session ended) or no state in it (`unknown`, also
