@@ -2114,13 +2114,23 @@ printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says
 Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
 whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
-to merge\`), the story is blocked again and nothing merges: leave its builder open.
+to merge\`), the story is blocked again and nothing merges: leave its builder open, unless <p>, or a
+story <p> stacks on, says \`costs: money\`. The user merges that one, maybe days later, so close its
+builder with a bare \`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its
+build, as with merge = human.
 $(held_ready_rule) After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
 story ${scope} that is yours to start is ready and none is running, or CI on the base is red or
 timed out.${epic_end}
 EOF
   fi
+}
+
+# costs_wait_rule — with merge = agent, a story --strict refusal naming a costs: money story in review,
+# of any epic or none: only the user merges it, so the conductor reports instead of waiting.
+costs_wait_rule() {
+  [[ "${CFG_merge}" == agent ]] || return 0
+  printf '%s' " If the named story is in review and its front matter says \`costs: money\`, only the user merges it, maybe days later: do not wait for it, and report yours as \`not started: <slug> (waits on <other>'s merge)\`."
 }
 
 # held_ready_rule — what to do when unblock readies a child review held, for both merge modes: its
@@ -2629,7 +2639,7 @@ for the user, unless it has \`escalated_from:\`: that one is the lead's, as abov
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
 of another epic (in review, or with its builder open) touches the same function or file. On a refusal
-that says the named story \`is open\`, start yours in a later wave, after the named story merges. On
+that says the named story \`is open\`, start yours in a later wave, after the named story merges.$(costs_wait_rule) On
 one that says it \`cannot tell\` (herdr could not list its agents, or the board's touches could not
 be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
 warns and starts it as the epic says.
@@ -2812,11 +2822,7 @@ conduct_backlog_mode() {
 A \`swarm.sh story --strict\` refusal that names another story with no epic (\`(epic none) is open\`)
 names one of yours in review, and it cannot merge while you run: do not wait for it. Report the
 refused story as \`not started: <slug> (waits on <other>'s merge)\`."
-  else own="
-
-A \`swarm.sh story --strict\` refusal that names another story with no epic (\`(epic none) is open\`)
-whose front matter says \`costs: money\` names one of yours in review that only the user merges: do
-not wait for it. Report the refused story as \`not started: <slug> (waits on <other>'s merge)\`."
+  else own=""
   fi
   cat <<EOF
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as method.md
@@ -3098,14 +3104,50 @@ release_due() {
 # ones (impossible_block) included.
 is_escalated() { [[ "$(fm "$1" status)" == ready && "$(fm "$1" kind)" == lead && -n "$(get_fm "$1" escalated_from)" ]]; }
 
-# costs_money <item-file> — true when a story's front matter says costs: money (in any case, quoted,
-# or with a trailing # comment): merging its PR can spend money, so with merge = agent only the user
-# merges it. costs: is a story's key; an epic's is ignored.
+# costs_money <item-file> — true when a story's costs: (costs_value) is money, or a value nothing here
+# knows: merging its PR can spend money, so with merge = agent only the user merges it. costs: is a
+# story's key; an epic's is ignored.
 costs_money() {
-  local v
   [[ "$1" == "${BOARD}/stories/"* ]] || return 1
-  v="$(get_fm "$1" costs)"; v="${v%%#*}"; v="${v//[[:space:]\"\']/}"
-  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${v}")" == money ]]
+  case "$(costs_value "$1")" in ""|none) return 1 ;; esac
+}
+
+# costs_value <story-file> — its costs: from the front matter, lowercased, with a trailing # comment,
+# quotes, brackets, commas and spaces gone (costs: [Money] is money): money, none, empty, or a value
+# nothing here knows, which costs_money holds (fails closed).
+costs_value() {
+  local v
+  v="$(get_fm "$1" costs)"; v="${v%%#*}"; v="${v//[][[:space:]\"\',]/}"
+  tr '[:upper:]' '[:lower:]' <<< "${v}"
+}
+
+# pr_held <pr-url> — why the PR waits for the user's merge, or nothing: the first story listing it, or
+# an open story one of those depends on at any depth (a stacked PR carries its parents' commits),
+# whose costs: holds its merge (costs_money).
+pr_held() {
+  local f todo="" seen=" " s p
+  while IFS= read -r f; do
+    [[ " $(fm "${f}" prs) " != *" $1 "* ]] || todo+=" $(basename "${f}" .md)"
+  done < <(board stories)
+  while [[ -n "${todo// /}" ]]; do
+    todo="${todo# }"; s="${todo%% *}"; todo="${todo#"${s}"}"
+    [[ "${seen}" != *" ${s} "* ]] || continue
+    seen+="${s} "; f="${BOARD}/stories/${s}.md"
+    if costs_money "${f}"; then
+      if [[ "$(costs_value "${f}")" == money ]]; then echo "${s} costs money"
+      else echo "${s} has costs: $(get_fm "${f}" costs), not money or none"; fi
+      return 0
+    fi
+    for p in $(open_parents "${f}"); do todo+=" ${p}"; done
+  done
+}
+
+# costs_tag <item-file> — " (costs money)" when a PR the item lists waits for the user's merge (pr_held).
+costs_tag() {
+  local u
+  for u in $(fm "$1" prs); do
+    [[ -z "$(pr_held "${u}")" ]] || { printf ' (costs money)'; return 0; }
+  done
 }
 
 # impossible_block <story-file> — true when the story's lead block is impossible_story's.
@@ -3125,14 +3167,13 @@ waiting_on_user() {
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
-      review) if costs_money "${f}"; then waiting+="  awaiting your merge (costs money): ${slug} $(fm "${f}" prs)"$'\n'
-              else waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n'; fi ;;
+      review) waiting+="  awaiting your merge$(costs_tag "${f}"): ${slug} $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board stories)
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
       later) waiting+="  later epic: $(basename "${f}" .md)"$'\n' ;;
-      review) waiting+="  awaiting your merge: epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
+      review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)
   printf '%s' "${waiting%$'\n'}"
@@ -3820,8 +3861,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
-# lists the URL and, with merge = agent, no story listing it says costs: money (held for the user,
-# whoever calls it) (with --board instead: the PR is in the board's own repo and every path it changes,
+# lists the URL (with merge = agent, by any route, pr_held finds nothing: whoever calls it, a PR whose
+# story or stacked parent costs money is the user's) (with --board instead: the PR is in the board's own repo and every path it changes,
 # old or new, is on the board; with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
@@ -3831,7 +3872,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" paid="" p rel origin own method oid why rc=0 rrc ran=1
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -3855,19 +3896,21 @@ merge_pr() {
     || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
+  # With merge = agent a PR whose story costs money is the user's, by any route (--board and --release too).
+  if [[ "${CFG_merge}" == agent ]]; then
+    why="$(pr_held "${url}")"
+    [[ -z "${why}" ]] || { MERGE_TARGET="${why%% *}"; merge_fail "held: ${why}; the user merges it"; }
+  fi
   if [[ -z "${only}" ]]; then
-    # Any item listing the URL may be the one in review, and any story listing it that costs money
-    # holds it, whichever item is in review.
+    # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
       [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
       [[ -n "${any}" ]] || any="${p}"
-      [[ -n "${f}" || "$(fm "${p}" status)" != review ]] || f="${p}"
-      if [[ -z "${paid}" ]] && costs_money "${p}"; then paid="$(basename "${p}" .md)"; fi
+      [[ "$(fm "${p}" status)" != review ]] || { f="${p}"; break; }
     done < <(board stories; board epics)
     [[ -n "${any}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
     if [[ -z "${f}" ]]; then MERGE_TARGET="$(basename "${any}" .md)"; merge_fail "${MERGE_TARGET} is $(fm "${any}" status), not review"; fi
     MERGE_TARGET="$(basename "${f}" .md)"
-    [[ "${CFG_merge}" != agent || -z "${paid}" ]] || merge_fail "held: ${paid} costs money; the user merges it"
   else
     whose="the project's"
     if [[ "${only}" == --board ]]; then

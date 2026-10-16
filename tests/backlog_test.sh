@@ -120,8 +120,7 @@ run conduct --backlog >/dev/null
 bl="$(cat "${brief}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does, unless it costs money" "yes" \
-  "$(has 'whose front matter says `costs: money` names one of yours in review that only the user merges: do
-not wait for it. Report the refused story as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
+  "$(has 'If the named story is in review and its front matter says `costs: money`, only the user merges it, maybe days later: do not wait for it, and report yours as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
 check "with merge = agent, the backlog conductor also stops when CI on the base is red or timed out" "yes" \
   "$(has 'that you may start is left and none is running, or when CI on the base is red or timed out.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's

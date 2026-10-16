@@ -380,12 +380,15 @@ fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: money with merge = agent" "held: s costs money"
 check "costs: money: s stays in review" grep -qx 'status: review' "${S}"
 # The value in any case, quoted, or with a comment holds it; another value whose comment names money does not.
-for v in "Money" "'money'" "money  # a CI job on real cloud"; do
+for v in "Money" "'money'" "money  # a CI job on real cloud" "[money]"; do
   fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: ${v}"
   merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: ${v} with merge = agent" "held: s costs money"
 done
 fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: none # no money"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; is "costs: none # no money merges" 0 "${rc}"
+# A value it does not know fails closed, naming it.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: maybe"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: maybe with merge = agent" "held: s has costs: maybe, not money or none"
 fresh "merge = agent"; printf 'costs: money\n' >> "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"
 is "the same story without costs: (only its body says costs: money) merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
 # Any story listing the PR holds it, whichever item is in review; an epic's costs: is ignored.
@@ -396,7 +399,18 @@ fresh "merge = agent"; rm "${S}" "${P}/docs/stories/a.md"
 printf -- '---\nstatus: review\ncosts: money\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"
 is "an epic's costs: money is ignored: it merges" "merge e ok|main-ci e ok|reconcile e ok (finished)" "$(events | paste -sd'|' -)"
-rm -rf "${P}/docs/epics"
+# A stacked child's PR carries its open parent's commits: a costs: money parent holds it.
+fresh "merge = agent"; item s "status: blocked" "depends_on: [p]" "prs: ${URL}"
+item p "status: review" "costs: money" "prs: https://github.com/o/r/pull/8"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "a child stacked on a costs: money parent" "held: p costs money"
+# status tags any review line whose PR is held, an epic's too.
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
+check "status tags an epic in review whose PR is held: awaiting your merge (costs money): epic e" said "awaiting your merge (costs money): epic e ${URL}"
+rm -rf "${P}/docs/epics" "${P}/docs/stories/p.md"
+# --board (or --release) is no way round it.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board for a costs: money story's PR" "held: s costs money"
 # With merge = human the user's PRs are all theirs: the lead merges one when asked, as before.
 fresh; item s "status: review" "prs: ${URL}" "costs: money"; merge "${URL}"
 is "with merge = human, the lead's swarm.sh merge of a costs: money story goes ahead" 0 "${rc}"
@@ -414,6 +428,11 @@ for c in e --backlog; do
   # shellcheck disable=SC2016 # the backticks are the brief's
   check "the ${c#--} conductor's brief (merge = agent) hands such a PR over and closes its builder, as merge = human does" \
     grep -qF 'run `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`, never `swarm.sh merge`' "${b}"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  check "the ${c#--} conductor's brief (merge = agent) reports, not waits, on a strict refusal naming a costs: money story in review" \
+    grep -qF 'If the named story is in review and its front matter says `costs: money`, only the user merges it, maybe days later: do not wait for it' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) closes a held child's builder when its parent costs money" \
+    grep -qF 'leave its builder open, unless <p>, or a' "${b}"
 done
 check "the epic conductor's brief (merge = agent) never finishes the epic under a story still in review" \
   grep -qF 'while a story of it is still in review' "${P}/.swarm/briefs/conduct-e.md"
