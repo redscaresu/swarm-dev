@@ -1306,10 +1306,10 @@ def minutes(start, end):
     # end comes first (a retry started after the PR it took over was created).
     try:
         t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-        n = round((t(end) - t(start)) / 60)
+        d = t(end) - t(start)
     except ValueError:
         return ""
-    return str(n) if n >= 0 else ""
+    return str(round(d / 60)) if d >= 0 else ""
 
 rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():

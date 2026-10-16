@@ -168,13 +168,15 @@ qs l1 late claude-opus-5-5; qs l2 late claude-fable-5-1 "${U}/4"
 qs f1 foreign claude-opus-5-5 "${U}/1"
 qs e1 in-epic claude-opus-5-5 "${U}/5"; qs e2 in-epic claude-fable-5-1
 TS=2026-10-05T10:00:00Z qs t1 timed claude-opus-5-5 "${U}/30"; TS=2026-10-05T11:00:00Z qs t2 timed claude-fable-5-1 "${U}/30"
+TS=2026-10-05T10:40:20Z qs t3 timed claude-fable-5-1 "${U}/30"
 printf '%s\n' \
   $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tr1' $'2026-10-02\tescalate\tretried\tclaude\tfable\txhigh\tr2' \
   $'2026-10-01\tcode\tshared\tclaude\topus\thigh\th1' $'2026-10-02\tcode\tshared\tclaude\topus\thigh\th2' \
   $'2026-10-03\tcode\tlate\tclaude\topus\thigh\tl1' $'2026-10-03\tescalate\tlate\tclaude\tfable\txhigh\tl2' \
   $'2026-10-03\tcode\tforeign\tclaude\topus\thigh\tf1' \
   $'2026-10-04\tcode\tin-epic\tclaude\topus\thigh\te1' $'2026-10-05\tescalate\tin-epic\tclaude\tfable\txhigh\te2' \
-  $'2026-10-05\tcode\ttimed\tclaude\topus\thigh\tt1' $'2026-10-05\tescalate\ttimed\tclaude\tfable\txhigh\tt2' > "${Q}/.swarm/agents.tsv"
+  $'2026-10-05\tcode\ttimed\tclaude\topus\thigh\tt1' $'2026-10-05\tescalate\ttimed\tclaude\tfable\txhigh\tt2' \
+  $'2026-10-05\tescalate\ttimed\tclaude\tfable\txhigh\tt3' > "${Q}/.swarm/agents.tsv"
 rows_of() { # <project> <slug regex> — the rows of the slugs that match, every column
   (cd "$1" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | awk -F'\t' -v re="^($2)$" 'NR > 1 && $2 ~ re')
 }
@@ -202,10 +204,11 @@ printf '%s\n' \
 check "findings fixed and declined, by reviewer (unknown for 4- and 5-field rows), each counted on one build" \
   "$(rows_of "${Q}" shared | cut -f14,33-35)" "$(printf '%s\n' $'1\t0\tcodex:1\t' $'2\t2\tcodex:1 unknown:1\tcode-review:1 unknown:1')"
 rm "${Q}/.swarm/findings.tsv"
-check "pr_created_at, minutes from start to PR and from PR to merge, and base merges; a retry started after its PR was created has no start_to_pr_min; no PR leaves all four empty" \
+check "pr_created_at, minutes from start to PR and from PR to merge, and base merges; a retry started after its PR was created, even by 20 seconds, has no start_to_pr_min; no PR leaves all four empty" \
   "$(rows_of "${Q}" 'timed|late' | grep -v /pull/4 | cut -f2,15,18,36-39)" "$(printf '%s\n' $'late\t\t\t\t\t\t' \
     "timed	${U}/30	2026-10-05T10:00:00Z	2026-10-05T10:40:00Z	40	80	2" \
-    "timed	${U}/30	2026-10-05T11:00:00Z	2026-10-05T10:40:00Z		80	2")"
+    "timed	${U}/30	2026-10-05T11:00:00Z	2026-10-05T10:40:00Z		80	2" \
+    "timed	${U}/30	2026-10-05T10:40:20Z	2026-10-05T10:40:00Z		80	2")"
 check "an epic story's builds take their PR from their logs too, never the epic branch's PR" \
   "$(two | grep in-epic | cut -f3 | paste -sd, -)" ","
 

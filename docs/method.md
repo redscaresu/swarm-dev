@@ -494,7 +494,8 @@ column). Four more columns come from `gh`: `pr_created_at` (UTC), `start_to_pr_m
 does), `pr_to_merge_min` (minutes from `pr_created_at` to `merged_at`), and `main_merges`, the
 commits on the PR whose headline merges the base branch into it (`Merge origin/main into …`,
 `Merge branch 'main' into …`, `Merge remote-tracking branch 'origin/main' into …`). Each is empty
-when its inputs are. A story the lead holds after an escalation (`kind: lead` with
+when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` describe the PR, not the
+build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `review-yield` and `flow`, which read them by name, and anything that cuts columns by position keep
 working. The slug comes
