@@ -378,7 +378,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
-`cost`, `outcomes`, `decisions`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
+`cost`, `outcomes`, `decisions`, `review-yield`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
@@ -442,6 +442,19 @@ by the end of the day it started, or the finding's text), `options`, `chosen`, a
 that build's `outcomes` row: merged, PR, `tells_findings` (its review rounds), `tells_nudge`,
 `tells_resume`, fixed findings, attempts and cost. A field the logs
 don't hold is null. It writes nothing.
+
+`swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]` shows what review yields, so the
+reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate`,
+counted from `findings.tsv` rows dated on or after `--since`. Each reviewer gets an `all` row and then
+a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
+come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
+declined over raised as a whole percent. After a blank line, the second block is TSV `prs rounds
+rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated on
+or after `--since`, summed per PR, so a PR built twice counts the rounds of both builds and a retry
+with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no
+`agents.tsv` the second block is all zero. `--epic` keeps only the PRs whose builds carry that
+`epic` in `outcomes`, in both blocks, and lists those PRs in a third block, so you can check what was
+counted. It writes nothing.
 
 `swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after
 `cleanupPeriodDays` (30 by default) and they hold every tool call and the model of every turn. The log

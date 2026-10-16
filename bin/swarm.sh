@@ -12,6 +12,7 @@
 #   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
+#   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
 #   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -1358,6 +1359,66 @@ for f in ([l.rstrip("\n").split("\t") for l in open(events, errors="ignore")] if
         out.append(rec(d, f[0], f[2], None, None, f[1], joined(f[2], f[0][:10])))
 for r in sorted(out, key=lambda r: r["time"]):
     print(json.dumps(r))
+PY
+}
+
+# review-yield [--since YYYY-MM-DD] [--epic <slug>] — what review yields, for tuning the reviewers.
+# Block 1 (TSV reviewer kind raised fixed declined decline_rate): findings.tsv rows dated on or after
+# since, per reviewer (its `all` row, then its kinds by declined, most first), per kind across reviewers
+# (`all <kind>`), and last `all all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr
+# max_rounds): the tells_findings of every outcomes row with a PR dated on or after since, summed per
+# PR. A tell names no reviewer, so rounds are not split by one. --epic keeps only the PRs of that epic
+# (outcomes epic column) in both blocks, and a third block lists them. It writes nothing.
+review_yield_report() {
+  local since="" epic="" rows="" usage="usage: swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
+      --epic) [[ "${2:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "${usage}"; epic="$2"; shift 2 ;;
+      *) die "${usage}" ;;
+    esac
+  done
+  # Every row, unfiltered, so an epic PR built before since still keeps its later findings.
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 - \
+    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${epic}" <<'PY'
+import collections, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+findings, since, epic = sys.argv[1:4]
+# Read by column name, as decisions does.
+table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
+rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
+rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
+urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
+# None is the all of a reviewer or kind, apart from a finding whose kind is the word all.
+c = collections.defaultdict(collections.Counter)
+for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
+    if day >= since and (not epic or pr_key(pr) in urls):
+        for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
+            c[key][outcome] += 1
+
+def line(who, kind):
+    fixed, declined = c[(who, kind)]["fixed"], c[(who, kind)]["declined"]
+    raised = fixed + declined
+    rate = f"{int(100 * declined / raised + 0.5)}%" if raised else "-"
+    return "\t".join(["all" if x is None else x for x in (who, kind)] + [str(raised), str(fixed), str(declined), rate])
+
+def kinds(who):
+    return sorted((k for w, k in list(c) if w == who and k is not None), key=lambda k: (-c[(who, k)]["declined"], k))
+
+print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate")
+for who in sorted({w for w, _ in c if w is not None}):
+    print("\n".join(line(who, k) for k in [None] + kinds(who)))
+print("\n".join(line(None, k) for k in kinds(None) + [None]))
+rounds = collections.Counter()
+for r in rows:
+    if r["date"] >= since:
+        rounds[pr_key(r["pr"])] += int(r["tells_findings"])
+total = sum(rounds.values())
+per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
+print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
+if epic:
+    print("\n" + "\n".join(["pr"] + sorted(urls.values())))
 PY
 }
 
@@ -4995,6 +5056,7 @@ dispatch() {
     cost)   cost_report "$@" ;;
     outcomes) outcomes_report "$@" ;;
     decisions) decisions_report "$@" ;;
+    review-yield) review_yield_report "$@" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
@@ -5037,7 +5099,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions review-yield lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
