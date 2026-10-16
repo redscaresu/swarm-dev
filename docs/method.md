@@ -139,9 +139,8 @@ replace a design later, write a new HLD and set the old one `status: superseded`
 
 The board is files: `docs/hld/`, `docs/epics/` and `docs/stories/`, one file per item, with front
 matter the scripts read. There is no shared board file to conflict on; the PR that finishes a story
-deletes its file (or, with `finished = mark`, sets it `status: done`), and the PR is the record. A project can move the board and change how finished
-items leave it (§ Configuring a project). `templates/docs/` holds the READMEs that define
-each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
+deletes its file, and the PR is the record. A project can move the board (§ Configuring a
+project). `templates/docs/` holds the READMEs that define each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
 
 ## Configuring a project
 
@@ -159,12 +158,7 @@ prints every setting and where it came from.
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main` |
-| `finished` | `delete` | `mark` keeps a finished item on the board as `status: done` |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
-| `merge_admin` | `false` | `true`: `swarm.sh merge` passes `--admin`, which bypasses every rule on the base branch: required reviews and the rest as well as required status checks. `merge` re-checks only the status checks (each one the base's rulesets or branch protection require must have passed on the head), and nothing checks the other rules, so this ships off |
-| `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
-| `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
-| `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
 | `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
@@ -655,7 +649,11 @@ or before that column existed). Columns added later go on the end, so readers ig
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
-the PR with a reason; none is silenced or dismissed.
+the PR with a reason; none is silenced or dismissed. findings also reads the PR's diff and body. A
+test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
+`it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
+mutation run. findings prints each test without one as `rules-unchecked`, with the command that
+logs it, `log-finding --reviewer ci`.
 
 **Merging.** With `merge = human` (the default) no agent merges: each agent starts unable to run
 `gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead
@@ -716,10 +714,7 @@ under the board instead. The head must be green: at least one check run, every r
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
-after the check stops the merge. It never passes `--auto`, and passes `--admin` only with
-`merge_admin = true`, after checking that every status check the base's rulesets or branch
-protection require passed on the head, from the app it names when it names one. `--admin` also
-bypasses required reviews and every other rule on the base, which nothing checks.
+after the check stops the merge. It never passes `--auto` or `--admin`.
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
