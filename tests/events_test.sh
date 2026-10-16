@@ -67,8 +67,8 @@ appends() {
 }
 
 item stories/s1.md 'status: ready'
-item stories/s2.md 'status: blocked' 'blocked_by: [gone]'
-item stories/s3.md 'status: blocked' 'blocked_by: [gone]'
+item stories/s2.md 'status: blocked' 'depends_on: [gone]'
+item stories/s3.md 'status: blocked' 'depends_on: [gone]'
 item stories/m1.md 'status: review' "prs: ${U}/1"
 item stories/c1.md 'status: review' "prs: ${U}/2"
 printf 'SECRET-CONTENT-123 in the findings\n' > "${P}/findings.md"
@@ -93,8 +93,9 @@ check "reconcile says which it finished and which it reopened" bash -c "grep -q 
 appends "finish" 1 finish s1 ok finish s1
 appends "log-finding" 1 log-finding "vacuous-test ${U}/9" ok log-finding vacuous-test "${U}/9" "a line"
 # The flags before the kind, in either order, leave the target <kind> <pr>; a decline goes with the command.
-appends "log-finding --reviewer then --declined" 1 log-finding:declined "k ${U}/9" ok log-finding --reviewer codex --declined k "${U}/9" t
-appends "log-finding --declined then --reviewer" 1 log-finding:declined "k ${U}/9" ok log-finding --declined --reviewer lead k "${U}/9" t
+appends "log-finding --reviewer then --declined" 1 log-finding:declined "k ${U}/9" ok log-finding --reviewer codex --declined nit k "${U}/9" t
+appends "log-finding --declined then --reviewer" 1 log-finding:declined "k ${U}/9" ok log-finding --declined wrong --reviewer lead k "${U}/9" t
+appends "log-finding --declined out-of-scope --reviewer" 1 log-finding:declined "k ${U}/9" ok log-finding --declined out-of-scope --reviewer codex k "${U}/9" t
 appends "log-finding --reviewer" 1 log-finding "k ${U}/9" ok log-finding --reviewer conductor k "${U}/9" t
 appends "a failed story" 1 story nope "no story" story nope
 appends "a failed conduct" 1 conduct nope "no epic" conduct nope

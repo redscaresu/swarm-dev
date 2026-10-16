@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # review_yield_test.sh — `swarm.sh review-yield` against fixtures. The first project: findings.tsv rows
-# of four, five and six fields (the first two read as reviewer unknown), one dated before a --since, and
+# of four, five, six and seven fields (the first two read as reviewer unknown), one dated before a --since, and
 # builders for slugs a (PR #1) and b (PR #2), whose tells give the rounds. The second: a story built
 # twice on one PR, a story built twice with a PR per attempt, each in its own epic, for --epic. gh is a
 # stub on PATH. TZ is UTC, so a build with no session log starts at a known time.
@@ -64,6 +64,19 @@ B1="$(printf '%s\n' "${H1}" \
   $'all\tall\t8\t4\t4\t50%')"
 check "block 1 per reviewer and kind (4- and 5-field rows as unknown), per kind, and all all; block 2 sums each PR's rounds" \
   "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
+# A declined row with its reason (7 fields) beside the 4- and 6-field ones: the old rows count as
+# before; only the new row's own lines and all all change. An escaped row (a defect review missed)
+# counts nowhere: were it counted, vacuous's lines would change and an escaped line appear.
+cp "${P}/.swarm/findings.tsv" "${dir}/findings.bak"
+printf '%s\n' $'2026-10-03\tplan-gap\to/r#1\tt\tdeclined\tskeptic\tnit' \
+  $'2026-10-03\tvacuous\to/r#1\tt\tescaped\tescaped' >> "${P}/.swarm/findings.tsv"
+old_rows() { grep -v -e '^skeptic' -e $'\tplan-gap\t' -e $'^all\tall\t' <<< "$1"; }
+check "a 7-field row leaves the 4-, 5- and 6-field rows' counts as they were" \
+  "$(old_rows "$(yield_of "${P}")")" "$(old_rows "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")")"
+out="$(yield_of "${P}")"
+check "the 7-field row counts as one decline, all all only adds it, and no escaped line" \
+  "$(grep -E $'^(skeptic|all\tall|escaped)\t' <<< "${out}")" "$(printf '%s\n' $'skeptic\tall\t1\t0\t1\t100%' $'skeptic\tplan-gap\t1\t0\t1\t100%' $'all\tall\t9\t4\t5\t56%')"
+cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t4\t1\t3\t75%' $'codex\tvacuous\t3\t1\t2\t67%' $'codex\tnit\t1\t0\t1\t100%' \

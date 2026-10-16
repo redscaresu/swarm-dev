@@ -87,7 +87,7 @@ A story is `kind: lead`, never an agent's, when it:
   prepares the PR or the request, and checks the result after.
 
 A merge is never a story of its own: with `merge = human` every merge is yours already. A `kind`
-that is none of code, docs, chore, verify or lead (a typo, or `operator` from older boards) is
+that is none of code, docs, chore or lead (a typo, or `operator` from older boards) is
 never built: `swarm.sh` stops and names it.
 
 **Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
@@ -139,9 +139,8 @@ replace a design later, write a new HLD and set the old one `status: superseded`
 
 The board is files: `docs/hld/`, `docs/epics/` and `docs/stories/`, one file per item, with front
 matter the scripts read. There is no shared board file to conflict on; the PR that finishes a story
-deletes its file (or, with `finished = mark`, sets it `status: done`), and the PR is the record. A project can move the board and change how finished
-items leave it (§ Configuring a project). `templates/docs/` holds the READMEs that define
-each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
+deletes its file, and the PR is the record. A project can move the board (§ Configuring a
+project). `templates/docs/` holds the READMEs that define each format and two Obsidian Bases (`Board.base`, `HLDs.base`) that show the board as a view.
 
 ## Configuring a project
 
@@ -159,12 +158,7 @@ prints every setting and where it came from.
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main` |
-| `finished` | `delete` | `mark` keeps a finished item on the board as `status: done` |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
-| `merge_admin` | `false` | `true`: `swarm.sh merge` passes `--admin`, which bypasses every rule on the base branch: required reviews and the rest as well as required status checks. `merge` re-checks only the status checks (each one the base's rulesets or branch protection require must have passed on the head), and nothing checks the other rules, so this ships off |
-| `review_bot` | `off` | `auto`: the conductor also runs the repo's PR review bot on each PR ([`review.md`](review.md)) |
-| `sign_commits` | `false` | `true`: every agent signs its commits and merges, and stops if it cannot |
-| `keep_panes` | `false` | `true`: `swarm.sh close` leaves a finished agent's pane and tabs open to read; you close them |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
 | `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
 | `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
@@ -191,9 +185,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   it, so it runs on Fable at `xhigh`.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
   critic run at `high`, because a skeptic is the only gate a story passes before it is built.
-- **Reading is Sonnet, running is Haiku.** Surveys read and cite at `high`, since they feed the
-  lead, and docs run on Sonnet at `medium`. Verification and chores run on Haiku at `medium`:
-  their result is a command's output or a mechanical diff, checked by the conductor.
+- **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the
+  lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
+  mechanical diff, checked by the conductor.
 - **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`. To find out
   whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories on
   Sonnet at `high` (`code-sonnet`). The slug fixes the pick, a retry goes back to Opus, and each
@@ -260,7 +254,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   (`ok (attempts <n>, <k> PRs)`), and `reset` or `drop <slug>` with `ok (<reason>)`.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost [--since YYYY-MM-DD]` turns that and Claude
-  Code's logs into tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
+  Code's logs into tokens and estimated cost per role. The lead's own sessions count too, under
+  `lead`: every session in the project's Claude Code directory that agents.tsv does not name. Change
+  `policy()` from that table, not from a guess.
 - **The conductor is Opus at `high`, one fresh session per epic**, on the standard context window,
   never 1M. A conductor re-reads its whole context every turn: on the project this came from, one
   long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M
@@ -575,7 +571,11 @@ also proves its tests can fail: it breaks its fix, watches a test fail, and rest
 Every codex review a builder, a conductor or the lead runs goes through `swarm.sh codex-review
 <base>`, in the worktree, with `SWARM_PROJECT` set to the project so a worktree of another repo still
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
-beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. An interrupted
+beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. With
+`SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
+against `origin/<base>`, lists the story's touches with its **Done when** and **From review** items,
+and says that work outside them is not a finding. If `SWARM_STORY` is not a slug, names no story file,
+or names a story with no **Done when** item, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
@@ -590,8 +590,8 @@ skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `code-review`, `ci` (a
-PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`. Each finding declined is logged with `log-finding --declined --reviewer <who>`, with the
-reason in its line; `lessons` counts only the fixed ones, `outcomes` counts the two apart, and `decisions` exports both. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
+PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR. A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward lessons, but `outcomes` and `review-yield` leave it out, since review missed it. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
+reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `lessons` counts the fixed and escaped ones, never the declined, and `outcomes` counts fixed and declined apart. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `lessons_file` (default `.claude/swarm/brief.md`) has no rule for is a `candidate`. So is a lead
 memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
 frontmatter carries `lesson: <kind>`: tag a memory that is about how code is written, and it reaches
@@ -605,14 +605,18 @@ opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silen
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
 PR of its repo, so findings count per epic per repo. A brief over 4 KB (counting `lessons_file`'s tagged lines, which every brief also carries) is flagged, and pruning it is your call: a rule that works stops
 its own findings, so quiet is no sign a rule is unneeded. The log is `.swarm/findings.tsv`, local to
-the machine: date, kind, PR, the line, its outcome (`fixed` or `declined`; rows written before the
+the machine: date, kind, PR, the line, its outcome (`fixed`, `declined` or `escaped`; rows written before the
 outcome column count as fixed) and the reviewer (`unknown` when a row was logged without `--reviewer`
 or before that column existed). Columns added later go on the end, so readers ignore any past the sixth.
 
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
-the PR with a reason; none is silenced or dismissed.
+the PR with a reason; none is silenced or dismissed. findings also reads the PR's diff and body. A
+test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
+`it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
+mutation run. findings prints each test without one as `rules-unchecked`, with the command that
+logs it, `log-finding --reviewer ci`.
 
 **Merging.** With `merge = human` (the default) no agent merges: each agent starts unable to run
 `gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead
@@ -635,17 +639,17 @@ back to what is committed (the `review` status, and a retry's `attempts:`), and 
 if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
 stop it. When the pull changes a board file whose only unstaged edit is to keys swarm.sh writes
-(`status`, `prs`, `blocked_by`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
+(`status`, `prs`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
 another story in review, reconcile checks the file out, pulls, then sets those keys again. If the
 pull deleted the file, it stays deleted; reconcile prints its name and keeps the backup, which holds
 the edit. If the base changed one of those keys as well, to a different value, reconcile stops
 before it touches anything and names the file. It also stops when the edit changes `status` and the
-base changed `blocked_by` or `depends_on`, so a flip to `ready` never lands over a new dependency.
+base changed `depends_on`, so a flip to `ready` never lands over a new dependency.
 Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and
 reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
 again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
-blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`,
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`,
 and no other agent can. Every agent, the conductor included, still starts unable to run `gh pr merge`. It notes a PR's head SHA before it reviews it and
 reads it again after; if the head moved, it reviews the new one. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
@@ -673,10 +677,7 @@ under the board instead. The head must be green: at least one check run, every r
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
-after the check stops the merge. It never passes `--auto`, and passes `--admin` only with
-`merge_admin = true`, after checking that every status check the base's rulesets or branch
-protection require passed on the head, from the app it names when it names one. `--admin` also
-bypasses required reviews and every other rule on the base, which nothing checks.
+after the check stops the merge. It never passes `--auto` or `--admin`.
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as

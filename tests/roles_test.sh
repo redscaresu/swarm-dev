@@ -45,7 +45,6 @@ story e4-a "kind: code" "risk: high"
 story e4-f "kind: code"
 story a "kind: docs"
 story a "kind: chore"
-story a "kind: verify"
 story a "kind: code" "attempts: 2"
 
 fails=0

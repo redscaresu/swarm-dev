@@ -44,7 +44,7 @@ item hld/2026-01-01-x.md 'status: agreed'
 item epics/e1.md 'status: active' 'hld: 2026-01-01-x'
 item epics/e2.md 'status: later'
 item stories/s-one.md 'status: review' 'epic: e1' 'prs: https://github.com/o/r/pull/7'
-item stories/s-two.md 'status: blocked' 'epic: e1' 'blocked_by: [s-one]'
+item stories/s-two.md 'status: blocked' 'epic: e1' 'depends_on: [s-one]'
 item stories/s-three.md 'status: ready' 'epic: e1'
 item stories/ask.md 'status: ready' 'kind: lead'
 sed -i.bak 's/^# ask$/# Create the read-only IAM user/' "${P}/docs/stories/ask.md" && rm "${P}/docs/stories/ask.md.bak"
@@ -69,7 +69,7 @@ printf '2026-10-01\tconduct\tconduct-e1\tclaude\topus\thigh\tsess-1\n2026-10-02\
 printf '%s\tcode\ts-three\tclaude\topus\thigh\tsess-today\n' "$(date +%F)" >> "${P}/.swarm/agents.tsv"
 echo '{"message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":1000000}}}' > "${ROOT}/projects/p/sess-today.jsonl"
 # One escalate agent whose session ran on opus (its first message with a model), not the fable its
-# policy names; the ladder shows the session's model. No verify agent: verify shows 0.
+# policy names; the ladder shows the session's model. No docs agent: docs shows 0.
 printf '2026-10-02\tescalate\tx-esc\tclaude\tfable\txhigh\tsess-esc\n' >> "${P}/.swarm/agents.tsv"
 # Ahead of opus: a non-string model and a failed turn's "<synthetic>" one, both skipped.
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"message":{"model":5}}' \
@@ -212,8 +212,9 @@ check "--ladder maps role to model and effort" has "code-risky → opus · xhigh
 check "--ladder names codex" has "codex      → codex · high" "${out}"
 check "--ladder counts a role's agents, with its sessions' models" has "code       → opus · high  2 opus " "${out}"
 check "--ladder names the model a session ran on, not the policy's" has "escalate   → fable · xhigh  1 opus " "${out}"
-check "--ladder shows 0 for a role with no agents" grep -qE "verify     → haiku · medium  0( |$)" <<< "${out}"
-check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +verify" <<< "${out}"
+check "--ladder shows 0 for a role with no agents" grep -qE "docs       → sonnet · medium  0( |$)" <<< "${out}"
+check "--ladder has no verify row" lacks "verify" "${out}"
+check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +escalate" <<< "${out}"
 check "--ladder cells are as wide as the longest row: two a row at 100 columns, every role aligned" python3 -c '
 import sys
 t = sys.stdin.read().splitlines()
@@ -709,7 +710,7 @@ git -C "${Q}" init -q -b main
 echo .swarm/ > "${Q}/.gitignore"; echo "status" > "${Q}/STATUS.md"
 qitem epics/x.md 'status: active'
 qitem epics/y.md 'status: active'
-qitem stories/y-wait.md 'status: blocked' 'epic: y' 'blocked_by: [x-b]'
+qitem stories/y-wait.md 'status: blocked' 'epic: y' 'depends_on: [x-b]'
 qitem stories/y-then.md 'status: later' 'epic: y'
 for s in x-merged x-big x-fin x-again x-gone x-scope x-scope2 x-twice x-squash x-ops; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
 qitem stories/x-own.md 'status: ready' 'epic: x' 'prs: https://github.com/o/r/pull/5'
