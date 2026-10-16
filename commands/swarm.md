@@ -21,6 +21,18 @@ trailers, where credentials live, and commands that must never run. Write only w
 are not asked again. Do not commit it. Tell the user to commit it, even empty: an untracked brief
 stops `swarm.sh reconcile` from pulling a `lesson:` PR that adds the file.
 
+When the board is in the project's repo, make each board edit you write by hand (a re-scope, a new
+story, an unblock) in its own worktree with `swarm.sh board-pr`, never in the main checkout. A board
+outside the repo is edited where it is, since `board-pr` refuses it.
+
+`swarm.sh board-pr start <name>` prints the worktree's path, `<repo>-wt/_board-<name>` (beside the
+story worktrees, never one of them), on a new `board/<name>` branch from origin's base. Edit the
+board there, then run `swarm.sh board-pr open <name> "<title>" <body-file>`. It refuses if anything
+outside the board changed, and otherwise commits with the brief's trailers, pushes and prints the
+PR's URL. Run it again to push more edits to the same PR. Once the PR has merged or closed, `open`
+refuses, and `swarm.sh board-pr done <name>` removes the worktree and the branch, here and on origin;
+run `start` again for the next edit. `done` also clears a start you abandoned with nothing committed.
+
 First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
 an old version still runs.
 
@@ -174,7 +186,8 @@ Repeat until a step below says stop:
      - Re-scope it: change the story so a fresh build can succeed, and run
        `swarm.sh reset <slug> <reason>`. When the board is in the story's repo, a builder reads the
        story in its own worktree, from the branch builds start from, so the new scope has to reach
-       that branch first: make the change in a board PR and leave the main checkout's copy alone.
+       that branch first: make the change in a board PR (`swarm.sh board-pr`) and leave the main
+       checkout's copy alone.
        Once that PR has merged (and, with `pr_per = epic`, once you have merged the base into
        `epic/<epic>` and pushed it), run `swarm.sh reset <slug> <reason> && git pull --ff-only` in
        the board's repo, in one go: `reset` puts the file back to its committed text, so the pull

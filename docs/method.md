@@ -45,6 +45,38 @@ not found out while building.
 The lead's messages to agents go through `swarm.sh tell`, which logs them as `tell:<kind>`, never a
 bare `herdr agent prompt`.
 
+When the board is in the project's repo, the lead's board edits (a re-scope, a new story, an
+unblock) go through `swarm.sh board-pr`, each in its own worktree, never the main checkout. A board
+outside the repo is edited where it is, and `board-pr` refuses it.
+
+- `start <name>` makes `<repo>-wt/_board-<name>` on a new `board/<name>` branch from `origin/<base>`
+  and prints its path. The `_` keeps it apart from story worktrees (`<repo>-wt/<slug>`), since a
+  slug never has one. It refuses when the branch exists here or on origin (or origin cannot be
+  read), when the directory exists, when the path resolves into the main checkout (through a
+  symlink or `..`), and when `git worktree add` fails.
+- `open <name> "<title>" <body-file>` refuses unless every changed file is under the board. Otherwise
+  it commits with the brief's commit trailers, pushes, and opens the PR, printing its URL. A trailer
+  is found anywhere in the brief, quoted in a sentence too: a `<Word>-by:` token, a name (with a
+  letter, and no colon or quote), and an email in `<...>`. A placeholder such as `<who> <email>` is
+  skipped, and the prose before a trailer never becomes part of it. Run `open` again to push
+  more edits: it prints the open PR's URL and opens no second one. Once the branch's PR has merged
+  or closed (squashed or not), it refuses, since the branch still holds the merged commits: run
+  `done`, then `start` again. A PR counts as the branch's when its head came after the branch was
+  started (the first entry in its reflog), so one from an earlier use of the name does not.
+- `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
+  on the branch's tip (the local one, or origin's when there is none here) has merged or closed. A
+  PR left by an earlier use of the name does not count. With no PR it removes an abandoned start:
+  a branch with no commits past the base. It runs every check before it removes anything, and
+  refuses while any PR on the branch is open, when origin cannot be read or its branch has moved
+  past the local one, when the worktree at that path is not on `board/<name>`, has uncommitted
+  changes or is locked, when `board/<name>` is checked out anywhere else (the main checkout, or
+  another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
+  branch goes first, so when its delete fails the local state is still there for the next run.
+
+Each step logs one `events.tsv` line, `board-pr:start`, `board-pr:open` or `board-pr:done`, with
+the name and `ok` or the refusal. The name may be a story's slug, so these lines are never a sign
+of life for that story's builder.
+
 A story is `kind: lead`, never an agent's, when it:
 
 - changes real cloud, uses credentials, or changes permissions;
