@@ -1,7 +1,7 @@
 ---
 kind: lead
 status: blocked
-blocked_by: [review-yield-release, review-yield-baseline]
+blocked_by: [review-yield-release]
 epic: review-yield
 depends_on: [review-yield-release, review-yield-baseline]
 touches: [board/stories/review-yield-tuning.md, board/stories/<tuning story>.md (new, filed by the lead)]
@@ -19,3 +19,39 @@ After `claude plugin update` installs review-yield-release and one epic built wh
 **From review (binding; overrides the scope above where they differ):**
 - The lead runs `claude plugin update` before the measured epic; nothing here waits on the user.
 - Done only when the tuning PR has merged (linked), and the before and after reports are `review-yield --epic <e>` for the epic run before and the one run after it, each listing its PR URLs with no `unknown` reviewer rows; the after rate for the tuned reviewer or kind is lower, or the lead reverts the change and says so. It notes that outcomes-every-attempt changed the rounds join between baseline and after.
+
+## Baseline
+
+Cut: 2026-10-16 ~01:00, every row in swarm-dev's `.swarm/findings.tsv` (2026-10-13 to the cut), from `swarm.sh review-yield` with no `--since`. It counts what finding_rows keeps (fixed or declined). An awk count over the same file gives the same totals: 211 fixed, 364 declined.
+
+**Total:** 575 raised, 211 fixed, 364 declined, 63% declined. Reviewers: 487 rows predate finding-reviewer-column and read `unknown` (61% declined). Of the rest, code-review has 84 (75% declined) and codex 4 (3 of them the version bump). Review rounds: 85 over 70 PRs (1.2 per PR, at most 4). The epic's earlier count of 207 declined against 140 fixed (about 60%) was taken on 2026-10-15. infrafactory reads differently, with 68 of 487 declined (14%), so the 63% is swarm-dev's alone.
+
+Every kind with 5 or more findings, across all reviewers:
+
+| kind | raised | fixed | declined | declined % |
+|---|---|---|---|---|
+| unhandled-state | 96 | 28 | 68 | 71% |
+| loose-match | 63 | 22 | 41 | 65% |
+| redundant-work | 53 | 4 | 49 | 92% |
+| docs-misstate-code | 46 | 27 | 19 | 41% |
+| condition-drift | 43 | 20 | 23 | 53% |
+| fails-open | 32 | 20 | 12 | 38% |
+| fails-silent | 21 | 12 | 9 | 43% |
+| view-disagrees | 20 | 7 | 13 | 65% |
+| misleading-error | 19 | 9 | 10 | 53% |
+| vacuous-test | 19 | 11 | 8 | 42% |
+| wiring | 19 | 9 | 10 | 53% |
+| stale-read | 15 | 6 | 9 | 60% |
+| unhandled-error | 14 | 8 | 6 | 43% |
+| release-bump | 12 | 1 | 11 | 92% |
+| docs | 12 | 5 | 7 | 58% |
+| version-bump | 11 | 0 | 11 | 100% |
+| duplicated-source-of-truth | 10 | 2 | 8 | 80% |
+| test-leak | 10 | 3 | 7 | 70% |
+| scope-creep | 8 | 1 | 7 | 88% |
+| lost-coverage | 8 | 2 | 6 | 75% |
+| layout-overflow | 6 | 3 | 3 | 50% |
+| missing-version-bump | 5 | 0 | 5 | 100% |
+| unsanitized-input | 5 | 1 | 4 | 80% |
+
+What it shows before tuning: the three bump kinds (release-bump, version-bump, missing-version-bump: 28 raised, 1 fixed) are already covered by codex-bump-not-a-finding (#171). Of the rest, redundant-work (92% declined), scope-creep (88%) and duplicated-source-of-truth (80%) are the noisiest. unhandled-state is the largest declined count, at 68. The kinds that mostly get fixed are fails-open, docs-misstate-code, vacuous-test and fails-silent, all under 45% declined.
