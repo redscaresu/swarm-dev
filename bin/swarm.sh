@@ -26,9 +26,9 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board] [--head <sha>] <pr-url>        merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR
-#   swarm.sh board-pr start <name>                          a worktree <repo>-wt/board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
+#   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
-#   swarm.sh board-pr done <name>                           remove the worktree and board/<name>, here and on origin, once its PR merged or closed
+#   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
@@ -3263,14 +3263,15 @@ merge_pr() {
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
 }
 
-# brief_trailers — the commit trailers the project's brief names: each line that is a trailer and
-# nothing else (Co-Authored-By: <name> <email>, or any other <Word>-by: line with a name), one per
-# line, in the brief's order. A sentence that mentions one is not a trailer.
+# brief_trailers — the commit trailers the project's brief names, wherever a line has one (quoted or
+# backticked in a sentence too): a <Word>-by: token, a name with a letter in it, and <an email>. A
+# placeholder such as Co-Authored-By: <who> <email> has no name, so it is not one. One per line, in
+# the brief's order.
 brief_trailers() {
   [[ -f "${PROJECT_BRIEF}" ]] || return 0
-  # shellcheck disable=SC2016 # the backticks are literal: a trailer line holds none
-  sed 's/[[:space:]]*$//' "${PROJECT_BRIEF}" \
-    | grep -E '^[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>`]*[^<>`[:space:]] <[^<>[:space:]]+@[^<>[:space:]]+>$' | awk '!seen[$0]++' || true
+  # shellcheck disable=SC2016 # the backticks are literal: a name holds none
+  grep -oE '[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>"`]*[A-Za-z][^<>"`]* <[^<>[:space:]]+@[^<>[:space:]]+>' "${PROJECT_BRIEF}" \
+    | awk '!seen[$0]++' || true
 }
 
 # origin_has <branch> — true when the project's origin has <branch>, false when it has not (ls-remote
@@ -3283,11 +3284,12 @@ origin_has() {
 }
 
 # board_pr start|open|done <name> ... — the lead's board edits, each in its own worktree, never the
-# main checkout: start makes <repo>-wt/board-<name> on a new board/<name> from origin/<base> and
-# prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
-# the brief's trailers, pushes and opens the PR, printing its URL; done <name> removes the worktree
-# and board/<name>, here and on origin, once the PR on the branch's tip has merged or closed, checking
-# everything before it removes anything. main logs each as board-pr:<step> <name>, with a refusal's
+# main checkout: start makes <repo>-wt/_board-<name> (a path no story slug makes) on a new
+# board/<name> from origin/<base> and prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
+# the brief's trailers, pushes and opens the PR (or pushes to the one open), printing its URL, and
+# refuses once the branch's PR has merged or closed; done <name> removes board/<name> on origin, then
+# the worktree and board/<name> here, once the PR on the branch's tip has merged or closed, or, with
+# no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
   local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why sign=()
@@ -3295,7 +3297,8 @@ board_pr() {
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
   [[ ${BOARD_IN_REPO} == 1 ]] || die "board-pr: the board is not in the project's repo"
-  wt="$(worktree_for "${PROJECT_DIR}" "board-${name}")"; b="board/${name}"
+  # The _ keeps it apart from story worktrees, <repo>-wt/<slug>: a slug never has one.
+  wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"; b="board/${name}"
   case "${step}" in
     start)
       # Resolved through any symlink or .., so a worktree can never land in the main checkout.
@@ -3323,6 +3326,21 @@ board_pr() {
         && git -C "${wt}" -c core.quotepath=off ls-files --others --exclude-standard)" || die "board-pr: cannot list the changes in ${wt}"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
       while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"
+      url="$(git -C "${PROJECT_DIR}" remote get-url origin)"
+      prs="$(gh pr list -R "${url}" --head "${b}" --state all --json state,url,headRefOid)" || die "board-pr: gh cannot list the PRs on ${b}"
+      # A second open pushes more edits to the PR the first one opened. Once that PR merged or closed,
+      # the branch still holds its commits: a new PR would apply them again (squashed) or mix them in.
+      # A PR is this branch's when its head came after the branch's start (its reflog's first entry;
+      # origin/<base> when that is gone): an earlier use of the name merged before it.
+      url="$(json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')" <<< "${prs}")"
+      if [[ -z "${url}" ]]; then
+        tip="$(git -C "${wt}" reflog --format=%H "refs/heads/${b}" 2>/dev/null | tail -1)"
+        for f in $(json "' '.join(p['headRefOid'] for p in d)" <<< "${prs}"); do
+          if git -C "${wt}" merge-base --is-ancestor "${f}" HEAD 2>/dev/null && ! git -C "${wt}" merge-base --is-ancestor "${f}" "${tip:-origin/${base}}"; then
+            die "board-pr: the PR on ${b} has merged or closed; run swarm.sh board-pr done ${name}, then start again"
+          fi
+        done
+      fi
       git -C "${wt}" add -A
       if ! git -C "${wt}" diff --cached --quiet; then
         msg="$3"; f="$(brief_trailers)"; [[ -z "${f}" ]] || msg+=$'\n\n'"${f}"
@@ -3330,13 +3348,9 @@ board_pr() {
         git -C "${wt}" commit -q ${sign[@]+"${sign[@]}"} -m "${msg}" || die "board-pr: the commit failed in ${wt}"
       fi
       git -C "${wt}" push -q -u origin "${b}" || die "board-pr: cannot push ${b}"
-      url="$(git -C "${PROJECT_DIR}" remote get-url origin)"
-      # A second open pushes more edits to the PR the first one opened.
-      prs="$(gh pr list -R "${url}" --head "${b}" --state all --json state,url | json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')")" \
-        || die "board-pr: gh cannot list the PRs on ${b}"
-      [[ -n "${prs}" ]] || prs="$(gh pr create -R "${url}" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \
+      [[ -n "${url}" ]] || url="$(gh pr create -R "$(git -C "${PROJECT_DIR}" remote get-url origin)" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \
         || die "board-pr: gh pr create failed for ${b}"
-      echo "${prs##*$'\n'}" ;;
+      echo "${url##*$'\n'}" ;;
     done)
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)" || die "board-pr: ${PROJECT_DIR} has no origin"
       tip="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/heads/${b}" || true)"
@@ -3353,14 +3367,26 @@ board_pr() {
         | SWARM_TIP="${tip}" json "'OPEN' if any(p['state'] == 'OPEN' for p in d) else ' '.join(p['state'] for p in d if p['headRefOid'] == e['SWARM_TIP'])")" \
         || die "board-pr: gh cannot list the PRs on ${b}"
       [[ "${prs}" != OPEN ]] || die "board-pr: the PR on ${b} is still open"
-      [[ -n "${prs}" ]] || die "board-pr: no PR on ${b} has its tip ${tip:0:7}; open it first"
+      # With no PR, only a branch with nothing past the base goes (a start that was abandoned).
+      if [[ -z "${prs}" ]]; then
+        base="$(base_for "${PROJECT_DIR}")"
+        [[ -z "$(git -C "${PROJECT_DIR}" rev-list "origin/${base}..${tip}" 2>/dev/null || echo unknown)" ]] \
+          || die "board-pr: no PR on ${b} has its tip ${tip:0:7}, and it has commits past origin/${base}; open it first"
+      fi
+      if [[ -e "${wt}" ]]; then
+        [[ "$(git -C "${wt}" symbolic-ref -q --short HEAD 2>/dev/null)" == "${b}" ]] || die "board-pr: ${wt} is not a worktree on ${b}; it is left alone"
+        [[ -z "$(git -C "${wt}" status --porcelain --untracked-files=all)" ]] || die "board-pr: ${wt} has uncommitted changes"
+        [[ ! -e "$(git -C "${wt}" rev-parse --absolute-git-dir)/locked" ]] || die "board-pr: ${wt} is locked; git worktree unlock it first"
+      fi
+      # origin first: its delete can fail (the lease, a protected branch), and the local state must
+      # then stay for the next run.
+      [[ -z "${rtip}" ]] || git -C "${PROJECT_DIR}" push -q --force-with-lease="refs/heads/${b}:${rtip}" origin --delete "${b}" \
+        || die "board-pr: cannot delete ${b} on origin"
       if [[ -e "${wt}" ]]; then
         why="$(git -C "${PROJECT_DIR}" worktree remove "${wt}" 2>&1)" || die "board-pr: cannot remove ${wt}: ${why%%$'\n'*}"
       fi
       git -C "${PROJECT_DIR}" worktree prune
       ! git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/${b}" || git -C "${PROJECT_DIR}" branch -q -D "${b}"
-      [[ -z "${rtip}" ]] || git -C "${PROJECT_DIR}" push -q --force-with-lease="refs/heads/${b}:${rtip}" origin --delete "${b}" \
-        || die "board-pr: cannot delete ${b} on origin"
       echo "removed ${wt} and ${b}" ;;
   esac
 }
