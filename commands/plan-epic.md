@@ -32,7 +32,11 @@ Every brief begins with the ground rules: *You are scoping docs/epics/$1.md; rea
 Read-only — write nothing except your output file, never commit, never touch real cloud or
 credentials. Cite evidence as file:line. Keep free text short.*
 
-**1. Survey** — three agents, role `survey`, in parallel (one, when a survey already exists; see below). Output `{summary, facts:[{fact, evidence}]}`.
+**0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
+planned by the lead alone: you write the stories, run one `swarm.sh codex-review` pass over them,
+and report as below. Skip steps 1 to 3, and start no agent. A larger or riskier epic gets the full run.
+
+**1. Survey** — role `survey`, in parallel: one agent when the epic names one repo, three otherwise (one, when a survey already exists; see below). Output `{summary, facts:[{fact, evidence}]}`.
 - `survey-lands`: where the change lands — packages, functions, tests, fixtures, golden files,
   and which existing tests must change.
 - `survey-constraints`: the project's ADRs, policies, safety rules and
@@ -42,19 +46,20 @@ credentials. Cite evidence as file:line. Keep free text short.*
 
 When a survey already exists (the user's, yours, or one from an earlier plan for a similar repo),
 start one `survey` agent that checks it against the code and covers only what it misses, and give
-the lead that survey and any earlier plan too. The three surveys mostly repeat each other on a
-one-repo epic; the review in steps 3 and 4 is where the plan's bugs turn up.
+the lead that survey and any earlier plan too. One survey is enough for a
+one-repo epic; the review in step 3 is where the plan's bugs turn up.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
 `{stories:[{slug, title, kind, risk, repo, scope, done_when, touches, depends_on}], waves, contradictions}`.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
-One agent story is one PR (a `lead` story may end with no PR, for example an approval); `done_when` must be able to fail; `kind` is code | docs | chore | verify |
+One agent story is one PR (a `lead` story may end with no PR, for example an approval); `done_when` must be able to fail; `kind` is code | docs | chore |
 lead (real cloud, credentials, or a step by the user, marked **You:**), by swarm-dev
 `docs/method.md` § Who does what; every step in the epic's **Your part** is in a `lead` story,
-and a merge is never a story of its own; `risk: high` for real-cloud, teardown,
-safety or hygiene paths; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
-check files `AGENTS.md` names as shared) in more than one story; reuse existing
+and a merge is never a story of its own; `risk: high` only for real-cloud, teardown,
+credentials and safety paths; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
+check files `AGENTS.md` names as shared) in more than one story; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
+reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
 failed, it says what it could not check. A check that several stories repeat (a freeze, a pinned
 SHA, an empty deploy queue) is written once, in the epic, under **Checks before every stage**,
@@ -63,7 +68,7 @@ Code that adds a flag or setting ships with it off, so merging the code changes 
 it on is a separate `lead` story with its own PR. A PR that both adds code and switches it on cannot
 tell you which of the two broke something, and cannot be rolled back one half at a time.
 
-**3. Verify** — in parallel:
+**3. Verify** — in parallel, a chain at most 3 deep (the skeptic flags a longer one):
 - one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked).
   It tries to refute the story: wrong about the code, too big for one PR, an unstated dependency,
   a `touches` clash inside its wave, a `done_when` that passes while the work is broken, or a wrong `kind` (an agent story that needs
@@ -73,16 +78,17 @@ tell you which of the two broke something, and cannot be rolled back one half at
   big for one PR, `done_when` criteria that could pass on broken work, and overlaps within a wave.
   Its brief says the review needs no GitHub login: a repo's `AGENTS.md` may ask for
   `gh auth status` first, which fails inside codex's sandbox, and codex then stops without reviewing.
-
-**4. Critic** — one `critic`, role `critic`: what the plan missed — a change the epic's
+- one `critic`, role `critic`: what the plan missed — a change the epic's
 **Done when** needs that no story makes, an unrespected constraint, a test or doc nobody updates, a
-real-cloud step hidden inside an agent story. A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words.
+  real-cloud step hidden inside an agent story. A story's **Done when** names only what the builder's session can show, never something only the conductor or a merge can. Under 250 words.
 
 **Then report**, in this order: refuted stories and why; contradictions; codex and critic findings
-the plan does not answer; the surviving stories with `kind`, `touches` and waves; then **What you will do**: every `lead`
+the plan does not answer; the surviving stories with `kind`, `touches` and waves; which stories carry `risk: high` and why; stories ÷ longest chain; then **What you will do**: every `lead`
 story, what each needs from the user (its **You:** steps), and, with `merge = human`, that the user
 merges the resulting PRs. Ask before
 writing anything. On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
-when set, `status: ready` or `blocked` with `blocked_by`, `epic: $1`, `depends_on`, `touches`, `risk` when
-high; body: scope and **Done when**; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass (a board-only PR needs no version bump), and `swarm.sh close
-scope-$1`. Waves are then built with `swarm.sh story <slug>`.
+when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `touches`, `risk` when
+high; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
+scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
+`swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and
+`swarm.sh log-finding --declined <reason> --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when it did not. Waves are then built with `swarm.sh story <slug>`.

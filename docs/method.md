@@ -265,11 +265,17 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 ## Scoping an epic
 
 An epic (`docs/epics/<slug>.md`: goal, **Done when**, out of scope, constraints) becomes stories
-with `/plan-epic <slug>`: three surveys (where it lands, what constrains it, what overlaps it), one
-lead decomposition into one-PR stories with `kind`, `touches` and `depends_on`, a skeptic per story
-(capped at five, the rest logged) and a codex pass, then a critic. Agents write their answers to
-`.swarm/<epic>/`. The user sees refuted stories and contradictions first and approves before any
-story file is written. About ten agents per run, so scope deliberately.
+with `/plan-epic <slug>`. An epic of at most 3 stories with no `risk: high` is planned by the lead
+alone, with one codex pass. Any other epic gets one survey agent when it names one repo (three
+otherwise), one lead decomposition into one-PR stories with `kind`, `touches` and `depends_on` (a
+chain at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`),
+and a skeptic per story (capped at five, the rest logged), a codex pass and a critic, all in
+parallel. `risk: high` goes only to real-cloud, teardown, credentials and safety paths. Agents write their answers to
+`.swarm/<epic>/`. The user sees refuted stories, contradictions, the risky stories and stories ÷
+longest chain first, and approves before any story file is written; review fixes are folded into
+each story's scope. Once the board PR is open, each skeptic, codex and critic finding is logged
+against it with `log-finding`, declined ones with a reason. A full run is about ten agents, so
+scope deliberately.
 
 **Ship code switched off.** Code that adds a flag or setting merges with it off, so the merge
 changes no behaviour; a separate `lead` story turns it on. Bundled, a failure cannot say whether
