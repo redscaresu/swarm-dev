@@ -45,6 +45,18 @@ not found out while building.
 The lead's messages to agents go through `swarm.sh tell`, which logs them as `tell:<kind>`, never a
 bare `herdr agent prompt`.
 
+When the board is in the project's repo, the lead's board edits (a re-scope, a new story, an
+unblock) go through `swarm.sh board-pr`, each in its own worktree, never the main checkout; a board
+outside the repo is edited where it is, and `board-pr` refuses it. `start <name>` makes `<repo>-wt/board-<name>` on a new
+`board/<name>` branch from `origin/<base>` and prints its path. It refuses when the branch or the
+directory exists, when the path resolves into the main checkout (through a symlink or `..`), and
+when `git worktree add` fails. `open <name> "<title>" <body-file>` refuses unless every changed file
+is under the board; otherwise it commits with the brief's commit trailers, pushes and opens the PR,
+printing its URL. `done <name>` removes the worktree and `board/<name>`, here and on origin, once the
+PR has merged or closed, and refuses while it is open or when it cannot tell whether origin still
+has the branch. Each step logs one `events.tsv` line,
+`board-pr:start`, `board-pr:open` or `board-pr:done`, with the name and `ok` or the refusal.
+
 A story is `kind: lead`, never an agent's, when it:
 
 - changes real cloud, uses credentials, or changes permissions;
