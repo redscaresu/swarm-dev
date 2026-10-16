@@ -18,7 +18,7 @@
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
-#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree]  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder
+#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
@@ -136,7 +136,6 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
 CFG_base_branches=""    # empty: origin's default branch
-CFG_finished=delete
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
@@ -1100,12 +1099,11 @@ PY
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
 # A build's PR is the last of the slug's PRs its session log names, so each attempt keeps its own;
-# with no log, the slug's PR when it has exactly one. With pr_per = epic, every build of an epic story
-# gets the epic's PR (builders open none).
+# with no log, the slug's PR when it has exactly one.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
 # read from close's copy of the session log once Claude Code deleted it.
 outcomes_report() {
-  local since="" rows meta="" slug text kind from src prs epic story_epic head got asked
+  local since="" rows meta="" slug text kind from src prs story_epic got asked
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
@@ -1256,51 +1254,48 @@ for b in builds:
                     + tok + [b.get("cause", "")] + steps))
 PY
 )"
-  # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, the epic whose PR
-  # its builds share (pr_per = epic), every PR of its head (newest first, as `url state mergedAt`
-  # triples joined by commas), its epic: and whether gh answered (1, or empty), from the story (on the
-  # board, or its last version in git once a merge deleted it) and gh. A gh that fails leaves no PR; it
-  # never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
+  # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
+  # story/<slug> (newest first, as `url state mergedAt` triples joined by commas), its epic: and
+  # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
+  # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    text="$(story_text "${slug}")"; prs=""; epic=""; head="story/${slug}"; asked=""
+    text="$(story_text "${slug}")"; prs=""; asked=""
     kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
     from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
-    [[ "${CFG_pr_per}" != epic ]] || epic="${story_epic}"
-    [[ -z "${epic}" ]] || head="epic/${epic}"
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
-      && got="$( (cd "${src}" && gh pr list --head "${head}" --state all \
+      && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
         --json url,state,mergedAt --jq '.[] | [.url, .state, .mergedAt // ""] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
-    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${epic}"$'\t'"${prs}"
+    meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
 import collections, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 7}
+meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
 def parsed(prs):
     # The (url, state, mergedAt) of each PR in the meta column; a stub or older gh may leave out mergedAt.
     return [(p.split(" ") + [""])[:3] for p in prs.split(",") if " " in p]
 
-def pr_of(epic, prs, pulls):
+def pr_of(prs, pulls):
     # (url, state, mergedAt) of a build's PR, or empty: see outcomes_report. pulls is the first python's
     # column: "-" for no log.
     prs = parsed(prs)
-    if epic or pulls == "-":
-        return prs[0] if prs and (epic or len(prs) == 1) else ("", "", "")
+    if pulls == "-":
+        return prs[0] if len(prs) == 1 else ("", "", "")
     keyed = {pr_key(u): (u, s, m) for u, s, m in prs}
     return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", "", ""))
 
 rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():
     f = line.split("\t")
-    kind, risk, epic, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", "", ""))
-    rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(epic, prs, f[12])))
+    kind, risk, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", ""))
+    rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(prs, f[12])))
 # Each finding goes to the latest build on its PR that started on or before the finding (both are
 # local dates), so a PR two builds share counts each finding once.
 found = [collections.Counter() for _ in rows]
@@ -1572,23 +1567,16 @@ deliver_prompt() {
 IDLE_NUDGES=3
 
 # nudge_reason <name> — when <name> builds a ready code, docs or chore story that has no open or
-# merged PR (a closed one is an earlier attempt's, closed by a counted close; an epic story with
-# pr_per = epic, as build_story builds it: story/<slug> is not pushed), print why a nudge is sent and
-# succeed. A name with
-# no story (a conductor, hld, a planner) or a verify story is never nudged, and a repo that cannot
-# be resolved, or a gh or git call that fails, counts as having a PR.
+# merged PR (a closed one is an earlier attempt's, closed by a counted close), print why a nudge is
+# sent and succeed. A name with no story (a conductor, hld, a planner) is never nudged, and a repo
+# that cannot be resolved, or a gh or git call that fails, counts as having a PR.
 nudge_reason() {
-  local slug f src url n rc=0
+  local slug f src url n
   slug="$(stall_py story "$1")"; [[ -n "${slug}" ]] || return 1
   f="${BOARD}/stories/${slug}.md"
   case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
   [[ "$(fm "${f}" status)" == ready ]] || return 1   # a story being built stays ready until review
   src="$(repo_dir "$(fm "${f}" repo)")" || return 1
-  if [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]]; then
-    git -C "${src}" ls-remote --exit-code origin "refs/heads/story/${slug}" >/dev/null 2>&1 || rc=$?
-    [[ ${rc} -eq 2 ]] || return 1   # 2: no such branch; 0 is pushed, anything else a failure
-    echo "you are idle and story/${slug} is not pushed"; return
-  fi
   url="$(git -C "${src}" remote get-url origin 2>/dev/null)" || return 1
   n="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json state -q '[.[] | select(.state != "CLOSED")] | length' 2>/dev/null)" || return 1
   [[ "${n}" == 0 ]] || return 1
@@ -1887,11 +1875,9 @@ tell_agent() {
 # once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
 # than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
 findings_goal() {
-  local slug="$1" goal="$3" mode=story
-  [[ "${CFG_pr_per}" != epic || -z "$(fm "${BOARD}/stories/${slug}.md" epic 2>/dev/null)" ]] || mode=epic
   printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
-    "$(reply_sentence "${mode}")" "It is met once both hold, or stop after ${CFG_goal} more turns." > "${goal}"
-  send_goal "${slug}" "${goal}" findings "$2"
+    "$(reply_sentence)" "It is met once both hold, or stop after ${CFG_goal} more turns." > "$3"
+  send_goal "$1" "$3" findings "$2"
 }
 
 # The merge, signing and review rules, shared by the briefs.
@@ -1910,12 +1896,11 @@ sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop 
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
-# review_rule — for pr_per=story, where each story has its own PR and its builder stays open.
 review_rule() {
   cat <<EOF
 A story is reviewed only when its latest head has passed \`$(codex_review_cmd '<base>')\`
 in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
-/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule)$(bump_rule) Send every real finding to the story's
+/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule) Send every real finding to the story's
 builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
 what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
@@ -2035,14 +2020,10 @@ mutation_rule() {
   printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
 }
 
-# reply_sentence <epic|story> — what a builder replies, and when: the brief's rule on finishing, and
-# what its goal condition waits for. One sentence per mode, so the two cannot drift.
+# reply_sentence — what a builder replies, and when: the brief's rule on finishing, and what its goal
+# condition waits for. One sentence, so the two cannot drift.
 reply_sentence() {
-  if [[ "$1" == epic ]]; then
-    printf '%s' "When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
-  else
-    printf '%s' "When CI is green, reply with the PR URL, what changed in three lines, and the codex findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR."
-  fi
+  printf '%s' "When CI is green, reply with the PR URL, what changed in three lines, and the codex findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR."
 }
 
 # story_path <slug> <src> — the story file as its builder names it: relative to the worktree when the
@@ -2052,9 +2033,9 @@ story_path() {
   else echo "${BOARD}/stories/$1.md"; fi
 }
 
-# goal_condition <slug> <epic|story> <src> — the builder's /goal, on one line: the story's **Done when**
+# goal_condition <slug> <src> — the builder's /goal, on one line: the story's **Done when**
 # and **From review** items named by the path its brief gives (story_path; inlined, a long Done when
-# made the /goal arrive as pasted text), the reply its brief asks for in that mode, an escape for a
+# made the /goal arrive as pasted text), the reply its brief asks for, an escape for a
 # story that cannot be done, and the goal's turn bound. Fails, printing why, with no Done when or no
 # item under it: a blank line under the heading is skipped, and a bold line before any item ends it.
 goal_condition() {
@@ -2064,8 +2045,8 @@ goal_condition() {
     on && /[^[:space:]]/ { found = 1; exit }
     END { exit !found }' "${f}" \
     || { echo "$1 has no **Done when** with an item under it, so its goal would have nothing to meet"; return 1; }
-  printf '%s %s %s\n' "Every item under **Done when:** and **From review**, if any, in $(story_path "$1" "$3") (your brief's story, already in this session) holds and is shown in this session." \
-    "$(reply_sentence "$2")" \
+  printf '%s %s %s\n' "Every item under **Done when:** and **From review**, if any, in $(story_path "$1" "$2") (your brief's story, already in this session) holds and is shown in this session." \
+    "$(reply_sentence)" \
     "If the story cannot be done, reply \`IMPOSSIBLE: <why>\` and stop; that reply meets this goal. The goal is met once all of the above holds and you have replied, or stop after ${CFG_goal} more turns."
 }
 # goal_message <condition> — the line send_goal types: /goal and the condition, whitespace squeezed.
@@ -2163,42 +2144,18 @@ send_goal() {
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before bump=""
-  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
-  [[ -z "${epic}" || "$(fm "${BOARD}/stories/${slug}.md" touches)" == *.claude-plugin/plugin.json* ]] || bump="$(bump_rule)"
+  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules
   story_ref="$(story_path "${slug}" "${src}")"
-  if [[ -n "${epic_branch}" ]]; then
-    cleanup="Do not touch the story file; the conductor takes it off the board."
-  elif [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
+  if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in this repo: the PR takes the story off it.
     rel="${BOARD#"${PROJECT_DIR}/"}/stories"
-    if [[ "${CFG_finished}" == mark ]]; then
-      cleanup="In your PR, set \`status: done\` in ${rel}/${slug}.md, and change nothing else under ${rel}/."
-    else
-      cleanup="Delete ${rel}/${slug}.md in your PR, and nothing else under ${rel}/."
-    fi
+    cleanup="Delete ${rel}/${slug}.md in your PR, and nothing else under ${rel}/."
   else
     # The board is elsewhere: read the story there, and leave it for the lead.
     story_ref="${story_ref} (this worktree is $(basename "${src}"))"
     cleanup="Do not touch the story file; the lead takes it off the board after your PR merges."
   fi
-  if [[ -n "${epic_branch}" ]]; then
-    before="reply"
-    cat <<EOF
-Implement ${story_ref}. Its **Done when** is the acceptance.
-
-Title your commit with a plain description of the change.
-
-Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
-credentials. This project opens one PR per epic, so open no PR: commit on your branch,
-story/${slug}, and push it; the conductor merges it into \`${epic_branch}\`. Run
-\`$(codex_review_cmd "${epic_branch}")\` before committing; fix real findings, decline
-nits with a reason, and converge on one clean pass. $(codex_rule)${bump} Run the repo's tests and make them pass. $(mutation_rule)
-$(reply_sentence epic)
-EOF
-  else
-    before="open the PR"
-    cat <<EOF
+  cat <<EOF
 Implement ${story_ref}. Its **Done when** is the acceptance.
 
 Title your commit and PR with a plain description of the change.
@@ -2206,19 +2163,17 @@ Title your commit and PR with a plain description of the change.
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
 credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
-loop in the PR body. $(codex_rule)${bump} If \`gh pr view --json mergeable\` says
+loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
-in the PR body. $(reply_sentence story)
+in the PR body. $(reply_sentence)
 EOF
-  fi
+  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
-  [[ -z "${check}" ]] || extra+="Before you ${before}, also run the epic's check from the worktree root, and make it pass: \`${check}\`"$'\n'
-  [[ "${CFG_sign_commits}" != true ]] || extra+="$(sign_rule)"$'\n'
-  [[ -z "${extra}" ]] || printf '%s' "${extra}"
-  local rules; rules="$(project_rules)"
+  [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
+  rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
-  rules_check_step "${before}" "${rules}"
+  rules_check_step "open the PR" "${rules}"
 }
 
 # rule_kinds — the kinds of the tagged rules (<!-- lesson: <kind> -->) on stdin, one per line.
@@ -2288,47 +2243,39 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" msg mode=story
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" msg
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
   case "${kind}" in
-    code|docs|chore|verify) ;;
+    code|docs|chore) ;;
     lead) die "${slug} is kind: lead — real cloud, credentials or a human step; the lead runs it, not a swarm agent" ;;
     operator) die "${slug} is kind: operator, which is now kind: lead: change it, and mark the user's step **You:**" ;;
-    *) die "${slug} has kind: ${kind}; an agent builds only code, docs, chore or verify" ;;
+    *) die "${slug} has kind: ${kind}; an agent builds only code, docs or chore" ;;
   esac
   touches_overlap "${slug}" "${strict}"   # before anything is made, so --strict leaves nothing behind
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
   role="$(story_role "${slug}")" || die "${role}"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
-  # Decided once: the epic branch below, the brief's reply (keyed on that branch) and the goal's.
-  epic="$(fm "${story}" epic)"
-  [[ "${CFG_pr_per}" != epic || -z "${epic}" ]] || mode=epic
-  # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
+  # Before the worktree exists, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
   if [[ "${CFG_goal}" == off ]]; then require_claude; else
-    goal="$(goal_condition "${slug}" "${mode}" "${src}")" || die "${goal}"
+    goal="$(goal_condition "${slug}" "${src}")" || die "${goal}"
     msg="$(goal_message "${goal}")"
     (( ${#msg} <= GOAL_SEND_MAX )) \
       || die "${slug}: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
     require_claude "${GOAL_MIN_CLAUDE}"
   fi
   base="$(base_for "${src}")"
-  from="origin/${base}"; epic_branch=""
-  if [[ "${mode}" == epic ]]; then
-    [[ -f "${BOARD}/epics/${epic}.md" ]] || die "${slug}: no epic ${BOARD}/epics/${epic}.md"
-    epic_branch="$(epic_branch_for "${src}" "${epic}" "${base}")"; from="origin/${epic_branch}"
-    add_epic_repo "${epic}" "${repo:-$(basename "${PROJECT_DIR}")}"
-  fi
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
-  git -C "${src}" worktree add -q -b "${branch}" "${wt}" "${from}"
+  git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "$(dirname "${prompt}")"
   rm -f "${prompt%.md}.goal.md"   # an earlier build's, which a goal-off retry must not keep
-  story_brief "${slug}" "${src}" "${base}" "${epic_branch}" > "${prompt}"
+  story_brief "${slug}" "${src}" "${base}" > "${prompt}"
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
+  epic="$(fm "${story}" epic)"
   start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
@@ -2432,29 +2379,6 @@ for slug, fm in sorted(fms.items()):
         print("\t".join([slug, fm.get("epic") or "none", fm.get("status") or "-",
                          ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))
 PY
-}
-
-# epic_branch_for <repo-dir> <epic> <base> — epic/<epic>, fetched from origin; pushed there from
-# <base> the first time a story of the epic is built in that repo.
-epic_branch_for() {
-  local src="$1" b="epic/$2"
-  if ! git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" 2>/dev/null; then
-    git -C "${src}" push -q origin "refs/remotes/origin/$3:refs/heads/${b}" || die "${src}: cannot push ${b}"
-    git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}"
-  fi
-  echo "${b}"
-}
-
-# add_epic_repo <epic> <repo> — list <repo> on the epic's repos: line, the repos with an epic
-# branch. It is how a fresh conductor finds the branches, and how `next` sees a stalled epic.
-add_epic_repo() {
-  local f="${BOARD}/epics/$1.md"
-  [[ " $(fm "${f}" repos) " == *" $2 "* ]] && return 0
-  awk -v r="$2" '
-    /^---$/ { n++ }
-    n == 1 && /^repos:/ { print $0 " " r; d = 1; next }
-    n == 2 && !d { print "repos: " r; d = 1 }
-    { print }' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
@@ -2596,7 +2520,7 @@ EOF
 # goal_rule_if_on — goal_rule after a blank line, or nothing with goal off.
 goal_rule_if_on() { [[ "${CFG_goal}" == off ]] || printf '\n\n%s' "$(goal_rule)"; }
 
-# pr_per = story: a PR per story.
+# A PR per story.
 conduct_story_mode() {
   local epic="$1"
   cat <<EOF
@@ -2749,15 +2673,6 @@ board() {
   return 0
 }
 
-# epic_has_open_stories <epic> — true while any story of <epic> is still on the board and not done.
-epic_has_open_stories() {
-  local s
-  while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "$1" ]] && open_item "${s}" && return 0
-  done < <(board stories)
-  return 1
-}
-
 # epic_has_stories <epic> — true when any story names <epic>.
 epic_has_stories() {
   local s
@@ -2772,8 +2687,7 @@ epic_has_stories() {
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once)
-#   conduct <epic>    an active epic has a story an agent can build, or (pr_per = epic) every story
-#                     merged into its epic branch and no PR yet
+#   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet
@@ -2825,16 +2739,6 @@ next_step() {
     [[ -n "${slug}" && "$(fm "${BOARD}/epics/${story_epic}.md" status 2>/dev/null)" == active ]] || continue
     echo "conduct ${story_epic}"; echo "${slug} is ready in the active epic ${story_epic}"; return
   done <<< "${buildable}"
-  if [[ "${CFG_pr_per}" == epic ]]; then
-    # Stories went into the epic branch (repos: says where) and none is left, but the epic is still
-    # active, not in review: its conductor stopped before the PRs. A fresh one picks it up there.
-    while IFS= read -r f; do
-      [[ "$(fm "${f}" status)" == active && -n "$(fm "${f}" repos)" ]] || continue
-      epic=$(basename "${f}" .md)
-      epic_has_open_stories "${epic}" && continue
-      echo "conduct ${epic}"; echo "every story of ${epic} is in its epic branch, and the epic has no PR yet"; return
-    done < <(board epics)
-  fi
   while read -r story_epic slug; do
     # A one-off: `read` puts the lone slug in story_epic.
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
@@ -4086,10 +3990,12 @@ PY
 # events. --ladder adds the model per role; --tree shows the agents by herdr workspace and tab in
 # place of the epics. It never writes the board, state or logs, and never opens or closes a pane.
 # --watch rebuilds it every N seconds (default 2) and repaints in place; q quits, t and l toggle the
-# tree and the ladder. Colour only on a terminal with NO_COLOR unset.
+# tree and the ladder. Colour only on a terminal with NO_COLOR unset, or as DASH_COLOR says when set.
+# Each --project <dir> (repeatable) draws that project's frame in turn (dash_frame) in place of this
+# project's, so it runs from any git repo; every dir is checked before anything is drawn.
 dash() {
-  local every="" tty=0
-  DASH_LADDER=0; DASH_TREE=0
+  local every="" tty=0 i d b c
+  DASH_LADDER=0; DASH_TREE=0; DASH_DIRS=(); DASH_LEAD_ANY=off; DASH_ENV_W="${DASH_W:-}"; DASH_ENV_H="${DASH_H:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --watch)
@@ -4098,25 +4004,47 @@ dash() {
         [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
       --ladder) DASH_LADDER=1 ;;
       --tree) DASH_TREE=1 ;;
-      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree]" ;;
+      --project) [[ -n "${2:-}" ]] || die "dash --project: name a project directory"
+                 DASH_DIRS+=("$2"); shift ;;
+      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]..." ;;
     esac
     shift
   done
   # init's marker; checked after the arguments and before any drawing, so --watch never draws an empty board either.
-  [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
-  DASH_COLOR=0
-  if [[ -t 1 ]]; then
-    tty=1
-    [[ -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
+  if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then
+    [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
+  fi
+  for ((i = 0; i < ${#DASH_DIRS[@]}; i++)); do
+    d="$(cd "${DASH_DIRS[i]}" 2>/dev/null && pwd -P)" || d=""
+    [[ -n "${d}" && -f "${d}/.claude/swarm/config" ]] \
+      || die "dash --project ${DASH_DIRS[i]}: not a swarm project (no .claude/swarm/config)"
+    c="$(SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" config)" || c=""
+    b="$(sed -n 's/^board_dir = \(.*\)    (.*)$/\1/p' <<< "${c}")"
+    [[ -n "${b}" && -f "${b}/stories/README.md" ]] || die "dash --project ${DASH_DIRS[i]}: no board at ${b}; run swarm.sh init there"
+    [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
+    DASH_DIRS[i]="${d}"
+  done
+  [[ ! -t 1 ]] || tty=1
+  # Several projects share the height only in a watch on a terminal, or when DASH_H says so: a
+  # one-shot dash, or one into a file or a pager, is never cut.
+  DASH_SHARE=0
+  if [[ ( ${tty} == 1 && -n "${every}" ) || -n "${DASH_ENV_H}" ]]; then DASH_SHARE=1; fi
+  if [[ -z "${DASH_COLOR:-}" ]]; then
+    DASH_COLOR=0
+    [[ ${tty} == 0 || -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
   fi
   dash_size
-  if [[ -z "${every}" ]]; then dash_slow; dash_render; return; fi
+  if [[ -z "${every}" ]]; then
+    [[ ${#DASH_DIRS[@]} -gt 0 ]] || dash_slow
+    dash_frame; return
+  fi
   dash_watch "${every}" "${tty}"
 }
 
 # dash_size — the terminal's columns and lines into DASH_W and DASH_H. Measured here, never in the
 # render's $(...), where there is no terminal (tput answers 80 there): stty on /dev/tty, then tput
-# on a terminal, then COLUMNS and LINES, then 100 columns and an unknown height (0).
+# on a terminal, then COLUMNS and LINES, then 100 columns and an unknown height (0). DASH_W and DASH_H
+# set in dash's environment (a parent dash's share for one project, dash_frame) win.
 dash_size() {
   local s="" c="" r=""
   s="$( { stty size </dev/tty; } 2>/dev/null)" || s=""
@@ -4129,7 +4057,76 @@ dash_size() {
   [[ "${c}" =~ ^[1-9][0-9]*$ ]] || c=100
   [[ "${r}" =~ ^[1-9][0-9]*$ ]] || r="${LINES:-}"
   [[ "${r}" =~ ^[1-9][0-9]*$ ]] || r=0
+  [[ ! "${DASH_ENV_W}" =~ ^[1-9][0-9]*$ ]] || c="${DASH_ENV_W}"
+  [[ ! "${DASH_ENV_H}" =~ ^[0-9]+$ ]] || r="${DASH_ENV_H}"
   DASH_W="${c}"; DASH_H="${r}"
+}
+
+# DASH_LEGEND_PY — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
+# few lines as w columns allow, with a watch's keys at the end under 140 columns (wide puts them in
+# the status bar). With lead = session most ! rows are the lead's queue, so the legend says so.
+DASH_LEGEND_PY='
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
+KEYWORDS = "q quit · t tree · l ladder · r redraw"
+def legend_lines(w, keys, wide, lead):
+    rows, cur = [], ""
+    for item in [l.replace("! needs you", "! needs you or the lead") if lead else l for l in LEGEND] + ([KEYWORDS] if keys and not wide else []):
+        if cur and len(cur) + 3 + len(item) > w:
+            rows.append(cur); cur = item
+        else:
+            cur = f"{cur}   {item}" if cur else item
+    rows.append(cur)
+    return rows
+'
+
+# dash_legend — the legend dash_frame draws once under several projects: legend_lines, then from 140
+# columns the keys on a line of their own; dim when DASH_COLOR is 1.
+dash_legend() {
+  SWARM_LEGEND_PY="${DASH_LEGEND_PY}" python3 -c '
+import os, sys
+exec(os.environ["SWARM_LEGEND_PY"])
+w, keys, lead, color = max(int(sys.argv[1]), 40), sys.argv[2] == "1", sys.argv[3] == "session", sys.argv[4] == "1"
+rows = legend_lines(w, keys, w >= 140, lead) + (["   " + KEYWORDS + ("" if keys else " (with --watch)")] if w >= 140 else [])
+rows = [r if len(r) <= w else r[:w - 1] + "…" for r in rows]
+print("\n".join(f"\033[2m{r}\033[0m" if color else r for r in rows))' "${DASH_W}" "${DASH_KEYS:-0}" "${DASH_LEAD_ANY}" "${DASH_COLOR}"
+}
+
+# dash_frame — one frame: this project's (after dash_slow), or with --project each project's in turn,
+# each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder
+# and no legend, then the legend once (dash_legend). With DASH_SHARE the height, less the legend's,
+# is shared out between them; with too little room for a line each the legend goes. A project whose
+# frame fails shows its error line in its place, the others are still drawn, and it returns 1. What
+# the others print to stderr follows the frames, so it never pushes a header down.
+dash_frame() {
+  if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then dash_render; return; fi
+  local d out frames="" legend rows=0 h=0 failed=0 n=${#DASH_DIRS[@]} err errs=""
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-dash.XXXXXX")" || die "dash: mktemp failed"
+  legend="$(dash_legend)"
+  if [[ ${DASH_SHARE} == 1 && ${DASH_H} -gt 0 ]]; then
+    rows=$((DASH_H - $(wc -l <<< "${legend}")))
+    [[ ${rows} -ge ${n} ]] || { legend=""; rows=${DASH_H}; }
+    h=$((rows / n))
+    # A known height is never shared down to 0, which would mean no limit.
+    [[ ${h} -gt 0 ]] || h=1
+  fi
+  set -- dash
+  [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
+  [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
+  for d in "${DASH_DIRS[@]}"; do
+    if ! out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND=0 \
+        "${SWARM_HOME}/bin/swarm.sh" "$@" 2> "${err}")"; then
+      out="$(tail -n 1 "${err}")"; out="$(basename "${d}")  could not draw: ${out#swarm: }"; failed=1
+    elif [[ -s "${err}" ]]; then
+      errs+="$(cat "${err}")"$'\n'
+    fi
+    frames+="${out}"$'\n'
+  done
+  rm -f "${err}"
+  # More projects than lines: the 1-line shares still add up to no more than the height.
+  if [[ ${h} -gt 0 ]]; then frames="$(sed -n "1,${rows}p" <<< "${frames%$'\n'}")"$'\n'; fi
+  printf '%s%s' "${frames}" "${legend:+${legend}$'\n'}"
+  printf '%s' "${errs}" >&2
+  return "${failed}"
 }
 
 # dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
@@ -4285,9 +4282,10 @@ dash_watch() {
       [[ -z "${now}" || "${now}" == "${ver}" ]] || dash_reexec "${path}/bin/swarm.sh" "${every}" "${tty}"
     fi
     [[ ${tty} == 0 ]] || dash_size
-    dash_slow   # the cache file decides whether this asks gh again
+    # The cache file decides whether this asks gh again; each project's own dash runs it for itself.
+    [[ ${#DASH_DIRS[@]} -gt 0 ]] || dash_slow
     # A failed render shows its error in the frame and the loop carries on: a watch must not die quietly.
-    if ! tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_render 2>&1)"; then
+    if ! tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_frame 2>&1)"; then
       # Keep the error line on screen: cut the rest to one line short of the terminal's height.
       [[ ${tty} == 0 || ${DASH_H} -lt 2 ]] || tpl="$(head -n $((DASH_H - 1)) <<< "${tpl}")"
       tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
@@ -4295,7 +4293,8 @@ dash_watch() {
     frame="${tpl//HH:MM:SS/$(date +%H:%M:%S)}"
     if [[ ${tty} == 0 ]]; then
       [[ "${tpl}" == "${last}" ]] || printf '%s\n\n' "${frame}"
-    elif [[ "${tpl}" != "${last}" ]]; then
+    elif [[ "${tpl}" != "${last}" || ${#DASH_DIRS[@]} -gt 1 ]]; then
+      # Several projects have a clock each, so a frame that only ticked is repainted whole, in place.
       printf '\033[H%s\033[K\033[J' "${frame//$'\n'/$'\033[K\n'}"
     else
       printf '\033[H%s\033[K' "${frame%%$'\n'*}"
@@ -4346,16 +4345,17 @@ PY
 }
 
 # dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
-# on this project (the cwd may be gone), with the tree and ladder as they stand now. exec keeps the
+# on this project (the cwd may be gone), with the tree and ladder as they stand now and every --project. exec keeps the
 # PID and skips the EXIT trap, so a terminal is restored first, in case the new script dies before
 # it enters the alternate screen again. A script that is not an executable file is ignored.
 dash_reexec() {
   [[ -f "$1" && -x "$1" ]] || return 0
-  local script="$1"
+  local script="$1" d
   [[ $3 == 0 ]] || printf '\033[?25h\033[?1049l'
   set -- dash --watch "$2"
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
+  for d in ${DASH_DIRS[@]+"${DASH_DIRS[@]}"}; do set -- "$@" --project "${d}"; done
   SWARM_PROJECT="${PROJECT_DIR}" exec "${script}" "$@"
 }
 
@@ -4433,7 +4433,7 @@ for a in agents:
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
-  DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
+  DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
@@ -4454,6 +4454,7 @@ RW = W * 2 // 5 if WIDE else 0
 LW = W - RW - 1 if WIDE else W
 COLOR = E.get("DASH_COLOR") == "1"
 KEYS = E.get("DASH_KEYS") == "1"
+FIT = KEYS or E.get("DASH_FIT") == "1"   # cut to H: a watched frame, or a height given to dash (a share of --project's)
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
 SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
@@ -4468,7 +4469,7 @@ def model_style(model, label=False):
     k = next((m for m in MODEL_COLOR if m in model.lower()), None)
     return (k + "-label" if label else k) if k else "dim"
 
-LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
+exec(E["SWARM_LEGEND_PY"])
 out = []
 
 def paint(t, s):
@@ -5016,20 +5017,13 @@ elif epic_view:
 if blocked or later:
     left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
-# The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
-KEYWORDS = "q quit · t tree · l ladder · r redraw"
-legend, cur = [], ""
-# With lead = session most ! rows are the lead's queue, so the legend says so.
-for item in [l.replace("! needs you", "! needs you or the lead") if LEAD else l for l in LEGEND] + ([KEYWORDS] if KEYS and not WIDE else []):
-    if cur and len(cur) + 3 + len(item) > W:
-        legend.append(cur); cur = item
-    else:
-        cur = f"{cur}   {item}" if cur else item
-legend.append(cur)
-foot = [fit([(cut(l, W), "dim")], W) for l in legend]
+# The legend; from 140 columns the keys go to the status bar. DASH_LEGEND=0 (a --project frame,
+# whose legend dash_frame draws once under them all) leaves the legend and the keys out.
+LEGEND_ON = E.get("DASH_LEGEND") != "0"
+foot = [fit([(cut(l, W), "dim")], W) for l in legend_lines(W, KEYS, WIDE, LEAD)] if LEGEND_ON else []
 if WIDE:
-    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call),
-                  (("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])], W)
+    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
+                 + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
 
 # Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
 # column; from 140 they are the right column, the ladder on top.
@@ -5052,10 +5046,11 @@ else:
         room = max(5, room)
     if room > 0:
         out += recent_box(W, room)
-if KEYS and H:
-    out = out[:max(H - len(foot), 0)]   # a watched frame never scrolls the screen
+if FIT and H:
+    # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
+    out = out[:max(H - len(foot), 1)]
 out += foot
-if KEYS and H:
+if FIT and H:
     out = out[:H]
 print("\n".join(l.rstrip() for l in out))
 PY
@@ -5197,7 +5192,7 @@ escalate_story() {
   if [[ -n "${when}" ]]; then
     text+="- It was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
   else
-    text+="- Re-scope the story, then run \`swarm.sh reset $1 <reason>\`, which ${put} while it still says \`kind: lead\` (a kind you set yourself stays), and clears \`attempts:\`. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the re-scope as a board PR first (with pr_per = epic, then merge the base into epic/<epic>), then reset and pull the board in one go. At most one reset per story: after a second failed escalate build, drop it."$'\n'
+    text+="- Re-scope the story, then run \`swarm.sh reset $1 <reason>\`, which ${put} while it still says \`kind: lead\` (a kind you set yourself stays), and clears \`attempts:\`. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the re-scope as a board PR first, then reset and pull the board in one go. At most one reset per story: after a second failed escalate build, drop it."$'\n'
     text+="- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
   fi
   k="$(lead_block "$1" "${text}" "$3")"
@@ -5212,7 +5207,7 @@ escalate_story() {
 impossible_story() {
   local when choice none=""
   when="$(reset_at "$1")"
-  choice="- Re-scope its **Done when** (the judge called it impossible from the builder's session), then run \`swarm.sh reset $1 <reason>\`, which puts its kind back so it is built again. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the re-scope as a board PR first (with pr_per = epic, then merge the base into epic/<epic>), then reset and pull the board in one go."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
+  choice="- Re-scope its **Done when** (the judge called it impossible from the builder's session), then run \`swarm.sh reset $1 <reason>\`, which puts its kind back so it is built again. When the board is in the story's repo, a builder reads the story from the branch it starts from: merge the re-scope as a board PR first, then reset and pull the board in one go."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR."
   [[ -z "${when}" ]] || choice="- It was reset once already (${when}), and \`swarm.sh reset\` refuses a second, so drop it: run \`swarm.sh drop $1 <reason>\`, and put a re-scoped **Done when** in a new story if it is still wanted."
   [[ "$3" == 1 ]] || none="swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo."
   lead_block "$1" "**Impossible.** The builder replied \`IMPOSSIBLE:\`, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"${choice}" "$2" "${none}" >/dev/null
@@ -5233,8 +5228,8 @@ held_story() {
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
 # kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
-# and every PR in <prs> (failed_build's gh list), or [none] when <prs> has
-# none (by default, that no PR was found). Prints how many PRs it named.
+# and every PR in <prs> (failed_build's gh list), or [none] when <prs> has none (by default, that no
+# PR was found). Prints how many PRs it named.
 lead_block() {
   local f="${BOARD}/stories/$1.md" from urls k=0
   from="$(get_fm "${f}" kind)"
@@ -5253,20 +5248,17 @@ lead_block() {
 }
 
 # failed_build <name> — succeed when closing <name> ends a failed build, and print gh's list of the
-# PRs on story/<name> (nothing with pr_per = epic, whose epic stories have none): <name> is a story
-# on the board, still ready, of kind code, docs or chore, whose builder this project has open in herdr
-# under that name (not closed by hand, not already retired), and none of its PRs merged or is open with
-# auto-merge set: with merge = agent a close that comes before the board is pulled, or while the merge
-# waits on auto-merge, finds the story still ready, so only the PR tells. One gh call answers both;
-# when it fails, nothing is counted or cleared, and stderr says so.
+# PRs on story/<name>: <name> is a story on the board, still ready, of kind code, docs or chore,
+# whose builder this project has open in herdr under that name (not closed by hand, not already
+# retired), and none of its PRs merged or is open with auto-merge set: with merge = agent a close
+# that comes before the board is pulled, or while the merge waits on auto-merge, finds the story still
+# ready, so only the PR tells. One gh call answers both; when it fails, nothing is counted or cleared,
+# and stderr says so.
 failed_build() {
   local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging
   [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
-  # A verify story has no PR, so nothing here tells its pass from a failure: its close never counts.
   case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
   [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
-  # The conductor finishes an epic's story before closing it, so a ready one never merged.
-  [[ "${CFG_pr_per}" == epic && -n "$(fm "${f}" epic)" ]] && return 0
   src="$(repo_dir "$(fm "${f}" repo)")" \
     || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; return 1; }
   if ! url="$(git -C "${src}" remote get-url origin)" \
