@@ -6,6 +6,7 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its HLD; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or (merge = human) a green PR in review; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
@@ -6079,10 +6080,145 @@ for t in json.load(sys.stdin)['result']['tabs']:
   done
 }
 
-# wait_command [--stall | --until-report] <name> [timeout-ms] — the wait command: a conductor's wait,
-# with no timeout under --until-report, or any other agent's.
+LEAD_POLL="${SWARM_LEAD_POLL:-30}"    # seconds between wait --lead's reads of the board, at least 1
+# wait --lead's own files, kept out of STATE_DIR, whose files close reads as tab records.
+LEAD_DIR="${PROJECT_DIR}/.swarm/lead"
+LEAD_SEEN="${LEAD_DIR}/seen"          # the lead's queue at wait --lead's last read, kept across runs
+LEAD_GREEN="${LEAD_DIR}/green"        # "<PR URL> <sha>" per head ci_gate passed, so it runs once per head
+LEAD_PID="${LEAD_DIR}/pid"            # the running wait --lead, which a new one takes over from
+
+# heads_green <pr-url>... — 0 when there is at least one PR and every one's head is green, 1 when one is
+# not or a URL is not a PR, 2 when none is red but gh or ci_gate could not read one. ci_gate head is
+# skipped for a head LEAD_GREEN holds, setting LEAD_CACHED, unless LEAD_FRESH is set; each green head
+# goes to LEAD_GREEN.new. A red or pending head is read again each time: a re-run can turn it green
+# with no new SHA.
+heads_green() {
+  local url repo head rc=0 g
+  LEAD_CACHED=""
+  [[ $# -gt 0 ]] || return 1
+  for url in "$@"; do
+    [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 1
+    repo="${BASH_REMATCH[1]}"
+    head="$(gh pr view "${BASH_REMATCH[2]}" --repo "${repo}" --json headRefOid --jq .headRefOid </dev/null 2>/dev/null)" || head=""
+    [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || { rc=2; continue; }
+    if [[ -z "${LEAD_FRESH:-}" ]] && grep -qxF "${url} ${head}" "${LEAD_GREEN}" 2>/dev/null; then
+      LEAD_CACHED=1
+    else
+      g=0; ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || g=$?
+      [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 ]] || return 1; rc=2; continue; }
+    fi
+    echo "${url} ${head}" >> "${LEAD_GREEN}.new"
+  done
+  return "${rc}"
+}
+
+# lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
+# for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human
+# `merge: <slug> <PR URL>...` for a story or epic in review (waiting_on_user) whose every PR head is green.
+# A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
+lead_queue() {
+  local f held line slug prs rc urls=""
+  while IFS= read -r f; do
+    held="$(get_fm "${f}" held_for)"
+    if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
+    elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
+  done < <(board stories)
+  [[ "${CFG_merge}" == human ]] || return 0
+  : > "${LEAD_GREEN}.new"
+  # waiting_on_user's last line has no newline.
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" == "  awaiting your merge: "* ]] || continue
+    line="${line#  awaiting your merge: }"; line="${line#epic }"
+    slug="${line%% *}"; prs="${line#"${slug}"}"; line="merge: ${slug}${prs}"; rc=0; urls+="${prs}"
+    # shellcheck disable=SC2086 # prs: is a space-separated list of URLs
+    heads_green ${prs} || rc=$?
+    if [[ ${rc} -eq 0 && -n "${LEAD_CACHED}" ]] && ! grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; then
+      # About to wake the lead: a cached head can have gone red on a re-run since, so read each one again.
+      # shellcheck disable=SC2086 # as above
+      LEAD_FRESH=1 heads_green ${prs} || rc=$?
+    fi
+    if [[ ${rc} -eq 0 ]] || { [[ ${rc} -eq 2 ]] && grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; }; then echo "${line}"; fi
+  done < <(waiting_on_user)
+  # A green head this read did not reach (gh failed, or an earlier PR of its item was red) stays cached
+  # while its PR is still in review.
+  touch "${LEAD_GREEN}"
+  awk -v keep="${urls} " 'FILENAME == ARGV[1] { if (!($1 in got)) print; got[$1] = 1; next }
+    !($1 in got) && index(keep, " " $1 " ") { print }' "${LEAD_GREEN}.new" "${LEAD_GREEN}" > "${LEAD_GREEN}.tmp"
+  mv "${LEAD_GREEN}.tmp" "${LEAD_GREEN}"; rm -f "${LEAD_GREEN}.new"
+}
+
+# lead_wake [quiet] — read the lead's queue once and save it as LEAD_SEEN. Print each item that was not in
+# LEAD_SEEN before and log `lead-woken <slug>` for it; true when there was one. quiet only saves.
+lead_wake() {
+  local now line new=""
+  now="$(lead_queue)"
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || new+="${line}"$'\n'
+  done <<< "${now}"
+  printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
+  [[ -z "${1:-}" && -n "${new}" ]] || return 1
+  while IFS= read -r line; do
+    echo "${line}"; line="${line#*: }"; record_event lead-woken "${line%% *}"
+  done <<< "${new%$'\n'}"
+}
+
+# lead_holder — the pid in LEAD_PID when it is a live wait --lead, else nothing.
+lead_holder() {
+  local pid
+  pid="$(cat "${LEAD_PID}" 2>/dev/null)" || return 0
+  if [[ "${pid}" =~ ^[0-9]+$ ]] && ps -p "${pid}" -o command= 2>/dev/null | grep -q -- 'swarm.sh wait --lead'; then echo "${pid}"; fi
+}
+
+# lead_lock — make this run the one wait --lead: stop any live holder of LEAD_PID (an earlier run, whose
+# output may go unread), then link a file holding $$ into place, so LEAD_PID is never seen half written.
+# The pid file goes on exit, only while it still names this run.
+lead_lock() {
+  local pid tmp i
+  mkdir -p "${LEAD_DIR}" || die "wait --lead: cannot make ${LEAD_DIR}"
+  tmp="${LEAD_PID}.$$"
+  echo "$$" > "${tmp}" || die "wait --lead: cannot write ${tmp}"
+  until ln "${tmp}" "${LEAD_PID}" 2>/dev/null; do
+    [[ -e "${LEAD_PID}" ]] || { rm -f "${tmp}"; die "wait --lead: cannot write ${LEAD_PID}"; }
+    pid="$(lead_holder)"
+    if [[ -n "${pid}" ]]; then
+      echo "swarm: wait --lead: stopping the earlier run (pid ${pid}); this one watches now" >&2
+      kill "${pid}" 2>/dev/null || true
+      for ((i = 0; i < 50; i++)); do [[ -n "$(lead_holder)" ]] || break; sleep 0.1; done
+      [[ -z "$(lead_holder)" ]] || { rm -f "${tmp}"; die "wait --lead: the earlier run (pid ${pid}) did not stop"; }
+    fi
+    # Gone, or stale: free the name, unless another new run took it in the meantime.
+    [[ -n "$(lead_holder)" ]] || rm -f "${LEAD_PID}"
+  done
+  rm -f "${tmp}"
+  trap '[[ "$(cat "${LEAD_PID}" 2>/dev/null)" != "$$" ]] || rm -f "${LEAD_PID}"' EXIT
+}
+
+# wait_lead [timeout-ms] — wait --lead: one run at a time, the newest (lead_lock). It reads the lead's
+# queue every LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not
+# (lead_wake). The first read of a run reports what landed since the last run; with no LEAD_SEEN yet
+# it only notes the queue. At the timeout (default an hour) it fails with nothing printed. It nudges no
+# one and edits no board file.
+wait_lead() {
+  local timeout="${1:-3600000}" start left
+  [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
+  timeout=$((10#${timeout}))   # 090000 is not octal
+  [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
+  lead_lock
+  start=${SECONDS}
+  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else lead_wake quiet || true; fi
+  while (( (SECONDS - start) * 1000 < timeout )); do
+    left=$(( (timeout + 999) / 1000 - (SECONDS - start) ))
+    sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))
+    ! lead_wake || return 0
+  done
+  return 1
+}
+
+# wait_command [--stall | --until-report] <name> [timeout-ms] | --lead [timeout-ms] — the wait command:
+# a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's (wait_lead).
 wait_command() {
   local stall until n
+  [[ "${1:-}" != --lead ]] || { wait_lead "${2:-}"; return; }
   require_herdr; stall=""; until=""
   case "${1:-}" in --stall) stall=--stall; shift ;; --until-report) until=1; shift ;; esac
   n="$(agent_name "${1:?name}")"
