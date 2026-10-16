@@ -2446,8 +2446,8 @@ review_agent() {
   src="$(repo_dir "$(fm "${story}" repo)")" || die "${slug}: ${src}"
   wt="$(worktree_for "${src}" "${slug}")"
   [[ -d "${wt}" ]] || die "${slug}: no worktree at ${wt}: review-agent reviews a story built here"
-  head="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid 2>/dev/null)" && [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
-    || die "review-agent: could not read ${pr}'s head (gh pr view --json headRefOid)"
+  head="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid 2>/dev/null)" || head=""
+  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || die "review-agent: could not read ${pr}'s head (gh pr view --json headRefOid)"
   at="$(git -C "${wt}" rev-parse HEAD)"
   [[ "${at}" == "${head}" ]] \
     || die "review-agent: ${slug}'s worktree is at ${at}, not the PR's head ${head}; nothing was started: wait for its builder, then start the review again"
