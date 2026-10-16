@@ -8,7 +8,7 @@ The board is the directory `swarm.sh config board_dir` prints (`docs/` unless th
 is inside it.
 
 Scope the epic `$1` into stories. Run it as a swarm so the user can watch every agent; do not
-decompose it yourself in one pass. Requires herdr (`HERDR_ENV=1`); if not inside herdr, say so and
+decompose it yourself in one pass, except for a small epic (step 0). Requires herdr (`HERDR_ENV=1`); if not inside herdr, say so and
 stop. If `$1` is empty, list `docs/epics/*.md` (not the README) and ask which. If the epic does not
 exist, help the user write it from `docs/epics/README.md` first.
 
@@ -33,10 +33,11 @@ Read-only — write nothing except your output file, never commit, never touch r
 credentials. Cite evidence as file:line. Keep free text short.*
 
 **0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
-planned by the lead alone: you write the stories, run one `swarm.sh codex-review` pass over them,
-and report as below. Skip steps 1 to 3, and start no agent. A larger or riskier epic gets the full run.
+planned by the lead alone: you write the stories in a board-PR worktree (`swarm.sh board-pr start scope-$1`),
+not the main checkout, run one `swarm.sh codex-review` pass over them there so codex sees them, and report
+as below, asking before you open the PR. Skip steps 1 to 3, and start no agent. A larger or riskier epic gets the full run.
 
-**1. Survey** — role `survey`, in parallel: one agent when the epic names one repo, three otherwise (one, when a survey already exists; see below). Output `{summary, facts:[{fact, evidence}]}`.
+**1. Survey** — role `survey`, in parallel: one agent (lands, constraints and overlaps together) unless the epic spans more than one repo (its stories' `repo:` or `touches` name another), three then (one, when a survey already exists; see below). Output `{summary, facts:[{fact, evidence}]}`.
 - `survey-lands`: where the change lands — packages, functions, tests, fixtures, golden files,
   and which existing tests must change.
 - `survey-constraints`: the project's ADRs, policies, safety rules and
@@ -68,9 +69,9 @@ Code that adds a flag or setting ships with it off, so merging the code changes 
 it on is a separate `lead` story with its own PR. A PR that both adds code and switches it on cannot
 tell you which of the two broke something, and cannot be rolled back one half at a time.
 
-**3. Verify** — in parallel, a chain at most 3 deep (the skeptic flags a longer one):
-- one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked).
-  It tries to refute the story: wrong about the code, too big for one PR, an unstated dependency,
+**3. Verify** — in parallel, a chain at most 3 deep (a skeptic flags a longer one):
+- one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph.
+  It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR, an unstated dependency,
   a `touches` clash inside its wave, a `done_when` that passes while the work is broken, or a wrong `kind` (an agent story that needs
   real cloud, credentials or a person).
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
@@ -91,4 +92,5 @@ when set, `status: ready`, or `blocked` with `depends_on` and no other blocker l
 high; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and
-`swarm.sh log-finding --declined <reason> --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when it did not. Waves are then built with `swarm.sh story <slug>`.
+`swarm.sh log-finding --declined <reason> --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when it did not.
+The kind is a short kebab-case name for the class of mistake, and `<reason>` is `out-of-scope`, `nit` or `wrong`. Waves are then built with `swarm.sh story <slug>`.
