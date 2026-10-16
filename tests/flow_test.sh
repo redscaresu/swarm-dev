@@ -6,7 +6,8 @@
 # 10:00Z (gh stub), gets a review-agent event at 10:20Z. Epic e2's one story e has a PR created at
 # 10:00Z and only a tell:findings at 10:50Z, so its wait is a proxy. Three stacked events, the last
 # after --until's date. Epic e3's story g was built twice: PR #3 (14:10Z) got no review before the
-# retry's PR #4 (15:10Z), whose review-agent at 15:20Z is #4's alone. Epic e4's h, closed on 10-03,
+# retry's PR #4 (15:10Z), whose review-agent at 15:20Z is #4's alone. The first build was never
+# closed, so it ends at its session log's last entry (14:30Z), not at the retry's close (15:30Z). Epic e4's h, closed on 10-03,
 # runs past --until 2026-10-02 to its cutoff, so it overlaps i on 10-02. TZ is UTC, so a build with no session log starts at a known time.
 set -euo pipefail
 export TZ=UTC
@@ -50,6 +51,7 @@ printf '%s\n' \
   $'2026-10-01T10:50:00Z\ttell:findings\te\tw:1\tok' \
   $'2026-10-01T11:00:00Z\tclose:met\ta\tw:1\tok' \
   $'2026-10-01T15:20:00Z\treview-agent\tg\tw:1\tok' \
+  $'2026-10-01T15:30:00Z\tclose\tg\tw:1\tok' \
   $'2026-10-03T09:00:00Z\tstacked\td\tw:1\tok' \
   $'2026-10-03T09:00:00Z\tclose\th\tw:1\tok' > "${P}/.swarm/events.tsv"
 # gh: pr list answers a's, e's and g's heads; pr view answers each PR's createdAt (#3 at 14:10, #4 at 15:10).
@@ -80,6 +82,18 @@ check "--since keeps the builds and events from its date" \
 check "flow and features add no line to events.tsv" "$(run features >/dev/null; cat "${P}/.swarm/events.tsv")" "${before}"
 check "a bad flag prints the usage" "$(run flow --until yesterday 2>&1 || true)" \
   "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+# A second project, in UTC-7: epic `all` (j) is an epic beside the project row; j's agents.tsv day is
+# --until's (local), but its session starts at 03:00Z the next UTC day, still inside the local cutoff;
+# k's agents.tsv date does not parse and it has no session log, so it is left out.
+Q="${dir}/q"; mkdir -p "${Q}/.swarm" "${Q}/docs/stories"; git -C "${Q}" init -q
+printf -- '---\nkind: code\nstatus: ready\nepic: all\n---\n' > "${Q}/docs/stories/j.md"
+printf '{"cwd":"%s/q-wt/j","timestamp":"2026-10-03T03:00:00Z"}\n{"timestamp":"2026-10-03T03:30:00Z"}\n' "${dir}" > "${dir}/projects/p/sj.jsonl"
+printf '%s\n' $'2026-10-02\tcode\tj\tclaude\topus\thigh\tsj' $'2026-10-01x\tcode\tk\tclaude\topus\thigh\t-' > "${Q}/.swarm/agents.tsv"
+check "an epic named all keeps its row; a build late on --until's local day counts; a bad date is left out" \
+  "$(cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT TZ=America/Los_Angeles CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+    bash "${SWARM}" flow --until 2026-10-02 2>&1)" "${H}"$'
+all\t1\t1.00\t1\t1\t1\t1.0\t\t\t0
+all\t1\t1.00\t1\t1\t1\t1.0\t\t\t0'
 for gone in decisions export; do
   out="$(run "${gone}" 2>&1)" && code=0 || code=$?
   check "${gone} is gone: it exits non-zero printing the usage" "${code} $(grep -c 'swarm.sh flow' <<< "${out}")" "2 1"

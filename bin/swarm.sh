@@ -1300,9 +1300,10 @@ PY
 # the project, over the outcomes rows dated in the window and the ok events.tsv lines in it. builds;
 # builders_mean and builders_max, how many builds ran at once, time-weighted over the span from the
 # first build's start to the last one's end: a build runs from its outcomes started (00:00 local on
-# its agents.tsv day without one) to its first close after that, else its session log's last entry,
-# and never past --until's day; stories (its builds' slugs), the longest depends_on chain among them
-# (read with story_text, so merged stories count) and stories_per_chain; review_wait_min, the mean
+# its agents.tsv day without one) to its first close after that and before its slug's next build,
+# else its session log's last entry, and never past --until's local midnight; stories (its builds'
+# slugs), the longest depends_on chain among them (read with story_text, so merged stories count)
+# and stories_per_chain; review_wait_min, the mean
 # minutes from each PR's createdAt (gh) to the first review-agent event for its slug (before the
 # slug's next PR, if a retry opened one); for a PR with
 # none, proxy_review_wait_min, the same to its first tell:findings or review, which marks a review's
@@ -1365,17 +1366,21 @@ table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
 rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
 agents = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
 agents = [f for f in agents if len(f) == 7 and f[1] in roles.split()]
-stop = secs(until + "T00:00:00Z") + 86400
-groups = collections.defaultdict(list, all=[])
-for r, a in zip(rows, agents):
+# Local midnight after --until, as agents.tsv dates and a log-less build's start are local.
+stop = (datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp()
+# A build whose start does not parse (a damaged agents.tsv date and no session log) is left out.
+built = [(r, a, t) for r, a in zip(rows, agents) for t in [secs(r["started"] or r["date"] + "T00:00:00")] if t is not None]
+project, groups = [], collections.defaultdict(list)   # apart, so an epic named all is still an epic
+for r, a, start in built:
     if not since <= r["date"] <= until:
         continue
-    start = secs(r["started"] or r["date"] + "T00:00:00")
+    # Its first close before the slug's next build starts: a build never closed must not take its retry's.
+    upto = min((t for o, _, t in built if o["slug"] == r["slug"] and t > start), default=float("inf"))
     names = (r["slug"], a[2])
-    end = min((t for t, x in closes if x in names and t >= start), default=None)
+    end = min((t for t, x in closes if x in names and start <= t < upto), default=None)
     end = end or last_entry(session_log(projects, a[6], archive))
     b = {"slug": r["slug"], "pr": r["pr"], "start": start, "end": min(end, stop) if end else None}
-    groups["all"].append(b)
+    project.append(b)
     if r["epic"]:
         groups[r["epic"]].append(b)
 
@@ -1420,19 +1425,20 @@ def waits(bs):
 
 print("epic\tbuilds\tbuilders_mean\tbuilders_max\tstories\tlongest_chain\tstories_per_chain"
       "\treview_wait_min\tproxy_review_wait_min\tstacked")
-for g in sorted(groups, key=lambda g: (g == "all", g)):
-    bs = groups[g]
+for g, bs in sorted(groups.items()) + [(None, project)]:
     slugs = {b["slug"] for b in bs}
     n = chain(slugs)
-    stacked = sum(1 for _, c, x in evs if c == "stacked" and (g == "all" or x in slugs))
-    print("\t".join([g, str(len(bs)), *running(bs), str(len(slugs)), str(n), f"{len(slugs) / n:.1f}" if n else "",
+    stacked = sum(1 for _, c, x in evs if c == "stacked" and (g is None or x in slugs))
+    print("\t".join([g or "all", str(len(bs)), *running(bs), str(len(slugs)), str(n), f"{len(slugs) / n:.1f}" if n else "",
                      *waits(bs), str(stacked)]))
 PY
 }
 
 # features [--since YYYY-MM-DD] — FEATURES_FILE joined with this project's logs: per feature, its uses
 # since --since (default the last 30 days), its metric and its baseline, and `delete?` for a feature
-# with no metric, or with logged uses and none in the last 30 days. A use is an events.tsv line of an
+# with no metric, or with logged uses and none in the last 30 days. A feature still settling in is never
+# stale: one whose landed date is within the last 30 days, or whose landed is an epic (neither a date
+# nor a #PR), which has not finished. A use is an ok events.tsv line of an
 # `event:<command>` (or <command>:<anything>), an agents.tsv line of a `role:<role>` or
 # `agent:<name>`, or a findings.tsv row of a `reviewer:<who>`. An `unlogged: <why>` feature (a
 # read-only command leaves no events line) shows `-` and is judged on its metric alone. It writes nothing.
@@ -1443,7 +1449,7 @@ features_report() {
   [[ -f "${FEATURES_FILE}" ]] || die "no feature list at ${FEATURES_FILE}"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${FEATURES_FILE}" "${AGENTS_LOG}" \
     "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" <<'PY'
-import datetime, os, sys
+import datetime, os, re, sys
 exec(os.environ["SWARM_REPORT_PY"])
 features, agents, events, findings, since = sys.argv[1:6]
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
@@ -1452,7 +1458,7 @@ def rows(path):
     return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []
 
 # (source, name, day) for every use the logs hold.
-uses = [("event", f[1], f[0][:10]) for f in rows(events) if len(f) == 5]
+uses = [("event", f[1], f[0][:10]) for f in rows(events) if len(f) == 5 and f[4].startswith("ok")]
 uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
 uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
 
@@ -1466,11 +1472,12 @@ def count(sources, after):
 
 print("feature\tuses\tmetric\tbaseline\tverdict")
 for f in rows(features)[1:]:
-    feature, _, metric, baseline, sources = (f + [""] * 5)[:5]
+    feature, landed, metric, baseline, sources = (f + [""] * 5)[:5]
     if not feature:
         continue
     unlogged = sources.startswith("unlogged:")
-    stale = not unlogged and count(sources, recent) == 0
+    settled = landed < recent if re.fullmatch(r"\d{4}-\d{2}-\d{2}", landed) else landed.startswith("#")
+    stale = settled and not unlogged and count(sources, recent) == 0
     print("\t".join([feature, "-" if unlogged else str(count(sources, since or recent)), metric, baseline,
                      "delete?" if not metric.strip() or stale else ""]))
 PY
