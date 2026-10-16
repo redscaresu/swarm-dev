@@ -34,7 +34,10 @@ The throughput numbers come from `swarm.sh outcomes` and git:
   - **Incidents:** swarm.sh logs an `incident` event for a reconcile pull that fails, a `wait` that times out, an agent stopped on a login, a merge that the guard hook blocks, a codex usage limit, and a builder that went idle with no PR. `flow` counts them per day by kind.
   - **Lead queue wait:** for each held, escalated or awaiting-merge item, the minutes between entering the lead's queue and leaving it, as a median and maximum per day.
   - **Rework:** a merged PR that a later PR fixes within 7 days (the later PR names it, or `log-finding --reviewer escaped` points at it) counts against the first PR's story, model and reviewer in `review-yield`.
-- **`dash --project` runs from any directory.** Today it fails with "not in a swarm project" unless the shell is inside a project (the user hit it on 2026-10-17). When every frame is named with `--project`, dash needs no project around the current directory. A test runs it from a temp dir.
+- **`dash --project` runs from any directory.** Today it fails with "not in a swarm project" unless the shell is inside a project (the user hit it on 2026-10-17). When every frame is named with `--project`, dash needs no project around the current directory. A test runs it from a temp dir. Three more dash defects, seen on 2026-10-17 at 00:57, are fixed with it, each with a test:
+  - swarm-dev's frame read "0 agents working" while `swarm.sh status` listed the conductor and a builder working.
+  - Both frames showed the same "$80.60 today", so the cost is not per project.
+  - "active epics with no open story" listed two epics that are unplanned and waiting on their dependencies, which reads as finished. dash names them as waiting on the epics they depend on.
 - **init sets up a new project like infrafactory.** `swarm.sh init` writes a CI board-only fast path, a pre-commit hook that runs the project's `check`, and an optional `commit_trailers` config line that builders add to every commit. A test runs init on an empty repo and checks each one.
 
 **Out of scope:** remote or cloud-hosted agents, and a web UI beyond `dash`.
