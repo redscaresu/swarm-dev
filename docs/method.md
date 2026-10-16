@@ -107,8 +107,8 @@ lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seco
 (`held_for:`), an escalated one, or, with `merge = human`, a story or epic in review whose PR heads
 are all green. It prints one line per item and logs one `lead-woken` line for each in events.tsv.
 The lead handles each line at once and starts it again. It keeps what it last saw in
-`.swarm/state/lead-seen`, so an item that lands between two runs wakes the next one, and only one
-runs at a time. It never nudges an agent and never edits the board.
+`.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
+any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
 
 ## Writing the HLD
 

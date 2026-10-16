@@ -58,8 +58,8 @@ Repeat until a step below says stop:
      `merge: <slug> <PR URL>` line, tell the user the PR waits on their merge. Then start
      `wait --lead` again. The conductor's `wait --until-report` keeps running throughout. If
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
-     time: if it stops at once saying it is running already, the earlier one still watches, so
-     leave it. A new run first reports anything that landed while none was running.
+     time: a new one stops the earlier one, which then ends with nothing printed; that needs
+     nothing from you. A new run first reports anything that landed while none was running.
 
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
