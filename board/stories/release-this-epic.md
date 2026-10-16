@@ -1,9 +1,9 @@
 ---
 kind: lead
 status: blocked
-blocked_by: [plan-during-review-and-release]
+blocked_by: [plan-during-review-and-release, merge-holds-costs-money, reconcile-always-pulls]
 epic: leaner-faster-swarm
-depends_on: [plan-during-review-and-release]
+depends_on: [plan-during-review-and-release, merge-holds-costs-money, reconcile-always-pulls]
 touches: []
 ---
 
