@@ -3090,7 +3090,7 @@ is_escalated() { [[ "$(fm "$1" status)" == ready && "$(fm "$1" kind)" == lead &&
 
 # costs_money <item-file> — true when its front matter says costs: money (quoted or with a comment
 # too): merging its PR can spend money, so only the user merges it, under merge = agent as well.
-costs_money() { [[ "$(fm "$1" costs)" == *money* ]]; }
+costs_money() { [[ "$(get_fm "$1" costs)" == *money* ]]; }
 
 # impossible_block <story-file> — true when the story's lead block is impossible_story's.
 impossible_block() {
