@@ -101,7 +101,7 @@ Repeat until a step below says stop:
      `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
      `agent`, read the head SHA again once review passes; if it moved from the one you noted, review
      the new head. Then run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
-     reviewed> <PR URL>`, never a bare `gh pr merge`. Run it in the background (Bash
+     reviewed> <PR URL>`, the only route: never `gh pr merge` or `gh api`. Run it in the background (Bash
      `run_in_background`) and wait for it, as with codex-review: it can wait 30 minutes for CI on the
      base, longer than a foreground Bash call lasts, and killed after the merge it never runs
      reconcile. It merges that head by the literal PR number with `--match-head-commit`, never
