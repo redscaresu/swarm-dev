@@ -3865,7 +3865,7 @@ tests = [  # (path pattern, pattern whose group n is the test name)
 path, names, end = "", [], None
 for line in sys.stdin.read().splitlines():
     if line.startswith("+++ "):
-        path, end = line[4:].removeprefix("b/"), None
+        path, end = line[4:], None  # b/<path>: each pattern ends at $ or starts at (^|/)
     elif line.startswith("@@"):
         end = None  # ponytail: a hunk that opens inside a heredoc reads its fixture as tests
     elif line[:1] in ("+", " "):
