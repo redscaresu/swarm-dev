@@ -10,10 +10,10 @@
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
+#   swarm.sh features [--since YYYY-MM-DD]                  each feature in docs/features.tsv: its uses in the logs, its metric and baseline, and delete? when unused or unmeasured
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
-#   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
+#   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]  per epic and project: builders at once, stories per chain, review wait, stacked starts
 #   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
-#   swarm.sh export [--since YYYY-MM-DD] [--format jsonl|tsv]  one row per build attempt for training a router: ids, enums, numbers, UTC times and PR URLs, no free text
 #   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -1296,77 +1296,183 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged), c in zip(rows, f
 PY
 }
 
-# decisions [--since YYYY-MM-DD] — one JSON object per line for each decision the logs record, for
-# training a decision model: decision (model_choice, retry, finding_accept, nudge, close), time,
-# subject, context, options, chosen and outcome (the build's row in `outcomes`: merged, PR, every
-# tells* column it prints, fixed findings, attempts, cost). A builder's context is its story as committed to the board by the
-# end of its start day. What the logs do not hold is null, never guessed. It writes nothing.
-decisions_report() {
-  local since="" rows=""
-  [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
-    || die "usage: swarm.sh decisions [--since YYYY-MM-DD]"
-  [[ -z "${1:-}" ]] || since="$2"
+# flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] — throughput: one TSV row per epic, then `all` for
+# the project, over the outcomes rows dated in the window and the ok events.tsv lines in it. builds;
+# builders_mean and builders_max, how many builds ran at once, time-weighted over the span from the
+# first build's start to the last one's end: a build runs from its outcomes started (00:00 local on
+# its agents.tsv day without one) to its first close after that, else its session log's last entry,
+# and never past --until's day; stories (its builds' slugs), the longest depends_on chain among them
+# (read with story_text, so merged stories count) and stories_per_chain; review_wait_min, the mean
+# minutes from each PR's createdAt (gh) to the first review-agent event for its slug (before the
+# slug's next PR, if a retry opened one); for a PR with
+# none, proxy_review_wait_min, the same to its first tell:findings or review, which marks a review's
+# end, so the two are never averaged together; and stacked, the stacked events for its slugs (all of
+# them on the `all` row). A PR gh cannot read counts in neither wait. It writes nothing.
+flow_report() {
+  local since="" until="" rows="" deps="" created="" slug url got usage="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
+      --until) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; until="$2"; shift 2 ;;
+      *) die "${usage}" ;;
+    esac
+  done
+  since="${since:-0000-00-00}"; until="${until:-9999-12-30}"
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" \
-    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${BUILDER_ROLES}" "${BOARD}" <<'PY'
-import json, os, subprocess, sys
+  while IFS= read -r slug; do
+    [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+    deps+="${slug}"$'\t'"$(story_text "${slug}" | sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
+  done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
+  while IFS= read -r url; do
+    [[ "${url}" == https://* ]] || continue
+    got="$(gh pr view "${url}" --json createdAt --jq .createdAt 2>/dev/null)" || got=""
+    created+="${url}"$'\t'"${got}"$'\n'
+  done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $15 }' <<< "${rows}" | sort -u)"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_CREATED="${created}" python3 - \
+    "${AGENTS_LOG}" "${EVENTS_LOG}" "${since}" "${until}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" <<'PY'
+import collections, datetime, json, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, events, findings, since, roles, board = sys.argv[1:7]
+log, events, since, until, roles, projects, archive = sys.argv[1:8]
 
-def outcome(r):
-    # Read by column name, so the tells columns are whichever outcomes prints (one or one per kind).
-    o = {"merged": r["pr_state"] == "MERGED" if r["pr_state"] else None, "pr": r["pr"] or None,
-         "findings": int(r["findings_fixed"]) if r["pr"] else None, "attempts": int(r["attempts"]),
-         "cost_usd": float(r["cost_usd"]) if r["cost_usd"] else None}
-    o.update({k: int(v) for k, v in r.items() if k.startswith("tells")})
-    return o
+def secs(t):
+    # A time in epoch seconds (local when it names no zone); None when it does not parse.
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
-def story_at(slug, day):
-    # The story's last committed version on or before <day>; None when git has none.
-    got = subprocess.run(["git", "-C", board, "log", "-1", "--format=%H", "--diff-filter=d", f"--until={day} 23:59:59",
-                          "--", f"stories/{slug}.md"], capture_output=True, text=True)
-    c = got.stdout.strip() if got.returncode == 0 else ""
-    shown = subprocess.run(["git", "-C", board, "show", f"{c}:./stories/{slug}.md"], capture_output=True, text=True) if c else None
-    return shown.stdout if shown and shown.returncode == 0 else None
+def last_entry(path):
+    t = None
+    for line in log_lines(path) if path else ():
+        try:
+            ts = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        t = (secs(ts) if isinstance(ts, str) else None) or t
+    return t
 
-def rec(decision, time, subject, context, options, chosen, out):
-    return {"decision": decision, "time": time, "subject": subject, "context": context, "options": options,
-            "chosen": chosen, "outcome": out}
-
+oks = []
+for line in open(events, errors="ignore") if os.path.exists(events) else ():
+    f = line.rstrip("\n").split("\t")
+    t = secs(f[0]) if len(f) == 5 and f[4].startswith("ok") else None
+    if t is not None:
+        oks.append((t, f[1], f[2], f[0][:10]))
+# A close after --until still ends its build (at the cutoff); every other event counts in the window only.
+closes = [(t, x) for t, c, x, _ in oks if c.split(":")[0] == "close"]
+evs = [(t, c, x) for t, c, x, day in oks if since <= day <= until]
 table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
-rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])]
-builds = []   # (day, keys, outcome): what a finding, nudge or close is joined to
-out = []
-lines = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
-for f in (f for f in lines if len(f) == 7):
-    day, role, name, kind, model, effort, _ = f
-    r = rows.pop(0) if role in roles.split() and rows else None
-    o, slug = (outcome(r), r["slug"]) if r else (None, None)
-    if r:
-        builds.append((day, {slug, name, pr_key(r["pr"])} if r["pr"] else {slug, name}, o))
-    if day < since:
+rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
+agents = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
+agents = [f for f in agents if len(f) == 7 and f[1] in roles.split()]
+stop = secs(until + "T00:00:00Z") + 86400
+groups = collections.defaultdict(list, all=[])
+for r, a in zip(rows, agents):
+    if not since <= r["date"] <= until:
         continue
-    context = story_at(slug, day) if slug else None
-    out.append(rec("model_choice", day, slug or name, context, None, {"role": role, "kind": kind, "model": model, "effort": effort}, o))
-    if o and o["attempts"] > 1:
-        out.append(rec("retry", day, slug, context, None, {"role": role, "model": model, "effort": effort}, o))
+    start = secs(r["started"] or r["date"] + "T00:00:00")
+    names = (r["slug"], a[2])
+    end = min((t for t, x in closes if x in names and t >= start), default=None)
+    end = end or last_entry(session_log(projects, a[6], archive))
+    b = {"slug": r["slug"], "pr": r["pr"], "start": start, "end": min(end, stop) if end else None}
+    groups["all"].append(b)
+    if r["epic"]:
+        groups[r["epic"]].append(b)
 
-def joined(key, day):
-    # The newest build of <key> started on or before <day>.
-    return next((o for d, keys, o in reversed(builds) if key in keys and d <= day), None)
+def running(bs):
+    spans = [(b["start"], b["end"]) for b in bs if b["end"] and b["end"] > b["start"]]
+    if not spans:
+        return "", ""
+    now = top = 0
+    for _, d in sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans]):   # an end before a start at one time
+        now += d
+        top = max(top, now)
+    span = max(e for _, e in spans) - min(s for s, _ in spans)
+    return f"{sum(e - s for s, e in spans) / span:.2f}", str(top)
 
-for day, kind, pr, text, chosen, _ in finding_rows(findings):
-    if day >= since:
-        out.append(rec("finding_accept", day, pr, text, ["fixed", "declined"], chosen, joined(pr_key(pr), day)))
-for f in ([l.rstrip("\n").split("\t") for l in open(events, errors="ignore")] if os.path.exists(events) else []):
-    # A close with a cause (close:<cause>) is a close whose chosen value carries the cause.
-    close = len(f) == 5 and f[1].split(":")[0] == "close"
-    if len(f) == 5 and (close or f[1] in ("nudge", "tell:nudge")) and f[4] == "ok" and f[0][:10] >= since:
-        d = "close" if close else "nudge"
-        out.append(rec(d, f[0], f[2], None, None, f[1], joined(f[2], f[0][:10])))
-for r in sorted(out, key=lambda r: r["time"]):
-    print(json.dumps(r))
+deps = {s: d.split() for s, _, d in (l.partition("\t") for l in os.environ["SWARM_DEPS"].splitlines())}
+def chain(slugs):
+    memo = {}
+    def depth(s, seen):
+        if s not in memo:
+            memo[s] = 1 + max((depth(d, seen | {s}) for d in deps.get(s, []) if d in slugs and d not in seen), default=0)
+        return memo[s]
+    return max((depth(s, frozenset()) for s in slugs), default=0)
+
+created = dict(l.split("\t", 1) for l in os.environ["SWARM_CREATED"].splitlines() if "\t" in l)
+def waits(bs):
+    wait, proxy = [], []
+    prs = list({pr_key(b["pr"]): b for b in bs if b["pr"]}.values())
+    for b in prs:
+        t0 = secs(created.get(b["pr"], ""))
+        # A retry's PR takes the slug's events from its own createdAt on, so an older PR keeps only its own.
+        t1 = min((t for t in (secs(created.get(o["pr"], "")) for o in prs if o["slug"] == b["slug"])
+                  if t is not None and t0 is not None and t > t0), default=float("inf"))
+        first = lambda cmds: min((t for t, c, x in evs if c in cmds and x == b["slug"] and t0 <= t < t1), default=None)
+        t = first(("review-agent",)) if t0 is not None else None
+        p = first(("tell:findings", "tell", "review")) if t0 is not None and t is None else None
+        if t is not None:
+            wait.append(t - t0)
+        elif p is not None:
+            proxy.append(p - t0)
+    mean = lambda xs: str(round(sum(xs) / len(xs) / 60)) if xs else ""
+    return mean(wait), mean(proxy)
+
+print("epic\tbuilds\tbuilders_mean\tbuilders_max\tstories\tlongest_chain\tstories_per_chain"
+      "\treview_wait_min\tproxy_review_wait_min\tstacked")
+for g in sorted(groups, key=lambda g: (g == "all", g)):
+    bs = groups[g]
+    slugs = {b["slug"] for b in bs}
+    n = chain(slugs)
+    stacked = sum(1 for _, c, x in evs if c == "stacked" and (g == "all" or x in slugs))
+    print("\t".join([g, str(len(bs)), *running(bs), str(len(slugs)), str(n), f"{len(slugs) / n:.1f}" if n else "",
+                     *waits(bs), str(stacked)]))
+PY
+}
+
+# features [--since YYYY-MM-DD] — FEATURES_FILE joined with this project's logs: per feature, its uses
+# since --since (default the last 30 days), its metric and its baseline, and `delete?` for a feature
+# with no metric, or with logged uses and none in the last 30 days. A use is an events.tsv line of an
+# `event:<command>` (or <command>:<anything>), an agents.tsv line of a `role:<role>` or
+# `agent:<name>`, or a findings.tsv row of a `reviewer:<who>`. An `unlogged: <why>` feature (a
+# read-only command leaves no events line) shows `-` and is judged on its metric alone. It writes nothing.
+FEATURES_FILE="${SWARM_FEATURES:-${SWARM_HOME}/docs/features.tsv}"
+features_report() {
+  [[ $# -eq 0 || ( $# -eq 2 && "$1" == --since && "$2" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
+    || die "usage: swarm.sh features [--since YYYY-MM-DD]"
+  [[ -f "${FEATURES_FILE}" ]] || die "no feature list at ${FEATURES_FILE}"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${FEATURES_FILE}" "${AGENTS_LOG}" \
+    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" <<'PY'
+import datetime, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+features, agents, events, findings, since = sys.argv[1:6]
+recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+
+def rows(path):
+    return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []
+
+# (source, name, day) for every use the logs hold.
+uses = [("event", f[1], f[0][:10]) for f in rows(events) if len(f) == 5]
+uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
+uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
+
+def count(sources, after):
+    n = 0
+    for s in sources.split():
+        kind, _, want = s.partition(":")
+        n += sum(1 for k, name, day in uses if k == kind and day >= after
+                 and (name == want or kind == "event" and name.startswith(want + ":")))
+    return n
+
+print("feature\tuses\tmetric\tbaseline\tverdict")
+for f in rows(features)[1:]:
+    feature, _, metric, baseline, sources = (f + [""] * 5)[:5]
+    if not feature:
+        continue
+    unlogged = sources.startswith("unlogged:")
+    stale = not unlogged and count(sources, recent) == 0
+    print("\t".join([feature, "-" if unlogged else str(count(sources, since or recent)), metric, baseline,
+                     "delete?" if not metric.strip() or stale else ""]))
 PY
 }
 
@@ -1430,67 +1536,6 @@ per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
 print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
 if epic:
     print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
-PY
-}
-
-# export [--since YYYY-MM-DD] [--format jsonl|tsv] — one row per build attempt, for training a router:
-# project (the project directory's name, as agent_name makes it) and a fixed allowlist of outcomes
-# columns, read by name, in the order docs/method.md documents. Every value must match its column's
-# type (slug, enum, integer, decimal, UTC time, PR URL, bool, reviewer pairs, model token); one that
-# does not is emitted empty (null in jsonl) with a warning on stderr, so no free text gets out.
-# decisions is not reused: it carries story and finding text. --since passes through to outcomes, so
-# attempts stay stable. It writes nothing.
-export_report() {
-  local since="" format=jsonl rows usage="usage: swarm.sh export [--since YYYY-MM-DD] [--format jsonl|tsv]"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
-      --format) [[ "${2:-}" == jsonl || "${2:-}" == tsv ]] || die "${usage}"; format="$2"; shift 2 ;;
-      *) die "${usage}" ;;
-    esac
-  done
-  rows="$(outcomes_report ${since:+--since "${since}"})"
-  # The project's name as agent_name makes one, so a directory like My.Project passes the slug check.
-  SWARM_ROWS="${rows}" python3 - "$(agent_name "$(basename "${PROJECT_DIR}")")" "${format}" "${BUILDER_ROLES}" \
-    "${CLOSE_CAUSE_WORDS}" <<'PY'
-import json, os, re, sys
-project, fmt, roles, causes = sys.argv[1:5]
-TIME = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
-TYPES = {"slug": r"[a-z0-9][a-z0-9_-]*", "integer": r"[0-9]+", "decimal": r"[0-9]+\.[0-9]+", "time": TIME,
-         "pr": r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+", "bool": "true|false",
-         "reviewers": r"([a-z-]+:[0-9]+( |$))*", "model": r"[a-z0-9][a-z0-9.-]*"}
-ENUMS = {"kind": "code|docs|chore|verify|lead", "risk": "high", "role": "|".join(roles.split()),
-         "effort": "low|medium|high|xhigh|max", "dialog": "accepted|dismissed",
-         "close_cause": "|".join(causes.split()), "pr_state": "OPEN|CLOSED|MERGED"}
-# name:type, in the documented order. attempt is outcomes attempts; project is not an outcomes column.
-COLUMNS = [c.split(":") for c in """project:slug slug:slug epic:slug kind:enum risk:enum role:enum model:model
-    effort:enum started:time tokens_input:integer tokens_cache_write:integer tokens_cache_read:integer
-    tokens_output:integer cost_usd:decimal tells_findings:integer tells_nudge:integer tells_resume:integer
-    findings_fixed:integer findings_declined:integer findings_fixed_by:reviewers findings_declined_by:reviewers
-    escalate_at:time dialog_at:time dialog:enum escalated_at:time reset_at:time drop_at:time close_cause:enum
-    pr:pr pr_state:enum merged_at:time attempt:integer story_merged:bool""".split()]
-TYPED = {"integer": int, "decimal": float, "bool": lambda v: v == "true"}
-
-table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
-if fmt == "tsv":
-    print("\t".join(n for n, _ in COLUMNS))
-for i, f in enumerate(table[1:], 1):
-    if len(f) != len(table[0]):
-        print(f"swarm.sh export: outcomes row {i} has {len(f)} columns, not {len(table[0])}; left out", file=sys.stderr)
-        continue
-    r = dict(zip(table[0], f), project=project)
-    r["attempt"] = r["attempts"]
-    row = {}
-    for name, typ in COLUMNS:
-        v = r[name]
-        if v and not re.fullmatch(ENUMS[name] if typ == "enum" else TYPES[typ], v):
-            print(f"swarm.sh export: row {i}: {name} is not a valid {typ}, left empty", file=sys.stderr)
-            v = ""
-        row[name] = v
-    if fmt == "tsv":
-        print("\t".join(row.values()))
-    else:
-        print(json.dumps({n: TYPED.get(t, str)(row[n]) if row[n] else None for n, t in COLUMNS}))
 PY
 }
 
@@ -5411,6 +5456,20 @@ for t in json.load(sys.stdin)['result']['tabs']:
   done
 }
 
+# wait_command [--stall | --until-report] <name> [timeout-ms] — the wait command: a conductor's wait,
+# with no timeout under --until-report, or any other agent's.
+wait_command() {
+  local stall until n
+  require_herdr; stall=""; until=""
+  case "${1:-}" in --stall) stall=--stall; shift ;; --until-report) until=1; shift ;; esac
+  n="$(agent_name "${1:?name}")"
+  if [[ -n "${until}" ]]; then
+    [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
+    wait_conductor "${n}" 0
+  elif [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
+  else wait_agent "${n}" "${2:-3600000}" "${stall}"; fi
+}
+
 # Everything runs from main, called on the last line with `exit` beside it: bash reads a
 # script as it executes, so a `git pull` that rewrites this file during a long `wait` would
 # otherwise make it resume reading the new file mid-line.
@@ -5434,12 +5493,12 @@ dispatch() {
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   cost_report "$@" ;;
     outcomes) outcomes_report "$@" ;;
-    decisions) decisions_report "$@" ;;
+    flow)   flow_report "$@" ;;
     review-yield) review_yield_report "$@" ;;
-    export) export_report "$@" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
+    features) features_report "$@" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
     reset)  reset_story "${1:-}" "${*:2}" ;;
@@ -5463,14 +5522,7 @@ dispatch() {
     _mtime) session_mtime "${1:?name}" ;;                         # test hook: the session-log mtime the stall rule reads
     _trusted) require_trusted "${1:?cwd}"; echo trusted ;;        # test hook: whether Claude Code trusts a folder
     _pane)  require_herdr; next_pane "${1:?tab}" "${2:?cwd}" "${3:-}" ;;   # layout test hook: a pane, no agent
-    wait)   require_herdr; stall=""; until=""
-            case "${1:-}" in --stall) stall=--stall; shift ;; --until-report) until=1; shift ;; esac
-            n="$(agent_name "${1:?name}")"
-            if [[ -n "${until}" ]]; then
-              [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]] || die "wait --until-report waits only on a conductor (conduct-<epic>), not ${n}"
-              wait_conductor "${n}" 0
-            elif [[ "${n}" == conduct-* && ! "${n}" =~ -done[0-9]*$ ]]; then wait_conductor "${n}" "${2:-3600000}"
-            else wait_agent "${n}" "${2:-3600000}" "${stall}"; fi ;;
+    wait)   wait_command "$@" ;;
     *) awk 'NR > 1 && /^#$/ && ++blank == 2 { exit } NR > 1' "$0"; exit 2 ;;   # the header up to the command list's end
   esac
 }
@@ -5480,7 +5532,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions review-yield export lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
