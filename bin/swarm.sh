@@ -4140,10 +4140,12 @@ print("\n".join(f"\033[2m{r}\033[0m" if color else r for r in rows))' "${DASH_W}
 # each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder
 # and no legend, then the legend once (dash_legend). With DASH_SHARE the height, less the legend's,
 # is shared out between them; with too little room for a line each the legend goes. A project whose
-# frame fails shows its error line in its place, the others are still drawn, and it returns 1.
+# frame fails shows its error line in its place, the others are still drawn, and it returns 1. What
+# the others print to stderr follows the frames, so it never pushes a header down.
 dash_frame() {
   if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then dash_render; return; fi
-  local d out frames="" legend rows=0 h=0 failed=0 n=${#DASH_DIRS[@]}
+  local d out frames="" legend rows=0 h=0 failed=0 n=${#DASH_DIRS[@]} err errs=""
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-dash.XXXXXX")" || die "dash: mktemp failed"
   legend="$(dash_legend)"
   if [[ ${DASH_SHARE} == 1 && ${DASH_H} -gt 0 ]]; then
     rows=$((DASH_H - $(wc -l <<< "${legend}")))
@@ -4157,14 +4159,18 @@ dash_frame() {
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
   for d in "${DASH_DIRS[@]}"; do
     if ! out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND=0 \
-        "${SWARM_HOME}/bin/swarm.sh" "$@" 2>&1)"; then
-      out="${out##*$'\n'}"; out="$(basename "${d}")  could not draw: ${out#swarm: }"; failed=1
+        "${SWARM_HOME}/bin/swarm.sh" "$@" 2> "${err}")"; then
+      out="$(tail -n 1 "${err}")"; out="$(basename "${d}")  could not draw: ${out#swarm: }"; failed=1
+    elif [[ -s "${err}" ]]; then
+      errs+="$(cat "${err}")"$'\n'
     fi
     frames+="${out}"$'\n'
   done
+  rm -f "${err}"
   # More projects than lines: the 1-line shares still add up to no more than the height.
   if [[ ${h} -gt 0 ]]; then frames="$(sed -n "1,${rows}p" <<< "${frames%$'\n'}")"$'\n'; fi
   printf '%s%s' "${frames}" "${legend:+${legend}$'\n'}"
+  printf '%s' "${errs}" >&2
   return "${failed}"
 }
 
