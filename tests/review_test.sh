@@ -71,6 +71,7 @@ case "$1 $2" in
   "agent start")  if [ -f "$O" ]; then rm -f "$O"; echo '{"error":{"code":"agent_pane_busy"}}'; exit 1; fi
                   if [ -f "$F" ]; then echo '{"error":{"code":"agent_name_taken"}}'; exit 1; fi ;;
   "pane list")    if [ -f "$P" ]; then cat "$P"; fi ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w","label":"e"}]}}' ;;
 esac
 EOF
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -302,7 +303,7 @@ PATH="${ROOT}/late-bin:${PATH}" at fr reconcile >/dev/null || true
 check "a merge that lands during reconcile is not pulled under its keys" "${checked}|ready|done" \
   "$(git -C "${ROOT}/fr" rev-parse HEAD)|$(sed -n 's/^status: //p' "${ROOT}/fr/docs/stories/x.md")|$(git -C "${ROOT}/fr.git" show main:docs/stories/x.md | sed -n 's/^status: //p')"
 
-# --- The merge guard: every Claude agent starts unable to run gh pr merge, unless merge = agent.
+# --- The merge guard: every Claude agent starts unable to run gh pr merge, a conductor with merge = agent too.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m init && "${GIT[@]}" -C "${ROOT}/svc" push -q origin main
@@ -311,11 +312,20 @@ start() { # <slug> — start a story with the stubs, and print herdr's agent sta
   (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story "$1" >/dev/null 2>&1)
   grep "^agent start $1 " "${ROOT}/herdr.log"
 }
-check "merge = human (the default) starts a story agent with gh pr merge disallowed" "yes" \
-  "$(has '--disallowedTools Bash(gh pr merge:*)' "$(start g1)")"
+conductor() { # <epic> — start its conductor with the stubs, and print herdr's agent start line
+  item "${b}" "epics/$1.md" "status: active"
+  (cd "${p}" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" conduct "$1" >/dev/null 2>&1)
+  grep "^agent start conduct-$1 " "${ROOT}/herdr.log" | tail -1
+}
+GUARD='--disallowedTools Bash(gh pr merge:*)'
+check "merge = human (the default) starts a story agent and a conductor with gh pr merge disallowed" "yes|yes" \
+  "$(has "${GUARD}" "$(start g1)")|$(has "${GUARD}" "$(conductor e)")"
 echo "merge = agent" > "${p}/.claude/swarm/config"
-check "merge = agent starts a story agent without the guard" "no" \
-  "$(grep -q disallowedTools <<< "$(start g2)" && echo yes || echo no)"
+check "merge = agent keeps the guard on a story agent and on the conductor, which merges through swarm.sh merge" "yes|yes" \
+  "$(has "${GUARD}" "$(start g2)")|$(has "${GUARD}" "$(conductor e)")"
+check "a builder's brief says who merges: a human, or with merge = agent the conductor or the lead" "yes|yes" \
+  "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
+rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
 # --- Starting an agent: a taken name, a failed start, codex's update check.
 echo brief > "${ROOT}/brief.md"

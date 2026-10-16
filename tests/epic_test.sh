@@ -51,6 +51,8 @@ gives_up() {
   has "for the user, unless it has \`escalated_from:\`: that one is the lead's" "$1"
 }
 GIVES_UP="yes|yes|yes|yes|yes|yes|yes|yes|yes|yes"
+# shellcheck disable=SC2016 # the backticks are the brief's
+STRICT_RULE='Start every story, a retry too, with `swarm.sh story --strict <slug>`.'
 # goal_on <brief> — goal_rule's parts, as has prints them: the six causes, the impossible close, one
 # resume tell for a pause and then the paused close, cleared-on-error stopping the wave and its story
 # held for the lead, the transcript under CLAUDE_PROJECTS from the current build's agents.tsv line
@@ -256,6 +258,9 @@ check "the conductor gives up on a builder with close, accepts a Fable dialog it
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
 check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
+check "the story-mode conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
+  "$(has "${STRICT_RULE}" "${cbrief}")|$(has "start yours in a later wave, after the named story merges" "${cbrief}")|$(has "nothing is known to be open: retry the story in a later wave" "${cbrief}")"
+check "the story-mode conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${cbrief}" || true)"
 for s in s1 s2 s3; do run story "${s}" >/dev/null; done
 mv "${p}/.claude-plugin/plugin.json" "${ROOT}/plugin.json"; run story s4 >/dev/null; mv "${ROOT}/plugin.json" "${p}/.claude-plugin/plugin.json"
 check "with plugin.json, the story-mode builder and conductor say a missing bump is not a finding; without it, no line" "yes|yes|no" \
@@ -284,6 +289,93 @@ check "closing a ready story's builder counts a failed build and removes its wor
   "$(sed -n 's/^attempts: //p' "${b}/stories/s1.md")|$([[ -d "${ROOT}/svc-wt/s1" ]] && echo yes || echo no)"
 run close conduct-e >/dev/null
 check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5" "$(grep '^tab close' "${ROOT}/herdr.log" | paste -sd'|' -)"
+
+# --- story warns when an open story of another epic touches the same function or file; --strict refuses.
+# subject <slug> <touches> — a ready story of e1 in svc; other <front-matter line>... — xb, in svc unless
+# a line says otherwise; warns <slug> — story's warning lines, or none.
+subject() { item "${b}" "stories/$1.md" "status: ready" "kind: code" "epic: e1" "repo: svc" "touches: $2"; }
+other() { item "${b}" stories/xb.md "kind: code" "repo: svc" "$@"; }
+warns() { run story "$1" | grep '^warning:' || echo none; }
+started_x() { if grep -q "^agent start $1 " "${ROOT}/herdr.log"; then echo started; else echo "not started"; fi; }
+subject xa "[bin/swarm.sh:tell_agent (note), docs/x.md]"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:tell_agent (kinds)]"
+: > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+rc=0; out="$(run story --strict xa)" || rc=$?
+check "story --strict refuses naming the open story; no agent, branch or worktree; events.tsv's story line targets xa" \
+  "fail|yes|not started|no|no|xa" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xa: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xa after it merges" "${out}")|$(started_x xa)|$(
+  git -C "${ROOT}/svc" rev-parse -q --verify story/xa >/dev/null && echo yes || echo no)|$([[ -e "${ROOT}/svc-wt/xa" ]] && echo yes || echo no)|$(
+  awk -F'\t' '$2 == "story" { print $3 }' "${p}/.swarm/events.tsv")"
+check "story warns naming the open story and the function, and still starts it" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xa after it merges|started" "$(warns xa)|$(started_x xa)"
+for s in xc1 xc2 xc3; do subject "${s}" "[bin/swarm.sh:tell_agent]"; done
+check "no warning for a ready story with no builder, a story of the same epic, or another function" "none|none|none" \
+  "$(other "status: ready" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; warns xc1)|$(
+  other "status: review" "epic: e1" "touches: [bin/swarm.sh:tell_agent]"; warns xc2)|$(
+  other "status: review" "epic: e2" "touches: [bin/swarm.sh:tell_agent_x]"; warns xc3)"
+other "status: review" "epic: e2" "touches: [docs/method.md (§ A; § B, C)]"; subject xd "[docs/method.md]"
+check "a parenthetical with commas and semicolons stays in its entry" \
+  "warning: xb (epic e2) is open and touches docs/method.md; start xd after it merges" "$(warns xd)"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:x, FOO, CONFIG_KEYS]"; subject xe "[bin/swarm.sh:CONFIG_KEYS]"
+check "an entry with no file inherits the previous entry's, after another such entry too" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh:CONFIG_KEYS; start xe after it merges" "$(warns xe)"
+touch "${ROOT}/svc/Makefile"   # a bare head is a file only when the repo's checkout has it
+other "status: review" "epic: e2" "touches: [Makefile]"; subject xk "[src/app.go, Makefile]"
+check "an extensionless root file after another entry is still a file" \
+  "warning: xb (epic e2) is open and touches Makefile; start xk after it merges" "$(warns xk)"
+other "status: review" "epic: e2" "touches: [Makefile:lint]"; subject xl "[src/app.go, Makefile:lint]"
+check "and so is one with a function" \
+  "warning: xb (epic e2) is open and touches Makefile:lint; start xl after it merges" "$(warns xl)"
+other "status: review" "epic: e2" "touches: [Makefile]"; subject xr "[other: src/a.go, Makefile]"
+check "an unprefixed file after another repo's entry is in the story's repo" \
+  "warning: xb (epic e2) is open and touches Makefile; start xr after it merges" "$(warns xr)"
+rm -f "${ROOT}/svc/Makefile"
+other "status: review" "epic: e2" "touches: [tests/x_test.sh:setup, main]"; subject xm "[bin/swarm.sh:dispatch, main]"
+check "a shorthand that names no file is a function only, so the same name in other files does not overlap" "none" "$(warns xm)"
+other "status: review" "epic: e2" "touches: [other: src/a.go:y]"; subject xn "[other: src/a.go:x, y]"
+check "a shorthand inherits the previous entry's repo with its file" \
+  "warning: xb (epic e2) is open and touches src/a.go:y; start xn after it merges" "$(warns xn)"
+other "status: review" "epic: e2" "touches: [other: docs/y.md]"; subject xf "[docs/y.md]"
+check "the same file in another repo does not overlap" "none" "$(warns xf)"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; subject xg "[bin/swarm.sh]"
+check "a file-only entry overlaps any function in that file" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xg after it merges" "$(warns xg)"
+# xb's builder open: built in e2 (its own warnings about e1's open builders are not this check's).
+other "status: ready" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; run story xb >/dev/null; subject xh "[bin/swarm.sh:tell_agent]"
+check "a ready story whose builder herdr lists open warns" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xh after it merges" "$(warns xh)"
+subject xi "[bin/swarm.sh:tell_agent]"; touch "${ROOT}/listfail"; : > "${ROOT}/herdr.log"
+rc=0; out="$(run story --strict xi)" || rc=$?
+check "when herdr cannot list agents, --strict refuses and starts nothing" "fail|yes|not started|no" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xi: cannot tell whether the builder of xb (epic e2), which touches bin/swarm.sh:tell_agent, is open (herdr cannot list its agents); retry xi" "${out}")|$(started_x xi)|$([[ -e "${ROOT}/svc-wt/xi" ]] && echo yes || echo no)"
+check "and plain story warns that it cannot tell" \
+  "warning: cannot tell whether the builder of xb (epic e2), which touches bin/swarm.sh:tell_agent, is open (herdr cannot list its agents); retry xi" "$(warns xi)"
+rm -f "${ROOT}/listfail"
+item "${b}" stories/xb.md "status: review" "kind: code" "repo: svc" "touches: [bin/swarm.sh:tell_agent]"
+item "${b}" stories/xj.md "status: ready" "kind: code" "repo: svc" "touches: [bin/swarm.sh:tell_agent]"
+# xj, with no epic, also warns about e1's open builders above; only xb's line is this check's.
+check "two stories with no epic are of different epics" \
+  "warning: xb (epic none) is open and touches bin/swarm.sh:tell_agent; start xj after it merges" "$(warns xj | grep '^warning: xb ')"
+# A board the parse cannot read fails closed under --strict: a directory named like a story.
+mkdir "${b}/stories/xbroken.md"; subject xo "[bin/swarm.sh:merge_cmd]"; : > "${ROOT}/herdr.log"
+rc=0; out="$(run story --strict xo)" || rc=$?
+check "when the touches cannot be read, --strict refuses and starts nothing, and plain story warns" "fail|yes|not started|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xo: cannot read the board's touches" "${out}")|$(started_x xo)|$(
+  has "warning: cannot read the board's touches, so cannot tell whether another epic's open story overlaps xo; retry xo once they can be read" "$(run story xo)")"
+rmdir "${b}/stories/xbroken.md"
+# Only a ready story can have a builder: a blocked or done one is never asked about, even when herdr fails.
+touch "${ROOT}/listfail"
+subject xp-blocked "[bin/swarm.sh:merge_cmd]"; subject xp-done "[bin/swarm.sh:merge_cmd]"
+check "an overlapping blocked or done story is not open, even when herdr cannot list agents" "ok|ok" \
+  "$(other "status: blocked" "epic: e2" "touches: [bin/swarm.sh:merge_cmd]"; run story --strict xp-blocked >/dev/null && echo ok || echo refused)|$(
+  other "status: done" "epic: e2" "touches: [bin/swarm.sh:merge_cmd]"; run story --strict xp-done >/dev/null && echo ok || echo refused)"
+rm -f "${ROOT}/listfail"
+other "status: review" "epic: e2" "touches: [bin/swarm.sh:merge_cmd]"; subject xq "[bin/swarm.sh:merge_cmd]"; : > "${ROOT}/herdr.log"
+rc=0; out="$(run story xq --strict)" || rc=$?
+check "--strict after the slug is strict too; any other extra argument stops story" "fail|yes|not started|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xq: xb (epic e2) is open and touches bin/swarm.sh:merge_cmd" "${out}")|$(started_x xq)|$(
+  has "story: unknown argument '--strct'" "$(run story xq --strct || true)")"
+for s in xa xc1 xc2 xc3 xd xe xk xl xr xm xn xf xg xb xh xi xj xo xp-blocked xp-done xq; do run close "${s}" >/dev/null 2>&1 || true; rm -f "${b}/stories/${s}.md"; done
 # A conductor that never takes its brief (an agent not logged in) must not leave the placeholder behind.
 : > "${ROOT}/herdr.log"; touch "${ROOT}/idle"
 run conduct e >/dev/null || true
@@ -459,6 +551,13 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
+check "the one-PR-per-epic conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
+  "$(has "${STRICT_RULE}" "${brief}")|$(has "start yours in a later wave, after the named story merges" "${brief}")|$(has "nothing is known to be open: retry the story in a later wave" "${brief}")"
+check "the one-PR-per-epic conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${brief}" || true)"
+check "with merge = human, the story-mode and one-PR-per-epic conductors stop when the Done when holds or nothing ready is left" "yes|yes" \
+  "$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${cbrief}")|$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${brief}")"
+check "with merge = human, neither the story-mode nor the one-PR-per-epic brief pins a merge" "no|no" \
+  "$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)|$(grep -qF -- --match-head-commit <<< "${brief}" && echo yes || echo no)"
 check "the epic-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${brief}")"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
   "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
@@ -496,9 +595,30 @@ for mode in story epic; do   # epic last: the tests below run with pr_per = epic
 done
 cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" "base_branches = dev main" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
-brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
-check "with merge = agent, the conductor waits out a queued merge, then pulls and finishes through review and reconcile" "yes|yes|yes" \
-  "$(has "A queued merge (auto-merge, a merge queue) has not" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\` and" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
+brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
+check "with merge = agent, the conductor reviews a pinned head, puts the story in review, then merges that head with swarm.sh merge, which reconciles" "yes|yes|yes|yes" \
+  "$(has "note its head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${brief}")|$(has "if the head moved, review the new head" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never \`gh pr merge\` or \`gh api\`" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
+check "it merges by the literal PR number, pinned with --match-head-commit, in the repo's method, never --auto" "yes|yes|yes|yes" \
+  "$(has "by the literal PR number" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")|$(has "(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`)" "${brief}")|$(has "never --auto" "${brief}")"
+check "it runs one swarm.sh merge at a time, the next only once the last has exited" "yes" "$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"
+check "a red base stops its merging: it finds the PR pair, opens the fix or lists it, and reports it" "yes" \
+  "$(has "A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing more, find the PR pair that broke it" "${brief}")"
+after="${brief#*swarm.sh merge --head}"; after="${after%%Stay inside this epic*}"
+check "after the merge it closes a builder only when reconcile printed build cleared, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "1|yes|yes|yes" \
+  "$(grep -oF 'swarm.sh close <slug>' <<< "${after}" | wc -l | tr -d ' ')|$(has "Reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${after}")|$(has "start each story of this epic it prints as \`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
+check "it reports, and stops, only once no story of the epic is ready or running, never just because nothing is ready" "yes|yes|no" \
+  "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
+check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
+  "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
+printf '%s\n' "merge = agent" "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
+run conduct f >/dev/null || true
+brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
+check "with merge = agent, the one-PR-per-epic conductor stops once every epic PR has merged, or what is left needs the lead, not when no story is left" "yes|yes|yes|yes|no" \
+  "$(has "Stop when every PR from epic/f has merged and the epic's **Done when** holds, or when what is left needs the lead:" "${brief}")|$(has "a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running;" "${brief}")|$(has "a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch;" "${brief}")|$(has "or CI on the base red or timed out." "${brief}")|$(grep -qF "none is running" <<< "${brief}" && echo yes || echo no)"
+check "with merge = agent, the one-PR-per-epic conductor notes the epic branch's head before the whole-epic review, re-reads the PR's head before each merge, and merges one at a time" "yes|yes|yes" \
+  "$(has "review the whole epic: first note the head SHA of epic/f in each repo's epic worktree (\`git rev-parse HEAD\`)" "${brief%codex-review <base>*}")|$(has "Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if it is not the head you reviewed, review the new head." "${brief}")|$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"
+check "with merge = agent, the one-PR-per-epic conductor puts the epic in review, then merges each pinned head with swarm.sh merge" "yes|yes" \
+  "$(has "run \`swarm.sh review f <every PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")"
 printf '%s\n' "escalate_after = 0" "base_branches = dev main" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
@@ -510,6 +630,8 @@ oneoff="$(sed -n '/`story <slug>`: a one-off/,/`plan-epic <epic>`/p' "$(dirname 
 oneoff_flat="$(tr -s '[:space:]' ' ' <<< "${oneoff}")"
 check "/swarm-dev:swarm's one-off merge = agent step reviews, then merges the reviewed head with swarm.sh merge, in the background, which reconciles" "yes|yes|yes|yes" \
   "$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare \`gh pr merge\`" "${oneoff_flat}")|$(has "Run it in the background (Bash \`run_in_background\`) and wait for it" "${oneoff_flat}")|$(has "runs \`swarm.sh reconcile\`" "${oneoff_flat}")|$(has "a red or timed-out CI on the base means the PR merged" "${oneoff_flat}")"
+check "/swarm-dev:swarm's one-off merge = agent step notes the head before the review starts, re-reads it after, and leaves the builder to reconcile" "yes|yes|yes|yes" \
+  "$(has "If \`swarm.sh config merge\` is \`agent\`, first note the PR's head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${oneoff_flat%%codex-review <base>*}")|$(has "read the head SHA again once review passes; if it moved from the one you noted, review the new head." "${oneoff_flat}")|$(has "by the literal PR number with \`--match-head-commit\`" "${oneoff_flat}")|$(has "Then \`swarm.sh unblock\`; reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${oneoff_flat}")"
 check "/swarm-dev:swarm's one-off step gives up with close, sends an escalated story to its step, and answers only Fable's consent" "yes|yes|yes|yes|yes|yes" \
   "$(has "run \`swarm.sh close <slug>\`, which, on a code, docs or chore story still \`ready\`," "${oneoff}")|$(has "go back to 1, where \`next\` names its \`escalated <slug>\` step" "${oneoff}")|$(has "\`waiting: dialog open\` for an escalate build" "${oneoff}")|$(has "only if it shows that consent" "${oneoff}")|$(has "\`swarm.sh dialog <slug> accepted\`" "${oneoff}")|$(has "every permission or tool prompt, is the user's: never send keys to it" "${oneoff}")"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
@@ -559,7 +681,7 @@ printf '%s\n' '[ -e "$H/ghfail" ] && exit 1' \
   'q=.; while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done; echo "$prs" | jq -r "$q"' >> "${ROOT}/bin/gh"
 chmod +x "${ROOT}/bin/gh"
 echo '[{"state":"OPEN"}]' > "${ROOT}/prs-a.json"
-echo "a w:50" >> "${ROOT}/agents"; echo "w:50 a" > "${p}/.swarm/state/wait-a"   # this project's agent a, in a pane it recorded
+echo "a w:950" >> "${ROOT}/agents"; echo "w:950 a" > "${p}/.swarm/state/wait-a"   # a pane id the stub never reaches; this project's agent a, in a pane it recorded
 printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agents.tsv"
 session "${ROOT}/claude.json" sess-a=idle
 printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"
