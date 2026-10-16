@@ -19,3 +19,5 @@ After the release is published, the lead runs `claude plugin update swarm-dev@sw
 **From review (binding; overrides the scope above where they differ):**
 - No restart is needed: the lead runs `claude plugin update swarm-dev@swarm-dev` and calls the new script directly. The lead merges the config PR under its standing authority, so nothing here waits on the user.
 - Depends only on flow-speedups-release; ruleset-not-strict was done on 2026-10-15 before the board PR.
+
+**First run (goal-paste, 2026-10-16):** the conductor merged #191 through `swarm.sh merge` at the reviewed head (events: merge 12:12:02, main-ci 12:19:59, reconcile 12:20:01, unblock 12:20:06) and v0.20.1 was published. Not yet shown: starting a story that unblock readied, since the only one readied was a `lead` story. leaner-faster-swarm's run is the next check.
