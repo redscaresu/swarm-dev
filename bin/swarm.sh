@@ -4288,9 +4288,10 @@ for repo, mine in slugs.items():
         continue
     for pr in prs if isinstance(prs, list) else []:
         head = str(pr.get("headRefName")) if isinstance(pr, dict) else ""
-        if head.startswith("story/") and head[len("story/"):] in mine and pr.get("url") not in sys.argv[1:]:
+        if head.startswith("story/") and head[len("story/"):] in mine:
             print("head\t" + head[len("story/"):] + "\t" + pr["url"])
-            out = gh(["pr", "view", pr["url"], "--json", FIELDS])
+            # A PR a board item lists was viewed above.
+            out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
             if out is not None:
                 print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
 PY
@@ -4681,6 +4682,18 @@ def pr_state(url):
     behind = {"BEHIND": " · behind", "DIRTY": " · conflicts"}.get((s.get("mergeStateStatus") or "").upper(), "")
     return k, words + behind
 
+def is_open(url):
+    # A PR gh did not say is merged or closed counts as open.
+    return (PRS.get(url) or {}).get("state", "OPEN").upper() not in ("MERGED", "CLOSED")
+
+def builder_prs(slug):
+    # A story's PRs, and its builder's open story/<slug> PR (HEADS) while none it lists is open: a
+    # retry's PR beside the closed one an earlier attempt left on the story.
+    listed = (story_by_slug.get(slug) or [""] * 4)[3]
+    if any(is_open(m.group(0)) for m in URL.finditer(listed)) or not HEADS.get(slug or ""):
+        return listed
+    return f"{listed} {HEADS[slug]}".strip()
+
 def pr_ref(m):
     return f"{m.group(2)}#{m.group(3)}"
 
@@ -4818,7 +4831,7 @@ if agents is not None:
                 elif age is not None:
                     words = f"working {age}m"
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
-                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3] or HEADS.get(slug or "", ""),
+                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=builder_prs(slug),
                      open=bool(slug) and story_by_slug[slug][2] != "done",
                      since=since, day=rec[0] if rec else "", tail=tail_of(rec, bool(slug) and st in ("idle", "done") and epic_for(base, slug, label) not in epics),
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
@@ -4922,10 +4935,6 @@ need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
 # its live agents and open PRs beneath it.
-def is_open(url):
-    # A PR gh did not say is merged or closed counts as open.
-    return (PRS.get(url) or {}).get("state", "OPEN").upper() not in ("MERGED", "CLOSED")
-
 def one_off(r):
     # An idle one-off builder (its story on no epic) says what it waits on, never a bare idle.
     if r.get("epic") in epics or not r.get("slug") or r["state"] not in ("idle", "done"):
@@ -5182,6 +5191,8 @@ def running_view():
         act = f"{tool} {ago}" if tool and ago else ago or "no session log"
         pr = []
         for m in URL.finditer(r.get("prs") or "") if r.get("slug") else []:
+            if not is_open(m.group(0)):
+                continue
             st = pr_state(m.group(0))
             pr.append((f"#{m.group(3)} {st[1] if st else 'checks unknown'}  ", SYM[st[0] if st else "review"][1]))
         if r.get("slug") and not pr:

@@ -946,17 +946,20 @@ D="${ROOT}/running"; mkdir -p "${D}/.swarm/state" "${D}/docs/epics" "${D}/docs/s
 git -C "${D}" remote add upstream https://github.com/up/d.git && git -C "${D}" remote add origin https://github.com/o/d.git
 touch "${D}/docs/stories/README.md"
 ditem() { local path="${D}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
-ditem epics/re.md 'status: active'
+# The epic's file lists PR 20 too, so dash_slow views it once, and story/ro-retry still maps to it.
+ditem epics/re.md 'status: active' 'prs: https://github.com/o/d/pull/20'
 ditem stories/rb-one.md 'status: ready' 'epic: re' 'prs: https://github.com/o/d/pull/11'
 ditem stories/rb-two.md 'status: ready' 'epic: re' 'prs: https://github.com/o/d/pull/12'
 # ro-review's PR is open on story/ro-review, which its file lists only from review on: gh pr list finds it.
 ditem stories/ro-review.md 'status: ready'
 ditem stories/ro-merge.md 'status: review' 'prs: https://github.com/o/d/pull/14'
 ditem stories/ro-imp.md 'status: ready'
+# A retry: the story still lists the earlier attempt's closed PR 16; the retry's PR 20 is open on story/ro-retry.
+ditem stories/ro-retry.md 'status: ready' 'prs: https://github.com/o/d/pull/16'
 ditem stories/rh-held.md 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
-printf 'w5:p1 rb-one\nw5:p2 rb-two\nw5:p3 ro-review\nw5:p4 ro-merge\nw5:p5 ro-imp\n' > "${D}/.swarm/state/d"
+printf 'w5:p1 rb-one\nw5:p2 rb-two\nw5:p3 ro-review\nw5:p4 ro-merge\nw5:p5 ro-imp\nw5:p6 ro-retry\n' > "${D}/.swarm/state/d"
 printf '%s\tcode\t%s\tclaude\topus\thigh\t%s\n' "$(date +%F)" rb-one drb1 "$(date +%F)" rb-two drb2 \
-  "$(date +%F)" ro-review dro1 "$(date +%F)" ro-merge dro2 "$(date +%F)" ro-imp dro3 > "${D}/.swarm/agents.tsv"
+  "$(date +%F)" ro-review dro1 "$(date +%F)" ro-merge dro2 "$(date +%F)" ro-imp dro3 "$(date +%F)" ro-retry dro4 > "${D}/.swarm/agents.tsv"
 printf '%s\tstory\trb-one\tw5:p1\tok\n' "$(ago 25)" > "${D}/.swarm/events.tsv"
 dlog() { # <session> <minutes ago> <content block>
   printf '{"type":"assistant","timestamp":"%s","message":{"content":[%s]}}\n' "$(ago "$2")" "$3" >> "${ROOT}/projects/p/$1.jsonl"
@@ -966,6 +969,7 @@ dlog drb2 12 '{"type":"text","text":"reading"},{"type":"tool_use","name":"Read",
 # rb-two's newest tool is a Write of 80 KB, longer than the 64 KB dash reads first, then its short result.
 dlog drb2 10 "{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"content\":\"$(head -c 81920 /dev/zero | tr '\0' x)\"}}"
 printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"ok"}]}}\n' "$(ago 9)" >> "${ROOT}/projects/p/drb2.jsonl"
+dlog dro4 30 '{"type":"text","text":"Opened the retry PR."}'
 dlog dro1 30 '{"type":"text","text":"Opened the PR."}'
 # A newest line whose message is not an object costs nothing: ro-review's row still reads.
 echo '{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":"odd"}' >> "${ROOT}/projects/p/dro1.jsonl"
@@ -976,25 +980,27 @@ dlog dro3 20 '{"type":"text","text":"IMPOSSIBLE: the API has no such call"}'
 # reads further back for an idle one-off builder, the one row that needs it.
 printf '{"type":"attachment","timestamp":"%s","content":"%s"}\n' "$(ago 19)" "$(head -c 81920 /dev/zero | tr '\0' x)" >> "${ROOT}/projects/p/dro3.jsonl"
 dlog dro3 18 '{"type":"tool_use","name":"Bash","input":{}}'
-printf '[{"sessionId":"drb1","status":"busy"},{"sessionId":"drb2","status":"busy"},{"sessionId":"dro1","status":"idle"},{"sessionId":"dro2","status":"idle"},{"sessionId":"dro3","status":"idle"}]' > "${ROOT}/d.json"
+printf '[{"sessionId":"drb1","status":"busy"},{"sessionId":"drb2","status":"busy"},{"sessionId":"dro1","status":"idle"},{"sessionId":"dro2","status":"idle"},{"sessionId":"dro3","status":"idle"},{"sessionId":"dro4","status":"idle"}]' > "${ROOT}/d.json"
 cat > "${ROOT}/dbin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"rb-one","agent_status":"working","pane_id":"w5:p1"},{"name":"rb-two","agent_status":"working","pane_id":"w5:p2"},{"name":"ro-review","agent_status":"idle","pane_id":"w5:p3"},{"name":"ro-merge","agent_status":"idle","pane_id":"w5:p4"},{"name":"ro-imp","agent_status":"idle","pane_id":"w5:p5"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w5:p1"},{"pane_id":"w5:p2"},{"pane_id":"w5:p3"},{"pane_id":"w5:p4"},{"pane_id":"w5:p5"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"rb-one","agent_status":"working","pane_id":"w5:p1"},{"name":"rb-two","agent_status":"working","pane_id":"w5:p2"},{"name":"ro-review","agent_status":"idle","pane_id":"w5:p3"},{"name":"ro-merge","agent_status":"idle","pane_id":"w5:p4"},{"name":"ro-imp","agent_status":"idle","pane_id":"w5:p5"},{"name":"ro-retry","agent_status":"idle","pane_id":"w5:p6"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w5:p1"},{"pane_id":"w5:p2"},{"pane_id":"w5:p3"},{"pane_id":"w5:p4"},{"pane_id":"w5:p5"},{"pane_id":"w5:p6"}]}}' ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w5","label":"running"}]}}' ;;
   *) exit 1 ;;
 esac
 STUB
 # gh: PR 11 is green, PR 12 failing, PR 14 green, and origin's open PR list (url and head only) has
-# PR 13 on story/ro-review, whose CI is running.
+# PR 13 on story/ro-review, whose CI is running, and PR 20 on story/ro-retry, green; PR 16 is closed.
 cat > "${ROOT}/dbin/gh" <<'STUB'
 #!/bin/sh
 case "$1 $2 $3" in
   "pr view https://github.com/o/d/pull/11"|"pr view https://github.com/o/d/pull/14") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   "pr view https://github.com/o/d/pull/12") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
   "pr list -R") [ "$4" = https://github.com/o/d.git ] || exit 1
-    echo '[{"url":"https://github.com/o/d/pull/13","headRefName":"story/ro-review"},{"url":"https://github.com/o/d/pull/15","headRefName":"other"}]' ;;
+    echo '[{"url":"https://github.com/o/d/pull/13","headRefName":"story/ro-review"},{"url":"https://github.com/o/d/pull/15","headRefName":"other"},{"url":"https://github.com/o/d/pull/20","headRefName":"story/ro-retry"}]' ;;
+  "pr view https://github.com/o/d/pull/16") echo '{"state":"CLOSED","statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
+  "pr view https://github.com/o/d/pull/20") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   "pr view https://github.com/o/d/pull/13") echo '{"state":"OPEN","statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
   *) exit 1 ;;
 esac
@@ -1018,6 +1024,9 @@ sys.exit(not (t[r - 1].startswith("╰") and "╭─ epics" in "".join(t[:r]) if
   check "one-off builder at ${cols} columns: a story in review waits for the lead's merge" grep -qE "ro-merge .*#14 waits for the lead's merge" <<< "${epicp}"
   check "one-off builder at ${cols} columns: a last reply of IMPOSSIBLE: reads IMPOSSIBLE" grep -qE 'ro-imp .*IMPOSSIBLE' <<< "${epicp}"
   check "running now at ${cols} columns: a builder with no PR says so" grep -qE '! ro-imp .*no PR yet|✓ ro-imp .*no PR yet' <<< "${run}"
+  check "one-off builder at ${cols} columns: a retry's open PR stands in for the closed one its story lists" grep -qE 'ro-retry .*#20 waits for review' <<< "${epicp}"
+  check "running now at ${cols} columns: a retry shows its open PR, not the closed one" grep -qE 'ro-retry .*#20 green' <<< "${run}"
+  check "running now at ${cols} columns: a closed PR is not shown" lacks "#16" "${run}"
   check "no agent row at ${cols} columns reads a bare idle" lacks " idle " "${out}"
   out="$(fresh; cd "${D}" || exit 1; env -u HERDR_ENV COLUMNS="${cols}" CLAUDE_STUB_AGENTS="${ROOT}/d.json" PATH="${ROOT}/dbin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)"
   check "--tree at ${cols} columns: an idle one-off builder says what it waits on" grep -qE 'ro-review .*#13 waits for review' <<< "${out}"

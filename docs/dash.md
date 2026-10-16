@@ -51,9 +51,10 @@ is one column, top to bottom:
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
   or `agent` line in `events.tsv`, or else from midnight on its `agents.tsv` day) and its last
   activity: the newest tool in its session log and how old the log's newest entry is (`Bash 3m
-  ago`). A builder's row also has its PR and CI state (`#11 green`), or `no PR yet`. The PR is the
-  one its story lists, or before review (when the story lists none yet) the open PR on its
-  `story/<slug>` branch, which dash asks gh for once a minute per repo. Held stories
+  ago`). A builder's row also has its open PRs and their CI state (`#11 green`), or `no PR yet`.
+  Its PRs are the ones its story lists. While none of those is open (the story lists none until
+  review, or only a closed PR from an earlier attempt), the open PR on its `story/<slug>` branch
+  counts instead; dash asks gh for those once a minute per repo. Held stories
   (`held_for:` set) come after the agents, each with its cause (`held rh-held: paused`). The box
   is left out when no agent is open and no story is held. Narrower than 140 columns it sits above
   recent (under the ladder, when that shows), so recent gives up the lines it takes; from 140
@@ -84,10 +85,11 @@ is one column, top to bottom:
   needs you or the lead's queue, and it drops off once its process is gone or it has run past
   `codex_minutes` plus a minute. Idle and
   retired agents not on an open story are one `+N idle` line; agents on no epic come last. An idle
-  one-off builder there (its story is on no epic) shows what it waits on instead of `idle`:
-  `#12 waits for review` while its PR is open and its story is not in review, `#12 waits for the
-  lead's merge` once its story is `status: review`, `IMPOSSIBLE` when its last reply starts
-  `IMPOSSIBLE:`, and `no PR yet` otherwise. Active
+  one-off builder there (its story is on no epic) shows what it waits on instead of `idle`, with
+  its open PR first when it has one: `#12 IMPOSSIBLE` when its last reply starts `IMPOSSIBLE:`,
+  `#12 waits for the lead's merge` once its story is `status: review`, `#12 waits for review`
+  while its PR is open and its story is not in review, and `no PR yet` otherwise. `--tree` shows
+  the same words for it. Active
   epics with no open story share one line. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead.
