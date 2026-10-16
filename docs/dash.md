@@ -28,25 +28,39 @@ the left, recent as a timestamped log on the right, and a status bar on the last
 is one column, top to bottom:
 
 - **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm-dev:swarm` does next, and the
-  time of the last refresh. Under it, one summary line: epics active, agents working, PRs green and
+  time of the last refresh. Under it, at every width, the speedometer: `2.0 merged/day over 7 days`
+  is the number of stories the swarm finished in the last 7 days, divided by 7. dash reads them from
+  `events.tsv`: a `finish` line, or `reconcile`'s `finished` line once a story's PR merged, each slug
+  counted once. A story that was dropped or rescoped writes neither, so it never counts. It asks gh
+  nothing. Two lights follow it,
+  each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
+  (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
+  the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
+  from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
+  file's last commit. The second counts the escaped defects logged in the last 7 days
+  (`--reviewer escaped` in `findings.tsv`). Then one summary line: epics active, agents working, PRs green and
   waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today). After
   it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
   call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
   today` too), on the same line when they fit there and on the next line when they don't. Then a
-  warning when the main checkout has board edits not committed yet. From 140 columns the merge
-  mode, the summary and who is on call move to the status bar.
+  warning when the main checkout has board edits not committed yet, naming the files, cut to the
+  width: `board: 2 uncommitted edits in the main checkout: stories/a.md, stories/b.md`. From 140
+  columns the merge mode, the summary and who is on call move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
   by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
-  pane, nudges and failed tells excepted), `agree` a draft HLD. When nothing does,
-  it is one line.
+  pane, nudges and failed tells excepted), `agree` a draft HLD. A `lead` story's row ends with
+  who it waits for: `waits for: you: create the read-only user`, with the text of its first
+  **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
+  the first ready `lead` story that has one, with `+N more` when other stories have one too. When
+  nothing needs you, it is one line.
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
   you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft HLD) and
   everything else from the list above moves to this box under it: every `merge`, `answer`, `close`
-  and `look at` row, a `lead` story with no **You:** step, and `decide` for every escalated `lead`
-  story (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
+  and `look at` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
+  every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
 - **Running now**: one row per agent open in this project's panes (empty panes and retired agents
   aside). Each row has the agent's name, how long it has run (`up 25m`, from its `story`, `conduct`
   or `agent` line in `events.tsv`, or else from midnight on its `agents.tsv` day) and its last
@@ -98,7 +112,9 @@ is one column, top to bottom:
   fixed (✎, one row per PR and day, so a fix's `log-finding` line is not shown again), declined
   findings (a run of them on one PR is one row, `8 findings declined on #133`), agents, conductors and builders started (▶), escalation
   steps (▲: `escalate`, `dialog`, `escalated`, `reset` and `drop`), and the swarm's other actions
-  (·); a failed one is ✗. It fills the rest of the screen. From 140 columns it is
+  (·); a failed one is ✗. A run of lines with the same action, target and outcome is one row
+  with a count, `tell:nudge s-one ×3`. A findings row too long for its column is cut in its text,
+  so it still ends with its `(#PR)`. It fills the rest of the screen. From 140 columns it is
   the right column, and its time column is the clock instead (`14:05` today, `10-03` before then;
   a finding dated today reads `today`).
 - **Ladder**, with `--ladder` (or `l` while watching): the model and effort each role runs on,
@@ -120,16 +136,19 @@ Each model has a colour of its own, the same wherever it appears (agent rows, th
 ladder): Fable pink, Opus orange, Sonnet blue, Haiku green, codex grey. Colour only on a terminal,
 and none at all when `NO_COLOR` is set or the output goes to a pipe or a file; the symbols carry
 the same meaning in plain text. If herdr is missing or gives no answer, it
-still shows the board and says the agents are unavailable. At 100 columns, from a real project:
+still shows the board and says the agents are unavailable. At 100 columns, from a real project
+(the speedometer's numbers are made up for this example):
 
 ```text
 infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:48:02
+1.6 merged/day over 7 days · ! 2 waiting on you, oldest 4h05m · ✓ 0 escaped in 7 days
 9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $427.69 today
 on call: fable·xhigh · 0 escalations today
-board: 2 uncommitted edits in the main checkout (reconcile pulls first)
+board: 2 uncommitted edits in the main checkout: stories/prod-read-seam-reader-user.md, stories/fak…
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! merge fakeaws#71 (✓ green)  fakeaws-subnet-overlap-refused                                     │
 │ ! run lead story prod-read-seam-reader-user: create the read-only reader user and its key file   │
+│   waits for: the lead                                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ epics ──────────────────────────────────────────────────────────────────────────────────────────╮
 │ ! prod-read-seam          ██████████░░ 12/15  1 ready · 2 blocked                                │

@@ -144,7 +144,7 @@ touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 fresh; clean="$(cd "${P}" || exit 1; PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a committed board shows no drift line" lacks "board:" "${clean}"
 check "with no agent open and nothing held, the frame has no running-now box" lacks "running now" "${clean}"
-echo "more" >> "${P}/docs/stories/s-three.md"
+echo "more" >> "${P}/docs/stories/s-three.md"; echo "more" >> "${P}/docs/stories/s-two.md"
 
 snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
 before="$(snapshot)"
@@ -154,9 +154,10 @@ for panel in "needs you" "epics" "recent"; do
   check "panel ${panel}" has "╭─ ${panel} ─" "${out}"
 done
 check "the header is one line: project, version, merge, next, clock" grep -qE '^proj  swarm-dev [0-9.]+  merge human  next wait conduct-e1 +[0-9]{2}:[0-9]{2}:[0-9]{2}$' <<< "$(head -1 <<< "${out}")"
-check "the summary line counts epics, working agents, green PRs, stalls and cost" test "$(sed -n 2p <<< "${out}")" == "1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · \$24.00 today"
-check "below 140 columns, on call and today's escalations follow the summary, on a line of their own when it is full" test "$(sed -n 3p <<< "${out}")" == "on call: fable·xhigh · 0 escalations today"
-check "an uncommitted board edit is one line under the summary" has "board: 1 uncommitted edit in the main checkout (reconcile pulls first)" "$(sed -n 4p <<< "${out}")"
+check "the speedometer is the line under the header" grep -qE '^0[.]0 merged/day over 7 days · ! [0-9]+ waiting on you, oldest [0-9hmd]+ · ✓ 0 escaped in 7 days$' <<< "$(sed -n 2p <<< "${out}")"
+check "the summary line counts epics, working agents, green PRs, stalls and cost" test "$(sed -n 3p <<< "${out}")" == "1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · \$24.00 today"
+check "below 140 columns, on call and today's escalations follow the summary, on a line of their own when it is full" test "$(sed -n 4p <<< "${out}")" == "on call: fable·xhigh · 0 escalations today"
+check "uncommitted board edits are one line under the summary, naming each file" test "$(sed -n 5p <<< "${out}")" == "board: 2 uncommitted edits in the main checkout: stories/s-three.md, stories/s-two.md"
 check "needs you is the first panel" grep -q '^╭─ needs you ─' <<< "$(grep -m1 '^╭─' <<< "${out}")"
 needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 check "needs you lists a green PR as a merge" grep -qE '^│ ! merge r#7 \(✓ green · behind\)  s-one +│$' <<< "${needs}"
@@ -252,7 +253,7 @@ fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS=50 PATH="${ROOT}/bin:${PA
 check "at 50 columns no line is wider than the terminal" test "$(widest <<< "${out}")" -le 50
 check "at 50 columns the header drops version and merge mode, keeping next" grep -qE '^proj  next wait conduct-e1 +[0-9:]{8}$' <<< "$(head -1 <<< "${out}")"
 joined="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}" | sed -e 's/^│ //' -e 's/ *│$//' | paste -sd' ' - | tr -s ' ')"
-check "at 50 columns a needs-you action wraps, not cut" has "! run lead story ask: create the read-only IAM user !" "${joined}"
+check "at 50 columns a needs-you action wraps, not cut" has "! run lead story ask: create the read-only IAM user waits for: the lead !" "${joined}"
 check "at 50 columns a wrapped needs-you line is indented under its action" grep -qE '^│   [a-z]' <<< "$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 for cols in 79 60 45; do
   fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 COLUMNS="${cols}" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"
@@ -399,7 +400,7 @@ check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit, edit, session-log write or PR update' <<< "${out}"
-check "the summary counts the stall" has " · 1 stalled · " "$(sed -n 2p <<< "${out}")"
+check "the summary counts the stall" has " · 1 stalled · " "$(sed -n 3p <<< "${out}")"
 check "recent shows a start minutes ago, newest first" grep -qE '^│    4m ago  ▶ conduct e1 ' <<< "$(sed -n '/^╭─ recent/{n;p;}' <<< "${out}")"
 check "recent shows hours ago" grep -qE '^│    2h ago  ▶ story s-three ' <<< "${out}"
 mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/config"
@@ -450,7 +451,7 @@ check "at 160 columns the status bar says who is on call" has "on call: fable·x
 check "at 160 columns the status bar counts today's ok escalate builds, not yesterday's or a failed one" has " · 2 escalations today" "$(tail -2 <<< "${out}")"
 check "at 160 columns an escalated builder's card shows its state age, attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m  attempt 3 · ${esc_at} +│" <<< "${out}"
 out="$(COLUMNS=100 escdash)"
-check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 3p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
+check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 4p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
 check "at 100 columns an escalated builder's row shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m +attempt 3 · ${esc_at} +│" <<< "${out}"
 recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
 for k in "escalate y-esc" "dialog x-esc" "escalated w-esc" "reset w-esc" "drop v-esc"; do
@@ -806,6 +807,8 @@ litem() { # <path under docs> <body> <front-matter line>...
 }
 mkdir -p "${L}/docs/stories"; touch "${L}/docs/stories/README.md"
 litem stories/you-ask.md 'After the release merges. **You:** create the read-only user' 'status: ready' 'kind: lead'
+# A second story with a **You:** step: needs you shows only the first one's, with +1 more.
+litem stories/you-two.md '**You:** rotate the key' 'status: ready' 'kind: lead'
 litem stories/no-you.md 'The lead runs the migration.' 'status: ready' 'kind: lead'
 # Prose that names the convention is no step: this story is the lead's.
 litem stories/talks.md 'The lead does it all, so there is no **You:** step.' 'status: ready' 'kind: lead'
@@ -884,6 +887,11 @@ for cols in 100 160; do
     check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
   done
   check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"
+  check "lead = session at ${cols} columns: needs you shows the first **You:** step's text, with +1 more" \
+    has "! run lead story you-ask waits for: you: create the read-only user +1 more" "$(joined "${needs}")"
+  check "lead = session at ${cols} columns: the other **You:** step is not listed" lacks "rotate the key" "${out}"
+  check "lead = session at ${cols} columns: a ready lead story with no **You:** line waits for the lead" \
+    has "! run lead story no-you waits for: the lead" "$(joined "${queue}")"
 done
 # Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
@@ -902,6 +910,59 @@ check "lead off: no lead's queue" lacks "lead's queue" "${out}"
 check "lead off: the legend says ! is needs you" has "! needs you (session gone or unknown)" "${out}"
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
+
+# --- The speedometer, in a project of its own (SPD, lead = session): stories merged per day over 7
+# days, the slugs events.tsv says were finished, and two lights.
+SPD="${ROOT}/speed"; mkdir -p "${SPD}/.swarm" "${SPD}/.claude/swarm" "${SPD}/docs/stories"
+git -C "${SPD}" init -q; touch "${SPD}/docs/stories/README.md"; echo "lead = session" > "${SPD}/.claude/swarm/config"
+GSP=(git -C "${SPD}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
+sitem() { local path="${SPD}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
+# 14 stories finished in the last 7 days (m1 by finish and again by reconcile), one reopened, one
+# dropped, and one finished 8 days ago whose file was deleted only yesterday.
+for i in $(seq 1 14); do printf '%s\treconcile\tm%s\tw5:p1\tok (finished%s)\n' "$(ago $((i * 600)))" "${i}" "$([ $((i % 2)) = 0 ] && echo ' by its PR')"; done > "${SPD}/.swarm/events.tsv"
+printf '%s\tfinish\tm1\tw5:p1\tok\n%s\treconcile\tm-back\tw5:p1\tok (reopened)\n%s\tdrop\tm-drop\tw5:p1\tok\n%s\treconcile\tm-old\tw5:p1\tok (finished)\n' \
+  "$(ago 30)" "$(ago 30)" "$(ago 30)" "$(ago $((8 * 1440)))" >> "${SPD}/.swarm/events.tsv"
+sitem stories/m-old.md 'status: review'
+"${GSP[@]}" add docs && "${GSP[@]}" commit -qm board
+GIT_COMMITTER_DATE="$(ago 1440)" "${GSP[@]}" rm -q docs/stories/m-old.md && GIT_COMMITTER_DATE="$(ago 1440)" "${GSP[@]}" commit -qm "clean m-old"
+# A held story whose builder was closed paused 3 hours ago, and a story in review: the lead's two items.
+sitem stories/q-held.md 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
+sitem stories/q-rev.md 'status: review' 'prs: https://github.com/o/q/pull/50'
+"${GSP[@]}" add docs && "${GSP[@]}" commit -qm "held and review"
+printf '%s\tclose:paused\tq-held\tw5:p1\tok\n' "$(ago 180)" >> "${SPD}/.swarm/events.tsv"
+# Three identical lines in a row: one recent row, ×3.
+for _ in 1 2 3; do printf '%s\ttell:nudge\tq-rev\tw5:p1\tok\n' "$(ago 5)" >> "${SPD}/.swarm/events.tsv"; done
+# A fixed finding far longer than recent's column: its text is cut, never its (#PR).
+printf '%s\tlong\thttps://github.com/o/q/pull/42\t%s\n' "$(date +%F)" "$(printf 'word %.0s' $(seq 1 40))" > "${SPD}/.swarm/findings.tsv"
+spdash() { fresh; (cd "${SPD}" || exit 1; env -u HERDR_ENV COLUMNS=100 PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
+out="$(spdash)"; top="$(sed -n 2p <<< "${out}")"
+check "speedometer: 14 stories finished in 7 days are 2.0 a day; a second finish, a reopen, a drop and one 8 days old do not change it" has "2.0 merged/day over 7 days" "${top}"
+check "speedometer: a held story closed 3h ago and a review story light the first light, 2 items, oldest 3h" \
+  grep -qE '! 2 waiting on you or the lead, oldest 3h0[01]m' <<< "${top}"
+check "speedometer: with no escaped finding the second light is unlit" has "✓ 0 escaped in 7 days" "${top}"
+recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
+check "recent: three identical lines in a row are one row, ×3" test "$(grep -c 'tell:nudge q-rev' <<< "${recent}")" -eq 1
+check "recent: the collapsed row says ×3" has "tell:nudge q-rev ×3" "${recent}"
+check "recent: a findings row cut to width keeps its (#PR)" has "… (#42)" "${recent}"
+# One escaped finding 2 days old lights the second light; one 9 days old does not count.
+printf '%s\tmissed\thttps://github.com/o/q/pull/3\tescaped %s\tescaped\tescaped\n' \
+  "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=2))')" two \
+  "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=9))')" nine >> "${SPD}/.swarm/findings.tsv"
+check "speedometer: one escaped finding 2 days old lights the second light" has "! 1 escaped in 7 days" "$(sed -n 2p <<< "$(spdash)")"
+# An uncommitted board file whose name has a space is named as it is, unquoted.
+echo x > "${SPD}/docs/stories/notes 1.md"
+check "the board line names a file with a space unquoted" has "board: 1 uncommitted edit in the main checkout: stories/notes 1.md" "$(spdash)"
+rm "${SPD}/docs/stories/notes 1.md"
+# A rename in the work tree only (Y = R, after git add -N): the new name once, never the old one.
+echo n > "${SPD}/docs/stories/n-old.md"; "${GSP[@]}" add docs && "${GSP[@]}" commit -qm n-old
+mv "${SPD}/docs/stories/n-old.md" "${SPD}/docs/stories/n-new.md"; "${GSP[@]}" add -N docs/stories/n-new.md
+check "the board line names a work-tree rename by its new name alone" has "board: 1 uncommitted edit in the main checkout: stories/n-new.md" "$(spdash)"
+"${GSP[@]}" rm -q --cached docs/stories/n-new.md; rm "${SPD}/docs/stories/n-new.md"; "${GSP[@]}" checkout -q -- docs/stories/n-old.md
+"${GSP[@]}" rm -q docs/stories/n-old.md && "${GSP[@]}" commit -qm "n-old gone"
+# Nothing built, so nothing finished: 0.0.
+mv "${SPD}/.swarm/events.tsv" "${SPD}/.swarm/events.tsv.bak"
+check "speedometer: with no events.tsv nothing was built, 0.0" has "0.0 merged/day" "$(sed -n 2p <<< "$(spdash)")"
+mv "${SPD}/.swarm/events.tsv.bak" "${SPD}/.swarm/events.tsv"
 
 # --- A running codex review (codex-review's marker, .swarm/state/codex-review.<pid>: start epoch, base,
 # cwd) is a row under its worktree's epic, with its age, in neither needs you nor the lead's queue. A
