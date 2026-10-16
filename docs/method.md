@@ -171,7 +171,7 @@ prints every setting and where it came from.
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort) |
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
-| `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It holds the story's **Done when** and **From review** blocks, the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. A condition over 4000 characters, Claude Code's own limit, stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
+| `goal` | `off` | `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by path: every item under **Done when** and **From review** in `<board>/stories/<slug>.md` holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**) |
 | `codex_minutes` | `10` | `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged |
 
@@ -364,7 +364,8 @@ opened (recorded in `.swarm/state`); an agent started by hand is not watched.
 
 **The goal.** With `goal = N`, once the builder has taken up its brief, `story` sends it `/goal`
 followed by the condition in `.swarm/briefs/<slug>.goal.md`, joined onto one line, once, through
-`herdr agent prompt`. The builder is mid-turn by then; Claude Code still sets the goal straight
+`herdr agent prompt`. The condition names the story by its path, so the line stays under
+`GOAL_SEND_MAX`, the length past which Claude Code takes it as pasted text. The builder is mid-turn by then; Claude Code still sets the goal straight
 away, and runs one extra short turn after the brief's turn ends. From then on Claude Code's judge
 keeps the builder working until the story's **Done when** holds, the builder replies
 `IMPOSSIBLE: <why>`, or N more turns have passed. The judge records all three as met, and only its
@@ -373,6 +374,7 @@ read the pane: it waits up to a minute for a `goal_status` entry with that condi
 aside), written after the send. If Claude Code refused
 the goal (hooks restricted by settings or policy, or a folder it does not trust), or no entry came,
 `story` fails, names the story and the reason, and leaves the builder open for the lead to look at.
+If the log shows the `/goal` queued as a prompt instead, the failure says it was pasted as text.
 It never sends the `/goal` again, because a second one would reset a goal that had set.
 It types the `/goal` only once Claude Code reports the session busy. If the session is waiting on a
 prompt, where Enter could approve what auto mode flagged, or is not busy within a minute, nothing is

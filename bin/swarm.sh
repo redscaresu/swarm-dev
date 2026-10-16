@@ -2007,28 +2007,27 @@ reply_sentence() {
   fi
 }
 
-# goal_condition <slug> <epic|story> — the builder's /goal: the story's **Done when** and **From
-# review** blocks, the reply its brief asks for in that mode, an escape for a story that cannot be
-# done, and the goal's turn bound. A block runs from its bold heading to the first blank line after
-# its content, or to the next bold line. Fails, printing why, with no Done when or none under it.
+# goal_condition <slug> <epic|story> — the builder's /goal, on one line: the story's **Done when** and
+# **From review** items named by the story's path (inlined, a long Done when made the /goal arrive as
+# pasted text), the reply its brief asks for in that mode, an escape for a story that cannot be done,
+# and the goal's turn bound. Fails, printing why, with no Done when or no item under it: a blank line
+# under the heading is skipped, and a bold line before any item ends it.
 goal_condition() {
-  local blocks
-  blocks="$(awk '
-    /^\*\*(Done when|From review)/ {
-      if (on) print ""
-      on = 1; dw = /^\*\*Done when/; rest = $0; sub(/^\*\*[^*]*\*\*[[:space:]]*/, "", rest)
-      has = (rest != ""); if (has && dw) items = 1
-      print; next
-    }
-    on && /^\*\*/ { on = 0; print ""; next }
-    on && /^[[:space:]]*$/ { if (has) { on = 0; print "" }; next }
-    on { has = 1; if (dw) items = 1; print }
-    END { exit !items }' "${BOARD}/stories/$1.md")" \
+  local f="${BOARD}/stories/$1.md"
+  awk '/^\*\*Done when/ { on = 1; rest = $0; sub(/^\*\*[^*]*\*\*[[:space:]]*/, "", rest); if (rest != "") { found = 1; exit }; next }
+    on && /^\*\*/ { on = 0; next }
+    on && /[^[:space:]]/ { found = 1; exit }
+    END { exit !found }' "${f}" \
     || { echo "$1 has no **Done when** with an item under it, so its goal would have nothing to meet"; return 1; }
-  printf '%s\n\n%s\n\n%s\n' "${blocks}" "$(reply_sentence "$2")" \
+  printf '%s %s %s\n' "Every item under **Done when:** and **From review** in ${f} (your brief's story, already in this session) holds and is shown in this session." \
+    "$(reply_sentence "$2")" \
     "If the story cannot be done, reply \`IMPOSSIBLE: <why>\` and stop; that reply meets this goal. The goal is met once all of the above holds and you have replied, or stop after ${CFG_goal} more turns."
 }
-GOAL_MAX_CHARS=4000   # Claude Code's own cap on a /goal condition
+# goal_message <condition> — the line send_goal types: /goal and the condition, whitespace squeezed.
+goal_message() { local c; c="$(tr -s '[:space:]' ' ' <<< "$1")"; c="${c# }"; printf '/goal %s' "${c% }"; }
+# GOAL_SEND_MAX: the longest /goal message story sends. Claude Code collapses a longer paste into a
+# "[Pasted text]" block and queues it as a prompt, so the /goal never runs.
+GOAL_SEND_MAX=700   # MEASUREMENT PENDING; the 2026-10-16 logs: a 704-character /goal ran, 1198 was pasted
 
 # goal_entry <name> <since-epoch> [<goal-file>] — the kind of the newest goal entry written at or
 # after <since> in <name>'s session log (its agents.tsv session id, REPORT_PY's session_log under
@@ -2038,7 +2037,9 @@ GOAL_MAX_CHARS=4000   # Claude Code's own cap on a /goal condition
 # `refused: <Claude Code's reason>` (a system/local_command whose stdout is a /goal refusal, as with
 # hooks restricted or an untrusted folder; no goal_status follows). The spike saw no entry for a
 # stalled, paused or errored goal, so none is read. With <goal-file>, a goal_status for another
-# condition (whitespace aside) is skipped.
+# condition (whitespace aside) is skipped, and with no goal entry, `pasted` when a queued_command
+# attachment's prompt, its <pasted_content> tags aside, starts with that /goal: Claude Code collapsed
+# the paste and queued it as a prompt, as it did on 2026-10-16.
 goal_entry() {
   SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "${3:-}" <<'PY'
 import datetime, json, os, re, sys
@@ -2046,9 +2047,9 @@ exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
 log, name, projects, since, cond = sys.argv[1:6]
 want = " ".join(open(cond, encoding="utf-8").read().split()) if cond else None
 sid = session_id(log, name)
-path, kind = session_log(projects, sid) if sid else "", ""
+path, kind, queued = session_log(projects, sid) if sid else "", "", False
 for l in open(path, encoding="utf-8", errors="replace") if path else []:
-    if "goal_status" not in l and "local_command" not in l:
+    if "goal_status" not in l and "local_command" not in l and "queued_command" not in l:
         continue
     try:
         d = json.loads(l)
@@ -2065,11 +2066,17 @@ for l in open(path, encoding="utf-8", errors="replace") if path else []:
         if not m:
             continue
         k = "refused: " + " ".join(m.group(1).split())
+    elif want is not None and d.get("type") == "attachment" and isinstance(a, dict) and a.get("type") == "queued_command":
+        p = a.get("prompt")
+        p = "".join(b.get("text") or "" for b in p if isinstance(b, dict)) if isinstance(p, list) else str(p or "")
+        if t >= float(since) and " ".join(re.sub(r"</?pasted_content[^>]*>", " ", p).split()).startswith("/goal " + want):
+            queued = True
+        continue
     else:
         continue
     if t >= float(since):
         kind = k
-print(kind)
+print(kind or ("pasted" if queued else ""))
 PY
 }
 
@@ -2078,15 +2085,16 @@ PY
 # PROMPT_TIMEOUT_MS. The condition goes on one line: the spike only saw a one-line /goal set, and a
 # multi-line paste could be split or become a "[Pasted text]" placeholder; goal_entry compares it
 # whitespace aside. Any goal_status newer than the send means it set: the judge may already have
-# written its own after the sentinel. A refusal, or no entry, fails naming the story and why, and
-# leaves the builder open for the lead to read. <since> defaults to now. The /goal goes only into a
+# written its own after the sentinel. A refusal, or no entry, fails naming the story and why (a /goal
+# Claude Code queued as pasted text, when goal_entry finds one), and leaves the builder open for the
+# lead to read. <since> defaults to now. The /goal goes only into a
 # turn that has started: herdr can say working while the session is still idle, and deliver_prompt
 # takes blocked as taken up, so it waits up to PROMPT_TIMEOUT_MS for the session (session_state) to
 # read busy, and fails with nothing sent if it reads waiting (a dialog, where Enter could approve
 # what auto mode flagged) or never reads busy. Each failure says the brief or the findings were
 # delivered, so they are not sent again.
 send_goal() {
-  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline cond state pre post
+  local slug="$1" goal="$2" name since="${4:-$(date +%s)}" entry deadline state pre post
   name="$(agent_name "${slug}")"
   pre="${slug}: the brief was delivered, but"; post="; do not send it again"
   [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; }
@@ -2097,11 +2105,12 @@ send_goal() {
     waiting*) die "${pre} its builder is waiting on $(waiting_for "${state}"), so no /goal was sent; answer it (herdr agent read ${name})${post}" ;;
     *) die "${pre} its session did not read busy within $((PROMPT_TIMEOUT_MS / 1000))s (${state}), so no /goal was sent${post}" ;;
   esac
-  cond="$(tr -s '[:space:]' ' ' < "${goal}")"; cond="${cond# }"; cond="${cond% }"
-  deliver_prompt "${name}" <(printf '/goal %s' "${cond}") "" once   # read once, so a pipe will do
+  deliver_prompt "${name}" <(goal_message "$(cat "${goal}")") "" once   # read once, so a pipe will do
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
-  while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ -z "${entry}" && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
+  # A queued paste waits out the deadline: a goal_status may still follow it.
+  while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ ( -z "${entry}" || "${entry}" == pasted ) && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
   case "${entry}" in
+    pasted) die "${pre} its /goal was pasted as text, not run: its session log shows it queued as a prompt and no goal set; its builder is still open${post}" ;;
     refused:*) die "${pre} Claude Code refused its /goal (${entry#refused: }); its builder is still open${post}" ;;
     "") die "${pre} its session log shows no goal set for its condition $((PROMPT_TIMEOUT_MS / 1000))s after the /goal; its builder is still open${post}" ;;
   esac
@@ -2236,7 +2245,7 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" mode=story
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic from epic_branch goal="" msg mode=story
   [[ -f "${story}" ]] || die "no story ${story}"
   grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
   kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
@@ -2258,8 +2267,9 @@ build_story() {
   require_trusted "${src}"
   if [[ "${CFG_goal}" == off ]]; then require_claude; else
     goal="$(goal_condition "${slug}" "${mode}")" || die "${goal}"
-    (( ${#goal} <= GOAL_MAX_CHARS )) \
-      || die "${slug}: its goal condition is ${#goal} characters, over Claude Code's ${GOAL_MAX_CHARS}; shorten its **Done when** or **From review**"
+    msg="$(goal_message "${goal}")"
+    (( ${#msg} <= GOAL_SEND_MAX )) \
+      || die "${slug}: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
     require_claude "${GOAL_MIN_CLAUDE}"
   fi
   base="$(base_for "${src}")"
