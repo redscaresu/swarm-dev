@@ -2,7 +2,7 @@
 # cost_test.sh — `swarm.sh cost` against a fixture: two roles, a message logged twice (counted
 # once), a codex agent (listed, not priced), an agent older than the `since` date (left out), the
 # arguments cost refuses; then the same agents read from close's copies of their session logs once
-# Claude Code deleted them. The project and Claude's projects dir carry [x] in their names, which
+# Claude Code deleted them; last the lead's own sessions, in the project's directory. The project and Claude's projects dir carry [x] in their names, which
 # must be read as paths, not patterns.
 set -euo pipefail
 
@@ -76,6 +76,21 @@ same "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${R}/.swarm/sessions/"*
 out="$(run cost 2026-09-15)"
 check "with neither, the agent is listed and not priced" "| code | 1 (1 not in the logs) | - | 0k | 0k | 0k | 0k | 0.00 |"
+
+# The lead's own sessions, in the project's directory under Claude's projects dir (its path with every
+# character but letters and digits turned into -): one agents.tsv does not name counts as lead, from
+# its first timestamp's day on; one it names (s-code) counts once, under its own role.
+real="$(cd "${R}" && pwd -P)"; E="${C}/${real//[^A-Za-z0-9]/-}"
+mkdir -p "${E}"
+stamp() { printf '{"timestamp":"%s",%s\n' "$1" "$(cut -c2-)"; } # <time>: one usage line, stamped
+{ echo '{"type":"summary"}'; usage m5 claude-opus-5-5 0 0 0 1000000 | stamp 2026-09-20T10:00:00.000Z; } > "${E}/s-lead.jsonl"
+usage m6 claude-opus-5-5 0 0 0 1000000 | stamp 2026-09-20T09:00:00.000Z > "${E}/s-code.jsonl"
+out="$(run cost 2026-09-15)"
+check "an unlisted session in the project's directory is the lead's" "| lead | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
+check "a listed session there counts under its own role" "| code | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
+check "each counted once" "| **total** | 4 | | 0k | 0k | 0k | 2.0M | 40.00 |"
+out="$(run cost --since 2026-09-21)"
+check "with --since after its first timestamp, the lead session is left out" "| **total** | 3 | | 0k | 0k | 0k | 1.0M | 20.00 |"
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

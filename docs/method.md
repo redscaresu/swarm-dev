@@ -260,7 +260,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   (`ok (attempts <n>, <k> PRs)`), and `reset` or `drop <slug>` with `ok (<reason>)`.
 - **Measure before tuning.** `swarm.sh` records every agent it starts (role, model, effort,
   session) in `.swarm/agents.tsv`, and `swarm.sh cost [--since YYYY-MM-DD]` turns that and Claude
-  Code's logs into tokens and estimated cost per role. Change `policy()` from that table, not from a guess.
+  Code's logs into tokens and estimated cost per role. The lead's own sessions count too, under
+  `lead`: every session in the project's Claude Code directory that agents.tsv does not name. Change
+  `policy()` from that table, not from a guess.
 - **The conductor is Opus at `high`, one fresh session per epic**, on the standard context window,
   never 1M. A conductor re-reads its whole context every turn: on the project this came from, one
   long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M

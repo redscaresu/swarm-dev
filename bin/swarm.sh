@@ -1006,30 +1006,51 @@ print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) 
 PY
 }
 
-# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started
-# (and the calling session, as "lead", when run inside herdr). Usage comes from Claude Code's own
-# session logs (or close's copy, once Claude Code deleted one), deduplicated by message id; codex
-# agents are listed but not priced (not logged here).
+# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started,
+# and as "lead" the calling session when run inside herdr plus every session in the project's own
+# Claude Code directory that agents.tsv does not name (with --since, those that started on or after it).
+# Usage comes from Claude Code's own session logs (or close's copy, once Claude Code deleted one),
+# deduplicated by session and message id; codex agents are listed but not priced (not logged here).
 cost_report() {
-  local lead="" since=""
+  local lead="" since="" own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   # A bare date is the older form, still what dash passes.
   if [[ $# -eq 1 ]]; then since="$1"; elif [[ $# -eq 2 && "$1" == --since ]]; then since="$2"; fi
   [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  [[ -f "${AGENTS_LOG}" || -n "${lead}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  [[ -f "${AGENTS_LOG}" || -n "${lead}" || -d "${own}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
-    "${SESSIONS_DIR}" <<'PY'
+    "${SESSIONS_DIR}" "${own}" <<'PY'
 import os, sys
 exec(os.environ["SWARM_REPORT_PY"])
-log, since, lead, projects, archive = sys.argv[1:6]
-agents = []
+log, since, lead, projects, archive, own = sys.argv[1:7]
+agents, named = [], set()
 if os.path.exists(log):
     for line in open(log):
         f = line.rstrip("\n").split("\t")
-        if len(f) == 7 and f[0] >= since:
-            agents.append({"role": f[1], "kind": f[3], "session": f[6]})
+        if len(f) == 7:
+            named.add(f[6])
+            if f[0] >= since:
+                agents.append({"role": f[1], "kind": f[3], "session": f[6]})
 if lead:
     agents.append({"role": "lead", "kind": "claude", "session": lead})
+    named.add(lead)
+
+def started(path):
+    # The first timestamp's UTC day, or "".
+    for line in log_lines(path):
+        try:
+            ts = json.loads(line).get("timestamp")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(ts, str):
+            return ts[:10]
+    return ""
+
+# The lead's own sessions: Claude Code keeps them under the project's path, all but letters and digits turned into -.
+for path in sorted(glob.glob(os.path.join(glob.escape(own), "*.jsonl"))):
+    session = os.path.basename(path)[:-len(".jsonl")]
+    if session not in named and (since == "0000-00-00" or started(path) >= since):
+        agents.append({"role": "lead", "kind": "claude", "session": session})
 rows, seen = {}, set()
 for a in agents:
     r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
