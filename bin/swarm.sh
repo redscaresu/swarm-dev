@@ -27,7 +27,7 @@
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
-#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR; --release: a PR that changes only .claude-plugin/plugin.json, no reconcile
+#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
@@ -3547,21 +3547,30 @@ merge_pr() {
 }
 
 # release_check <owner/repo> <base> <head> — merge --release's checks past the file list: the PR goes
-# into the project's base, and its plugin.json differs from the base's only in "version", since
-# hooks, mcpServers and command paths there run code.
+# into the project's base, its plugin.json differs from the base's only in "version" (compared as
+# sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
+# and that version is MAJOR.MINOR.PATCH and greater than the base's.
 release_check() {
-  local want old new
+  local want old new why
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
   old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
     || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2"
   new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
     || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
-  OLD="${old}" NEW="${new}" python3 -c 'import json,os
-o, n = json.loads(os.environ["OLD"]), json.loads(os.environ["NEW"])
-v = n.pop("version", None); o.pop("version", None)
-raise SystemExit(0 if isinstance(v, str) and o == n else 1)' 2>/dev/null \
-    || merge_fail "--release: ${MERGE_TARGET} changes more of .claude-plugin/plugin.json than its version"
+  why="$(OLD="${old}" NEW="${new}" BASE="$2" python3 -c 'import json,os,re
+e = os.environ
+o, n = json.loads(e["OLD"]), json.loads(e["NEW"])
+v, w = n.pop("version", None), o.pop("version", None)
+semver = lambda x: tuple(map(int, x.split("."))) if isinstance(x, str) and re.fullmatch(r"\d+\.\d+\.\d+", x) else None
+if semver(v) is None:
+    print("its version %r is not MAJOR.MINOR.PATCH" % (v,))
+elif semver(w) is None or semver(v) <= semver(w):
+    print("its version %s is not greater than %r on %s" % (v, w, e["BASE"]))
+elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
+    print("it changes more of .claude-plugin/plugin.json than its version; if %s changed plugin.json after the release branch was cut, merge origin/%s into it and retry" % (e["BASE"], e["BASE"]))' 2>/dev/null)" \
+    || why="cannot read .claude-plugin/plugin.json as JSON"
+  [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET}: ${why}"
 }
 
 # brief_trailers — the commit trailers the project's brief names, wherever a line has one (quoted or
