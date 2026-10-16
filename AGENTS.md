@@ -44,7 +44,7 @@ also run one by one, and which each wait for the user's approval:
 Useful while it runs: `swarm.sh status [--all]` (agents that need a look, including empty panes where a start failed, and what waits on the user; `--all` lists idle agents and blocked stories too), `swarm.sh dash [--watch [seconds]]` (the board, agents, model ladder and recent events on one read-only screen), `swarm.sh tidy [--yes]` (close empty panes and retired agents' panes; lists them first), `swarm.sh next` (the next step, without doing it), `swarm.sh cost [--since YYYY-MM-DD]`
 (tokens and estimated cost per role), `swarm.sh policy <role>` (model and effort for a role), `swarm.sh tell <slug> <kind> <file>` (findings, nudge or resume
 sends an idle builder a file; note leaves a conductor a note, busy or not), `swarm.sh merge [--board] <pr-url>`
-(merge a green PR in review with its head pinned, wait for CI on main, then reconcile), `swarm.sh log-finding <kind> <pr> <text>` and `swarm.sh lessons [--all]` (the outer
+(merge a green PR in review with its head pinned, wait for CI on main, then reconcile), `swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr> <text>` and `swarm.sh lessons [--all]` (the outer
 loop: log fixed findings by kind; list kinds recurring in 3+ PRs with no brief rule yet), `swarm.sh watch`
 (returns when a story PR needs the lead), `herdr agent read <name> --source recent-unwrapped`
 (what an agent is doing).
