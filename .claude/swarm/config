@@ -4,3 +4,5 @@ board_dir = board
 lessons_file = AGENTS.md
 # The lead is a Claude session: dash puts what it can do in its own queue, apart from the user's.
 lead = session
+# The conductor merges its own green, reviewed PRs through swarm.sh merge (head pinned) and keeps going.
+merge = agent
