@@ -5521,31 +5521,43 @@ stop_codex() {
   } 2>/dev/null || true
 }
 
+# story_items <story file> <heading> — the items under a story's bold **<heading>** line: any text on
+# that line, then the non-blank lines under it, up to the next bold line or markdown heading.
+story_items() {
+  awk -v h="$2" 'index($0, "**" h) == 1 { on = 1; sub(/^\*\*[^*]*\*\*[[:space:]]*/, ""); if ($0 != "") print; next }
+    on && /^(\*\*|#+[[:space:]])/ { exit } on && /[^[:space:]]/' "$1"
+}
 # codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
-# the story's touches and its **Done when** items (any text on its line, then the lines under it, up to
-# the next bold line), and that work outside them is not a finding.
+# the story's touches, its **Done when** and **From review** items (the builder's acceptance, as in
+# goal_condition), and that work outside them is not a finding. Fails with no Done when item.
 codex_story_prompt() {
-  printf 'Review the changes on this branch against origin/%s (git diff origin/%s...HEAD). They implement a story that touches: %s\n\nIts Done when:\n%s\n\nReview them against these touches and Done when items. Work outside them is not a finding.' \
-    "$1" "$1" "$(fm "$2" touches)" \
-    "$(awk '/^\*\*Done when/ { on = 1; sub(/^\*\*[^*]*\*\*[[:space:]]*/, ""); if ($0 != "") print; next }
-      on && /^\*\*/ { exit } on && /[^[:space:]]/' "$2")"
+  local done_when from_review
+  done_when="$(story_items "$2" 'Done when')"
+  [[ -n "${done_when}" ]] || return 1
+  from_review="$(story_items "$2" 'From review')"
+  [[ -z "${from_review}" ]] || from_review=$'\n\nIts From review:\n'"${from_review}"
+  printf 'Review the changes on this branch against origin/%s (git diff origin/%s...HEAD). They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. Work outside them is not a finding.' \
+    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}"
 }
 
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
 # beside --base) and stdin from /dev/null, so it never waits on input. With SWARM_STORY=<slug>, a
 # prompt instead of --base (codex_story_prompt), so codex reviews against that story. codex stays in
-# the caller's process group, so a harness that kills that group kills codex too. stop_codex stops it after
-# codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent TERM or
-# HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
+# the caller's process group, so a harness that kills that group kills codex too. stop_codex stops it
+# after codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent
+# TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid left rc=0 m args
+  local pid left rc=0 m args story prompt
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   if [[ -n "${SWARM_STORY:-}" ]]; then
-    m="${BOARD}/stories/${SWARM_STORY}.md"
-    [[ -f "${m}" ]] || die "SWARM_STORY=${SWARM_STORY}: no story file ${m}"
-    args=("$(codex_story_prompt "$1" "${m}")")
+    [[ "${SWARM_STORY}" =~ ^[a-z0-9-]+$ ]] || die "SWARM_STORY: bad slug '${SWARM_STORY}'"
+    story="${BOARD}/stories/${SWARM_STORY}.md"
+    [[ -f "${story}" ]] || die "SWARM_STORY=${SWARM_STORY}: no story file ${story}"
+    prompt="$(codex_story_prompt "$1" "${story}")" \
+      || die "SWARM_STORY=${SWARM_STORY}: ${story} has no **Done when** with an item under it"
+    args=("${prompt}")
   fi
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),

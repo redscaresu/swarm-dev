@@ -610,8 +610,9 @@ Every codex review a builder, a conductor or the lead runs goes through `swarm.s
 reads its config. It runs `codex exec review --base origin/<base>` with no prompt (codex refuses one
 beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`. With
 `SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
-against `origin/<base>`, lists the story's touches and **Done when** items, and says that work outside
-them is not a finding. If `SWARM_STORY` names no story file, codex-review fails before codex starts. An interrupted
+against `origin/<base>`, lists the story's touches with its **Done when** and **From review** items,
+and says that work outside them is not a finding. If `SWARM_STORY` is not a slug, names no story file,
+or names a story with no **Done when** item, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
