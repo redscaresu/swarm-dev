@@ -417,6 +417,9 @@ for c in e --backlog; do
 done
 check "the epic conductor's brief (merge = agent) never finishes the epic under a story still in review" \
   grep -qF 'while a story of it is still in review' "${P}/.swarm/briefs/conduct-e.md"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the epic conductor's brief (merge = agent) puts such an epic in review, so reconcile finishes it after the user's merge" \
+  grep -qF 'run `swarm.sh review <epic> <every PR URL still waiting>`' "${P}/.swarm/briefs/conduct-e.md"
 rm -rf "${P}/docs/epics" "${ROOT}/agents.fail"
 # step <from> <to> — plan-epic.md from the line holding <from> up to the one holding <to>.
 step() { awk -v from="$1" -v to="$2" 'index($0, to) { on = 0 } index($0, from) { on = 1 } on' "${REPO}/commands/plan-epic.md"; }

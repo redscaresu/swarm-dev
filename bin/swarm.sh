@@ -2098,8 +2098,9 @@ EOF
   else
     [[ -n "${backlog}" ]] || epic_end=" When the
 epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`, but never
-while a story of it is still in review (a \`costs: money\` one waits for the user's merge): then say
-in your report that the epic waits on that merge."
+while a story of it is still in review (a \`costs: money\` one waits for the user's merge): once the
+Done when will hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\`
+instead, and the epic leaves the board once they all merge."
     cat <<EOF
 A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
 as with merge = human. When its PR is green and reviewed,
