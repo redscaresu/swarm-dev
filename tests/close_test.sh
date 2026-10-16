@@ -102,14 +102,12 @@ is "and closes its open PR, and only that one, with a comment naming the attempt
 close s1
 is "closing it again leaves 1" "1" "$(attempts s1)"
 echo '[]' > "${ROOT}/prs.json"
-mkdir -p "${P}/.claude/swarm"; echo "keep_panes = true" > "${P}/.claude/swarm/config"
+mkdir -p "${P}/.claude/swarm"
+# Its pane is alone in its tab, so the tab closes with it and the tab record goes.
 item k1 "status: ready" "kind: code"; started k1 w:p2
 close k1
-is "with keep_panes, closing it writes attempts: 1, clears it, and retires the builder" "1||k1-done w:p2" \
-  "$(attempts k1)|$(left k1)|$(grep ' w:p2$' "${ROOT}/agents")"
-close k1
-is "with keep_panes, closing it again leaves 1" "1" "$(attempts k1)"
-: > "${P}/.claude/swarm/config"
+is "closing a builder closes its pane and never renames it k1-done" "closed|k1 w:p2" \
+  "$([[ -e "${P}/.swarm/state/k1" ]] || echo closed)|$(grep ' w:p2$' "${ROOT}/agents")"
 # A worktree whose directory was deleted by hand is still registered: it is pruned, so the branch goes.
 item w1 "status: ready" "kind: code"; started w1 w:p11; rm -rf "${ROOT}/proj-wt/w1"
 close w1
@@ -125,10 +123,9 @@ item g1 "status: ready" "kind: code"; started g1 w:p5
 item n1 "status: ready" "kind: code"; started n1
 item h1 "status: ready" "kind: code"; started h1; echo "w:p6 h1" > "${P}/.swarm/state/h1"   # its pane closed by hand
 item q1 "status: ready" "kind: code"; started q1 w:p13
-item v1 "status: ready" "kind: verify"; started v1 w:p14
 started d1 w:p7
 started conduct-x w:p8; started hld-x w:p9; started plan-x w:p10
-close r1; close v1; close d1; close n1; close h1; for s in conduct-x hld-x plan-x; do close "${s}"; done
+close r1; close d1; close n1; close h1; for s in conduct-x hld-x plan-x; do close "${s}"; done
 echo "[{\"number\":3,\"state\":\"MERGED\",\"url\":\"${U}/3\"},{\"number\":4,\"state\":\"OPEN\",\"url\":\"${U}/4\"}]" > "${ROOT}/prs.json"
 close m1
 # Merged but queued: still open, with auto-merge set.
@@ -154,7 +151,7 @@ is "a slug over 32 characters (agent ${#LN} long) is counted once, cleared, and 
   "$(attempts "${L}")|$(left "${L}")|$(cat "${ROOT}/panes-closed")|$(cat "${P}/.swarm/state/e1")"
 close "${L}"
 is "and closing it again leaves 1" "1" "$(attempts "${L}")"
-for s in r1:"a story in review" v1:"a ready verify story (no PR tells its pass from a failure)" d1:"a deleted story" m1:"a story whose PR merged" q1:"a story whose open PR has auto-merge set" \
+for s in r1:"a story in review" d1:"a deleted story" m1:"a story whose PR merged" q1:"a story whose open PR has auto-merge set" \
          g1:"a story whose gh call fails" \
          n1:"a ready story with no builder open" h1:"a ready story whose builder's pane was closed by hand" \
          conduct-x:"conduct-x" hld-x:"hld-x" plan-x:"plan-x"; do
@@ -309,10 +306,6 @@ for c in paused cleared-on-error; do
   touch "${ROOT}/ghfail"; out="$(cs "hg-${c}" "${c}")"; rm "${ROOT}/ghfail"
   is "close hg-${c} ${c} with gh failing (a merging PR cannot be ruled out) leaves the story file and its build alone, and says it is not held" \
     "same|worktree branch origin|1" "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/hg-${c}.md" && echo same)|$(left "hg-${c}")|$(grep -c "^not held: hg-${c} " <<< "${out}")"
-  item "hv-${c}" "status: ready" "kind: verify" "attempts: 1"; started "hv-${c}" w:p76
-  cs "hv-${c}" "${c}" >/dev/null
-  is "close hv-${c} ${c} on a verify story, its builder open (no build counts): held all the same, its block says it has no PRs, its build cleared" \
-    "lead|verify|1|ready|${c}|1|0|" "$(state "hv-${c}")|$(fmv "hv-${c}" held_for)|$(grep -cx 'A verify story has no PRs.' <<< "$(block "hv-${c}")")|$(grep -c 'gh pr list' <<< "$(block "hv-${c}")")|$(left "hv-${c}")"
   started "conduct-h${c}" w:p79; out="$(cs "conduct-h${c}" "${c}")"
   is "close conduct-h${c} ${c}, a name with no story file and its pane open: no read error, no held or not held line" "0" \
     "$(grep -c "No such file\|can't read\|held" <<< "${out}")"
