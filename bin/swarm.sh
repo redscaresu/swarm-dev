@@ -11,13 +11,13 @@
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh features [--since YYYY-MM-DD]                  each feature in docs/features.tsv: its uses in the logs, its metric and baseline, and delete? when unused or unmeasured
-#   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
+#   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]  per epic and project: builders at once, stories per chain, review wait, stacked starts
 #   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
 #   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
-#   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
+#   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
@@ -136,10 +136,7 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
 CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
-CFG_base_branches=""    # empty: origin's default branch
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
-CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
-CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
@@ -148,7 +145,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches merge pr_per lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -176,12 +173,8 @@ load_config() {
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
-      base_branches)
-        [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches: not branch names: ${value}" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
-      pr_per)
-        [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes|codex_minutes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: ${key} must be a positive whole number, not '${value}'" ;;
       sonnet_share|escalate_after)
@@ -255,22 +248,14 @@ repo_dir() {
 # worktree_for <repo-dir> <slug> — where a story's worktree goes: beside its repo, in <repo>-wt/.
 worktree_for() { echo "$(dirname "$1")/$(basename "$1")-wt/$2"; }
 
-# base_for <repo-dir> — the branch a story starts from and merges into, fetched: the first
-# base_branches entry origin has, or origin's default branch when the list is empty. Each is asked
-# of origin itself, not the clone's cached refs, which a single-branch clone or a changed default
-# would get wrong. Never a guess.
+# base_for <repo-dir> — the branch a story starts from and merges into, fetched: origin's default
+# branch, asked of origin itself, not the clone's cached refs, which a changed default would get
+# wrong. Never a guess.
 base_for() {
-  local src="$1" b head branches
-  if [[ -n "${CFG_base_branches// /}" ]]; then
-    read -r -a branches <<< "${CFG_base_branches}"
-    for b in "${branches[@]}"; do
-      git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" 2>/dev/null && { echo "${b}"; return; }
-    done
-    die "${src}: origin has none of base_branches (${CFG_base_branches})"
-  fi
+  local src="$1" b head
   if ! git -C "${src}" remote set-head origin --auto >/dev/null 2>&1 \
      || ! head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD)"; then
-    die "${src}: cannot tell origin's default branch; set base_branches"
+    die "${src}: cannot tell origin's default branch"
   fi
   b="${head#origin/}"
   git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" || die "${src}: cannot fetch ${b}"
@@ -283,8 +268,10 @@ base_for() {
 ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
-# plus verify: nothing starts it now, but agents.tsv keeps the verify builds made before it went.
-BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } verify"
+# plus LEGACY_BUILDER_ROLES: roles nothing starts now, kept so agents.tsv's past builds still count.
+# They are in neither policy nor the ladder.
+LEGACY_BUILDER_ROLES="verify"
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } ${LEGACY_BUILDER_ROLES}"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -1096,7 +1083,8 @@ PY
 # Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
 # cause, the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
 # drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
-# unknown), the findings declined, and both counts by reviewer. A finding goes to the latest build on
+# unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
+# its start to that and from that to the merge, and the commits on the PR that merge the base into it. A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -1257,7 +1245,9 @@ for b in builds:
 PY
 )"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
-  # story/<slug> (newest first, as `url state mergedAt` triples joined by commas), its epic: and
+  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
+  # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
+  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -1267,31 +1257,48 @@ PY
     from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    # shellcheck disable=SC2016 # $b is jq's
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
-        --json url,state,mergedAt --jq '.[] | [.url, .state, .mergedAt // ""] | @tsv') 2>/dev/null)"; then
+        --json url,state,mergedAt,createdAt,baseRefName,commits --jq '.[] | [.url, .state, .mergedAt // "",
+          .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
+          | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
+          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length)] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
-import collections, os, sys
+import collections, datetime, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
+NO_PR = ("", "", "", "", "")
+
 def parsed(prs):
-    # The (url, state, mergedAt) of each PR in the meta column; a stub or older gh may leave out mergedAt.
-    return [(p.split(" ") + [""])[:3] for p in prs.split(",") if " " in p]
+    # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
+    # leave out the last three.
+    return [tuple((p.split(" ") + [""] * 4)[:5]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
-    # (url, state, mergedAt) of a build's PR, or empty: see outcomes_report. pulls is the first python's
-    # column: "-" for no log.
+    # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
+    # for no log.
     prs = parsed(prs)
     if pulls == "-":
-        return prs[0] if len(prs) == 1 else ("", "", "")
-    keyed = {pr_key(u): (u, s, m) for u, s, m in prs}
-    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", "", ""))
+        return prs[0] if len(prs) == 1 else NO_PR
+    keyed = {pr_key(p[0]): p for p in prs}
+    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), NO_PR)
+
+def minutes(start, end):
+    # Whole minutes from one UTC time to a later one; empty when either is empty or does not parse, or
+    # end comes first (a retry started after the PR it took over was created).
+    try:
+        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+        d = t(end) - t(start)
+    except ValueError:
+        return ""
+    return str(round(d / 60)) if d >= 0 else ""
 
 rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():
@@ -1309,20 +1316,23 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
 
-# Columns are only ever appended: review-yield and flow read them by name.
+# Columns are only ever appended, never inserted or reordered: review-yield and flow read them by name,
+# and a saved report or a script that cuts by position still lines up with a new one.
 print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
-      "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by")
-for (f, kind, risk, story_epic, asked, prs, pr, state, merged), c in zip(rows, found):
+      "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
+      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges")
+for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c in zip(rows, found):
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
-    story_merged = ("true" if any(s == "MERGED" for _, s, _ in parsed(prs)) else "false") if asked else ""
+    story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
+    merged = merged if asked and state == "MERGED" else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[13:]
-                     + [story_epic, merged if asked and state == "MERGED" else "", story_merged, str(declined),
-                        by(c, "fixed"), by(c, "declined")]))
+                     + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
+                        created, minutes(f[13], created), minutes(created, merged), main_merges]))
 PY
 }
 
@@ -1997,24 +2007,21 @@ findings_goal() {
   send_goal "$1" "$3" findings "$2"
 }
 
-# The merge, signing and review rules, shared by the briefs.
+# The merge and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
 # stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
-# waits out every running build, or with pr_per = epic, the epic's PRs. The backlog conductor has
-# no Done when: it stops once its stories are all started and finished.
+# waits out every running build. The backlog conductor has no Done when: it stops once its stories
+# are all started and finished.
 stop_rule() {
   if [[ "$1" == backlog ]]; then
     printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
     if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when CI on the base is red or timed out."; fi
   elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
-  elif [[ "${CFG_pr_per}" == epic ]]; then echo "Stop when every PR from epic/$1 has merged and the epic's **Done when** holds, or when what is left needs the lead: a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running; a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch; or CI on the base red or timed out."
   else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
 }
-sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
-sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
 # The review every story's PR passes before its builder is closed. The builder keeps its context
 # until then, so findings go back to it rather than to a fresh agent that has none. Each PR gets its
 # own review agent (review_agent) as soon as it is green, so PRs that land together are reviewed at
@@ -2063,15 +2070,6 @@ codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
-# bump_rule — beside codex_rule, in a project that ships a plugin: an epic's release story makes the
-# plugin.json bump, so a story PR without one is not a finding. story_brief leaves it out of a one-off
-# story (no epic, so no release story) and of the release story itself (its touches name plugin.json).
-# The whole-epic review gets none: the epic PR carries the release story's bump.
-bump_rule() {
-  [[ -f "${PROJECT_DIR}/.claude-plugin/plugin.json" ]] || return 0
-  printf ' %s' "Do not bump plugin.json: the epic's release story (the one whose touches name it) does. On any other story a PR without the bump is not a finding; decline it."
-}
-
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
 # logged too, with their reason, and never count as lessons.
 finding_rule() {
@@ -2616,7 +2614,7 @@ You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (an
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
 
 EOF
-    if [[ "${CFG_pr_per}" == epic ]]; then conduct_epic_mode "${epic}"; else conduct_story_mode "${epic}"; fi
+    conduct_story_mode "${epic}"
   fi
   cat <<EOF
 
@@ -2710,8 +2708,7 @@ EOF
 # answers Fable's usage-credits consent, which is not giving up. With goal on, an idle builder is the
 # goal rule's, and the stall close names its cause.
 give_up_rule() {
-  local retry idle="when it is idle with no PR
-(with one PR per epic, no pushed story/<slug>) after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
+  local retry idle="when it is idle with no PR after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
   if [[ "${CFG_goal}" != off ]]; then
     idle=""
     close="\`swarm.sh close <slug> stalled\` for a stall, or \`swarm.sh close <slug> met\` when review has not converged"
@@ -2747,6 +2744,35 @@ EOF
 # goal_rule_if_on — goal_rule after a blank line, or nothing with goal off.
 goal_rule_if_on() { [[ "${CFG_goal}" == off ]] || printf '\n\n%s' "$(goal_rule)"; }
 
+# stacked_rule <epic>|backlog — how a conductor keeps its own stacked builds on their parents:
+# unblock after each wait, watch and new PR, then act on status's Stacked lines (stacked_lines),
+# which cover the whole board, for its own stories only.
+stacked_rule() {
+  local mine="a story with \`epic: $1\`"
+  [[ "$1" != backlog ]] || mine="a story with no \`epic:\`"
+  cat <<EOF
+After each \`swarm.sh wait\` or \`swarm.sh watch\` returns, and after a builder opens a PR, run
+\`swarm.sh unblock\` and start what it readies that is yours (${mine}; a ready story whose
+worktree exists has started: never run \`swarm.sh story\` for it), then run \`swarm.sh status\` and
+read its Stacked lines. Both cover the whole board: act only on a line whose <child> is yours, and
+leave the rest to their own conductor.
+- \`<child>: merge <ref>\`: write a file saying to merge <ref> into its branch, re-run the tests and
+  push, and send it with \`swarm.sh tell <child> findings <file>\`. On a line that ends \`(no builder)\`,
+  first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with
+  \`swarm.sh agent <tab> <child> <worktree> <role> <brief>\`, where <tab> is the child's \`epic:\` (its
+  slug when it has none), <role> is what \`swarm.sh _role <child>\` prints, and the brief says the
+  same and to reply with the PR URL. Any review of the child from before that merge is stale: review
+  the new head. The line stays until the child pushes the merge, so send each merge once: until the
+  child's builder replies to that tell (or brief), skip a line for the same child and ref.
+- \`<child>: lost story/<p>\`: on a ready child whose builder is open, run \`swarm.sh close <child>
+  paused\`, which holds it for the lead. If the line ends \`(no builder)\`, or close prints
+  \`not held:\`, the child stays ready on a dead parent: do not start it, and list it in your report
+  for the lead. A lost line on a held (blocked) child goes in your report too.
+- \`<child>: could not check <what>\`: a gh or git call failed, so nothing is known: read status
+  again after your next wait, and if the line stays, list it in your report.
+EOF
+}
+
 # A PR per story.
 conduct_story_mode() {
   local epic="$1"
@@ -2756,6 +2782,8 @@ Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
+
+$(stacked_rule "${epic}")
 
 $(auth_rule)$(goal_rule_if_on)
 
@@ -2794,6 +2822,8 @@ start it, and report it as not started, with the reason \`build died\`.
 List each ready story with no \`epic:\` that you could not start in your report, one line each:
 \`not started: <slug> (<the refusal's first line>)\`.${own}
 
+$(stacked_rule backlog)
+
 $(auth_rule)$(goal_rule_if_on)
 
 $(give_up_rule)
@@ -2803,61 +2833,6 @@ $(green_rule)
 $(review_rule)
 
 $(conduct_merge_rule backlog)
-EOF
-}
-
-# pr_per = epic: stories merge into epic/<epic>, and each repo gets one PR for the whole epic.
-conduct_epic_mode() {
-  local epic="$1" check sign="" merge_step pin="" tick='`'
-  check="$(fm "${BOARD}/epics/${epic}.md" check)"
-  [[ -z "${check}" ]] || check=" and the epic check ${tick}${check}${tick}"
-  [[ "${CFG_sign_commits}" != true ]] || sign=" -S"
-  if [[ "${CFG_merge}" == human ]]; then
-    merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
-merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
-  else
-    pin="first note the head SHA of epic/${epic} in each repo's epic worktree (\`git rev-parse HEAD\`): that is
-the head you review, and after a fix, the new head. Then, "
-    merge_step="Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`):
-if it is not the head you reviewed, review the new head. $(pinned_merge_rule "${epic} <every PR URL>") Reconcile takes
-the epic off the board once its last PR merges."
-  fi
-  cat <<EOF
-This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`
-starts each builder on story/<slug>, branched from epic/${epic}; builders push their branch and open
-no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) as method.md
-§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
-and wait with \`swarm.sh wait <slug>\` in the background.
-
-$(auth_rule)$(goal_rule_if_on)
-
-$(give_up_rule)
-
-When a builder reports, review its branch.$(bump_rule)$(rules_review_rule)
-
-Then, one story at a time, merge it into the epic branch
-in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
-\`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
-and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
-\`swarm.sh close <slug>\`, and go on to the next wave.
-
-When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
-line lists every repo with an epic branch), review the whole epic: ${pin}in each repo's epic worktree,
-\`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
-$(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
-base, written for a reader who knows nothing of how it was built: what changes and why, with no
-waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
-keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
-in the background.
-
-$(green_rule)
-
-An epic PR that changes code is reviewed only once the /code-review skill (\`/code-review <PR>\`)
-has also passed on it, its real findings fixed on the epic branch and the rest rebutted in the PR.
-
-$(finding_rule)
-
-${merge_step}$(sign_rule_if_on)
 EOF
 }
 
@@ -4309,7 +4284,106 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   done
 }
 
-# status [--all] — one summary for the user: the agents that need a look or are working, what is
+# ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when
+# git cannot tell (a missing ref).
+ref_in() { local rc=0; git -C "$1" merge-base --is-ancestor "$2" "$3" 2>/dev/null || rc=$?; (( rc <= 1 )) || rc=2; return "${rc}"; }
+
+# fetch_branch <repo-dir> <branch> — fetch origin's <branch> into origin/<branch>; returns 2 when
+# origin answered and has no such branch, 1 for any other failure.
+fetch_branch() {
+  local rc=0
+  git -C "$1" fetch -q origin "+refs/heads/$2:refs/remotes/origin/$2" 2>/dev/null && return 0
+  git -C "$1" ls-remote --exit-code -q origin "refs/heads/$2" >/dev/null 2>&1 || rc=$?
+  [[ ${rc} == 2 ]] && return 2
+  return 1
+}
+
+# stacked_parents <child> — the parents the child's current build stacked on: the `stacked <child>`
+# event just before its last ok `story <child>` (main logs story once the build is done), or one
+# with no story after it yet (a build still starting). A later ok build with no stacked event
+# (rebuilt from the base) has none. A stacked event a story that failed, a close or a reset
+# follows belongs to no build: a failed or abandoned start.
+stacked_parents() {
+  awk -F'\t' -v s="$1" '$3 != s { next }
+    $2 == "stacked" && index($5, "ok (on ") == 1 { pend = substr($5, 8, length($5) - 8) }
+    $2 == "story" && index($5, "ok") == 1 { cur = pend; pend = ""; next }
+    $2 == "story" || $2 ~ /^(close|reset)(:|$)/ { pend = "" }
+    END { print (pend != "" ? pend : cur) }' "${EVENTS_LOG}" 2>/dev/null || true
+}
+
+# stacked_parent <repo-dir> <child-ref> <p> — what the child must do about parent p: `merge
+# origin/story/<p>` when p's PR is open (or p, on the board, has none) and its head is not in
+# <child-ref>; `merged` when p's PR merged, or p's file is gone and it has no PR; `lost story/<p>`
+# when p's only PRs closed unmerged (a dropped p too), or its branch is gone while its PR is open or
+# it is on the board. Nothing when the child has it. A gh or git call that fails returns 1.
+stacked_parent() {
+  local src="$1" have="$2" p="$3" state rc=0
+  state="$( (cd "${src}" && gh pr list --head "story/${p}" --state all --json state) 2>/dev/null \
+    | json "next((s for s in ('OPEN', 'MERGED', 'CLOSED') if any(x['state'] == s for x in d)), '')" 2>/dev/null)" || return 1
+  [[ -n "${state}" || -f "${BOARD}/stories/${p}.md" ]] || state=MERGED   # finished with no PR
+  case "${state}" in
+    CLOSED) echo "lost story/${p}" ;;
+    MERGED) echo merged ;;
+    *)
+      fetch_branch "${src}" "story/${p}" || rc=$?
+      case ${rc} in 0) ;; 2) echo "lost story/${p}"; return ;; *) return 1 ;; esac
+      rc=0; ref_in "${src}" "origin/story/${p}" "${have}" || rc=$?
+      case ${rc} in 0) ;; 1) echo "merge origin/story/${p}" ;; *) return 1 ;; esac ;;
+  esac
+}
+
+# stacked_child <story> — stacked_lines' lines for one story. The child's branch is origin's (fetched),
+# so a merge not yet pushed still shows; its local branch only while origin has none. Parents that
+# merged give one base line; the base is looked up once per repo in a row (STACKED_SRC).
+stacked_child() {
+  local child src parents p line have builder="" done_ps="" rc=0
+  child="$(basename "$1" .md)"
+  src="$(repo_dir "$(fm "$1" repo)")" || return 0
+  [[ -d "$(worktree_for "${src}" "${child}")" ]] || return 0
+  parents="$(stacked_parents "${child}")"; [[ -n "${parents}" ]] || return 0
+  # Outside herdr the agents cannot be read, so no line claims the builder is gone.
+  [[ "${HERDR_ENV:-}" != 1 || "$(builder_state "${child}")" != none ]] || builder=" (no builder)"
+  fetch_branch "${src}" "story/${child}" || rc=$?
+  case ${rc} in
+    0) have="origin/story/${child}" ;;
+    2) have="story/${child}" ;;
+    *) echo "${child}: could not check story/${child} on origin${builder}"; return 0 ;;
+  esac
+  for p in ${parents//,/ }; do
+    if [[ ! "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then echo "${child}: could not check ${p}${builder}"; continue; fi
+    line="$(stacked_parent "${src}" "${have}" "${p}")" || line="could not check ${p}"
+    case "${line}" in merged) done_ps+="${done_ps:+, }${p}" ;; ?*) echo "${child}: ${line}${builder}" ;; esac
+  done
+  [[ -n "${done_ps}" ]] || return 0
+  # ponytail: caches the last repo's base only; boards span few repos, so a miss is one more fetch.
+  [[ "${STACKED_SRC}" == "${src}" ]] || { STACKED_BASE="$(base_for "${src}" 2>/dev/null)" || STACKED_BASE=""; STACKED_SRC="${src}"; }
+  rc=2; [[ -z "${STACKED_BASE}" ]] || { rc=0; ref_in "${src}" "origin/${STACKED_BASE}" "${have}" || rc=$?; }
+  case ${rc} in
+    0) ;;
+    1) echo "${child}: merge origin/${STACKED_BASE} (${done_ps} merged)${builder}" ;;
+    *) echo "${child}: could not check the base for ${done_ps}${builder}" ;;
+  esac
+}
+
+# stacked_lines — one line per parent of a stacked build that needs action (stacked_child): a ready
+# or blocked story with a worktree whose current build stacked on parents. A line ends (no builder)
+# when herdr shows no builder open for the child; a gh or git call that fails gives a `could not
+# check` line. herdr, gh and git read no stdin, which feeds the loop, and git never prompts for a
+# credential or an ssh passphrase on the terminal: status must not hang, so such a fetch fails into
+# a could-not-check line.
+stacked_lines() {
+  local story
+  STACKED_SRC=""; STACKED_BASE=""
+  while IFS= read -r story; do
+    case "$(fm "${story}" status)" in
+      ready|blocked)
+        GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes" stacked_child "${story}" </dev/null ;;
+    esac
+  done < <(board stories)
+}
+
+# status [--all] — one summary for the user: the agents that need a look or are working, the stacked
+# builds whose parent moved or merged (stacked_lines; no section when there are none), what is
 # waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
@@ -4357,6 +4431,8 @@ PY
   else
     echo "Agents: not inside herdr, so their states are not available"
   fi
+  local stacked; stacked="$(stacked_lines)" || true
+  [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
   echo; echo "Waiting on you"
   waiting="$(waiting_on_user)"
   if [[ "${all}" != --all ]]; then
@@ -4514,14 +4590,10 @@ dash_frame() {
   return "${failed}"
 }
 
-# dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
-# (origin/<base>; dash never fetches), else HEAD.
+# dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), origin's default branch as last
+# fetched (origin/HEAD; dash never fetches), else HEAD.
 dash_base_ref() {
-  local r
-  for r in ${CFG_base_branches} HEAD; do
-    git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify "origin/${r}" >/dev/null 2>&1 && { echo "origin/${r}"; return; }
-  done
-  echo HEAD
+  if git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify origin/HEAD >/dev/null 2>&1; then echo origin/HEAD; else echo HEAD; fi
 }
 
 # dash_slow — the fields too slow for every frame, cached for a minute in a file under $TMPDIR (never

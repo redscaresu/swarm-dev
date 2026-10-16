@@ -16,7 +16,7 @@ trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 P="${ROOT}/proj"; WT="${ROOT}/proj-wt/_board-x"; URL=https://github.com/o/r/pull/9
 mkdir -p "${P}/.claude/swarm" "${P}/board/stories" "${P}/bin" "${ROOT}/bin"
-printf 'board_dir = board\nbase_branches = main\n' > "${P}/.claude/swarm/config"
+printf 'board_dir = board\n' > "${P}/.claude/swarm/config"
 cat > "${P}/.claude/swarm/brief.md" <<'BRIEF'
 End every commit with this trailer, on a line of its own:
 
@@ -29,7 +29,7 @@ Signed-off-by: is not used; Co-Authored-By: Lead <l@x.com>
 BRIEF
 echo .swarm/ > "${P}/.gitignore"
 echo story > "${P}/board/stories/a.md"; echo code > "${P}/bin/tool"
-git init -q --bare "${ROOT}/origin.git"
+git init -q --bare "${ROOT}/origin.git"; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
 git -C "${P}" init -q -b main
 git -C "${P}" -c user.name=t -c user.email=t@t add -A
 git -C "${P}" -c user.name=t -c user.email=t@t commit -qm init
@@ -288,7 +288,7 @@ reset_log; bpr start ../proj
 refused "a name with .." "not a name" "${before}"
 
 # --- board_dir = .: the whole repo is the board, so open takes any file.
-printf 'board_dir = .\nbase_branches = main\n' > "${P}/.claude/swarm/config"
+printf 'board_dir = .\n' > "${P}/.claude/swarm/config"
 bpr start y; echo changed > "${ROOT}/proj-wt/_board-y/bin/tool"
 reset_log; bpr open y "Root board edit" "${ROOT}/body.md"
 is "board_dir = .: open exits 0" 0 "${rc}"

@@ -159,11 +159,9 @@ prints every setting and where it came from.
 |---|---|---|
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
-| `base_branches` | origin's default branch | branches to try, in order, as the base: `dev main` means `dev` where origin has it, else `main` |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped |
 | `stall_minutes` | `30` | a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder |
-| `pr_per` | `story` | `epic`: an epic's stories merge into one branch, and each repo gets one PR for the epic (§ One PR per epic) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort) |
 | `escalate_after` | `2` | `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice |
@@ -435,9 +433,26 @@ with its time, and waits on the builder again. It never closes or tells a builde
 a dialog is not an attempt. Any other dialog, and every permission or tool prompt, it leaves alone.
 `/swarm-dev:swarm` does the same for the lead's one-off stories.
 
-**Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an
-empty pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose
-login expired, which only your `/login` clears), what waits on you, and the next step. `next` says
+**Watching it.** `swarm.sh status` lists the agents that need a look (waiting on a prompt, an empty
+pane where a start failed, a session gone or unknown, or `auth`: an idle agent whose login expired,
+which only your `/login` clears), what waits on you, and the next step. A Stacked section, shown
+only when it has a line, lists each stacked build that has to catch up with a parent. It reads the
+parents the child's current build stacked on, and compares them with the child's branch on origin,
+so a merge the child has not pushed still shows: `<child>: merge origin/story/<p>` when the parent's
+open PR has commits the child lacks, `<child>: merge origin/<base> (<p> merged)` once the parent
+merged and the child lacks the base's head (one line for all the merged parents; after a squash
+merge, the child takes the base), and `<child>: lost story/<p>` when the parent's PR closed unmerged
+(as a dropped parent's has), or its branch is gone while its PR is open or, still on the board, it
+has no PR. A gh or git call that fails, or a git that cannot tell, gives a `could not check` line.
+Inside herdr, a line ends `(no builder)` when the child has no builder open. After each wait, watch
+and new PR, the conductor runs `unblock`, starts what it readies, and runs `status`, acting only on
+its own stories: its epic's, or for the backlog conductor those with no epic. It tells each child
+with a merge line to merge that ref, re-run the tests and push, first starting a builder in the
+child's worktree when the line says `(no builder)`, and reviews the new head, since a review from
+before the merge is stale. A merge line stays until the child pushes, so the conductor sends each
+one once and skips it until the child's builder replies. It closes a lost ready child whose builder
+is open with `paused`, which holds it for the lead. It lists for the lead a lost child that has no
+builder or that close did not hold. `next` says
 `auth` too when the conductor's login expired. A Claude agent's state comes from its own session in `claude agents --json`, read once per
 run: busy is working, idle is idle, waiting is WAITING with what it waits for, and a recorded
 session with no entry in the list (`gone`: the session ended) or no state in it (`unknown`, also
@@ -494,8 +509,16 @@ never printed. After those: `epic` (the story's `epic:`), `merged_at` (when the 
 none merged, and empty when that is unknown: the story is gone, it names no repo here, or `gh`
 failed), `findings_declined`, and `findings_fixed_by` and `findings_declined_by`, which count each by
 reviewer as `<reviewer>:<n>` pairs in name order (`unknown` for rows logged before the reviewer
-column). A story the lead holds after an escalation (`kind: lead` with `escalated_from:`) shows the
-kind it was built as. New columns go on the end, so `decisions`, which reads them by name, keeps working. The slug comes
+column). Four more columns come from `gh`: `pr_created_at` (UTC), `start_to_pr_min` (minutes from
+`started` to `pr_created_at`, empty when the build started after its PR already existed, as a retry
+does), `pr_to_merge_min` (minutes from `pr_created_at` to `merged_at`), and `main_merges`, the
+commits on the PR whose headline merges the base branch into it (`Merge origin/main into …`,
+`Merge branch 'main' into …`, `Merge remote-tracking branch 'origin/main' into …`). Each is empty
+when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` describe the PR, not the
+build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. A story the lead holds after an escalation (`kind: lead` with
+`escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
+`review-yield` and `flow`, which read them by name, and anything that cuts columns by position keep
+working. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. Each build gets its own
 PR: the last of the story's PRs that its session log names, so a retried story shows the first build's
 closed PR beside the retry's merged one. A build whose log names none of them has no PR, and a build

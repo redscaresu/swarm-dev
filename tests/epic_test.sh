@@ -509,8 +509,9 @@ check "a failed split records no pane" "1" "$(wc -l < "${p}/.swarm/state/d" | tr
 rm -f "${ROOT}/live" "${ROOT}/nosplit" "${b}/epics/d.md" "${b}/stories/d1.md"
 
 # --- An epic with a check:, in story mode: its story branches from the base and runs the check
-# before its PR; its conductor's brief.
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+# before its PR; its conductor's brief. From here on dev is origin's default, so every story's base.
+git -C "${ROOT}/svc.git" symbolic-ref HEAD refs/heads/dev
+: > "${p}/.claude/swarm/config"
 item "${b}" epics/f.md "status: active" "check: make test"
 item "${b}" stories/f1.md "status: ready" "kind: code" "epic: f" "repo: svc"
 run story f1 >/dev/null
@@ -519,7 +520,7 @@ check "an epic's story branches from the base (dev), opens its PR against it, ru
   "$(git -C "${ROOT}/svc-wt/f1" rev-parse HEAD)|$(has "Open the PR against \`dev\`" "${brief}")|$(has "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`make test\`" "${brief}")|$(has "prove each new or changed test can fail" "${brief}")"
 # A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the worktree
 # exists, and nothing is sent.
-printf '%s\n' "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"
+printf '%s\n' "goal = 7" > "${p}/.claude/swarm/config"
 gx="gx1-$(printf 'long%.0s' {1..60})"
 goal_story "${b}" "${gx}" "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
@@ -529,7 +530,7 @@ check "with goal on, a /goal message over GOAL_SEND_MAX fails naming the story, 
   "$(has "${gx}: its /goal message is" "${out}")|$(grep -qE '^agent (start|prompt) ' "${ROOT}/herdr.log" && echo sent || echo "nothing sent")|$([[ -e "${ROOT}/svc-wt/${gx}" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)"
 rm -f "${b}/stories/${gx}.md"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
-printf '%s\n' "base_branches = dev main" "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
+printf '%s\n' "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
 printf 'A PROJECT RULE every agent reads. <!-- lesson: brief-kind -->' > "${p}/.claude/swarm/brief.md"   # no final newline
 item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
@@ -540,7 +541,7 @@ check "a builder walks its diff against each tagged rule, and lists both kinds i
 run conduct f >/dev/null || true
 check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
   "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
-cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" "base_branches = dev main" > "${p}/.claude/swarm/config"
+cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
 check "with merge = agent, the conductor reviews a pinned head, puts the story in review, then merges that head with swarm.sh merge, which reconciles" "yes|yes|yes|yes" \
@@ -557,7 +558,7 @@ check "it reports, and stops, only once no story of the epic is ready or running
   "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
 check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
   "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
-printf '%s\n' "escalate_after = 0" "base_branches = dev main" > "${p}/.claude/swarm/config"
+printf '%s\n' "escalate_after = 0" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "with escalate_after = 0, the conductor stops retrying a story that failed twice and reports it to the lead" "yes|yes|no" \
@@ -570,7 +571,7 @@ run close g1 >/dev/null; rm -f "${b}/stories/g1.md" "${p}/AGENTS.md"
 grep -v '^lessons_file' "${p}/.claude/swarm/config" > "${p}/cfg.tmp" || true; mv "${p}/cfg.tmp" "${p}/.claude/swarm/config"
 check "base prints a repo's base" "dev" "$(run base svc)"
 rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 
 # --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
 # state is its session's, from the claude stub's fixture. A builder idle before its story has a PR
@@ -606,7 +607,7 @@ printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"
 check "an idle agent with no story is not nudged" "idle|0" "$(run wait a)|$(nudges)"
 # Story a, in svc (repos_dir set), has no PR: its idle builder is nudged three times, each logged.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
-printf '%s\n' "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+printf '%s\n' "repos_dir = ${ROOT}" > "${p}/.claude/swarm/config"
 : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
 check "an idle builder with no PR is nudged IDLE_NUDGES times, each logged as nudge a" "idle|exit 0|3|3" \
@@ -684,7 +685,7 @@ chmod 600 "${tr}"
 # With goal on, wait nudges no builder: whether its goal is set, met or missing, it returns idle at
 # once, with no nudge and no nudge line in events.tsv, so the reply and goal entry stay last. The goal_status shapes are the ones Claude Code 2.1.299 wrote in the goal spike.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
-printf '%s\n' "goal = 5" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+printf '%s\n' "goal = 5" "repos_dir = ${ROOT}" > "${p}/.claude/swarm/config"
 gs() { # <met> <sentinel> — a goal_status entry
   printf '{"type":"attachment","timestamp":"2026-10-14T10:00:00.000Z","attachment":{"type":"goal_status","met":%s,"sentinel":%s,"condition":"DW-ONE holds"}}\n' "$1" "$2"
 }
@@ -702,7 +703,7 @@ check "goal = 5 and no goal entry in the session log: the idle builder with no P
 got="$(CLAUDE_PROJECTS_DIR="${tr_dir}" SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
 check "goal = 5 and the goal met: the idle builder with no PR is not nudged, nor logged" "idle|0|0" "${got%%|*}|$(nudges)|$(nudged)"
 rm -f "${ROOT}/screen" "${b}/stories/a.md" "${tr}"
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 # herdr says done at once, but the session is busy: wait sleeps out each slice until it turns idle.
 session "${ROOT}/claude.json" sess-a=busy
 (sleep 2; session "${ROOT}/claude.json.new" sess-a=idle; mv "${ROOT}/claude.json.new" "${ROOT}/claude.json") &
@@ -761,7 +762,7 @@ check "with two agents.tsv lines for a name, wait reads the newer line's session
 # the wait begun 2 hours ago. A file edited a minute ago in the worktree is a sign of life; aged past
 # stall_minutes (or gone, the worktree clean) it is not, and wait --stall returns on the stall.
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
-printf '%s\n' "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
+printf '%s\n' "repos_dir = ${ROOT}" > "${p}/.claude/swarm/config"
 : > "${p}/.swarm/events.tsv"; wt="${ROOT}/svc-wt/a"; old=$(($(date +%s) - 7200))
 "${GIT[@]}" init -q "${wt}" && GIT_COMMITTER_DATE="@${old}" "${GIT[@]}" -C "${wt}" commit -q --allow-empty -m old
 mins_ago() { python3 -c 'import sys, time; print(time.strftime("%Y%m%d%H%M", time.localtime(time.time() - 60 * int(sys.argv[1]))))' "$1"; }
@@ -776,7 +777,7 @@ check "a clean worktree with an old commit is stalled, as before" "exit 3" "$(st
 mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
 rm "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
-rm -rf "${wt}" "${b}/stories/a.md"; printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+rm -rf "${wt}" "${b}/stories/a.md"; : > "${p}/.claude/swarm/config"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"
@@ -797,7 +798,7 @@ build() { # <slug> <front-matter line>... — build a ready story in svc, then p
   run story "${s}" >/dev/null || true   # a start that fails shows as the FAIL, not an abort
   row "${s}"
 }
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 check "sonnet_share = 0 (the default): roles resolve as before" \
   "code opus high|code-risky opus xhigh|docs sonnet medium|chore haiku medium" \
   "$(build r0-code "kind: code")|$(build r0-risky "kind: code" "risk: high")|$(build r0-docs "kind: docs")|$(build r0-chore "kind: chore")"
@@ -827,7 +828,7 @@ ladder() { # <slug> <attempts>... -- <front-matter line>... — _role at each at
   for n in "${ns[@]}"; do out+=("$(role "${s}" "attempts: ${n}" "$@")"); done
   echo "${out[*]}"
 }
-printf '%s\n' "base_branches = dev main" "sonnet_share = 4" > "${p}/.claude/swarm/config"
+printf '%s\n' "sonnet_share = 4" > "${p}/.claude/swarm/config"
 check "escalate_after = 2 (the default): every kind an agent builds escalates at attempts: 2" \
   "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate" \
   "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")"
@@ -851,7 +852,7 @@ rm -f "${b}/stories/e4-bad.md"
 echo "escalate_after = 0" >> "${p}/.claude/swarm/config"
 check "escalate_after = 0: attempts 0, 1, 2 and 5 never escalate" "code code code code|code-risky code-risky code-risky code-risky" \
   "$(ladder e4-a 0 1 2 5 -- "kind: code")|$(ladder e4-a 0 1 2 5 -- "kind: code" "risk: high")"
-printf '%s\n' "base_branches = dev main" "escalate_after = 3" > "${p}/.claude/swarm/config"
+printf '%s\n' "escalate_after = 3" > "${p}/.claude/swarm/config"
 check "escalate_after = 3: attempts: 2 is code, 3 is escalate" "code escalate" "$(ladder e4-a 2 3 -- "kind: code")"
 rm -f "${b}/stories/e4-a.md" "${b}/stories/e4-f.md"
 
@@ -859,7 +860,7 @@ rm -f "${b}/stories/e4-a.md" "${b}/stories/e4-f.md"
 # as code, code, then escalate, each in a fresh worktree. Before each close the builder has committed
 # and pushed story/x1, left an untracked file and opened a PR; the close clears them all away.
 gh_stub; : > "${ROOT}/gh.log"
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 item "${b}" stories/x1.md "status: ready" "kind: code" "repo: svc"
 wt="${ROOT}/svc-wt/x1"; adds=""; fresh=""; cleared=""
 left() { # <slug> — which of its worktree, local story/<slug> and origin's are still there
@@ -905,7 +906,7 @@ rm -f "${b}/stories/x1.md" "${b}/stories/y1.md" "${ROOT}/prs.json"
 # --- reconcile clears a story's build before the pull: once its PR merged always, closing its open
 # builder first (in review, so the close counts nothing); once its PR closed unmerged only when no
 # builder is open. built <slug> <n> — build the story, push story/<slug> and put it in review with PR <n>.
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 UR="https://github.com/o/svc/pull"
 built() {
   item "${b}" "stories/$1.md" "status: ready" "kind: code" "repo: svc" "attempts: 1"
@@ -978,7 +979,7 @@ check "with the board in the repo, a one-off's and an epic story's briefs say to
 rm -f "${b}"/stories/r[um][123].md
 
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
-printf '%s\n' "base_branches = dev main" "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
+printf '%s\n' "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
 sub='--settings {"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
 started() { # <name> — with or without the setting, or "not started" when herdr never started <name>
   local l; l="$(grep "^agent start $1 " "${ROOT}/herdr.log")" || { echo "not started"; return; }
@@ -993,7 +994,7 @@ run conduct sube >/dev/null || true
 check "builder_subagent_model: the builder's start sets it; a survey's and a conductor's do not" "with|without|without" \
   "$(started sub1)|$(started sv1)|$(started conduct-sube)"
 rm -f "${b}"/stories/r[04]-*.md "${b}"/stories/s4-*.md "${b}/stories/sub1.md" "${b}/epics/sube.md"
-printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 
 # --- Every codex run goes through codex-review: the arm is the one place that runs codex's review.
 REPO="$(dirname "${SWARM}")/.."

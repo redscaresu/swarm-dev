@@ -513,7 +513,7 @@ if [[ "${got}" == "done" && $((SECONDS - start)) -lt 5 ]]; then
   echo "FAIL wait on a retired conductor returns at once: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
-# A retired conductor (keep_panes renames it <name>-done) is finished: next must not wait on it.
+# A retired conductor (renamed <name>-done) is finished: next must not wait on it.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories bin)
