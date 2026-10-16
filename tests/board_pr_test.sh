@@ -2,7 +2,7 @@
 # board_pr_test.sh — swarm.sh board-pr: start makes the board worktree off origin/main and refuses
 # anything that could touch the main checkout; open commits board files only and opens one PR; done
 # clears up only once the PR merged or closed; one events.tsv line per step. gh is a stub on PATH
-# that logs every call to gh.log and lists a PR whose state is ${ROOT}/state; origin is a local
+# that logs every call to gh.log and lists the PRs in ${ROOT}/prs (none without it); origin is a local
 # bare repo. A git wrapper on PATH fails `worktree add` while ${ROOT}/wt-add.fail exists, and
 # `ls-remote` while ${ROOT}/ls-remote.fail does.
 set -euo pipefail
@@ -18,7 +18,12 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/board-x"; URL=https://github.com/o/r/pull/
 mkdir -p "${P}/.claude/swarm" "${P}/board/stories" "${P}/bin" "${ROOT}/bin"
 printf 'board_dir = board\nbase_branches = main\n' > "${P}/.claude/swarm/config"
 cat > "${P}/.claude/swarm/brief.md" <<'BRIEF'
-Sign off every commit with `Co-Authored-By: Lead Bot <lead@example.com>`.
+End every commit with this trailer, on a line of its own:
+
+Co-Authored-By: Lead Bot <lead@example.com>
+
+Never add `Signed-off-by: Someone <someone@example.com>`, and fill in the template
+Reviewed-by: <you@example.com>
 BRIEF
 echo .swarm/ > "${P}/.gitignore"
 echo story > "${P}/board/stories/a.md"; echo code > "${P}/bin/tool"
@@ -35,7 +40,7 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${R}/gh.log"
 case "$1 $2" in
   "pr create") echo "https://github.com/o/r/pull/9" ;;
-  "pr list") printf '[{"state":"%s"}]\n' "$(cat "${R}/state")" ;;
+  "pr list") cat "${R}/prs" 2>/dev/null || echo '[]' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
@@ -60,6 +65,8 @@ lines() { events | grep -c . || true; }
 logged() { grep -qF -- "board-pr:" <<< "$(events)" && grep -qF -- "$1" <<< "$(events)"; }
 reset_log() { rm -f "${P}/.swarm/events.tsv" "${ROOT}/gh.log"; : > "${ROOT}/gh.log"; }
 branch() { git -C "${P}" show-ref -q --verify "refs/heads/$1"; }
+# pr <state> [sha] — the one PR the gh stub lists from now on: <state>, its head board/x's tip or <sha>.
+pr() { printf '[{"state":"%s","url":"%s","headRefOid":"%s"}]\n' "$1" "${URL}" "${2:-$(git -C "${P}" rev-parse board/x)}" > "${ROOT}/prs"; }
 on_origin() { git -C "${P}" ls-remote --exit-code origin "refs/heads/$1" >/dev/null 2>&1; }
 
 fails=0
@@ -107,17 +114,46 @@ is "open: one gh pr create" 1 "$(grep -c '^pr create' "${ROOT}/gh.log")"
 check "open: the PR is board/x into main" grep -qF -- "--base main --head board/x --title Board edit --body-file ${ROOT}/body.md" "${ROOT}/gh.log"
 check "open: board/x is on origin" on_origin board/x
 is "open: origin has the commit" "$(git -C "${WT}" rev-parse HEAD)" "$(git -C "${P}" rev-parse refs/remotes/origin/board/x)"
-check "open: the commit carries the brief's trailer" bash -c "git -C '${WT}' log -1 --format=%B | grep -qxF 'Co-Authored-By: Lead Bot <lead@example.com>'"
+is "open: the commit's only trailer is the brief's trailer line" "Co-Authored-By: Lead Bot <lead@example.com>" \
+  "$(git -C "${WT}" log -1 --format=%B | grep -E -- '-[Bb]y:' || true)"
 is "open: the commit has both board files" "board/stories/a.md board/stories/b.md" "$(git -C "${WT}" diff --name-only origin/main HEAD | paste -sd' ' -)"
 is "open: logs board-pr:open x ok" "board-pr:open x ok" "$(events)"
 
-# done refuses while the PR is open, and clears up once it merged.
-echo OPEN > "${ROOT}/state"; reset_log; bpr "done" x
+# A second open pushes more edits to the PR the first one opened, and creates none.
+pr OPEN; echo typo-fixed > "${WT}/board/stories/a.md"
+reset_log; bpr open x "Board edit" "${ROOT}/body.md"
+is "a second open: exits 0" 0 "${rc}"
+is "a second open: prints the open PR's URL" "${URL}" "$(cat "${ROOT}/out")"
+is "a second open: no gh pr create" 0 "$(grep -c '^pr create' "${ROOT}/gh.log" || true)"
+is "a second open: origin has the new commit" "$(git -C "${WT}" rev-parse HEAD)" "$(git -C "${P}" rev-parse refs/remotes/origin/board/x)"
+is "a second open: logs board-pr:open x ok" "board-pr:open x ok" "$(events)"
+
+# done refuses, removing nothing, while a newer PR is open though a closed one is on the local tip,
+# and when origin's board/x has moved past the local tip.
+tip="$(git -C "${P}" rev-parse board/x)"
+printf '[{"state":"CLOSED","url":"%s","headRefOid":"%s"},{"state":"OPEN","url":"%s","headRefOid":"%s"}]\n' \
+  "${URL}" "${tip}" "${URL}" 2222222222222222222222222222222222222222 > "${ROOT}/prs"
+reset_log; bpr "done" x
+refused "done with a newer PR open on another head" "still open" "${before}"
+check "a newer open PR: board/x stays on origin" on_origin board/x
+other="$(git -C "${P}" commit-tree "${tip}^{tree}" -p "${tip}" -m other)"
+git -C "${P}" push -q -f origin "${other}:refs/heads/board/x"; pr MERGED
+reset_log; bpr "done" x
+refused "done when origin's board/x moved on" "origin's board/x is at" "${before}"
+is "origin moved on: origin keeps its commit" "${other}" "$(git -C "${P}" ls-remote origin refs/heads/board/x | cut -f1)"
+check "origin moved on: board/x stays here" branch board/x
+git -C "${P}" push -q -f origin "${tip}:refs/heads/board/x"
+
+# done refuses while the PR is open, or while origin cannot be read, removing nothing; then clears up
+# once it merged.
+pr OPEN; reset_log; bpr "done" x
 refused "done while the PR is open" "still open" "${before}"
 check "done while open: the worktree stays" test -d "${WT}"
 check "done while open: board/x stays" branch board/x
-echo MERGED > "${ROOT}/state"; touch "${ROOT}/ls-remote.fail"; reset_log; bpr "done" x
-refused "done when origin cannot be read" "cannot tell whether origin still has board/x" "${before}"
+pr MERGED; touch "${ROOT}/ls-remote.fail"; reset_log; bpr "done" x
+refused "done when origin cannot be read" "cannot tell whether origin has board/x" "${before}"
+check "done when origin cannot be read: the worktree stays" test -d "${WT}"
+check "done when origin cannot be read: board/x stays here" branch board/x
 check "done when origin cannot be read: board/x stays on origin" on_origin board/x
 rm "${ROOT}/ls-remote.fail"; reset_log; bpr "done" x
 is "done after MERGED: exits 0" 0 "${rc}"
@@ -126,6 +162,45 @@ check "done: board/x is gone here" bash -c "! git -C '${P}' show-ref -q --verify
 check "done: board/x is gone on origin" bash -c "! git -C '${P}' ls-remote --exit-code origin refs/heads/board/x >/dev/null"
 is "done: logs board-pr:done x ok" "board-pr:done x ok" "$(events)"
 is "the full cycle leaves the main checkout byte-identical" "${before}" "$(snap)"
+
+# board/x on origin only (a retry after a failed remote delete, or a reused name): done drops it only
+# when a PR's head is origin's tip.
+git -C "${P}" push -q origin "${other}:refs/heads/board/x"; pr MERGED "${tip}"
+reset_log; bpr "done" x
+refused "done with board/x only on origin and an old PR" "no PR on board/x has its tip" "${before}"
+check "only on origin, old PR: board/x stays on origin" on_origin board/x
+pr MERGED "${other}"; reset_log; bpr "done" x
+is "done with board/x only on origin and its PR merged: exits 0" 0 "${rc}"
+check "only on origin, its PR merged: board/x is gone on origin" bash -c "! git -C '${P}' ls-remote --exit-code origin refs/heads/board/x >/dev/null"
+reset_log; bpr "done" x
+refused "done with no board/x anywhere" "no board/x here or on origin" "${before}"
+
+# A second use of the name: the first one's merged PR does not let done drop an unpushed commit.
+old="$(git -C "${P}" rev-parse refs/remotes/origin/main)"; pr MERGED 1111111111111111111111111111111111111111
+bpr start x; echo again > "${WT}/board/stories/a.md"; git -C "${WT}" commit -qam again
+reset_log; bpr "done" x
+refused "done with only an earlier use's merged PR" "no PR on board/x has its tip" "${before}"
+check "an earlier use's PR: the worktree stays" test -d "${WT}"
+check "an earlier use's PR: board/x keeps its commit" bash -c "git -C '${P}' log -1 --format=%s board/x | grep -qx again"
+git -C "${P}" worktree remove --force "${WT}"; git -C "${P}" branch -q -D board/x
+
+# A worktree done cannot remove: git's own reason, and nothing else is removed.
+bpr start x; pr MERGED; git -C "${P}" worktree lock "${WT}"
+reset_log; bpr "done" x
+refused "done on a locked worktree" "locked" "${before}"
+check "a locked worktree: board/x stays" branch board/x
+git -C "${P}" worktree unlock "${WT}"; bpr "done" x
+is "done once unlocked: exits 0" 0 "${rc}"
+
+# start refuses when origin has board/x already, or cannot be read.
+git -C "${P}" push -q origin "${old}:refs/heads/board/x"
+reset_log; bpr start x
+refused "start when origin has board/x" "origin has board/x" "${before}"
+check "origin has board/x: no board/x here" bash -c "! git -C '${P}' show-ref -q --verify refs/heads/board/x"
+git -C "${P}" push -q origin --delete board/x
+touch "${ROOT}/ls-remote.fail"; reset_log; bpr start x
+refused "start when origin cannot be read" "cannot tell whether origin has board/x" "${before}"
+rm "${ROOT}/ls-remote.fail"
 
 # --- start's refusals, each with no branch made.
 mkdir -p "${WT}"; reset_log; bpr start x

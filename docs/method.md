@@ -46,16 +46,28 @@ The lead's messages to agents go through `swarm.sh tell`, which logs them as `te
 bare `herdr agent prompt`.
 
 When the board is in the project's repo, the lead's board edits (a re-scope, a new story, an
-unblock) go through `swarm.sh board-pr`, each in its own worktree, never the main checkout; a board
-outside the repo is edited where it is, and `board-pr` refuses it. `start <name>` makes `<repo>-wt/board-<name>` on a new
-`board/<name>` branch from `origin/<base>` and prints its path. It refuses when the branch or the
-directory exists, when the path resolves into the main checkout (through a symlink or `..`), and
-when `git worktree add` fails. `open <name> "<title>" <body-file>` refuses unless every changed file
-is under the board; otherwise it commits with the brief's commit trailers, pushes and opens the PR,
-printing its URL. `done <name>` removes the worktree and `board/<name>`, here and on origin, once the
-PR has merged or closed, and refuses while it is open or when it cannot tell whether origin still
-has the branch. Each step logs one `events.tsv` line,
-`board-pr:start`, `board-pr:open` or `board-pr:done`, with the name and `ok` or the refusal.
+unblock) go through `swarm.sh board-pr`, each in its own worktree, never the main checkout. A board
+outside the repo is edited where it is, and `board-pr` refuses it.
+
+- `start <name>` makes `<repo>-wt/board-<name>` on a new `board/<name>` branch from `origin/<base>`
+  and prints its path. It refuses when the branch exists here or on origin (or origin cannot be
+  read), when the directory exists, when the path resolves into the main checkout (through a
+  symlink or `..`), and when `git worktree add` fails.
+- `open <name> "<title>" <body-file>` refuses unless every changed file is under the board. Otherwise
+  it commits with the brief's commit trailers (the lines in the brief that are a trailer and nothing
+  else), pushes, and opens the PR, printing its URL. Run it again to push more edits: it prints the
+  open PR's URL and opens no second one.
+- `done <name>` removes the worktree and `board/<name>`, here and on origin, once the PR on the
+  branch's tip (the local one, or origin's when there is none here) has merged or closed. A PR left
+  by an earlier use of the name does not count. It runs
+  every check before it removes anything, and refuses while any PR on the branch is open, when
+  origin cannot be read or its branch has moved past the local one, and when git cannot remove the
+  worktree (giving git's reason, such as uncommitted changes
+  or a lock).
+
+Each step logs one `events.tsv` line, `board-pr:start`, `board-pr:open` or `board-pr:done`, with
+the name and `ok` or the refusal. The name may be a story's slug, so these lines are never a sign
+of life for that story's builder.
 
 A story is `kind: lead`, never an agent's, when it:
 

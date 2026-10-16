@@ -445,7 +445,8 @@ def session_state(log, name, listing):
 #   sign_time(f) -> an events.tsv line's (fields) epoch when it is a sign of life, else None. A
 #     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
-#     is any other tell whose outcome is not ok: it never reached the builder.
+#     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
+#     line is the lead's board edit, whose name may be a story's slug, so it is never one either.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
@@ -469,7 +470,7 @@ def epoch(x):
             return None
 def sign_time(f):
     t = epoch(f[0]) if len(f) == 5 else None
-    if t is None or f[1] in ("nudge", "tell:nudge", "tell:note") or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
+    if t is None or f[1] in ("nudge", "tell:nudge", "tell:note") or f[1].split(":")[0] == "board-pr" or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
         return None
     return t
 def last_seen(events):
@@ -3262,21 +3263,34 @@ merge_pr() {
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
 }
 
-# brief_trailers — the commit trailers the project's brief names (Co-Authored-By: <who> <email>, and
-# any other <Word>-by: line), one per line, in the brief's order.
+# brief_trailers — the commit trailers the project's brief names: each line that is a trailer and
+# nothing else (Co-Authored-By: <name> <email>, or any other <Word>-by: line with a name), one per
+# line, in the brief's order. A sentence that mentions one is not a trailer.
 brief_trailers() {
   [[ -f "${PROJECT_BRIEF}" ]] || return 0
-  grep -oE '[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^`<]*<[^>]+>' "${PROJECT_BRIEF}" | awk '!seen[$0]++' || true
+  # shellcheck disable=SC2016 # the backticks are literal: a trailer line holds none
+  sed 's/[[:space:]]*$//' "${PROJECT_BRIEF}" \
+    | grep -E '^[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>`]*[^<>`[:space:]] <[^<>[:space:]]+@[^<>[:space:]]+>$' | awk '!seen[$0]++' || true
+}
+
+# origin_has <branch> — true when the project's origin has <branch>, false when it has not (ls-remote
+# exits 2); dies when it cannot tell, so a step never goes on from a guess.
+origin_has() {
+  local rc=0
+  git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/heads/$1" >/dev/null 2>&1 || rc=$?
+  [[ ${rc} -eq 0 || ${rc} -eq 2 ]] || die "board-pr: cannot tell whether origin has $1"
+  return "${rc}"
 }
 
 # board_pr start|open|done <name> ... — the lead's board edits, each in its own worktree, never the
 # main checkout: start makes <repo>-wt/board-<name> on a new board/<name> from origin/<base> and
 # prints its path; open <name> "<title>" <body-file> commits every change (all under the board) with
 # the brief's trailers, pushes and opens the PR, printing its URL; done <name> removes the worktree
-# and board/<name>, here and on origin, once the PR has merged or closed. main logs each as
-# board-pr:<step> <name>, with a refusal's reason.
+# and board/<name>, here and on origin, once the PR on the branch's tip has merged or closed, checking
+# everything before it removes anything. main logs each as board-pr:<step> <name>, with a refusal's
+# reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg states sign=()
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why sign=()
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -3291,6 +3305,7 @@ board_pr() {
         || die "board-pr: ${wt} resolves to ${real}, in the main checkout"
       [[ ! -e "${wt}" && ! -L "${wt}" ]] || die "board-pr: ${wt} exists"
       ! git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/${b}" || die "board-pr: the branch ${b} exists"
+      ! origin_has "${b}" || die "board-pr: origin has ${b}; run swarm.sh board-pr done ${name}, or delete it there"
       base="$(base_for "${PROJECT_DIR}")"
       git -C "${PROJECT_DIR}" worktree add -q -b "${b}" "${wt}" "origin/${base}" >&2 \
         || die "board-pr: git worktree add failed for ${wt} from origin/${base}"
@@ -3316,26 +3331,36 @@ board_pr() {
       fi
       git -C "${wt}" push -q -u origin "${b}" || die "board-pr: cannot push ${b}"
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)"
-      url="$(gh pr create -R "${url}" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" || die "board-pr: gh pr create failed for ${b}"
-      echo "${url##*$'\n'}" ;;
+      # A second open pushes more edits to the PR the first one opened.
+      prs="$(gh pr list -R "${url}" --head "${b}" --state all --json state,url | json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')")" \
+        || die "board-pr: gh cannot list the PRs on ${b}"
+      [[ -n "${prs}" ]] || prs="$(gh pr create -R "${url}" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \
+        || die "board-pr: gh pr create failed for ${b}"
+      echo "${prs##*$'\n'}" ;;
     done)
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)" || die "board-pr: ${PROJECT_DIR} has no origin"
-      states="$(gh pr list -R "${url}" --head "${b}" --state all --json state | json "' '.join(p['state'] for p in d)")" \
+      tip="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/heads/${b}" || true)"
+      # origin's tip, or nothing when origin has no such branch; one that moved past ours is not ours to drop.
+      rtip="$(git -C "${PROJECT_DIR}" ls-remote origin "refs/heads/${b}")" || die "board-pr: cannot tell whether origin has ${b}"
+      rtip="${rtip%%[[:space:]]*}"
+      [[ -z "${rtip}" || -z "${tip}" || "${rtip}" == "${tip}" ]] \
+        || die "board-pr: origin's ${b} is at ${rtip:0:7}, not ${tip:0:7} here; pull it into the worktree, or delete it there"
+      tip="${tip:-${rtip}}"
+      [[ -n "${tip}" ]] || die "board-pr: there is no ${b} here or on origin"
+      # Any open PR on the branch stops it. Of the rest, only a PR on the branch's tip counts: an
+      # earlier use of the name leaves its merged PR behind.
+      prs="$(gh pr list -R "${url}" --head "${b}" --state all --json state,headRefOid \
+        | SWARM_TIP="${tip}" json "'OPEN' if any(p['state'] == 'OPEN' for p in d) else ' '.join(p['state'] for p in d if p['headRefOid'] == e['SWARM_TIP'])")" \
         || die "board-pr: gh cannot list the PRs on ${b}"
-      [[ -n "${states}" ]] || die "board-pr: ${b} has no PR"
-      [[ " ${states} " != *" OPEN "* ]] || die "board-pr: the PR on ${b} is still open"
+      [[ "${prs}" != OPEN ]] || die "board-pr: the PR on ${b} is still open"
+      [[ -n "${prs}" ]] || die "board-pr: no PR on ${b} has its tip ${tip:0:7}; open it first"
       if [[ -e "${wt}" ]]; then
-        git -C "${PROJECT_DIR}" worktree remove "${wt}" || die "board-pr: cannot remove ${wt}; it has uncommitted changes"
+        why="$(git -C "${PROJECT_DIR}" worktree remove "${wt}" 2>&1)" || die "board-pr: cannot remove ${wt}: ${why%%$'\n'*}"
       fi
       git -C "${PROJECT_DIR}" worktree prune
-      if git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/${b}"; then git -C "${PROJECT_DIR}" branch -q -D "${b}"; fi
-      # ls-remote exits 2 when origin has no such branch, and anything else but 0 when it cannot ask.
-      f=0; git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/heads/${b}" >/dev/null 2>&1 || f=$?
-      case "${f}" in
-        0) git -C "${PROJECT_DIR}" push -q origin --delete "${b}" || die "board-pr: cannot delete ${b} on origin" ;;
-        2) ;;
-        *) die "board-pr: cannot tell whether origin still has ${b}; run done again" ;;
-      esac
+      ! git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/${b}" || git -C "${PROJECT_DIR}" branch -q -D "${b}"
+      [[ -z "${rtip}" ]] || git -C "${PROJECT_DIR}" push -q --force-with-lease="refs/heads/${b}:${rtip}" origin --delete "${b}" \
+        || die "board-pr: cannot delete ${b} on origin"
       echo "removed ${wt} and ${b}" ;;
   esac
 }

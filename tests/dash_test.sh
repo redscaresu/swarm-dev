@@ -505,6 +505,12 @@ rm "${P}/.swarm/state/plan-e9" "${ROOT}/projects/p/sess-1.jsonl" "${ROOT}/projec
 # anyone are not signs of life (STALL_PY's rule): the conductor stays stalled.
 printf '%s\tnudge\ts-one\tw1:p1\tok\n%s\ttell:nudge\ts-one\tw1:p1\tok\n%s\ttell:findings\ts-one\tw1:p1\tfailed (exit 1)\n' "$(ago 1)" "$(ago 1)" "$(ago 1)" >> "${P}/.swarm/events.tsv"
 check "a conductor whose only recent pane lines are nudges is still stalled" grep -qE '! conduct-e1 +conduct +opus·high +stalled [45]m +│$' <<< "$(COLUMNS=100 agedash)"
+# The lead's board-pr step a minute ago, named after s-three (a re-scope of it), is no sign of life
+# for s-three's builder: it stays stalled.
+cp "${P}/.swarm/events.tsv" "${ROOT}/events.bak"
+printf '%s\tboard-pr:start\ts-three\tw0:p1\tok\n' "$(ago 1)" >> "${P}/.swarm/events.tsv"
+check "a board-pr line named after a story is no sign of life for its builder" grep -qE '! s-three .*stalled' <<< "$(COLUMNS=100 agedash)"
+cp "${ROOT}/events.bak" "${P}/.swarm/events.tsv"
 # A note the lead left the conductor a minute ago (tell:note, from the lead's pane) is no sign of
 # life: with its session log older than stall_minutes it stays stalled. The same line as tell:resume is.
 echo '{}' > "${ROOT}/projects/p/sess-1.jsonl"; touch -t "$(mins_ago 10)" "${ROOT}/projects/p/sess-1.jsonl"
