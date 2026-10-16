@@ -289,7 +289,7 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,verify,escalate conducting:conduct"
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model).
 BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ }"
@@ -308,7 +308,6 @@ policy() {
     code-sonnet) echo "claude sonnet high" ;;  # the sonnet_share sample of code stories, measured against code
     docs)       echo "claude sonnet medium" ;; # prose a reviewer reads, often held to a doc test
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
-    verify)     echo "claude haiku medium" ;;  # run tests or commands and report
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
     *) die "unknown role '$1' ($(roles))" ;;
@@ -2221,7 +2220,7 @@ project_rules() {
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
 # lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
 agent_kind() {
-  case "$1" in ""|code|docs|chore|verify) return 0 ;; *) return 1 ;; esac
+  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
 }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
@@ -5138,23 +5137,21 @@ impossible_story() {
   echo "impossible: $1 is kind: lead now, for the lead to re-scope or drop"
 }
 
-# held_story <slug> <cause> <prs> <listed> — after `close <slug> paused` or `close <slug> cleared-on-error`
-# ends a build, or closes a ready verify story's open builder, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
+# held_story <slug> <cause> <prs> — after `close <slug> paused` or `close <slug> cleared-on-error`
+# ends a build, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
 # no conductor or /swarm-dev:swarm run builds it again. attempts: stays as it was. Lifting the hold with reset
 # is not the story's one reset (main logs it as reset:held, which reset_at does not read).
 held_story() {
-  local why="it paused on its goal" none=""
-  # Unless <listed> is 1, failed_build listed no PRs: the story is verify, which has none.
-  [[ "$4" == 1 ]] || none="A verify story has no PRs."
+  local why="it paused on its goal"
   [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
-  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" "${none}" >/dev/null
+  lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for "$2"
   echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
 # kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
-# and every PR in <prs> (failed_build's gh list; empty with pr_per = epic), or [none] when <prs> has
+# and every PR in <prs> (failed_build's gh list), or [none] when <prs> has
 # none (by default, that no PR was found). Prints how many PRs it named.
 lead_block() {
   local f="${BOARD}/stories/$1.md" from urls k=0

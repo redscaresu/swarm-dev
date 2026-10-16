@@ -87,7 +87,7 @@ A story is `kind: lead`, never an agent's, when it:
   prepares the PR or the request, and checks the result after.
 
 A merge is never a story of its own: with `merge = human` every merge is yours already. A `kind`
-that is none of code, docs, chore, verify or lead (a typo, or `operator` from older boards) is
+that is none of code, docs, chore or lead (a typo, or `operator` from older boards) is
 never built: `swarm.sh` stops and names it.
 
 **Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
@@ -191,9 +191,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   it, so it runs on Fable at `xhigh`.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
   critic run at `high`, because a skeptic is the only gate a story passes before it is built.
-- **Reading is Sonnet, running is Haiku.** Surveys read and cite at `high`, since they feed the
-  lead, and docs run on Sonnet at `medium`. Verification and chores run on Haiku at `medium`:
-  their result is a command's output or a mechanical diff, checked by the conductor.
+- **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the
+  lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
+  mechanical diff, checked by the conductor.
 - **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`. To find out
   whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories on
   Sonnet at `high` (`code-sonnet`). The slug fixes the pick, a retry goes back to Opus, and each
