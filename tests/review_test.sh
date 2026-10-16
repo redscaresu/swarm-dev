@@ -344,8 +344,16 @@ check "no item merged, the base not ahead: reconcile prints nothing, and HEAD is
 # g is in review and gh cannot read its PR: if it merged, the pull would take g before its build is cleared.
 setup_behind bu ahead; at bu review g "${U}/99" >/dev/null
 out="$(at bu reconcile; echo "exit $?")"
-check "no item merged, a PR unread: reconcile does not pull, and says why" "yes|exit 0|$(git -C "${ROOT}/bu.git" rev-parse main~1)|there" \
-  "$(has "reconcile: not pulling ${ROOT}/bu: a PR in review could not be read" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bu" rev-parse HEAD)|$([[ -e "${ROOT}/bu/docs/stories/g.md" ]] && echo there || echo gone)"
+check "no item merged, a PR unread: reconcile does not pull, and names the PR" "yes|exit 0|$(git -C "${ROOT}/bu.git" rev-parse main~1)|there" \
+  "$(has "reconcile: not pulling ${ROOT}/bu: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bu" rev-parse HEAD)|$([[ -e "${ROOT}/bu/docs/stories/g.md" ]] && echo there || echo gone)"
+# The same with h in review, its PR merged: h is finished, but nothing is pulled while g's PR is unread.
+setup_behind bw ahead; at bw review g "${U}/99" >/dev/null; at bw review h "${U}/1" >/dev/null
+out="$(at bw reconcile; echo "exit $?")"
+check "an item merged, a PR unread: reconcile finishes it, does not pull, and names the PR" "yes|exit 0|$(git -C "${ROOT}/bw.git" rev-parse main~1)|there|gone" \
+  "$(has "reconcile: not pulling ${ROOT}/bw: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bw" rev-parse HEAD)|$(gone "${ROOT}/bw/docs/stories/g.md")|$(gone "${ROOT}/bw/docs/stories/h.md")"
+# Nothing behind: no pull was due, so an unread PR holds nothing back, and reconcile says nothing of it.
+setup_behind bv; at bv review g "${U}/99" >/dev/null
+check "no pull due, a PR unread: no not-pulling note" "no" "$(if at bv reconcile | grep -q "not pulling"; then echo yes; else echo no; fi)"
 # Offline: the fetch fails, so reconcile cannot tell it is behind, says so, and exits 0.
 setup_behind bf ahead; git -C "${ROOT}/bf" remote set-url origin "${ROOT}/missing.git"
 out="$(at bf reconcile; echo "exit $?")"
