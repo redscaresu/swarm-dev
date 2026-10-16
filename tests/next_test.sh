@@ -66,7 +66,7 @@ expect "one-off story" "story a" \
   "item stories/a.md 'status: ready'"
 expect "blocked code story is a gate, not done" "gate" \
   "item epics/e1.md 'status: active'" \
-  "item stories/a.md 'status: blocked' 'kind: code' 'epic: e1' 'blocked_by: [b]'"
+  "item stories/a.md 'status: blocked' 'kind: code' 'epic: e1' 'depends_on: [b]'"
 # shellcheck disable=SC2016 # the setup is eval'd inside the fixture, so $PWD is the fixture's
 expect "started one-off resumes" "resume a" \
   "item stories/a.md 'status: ready'" \

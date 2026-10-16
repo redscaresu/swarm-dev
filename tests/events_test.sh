@@ -67,8 +67,8 @@ appends() {
 }
 
 item stories/s1.md 'status: ready'
-item stories/s2.md 'status: blocked' 'blocked_by: [gone]'
-item stories/s3.md 'status: blocked' 'blocked_by: [gone]'
+item stories/s2.md 'status: blocked' 'depends_on: [gone]'
+item stories/s3.md 'status: blocked' 'depends_on: [gone]'
 item stories/m1.md 'status: review' "prs: ${U}/1"
 item stories/c1.md 'status: review' "prs: ${U}/2"
 printf 'SECRET-CONTENT-123 in the findings\n' > "${P}/findings.md"
