@@ -210,6 +210,13 @@ check "with merge = agent, a green review story does not wake it, and it times o
 check "with merge = agent it times out non-zero with nothing printed" test "$(out)|$(rc)" == "|1"
 check "with merge = agent nothing is logged" test -z "$(events)"
 
+fresh "merge = agent"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL}" "costs: money"
+check "with merge = agent, a green costs: money review story wakes it: the user merges it" returned 25
+check "it prints merge: <slug> <PR URL> for it under merge = agent" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+stop
+
 # --- no change: a short timeout.
 fresh
 start 3000

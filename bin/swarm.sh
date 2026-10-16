@@ -6,7 +6,7 @@
 #   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its HLD; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
-#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or (merge = human) a green PR in review; print each new one
+#   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or (merge = human, or a story marked costs: money) a green PR in review; print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
@@ -6295,8 +6295,9 @@ heads_green() {
 }
 
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
-# for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human
-# `merge: <slug> <PR URL>...` for a story or epic in review (waiting_on_user) whose every PR head is green.
+# for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human (or
+# for a costs: money story, under merge = agent too) `merge: <slug> <PR URL>...` for a story or epic in
+# review (waiting_on_user) whose every PR head is green.
 # A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
 lead_queue() {
   local f held line slug prs rc urls=""
@@ -6305,10 +6306,11 @@ lead_queue() {
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
     elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
   done < <(board stories)
-  [[ "${CFG_merge}" == human ]] || return 0
   : > "${LEAD_GREEN}.new"
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
+    # With merge = agent only a costs: money item waits on the user: merge holds it for them.
+    [[ "${CFG_merge}" == human || "${line}" == "  awaiting your merge (costs money): "* ]] || continue
     line="${line/#  awaiting your merge (costs money): /  awaiting your merge: }"
     [[ "${line}" == "  awaiting your merge: "* ]] || continue
     line="${line#  awaiting your merge: }"; line="${line#epic }"
