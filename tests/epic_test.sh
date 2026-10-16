@@ -483,35 +483,6 @@ check "a Done when with no item under it fails like a missing one, before any wo
   "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
 : > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-8].md; unset CLAUDE_STUB_AGENTS
 
-# --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
-echo "keep_panes = true" > "${p}/.claude/swarm/config"
-item "${b}" epics/k.md "status: active"
-for s in k1 k2; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: k" "repo: svc"; done
-run conduct k >/dev/null; run story k1 >/dev/null
-echo "Ask k1" > "${p}/.swarm/state/brief-x.md"   # a codex brief's prose: never a tab record
-: > "${ROOT}/herdr.log"
-run close k1 >/dev/null; run close conduct-k >/dev/null
-check "with keep_panes, closing a story or a conductor closes nothing and renames the agents by their panes" "no|yes|yes|Ask k1" \
-  "$(grep -q 'close' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^agent rename w:[0-9]+ k1-done$' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -qE '^agent rename w:[0-9]+ conduct-k-done$' "${ROOT}/herdr.log" && echo yes || echo no)|$(cat "${p}/.swarm/state/brief-x.md")"
-check "with keep_panes, closing a ready story's builder still counts a failed build" "1" "$(sed -n 's/^attempts: //p' "${b}/stories/k1.md")"
-rm -f "${p}/.swarm/state/brief-x.md"
-# Another project's agent with this project's name is never renamed (herdr names span workspaces).
-echo "k1 w:99" >> "${ROOT}/agents"; : > "${ROOT}/herdr.log"
-run close k1 >/dev/null
-check "with keep_panes, closing never renames another project's agent of the same name" "no" \
-  "$(grep -q '^agent rename' "${ROOT}/herdr.log" && echo yes || echo no)"
-awk '$2 != "w:99"' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
-# A rename herdr refuses leaves the tab record as it was, and close says the name is not free.
-echo "k3 w:98" >> "${ROOT}/agents"; echo "w:98 k3" > "${p}/.swarm/state/k3"; touch "${ROOT}/norename"
-out="$(run close k3 2>&1 || true)"
-check "with keep_panes, a refused rename keeps the record and says the name is not free" "w:98 k3|yes" \
-  "$(cat "${p}/.swarm/state/k3")|$(has "is not free" "${out}")"
-rm -f "${ROOT}/norename" "${p}/.swarm/state/k3"
-run story k2 >/dev/null
-check "and the next story gets a pane of its own" "3|k1-done|k2" \
-  "$(wc -l < "${p}/.swarm/state/k" | tr -d ' ')|$(awk 'NR == 2 { print $2 }' "${p}/.swarm/state/k")|$(awk 'NR == 3 { print $2 }' "${p}/.swarm/state/k")"
-: > "${p}/.claude/swarm/config"; rm -f "${b}"/epics/k.md "${b}"/stories/k?.md
-
 # --- A pane closed by hand is dropped from the state, so the next agent does not split it.
 item "${b}" epics/d.md "status: active"
 item "${b}" stories/d1.md "status: ready" "kind: code" "epic: d" "repo: svc"
@@ -858,8 +829,8 @@ ladder() { # <slug> <attempts>... -- <front-matter line>... — _role at each at
 }
 printf '%s\n' "base_branches = dev main" "sonnet_share = 4" > "${p}/.claude/swarm/config"
 check "escalate_after = 2 (the default): every kind an agent builds escalates at attempts: 2" \
-  "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate|verify verify escalate" \
-  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")|$(ladder e4-a 0 1 2 -- "kind: verify")"
+  "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate" \
+  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")"
 check "no attempts: and no kind: is a first attempt at code" "code" "$(role e4-a)"
 item "${b}" stories/e4-a.md "status: ready" "kind: code"; echo "attempts: 2" >> "${b}/stories/e4-a.md"
 check "attempts: is read from the front matter, never from a body line" "code" "$(run _role e4-a)"
@@ -934,7 +905,7 @@ rm -f "${b}/stories/x1.md" "${b}/stories/y1.md" "${ROOT}/prs.json"
 # --- reconcile clears a story's build before the pull: once its PR merged always, closing its open
 # builder first (in review, so the close counts nothing); once its PR closed unmerged only when no
 # builder is open. built <slug> <n> — build the story, push story/<slug> and put it in review with PR <n>.
-printf '%s\n' "base_branches = dev main" "finished = mark" > "${p}/.claude/swarm/config"
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 UR="https://github.com/o/svc/pull"
 built() {
   item "${b}" "stories/$1.md" "status: ready" "kind: code" "repo: svc" "attempts: 1"
@@ -943,6 +914,7 @@ built() {
   run review "$1" "${UR}/$2" >/dev/null
 }
 fmv() { sed -n "s/^$2: //p" "${b}/stories/$1.md"; }   # <slug> <key>
+gone() { [[ -e "${b}/stories/$1.md" ]] && echo there || echo gone; }   # <slug>: finish deletes its file
 built ru1 11; run close ru1 >/dev/null; echo "${UR}/11 CLOSED" >> "${ROOT}/pr-states"
 run reconcile >/dev/null
 check "a PR closed unmerged with no builder open: reconcile clears its worktree and both branches" "|ready" "$(left ru1)|$(fmv ru1 status)"
@@ -964,14 +936,14 @@ check "after a merge, when herdr cannot list its agents, reconcile still clears 
   "$(left rm3)|$(has "build cleared: rm3's builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close rm3" "${rout}")"
 built rm1 13; echo "${UR}/13 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"; : > "${ROOT}/gh.log"
 run reconcile >/dev/null
-check "a merged story with its builder open: reconcile closes it, clears its build and finishes it, counting nothing and closing no PR" \
-  "closed|gone||done|1|0" \
-  "$(closes)|$(grep -q '^rm1 ' "${ROOT}/agents" && echo open || echo gone)|$(left rm1)|$(fmv rm1 status)|$(fmv rm1 attempts)|$(grep -c '^pr close' "${ROOT}/gh.log" || true)"
+check "a merged story with its builder open: reconcile closes it, clears its build and finishes it, closing no PR" \
+  "closed|gone||gone|0" \
+  "$(closes)|$(grep -q '^rm1 ' "${ROOT}/agents" && echo open || echo gone)|$(left rm1)|$(gone rm1)|$(grep -c '^pr close' "${ROOT}/gh.log" || true)"
 # Outside herdr no builder is open, and herdr is never called.
 built rm2 14; run close rm2 >/dev/null; echo "${UR}/14 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"
 (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile >/dev/null 2>&1)
-check "a merged story with no builder open still loses its worktree and both branches, and outside herdr no herdr call is made" "|done|" \
-  "$(left rm2)|$(fmv rm2 status)|$(cat "${ROOT}/herdr.log")"
+check "a merged story with no builder open still loses its worktree and both branches, and outside herdr no herdr call is made" "|gone|" \
+  "$(left rm2)|$(gone rm2)|$(cat "${ROOT}/herdr.log")"
 # The board in the project repo, goal = 5, and the review status uncommitted: the builder is closed
 # while the story still says review (with goal on, closing a ready story with no cause is refused), then
 # the pull takes the story off as its PR did. A second reconcile does nothing, and leaves qy (never
@@ -996,11 +968,11 @@ check "goal = 5, board in the repo, review uncommitted: reconcile exits 0, close
   "${rc}|$(closes)|$([[ -d "${q}-wt/qz" ]] && echo worktree)|$(git -C "${q}" show-ref --heads story/qz; git -C "${q}.git" show-ref --heads story/qz)|$([[ -e "${q}/docs/stories/qz.md" ]] && echo there || echo gone)"
 : > "${ROOT}/herdr.log"; rc=0; rout="$(qrun reconcile)" || rc=$?
 check "a second reconcile is a no-op" "0|||ready" "${rc}|${rout}|$(cat "${ROOT}/herdr.log")|$(sed -n "s/^status: //p" "${q}/docs/stories/qy.md")"
-# With the board in the repo, every builder deletes its story file in its PR: a one-off (qz) and,
-# with finished = mark, an epic's story (qy).
-echo "finished = mark" > "${q}/.claude/swarm/config"
+# With the board in the repo, every builder deletes its story file in its PR: a one-off (qz) and an
+# epic's story (qy).
+: > "${q}/.claude/swarm/config"
 qrun story qy >/dev/null
-check "with the board in the repo, a one-off's and (finished = mark) an epic story's briefs say to delete the story file" "yes|yes" \
+check "with the board in the repo, a one-off's and an epic story's briefs say to delete the story file" "yes|yes" \
   "$(has "Delete docs/stories/qz.md in your PR, and nothing else under docs/stories/." "$(cat "${q}/.swarm/briefs/qz.md")")|$(
   has "Delete docs/stories/qy.md in your PR, and nothing else under docs/stories/." "$(cat "${q}/.swarm/briefs/qy.md")")"
 rm -f "${b}"/stories/r[um][123].md
