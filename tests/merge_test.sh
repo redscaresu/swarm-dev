@@ -374,6 +374,32 @@ fresh; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b --board "${URL}"; refused 
 fresh "merge = agent"; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"
 is "--board from a conductor's pane with merge = agent: exits 0" 0 "${rc}"
 
+# --- A story marked costs: money is the user's to merge: merge holds it whoever calls, status lists
+# it for the user, and the conductor's and plan-epic's briefs say so.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: money with merge = agent" "held: s costs money"
+check "costs: money: s stays in review" grep -qx 'status: review' "${S}"
+fresh "merge = agent"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"
+is "the same story without costs: merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
+check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"
+# conduct writes the brief before it opens a workspace, which a failing herdr then refuses.
+cp "${REPO}/tests/claude_stub.sh" "${ROOT}/bin/claude"; touch "${ROOT}/agents.fail"
+mkdir -p "${P}/docs/epics"; printf -- '---\nstatus: active\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+for c in e --backlog; do
+  b="${P}/.swarm/briefs/conduct-${c#--}.md"; rm -f "${b}"
+  (cd "${P}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" conduct "${c}" >/dev/null 2>&1) || true
+  check "the ${c#--} conductor's brief (merge = agent) names costs: money" grep -qF 'costs: money' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) leaves such a PR for the user" grep -qF 'Leave the PR for the user' "${b}"
+done
+rm -rf "${P}/docs/epics" "${ROOT}/agents.fail"
+# step <from> <to> — plan-epic.md from the line holding <from> up to the one holding <to>.
+step() { awk -v from="$1" -v to="$2" 'index($0, to) { on = 0 } index($0, from) { on = 1 } on' "${REPO}/commands/plan-epic.md"; }
+check "plan-epic's decompose brief names costs: money" grep -qF 'costs: money' <<< "$(step '**2. Decompose**' '**3. Verify**')"
+# shellcheck disable=SC2016 # the backticks are plan-epic's
+check "plan-epic's skeptic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'skeptic-<slug>' 'one `codex`')"
+
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
 check "method.md § Merging merges with swarm.sh merge" \

@@ -196,6 +196,13 @@ check "two review items turning green at once wake it" returned 25
 check "it prints both, so gh never reads the board's lines" test "$(out)" == "merge: r ${URL}"$'\n'"merge: r2 ${URL}"
 stop
 
+fresh "merge = human"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL}" "costs: money"
+check "with merge = human, a green costs: money review story wakes it too" returned 25
+check "it prints merge: <slug> <PR URL> for it" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+stop
+
 fresh "merge = agent"
 start 4000
 item r "kind: code" "status: review" "prs: ${URL}"

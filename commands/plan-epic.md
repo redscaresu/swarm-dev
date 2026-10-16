@@ -52,14 +52,16 @@ the lead that survey and any earlier plan too. One survey is enough for a
 one-repo epic; the review in step 3 is where the plan's bugs turn up.
 
 **2. Decompose** — one agent, `lead`, role `lead`, given the survey files. Output
-`{stories:[{slug, title, kind, risk, repo, scope, done_when, touches, depends_on}], waves, contradictions}`.
+`{stories:[{slug, title, kind, risk, costs, repo, scope, done_when, touches, depends_on}], waves, contradictions}`.
 `repo` is the repo the story changes, by its directory name in `swarm.sh config repos_dir`; leave it
 empty for the project's own repo. It is required when the project is not a git repo.
 One agent story is one PR (a `lead` story may end with no PR, for example an approval); `done_when` must be able to fail; `kind` is code | docs | chore |
 lead (real cloud, credentials, or a step by the user, marked **You:**), by swarm-dev
 `docs/method.md` § Who does what; every step in the epic's **Your part** is in a `lead` story,
 and a merge is never a story of its own; `risk: high` only for real-cloud, teardown,
-credentials and safety paths; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
+credentials and safety paths; `costs: money` on any story whose merge can spend money (it adds or
+changes a CI job or schedule that runs against real cloud, raises a spend cap, or turns on something
+billed): with `merge = agent`, `swarm.sh merge` holds its PR for the user; no shared hot file (`AGENTS.md`, `STATUS.md`, and the config, schema and
 check files `AGENTS.md` names as shared) in more than one story; a `depends_on` chain is at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`: the file or the function;
 reuse existing
 stories by slug; record every disagreement with the epic under `contradictions`. If a survey
@@ -73,8 +75,8 @@ tell you which of the two broke something, and cannot be rolled back one half at
 **3. Verify** — in parallel, a chain at most 3 deep (a skeptic flags a longer one):
 - one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph.
   It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR, an unstated dependency,
-  a `touches` clash inside its wave, a `done_when` that passes while the work is broken, or a wrong `kind` (an agent story that needs
-  real cloud, credentials or a person).
+  a `touches` clash inside its wave, a `done_when` that passes while the work is broken, a wrong `kind` (an agent story that needs
+  real cloud, credentials or a person), or a missing or wrong `costs: money` (a story whose merge can spend money).
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
 - one `codex`, role `codex` (read-only, a different model family): missing stories, stories too
   big for one PR, `done_when` criteria that could pass on broken work, and overlaps within a wave.
@@ -92,7 +94,7 @@ writing anything. (The small path has already written and committed the stories 
 `swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
 when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `touches`, `risk` when
-high; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
+high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and
 `swarm.sh log-finding --declined <reason> --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when it did not.
