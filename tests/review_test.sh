@@ -85,7 +85,7 @@ first() { printf '%s' "${1%%$'\n'*}"; }
 
 # --- review: the item waits on a human merge, with its PRs on the board.
 item "${b}" stories/a.md "status: ready" "kind: code" "epic: e1"
-item "${b}" stories/n.md "status: blocked" "kind: code" "epic: e1" "blocked_by: [a]"
+item "${b}" stories/n.md "status: blocked" "kind: code" "epic: e1" "depends_on: [a]"
 item "${b}" epics/e1.md "status: active"
 run review a "${U}/1" >/dev/null
 check "review sets the status and the PRs" "review|${U}/1" \
@@ -152,7 +152,7 @@ item "${ROOT}/app/docs" stories/v.md "status: ready" "kind: code"
 "${GIT[@]}" -C "${ROOT}/app" add docs && "${GIT[@]}" -C "${ROOT}/app" commit -q -m "u v" && "${GIT[@]}" -C "${ROOT}/app" push -q origin main
 "${GIT[@]}" -C "${ROOT}/pr" pull -q --ff-only
 item "${ROOT}/pr/docs" stories/t.md "status: ready" "kind: code"
-item "${ROOT}/pr/docs" stories/u.md "status: blocked" "kind: code" "blocked_by: [t]"
+item "${ROOT}/pr/docs" stories/u.md "status: blocked" "kind: code" "depends_on: [t]"
 "${GIT[@]}" -C "${ROOT}/pr" add docs && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "plan t" && "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
 cp "${ROOT}/pr/docs/stories/t.md" "${ROOT}/pr/docs/stories/u.md" "${ROOT}/app/docs/stories/"   # the same edits, by hand
 inrepo review v "${U}/1" >/dev/null
@@ -217,7 +217,7 @@ check "the merged item stays in review" "review" "$(sed -n 's/^status: //p' "${R
 # --- reconcile carries the board's own uncommitted front-matter edits over a pull that changes the
 # file. setup_flip <name>: a bare origin whose board has k, z, and x and y blocked on t (not on the
 # board; x also depends on it); its main checkout <name>, with k in review (its PR merged), z in review (its PR open), and
-# x and y flipped to ready by unblock, all uncommitted; and a clone <name>-up for the base's changes.
+# x and y flipped to ready by unblock, all uncommitted (x keeps a legacy blocked_by line, which nothing reads); and a clone <name>-up for the base's changes.
 setup_flip() {
   local d="${ROOT}/$1"
   "${GIT[@]}" init -q --bare "${d}.git"
@@ -225,13 +225,13 @@ setup_flip() {
   item "${d}/docs" stories/k.md "status: ready" "kind: code"
   item "${d}/docs" stories/z.md "status: ready" "kind: code"
   item "${d}/docs" stories/x.md "status: blocked" "kind: code" "blocked_by: [t]" "depends_on: [t]"
-  item "${d}/docs" stories/y.md "status: blocked" "kind: code" "blocked_by: [t]"
+  item "${d}/docs" stories/y.md "status: blocked" "kind: code" "depends_on: [t]"
   "${GIT[@]}" -C "${d}" add docs && "${GIT[@]}" -C "${d}" commit -q -m board && "${GIT[@]}" -C "${d}" push -q origin main
   "${GIT[@]}" clone -q "${d}.git" "${d}-up"
   at "$1" review k "${U}/1" >/dev/null; at "$1" review z "${U}/3" >/dev/null; at "$1" unblock >/dev/null
 }
 push_up() { "${GIT[@]}" -C "${ROOT}/$1-up" add -A && "${GIT[@]}" -C "${ROOT}/$1-up" commit -q -m "the base's" && "${GIT[@]}" -C "${ROOT}/$1-up" push -q origin main; }
-flipped() { sed -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "$1"; }
+flipped() { sed -e 's/^status: blocked$/status: ready/' "$1"; }
 same() { if cmp -s "$1" "$2"; then echo same; else echo differs; fi; }
 # The base changes x's and z's bodies and deletes y: the pull goes through, and each keeps its edit.
 setup_flip fl
@@ -241,7 +241,7 @@ cp "${ROOT}/fl/docs/stories/y.md" "${ROOT}/fl-y"
 out="$(at fl reconcile; echo "exit $?")"
 check "a flip on a story the pull changes: reconcile pulls, and exits 0" "yes|$(git -C "${ROOT}/fl.git" rev-parse main)" \
   "$(has "exit 0" "${out}")|$(git -C "${ROOT}/fl" rev-parse HEAD)"
-check "x has the base's body, status: ready and no blocked_by" "same" \
+check "x has the base's body and status: ready" "same" \
   "$(same <(flipped "${ROOT}/fl-up/docs/stories/x.md") "${ROOT}/fl/docs/stories/x.md")"
 check "an in-review z keeps its status and prs: under the base's body" "review|${U}/3|the base's line" \
   "$(sed -n 's/^status: //p' "${ROOT}/fl/docs/stories/z.md")|$(sed -n 's/^prs: //p' "${ROOT}/fl/docs/stories/z.md")|$(tail -1 "${ROOT}/fl/docs/stories/z.md")"
@@ -259,14 +259,20 @@ echo "a local note" >> "${ROOT}/fh/docs/stories/x.md"; cp "${ROOT}/fh/docs/stori
 out="$(at fh reconcile || true)"
 check "a hand edit to x stops the pull, named, and x is byte for byte as it was" "yes|same" \
   "$(has "docs/stories/x.md" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fh-x" "${ROOT}/fh/docs/stories/x.md")"
-# The base blocks x on another story while x is flipped to ready here: stop, named, x as it was.
+# The base changes x's legacy blocked_by under its flip: no key of swarm.sh's, so the pull goes through.
 setup_flip fc
 perl -pi -e 's/^blocked_by: \[t\]$/blocked_by: [w]/' "${ROOT}/fc-up/docs/stories/x.md"; push_up fc
-cp "${ROOT}/fc/docs/stories/x.md" "${ROOT}/fc-x"
-out="$(at fc reconcile || true)"
-check "the base changed x's blocked_by too: reconcile stops naming x, and x is as it was" "yes|same" \
-  "$(has "docs/stories/x.md has an uncommitted front-matter edit, and the base changed its blocked_by: too" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fc-x" "${ROOT}/fc/docs/stories/x.md")"
-# The base adds w to x's depends_on alone: x's flip to ready is not set again over it.
+out="$(at fc reconcile; echo "exit $?")"
+check "the base changed x's legacy blocked_by: reconcile pulls, and x has it with status: ready" "yes|same" \
+  "$(has "exit 0" "${out}")|$(same <(flipped "${ROOT}/fc-up/docs/stories/x.md") "${ROOT}/fc/docs/stories/x.md")"
+# A hand edit to x's legacy blocked_by is a hand edit: it stops the pull, named, and x stays as it was.
+setup_flip fb
+echo "the base's line" >> "${ROOT}/fb-up/docs/stories/x.md"; push_up fb
+perl -pi -e 's/^blocked_by: \[t\]$/blocked_by: [u]/' "${ROOT}/fb/docs/stories/x.md"; cp "${ROOT}/fb/docs/stories/x.md" "${ROOT}/fb-x"
+out="$(at fb reconcile || true)"
+check "a hand edit to x's blocked_by stops the pull, named, and x is as it was" "yes|same" \
+  "$(has "docs/stories/x.md" "$(grep 'cannot pull' <<< "${out}")")|$(same "${ROOT}/fb-x" "${ROOT}/fb/docs/stories/x.md")"
+# The base adds w to x's depends_on: x's flip to ready is not set again over it.
 setup_flip fp
 perl -pi -e 's/^depends_on: \[t\]$/depends_on: [t, w]/' "${ROOT}/fp-up/docs/stories/x.md"; push_up fp
 cp "${ROOT}/fp/docs/stories/x.md" "${ROOT}/fp-x"

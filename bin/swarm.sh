@@ -18,7 +18,7 @@
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
-#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree]  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder
+#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
@@ -779,35 +779,54 @@ LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
-# code-scanning alerts (swarm.sh findings). A row logged without --reviewer says unknown. The reports
-# read this list as SWARM_FINDING_REVIEWERS. A new reviewer also needs its line in finding_rule's
-# mapping and in the story arm of commands/swarm.md, which tell whoever logs a finding which value
-# names which reviewer.
-FINDING_REVIEWERS="codex code-review ci conductor lead"
+# code-scanning alerts (swarm.sh findings). skeptic and critic are the plan reviewers, logging on a
+# board PR; escaped is a defect a later fix found in merged work, logged against the original PR. A
+# row logged without --reviewer says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
+# A new reviewer a conductor logs also needs its line in finding_rule's mapping and in the story arm
+# of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
+FINDING_REVIEWERS="codex code-review ci conductor lead skeptic critic escaped"
+# Why a finding was declined (log-finding --declined <reason>).
+FINDING_REASONS="out-of-scope nit wrong"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
-# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REVIEWER to --reviewer's value (unset
-# without one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies,
-# so main reads the events target with it before the command runs.
+# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REASON to --declined's reason (empty
+# when the next word is a flag or missing), FINDING_REVIEWER to --reviewer's value (unset without
+# one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
+# reads the events target with it before the command runs.
 finding_flags() {
   local n
-  FINDING_OUTCOME=fixed; unset FINDING_REVIEWER; FINDING_SKIP=0
+  FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER; FINDING_SKIP=0
   while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
     n=1
-    if [[ "$1" == --declined ]]; then FINDING_OUTCOME=declined; else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
+    if [[ "$1" == --declined ]]; then
+      FINDING_OUTCOME=declined
+      [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
+    else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
     shift "${n}"; FINDING_SKIP=$((FINDING_SKIP + n))
   done
 }
 
 # record_finding <kind> <pr-url> <text> <fixed|declined> [reviewer] — log one finding, what became of
-# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A row is date,
-# kind, PR, text, outcome, reviewer; rows from before the outcome column have four fields and were
-# all fixed, and rows from before the reviewer column have five. lessons, outcomes and dash count
-# only fixed rows; decisions reads both.
+# it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A declined one's
+# reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
+# text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
+# have four fields and were all fixed, and rows from before the reviewer column have five. An
+# escaped defect's outcome is escaped, so outcomes and review-yield, which count what review raised,
+# leave it out; lessons and dash count fixed and escaped rows, never declined ones.
 record_finding() {
-  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}"
+  local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
-    || die "usage: swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <one line>"
+    || die "usage: swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <one line>"
+  # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
+  if [[ "${reviewer}" == escaped ]]; then
+    [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined: drop --declined"
+    outcome=escaped
+  fi
+  if [[ "${outcome}" == declined ]]; then
+    [[ "${FINDING_REASON:-}" =~ ^[a-z-]+$ && " ${FINDING_REASONS} " == *" ${FINDING_REASON} "* ]] \
+      || die "--declined needs a reason, one of: ${FINDING_REASONS}"
+    reason=$'\t'"${FINDING_REASON}"
+  fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
   [[ "${kind}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#kind} -le 32 ]] \
@@ -816,7 +835,7 @@ record_finding() {
   [[ "${pr}" =~ ^https://github\.com/[^/]+/[^/]+/pull/[0-9]+(/[^[:space:]]*)?$ || "${pr}" =~ ^[^/#[:space:]]+/[^/#[:space:]]+#[0-9]+$ ]] \
     || die "pr '${pr}' must be a PR URL or owner/repo#N, so the same PR always counts once"
   mkdir -p "${PROJECT_DIR}/.swarm"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
 }
@@ -827,11 +846,14 @@ record_finding() {
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
 #   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
-#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome, reviewer);
-#   a row from before the outcome column is "fixed", and one from before the reviewer column "unknown".
+#   finding_rows(path[, outcomes]) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome,
+#   reviewer) whose outcome is one of outcomes (fixed and declined: what review raised, so an escaped
+#   row is not one); a row from before the outcome column is "fixed", and one from before the reviewer
+#   column "unknown".
 #   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
-#   reads findings passes) or unknown. Fields past the sixth are ignored, so a column appended later
-#   drops no row. fixed_rows(path) is the fixed ones' first four fields.
+#   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
+#   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
+#   escaped ones: both are a mistake someone fixed, so both are lessons.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
@@ -860,17 +882,17 @@ def log_lines(path):
     except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
         return
 
-def finding_rows(path):
+def finding_rows(path, outcomes=("fixed", "declined")):
     # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
     reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
     if not os.path.exists(path):
         return []
     rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
     rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
-    return [f for f in rows if f[4] in ("fixed", "declined") and f[5] in reviewers]
+    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
 
 def fixed_rows(path):
-    return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
+    return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()
@@ -1932,7 +1954,7 @@ bump_rule() {
 }
 
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
-# logged too, for `decisions`, and never count as lessons.
+# logged too, with their reason, and never count as lessons.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -1940,12 +1962,16 @@ finding_rule() {
 Log each finding that was fixed, and each one declined (rebutted with a reason), from any directory, with:
 
     SWARM_PROJECT=${proj} ${sw} log-finding --reviewer <who> <kind> <PR URL> "<one line>"
-    SWARM_PROJECT=${proj} ${sw} log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
+    SWARM_PROJECT=${proj} ${sw} log-finding --declined <reason> --reviewer <who> <kind> <PR URL> "<the finding, and why it was declined>"
 
+<reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
+it is real but not worth the change, and wrong when it is mistaken.
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
 \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
 one from the lead's own reading.
+When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
+PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
@@ -2947,7 +2973,7 @@ waiting_on_user() {
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
-      blocked) waiting+="  blocked: ${slug} (by $(fm "${f}" blocked_by))"$'\n' ;;
+      blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
       review) waiting+="  awaiting your merge: ${slug} $(fm "${f}" prs)"$'\n' ;;
     esac
@@ -2964,24 +2990,49 @@ waiting_on_user() {
 # open_item <file> — true while a board item is still open: its file exists and is not status: done.
 open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
 
-# unblock — a finished story is deleted or marked done, so a blocked story whose every blocked_by and
-# depends_on slug (either list may be empty) is no open story or epic, and names no hand step, is
-# ready. Prints each story it flips.
+# story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets,
+# quotes, a trailing # comment and trailing whitespace (a CR too) gone.
+story_deps() {
+  local v
+  v="$(get_fm "$1" depends_on)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+  v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
+  printf '%s' "${v//\'/}"
+}
+
+# open_deps <slugs> — the slugs (story_deps') still open: a story or epic on the board and not done,
+# or not a plain slug (a hand step such as "operator:planted-leak-proof" is cleared by hand, never by
+# a merge).
+open_deps() {
+  local b open=""
+  for b in $1; do
+    if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then
+      open+=" ${b}"
+    fi
+  done
+  printf '%s' "${open# }"
+}
+
+# blocked_why <story> — why a blocked story waits: its open depends_on slugs, or that none are left.
+blocked_why() {
+  local deps open
+  deps="$(story_deps "$1")"; open="$(open_deps "${deps}")"
+  if [[ -n "${open}" ]]; then echo "by ${open}"
+  elif [[ -n "${deps// /}" ]]; then echo "its depends_on is finished: swarm.sh unblock readies it"
+  else echo "by hand: no depends_on"
+  fi
+}
+
+# unblock — a finished story is deleted or marked done, so a blocked story whose every depends_on
+# slug is finished, and names no hand step, is ready. An old blocked_by line stays; nothing reads it.
+# Prints each story it flips.
 unblock() {
-  local story slug blockers b open
+  local story deps
   while IFS= read -r story; do
     grep -q '^status: blocked$' "${story}" || continue
-    # Both lists count: blocked_by may name only some of what the story waits on. YAML quotes go.
-    blockers=$(sed -n -e 's/^blocked_by: *\[\(.*\)\]$/\1/p' -e 's/^depends_on: *\[\(.*\)\]$/\1/p' "${story}" | tr ',\n' '  ' | tr -d "\"'")
-    [[ -n "${blockers// /}" ]] || continue   # blocked for a reason no merge clears
-    open=0
-    for b in ${blockers}; do
-      # Open while its story exists, its epic exists, or it is not a plain slug (a hand step such
-      # as "operator:planted-leak-proof" is cleared by hand, never by a merge).
-      if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md" || [[ ! "${b}" =~ ^[a-z0-9-]+$ ]]; then open=1; fi
-    done
-    [[ ${open} -eq 0 ]] || continue
-    sed -i.bak -e 's/^status: blocked$/status: ready/' -e '/^blocked_by:/d' "${story}" && rm -f "${story}.bak"
+    deps=$(story_deps "${story}")
+    [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
+    [[ -z "$(open_deps "${deps}")" ]] || continue
+    sed -i.bak -e 's/^status: blocked$/status: ready/' "${story}" && rm -f "${story}.bak"
     record_event unblock "$(basename "${story}" .md)"
     echo "ready: $(basename "${story}" .md)"
   done < <(board stories)
@@ -3079,10 +3130,10 @@ set_status() {
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
-# SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status, prs and
-# blocked_by too, which review and unblock write. reconcile puts them back as committed on an item
+# SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
+# too, which review and unblock write. reconcile puts them back as committed on an item
 # whose PRs merged, and carries another board file's edit to them over its pull, so they never stop it.
-SET_FM_KEYS="attempts kind escalated_from held_for status prs blocked_by"
+SET_FM_KEYS="attempts kind escalated_from held_for status prs"
 
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
 # when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
@@ -3814,14 +3865,14 @@ swarm_edit() {
 }
 
 # key_clash <path> — the first SET_FM_KEYS key the unstaged board file <path> changes from HEAD's that
-# the base changed to another value too, or, when the edit changes status, blocked_by or depends_on
-# if the base changed it (a status is not set again over a new dependency); nothing when there is
+# the base changed to another value too, or, when the edit changes status, depends_on if the base
+# changed it (a status is not set again over a new dependency); nothing when there is
 # none, or the base deleted <path>.
 key_clash() {
   local k l h u head up deps=""
   up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)" || return 0
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
-  [[ "$(get_fm "${PROJECT_DIR}/$1" status)" == "$(get_fm - status <<< "${head}")" ]] || deps="blocked_by depends_on"
+  [[ "$(get_fm "${PROJECT_DIR}/$1" status)" == "$(get_fm - status <<< "${head}")" ]] || deps="depends_on"
   for k in ${SET_FM_KEYS} ${deps}; do
     l="$(get_fm "${PROJECT_DIR}/$1" "${k}")"; h="$(get_fm - "${k}" <<< "${head}")"; u="$(get_fm - "${k}" <<< "${up}")"
     [[ "${u}" == "${h}" || "${u}" == "${l}" ]] && continue
@@ -4104,10 +4155,12 @@ PY
 # events. --ladder adds the model per role; --tree shows the agents by herdr workspace and tab in
 # place of the epics. It never writes the board, state or logs, and never opens or closes a pane.
 # --watch rebuilds it every N seconds (default 2) and repaints in place; q quits, t and l toggle the
-# tree and the ladder. Colour only on a terminal with NO_COLOR unset.
+# tree and the ladder. Colour only on a terminal with NO_COLOR unset, or as DASH_COLOR says when set.
+# Each --project <dir> (repeatable) draws that project's frame in turn (dash_frame) in place of this
+# project's, so it runs from any git repo; every dir is checked before anything is drawn.
 dash() {
-  local every="" tty=0
-  DASH_LADDER=0; DASH_TREE=0
+  local every="" tty=0 i d b c
+  DASH_LADDER=0; DASH_TREE=0; DASH_DIRS=(); DASH_LEAD_ANY=off; DASH_ENV_W="${DASH_W:-}"; DASH_ENV_H="${DASH_H:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --watch)
@@ -4116,25 +4169,47 @@ dash() {
         [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
       --ladder) DASH_LADDER=1 ;;
       --tree) DASH_TREE=1 ;;
-      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree]" ;;
+      --project) [[ -n "${2:-}" ]] || die "dash --project: name a project directory"
+                 DASH_DIRS+=("$2"); shift ;;
+      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]..." ;;
     esac
     shift
   done
   # init's marker; checked after the arguments and before any drawing, so --watch never draws an empty board either.
-  [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
-  DASH_COLOR=0
-  if [[ -t 1 ]]; then
-    tty=1
-    [[ -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
+  if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then
+    [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
+  fi
+  for ((i = 0; i < ${#DASH_DIRS[@]}; i++)); do
+    d="$(cd "${DASH_DIRS[i]}" 2>/dev/null && pwd -P)" || d=""
+    [[ -n "${d}" && -f "${d}/.claude/swarm/config" ]] \
+      || die "dash --project ${DASH_DIRS[i]}: not a swarm project (no .claude/swarm/config)"
+    c="$(SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" config)" || c=""
+    b="$(sed -n 's/^board_dir = \(.*\)    (.*)$/\1/p' <<< "${c}")"
+    [[ -n "${b}" && -f "${b}/stories/README.md" ]] || die "dash --project ${DASH_DIRS[i]}: no board at ${b}; run swarm.sh init there"
+    [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
+    DASH_DIRS[i]="${d}"
+  done
+  [[ ! -t 1 ]] || tty=1
+  # Several projects share the height only in a watch on a terminal, or when DASH_H says so: a
+  # one-shot dash, or one into a file or a pager, is never cut.
+  DASH_SHARE=0
+  if [[ ( ${tty} == 1 && -n "${every}" ) || -n "${DASH_ENV_H}" ]]; then DASH_SHARE=1; fi
+  if [[ -z "${DASH_COLOR:-}" ]]; then
+    DASH_COLOR=0
+    [[ ${tty} == 0 || -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
   fi
   dash_size
-  if [[ -z "${every}" ]]; then dash_slow; dash_render; return; fi
+  if [[ -z "${every}" ]]; then
+    [[ ${#DASH_DIRS[@]} -gt 0 ]] || dash_slow
+    dash_frame; return
+  fi
   dash_watch "${every}" "${tty}"
 }
 
 # dash_size — the terminal's columns and lines into DASH_W and DASH_H. Measured here, never in the
 # render's $(...), where there is no terminal (tput answers 80 there): stty on /dev/tty, then tput
-# on a terminal, then COLUMNS and LINES, then 100 columns and an unknown height (0).
+# on a terminal, then COLUMNS and LINES, then 100 columns and an unknown height (0). DASH_W and DASH_H
+# set in dash's environment (a parent dash's share for one project, dash_frame) win.
 dash_size() {
   local s="" c="" r=""
   s="$( { stty size </dev/tty; } 2>/dev/null)" || s=""
@@ -4147,7 +4222,76 @@ dash_size() {
   [[ "${c}" =~ ^[1-9][0-9]*$ ]] || c=100
   [[ "${r}" =~ ^[1-9][0-9]*$ ]] || r="${LINES:-}"
   [[ "${r}" =~ ^[1-9][0-9]*$ ]] || r=0
+  [[ ! "${DASH_ENV_W}" =~ ^[1-9][0-9]*$ ]] || c="${DASH_ENV_W}"
+  [[ ! "${DASH_ENV_H}" =~ ^[0-9]+$ ]] || r="${DASH_ENV_H}"
   DASH_W="${c}"; DASH_H="${r}"
+}
+
+# DASH_LEGEND_PY — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
+# few lines as w columns allow, with a watch's keys at the end under 140 columns (wide puts them in
+# the status bar). With lead = session most ! rows are the lead's queue, so the legend says so.
+DASH_LEGEND_PY='
+LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
+KEYWORDS = "q quit · t tree · l ladder · r redraw"
+def legend_lines(w, keys, wide, lead):
+    rows, cur = [], ""
+    for item in [l.replace("! needs you", "! needs you or the lead") if lead else l for l in LEGEND] + ([KEYWORDS] if keys and not wide else []):
+        if cur and len(cur) + 3 + len(item) > w:
+            rows.append(cur); cur = item
+        else:
+            cur = f"{cur}   {item}" if cur else item
+    rows.append(cur)
+    return rows
+'
+
+# dash_legend — the legend dash_frame draws once under several projects: legend_lines, then from 140
+# columns the keys on a line of their own; dim when DASH_COLOR is 1.
+dash_legend() {
+  SWARM_LEGEND_PY="${DASH_LEGEND_PY}" python3 -c '
+import os, sys
+exec(os.environ["SWARM_LEGEND_PY"])
+w, keys, lead, color = max(int(sys.argv[1]), 40), sys.argv[2] == "1", sys.argv[3] == "session", sys.argv[4] == "1"
+rows = legend_lines(w, keys, w >= 140, lead) + (["   " + KEYWORDS + ("" if keys else " (with --watch)")] if w >= 140 else [])
+rows = [r if len(r) <= w else r[:w - 1] + "…" for r in rows]
+print("\n".join(f"\033[2m{r}\033[0m" if color else r for r in rows))' "${DASH_W}" "${DASH_KEYS:-0}" "${DASH_LEAD_ANY}" "${DASH_COLOR}"
+}
+
+# dash_frame — one frame: this project's (after dash_slow), or with --project each project's in turn,
+# each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder
+# and no legend, then the legend once (dash_legend). With DASH_SHARE the height, less the legend's,
+# is shared out between them; with too little room for a line each the legend goes. A project whose
+# frame fails shows its error line in its place, the others are still drawn, and it returns 1. What
+# the others print to stderr follows the frames, so it never pushes a header down.
+dash_frame() {
+  if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then dash_render; return; fi
+  local d out frames="" legend rows=0 h=0 failed=0 n=${#DASH_DIRS[@]} err errs=""
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-dash.XXXXXX")" || die "dash: mktemp failed"
+  legend="$(dash_legend)"
+  if [[ ${DASH_SHARE} == 1 && ${DASH_H} -gt 0 ]]; then
+    rows=$((DASH_H - $(wc -l <<< "${legend}")))
+    [[ ${rows} -ge ${n} ]] || { legend=""; rows=${DASH_H}; }
+    h=$((rows / n))
+    # A known height is never shared down to 0, which would mean no limit.
+    [[ ${h} -gt 0 ]] || h=1
+  fi
+  set -- dash
+  [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
+  [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
+  for d in "${DASH_DIRS[@]}"; do
+    if ! out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND=0 \
+        "${SWARM_HOME}/bin/swarm.sh" "$@" 2> "${err}")"; then
+      out="$(tail -n 1 "${err}")"; out="$(basename "${d}")  could not draw: ${out#swarm: }"; failed=1
+    elif [[ -s "${err}" ]]; then
+      errs+="$(cat "${err}")"$'\n'
+    fi
+    frames+="${out}"$'\n'
+  done
+  rm -f "${err}"
+  # More projects than lines: the 1-line shares still add up to no more than the height.
+  if [[ ${h} -gt 0 ]]; then frames="$(sed -n "1,${rows}p" <<< "${frames%$'\n'}")"$'\n'; fi
+  printf '%s%s' "${frames}" "${legend:+${legend}$'\n'}"
+  printf '%s' "${errs}" >&2
+  return "${failed}"
 }
 
 # dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
@@ -4303,9 +4447,10 @@ dash_watch() {
       [[ -z "${now}" || "${now}" == "${ver}" ]] || dash_reexec "${path}/bin/swarm.sh" "${every}" "${tty}"
     fi
     [[ ${tty} == 0 ]] || dash_size
-    dash_slow   # the cache file decides whether this asks gh again
+    # The cache file decides whether this asks gh again; each project's own dash runs it for itself.
+    [[ ${#DASH_DIRS[@]} -gt 0 ]] || dash_slow
     # A failed render shows its error in the frame and the loop carries on: a watch must not die quietly.
-    if ! tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_render 2>&1)"; then
+    if ! tpl="$(DASH_CLOCK=HH:MM:SS DASH_KEYS="${tty}" dash_frame 2>&1)"; then
       # Keep the error line on screen: cut the rest to one line short of the terminal's height.
       [[ ${tty} == 0 || ${DASH_H} -lt 2 ]] || tpl="$(head -n $((DASH_H - 1)) <<< "${tpl}")"
       tpl+=$'\n'"(dash: this render failed; retrying in ${every}s)"
@@ -4313,7 +4458,8 @@ dash_watch() {
     frame="${tpl//HH:MM:SS/$(date +%H:%M:%S)}"
     if [[ ${tty} == 0 ]]; then
       [[ "${tpl}" == "${last}" ]] || printf '%s\n\n' "${frame}"
-    elif [[ "${tpl}" != "${last}" ]]; then
+    elif [[ "${tpl}" != "${last}" || ${#DASH_DIRS[@]} -gt 1 ]]; then
+      # Several projects have a clock each, so a frame that only ticked is repainted whole, in place.
       printf '\033[H%s\033[K\033[J' "${frame//$'\n'/$'\033[K\n'}"
     else
       printf '\033[H%s\033[K' "${frame%%$'\n'*}"
@@ -4364,16 +4510,17 @@ PY
 }
 
 # dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
-# on this project (the cwd may be gone), with the tree and ladder as they stand now. exec keeps the
+# on this project (the cwd may be gone), with the tree and ladder as they stand now and every --project. exec keeps the
 # PID and skips the EXIT trap, so a terminal is restored first, in case the new script dies before
 # it enters the alternate screen again. A script that is not an executable file is ignored.
 dash_reexec() {
   [[ -f "$1" && -x "$1" ]] || return 0
-  local script="$1"
+  local script="$1" d
   [[ $3 == 0 ]] || printf '\033[?25h\033[?1049l'
   set -- dash --watch "$2"
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
+  for d in ${DASH_DIRS[@]+"${DASH_DIRS[@]}"}; do set -- "$@" --project "${d}"; done
   SWARM_PROJECT="${PROJECT_DIR}" exec "${script}" "$@"
 }
 
@@ -4451,7 +4598,7 @@ for a in agents:
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
-  DASH_COLOR="${DASH_COLOR:-0}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
+  DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
@@ -4472,6 +4619,7 @@ RW = W * 2 // 5 if WIDE else 0
 LW = W - RW - 1 if WIDE else W
 COLOR = E.get("DASH_COLOR") == "1"
 KEYS = E.get("DASH_KEYS") == "1"
+FIT = KEYS or E.get("DASH_FIT") == "1"   # cut to H: a watched frame, or a height given to dash (a share of --project's)
 STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
 # One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
 SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
@@ -4486,7 +4634,7 @@ def model_style(model, label=False):
     k = next((m for m in MODEL_COLOR if m in model.lower()), None)
     return (k + "-label" if label else k) if k else "dim"
 
-LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
+exec(E["SWARM_LEGEND_PY"])
 out = []
 
 def paint(t, s):
@@ -5034,20 +5182,13 @@ elif epic_view:
 if blocked or later:
     left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
-# The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
-KEYWORDS = "q quit · t tree · l ladder · r redraw"
-legend, cur = [], ""
-# With lead = session most ! rows are the lead's queue, so the legend says so.
-for item in [l.replace("! needs you", "! needs you or the lead") if LEAD else l for l in LEGEND] + ([KEYWORDS] if KEYS and not WIDE else []):
-    if cur and len(cur) + 3 + len(item) > W:
-        legend.append(cur); cur = item
-    else:
-        cur = f"{cur}   {item}" if cur else item
-legend.append(cur)
-foot = [fit([(cut(l, W), "dim")], W) for l in legend]
+# The legend; from 140 columns the keys go to the status bar. DASH_LEGEND=0 (a --project frame,
+# whose legend dash_frame draws once under them all) leaves the legend and the keys out.
+LEGEND_ON = E.get("DASH_LEGEND") != "0"
+foot = [fit([(cut(l, W), "dim")], W) for l in legend_lines(W, KEYS, WIDE, LEAD)] if LEGEND_ON else []
 if WIDE:
-    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call),
-                  (("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])], W)
+    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
+                 + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
 
 # Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
 # column; from 140 they are the right column, the ladder on top.
@@ -5070,10 +5211,11 @@ else:
         room = max(5, room)
     if room > 0:
         out += recent_box(W, room)
-if KEYS and H:
-    out = out[:max(H - len(foot), 0)]   # a watched frame never scrolls the screen
+if FIT and H:
+    # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
+    out = out[:max(H - len(foot), 1)]
 out += foot
-if KEYS and H:
+if FIT and H:
     out = out[:H]
 print("\n".join(l.rstrip() for l in out))
 PY

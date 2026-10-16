@@ -140,7 +140,7 @@ MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex
 logs_findings() {
   local f="${p}/.swarm/findings.tsv" line n
   while IFS= read -r line; do
-    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"
+    line="${line//<who>/codex}"; line="${line//<kind>/brief-kind}"; line="${line//<PR URL>/o/r#9}"; line="${line//<reason>/nit}"
     line="${line%%\"<*}\"text\""   # the text placeholder is the last word
     n=0; [[ ! -f "${f}" ]] || n="$(wc -l < "${f}")"
     if ! (cd "${ROOT}" && env -u SWARM_PROJECT bash -c "${line}" >/dev/null 2>&1); then printf 'failed: %s|' "${line}"; continue; fi
@@ -1086,6 +1086,15 @@ check "only codex-review runs codex exec review, and no command tells anyone to"
 # notreviewed <file> — how many of <file>'s log-finding lines lack --reviewer, or none when it has none.
 notreviewed() { if ! grep -q 'log-finding' "$1"; then echo none; else grep 'log-finding' "$1" | grep -vc -- '--reviewer' || true; fi; }
 check "every log-finding line of method.md names --reviewer" "0" "$(notreviewed "${REPO}/docs/method.md")"
+# bare_declined — each --declined in finding_rule's text or method.md's outer-loop paragraph that is
+# not followed by a reason (out-of-scope, nit, wrong or the <reason> placeholder), or none.
+bare_declined() {
+  { sed -n '/^finding_rule() {/,/^}/p' "${SWARM}"; sed -n '/^\*\*Learning across epics/,/^$/p' "${REPO}/docs/method.md"; } \
+    | grep -oE -- '--declined( +[^ `]+)?' | grep -vE -- '--declined +(out-of-scope|nit|wrong|<reason>)$' || echo none
+}
+check "every --declined in finding_rule and the outer-loop paragraph is followed by a reason" "none" "$(bare_declined)"
+check "finding_rule names out-of-scope, nit, wrong and --reviewer escaped" "yes|yes|yes|yes" \
+  "$(f="$(sed -n '/^finding_rule() {/,/^}/p' "${SWARM}")"; for w in out-of-scope nit wrong '--reviewer escaped'; do has "${w}" "${f}"; done | paste -sd'|' -)"
 check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(grep -c "<who> is the reviewer that first raised it, whoever passed it on" "${SWARM}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

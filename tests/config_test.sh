@@ -155,7 +155,7 @@ p="${ROOT}/kanban"; b="${ROOT}/elsewhere/board"
 project "${p}" "board_dir = ../elsewhere/board" "repos_dir = ../repos" "base_branches = dev main"
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
 item "${b}" stories/no-repo.md "status: later" "kind: code"
-item "${b}" stories/c.md "status: blocked" "kind: code" "repo: svc" "blocked_by: [gone]"
+item "${b}" stories/c.md "status: blocked" "kind: code" "repo: svc" "depends_on: [gone]"
 check "next reads a board outside the project" "story a" "$(first "$(run "${p}" next)")"
 check "unblock reads a board outside the project" "ready: c" "$(run "${p}" unblock)"
 
@@ -220,18 +220,50 @@ check "no listed branch on origin stops" "yes" \
 p="${ROOT}/marked"; b="${p}/docs"
 project "${p}"
 item "${b}" stories/x.md "status: done" "kind: code"
-item "${b}" stories/y.md "status: blocked" "kind: code" "blocked_by: [x]"
+item "${b}" stories/y.md "status: blocked" "kind: code" "depends_on: [x]"
 check "a done blocker unblocks" "ready: y" "$(run "${p}" unblock)"
-# depends_on counts as well as blocked_by: a story waits until both lists are finished.
+# depends_on is what counts: a legacy blocked_by naming only part of it never unblocks the story early.
 item "${b}" stories/gap.md "status: ready" "kind: code"
 item "${b}" stories/read-set.md "status: blocked" "kind: code" "blocked_by: [x]" "depends_on: [gap, x]"
-check "an open depends_on keeps a story blocked" "" "$(run "${p}" unblock)"
+check "an open depends_on slug that blocked_by leaves out keeps a story blocked" "" "$(run "${p}" unblock)"
 run "${p}" finish gap >/dev/null
-check "it unblocks once depends_on is finished too" "ready: read-set" "$(run "${p}" unblock)"
+check "it unblocks once depends_on is finished, and leaves its blocked_by line as it is" "ready: read-set|blocked_by: [x]" \
+  "$(run "${p}" unblock)|$(grep blocked_by "${b}/stories/read-set.md")"
 rm "${b}/stories/read-set.md"
-# Blocked only by depends_on, with quoted slugs (YAML allows both kinds).
+# No blocked_by line at all: depends_on [a] waits while a is open, and the waiting list names a.
+item "${b}" stories/a.md "status: ready" "kind: code"
+item "${b}" stories/wait.md "status: blocked" "kind: code" "depends_on: [a, x]"
+check "a story with depends_on [a] and no blocked_by stays blocked while a is open" "" "$(run "${p}" unblock)"
+check "status --all names its open depends_on slugs" "yes" \
+  "$(grep -qxF '  blocked: wait (by a)' <<< "$(run "${p}" status --all)" && echo yes || echo "no, got: $(run "${p}" status --all)")"
+rm "${b}/stories/a.md"
+check "and is ready once a's file is gone" "ready: wait" "$(run "${p}" unblock)"
+rm "${b}/stories/wait.md"
+# depends_on is read from the front matter only: a body line that looks like it is not the list.
+item "${b}" stories/body-deps.md "status: blocked" "kind: code"
+echo "depends_on: [x]" >> "${b}/stories/body-deps.md"
+item "${b}" stories/deps-done.md "status: blocked" "kind: code" "depends_on: [x]"
+all="$(run "${p}" status --all)"
+check "a blocked story with no depends_on in its front matter says it is held by hand" "yes" \
+  "$(grep -qxF '  blocked: body-deps (by hand: no depends_on)' <<< "${all}" && echo yes || echo "no, got: ${all}")"
+check "a blocked story whose depends_on is finished says unblock readies it" "yes" \
+  "$(grep -qxF '  blocked: deps-done (its depends_on is finished: swarm.sh unblock readies it)' <<< "${all}" && echo yes || echo "no, got: ${all}")"
+check "a depends_on line in the body never unblocks a story" "ready: deps-done" "$(run "${p}" unblock)"
+rm "${b}/stories/body-deps.md" "${b}/stories/deps-done.md"
+# Trailing whitespace, a CR or a # comment after the list is not part of its last slug.
+item "${b}" stories/gap3.md "status: ready" "kind: code"
+item "${b}" stories/trail.md "status: blocked" "kind: code" "depends_on: [gap3, x] "
+item "${b}" stories/trail-cr.md "status: blocked" "kind: code" $'depends_on: [x]\r'
+item "${b}" stories/trail-note.md "status: blocked" "kind: code" "depends_on: [x]  # after gap3"
+check "a depends_on list with trailing space names its slugs, not 'x]'" "yes" \
+  "$(grep -qxF '  blocked: trail (by gap3)' <<< "$(run "${p}" status --all)" && echo yes || echo "no, got: $(run "${p}" status --all)")"
+run "${p}" finish gap3 >/dev/null
+check "a depends_on list ending in a space, a CR or a # comment unblocks once its slugs finish" $'ready: trail\nready: trail-cr\nready: trail-note' \
+  "$(run "${p}" unblock | sort)"
+rm "${b}/stories/trail.md" "${b}/stories/trail-cr.md" "${b}/stories/trail-note.md"
+# Quoted slugs (YAML allows both kinds).
 item "${b}" stories/gap2.md "status: ready" "kind: code"
-item "${b}" stories/only-deps.md "status: blocked" "kind: code" "blocked_by: []" "depends_on: [\"gap2\", 'x']"
+item "${b}" stories/only-deps.md "status: blocked" "kind: code" "depends_on: [\"gap2\", 'x']"
 check "a story blocked only by depends_on waits for it" "" "$(run "${p}" unblock)"
 run "${p}" finish gap2 >/dev/null
 check "a story blocked only by depends_on, with quoted slugs, unblocks once they finish" "ready: only-deps" "$(run "${p}" unblock)"

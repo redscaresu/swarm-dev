@@ -49,9 +49,11 @@ chmod +x "${ROOT}/bin/"*
 unset COLUMNS LINES
 export PATH="${ROOT}/bin:${PATH}"
 
-watch() { # <copy> <out> [<dir>]: dash --watch 1 --tree from that copy, off a terminal, in the
-  # background, started in <dir> (default the project)
-  (cd "${3:-${P}}" && exec env -u HERDR_ENV "${T}/$1/bin/swarm.sh" dash --watch 1 --tree > "$2" 2>&1) &
+watch() { # <copy> <out> [<dir> [<arg>...]]: dash --watch 1 --tree [<arg>...] from that copy, off a
+  # terminal, in the background, started in <dir> (default the project)
+  local copy="$1" out="$2" dir="${3:-${P}}"
+  shift 2; [[ $# -eq 0 ]] || shift
+  (cd "${dir}" && exec env -u HERDR_ENV "${T}/${copy}/bin/swarm.sh" dash --watch 1 --tree "$@" > "${out}" 2>&1) &
   WPID=$!; pids+=("${WPID}")
 }
 within() { # <seconds> <test...>: true once the test passes, checked every 0.2 seconds
@@ -105,6 +107,23 @@ sleep 2
 check "an unreadable or missing file does not stop the watch" alive "${C}"
 check "an unreadable or missing file does not re-exec" bash -c "! grep -qF '${MARK}' '${ROOT}/c.out'"
 kill "${C}" 2>/dev/null || true
+
+# Two projects watched from a git repo with no board: the re-exec keeps both --project flags.
+P2="${ROOT}/proj2"; G="${ROOT}/elsewhere"
+mkdir -p "${P2}/board/stories" "${P2}/.claude/swarm" "${G}"
+echo "# Stories" > "${P2}/board/stories/README.md"
+echo "board_dir = board" > "${P2}/.claude/swarm/config"
+git -C "${P2}" init -q; git -C "${G}" init -q
+installed 0.1.0 0.1.0
+watch 0.1.0 "${ROOT}/d.out" "${G}" --project "${P}" --project "${P2}"; D="${WPID}"
+both() { grep -q '^proj  swarm-dev ' "$1" && grep -q '^proj2  swarm-dev ' "$1"; }
+check "the two-project watch draws both frames within 10s" within 10 both "${ROOT}/d.out"
+installed 0.2.0 0.2.0
+check "the two-project watch re-execs within 10s" within 10 marked "${ROOT}/d.out"
+check "the re-exec'd watch draws the first project" within 5 grep -qxF "${MARK} project=${P}" "${ROOT}/d.out"
+check "the re-exec'd watch draws the second project" within 5 grep -qxF "${MARK} project=${P2}" "${ROOT}/d.out"
+check "the re-exec'd script keeps both --project flags" bash -c "ps -o args= -p '${D}' | grep -qF -- '--project ${P} --project ${P2}'"
+kill "${D}" 2>/dev/null || true
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
