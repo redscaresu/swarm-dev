@@ -266,8 +266,11 @@ base_for() {
 # knows, by group: the usage message and `dash` read it.
 ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
-# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model).
-BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ }"
+# BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
+# plus LEGACY_BUILDER_ROLES: roles nothing starts now, kept so agents.tsv's past builds still count.
+# They are in neither policy nor the ladder.
+LEGACY_BUILDER_ROLES="verify"
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } ${LEGACY_BUILDER_ROLES}"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -1979,14 +1982,14 @@ findings_goal() {
   send_goal "$1" "$3" findings "$2"
 }
 
-# The merge, signing and review rules, shared by the briefs.
+# The merge and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
 # stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
-# waits out every running build. The backlog conductor has
-# no Done when: it stops once its stories are all started and finished.
+# waits out every running build. The backlog conductor has no Done when: it stops once its stories
+# are all started and finished.
 stop_rule() {
   if [[ "$1" == backlog ]]; then
     printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
@@ -2591,8 +2594,7 @@ EOF
 # answers Fable's usage-credits consent, which is not giving up. With goal on, an idle builder is the
 # goal rule's, and the stall close names its cause.
 give_up_rule() {
-  local retry idle="when it is idle with no PR
-(with one PR per epic, no pushed story/<slug>) after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
+  local retry idle="when it is idle with no PR after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
   if [[ "${CFG_goal}" != off ]]; then
     idle=""
     close="\`swarm.sh close <slug> stalled\` for a stall, or \`swarm.sh close <slug> met\` when review has not converged"

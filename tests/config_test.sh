@@ -207,6 +207,9 @@ base() { run "${ROOT}/cfg" _base "${ROOT}/repos/$1"; }
 check "picks origin's default" "trunk" "$(base trunk)"
 git -C "${ROOT}/trunk.git" symbolic-ref HEAD refs/heads/main
 check "a changed default on origin is seen, not the cached one" "main" "$(base trunk)"
+remote "${ROOT}/dev-default.git" dev main dev
+"${GIT[@]}" clone -q --single-branch --branch dev "${ROOT}/dev-default.git" "${ROOT}/repos/single"
+check "a single-branch clone of origin's default, dev, finds dev" "dev" "$(base single)"
 
 # --- unblock and finish: a done item counts as finished, and finish deletes the file.
 p="${ROOT}/marked"; b="${p}/docs"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # removed_test.sh — the switches, modes and reports that were removed stay gone: none of their names
 # is in bin/swarm.sh or tests/*.sh (this file excepted), and bin/swarm.sh says verify only as git's
-# --verify.
+# --verify, or in the one LEGACY_BUILDER_ROLES line that keeps past verify builds counted.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,9 +15,9 @@ if found="$(grep -nE "${GONE}" "${files[@]}")"; then
   echo "FAIL a removed name is back:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   no removed name in bin/swarm.sh or tests/*.sh"; fi
 
-if found="$(grep -nw verify "${REPO}/bin/swarm.sh" | grep -v -- '--verify')"; then
+if found="$(grep -n '' "${REPO}/bin/swarm.sh" | sed -e '/^[0-9]*:LEGACY_BUILDER_ROLES=/d' -e 's/--verify//g' | grep -w verify)"; then
   echo "FAIL bin/swarm.sh says verify other than as git --verify:"; echo "${found}"; fails=$((fails + 1))
-else echo "ok   bin/swarm.sh says verify only as git --verify"; fi
+else echo "ok   bin/swarm.sh says verify only as git --verify and in LEGACY_BUILDER_ROLES"; fi
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
