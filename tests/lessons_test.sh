@@ -62,9 +62,14 @@ refused() {
 check "--reviewer is logged after the outcome" "fixed	codex" "$(logged --reviewer codex rev-kind o/r#93 t)"
 check "--declined before --reviewer" "declined	code-review" "$(logged --declined wrong --reviewer code-review rev-kind o/r#93 t)"
 check "--reviewer before --declined" "declined	code-review" "$(logged --reviewer code-review --declined wrong rev-kind o/r#93 t)"
-for who in escaped skeptic critic; do
+for who in skeptic critic; do
   check "--reviewer ${who} is logged in field 6" "fixed	${who}" "$(logged --reviewer "${who}" rev-kind o/r#93 t)"
 done
+# An escaped defect is no finding review raised: its outcome is escaped, and it is never declined.
+check "--reviewer escaped is logged in field 6, with outcome escaped" "escaped	escaped" "$(logged --reviewer escaped rev-kind o/r#93 t)"
+check "--declined with --reviewer escaped is refused" "refused" "$(refused --declined nit --reviewer escaped rev-kind o/r#93 t)"
+for pr in o/r#95 o/r#96 o/r#97; do sw log-finding --reviewer escaped late-kind "${pr}" t >/dev/null; done
+check "escaped defects in 3 PRs are a lesson candidate" "yes" "$(has "candidate late-kind: fixed in 3 PRs" "$(sw lessons)")"
 # A declined row carries its reason as a 7th field; a missing or unknown reason is refused, naming the three.
 check "--declined nit appends a 7-field row ending declined, codex, nit" "7|declined	codex	nit" \
   "$(sw log-finding --declined nit --reviewer codex k o/r#94 t >/dev/null; tail -1 "${F}" | awk -F'\t' '{print NF}')|$(tail -1 "${F}" | cut -f5-)"

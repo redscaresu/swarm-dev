@@ -819,8 +819,9 @@ finding_flags() {
 # it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A declined one's
 # reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
 # text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
-# have four fields and were all fixed, and rows from before the reviewer column have five. lessons,
-# outcomes and dash count only fixed rows.
+# have four fields and were all fixed, and rows from before the reviewer column have five. An
+# escaped defect's outcome is escaped, so outcomes and review-yield, which count what review raised,
+# leave it out; lessons and dash count fixed and escaped rows, never declined ones.
 record_finding() {
   local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
@@ -829,6 +830,11 @@ record_finding() {
     [[ "${FINDING_REASON:-}" =~ ^[a-z-]+$ && " ${FINDING_REASONS} " == *" ${FINDING_REASON} "* ]] \
       || die "--declined needs a reason, one of: ${FINDING_REASONS}"
     reason=$'\t'"${FINDING_REASON}"
+  fi
+  # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
+  if [[ "${reviewer}" == escaped ]]; then
+    [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined: drop --declined"
+    outcome=escaped
   fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"
@@ -849,11 +855,14 @@ record_finding() {
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
 #   back to archive_session's gzip copy there; only reports pass it, never a liveness check.
 #   log_lines(path) is either one's lines as text; a damaged copy reads as the lines before the damage.
-#   finding_rows(path) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome, reviewer);
-#   a row from before the outcome column is "fixed", and one from before the reviewer column "unknown".
+#   finding_rows(path[, outcomes]) is findings.tsv's well-formed rows as (date, kind, pr, text, outcome,
+#   reviewer) whose outcome is one of outcomes (fixed and declined: what review raised, so an escaped
+#   row is not one); a row from before the outcome column is "fixed", and one from before the reviewer
+#   column "unknown".
 #   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
 #   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
-#   a column appended later drops no row. fixed_rows(path) is the fixed ones' first four fields.
+#   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
+#   escaped ones: both are a mistake someone fixed, so both are lessons.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 REPORT_PY='
@@ -882,17 +891,17 @@ def log_lines(path):
     except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
         return
 
-def finding_rows(path):
+def finding_rows(path, outcomes=("fixed", "declined")):
     # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
     reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
     if not os.path.exists(path):
         return []
     rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
     rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
-    return [f for f in rows if f[4] in ("fixed", "declined") and f[5] in reviewers]
+    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
 
 def fixed_rows(path):
-    return [f[:4] for f in finding_rows(path) if f[4] == "fixed"]
+    return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
 
 def session_usage(path, seen):
     tok, usd, models = [0, 0, 0, 0], 0.0, set()

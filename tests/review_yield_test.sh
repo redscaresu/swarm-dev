@@ -65,13 +65,17 @@ B1="$(printf '%s\n' "${H1}" \
 check "block 1 per reviewer and kind (4- and 5-field rows as unknown), per kind, and all all; block 2 sums each PR's rounds" \
   "$(yield_of "${P}")" "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
 # A declined row with its reason (7 fields) beside the 4- and 6-field ones: the old rows count as
-# before; only the new row's own lines and all all change.
+# before; only the new row's own lines and all all change. An escaped row (a defect review missed)
+# counts nowhere: were it counted, vacuous's lines would change and an escaped line appear.
 cp "${P}/.swarm/findings.tsv" "${dir}/findings.bak"
-printf '%s\n' $'2026-10-03\tplan-gap\to/r#1\tt\tdeclined\tskeptic\tnit' >> "${P}/.swarm/findings.tsv"
+printf '%s\n' $'2026-10-03\tplan-gap\to/r#1\tt\tdeclined\tskeptic\tnit' \
+  $'2026-10-03\tvacuous\to/r#1\tt\tescaped\tescaped' >> "${P}/.swarm/findings.tsv"
 old_rows() { grep -v -e '^skeptic' -e $'\tplan-gap\t' -e $'^all\tall\t' <<< "$1"; }
 check "a 7-field row leaves the 4-, 5- and 6-field rows' counts as they were" \
   "$(old_rows "$(yield_of "${P}")")" "$(old_rows "$(printf '%s\n' "${B1}" "" "${H2}" $'2\t3\t1.5\t3' "exit 0")")"
-check "the 7-field row counts as one decline" "yes" "$(grep -c $'^skeptic\tplan-gap\t1\t0\t1\t100%$' <<< "$(yield_of "${P}")" | sed 's/^1$/yes/')"
+out="$(yield_of "${P}")"
+check "the 7-field row counts as one decline, all all only adds it, and no escaped line" \
+  "$(grep -E $'^(skeptic|all\tall|escaped)\t' <<< "${out}")" "$(printf '%s\n' $'skeptic\tall\t1\t0\t1\t100%' $'skeptic\tplan-gap\t1\t0\t1\t100%' $'all\tall\t9\t4\t5\t56%')"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \

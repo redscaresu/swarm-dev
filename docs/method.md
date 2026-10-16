@@ -623,7 +623,7 @@ skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
 (`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `code-review`, `ci` (a
-PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR. A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
+PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR. A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward lessons, but `outcomes` and `review-yield` leave it out, since review missed it. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `lessons` counts only the fixed ones, and `outcomes` counts the two apart. `swarm.sh lessons` counts kinds across PRs: a kind fixed in three or
 more PRs that the project's `lessons_file` (default `.claude/swarm/brief.md`) has no rule for is a `candidate`. So is a lead
 memory (Claude Code's per-project memory, which builders in their own worktrees never see) whose
@@ -638,7 +638,7 @@ opens it as a PR titled `lesson: <kind>` for you; it never edits the brief silen
 whose rule PR you closed is not proposed again. Only PRs from the last 90 days count. With `pr_per = epic` a finding is logged against the epic
 PR of its repo, so findings count per epic per repo. A brief over 4 KB (counting `lessons_file`'s tagged lines, which every brief also carries) is flagged, and pruning it is your call: a rule that works stops
 its own findings, so quiet is no sign a rule is unneeded. The log is `.swarm/findings.tsv`, local to
-the machine: date, kind, PR, the line, its outcome (`fixed` or `declined`; rows written before the
+the machine: date, kind, PR, the line, its outcome (`fixed`, `declined` or `escaped`; rows written before the
 outcome column count as fixed) and the reviewer (`unknown` when a row was logged without `--reviewer`
 or before that column existed). Columns added later go on the end, so readers ignore any past the sixth.
 
