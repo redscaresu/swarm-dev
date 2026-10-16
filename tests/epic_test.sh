@@ -268,6 +268,12 @@ check "the review paragraph starts a review agent per green PR without waiting, 
   "$(has "${SWARM} review-agent <slug> <PR URL>" "${review}")|$(has "Do not wait for other PRs or reviews: start one for each green PR" "${review}")|$(has "swarm.sh wait review-<slug>" "${review}")|$(has "log-finding --declined out-of-scope --reviewer <who>" "${review}")|$(has "${p}/.swarm/reviews/<slug>.md" "${review}")"
 check "the review paragraph has the conductor read the diff itself when a review agent reports codex skipped, and never run codex-review itself" "yes|0" \
   "$(has "When a review agent reports \`codex skipped: <why>\` (its file's second line says so too), read the diff yourself in codex's place." "${review}")|$(grep -c 'Run codex-review in the background' <<< "${review}" || true)"
+check "the review paragraph takes a head moved: line or no findings section for no pass, and closes the agent and reviews again when the wait brings no file" "yes|yes" \
+  "$(has "A file with a \`head moved:\` line, or
+with no \`## Findings\` section, is not a pass: start the review again." "${review}")|$(has "When the wait returns with
+no findings file (it timed out, or the agent waits on a prompt, is gone or needs a login), close the
+review agent, never answering its prompt, and start the review again in a later round, or read the
+diff yourself as for a skipped codex." "${review}")"
 check "the review paragraph closes the review agent whatever it found, logs its out-of-scope section as declined, and checks the reviewed head before a merge" "yes|yes|yes" \
   "$(has "then close the review
 agent (\`swarm.sh close review-<slug>\`) whatever it found." "${review}")|$(has "Log each item of the out-of-scope section with" "${review}")|$(has "compare the file's \`head:\` line with the PR's head" "${review}")"
@@ -545,7 +551,7 @@ cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" > "${p}/
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
 check "with merge = agent, the conductor reviews a pinned head, puts the story in review, then merges that head with swarm.sh merge, which reconciles" "yes|yes|yes|yes" \
-  "$(has "note its head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${brief}")|$(has "if the head moved, review the new head" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never \`gh pr merge\` or \`gh api\`" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
+  "$(has "The head a review passed is the \`head:\` line of the story's findings file (${p}/.swarm/reviews/<slug>.md). Once the review passes, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${brief}")|$(has "if it is not that SHA, the head moved: review the new head" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>\`, never \`gh pr merge\` or \`gh api\`" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
 check "it merges by the literal PR number, pinned with --match-head-commit, in the repo's method, never --auto" "yes|yes|yes|yes" \
   "$(has "by the literal PR number" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")|$(has "(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`)" "${brief}")|$(has "never --auto" "${brief}")"
 check "it runs one swarm.sh merge at a time, the next only once the last has exited" "yes" "$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"

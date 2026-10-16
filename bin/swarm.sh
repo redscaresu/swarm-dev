@@ -2042,7 +2042,11 @@ only docs, board files or a dependency bump), \`/code-review <PR>\`, judges only
 and **Done when**, and writes ${PROJECT_DIR}/.swarm/reviews/<slug>.md: a \`head: <SHA>\` line
 naming the commit it reviewed, its findings, and an out-of-scope section. Wait on each with
 \`swarm.sh wait review-<slug>\` in the background, triage that story's file, then close the review
-agent (\`swarm.sh close review-<slug>\`) whatever it found. Send the real findings to the story's
+agent (\`swarm.sh close review-<slug>\`) whatever it found. A file with a \`head moved:\` line, or
+with no \`## Findings\` section, is not a pass: start the review again. When the wait returns with
+no findings file (it timed out, or the agent waits on a prompt, is gone or needs a login), close the
+review agent, never answering its prompt, and start the review again in a later round, or read the
+diff yourself as for a skipped codex. Send the real findings to the story's
 builder with \`${sw} tell <slug> findings <file>\` (a file holding the findings and what to
 decline). Log each item of the out-of-scope section with
 \`log-finding --declined out-of-scope --reviewer <who>\`, as below.
@@ -2154,12 +2158,14 @@ stacked_start_rule() {
   printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
 }
 
-# pin_rule — with merge = agent and a PR per story, review each PR at a head noted before the review.
+# pin_rule — with merge = agent and a PR per story, the head a review passed is its findings file's
+# head: line (review_agent pins it), checked against the PR's head before the merge.
 pin_rule() {
   cat <<EOF
-Review a PR at a pinned head: before you review it, note its head SHA
-(\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`), and once the review passes, read it again; if the head
-moved, review the new head.
+The head a review passed is the \`head:\` line of the story's findings file
+(${PROJECT_DIR}/.swarm/reviews/<slug>.md). Once the review passes, read the PR's head
+(\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`); if it is not that SHA, the head
+moved: review the new head.
 EOF
 }
 
@@ -2168,7 +2174,7 @@ EOF
 pinned_merge_rule() {
   cat <<EOF
 Merge a PR only when it is green and reviewed, and only through \`swarm.sh merge\`: run
-\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never
+\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>\`, never
 \`gh pr merge\` or \`gh api\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
 repo's merge method, squash when allowed
 (\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
@@ -2468,8 +2474,8 @@ build_story() {
 # PR's head, and only when the worktree is at it with nothing uncommitted; the file's head: line
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
-# review-<slug> cannot start (still working). Its earlier findings file then goes, so the conductor
-# reads only this head's.
+# review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
+# started (kept aside until then), so the conductor reads only this head's.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
@@ -2497,12 +2503,28 @@ review_agent() {
   # What start_agent would refuse on, before any file is touched.
   require_trusted "${wt}"; require_claude; free_agent_name "$(agent_name "review-${slug}")"
   base="$(base_for "${src}")"
-  mkdir -p "${out%/*}"; rm -f "${out}"
+  mkdir -p "${out%/*}"
   prompt="${PROJECT_DIR}/.swarm/briefs/review-${slug}.md"; mkdir -p "${prompt%/*}"
   review_brief "${slug}" "${pr}" "${base}" "${out}" "${head}" > "${prompt}"
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
-  start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"
+  # The last review's file is moved aside before the brief goes (a quick agent's new file must not be
+  # the one removed), put back when the start fails, and dropped once it has started.
+  [[ ! -f "${out}" ]] || mv "${out}" "${out}.prev"
+  if ! (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"); then
+    [[ ! -f "${out}.prev" ]] || mv "${out}.prev" "${out}"
+    die "review-agent: review-${slug} did not start; ${out} is as it was"
+  fi
+  rm -f "${out}.prev"
+}
+
+# review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents), that their
+# commits are in its diff against <base> but are not its own; nothing for any other story.
+review_stack_note() {
+  local parents b="" p
+  parents="$(stacked_parents "$1")"; [[ -n "${parents}" ]] || return 0
+  for p in ${parents//,/ }; do b+="${b:+, }origin/story/${p}"; done
+  printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
@@ -2521,7 +2543,7 @@ Its **Done when:**
 $(story_items "${story}" 'Done when')
 
 Judge the PR against these touches and items alone: work outside them is not a finding.
-
+$(review_stack_note "$1" "$3")
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last. If
 codex reports a usage limit, or codex-review prints "codex skipped: timed out", do not wait or run

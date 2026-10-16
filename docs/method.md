@@ -667,15 +667,22 @@ the PR's head, which `review-agent` reads from `gh` and puts in the brief, then 
 <why>` when codex was skipped. Under them go the findings,
 each with its reviewer and file:line, then an out-of-scope section for points raised outside the
 story.
-`review-agent` refuses, starting nothing and touching no file, when the board has a story named
+`review-agent` refuses, starting nothing and leaving the last review's file in place, when the board has a story named
 `review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
 head or has uncommitted changes, or when `review-<slug>` is still working or still open with no
-findings file (idle while its codex runs, not finished). The conductor waits on each review in the background
+findings file (idle while its codex runs, not finished). It moves the last review's file aside
+before the new agent's brief goes, puts it back if herdr cannot start the agent, and deletes it once
+the agent has started. For a story stacked on
+parents, the brief names their branches: their code is in the diff against the base, but the agent
+lists it neither as a finding nor as out of scope. The conductor waits on each review in the background
 with `swarm.sh wait review-<slug>`. A review agent goes idle while its codex runs in the
 background, so for an agent agents.tsv records as role `review`, that wait, like a conductor's,
 holds on until the findings file exists, and fails if it times out without one. The conductor
 then triages that story's file, and closes the review agent whatever
-it found. It sends the real findings to the story's builder with `swarm.sh tell <slug> findings
+it found. A file with a `head moved:` line, or with no findings section, is not a pass: the
+conductor starts the review again. When the wait returns with no file (a timeout, a prompt, a gone
+session, an expired login), it closes the review agent without answering its prompt, and reviews
+again in a later round or reads the diff itself. It sends the real findings to the story's builder with `swarm.sh tell <slug> findings
 <file>`, and logs each out-of-scope item with `log-finding --declined out-of-scope --reviewer <who>`.
 It starts a new review agent on the builder's next head. Before a story merges or goes to review, it
 compares the file's `head:` line with the PR's head, and reviews the new head when they differ. `tell`'s kind (`findings`, `nudge`
@@ -781,8 +788,9 @@ reconcile prints where. If the pull still fails they are all restored, and if a 
 again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`,
-and no other agent can. Every agent, the conductor included, still starts unable to run `gh pr merge`. It notes a PR's head SHA before it reviews it and
-reads it again after; if the head moved, it reviews the new one. Then it runs `swarm.sh review <slug>
+and no other agent can. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
+story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
+not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit`, never `--auto`, waits for CI on the base, and runs `swarm.sh reconcile`.
 That pulls the board the way it does for you, putting back a retry's `attempts:` first, and finishes

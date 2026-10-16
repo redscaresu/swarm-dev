@@ -36,9 +36,12 @@ next() { n=$(($(cat "$H/n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/n"; }
 case "$1 $2" in
   "tab create")   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "agent start")  echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
+  "agent start")  [ -e "$H/startfail" ] && { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
+                  echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
-  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent prompt") # With quick, the agent writes its findings file while its brief is still being delivered.
+                  [ -e "$H/quick" ] && echo "head: NEW-REVIEW" > "$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)"
+                  echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait")   name=$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")
                   ms=$(echo "$*" | sed -n 's/.*--timeout \([0-9]*\).*/\1/p'); ticks=$(( ${ms:-10000} / 100 ))
                   while [ ! -e "$H/done/$name" ]; do
@@ -139,11 +142,15 @@ check "with review-s1 still working, review-agent s1 fails, starts nothing, and 
 
 # --- Four at once: each start returns while every agent still works (herdr's wait would block),
 # and each is waited on alone.
+# s2's build stacked on s1 (#215's stacked event, then its story line).
+printf '%s\t%s\t%s\t%s\t%s\n' 2026-10-16T10:00:00Z stacked s2 - "ok (on s1)" 2026-10-16T10:01:00Z story s2 - ok >> "${p}/.swarm/events.tsv"
 back=""; echo "head: STALE" > "${p}/.swarm/reviews/s2.md"
 for s in s2 s3 s4; do back+="${s}:$(start "${s}") "; done
-check "a start removes the story's findings file from an earlier head, so its wait cannot end on it" "no" \
-  "$([[ -e "${p}/.swarm/reviews/s2.md" ]] && echo yes || echo no)"
+check "a start removes the story's findings file from an earlier head, and leaves no copy aside, so its wait cannot end on it" "no|no" \
+  "$([[ -e "${p}/.swarm/reviews/s2.md" ]] && echo yes || echo no)|$([[ -e "${p}/.swarm/reviews/s2.md.prev" ]] && echo yes || echo no)"
 check "review-agent s2 to s4 each return within 10s while no review is done" "s2:back:0 s3:back:0 s4:back:0 " "${back}"
+check "a stacked story's brief leaves its parents' code out; another's says nothing of stacking" "yes|yes|0" \
+  "$(has "This story is stacked on s1: their branches (origin/story/s1) are in its diff against origin/main" "$(cat "${p}/.swarm/briefs/review-s2.md")")|$(has "it is neither a finding nor out of scope" "$(cat "${p}/.swarm/briefs/review-s2.md")")|$(grep -c stacked "${p}/.swarm/briefs/review-s3.md" || true)"
 check "herdr lists review-s1 to review-s4 working at once" "review-s1 working|review-s2 working|review-s3 working|review-s4 working" "$(working)"
 # done_review <slug> — the agent writes its findings file, then goes idle.
 done_review() { echo "head: ${HEAD_SHA}" > "${p}/.swarm/reviews/$1.md"; done_agent "review-$1"; }
@@ -190,6 +197,23 @@ echo brief > "${ROOT}/builder-brief.md"
 run agent e review-s9 "${ROOT}/svc" code "${ROOT}/builder-brief.md" >/dev/null || { echo "FAIL agent review-s9 failed"; exit 1; }
 done_agent review-s9
 check "a code agent named review-s9, idle, is not held for a findings file" "idle|fast" "$(fast_wait review-s9)"
+
+# --- A start herdr refuses leaves the last review's findings file as it was.
+sed "s/s4/s6/g" "${b}/stories/s4.md" > "${b}/stories/s6.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/s6 "${ROOT}/svc-wt/s6" origin/main
+echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s6.md"; touch "${ROOT}/startfail"
+check "when herdr cannot start review-s6, review-agent fails and s6's last findings file is put back" "1|head: OLD-REVIEW|no" \
+  "$(set +e; run review-agent s6 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s6.md")|$([[ -e "${p}/.swarm/reviews/s6.md.prev" ]] && echo yes || echo no)"
+rm "${ROOT}/startfail"
+
+# --- An agent that writes its findings before review-agent returns keeps them: only the last
+# review's file is removed.
+sed "s/s4/s7/g" "${b}/stories/s4.md" > "${b}/stories/s7.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/s7 "${ROOT}/svc-wt/s7" origin/main
+echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s7.md"; touch "${ROOT}/quick"
+check "a review written while its brief is delivered survives the start, and the old one is gone" "back:0|head: NEW-REVIEW|no" \
+  "$(start s7)|$(cat "${p}/.swarm/reviews/s7.md" 2>/dev/null)|$([[ -e "${p}/.swarm/reviews/s7.md.prev" ]] && echo yes || echo no)"
+rm "${ROOT}/quick"
 
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 
