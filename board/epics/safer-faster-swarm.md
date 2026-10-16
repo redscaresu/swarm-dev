@@ -1,0 +1,41 @@
+---
+status: active
+depends_on: [leaner-faster-swarm]
+---
+
+# Merges that need no hand cleanup, agents that cannot leak secrets, and builds that wait less
+
+swarm-dev is now the user's main way of building software (2026-10-17), and the user approved this epic that day. It comes from what the lead saw on 2026-10-16 across infrafactory and swarm-dev:
+- Conductors' uncommitted status edits in the main checkout broke the post-merge pull (infrafactory #597). The hand stash-and-pull routine deleted a live story earlier the same day.
+- Each one-off took four extra steps and a CI run to leave the board (`finish`, then a board PR).
+- A builder's test printed a fine-grained PAT into a transcript, which cost a key rotation. Panes inherit the user's whole shell environment.
+- The lead merged through a one-line script to get past a hook, and a conductor chained a stray `swarm.sh merge` onto an unrelated command (PR 214).
+- Codex was rate-limited for most of the day, so reviews fell back to the lead reading diffs.
+
+The throughput numbers come from `swarm.sh outcomes` and git:
+- `bin/swarm.sh` is 6778 lines, and 29 of the day's merges touched it.
+- 55% of story PRs needed main merged in (leaner-faster-swarm's baseline).
+- The three largest stories each cost $12–15 and took 5.5–7 hours from start to merge.
+- swarm-dev CI takes about 10 minutes, and every review round waits on it.
+
+**Done when:**
+- **Board state out of git.** A story's `status`, `attempts`, `prs` and other front-matter fields that swarm.sh writes live in `.swarm/state/`, not in tracked files. Tracked story files change only through PRs. `reconcile` loses its backup-and-restore step. A test shows that a conductor marking a story `review` leaves `git status` clean, and that a PR deleting that story pulls cleanly.
+- **A story's PR removes its story.** A builder's PR deletes its own story file (the epic's last story deletes the epic file too), so the board updates when the code merges. `finish` remains only for stories that end with no PR. A test covers one-off and epic stories.
+- **Agents get an allowlist, not the user's environment.** Panes start with a fixed set of environment variables (`PATH`, `HOME`, `TERM`, locale, and the ones swarm.sh sets). Any other variable reaches a pane only when the story names it under `env:`. A test starts a pane with a fake secret in the parent environment and shows the builder cannot see it unless the story names it.
+- **One merge path.** `swarm.sh merge` is the only merge command any role runs. It checks the head SHA and green checks, and holds `costs: money` stories. The merge guard hook blocks every other form, and the lead's docs stop telling it to write merge scripts. A test shows the hook blocks a raw `gh pr merge` and a `swarm.sh merge` chained into another command.
+- **A fallback reviewer.** When codex answers with a usage limit, the review step starts a review agent on another model family or tier (set in config), logs it as `reviewer: fallback`, and the PR body says so. A test stubs codex's limit message and shows the fallback runs.
+- **The lead waits until a report.** `/swarm` and the lead docs use `wait --until-report` (or `wait --lead`) for conductors, so an hour of normal work no longer returns "busy" with exit 1.
+- **swarm.sh split by command.** `bin/swarm.sh` keeps dispatch and shared helpers, and each command group lives in `bin/lib/<group>.sh`. No file is over 1500 lines. This story merges first, alone, before any other story of the epic starts. After the epic, `flow` reports the share of PRs that needed main merged in, set beside the 55% baseline.
+- **Story size cap.** plan-epic's decompose and skeptic briefs cap a story at one new command or one changed behaviour, and an estimated diff of about 300 lines. A skeptic refutes any story over the cap. The plan report lists each story's estimate.
+- **CI under 4 minutes.** The test files run in parallel (CI and `make test`), and the CI run on this epic's last PR takes under 4 minutes.
+- **Cost beside timings.** `outcomes` and `flow` print each story's cost next to its start-to-PR and PR-to-merge minutes, and `flow` sums cost per epic.
+- **init sets up a new project like infrafactory.** `swarm.sh init` writes a CI board-only fast path, a pre-commit hook that runs the project's `check`, and an optional `commit_trailers` config line that builders add to every commit. A test runs init on an empty repo and checks each one.
+
+**Out of scope:** remote or cloud-hosted agents, and a web UI beyond `dash`.
+
+**Constraints:**
+- The split story merges before any other story of this epic, because every other story touches swarm.sh.
+- New settings ship off where they change behaviour (the env allowlist ships on, because it is a safety fix). A switch-on is its own lead story.
+- Planned with the plan-epic and conductor that leaner-faster-swarm releases. The lead installs that release (`claude plugin update`) before planning.
+
+**Your part:** none. The lead plans, builds and merges, since swarm-dev is merge = agent.
