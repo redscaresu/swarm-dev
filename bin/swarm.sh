@@ -3264,13 +3264,14 @@ merge_pr() {
 }
 
 # brief_trailers — the commit trailers the project's brief names, wherever a line has one (quoted or
-# backticked in a sentence too): a <Word>-by: token, a name with a letter in it, and <an email>. A
-# placeholder such as Co-Authored-By: <who> <email> has no name, so it is not one. One per line, in
-# the brief's order.
+# backticked in a sentence too): a <Word>-by: token, a name with a letter in it and no colon or
+# quote (so a match starts at the last token before the email, never in the prose ahead of it), and
+# <an email>. A placeholder such as Co-Authored-By: <who> <email> has no name, so it is not one. One
+# per line, in the brief's order.
 brief_trailers() {
   [[ -f "${PROJECT_BRIEF}" ]] || return 0
   # shellcheck disable=SC2016 # the backticks are literal: a name holds none
-  grep -oE '[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>"`]*[A-Za-z][^<>"`]* <[^<>[:space:]]+@[^<>[:space:]]+>' "${PROJECT_BRIEF}" \
+  grep -oE '[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>"`:]*[A-Za-z][^<>"`:]* <[^<>[:space:]]+@[^<>[:space:]]+>' "${PROJECT_BRIEF}" \
     | awk '!seen[$0]++' || true
 }
 
@@ -3378,6 +3379,10 @@ board_pr() {
         [[ -z "$(git -C "${wt}" status --porcelain --untracked-files=all)" ]] || die "board-pr: ${wt} has uncommitted changes"
         [[ ! -e "$(git -C "${wt}" rev-parse --absolute-git-dir)/locked" ]] || die "board-pr: ${wt} is locked; git worktree unlock it first"
       fi
+      # branch -D fails on a branch checked out anywhere: the main checkout, or another worktree.
+      f="$(git -C "${PROJECT_DIR}" worktree list --porcelain \
+        | awk -v b="branch refs/heads/${b}" -v w="${wt}" '/^worktree / { p = substr($0, 10) } $0 == b && p != w { print p; exit }')"
+      [[ -z "${f}" ]] || die "board-pr: ${b} is checked out at ${f}; switch that checkout off it first"
       # origin first: its delete can fail (the lease, a protected branch), and the local state must
       # then stay for the next run.
       [[ -z "${rtip}" ]] || git -C "${PROJECT_DIR}" push -q --force-with-lease="refs/heads/${b}:${rtip}" origin --delete "${b}" \

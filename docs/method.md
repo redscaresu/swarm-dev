@@ -56,8 +56,9 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   symlink or `..`), and when `git worktree add` fails.
 - `open <name> "<title>" <body-file>` refuses unless every changed file is under the board. Otherwise
   it commits with the brief's commit trailers, pushes, and opens the PR, printing its URL. A trailer
-  is found anywhere in the brief, quoted in a sentence too: a `<Word>-by:` token, a name, and an
-  email in `<...>` (so a placeholder such as `<who> <email>` is skipped). Run `open` again to push
+  is found anywhere in the brief, quoted in a sentence too: a `<Word>-by:` token, a name (with a
+  letter, and no colon or quote), and an email in `<...>`. A placeholder such as `<who> <email>` is
+  skipped, and the prose before a trailer never becomes part of it. Run `open` again to push
   more edits: it prints the open PR's URL and opens no second one. Once the branch's PR has merged
   or closed (squashed or not), it refuses, since the branch still holds the merged commits: run
   `done`, then `start` again. A PR counts as the branch's when its head came after the branch was
@@ -68,7 +69,8 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   a branch with no commits past the base. It runs every check before it removes anything, and
   refuses while any PR on the branch is open, when origin cannot be read or its branch has moved
   past the local one, when the worktree at that path is not on `board/<name>`, has uncommitted
-  changes or is locked, and when git cannot remove the worktree (giving git's reason). Origin's
+  changes or is locked, when `board/<name>` is checked out anywhere else (the main checkout, or
+  another worktree), and when git cannot remove the worktree (giving git's reason). Origin's
   branch goes first, so when its delete fails the local state is still there for the next run.
 
 Each step logs one `events.tsv` line, `board-pr:start`, `board-pr:open` or `board-pr:done`, with

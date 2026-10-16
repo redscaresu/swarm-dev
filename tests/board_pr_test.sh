@@ -24,6 +24,8 @@ Co-Authored-By: Lead Bot <lead@example.com>
 
 End commit messages with "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" and PR bodies with the footer.
 Fill in the templates Reviewed-by: <you@example.com> and Co-Authored-By: <who> <email>.
+Every commit needs a Co-Authored-By: line, for example Co-Authored-By: Helper Bot <helper@example.com>.
+Signed-off-by: is not used; Co-Authored-By: Lead <l@x.com>
 BRIEF
 echo .swarm/ > "${P}/.gitignore"
 echo story > "${P}/board/stories/a.md"; echo code > "${P}/bin/tool"
@@ -117,8 +119,8 @@ is "open: one gh pr create" 1 "$(grep -c '^pr create' "${ROOT}/gh.log")"
 check "open: the PR is board/x into main" grep -qF -- "--base main --head board/x --title Board edit --body-file ${ROOT}/body.md" "${ROOT}/gh.log"
 check "open: board/x is on origin" on_origin board/x
 is "open: origin has the commit" "$(git -C "${WT}" rev-parse HEAD)" "$(git -C "${P}" rev-parse refs/remotes/origin/board/x)"
-is "open: the commit's trailers are the brief's, a quoted one too, and no placeholder" \
-  $'Co-Authored-By: Lead Bot <lead@example.com>\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>' \
+is "open: the commit's trailers are the brief's, quoted or in a sentence, with no prose and no placeholder" \
+  $'Co-Authored-By: Lead Bot <lead@example.com>\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nCo-Authored-By: Helper Bot <helper@example.com>\nCo-Authored-By: Lead <l@x.com>' \
   "$(git -C "${WT}" log -1 --format=%B | grep -E -- '-[Bb]y:' || true)"
 is "open: the commit has both board files" "board/stories/a.md board/stories/b.md" "$(git -C "${WT}" diff --name-only origin/main HEAD | paste -sd' ' -)"
 is "open: logs board-pr:open x ok" "board-pr:open x ok" "$(events)"
@@ -245,6 +247,16 @@ check "a locked worktree: board/x stays" branch board/x
 check "a locked worktree: board/x stays on origin" on_origin board/x
 git -C "${P}" worktree unlock "${WT}"; bpr "done" x
 is "done once unlocked: exits 0" 0 "${rc}"
+
+# done refuses, removing nothing, while board/x is checked out in another worktree.
+bpr start x; git -C "${P}" push -q origin board/x; pr MERGED
+git -C "${P}" worktree remove "${WT}"; git -C "${P}" worktree add -q "${ROOT}/elsewhere" board/x
+reset_log; bpr "done" x
+refused "done while board/x is checked out elsewhere" "board/x is checked out at ${ROOT}/elsewhere" "${before}"
+check "checked out elsewhere: board/x stays on origin" on_origin board/x
+check "checked out elsewhere: board/x stays here" branch board/x
+git -C "${P}" worktree remove "${ROOT}/elsewhere"; bpr "done" x
+is "done once nothing has board/x checked out: exits 0" 0 "${rc}"
 
 # start refuses when origin has board/x already, or cannot be read.
 git -C "${P}" push -q origin "${old}:refs/heads/board/x"
