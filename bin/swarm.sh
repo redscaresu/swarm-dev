@@ -5842,63 +5842,103 @@ for t in json.load(sys.stdin)['result']['tabs']:
   done
 }
 
-LEAD_POLL="${SWARM_LEAD_POLL:-30}"   # seconds between wait --lead's reads of the board
+LEAD_POLL="${SWARM_LEAD_POLL:-30}"    # seconds between wait --lead's reads of the board, at least 1
+LEAD_SEEN="${STATE_DIR}/lead-seen"    # the lead's queue at wait --lead's last read, kept across runs
+LEAD_GREEN="${STATE_DIR}/lead-green"  # "<repo> <sha>" per PR head ci_gate passed, so it runs once per head
+LEAD_PID="${STATE_DIR}/lead-wait.pid" # the running wait --lead, so a second one refuses
 
-# heads_green <pr-url>... — true when there is at least one PR and every one's head is green (ci_gate head).
+# heads_green <pr-url>... — 0 when there is at least one PR and every one's head is green (ci_gate head,
+# skipped for a head in LEAD_GREEN; each green head goes to LEAD_GREEN.new), 1 when one is not or a URL
+# is not a PR, 2 when none is red but gh or ci_gate could not read one. A red or pending head is read
+# again each time: a re-run can turn it green with no new SHA.
 heads_green() {
-  local url repo head
+  local url repo head rc=0 g
   [[ $# -gt 0 ]] || return 1
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || return 1
     repo="${BASH_REMATCH[1]}"
-    head="$(gh pr view "${BASH_REMATCH[2]}" --repo "${repo}" --json headRefOid --jq .headRefOid 2>/dev/null)" || return 1
-    [[ "${head}" =~ ^[0-9a-f]{40}$ ]] && ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || return 1
+    head="$(gh pr view "${BASH_REMATCH[2]}" --repo "${repo}" --json headRefOid --jq .headRefOid 2>/dev/null)" || head=""
+    [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || { rc=2; continue; }
+    if ! grep -qxF "${repo} ${head}" "${LEAD_GREEN}" 2>/dev/null; then
+      g=0; ci_gate head "${repo}" "${head}" >/dev/null 2>&1 || g=$?
+      [[ ${g} -eq 0 ]] || { [[ ${g} -eq 3 ]] || return 1; rc=2; continue; }
+    fi
+    echo "${repo} ${head}" >> "${LEAD_GREEN}.new"
   done
+  return "${rc}"
 }
 
 # lead_queue — one line per item waiting on the lead, as wait --lead prints it: `held: <slug> (<cause>)`
 # for a story with held_for:, `escalated: <slug>` for any other escalated one, and with merge = human
 # `merge: <slug> <PR URL>...` for a story or epic in review (waiting_on_user) whose every PR head is green.
+# A review item whose heads could not be read stays as LEAD_SEEN has it, so a gh error wakes no one.
 lead_queue() {
-  local f held line slug prs
+  local f held line slug prs rc
   while IFS= read -r f; do
     held="$(get_fm "${f}" held_for)"
     if [[ -n "${held}" ]]; then echo "held: $(basename "${f}" .md) (${held})"
     elif is_escalated "${f}"; then echo "escalated: $(basename "${f}" .md)"; fi
   done < <(board stories)
   [[ "${CFG_merge}" == human ]] || return 0
+  : > "${LEAD_GREEN}.new"
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ "${line}" == "  awaiting your merge: "* ]] || continue
     line="${line#  awaiting your merge: }"; line="${line#epic }"
-    slug="${line%% *}"; prs="${line#"${slug}"}"
+    slug="${line%% *}"; prs="${line#"${slug}"}"; line="merge: ${slug}${prs}"; rc=0
     # shellcheck disable=SC2086 # prs: is a space-separated list of URLs
-    if heads_green ${prs}; then echo "merge: ${slug}${prs}"; fi
+    heads_green ${prs} || rc=$?
+    if [[ ${rc} -eq 0 ]] || { [[ ${rc} -eq 2 ]] && grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; }; then echo "${line}"; fi
   done < <(waiting_on_user)
+  mv "${LEAD_GREEN}.new" "${LEAD_GREEN}"
 }
 
-# wait_lead [timeout-ms] — wait --lead: read the lead's queue (lead_queue) every LEAD_POLL seconds and
-# return 0 as soon as it holds an item it did not on the read before, printing each new one and logging
-# `lead-woken <slug>` for it. At the timeout (default an hour) it fails with nothing printed. It nudges
-# no one and edits no board file.
-wait_lead() {
-  local timeout="${1:-3600000}" start seen now line new=""
-  [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
-  [[ "${LEAD_POLL}" =~ ^[0-9]+$ ]] || die "SWARM_LEAD_POLL is in seconds, not '${LEAD_POLL}'"
-  start=$(date +%s); seen="$(lead_queue)"
-  while (( ($(date +%s) - start) * 1000 < timeout )); do
-    sleep "${LEAD_POLL}"
-    now="$(lead_queue)"
-    while IFS= read -r line; do
-      [[ -z "${line}" || $'\n'"${seen}"$'\n' == *$'\n'"${line}"$'\n'* ]] || new+="${line}"$'\n'
-    done <<< "${now}"
-    if [[ -n "${new}" ]]; then
-      while IFS= read -r line; do
-        echo "${line}"; line="${line#*: }"; record_event lead-woken "${line%% *}"
-      done <<< "${new%$'\n'}"
-      return 0
+# lead_wake [quiet] — read the lead's queue once and save it as LEAD_SEEN. Print each item that was not in
+# LEAD_SEEN before and log `lead-woken <slug>` for it; true when there was one. quiet only saves.
+lead_wake() {
+  local now line new=""
+  now="$(lead_queue)"
+  while IFS= read -r line; do
+    [[ -z "${line}" ]] || grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null || new+="${line}"$'\n'
+  done <<< "${now}"
+  printf '%s\n' "${now}" > "${LEAD_SEEN}.tmp" && mv "${LEAD_SEEN}.tmp" "${LEAD_SEEN}"
+  [[ -z "${1:-}" && -n "${new}" ]] || return 1
+  while IFS= read -r line; do
+    echo "${line}"; line="${line#*: }"; record_event lead-woken "${line%% *}"
+  done <<< "${new%$'\n'}"
+}
+
+# lead_lock — hold LEAD_PID for this run, freed when it exits; die while another wait --lead holds it.
+lead_lock() {
+  local pid
+  mkdir -p "${STATE_DIR}"
+  # ponytail: two runs starting in the same instant over a stale file can both win; flock if it matters.
+  until (set -C; echo "$$" > "${LEAD_PID}") 2>/dev/null; do
+    pid="$(cat "${LEAD_PID}" 2>/dev/null)" || pid=""
+    if [[ "${pid}" =~ ^[0-9]+$ ]] && ps -p "${pid}" -o command= 2>/dev/null | grep -q -- 'wait --lead'; then
+      die "wait --lead is running already (pid ${pid}) and still watches for you; leave it"
     fi
-    seen="${now}"
+    rm -f "${LEAD_PID}"
+  done
+  trap 'rm -f "${LEAD_PID}"' EXIT
+}
+
+# wait_lead [timeout-ms] — wait --lead: one run at a time (lead_lock). It reads the lead's queue every
+# LEAD_POLL seconds and returns 0 as soon as it holds an item that LEAD_SEEN does not (lead_wake). The
+# first read of a run reports what landed since the last run; with no LEAD_SEEN yet it only notes the
+# queue. At the timeout (default an hour) it fails with nothing printed. It nudges no one and edits no
+# board file.
+wait_lead() {
+  local timeout="${1:-3600000}" start left
+  [[ "${timeout}" =~ ^[0-9]+$ ]] || die "wait --lead: the timeout is in milliseconds, not '${timeout}'"
+  [[ "${LEAD_POLL}" =~ ^[1-9][0-9]*$ ]] || die "SWARM_LEAD_POLL is whole seconds, at least 1, not '${LEAD_POLL}'"
+  lead_lock
+  start=${SECONDS}
+  if [[ -f "${LEAD_SEEN}" ]]; then ! lead_wake || return 0; else lead_wake quiet || true; fi
+  while (( (SECONDS - start) * 1000 < timeout )); do
+    left=$(( (timeout + 999) / 1000 - (SECONDS - start) ))
+    sleep $(( left < LEAD_POLL ? left : LEAD_POLL ))
+    ! lead_wake || return 0
   done
   return 1
 }
