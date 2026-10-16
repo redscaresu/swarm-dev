@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # config_test.sh — the project config: finding the project, parsing .claude/swarm/config, a board
-# outside the project, repos_dir, base branches, unblock and finish, and the minimum Claude Code.
+# outside the project, repos_dir, the base branch, unblock and finish, and the minimum Claude Code.
 # Fixture remotes are local bare repos; herdr and claude (tests/claude_stub.sh) are stubs on PATH.
 set -euo pipefail
 
@@ -65,8 +65,9 @@ project "${p}" "# a comment" "boardd = x"
 check "unknown key names its line" "yes" "$(fails_with 'config:2: unknown key' run "${p}" config)"
 project "${p}" "merge = maybe"
 check "bad value names its line" "yes" "$(fails_with 'config:1: merge must be' run "${p}" config)"
-# Switches no project set are gone: a line naming one is an unknown key.
-for k in sign_commits review_bot keep_panes merge_admin finished; do
+# Switches that are gone: a line naming one is an unknown key. Each name is split with '' so
+# removed_test.sh, which greps tests/ for them, finds none here.
+for k in pr''_per base''_branches sign''_commits review''_bot keep''_panes merge''_admin finished; do
   project "${p}" "${k} = true"
   check "${k} is an unknown key" "yes" "$(fails_with "config:1: unknown key '${k}'" run "${p}" config)"
 done
@@ -152,7 +153,7 @@ check "the table's lead row has the Default CFG_lead ships" "\`$(project "${p}";
 remote "${ROOT}/svc.git" main main dev
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/repos/svc"
 p="${ROOT}/kanban"; b="${ROOT}/elsewhere/board"
-project "${p}" "board_dir = ../elsewhere/board" "repos_dir = ../repos" "base_branches = dev main"
+project "${p}" "board_dir = ../elsewhere/board" "repos_dir = ../repos"
 item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"
 item "${b}" stories/no-repo.md "status: later" "kind: code"
 item "${b}" stories/c.md "status: blocked" "kind: code" "repo: svc" "depends_on: [gone]"
@@ -173,8 +174,8 @@ EOF
 chmod +x "${ROOT}/bin/herdr"
 story() { (cd "$1" && HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" story "$2" 2>&1); }
 story "${p}" a >/dev/null || true   # a start that fails shows as the FAIL below, not an abort
-check "story starts from the first base branch origin has" \
-  "$(git -C "${ROOT}/repos/svc" rev-parse origin/dev)" "$(git -C "${ROOT}/repos/svc-wt/a" rev-parse HEAD 2>&1)"
+check "story starts from origin's default branch" \
+  "$(git -C "${ROOT}/repos/svc" rev-parse origin/main)" "$(git -C "${ROOT}/repos/svc-wt/a" rev-parse HEAD 2>&1)"
 sed -i.bak 's/^status: later$/status: ready/' "${b}/stories/no-repo.md" && rm -f "${b}/stories/no-repo.md.bak"
 check "a story with no repo: in a non-git project stops" "yes" \
   "$(fails_with 'no repo: named, and the project' story "${p}" no-repo)"
@@ -198,23 +199,17 @@ check "project found from a worktree is the main checkout" "story a" "$(first "$
 check "SWARM_PROJECT wins" "story a" \
   "$(first "$(cd "${ROOT}" && env -u HERDR_ENV SWARM_PROJECT="${g}" bash "${SWARM}" next 2>&1)")"
 
-# --- base_for: the first listed branch origin has, else origin's default branch; never a guess.
-remote "${ROOT}/only-main.git" main main
+# --- base_for: origin's default branch, asked of origin; never a guess.
 remote "${ROOT}/trunk.git" trunk main trunk
-for r in only-main trunk; do "${GIT[@]}" clone -q "${ROOT}/${r}.git" "${ROOT}/repos/${r}"; done
-base() { # <config line> <repo>
-  project "${ROOT}/cfg" "$1"
-  run "${ROOT}/cfg" _base "${ROOT}/repos/$2"
-}
-check "dev main picks dev" "dev" "$(base "base_branches = dev main" svc)"
-check "dev main without dev picks main" "main" "$(base "base_branches = dev main" only-main)"
-check "empty list picks origin's default" "trunk" "$(base "" trunk)"
+"${GIT[@]}" clone -q "${ROOT}/trunk.git" "${ROOT}/repos/trunk"
+project "${ROOT}/cfg"
+base() { run "${ROOT}/cfg" _base "${ROOT}/repos/$1"; }
+check "picks origin's default" "trunk" "$(base trunk)"
 git -C "${ROOT}/trunk.git" symbolic-ref HEAD refs/heads/main
-check "a changed default on origin is seen, not the cached one" "main" "$(base "" trunk)"
-"${GIT[@]}" clone -q --single-branch --branch main "${ROOT}/svc.git" "${ROOT}/repos/single"
-check "a single-branch clone still finds dev on origin" "dev" "$(base "base_branches = dev main" single)"
-check "no listed branch on origin stops" "yes" \
-  "$(fails_with 'origin has none of base_branches' base "base_branches = nope" svc)"
+check "a changed default on origin is seen, not the cached one" "main" "$(base trunk)"
+remote "${ROOT}/dev-default.git" dev main dev
+"${GIT[@]}" clone -q --single-branch --branch dev "${ROOT}/dev-default.git" "${ROOT}/repos/single"
+check "a single-branch clone of origin's default, dev, finds dev" "dev" "$(base single)"
 
 # --- unblock and finish: a done item counts as finished, and finish deletes the file.
 p="${ROOT}/marked"; b="${p}/docs"
