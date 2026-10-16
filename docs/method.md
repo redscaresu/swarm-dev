@@ -298,6 +298,16 @@ that tab, named for the story; a tab holds four panes, and the fifth opens `<epi
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
+**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog`, which builds the
+ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
+`story --strict`, the same review, and the same handover or merge. It runs in a workspace named
+`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. It watches only
+its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
+waits on that builder and never starts the story again. Its report,
+`.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
+`not started: <slug> (<why>)`. `/swarm-dev:swarm` runs it for a `story` or `resume` step, and does
+not run it again for a story it reported not started until the board changes.
+
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
 

@@ -3,7 +3,7 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same function or file, and with --strict refuse
-#   swarm.sh conduct <epic>                                 a fresh conductor for one epic, in a workspace named for its HLD
+#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its HLD; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login
 #   swarm.sh policy <role>                                  print the model and effort for a role
@@ -32,7 +32,7 @@
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
-#   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
+#   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
@@ -1867,9 +1867,11 @@ merge_rule() {
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
 # stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
-# waits out every running build, or with pr_per = epic, the epic's PRs.
+# waits out every running build, or with pr_per = epic, the epic's PRs. The backlog conductor has
+# no Done when: it stops once its stories are all started and finished.
 stop_rule() {
-  if [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
+  if [[ "$1" == backlog ]]; then echo "Stop when no ready story with no \`epic:\` that you may start is left and none is running."
+  elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
   elif [[ "${CFG_pr_per}" == epic ]]; then echo "Stop when every PR from epic/$1 has merged and the epic's **Done when** holds, or when what is left needs the lead: a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running; a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch; or CI on the base red or timed out."
   else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
 }
@@ -1936,27 +1938,32 @@ denylist, docs-misstate-code, fails-open); reuse one that
 \`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
 EOF
 }
+# conduct_merge_rule [scope] — how a conductor hands over or merges a reviewed PR. <scope> is "of this
+# epic" (the default) or "with no epic" for the backlog conductor, which has no epic to review or finish.
 conduct_merge_rule() {
+  local scope="${1:-of this epic}" epic_end=""
   if [[ "${CFG_merge}" == human ]]; then
-    cat <<'RULE'
-Never merge a PR, by any route: not `gh pr merge`, not `gh api`, not the web page. A human merges.
-When a story's PR is green and reviewed, run `swarm.sh review <slug> <PR URL>` and
-`swarm.sh close <slug>`, then carry on with stories that do not wait on it. A story that does wait
-stays blocked until the human merges and `/swarm-dev:swarm` reconciles the board. When every story left
+    [[ "${scope}" != "of this epic" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
-`swarm.sh review <epic> <every PR URL still waiting>`: the epic leaves the board once they all merge.
-RULE
+\`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge."
+    cat <<EOF
+Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
+When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
+\`swarm.sh close <slug>\`, then carry on with stories that do not wait on it. A story that does wait
+stays blocked until the human merges and \`/swarm-dev:swarm\` reconciles the board.${epic_end}
+EOF
   else
+    [[ "${scope}" != "of this epic" ]] || epic_end=" When the
+epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`."
     cat <<EOF
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
-Then run \`swarm.sh unblock\`, and in this run start each story of this epic it prints as \`ready:\`
+Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
 whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`. After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
-story of this epic that is yours to start is ready and none is running, or CI on the base is red or
-timed out. When the
-epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`.
+story ${scope} that is yours to start is ready and none is running, or CI on the base is red or
+timed out.${epic_end}
 EOF
   fi
 }
@@ -2420,19 +2427,30 @@ add_epic_repo() {
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
+# The epic backlog is the backlog conductor's: the ready stories with no epic.
 conduct_brief() {
-  local epic="$1" inbox
+  local epic="$1" inbox scope="Stay inside this epic: start no story outside it, and leave the HLD and other epics alone."
   inbox="$(conductor_inbox "$(agent_name "conduct-$1")")"
-  cat <<EOF
+  if [[ "${epic}" == backlog ]]; then
+    scope="Start only stories with no \`epic:\`, and leave every epic and its stories alone."
+    cat <<EOF
+You are the backlog conductor: you build the ready stories on the board with no \`epic:\`. Read
+AGENTS.md (and STATUS.md if there is one) and ${SWARM_HOME}/docs/method.md first.
+
+EOF
+    conduct_backlog_mode
+  else
+    cat <<EOF
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
 
 EOF
-  if [[ "${CFG_pr_per}" == epic ]]; then conduct_epic_mode "${epic}"; else conduct_story_mode "${epic}"; fi
+    if [[ "${CFG_pr_per}" == epic ]]; then conduct_epic_mode "${epic}"; else conduct_story_mode "${epic}"; fi
+  fi
   cat <<EOF
 
-Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
-story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
+${scope} A
+story whose \`kind\` is set and is not code, docs or chore (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
@@ -2580,6 +2598,35 @@ $(conduct_merge_rule)$(sign_rule_if_on)
 EOF
 }
 
+# The backlog conductor: every ready story with no epic, a PR per story, reviewed as an epic's are.
+conduct_backlog_mode() {
+  cat <<EOF
+Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as method.md
+§ Building describes: pick waves of them whose \`touches\` do not overlap, start each with
+\`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
+\`swarm.sh watch --backlog\` in the background, and review each PR. Each story's base branch is in
+its brief, .swarm/briefs/<slug>.md.
+
+A ready story whose worktree exists (\`<repo>-wt/<slug>\` beside its repo) has already started: never
+run \`swarm.sh story\` for it again. Wait on its builder with \`swarm.sh wait <slug>\` in the
+background, then review its PR as below. If it has no builder and no PR, the build died: do not
+start it, and report it as not started, with the reason \`build died\`.
+
+List each ready story with no \`epic:\` that you could not start in your report, one line each:
+\`not started: <slug> (<the refusal's first line>)\`.
+
+$(auth_rule)$(goal_rule_if_on)
+
+$(give_up_rule)
+
+$(green_rule)
+
+$(review_rule)
+
+$(conduct_merge_rule "with no epic")$(sign_rule_if_on)
+EOF
+}
+
 # pr_per = epic: stories merge into epic/<epic>, and each repo gets one PR for the whole epic.
 conduct_epic_mode() {
   local epic="$1" check sign="" merge_step pin="" tick='`'
@@ -2666,12 +2713,21 @@ conduct_epic() {
   echo "${want#conduct-}"
 }
 
+# start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
+# stories with no epic: conduct-backlog, in a workspace named backlog, needing no epic file.
 start_conductor() {
   local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox
-  [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
-  [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
-  hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
-  [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
+  if [[ "${epic}" == --backlog ]]; then
+    epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
+    # conduct-backlog would be both conductors' name, brief and report.
+    [[ ! -e "${epic_file}" ]] || die "conduct --backlog: ${epic_file} is an epic named backlog; rename it first"
+  else
+    [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
+    [[ "${epic}" != backlog ]] || die "conduct: backlog is the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
+    [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
+    hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
+    [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
+  fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
   require_claude
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
@@ -2690,7 +2746,7 @@ start_conductor() {
   # An uncommitted board edit, as unblock's are; any other status is left as it is. The conductor is
   # already running, so a file that cannot be written is reported, never fatal: a failed conduct
   # would invite a second conductor.
-  [[ "$(get_fm "${epic_file}" status)" == later ]] || return 0
+  [[ -f "${epic_file}" && "$(get_fm "${epic_file}" status)" == later ]] || return 0
   if set_fm "${epic_file}" status active 2>/dev/null; then
     echo "epic ${epic}: status later -> active (uncommitted board edit)"
   else
@@ -3843,32 +3899,34 @@ for a in json.load(sys.stdin):
   fi
 }
 
-# watch [--epic <slug>] [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print
-# one line saying which and why, and exit 0. With --epic, only that epic's PRs count (epic/<slug> and
-# its stories' story/<slug> branches), and the default repos are its stories' repos plus the epic's
-# repos: line (its stories may already be finished and deleted when the epic PR opens): a conductor
-# must not wake for another epic's PR on the same board. A PR needs the lead when its checks on a new head have all finished,
+# watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos needs the lead, print
+# one line saying which and why, and exit 0. With --epic, only that epic's stories' story/<slug> PRs
+# count, and with --backlog only those of stories with no epic; the default repos are then those
+# stories' repos: a conductor must not wake for another epic's PR on the same board. A PR needs the lead when its checks on a new head have all finished,
 # when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
 # project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
 # lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
 # poll finds that agent no longer waiting (state in .swarm/state).
 watch_prs() {
-  local epic="" stories=("${BOARD}"/stories/*.md) epic_heads="" epic_repos="" f
-  if [[ "${1:-}" == --epic ]]; then
-    epic="${2:?watch --epic needs an epic slug}"; shift 2
-    [[ -f "${BOARD}/epics/${epic}.md" ]] || die "watch: no epic ${BOARD}/epics/${epic}.md"
-    stories=(); epic_heads="epic/${epic}"; epic_repos="$(fm "${BOARD}/epics/${epic}.md" repos)"
+  local epic="" stories=("${BOARD}"/stories/*.md) heads="" f
+  if [[ "${1:-}" == --epic || "${1:-}" == --backlog ]]; then
+    # The backlog's stories are those whose epic: is empty; heads stays non-empty, so no other PR counts.
+    if [[ "$1" == --epic ]]; then
+      epic="${2:?watch --epic needs an epic slug}"; shift 2
+      [[ -f "${BOARD}/epics/${epic}.md" ]] || die "watch: no epic ${BOARD}/epics/${epic}.md"
+    else shift; fi
+    stories=(); heads="-"
     for f in "${BOARD}"/stories/*.md; do
-      [[ -f "${f}" && "$(fm "${f}" epic)" == "${epic}" ]] || continue
-      stories+=("${f}"); epic_heads="${epic_heads} story/$(basename "${f}" .md)"
+      [[ -f "${f}" && "$(basename "${f}")" != README.md && "$(fm "${f}" epic)" == "${epic}" ]] || continue
+      stories+=("${f}"); heads="${heads} story/$(basename "${f}" .md)"
     done
   fi
   local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending
   # Default: the project (when it is a repo) plus every repo a story names, so a new repo needs no edit here.
   if [[ ${#repos[@]} -eq 0 ]]; then
     local own=""; [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
-    read -r -a repos <<< "${own} ${epic_repos} $( (( ${#stories[@]} )) && sed -n 's/^repo: *//p' "${stories[@]}" 2>/dev/null | sort -u | tr '\n' ' ')"
+    read -r -a repos <<< "${own} $( (( ${#stories[@]} )) && sed -n 's/^repo: *//p' "${stories[@]}" 2>/dev/null | sort -u | tr '\n' ' ')"
   fi
   # With nothing to poll, the loop below would sleep forever.
   [[ ${#repos[@]} -gt 0 ]] || die "watch: no repo to watch${epic:+ for epic ${epic}}"
@@ -3886,7 +3944,7 @@ watch_prs() {
     for repo in "${repos[@]}"; do
       while read -r n sha br mergeable age; do
         [[ -n "${n}" ]] || continue
-        [[ -z "${epic_heads}" || " ${epic_heads} " == *" ${br} "* ]] || continue
+        [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
@@ -3900,7 +3958,7 @@ watch_prs() {
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
       done < <(gh pr list -R "${repo}" --state open --json number,headRefName,headRefOid,mergeable,updatedAt \
-        -q '.[]|select(.headRefName|startswith("story/") or startswith("epic/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
+        -q '.[]|select(.headRefName|startswith("story/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local agents sessions now e news="" tmp
