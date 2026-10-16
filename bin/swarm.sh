@@ -4068,6 +4068,10 @@ dash() {
     DASH_DIRS[i]="${d}"
   done
   [[ ! -t 1 ]] || tty=1
+  # Several projects share the height only on a terminal, in a watch, or when DASH_H says so: a
+  # one-shot dash into a file or a pager is never cut.
+  DASH_SHARE=0
+  if [[ ${tty} == 1 || -n "${every}" || -n "${DASH_ENV_H}" ]]; then DASH_SHARE=1; fi
   if [[ -z "${DASH_COLOR:-}" ]]; then
     DASH_COLOR=0
     [[ ${tty} == 0 || -n "${NO_COLOR+x}" ]] || DASH_COLOR=1
@@ -4103,22 +4107,27 @@ dash_size() {
 
 # dash_frame — one frame: this project's (after dash_slow), or with --project each project's in turn,
 # each drawn by this script run again on it (SWARM_PROJECT) with this colour, width, tree and ladder,
-# and the height shared out between them. A project whose frame fails stops it, naming the project.
+# and (DASH_SHARE) the height shared out between them. Only the last draws the legend, so each share
+# starts with its project's header. A project whose frame fails stops it, naming the project.
 dash_frame() {
   if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then dash_render; return; fi
-  local d out frames="" h=$((DASH_H / ${#DASH_DIRS[@]}))
-  # A known height is never shared down to 0, which would mean no limit.
-  [[ ${DASH_H} -eq 0 || ${h} -gt 0 ]] || h=1
+  local d out frames="" h=0 n=0 legend=0
+  if [[ ${DASH_SHARE} == 1 ]]; then
+    h=$((DASH_H / ${#DASH_DIRS[@]}))
+    # A known height is never shared down to 0, which would mean no limit.
+    [[ ${DASH_H} -eq 0 || ${h} -gt 0 ]] || h=1
+  fi
   set -- dash
   [[ ${DASH_LADDER} == 0 ]] || set -- "$@" --ladder
   [[ ${DASH_TREE} == 0 ]] || set -- "$@" --tree
   for d in "${DASH_DIRS[@]}"; do
-    out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" \
+    n=$((n + 1)); [[ ${n} -lt ${#DASH_DIRS[@]} ]] || legend=1
+    out="$(SWARM_PROJECT="${d}" DASH_COLOR="${DASH_COLOR}" DASH_W="${DASH_W}" DASH_H="${h}" DASH_LEGEND="${legend}" \
       "${SWARM_HOME}/bin/swarm.sh" "$@")" || die "dash --project ${d}: its frame failed"
     frames+="${out}"$'\n'
   done
   # More projects than lines: the 1-line shares still add up to no more than the height.
-  if [[ ${DASH_H} -gt 0 ]]; then sed -n "1,${DASH_H}p" <<< "${frames%$'\n'}"; else printf '%s' "${frames}"; fi
+  if [[ ${h} -gt 0 ]]; then sed -n "1,${DASH_H}p" <<< "${frames%$'\n'}"; else printf '%s' "${frames}"; fi
 }
 
 # dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
@@ -5010,7 +5019,9 @@ if blocked or later:
     left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
 # The legend, packed onto as few lines as the width allows; from 140 columns the keys go to the status bar.
+# DASH_LEGEND=0 (every --project frame but the last, dash_frame) leaves the legend and the keys out.
 KEYWORDS = "q quit · t tree · l ladder · r redraw"
+LEGEND_ON = E.get("DASH_LEGEND") != "0"
 legend, cur = [], ""
 # With lead = session most ! rows are the lead's queue, so the legend says so.
 for item in [l.replace("! needs you", "! needs you or the lead") if LEAD else l for l in LEGEND] + ([KEYWORDS] if KEYS and not WIDE else []):
@@ -5019,10 +5030,10 @@ for item in [l.replace("! needs you", "! needs you or the lead") if LEAD else l 
     else:
         cur = f"{cur}   {item}" if cur else item
 legend.append(cur)
-foot = [fit([(cut(l, W), "dim")], W) for l in legend]
+foot = [fit([(cut(l, W), "dim")], W) for l in legend] if LEGEND_ON else []
 if WIDE:
-    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call),
-                  (("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])], W)
+    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
+                 + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
 
 # Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
 # column; from 140 they are the right column, the ladder on top.
@@ -5046,7 +5057,8 @@ else:
     if room > 0:
         out += recent_box(W, room)
 if FIT and H:
-    out = out[:max(H - len(foot), 0)]   # a watched frame never scrolls the screen
+    # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
+    out = out[:max(H - len(foot), 1)]
 out += foot
 if FIT and H:
     out = out[:H]

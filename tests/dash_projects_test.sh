@@ -59,6 +59,8 @@ check "alpha's frame lists alpha's epic" has epic-of-alpha "${fa}"
 check "alpha's frame does not list bravo's" lacks epic-of-bravo "${fa}"
 check "bravo's frame lists bravo's epic" has epic-of-bravo "${fb}"
 check "bravo's frame does not list alpha's" lacks epic-of-alpha "${fb}"
+check "the legend is drawn once, under the last project" test "$(grep -c '● working' <<< "${out}")" -eq 1
+check "the legend is under bravo's frame" has "● working" "${fb}"
 
 # A bad project stops dash before it draws anything, naming the project.
 rc=0; out="$(dash --project "${A}" --project /nonexistent 2> "${ROOT}/err")" || rc=$?
@@ -82,6 +84,21 @@ check "with DASH_H=40, bravo's frame is at most 20 lines" test "$(frame_of bravo
 check "both frames are drawn with DASH_H=40" bash -c "[ -n \"\$1\" ] && [ -n \"\$2\" ]" _ "$(frame_of alpha "${out}")" "$(frame_of bravo "${out}")"
 out="$(DASH_H=1 dash --project "${A}" --project "${B}")"
 check "with fewer lines than projects (DASH_H=1), the frames fit the 1 line" test "$(wc -l <<< "${out}")" -le 1
+check "with DASH_H=1, the line drawn is alpha's header" grep -q '^alpha  swarm-dev ' <<< "${out}"
+# Three lines each: every share starts with its project's header, and the legend shows once.
+out="$(DASH_H=6 dash --project "${A}" --project "${B}")"
+check "with DASH_H=6, the frames fit 6 lines" test "$(wc -l <<< "${out}")" -le 6
+check "with DASH_H=6, alpha's share starts with its header" grep -q '^alpha  swarm-dev ' <<< "$(sed -n 1p <<< "${out}")"
+check "with DASH_H=6, bravo's share starts with its header" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 4p <<< "${out}")"
+check "with DASH_H=6, the legend shows at most once" test "$(grep -c '● working' <<< "${out}")" -le 1
+# Two lines each: bravo's legend alone would fill its share, and its header still comes first.
+out="$(DASH_H=4 dash --project "${A}" --project "${B}")"
+check "with DASH_H=4, bravo's share starts with its header, ahead of the legend" grep -q '^bravo  swarm-dev ' <<< "$(sed -n 3p <<< "${out}")"
+# A height measured off a terminal (LINES here; /dev/tty for a real one) is not shared out: a
+# one-shot dash into a file or a pager is never cut.
+out="$(LINES=10 dash --project "${A}" --project "${B}")"
+check "off a terminal, a measured height does not cut alpha's frame" test "$(frame_of alpha "${out}" | wc -l)" -gt 20
+check "off a terminal, a measured height still draws bravo's frame" grep -q '^bravo  swarm-dev ' <<< "${out}"
 esc=$'\033['
 out="$(DASH_COLOR=1 dash --project "${A}" --project "${B}")"
 check "with DASH_COLOR set, the frames carry colour codes" has "${esc}" "${out}"
