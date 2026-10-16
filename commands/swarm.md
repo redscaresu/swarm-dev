@@ -75,97 +75,32 @@ Repeat until a step below says stop:
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
-   - `resume <slug>`: a one-off that an earlier run started. If `swarm.sh status` (this project's
-     agents only; `herdr agent list` shows every project's) shows `<slug>` working, `swarm.sh wait
-     <slug>` in the background first. Then find its PR
-     (`gh pr list --head story/<slug>`, run in the story's repo: the project, or
-     `swarm.sh config repos_dir`/`<repo:>` when the story names one) and handle it as for `story`. If there is no
-     agent and no PR, the build died: tell the user, and stop.
-   - `story <slug>`: a one-off. `swarm.sh story <slug>`, wait for it, and review its PR. If
-     `swarm.sh config merge` is `agent`, first note the PR's head SHA
-     (`gh pr view <PR URL> --json headRefOid --jq .headRefOid`): that is the head you review. The
-     review: every check on its head green, `swarm.sh findings <repo> <pr>` triaged, and, before the
-     builder is closed, `SWARM_PROJECT=<project dir> swarm.sh codex-review <base>` in its worktree, run in the
-     background (Bash `run_in_background`) and waited for, since it can outlast a foreground Bash
-     call, plus `/code-review <PR>` when it changes code (log each fixed
-     finding with `SWARM_PROJECT=<project dir> swarm.sh log-finding --reviewer <who> <kind> <PR URL> "<one line>"`, and
-     each declined one with `log-finding --declined --reviewer <who> <kind> <PR URL> "<the finding, and why>"`,
-     where `<who>` is the reviewer that raised it: `codex` for codex-review's, `code-review` for /code-review's,
-     `ci` for the review bot's or a `swarm.sh findings` note's, or `lead` for your own reading), with findings
-     sent back through `swarm.sh tell <slug> findings <file>` until a pass on the latest head finds nothing
-     substantive
-     (method.md § Building). If codex reports a usage limit, or codex-review stops it and prints
-     `codex skipped: timed out`, do not run it again: review the diff yourself and write
-     `codex skipped: usage limit` or `codex skipped: timed out` in the PR.
-     Then, if `swarm.sh config merge` is `human` (the default), run
-     `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`: the user merges. If it is
-     `agent`, read the head SHA again once review passes; if it moved from the one you noted, review
-     the new head. Then run `swarm.sh review <slug> <PR URL>`, then `swarm.sh merge --head <the SHA you
-     reviewed> <PR URL>`, the only route: never `gh pr merge` or `gh api`. Run it in the background (Bash
-     `run_in_background`) and wait for it, as with codex-review: it can wait 30 minutes for CI on the
-     base, longer than a foreground Bash call lasts, and killed after the merge it never runs
-     reconcile. It merges that head by the literal PR number with `--match-head-commit`, never
-     `--auto`, only when every check on it passed, waits for CI on the base branch, and runs
-     `swarm.sh reconcile`, which puts back a retry's `attempts:`, pulls the board, finishes the story
-     and closes its builder. If it exits non-zero, read why: a refusal before `gh pr merge` ran merged
-     nothing; `unconfirmed` means `gh pr merge` ran but the PR never read as merged, so check it by
-     hand; a red or timed-out CI on the base means the PR merged and the base needs a fix. Then
-     `swarm.sh unblock`; reconcile has closed the builder, so leave it, unless it printed
-     `build cleared: <slug>`: then run `swarm.sh close <slug>` as it says.
-
-     Give up on the builder as a conductor does when `swarm.sh wait --stall <slug>` returns stalled,
-     when it is idle with no PR after wait's nudges, or when review has not converged in the rounds
-     you allow: run `swarm.sh close <slug>`, which, on a code, docs or chore story still `ready`,
-     counts the attempt and clears its worktree, branch and PR. If the story came back `kind: lead`
-     with `escalated_from:`, go back to 1, where `next` names its `escalated <slug>` step. Otherwise
-     start it again with `swarm.sh story <slug>`: swarm.sh picks the model, Fable once the story has
-     failed `escalate_after` builds (2 by default), so never choose one. With `escalate_after = 0`
-     escalation is off: after a story's second failed build, stop and tell the user instead of
-     starting it again.
-
-     With `goal` on (`swarm.sh config goal` is not `off`), a bare `swarm.sh close <slug>` on a
-     `ready` story is refused, so the give-up closes name their cause: `swarm.sh close <slug>
-     stalled` for a stall, and `swarm.sh close <slug> met` when review has not converged. A builder
-     idle short of its reply is not nudged and is not given up on as above: read why it stopped and
-     close it with that cause, `swarm.sh close <slug> <cause>`. The list below also says whether to
-     start it again; the restart above is only for a stall or a review that has not converged.
-     Read its reply and its transcript, never its pane. The transcript is
-     `<projects>/*/<session>.jsonl`, where `<projects>` is `$CLAUDE_PROJECTS_DIR`, or
-     `${CLAUDE_CONFIG_DIR:-~/.claude}/projects`, and `<session>` is field 7 of the last line in
-     `.swarm/agents.tsv` whose name (field 3) is the builder's agent name: its slug lowercased, each
-     character outside `a-z`, `0-9`, `_` and `-` made `-`, an `s` in front unless it starts with a
-     letter, then cut to 32 characters. That line is the current build. The reply comes first (`IMPOSSIBLE:` or the
-     story's reply), then the `reason` of the last `goal_status` entry with `met:true`.
-     - `met`: the reply is there. Review it as above; the closes after review or merge stay bare.
-     - `impossible`: the reply starts `IMPOSSIBLE:`. `swarm.sh close <slug> impossible` makes the
-       story `kind: lead`; go back to 1, where `next` names its `escalated <slug>` step.
-     - `stalled`: `wait --stall` returned stalled. `swarm.sh close <slug> stalled`, then start it again.
-     - `bound`: no reply, and the met entry's reason says the stop-after clause applied.
-       `swarm.sh close <slug> bound`, then start it again.
-     - `paused`: the goal is still set with no met entry since, and the builder is idle. Send one
-       `swarm.sh tell <slug> resume <file>` and wait again; if it stops paused again,
-       `swarm.sh close <slug> paused`. That counts nothing and holds the story for you, as for
-       `cleared-on-error`.
-     - `cleared-on-error`: the transcript holds a `/goal` refusal (a `system` `local_command` entry
-       whose stdout refuses `/goal`, with no `goal_status` after it), or the goal is gone and the
-       transcript ends on an API error; or `swarm.sh story` failed on a refused goal.
-       `swarm.sh close <slug> cleared-on-error`, and start nothing more. The close holds the story
-       (`kind: lead` with `held_for: <cause>`), so go back to 1, where `next` names its
-       `escalated <slug>` step: lift the hold with `swarm.sh reset <slug> <reason>` to build it
-       again, or drop it, and tell the user what you chose. If either close prints `not held:`
-       instead of `held:`, the story stays `ready` with nothing on it to say so, and `next` will
-       name it again: do not start it again until you have decided.
-     - None of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry
-       whose reason is not the stop-after clause): `swarm.sh close <slug> stalled`, which counts the
-       attempt so `escalate_after` bounds the retries, then start it again.
-
-     If `wait` prints `waiting: dialog open` for an escalate build (`swarm.sh _role <slug>` prints
-     `escalate`), it may be Fable's usage-credits consent, and accepting that is yours, not the
-     user's. `swarm.sh _target <slug>` prints its pane. Read it with `herdr agent read <pane>`, and
-     only if it shows that consent, accept it with `herdr pane send-keys <pane> <key>...`, run
-     `swarm.sh dialog <slug> accepted` (or `dismissed` if it would not accept, and tell the user),
-     and wait on it again. Never close or tell a builder over a dialog: it is not an attempt. Any
-     other dialog, and every permission or tool prompt, is the user's: never send keys to it.
+   - `resume <slug>`: a one-off that an earlier run started (its worktree exists). If the last
+     `.swarm/conduct-backlog.report.md` lists `<slug>` under `not started:` (a build that died
+     leaves a worktree with no builder and no PR), start no new conductor: `next` names it again for
+     as long as the worktree is there. Tell the user why it could not start, name its worktree
+     (`../<repo>-wt/<slug>`, beside its repo), and say what clears this stop. First, if
+     story/<slug> has commits worth keeping (`git log origin/<base>..story/<slug>` in its repo,
+     where `swarm.sh base <repo>` prints the base), push it and open a PR from it instead. Otherwise
+     the build's work is discarded: from the repo, `git worktree remove --force ../<repo>-wt/<slug>`,
+     `git worktree prune` and `git branch -D story/<slug>`, and `git push origin --delete
+     story/<slug>` if it was pushed; then delete `.swarm/conduct-backlog.report.md`. Then stop.
+     Otherwise handle it as `story <slug>`, which runs `swarm.sh conduct --backlog`: the backlog
+     conductor waits on a story whose worktree exists, and never starts it again.
+   - `story <slug>`: a one-off (a ready story with no `epic:`). The backlog conductor builds every
+     one-off as a conductor builds an epic: it reviews each PR, and hands it to the user or merges
+     it as `swarm.sh config merge` says. If `.swarm/conduct-backlog.report.md` exists and no story
+     or epic has been added, changed or removed since it was written (`find <board>/stories
+     <board>/epics \( -name '*.md' -o -type d \) -newer .swarm/conduct-backlog.report.md` prints
+     nothing; a directory is listed when a file in it was removed), the last backlog conductor
+     stopped on the board as it is now, and a new one would stop the same way, whatever the report
+     says: start no new conductor. Tell the user why `<slug>` is still waiting (its `not started:`
+     line, or what the report says is left: CI on the base red or timed out, a story escalated to
+     the lead), show what `swarm.sh status` lists under Waiting on you, and say what clears this
+     stop: a story or epic added, changed or removed (a merge removes one), or, for a fix that
+     touches neither (a code PR that turns CI on the base green), deleting
+     `.swarm/conduct-backlog.report.md` once the cause is fixed. Then stop. Otherwise run
+     `swarm.sh conduct --backlog`, then handle it as `wait conduct-backlog`.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.

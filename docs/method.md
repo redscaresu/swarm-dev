@@ -300,6 +300,28 @@ that tab, named for the story; a tab holds four panes, and the fifth opens `<epi
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
+**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog`, which builds the
+ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
+`story --strict`, the same review, and the same handover or merge. It runs in a workspace named
+`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. It watches only
+its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
+waits on that builder and never starts the story again. Its report,
+`.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
+`not started: <slug> (<why>)`. With `merge = human`, a story refused because another of its
+one-offs is in review is reported as `not started: <slug> (waits on <other>'s merge)`, since that
+merge cannot happen while the conductor runs. `/swarm-dev:swarm` runs it for a `story` or `resume`
+step. Until a story or epic is added, changed or removed under `stories/` or `epics/` (a merge
+removes one), it starts no new backlog conductor while that report exists, whatever the report
+says, and tells you why the story waits. For a `resume` step it also stops when the report lists
+the story under `not started:` (a build that died), even after the board changes. If story/<slug>
+has commits worth keeping (`git log origin/<base>..story/<slug>`), push it and open a PR from it.
+Otherwise clear the stop by discarding the build from its repo
+(`git worktree remove --force ../<repo>-wt/<slug>`, `git worktree prune`,
+`git branch -D story/<slug>`, and `git push origin --delete story/<slug>` if it was pushed), then
+deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic, such as a code PR
+that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
+`.swarm/conduct-backlog.report.md`.
+
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
 

@@ -191,22 +191,30 @@ for c in paused cleared-on-error; do
   rm -rf "${dir}"
 done
 rm -rf "${HOLD_BIN}"
-# With goal on, /swarm's story arm names the cause on its give-up closes, reads the current build's
-# transcript, and a paused or cleared-on-error close holds the story.
+# /swarm's story and resume arms hand a one-off to the backlog conductor, whose brief carries the
+# review, goal and give-up rules (backlog_test.sh), and stop on a story it reported not started.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
-arm="$(sed -n '/^   - `story <slug>`:/,/^   - `plan-epic <epic>`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
+arm="$(sed -n '/^   - `resume <slug>`:/,/^   - `plan-epic <epic>`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 got=""
+# Each arm on its own: the resume arm stops on a dead build, naming its worktree and the commands
+# that remove it; the story arm stops on any unchanged report, reading only stories/ and epics/.
+# armwords <arm heading> <phrase>... — "<arm> missing '<phrase>'" for each phrase that arm lacks.
+armwords() {
+  local a="$1" part w; shift
+  part="$(awk -v a="${a}" 'index($0, a) == 1 { on = 1; print; next } on && /^   - `/ { exit } on' <<< "${arm}" | tr -s '[:space:]' ' ')"
+  for w in "$@"; do grep -qF -- "${w}" <<< "${part}" || printf " %s missing '%s'" "${a# *- }" "${w}"; done
+}
 # shellcheck disable=SC2016 # the backticks are literal Markdown
-for w in '`swarm.sh close <slug>' 'stalled` for a stall' '`swarm.sh close <slug> met` when review has not converged' \
-         "whose name (field 3) is the builder's agent name" 'The close holds the story' \
-         'an `s` in front unless it starts with a' '- None of the above fits (no reply, no refusal, no stall' \
-         'That counts nothing and holds the story for you' 'the restart above is only for a stall or a review that has not converged' \
-         '- `met`:' '- `impossible`:' '- `stalled`:' '- `bound`:' '- `paused`:' '- `cleared-on-error`:'; do
-  grep -qF -- "${w}" <<< "${arm}" || got+=" missing '${w}'"; done
+got+="$(armwords '   - `resume <slug>`:' 'swarm.sh conduct --backlog' 'not started:' 'name its worktree' \
+  'has commits worth keeping (`git log origin/<base>..story/<slug>`' \
+  '`git worktree remove --force ../<repo>-wt/<slug>`' '`git worktree prune`' '`git branch -D story/<slug>`' \
+  '`git push origin --delete story/<slug>` if it was pushed' 'then delete `.swarm/conduct-backlog.report.md`')"
 # shellcheck disable=SC2016 # the backticks are literal Markdown
-grep -qF 'with `failed`' <<< "${arm}" && got+=" has an invented failed entry"
-if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story arm closes with a cause under goal, reads the current build, and holds a cleared-on-error story"
-else echo "FAIL commands/swarm.md's story arm:${got}"; fails=$((fails + 1)); fi
+got+="$(armwords '   - `story <slug>`:' 'swarm.sh conduct --backlog' 'not started:' 'whatever the report says: start no' \
+  "\`find <board>/stories <board>/epics \\( -name '*.md' -o -type d \\) -newer .swarm/conduct-backlog.report.md\`" \
+  'deleting `.swarm/conduct-backlog.report.md` once the cause is fixed')"
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog, stop on not started: or an unchanged report, and say what clears each stop"
+else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `escalated <slug>`:/,/^   - `gate`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"

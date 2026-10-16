@@ -554,15 +554,6 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "with escalate_after = 0, the conductor stops retrying a story that failed twice and reports it to the lead" "yes|yes|no" \
   "$(has "model: escalation is off (escalate_after = 0), so once a story has failed twice" "${brief}")|$(has "do not start it again: report it to the lead." "${brief}")|$(grep -q "picks Fable for build" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
-# shellcheck disable=SC2016 # the backticks are the Markdown's
-oneoff="$(sed -n '/`story <slug>`: a one-off/,/`plan-epic <epic>`/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
-oneoff_flat="$(tr -s '[:space:]' ' ' <<< "${oneoff}")"
-check "/swarm-dev:swarm's one-off merge = agent step reviews, then merges the reviewed head with swarm.sh merge, in the background, which reconciles" "yes|yes|yes|yes" \
-  "$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, the only route: never \`gh pr merge\` or \`gh api\`" "${oneoff_flat}")|$(has "Run it in the background (Bash \`run_in_background\`) and wait for it" "${oneoff_flat}")|$(has "runs \`swarm.sh reconcile\`" "${oneoff_flat}")|$(has "a red or timed-out CI on the base means the PR merged" "${oneoff_flat}")"
-check "/swarm-dev:swarm's one-off merge = agent step notes the head before the review starts, re-reads it after, and leaves the builder to reconcile" "yes|yes|yes|yes" \
-  "$(has "If \`swarm.sh config merge\` is \`agent\`, first note the PR's head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${oneoff_flat%%codex-review <base>*}")|$(has "read the head SHA again once review passes; if it moved from the one you noted, review the new head." "${oneoff_flat}")|$(has "by the literal PR number with \`--match-head-commit\`" "${oneoff_flat}")|$(has "Then \`swarm.sh unblock\`; reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${oneoff_flat}")"
-check "/swarm-dev:swarm's one-off step gives up with close, sends an escalated story to its step, and answers only Fable's consent" "yes|yes|yes|yes|yes|yes" \
-  "$(has "run \`swarm.sh close <slug>\`, which, on a code, docs or chore story still \`ready\`," "${oneoff}")|$(has "go back to 1, where \`next\` names its \`escalated <slug>\` step" "${oneoff}")|$(has "\`waiting: dialog open\` for an escalate build" "${oneoff}")|$(has "only if it shows that consent" "${oneoff}")|$(has "\`swarm.sh dialog <slug> accepted\`" "${oneoff}")|$(has "every permission or tool prompt, is the user's: never send keys to it" "${oneoff}")"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
@@ -999,16 +990,9 @@ printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 REPO="$(dirname "${SWARM}")/.."
 check "only codex-review runs codex exec review, and no command tells anyone to" "1|" \
   "$(grep -c 'codex exec review' "${SWARM}")|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
-check "/swarm-dev:swarm runs the lead's codex-review in the background" "yes" \
-  "$(has "swarm.sh codex-review <base>\` in its worktree, run in the background (Bash \`run_in_background\`)" "$(tr -s '[:space:]' ' ' < "${REPO}/commands/swarm.md")")"
-
 # notreviewed <file> — how many of <file>'s log-finding lines lack --reviewer, or none when it has none.
 notreviewed() { if ! grep -q 'log-finding' "$1"; then echo none; else grep 'log-finding' "$1" | grep -vc -- '--reviewer' || true; fi; }
-check "every log-finding line of commands/swarm.md and method.md names --reviewer" "0|0" \
-  "$(notreviewed "${REPO}/commands/swarm.md")|$(notreviewed "${REPO}/docs/method.md")"
-# shellcheck disable=SC2016 # the backticks are the Markdown's
-check "/swarm-dev:swarm maps each reviewer to its --reviewer value, the lead's own reading to lead" "yes" \
-  "$(has '`codex` for codex-review'"'"'s, `code-review` for /code-review'"'"'s, `ci` for the review bot'"'"'s or a `swarm.sh findings` note'"'"'s, or `lead` for your own reading' "$(tr -s '[:space:]' ' ' < "${REPO}/commands/swarm.md")")"
+check "every log-finding line of method.md names --reviewer" "0" "$(notreviewed "${REPO}/docs/method.md")"
 # bare_declined — each --declined in finding_rule's text or method.md's outer-loop paragraph that is
 # not followed by a reason (out-of-scope, nit, wrong or the <reason> placeholder), or none.
 bare_declined() {
