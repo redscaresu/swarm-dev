@@ -453,8 +453,8 @@ rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has
 or after `--since`, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no
 `agents.tsv` the second block is all zero. `--epic` keeps only the PRs whose builds carry that
-`epic` in `outcomes`, in both blocks, and lists those PRs in a third block, so you can check what was
-counted. It writes nothing.
+`epic` in `outcomes`, in both blocks, and lists the PRs the second block counted in a third block,
+so you can check what was covered. It writes nothing.
 
 `swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after
 `cleanupPeriodDays` (30 by default) and they hold every tool call and the model of every turn. The log

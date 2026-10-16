@@ -1368,7 +1368,7 @@ PY
 # (`all <kind>`), and last `all all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr
 # max_rounds): the tells_findings of every outcomes row with a PR dated on or after since, summed per
 # PR. A tell names no reviewer, so rounds are not split by one. --epic keeps only the PRs of that epic
-# (outcomes epic column) in both blocks, and a third block lists them. It writes nothing.
+# (outcomes epic column) in both blocks, and a third block lists the PRs block 2 counted. It writes nothing.
 review_yield_report() {
   local since="" epic="" rows="" usage="usage: swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]"
   while [[ $# -gt 0 ]]; do
@@ -1418,7 +1418,7 @@ total = sum(rounds.values())
 per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
 print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
 if epic:
-    print("\n" + "\n".join(["pr"] + sorted(urls.values())))
+    print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in rounds)))
 PY
 }
 

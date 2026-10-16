@@ -126,6 +126,8 @@ check "--epic ed: #4 with its one round and #5 with its four, ec left out" \
   $'codex\tall\t1\t1\t0\t0%' $'codex\tnit\t1\t1\t0\t0%' $'lead\tall\t1\t0\t1\t100%' $'lead\tnit\t1\t0\t1\t100%' \
   $'all\tnit\t2\t1\t1\t50%' $'all\tall\t2\t1\t1\t50%' \
   "" "${H2}" $'2\t5\t2.5\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
+check "--epic ed --since 2026-10-02: block 3 lists only #5, the one PR block 2 counted" \
+  "$(yield_of "${Q}" --epic ed --since 2026-10-02 | tail -6)" "$(printf '%s\n' "${H2}" $'1\t4\t4\t4' "" pr "${U}/5" "exit 0")"
 
 # A finding whose kind is the word all (log-finding takes it) is a kind of its own, counted once.
 R="${dir}/three"
