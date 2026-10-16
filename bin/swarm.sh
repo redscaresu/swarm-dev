@@ -14,7 +14,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]  per epic and project: builders at once, stories per chain, review wait, stacked starts
 #   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
-#   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
+#   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
@@ -37,6 +37,7 @@
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
 #   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
+#   swarm.sh review-agent <slug> <pr-url>                   start review-<slug>, a read-only agent in the story's worktree that reviews its PR against the story's touches and Done when, writes .swarm/reviews/<slug>.md, and returns at once
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -279,7 +280,7 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct"
+ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
 # plus verify: nothing starts it now, but agents.tsv keeps the verify builds made before it went.
@@ -301,6 +302,7 @@ policy() {
     chore)      echo "claude haiku medium" ;;  # mechanical edits with a checkable result
     escalate)   echo "claude fable xhigh" ;;   # only after a story failed twice, or an unreconcilable epic
     conduct)    echo "claude opus high" ;;     # dispatches, reviews, merges one epic; a fresh session each time
+    review)     echo "claude opus high" ;;     # one story's PR review, the model the conductor reviewed with
     *) die "unknown role '$1' ($(roles))" ;;
   esac
 }
@@ -2013,15 +2015,25 @@ stop_rule() {
 }
 sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
-# The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
-# context until then, so findings go back to it rather than to a fresh agent that has none.
+# The review every story's PR passes before its builder is closed. The builder keeps its context
+# until then, so findings go back to it rather than to a fresh agent that has none. Each PR gets its
+# own review agent (review_agent) as soon as it is green, so PRs that land together are reviewed at once.
 review_rule() {
+  local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
-A story is reviewed only when its latest head has passed \`$(codex_review_cmd '<base>')\`
-in its worktree, and, when it changes code (not only docs, board files or a dependency bump), the
-/code-review skill on its PR (\`/code-review <PR>\`). $(codex_rule) Send every real finding to the story's
-builder with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\` (a file holding the findings and
-what to decline), wait for it, and review the new head. Stop at the first pass on the latest head
+A story is reviewed only when its latest head has passed a review agent's review. As soon as a
+story's PR is green, start one with \`${sw} review-agent <slug> <PR URL>\`.
+Do not wait for other PRs or reviews: start one for each green PR, so PRs that land together are
+reviewed at once. It returns at once. The review agent, review-<slug>, is read-only and runs in the
+story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not only
+docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches and
+**Done when**, and writes its findings to ${PROJECT_DIR}/.swarm/reviews/<slug>.md. Wait on each with
+\`swarm.sh wait review-<slug>\` in the background, then triage that story's file. Send the real
+findings to the story's builder with \`${sw} tell <slug> findings <file>\` (a file holding the
+findings and what to decline). Log each finding outside the story's touches and **Done when** with
+\`log-finding --declined out-of-scope --reviewer <who>\`, as below. Close the review agent
+(\`swarm.sh close review-<slug>\`), wait for the builder, and start a new review agent on the new head.
+$(codex_rule) Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
 its latest head has passed.$(rules_review_rule)
@@ -2043,6 +2055,7 @@ codex_review_cmd() {
 codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
+  printf ' %s' "When a review agent reports \`codex skipped: <why>\`, the conductor reads the diff itself in codex's place."
 }
 # bump_rule — beside codex_rule, in a project that ships a plugin: an epic's release story makes the
 # plugin.json bump, so a story PR without one is not a finding. story_brief leaves it out of a one-off
@@ -2286,7 +2299,7 @@ Implement ${story_ref}. Its **Done when** is the acceptance.
 Title your commit and PR with a plain description of the change.
 
 Rules: read AGENTS.md first. ${cleanup} $(merge_rule) Never touch real cloud or
-credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}")\` before
+credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}" "${slug}")\` before
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
@@ -2406,6 +2419,61 @@ build_story() {
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
   [[ -z "${goal}" ]] || send_goal "${slug}" "${prompt%.md}.goal.md" brief
+}
+
+# review_agent <slug> <PR URL> — start review-<slug> on a story's PR in the story's worktree and tab,
+# with role review and review_brief, and return at once: the conductor waits on it with `swarm.sh
+# wait review-<slug>`. Its earlier findings file goes first, so the conductor reads only this head's.
+# Refused, starting nothing, when the board has a story named review-<slug>: its builder would hold
+# the same agent name.
+review_agent() {
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic
+  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
+  [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
+  [[ -f "${story}" ]] || die "no story ${story}"
+  [[ ! -f "${BOARD}/stories/review-${slug}.md" ]] \
+    || die "review-agent: the board has a story named review-${slug}, whose builder's agent name would be the same; nothing was started"
+  [[ -n "$(story_items "${story}" 'Done when')" ]] || die "${slug}: ${story} has no **Done when** with an item under it"
+  src="$(repo_dir "$(fm "${story}" repo)")" || die "${slug}: ${src}"
+  wt="$(worktree_for "${src}" "${slug}")"
+  [[ -d "${wt}" ]] || die "${slug}: no worktree at ${wt}: review-agent reviews a story built here"
+  base="$(base_for "${src}")"
+  out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
+  mkdir -p "${out%/*}"; rm -f "${out}"
+  prompt="${PROJECT_DIR}/.swarm/briefs/review-${slug}.md"; mkdir -p "${prompt%/*}"
+  review_brief "${slug}" "${pr}" "${base}" "${out}" > "${prompt}"
+  # The story's tab: its epic's, or a one-off's own.
+  epic="$(fm "${story}" epic)"
+  start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"
+}
+
+# review_brief <slug> <PR URL> <base> <findings file> — a review agent's brief: read-only, the story's
+# touches and Done when, codex-review with the slug, /code-review when the PR changes code, and each
+# finding written to the absolute <findings file>, since the agent's cwd is the worktree.
+review_brief() {
+  local story="${BOARD}/stories/$1.md"
+  cat <<EOF
+Review $2, the PR of story $1, in this worktree. You are read-only: never edit, commit or push here,
+and never merge, by any route. The one file you write is ${4}.
+
+The story touches: $(fm "${story}" touches)
+
+Its **Done when:**
+$(story_items "${story}" 'Done when')
+
+Judge the PR against these touches and items alone: work outside them is not a finding.
+
+Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
+finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last. If
+codex reports a usage limit, or codex-review prints "codex skipped: timed out", do not wait or run
+it again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When the PR
+changes code (not only docs, board files or a dependency bump), state the touches and Done when
+above, then run \`/code-review $2\`.
+
+Write each finding to ${4} with the Write tool, one per line: its reviewer (codex or code-review),
+file:line, and the finding. With none, write that there are none. Then reply with ${4}, and with
+\`codex skipped: <why>\` when codex was.
+EOF
 }
 
 # touches_overlap <slug> [strict] — warn on stderr for each story of another epic (no epic counts as
@@ -5898,6 +5966,7 @@ dispatch() {
     init)   init_project ;;
     base)   src="$(repo_dir "${1:-}")" || die "${src}"; base_for "${src}" ;;
     codex-review) codex_review "${1:-}" ;;
+    review-agent) require_herdr; review_agent "${1:-}" "${2:-}" ;;
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug

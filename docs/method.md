@@ -261,6 +261,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   never 1M. A conductor re-reads its whole context every turn: on the project this came from, one
   long-lived lead session was 80% of all tokens over three days (3.6B of 4.5B, at up to 1M
   context). The board carries the state, so a new conductor costs little.
+- **A review agent is Opus at `high`**, the model the conductor reviewed with before each PR got its
+  own (role `review`, started by `swarm.sh review-agent`). One per green PR, so reviews run side by
+  side and the conductor's own context holds only the findings files.
 
 ## Scoping an epic
 
@@ -582,8 +585,20 @@ is doing.
 
 **Review before closing.** A PR that changes only board files (no code) gets one
 `swarm.sh codex-review` pass plus the lead's own reading, not repeated passes. A story is reviewed when its latest head has passed
-codex and, if it changes code, the `/code-review` skill. The conductor sends the findings to the story's builder with
-`swarm.sh tell <slug> findings <file>` and reviews the new head again. The kind (`findings`, `nudge`
+codex and, if it changes code, the `/code-review` skill. As soon as a story's PR is green, the
+conductor starts a review agent for it with `swarm.sh review-agent <slug> <PR URL>`. It does not
+wait for other PRs or reviews, so PRs that land together are reviewed at once. The command returns
+straight away. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
+runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
+It judges the PR against the story's touches and **Done when** only: work outside them is not a
+finding. It writes each finding, with its reviewer and file:line, to the absolute path
+`<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the project),
+and replies with that path. `review-agent` refuses, starting nothing, when the board has a story
+named `review-<slug>`, whose builder would hold the same agent name. The conductor waits on each
+review in the background with `swarm.sh wait review-<slug>` and triages that story's file. It sends
+the real findings to the story's builder with `swarm.sh tell <slug> findings <file>`, and logs each
+finding outside the touches and **Done when** with `log-finding --declined out-of-scope --reviewer <who>`. Then it
+closes the review agent and starts a new one on the builder's next head. `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. To reach a busy conductor, the lead runs
@@ -618,7 +633,8 @@ background (Bash `run_in_background`) and wait for it: Claude Code stops a foreg
 minutes by default and 10 at most, before the limit could apply. When codex reports a
 usage limit, or codex-review prints `codex skipped: timed out`, no one waits or runs it again: a
 builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
-skipped: usage limit` or `codex skipped: timed out`. The planning `codex` panes of `/plan-hld` and
+skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
+its reply, and the conductor then reads the diff itself in codex's place. The planning `codex` panes of `/plan-hld` and
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 **Learning across epics (the outer loop).** Each finding that review fixed is logged with

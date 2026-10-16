@@ -262,7 +262,12 @@ cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the story-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
-  "$(has "codex-review <base>" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
+  "$(has "runs codex-review with the story's slug" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
+review="$(para "A story is reviewed only when" "${cbrief}")"
+check "the review paragraph starts a review agent per green PR without waiting, waits on each, and declines out-of-scope findings" "yes|yes|yes|yes|yes" \
+  "$(has "${SWARM} review-agent <slug> <PR URL>" "${review}")|$(has "Do not wait for other PRs or reviews: start one for each green PR" "${review}")|$(has "swarm.sh wait review-<slug>" "${review}")|$(has "log-finding --declined out-of-scope --reviewer <who>" "${review}")|$(has "${p}/.swarm/reviews/<slug>.md" "${review}")"
+check "the review paragraph has the conductor read the diff itself when a review agent reports codex skipped" "yes" \
+  "$(has "When a review agent reports \`codex skipped: <why>\`, the conductor reads the diff itself in codex's place." "${review}")"
 check "the conductor's brief says what a builder's auth means and to resume it after the login, then wait on it again" "yes|yes" \
   "$(has "stopped on an expired login, which only the user's" "${cbrief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${cbrief}")"
 check "the conductor gives up on a builder with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
@@ -276,8 +281,8 @@ check "the story-mode conductor's brief never starts a story without --strict" "
 check "with merge = human, the story-mode conductor stops when the Done when holds or nothing ready is left, and pins no merge" "yes|no" \
   "$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${cbrief}")|$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)"
 for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
-check "the story-mode builder and conductor run codex-review in the background, and know what a timeout means" "yes|yes|yes|yes|yes|yes" \
-  "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(codex_form '<base>' "$(para "A story is reviewed only when" "${cbrief}")")"
+check "the story-mode builder runs codex-review against its story in the background, and knows what a timeout means" "yes|yes|yes|yes" \
+  "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(has "SWARM_STORY=s1 SWARM_PROJECT=${p} ${SWARM} codex-review main\`" "$(cat "${p}/.swarm/briefs/s1.md")")"
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
   "$(grep -q "Rules checked:" "${p}/.swarm/briefs/s1.md" && echo yes || echo no)|$(grep -q "rules-unchecked" <<< "${cbrief}" && echo yes || echo no)"
 sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
