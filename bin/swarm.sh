@@ -1031,7 +1031,7 @@ if os.path.exists(log):
             named.add(f[6])
             if f[0] >= since:
                 agents.append({"role": f[1], "kind": f[3], "session": f[6]})
-if lead:
+if lead and lead not in named:  # a conductor's own pane is already its agents.tsv row
     agents.append({"role": "lead", "kind": "claude", "session": lead})
     named.add(lead)
 

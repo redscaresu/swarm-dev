@@ -89,7 +89,7 @@ out="$(run cost 2026-09-15)"
 check "an unlisted session in the project's directory is the lead's" "| lead | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
 check "a listed session there counts under its own role" "| code | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
 check "each counted once" "| **total** | 4 | | 0k | 0k | 0k | 2.0M | 40.00 |"
-out="$(run cost --since 2026-09-21)"
+out="$(TZ=UTC run cost --since 2026-09-21)"
 check "with --since after its first timestamp, the lead session is left out" "| **total** | 3 | | 0k | 0k | 0k | 1.0M | 20.00 |"
 # --since is a local date: a session started at 23:30 UTC on the 20th started on the 21st in Paris (UTC+2).
 usage m7 claude-opus-5-5 0 0 0 1000000 | stamp 2026-09-20T23:30:00.000Z > "${E}/s-late.jsonl"
@@ -97,6 +97,12 @@ out="$(TZ=Europe/Paris run cost --since 2026-09-21)"
 check "a lead session counts from its first timestamp's local day" "| lead | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
 out="$(TZ=UTC run cost --since 2026-09-21)"
 check "in UTC the same session started the day before" "| **total** | 3 | | 0k | 0k | 0k | 1.0M | 20.00 |"
+# Run in a herdr pane whose session agents.tsv names (a conductor's, here s-code): counted once, under its role.
+mkdir -p "${dir}/bin"
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"pane_id\":\"w:1\",\"agent_session\":{\"value\":\"s-code\"}}]}}'" > "${dir}/bin/herdr"
+chmod +x "${dir}/bin/herdr"
+out="$(cd "${R}" && TZ=UTC PATH="${dir}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:1 CLAUDE_PROJECTS_DIR="${C}" bash "${SWARM}" cost 2026-09-15)"
+check "a pane's session agents.tsv names is not a lead too" "| **total** | 5 | | 0k | 0k | 0k | 3.0M | 60.00 |"
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"
