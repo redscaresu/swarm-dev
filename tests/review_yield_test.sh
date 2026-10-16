@@ -126,8 +126,15 @@ check "--epic ed: #4 with its one round and #5 with its four, ec left out" \
   $'codex\tall\t1\t1\t0\t0%' $'codex\tnit\t1\t1\t0\t0%' $'lead\tall\t1\t0\t1\t100%' $'lead\tnit\t1\t0\t1\t100%' \
   $'all\tnit\t2\t1\t1\t50%' $'all\tall\t2\t1\t1\t50%' \
   "" "${H2}" $'2\t5\t2.5\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
-check "--epic ed --since 2026-10-02: block 3 lists only #5, the one PR block 2 counted" \
-  "$(yield_of "${Q}" --epic ed --since 2026-10-02 | tail -6)" "$(printf '%s\n' "${H2}" $'1\t4\t4\t4' "" pr "${U}/5" "exit 0")"
+# --since keeps #4's finding (dated 2026-10-02) but not its build's round (started 2026-10-01), so
+# block 3 lists both PRs: each one that either block counted.
+check "--epic ed --since 2026-10-02: #4 in block 1 only, #5 in both, and block 3 lists the two" \
+  "$(yield_of "${Q}" --epic ed --since 2026-10-02)" "$(printf '%s\n' "${H1}" \
+  $'codex\tall\t1\t1\t0\t0%' $'codex\tnit\t1\t1\t0\t0%' $'lead\tall\t1\t0\t1\t100%' $'lead\tnit\t1\t0\t1\t100%' \
+  $'all\tnit\t2\t1\t1\t50%' $'all\tall\t2\t1\t1\t50%' \
+  "" "${H2}" $'1\t4\t4\t4' "" pr "${U}/4" "${U}/5" "exit 0")"
+check "--epic ed --since 2026-10-03: nothing counted, so block 3 lists no PR" \
+  "$(yield_of "${Q}" --epic ed --since 2026-10-03)" "$(printf '%s\n' "${H1}" $'all\tall\t0\t0\t0\t-' "" "${H2}" $'0\t0\t0\t0' "" pr "exit 0")"
 
 # A finding whose kind is the word all (log-finding takes it) is a kind of its own, counted once.
 R="${dir}/three"

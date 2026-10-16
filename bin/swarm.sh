@@ -1367,8 +1367,10 @@ PY
 # since, per reviewer (its `all` row, then its kinds by declined, most first), per kind across reviewers
 # (`all <kind>`), and last `all all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr
 # max_rounds): the tells_findings of every outcomes row with a PR dated on or after since, summed per
-# PR. A tell names no reviewer, so rounds are not split by one. --epic keeps only the PRs of that epic
-# (outcomes epic column) in both blocks, and a third block lists the PRs block 2 counted. It writes nothing.
+# PR. So since keeps findings dated on or after it and the rounds of builds started on or after it. A
+# tell names no reviewer, so rounds are not split by one. --epic keeps only the PRs of that epic
+# (outcomes epic column) in both blocks, and a third block lists every PR either block counted. It
+# writes nothing.
 review_yield_report() {
   local since="" epic="" rows="" usage="usage: swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]"
   while [[ $# -gt 0 ]]; do
@@ -1391,9 +1393,10 @@ rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
 urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
 # None is the all of a reviewer or kind, apart from a finding whose kind is the word all.
-c = collections.defaultdict(collections.Counter)
+c, counted = collections.defaultdict(collections.Counter), set()
 for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
     if day >= since and (not epic or pr_key(pr) in urls):
+        counted.add(pr_key(pr))
         for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
             c[key][outcome] += 1
 
@@ -1418,7 +1421,7 @@ total = sum(rounds.values())
 per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
 print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
 if epic:
-    print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in rounds)))
+    print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
 PY
 }
 
