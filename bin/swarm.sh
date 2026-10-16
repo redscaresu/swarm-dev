@@ -1312,7 +1312,7 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
 
-# Columns are only ever appended: decisions reads them by name.
+# Columns are only ever appended: review-yield and flow read them by name.
 print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
@@ -1330,18 +1330,18 @@ PY
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] — throughput: one TSV row per epic, then `all` for
-# the project, over the outcomes rows dated in the window and the ok events.tsv lines in it. builds;
-# builders_mean and builders_max, how many builds ran at once, time-weighted over the span from the
-# first build's start to the last one's end: a build runs from its outcomes started (00:00 local on
-# its agents.tsv day without one) to its first close after that and before its slug's next build,
-# else its session log's last entry, and never past --until's local midnight; stories (its builds'
-# slugs), the longest depends_on chain among them (read with story_text, so merged stories count)
-# and stories_per_chain; review_wait_min, the mean
-# minutes from each PR's createdAt (gh) to the first review-agent event for its slug (before the
-# slug's next PR, if a retry opened one); for a PR with
-# none, proxy_review_wait_min, the same to its first tell:findings or review, which marks a review's
-# end, so the two are never averaged together; and stacked, the stacked events for its slugs (all of
-# them on the `all` row). A PR gh cannot read counts in neither wait. It writes nothing.
+# the project, over the outcomes rows dated in the window and the ok events.tsv lines whose local day
+# is in it. builds; builders_mean and builders_max, how many builds ran at once, time-weighted over
+# the span from the first build's start to the last one's end: a build runs from its outcomes started
+# (without one, 00:00 local on its agents.tsv day, or when its slug's previous build ended if later)
+# to its first close after that and before its slug's next build in agents.tsv, else its session
+# log's last entry, and never past --until's local midnight; stories (its builds' slugs), the longest
+# depends_on chain among them (read with story_text, so merged stories count) and stories_per_chain;
+# review_wait_min, the mean minutes from each PR's createdAt (gh) to the first review-agent event for
+# its slug (before the slug's next PR, if a retry opened one); for a PR with none,
+# proxy_review_wait_min, the same to its first tell:findings or review, which marks a review's end,
+# so the two are never averaged together; and stacked, the stacked events for its slugs (all of them
+# on the `all` row). A PR gh cannot read counts in neither wait. It writes nothing.
 flow_report() {
   local since="" until="" rows="" deps="" created="" slug url got usage="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
   while [[ $# -gt 0 ]]; do
@@ -1351,6 +1351,9 @@ flow_report() {
       *) die "${usage}" ;;
     esac
   done
+  # Real dates, with a day after them: 2026-02-30 or 9999-12-31 would end in a traceback.
+  python3 -c 'import datetime as d, sys; [d.date.fromisoformat(x) + d.timedelta(days=1) for x in sys.argv[1:]]' \
+    "${since:-2000-01-01}" "${until:-2000-01-01}" 2>/dev/null || die "${usage}"
   since="${since:-0000-00-00}"; until="${until:-9999-12-30}"
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
@@ -1391,8 +1394,9 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     t = secs(f[0]) if len(f) == 5 and f[4].startswith("ok") else None
     if t is not None:
-        oks.append((t, f[1], f[2], f[0][:10]))
-# A close after --until still ends its build (at the cutoff); every other event counts in the window only.
+        oks.append((t, f[1], f[2], datetime.date.fromtimestamp(t).isoformat()))
+# A close after --until still ends its build (at the cutoff); every other event counts in the window
+# only, by its local day, as builds are.
 closes = [(t, x) for t, c, x, _ in oks if c.split(":")[0] == "close"]
 evs = [(t, c, x) for t, c, x, day in oks if since <= day <= until]
 table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
@@ -1404,14 +1408,21 @@ stop = (datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).tim
 # A build whose start does not parse (a damaged agents.tsv date and no session log) is left out.
 built = [(r, a, t) for r, a in zip(rows, agents) for t in [secs(r["started"] or r["date"] + "T00:00:00")] if t is not None]
 project, groups = [], collections.defaultdict(list)   # apart, so an epic named all is still an epic
-for r, a, start in built:
-    if not since <= r["date"] <= until:
-        continue
-    # Its first close before the slug's next build starts: a build never closed must not take its retry's.
-    upto = min((t for o, _, t in built if o["slug"] == r["slug"] and t > start), default=float("inf"))
+ended = {}   # slug -> when its last build so far (agents.tsv order) ended
+for i, (r, a, start) in enumerate(built):
+    # A log-less build starts at 00:00, so a retry could seem to start before the build it retries:
+    # it starts no earlier than that one ended.
+    if not r["started"] and ended.get(r["slug"]):
+        start = max(start, ended[r["slug"]])
+    # Its first close before the slug's next build in agents.tsv order starts: a build never closed
+    # must not take its retry's.
+    upto = next((t for o, _, t in built[i + 1:] if o["slug"] == r["slug"]), float("inf"))
     names = (r["slug"], a[2])
     end = min((t for t, x in closes if x in names and start <= t < upto), default=None)
     end = end or last_entry(session_log(projects, a[6], archive))
+    ended[r["slug"]] = end
+    if not since <= r["date"] <= until:
+        continue
     b = {"slug": r["slug"], "pr": r["pr"], "start": start, "end": min(end, stop) if end else None}
     project.append(b)
     if r["epic"]:
@@ -1470,8 +1481,10 @@ PY
 # features [--since YYYY-MM-DD] — FEATURES_FILE joined with this project's logs: per feature, its uses
 # since --since (default the last 30 days), its metric and its baseline, and `delete?` for a feature
 # with no metric, or with logged uses and none in the last 30 days. A feature still settling in is never
-# stale: one whose landed date is within the last 30 days, or whose landed is an epic (neither a date
-# nor a #PR), which has not finished. A use is an ok events.tsv line of an
+# stale: one that landed within the last 30 days (a date, or a #PR: the day git log of the features
+# file's repo shows the commit whose subject ends `(#N)`), or whose landed is an epic still on the
+# board (epics/<name>.md). An epic gone from the board, or a landed that cannot be read (a warning on
+# stderr), is judged by its uses. A use is an ok events.tsv line of an
 # `event:<command>` (or <command>:<anything>), an agents.tsv line of a `role:<role>` or
 # `agent:<name>`, or a findings.tsv row of a `reviewer:<who>`. An `unlogged: <why>` feature (a
 # read-only command leaves no events line) shows `-` and is judged on its metric alone. It writes nothing.
@@ -1481,10 +1494,10 @@ features_report() {
     || die "usage: swarm.sh features [--since YYYY-MM-DD]"
   [[ -f "${FEATURES_FILE}" ]] || die "no feature list at ${FEATURES_FILE}"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${FEATURES_FILE}" "${AGENTS_LOG}" \
-    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" <<'PY'
-import datetime, os, re, sys
+    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" "${BOARD}" <<'PY'
+import datetime, os, re, subprocess, sys
 exec(os.environ["SWARM_REPORT_PY"])
-features, agents, events, findings, since = sys.argv[1:6]
+features, agents, events, findings, since, board = sys.argv[1:7]
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
 
 def rows(path):
@@ -1503,14 +1516,36 @@ def count(sources, after):
                  and (name == want or kind == "event" and name.startswith(want + ":")))
     return n
 
+def landed_day(landed):
+    # The day a date or #PR landed, or None when it cannot be read.
+    m = re.fullmatch(r"#(\d+)", landed)
+    if m:
+        got = subprocess.run(["git", "-C", os.path.dirname(os.path.abspath(features)), "log", "-1", "--format=%cs",
+                              f"--grep=(#{m.group(1)})$", "HEAD"], capture_output=True, text=True)
+        landed = got.stdout.strip() if got.returncode == 0 else ""
+    try:
+        return datetime.date.fromisoformat(landed).isoformat()
+    except ValueError:
+        return None
+
+def settled(feature, landed):
+    # Whether its uses can judge it: landed 30 days ago or more, or an epic that has left the board.
+    day = landed_day(landed)
+    if day:
+        return day < recent
+    if re.fullmatch(r"[a-z][a-z0-9_-]*", landed):
+        return not os.path.exists(os.path.join(board, "epics", landed + ".md"))
+    print(f"swarm.sh features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
+          file=sys.stderr)
+    return True
+
 print("feature\tuses\tmetric\tbaseline\tverdict")
 for f in rows(features)[1:]:
     feature, landed, metric, baseline, sources = (f + [""] * 5)[:5]
     if not feature:
         continue
     unlogged = sources.startswith("unlogged:")
-    settled = landed < recent if re.fullmatch(r"\d{4}-\d{2}-\d{2}", landed) else landed.startswith("#")
-    stale = settled and not unlogged and count(sources, recent) == 0
+    stale = settled(feature, landed) and not unlogged and count(sources, recent) == 0
     print("\t".join([feature, "-" if unlogged else str(count(sources, since or recent)), metric, baseline,
                      "delete?" if not metric.strip() or stale else ""]))
 PY
@@ -1541,7 +1576,7 @@ review_yield_report() {
 import collections, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 findings, since, epic = sys.argv[1:4]
-# Read by column name, as decisions does.
+# Read by column name, as flow does.
 table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
 rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
@@ -5241,7 +5276,7 @@ archive_session() {
 
 # is_close_cause <word> — true for a cause close takes: why the builder stopped. met, stalled and
 # bound are attempts; impossible, paused and cleared-on-error are not. CLOSE_CAUSE_WORDS is the one
-# list (export reads it too); CLOSE_CAUSES is it as prose, for messages.
+# list; CLOSE_CAUSES is it as prose, for messages.
 CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
 is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"

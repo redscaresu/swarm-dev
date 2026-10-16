@@ -89,11 +89,34 @@ Q="${dir}/q"; mkdir -p "${Q}/.swarm" "${Q}/docs/stories"; git -C "${Q}" init -q
 printf -- '---\nkind: code\nstatus: ready\nepic: all\n---\n' > "${Q}/docs/stories/j.md"
 printf '{"cwd":"%s/q-wt/j","timestamp":"2026-10-03T03:00:00Z"}\n{"timestamp":"2026-10-03T03:30:00Z"}\n' "${dir}" > "${dir}/projects/p/sj.jsonl"
 printf '%s\n' $'2026-10-02\tcode\tj\tclaude\topus\thigh\tsj' $'2026-10-01x\tcode\tk\tclaude\topus\thigh\t-' > "${Q}/.swarm/agents.tsv"
-check "an epic named all keeps its row; a build late on --until's local day counts; a bad date is left out" \
+# j's stacked event at 03:10Z on the 3rd is 20:10 on the 2nd locally, so --until 2026-10-02 keeps it.
+printf '%s\n' $'2026-10-03T03:10:00Z\tstacked\tj\tw:1\tok' > "${Q}/.swarm/events.tsv"
+check "an epic named all keeps its row; a build and its event late on --until's local day count; a bad date is left out" \
   "$(cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT TZ=America/Los_Angeles CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
     bash "${SWARM}" flow --until 2026-10-02 2>&1)" "${H}"$'
-all\t1\t1.00\t1\t1\t1\t1.0\t\t\t0
-all\t1\t1.00\t1\t1\t1\t1.0\t\t\t0'
+all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1
+all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1'
+
+# A third project: m's first build (10:00-10:30Z) was never closed and its retry has no session log,
+# so the retry starts when the first ended, and the close at 15:30Z is the retry's alone. n's two
+# builds have no session log on one day: the first is bounded by the second, so only the second
+# takes n's close. Neither epic ever runs two builders at once.
+R="${dir}/r"; mkdir -p "${R}/.swarm" "${R}/docs/stories"; git -C "${R}" init -q
+printf -- '---\nkind: code\nstatus: ready\nepic: e6\n---\n' > "${R}/docs/stories/m.md"
+printf -- '---\nkind: code\nstatus: ready\nepic: e7\n---\n' > "${R}/docs/stories/n.md"
+printf '{"cwd":"%s/r-wt/m","timestamp":"2026-10-01T10:00:00Z"}\n{"timestamp":"2026-10-01T10:30:00Z"}\n' "${dir}" > "${dir}/projects/p/sm.jsonl"
+printf '%s\n' $'2026-10-01\tcode\tm\tclaude\topus\thigh\tsm' $'2026-10-01\tcode\tm\tclaude\topus\thigh\t-' \
+  $'2026-10-01\tcode\tn\tclaude\topus\thigh\t-' $'2026-10-01\tcode\tn\tclaude\topus\thigh\t-' > "${R}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T12:00:00Z\tclose\tn\tw:1\tok' $'2026-10-01T15:30:00Z\tclose\tm\tw:1\tok' > "${R}/.swarm/events.tsv"
+check "a build's close is bounded by its slug's next build in agents.tsv order, and a log-less retry starts when the last one ended" \
+  "$(cd "${R}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow 2>&1)" "${H}"$'
+e6\t2\t1.00\t1\t1\t1\t1.0\t\t\t0
+e7\t2\t1.00\t1\t1\t1\t1.0\t\t\t0
+all\t4\t1.13\t2\t2\t1\t2.0\t\t\t0'
+for d in --since=9999-12-31 --until=2026-02-30; do
+  check "flow ${d%%=*} ${d#*=}, not a real date with a day after it, prints the usage" \
+    "$(run flow "${d%%=*}" "${d#*=}" 2>&1 || true)" "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+done
 for gone in decisions export; do
   out="$(run "${gone}" 2>&1)" && code=0 || code=$?
   check "${gone} is gone: it exits non-zero printing the usage" "${code} $(grep -c 'swarm.sh flow' <<< "${out}")" "2 1"
