@@ -303,7 +303,7 @@ PATH="${ROOT}/late-bin:${PATH}" at fr reconcile >/dev/null || true
 check "a merge that lands during reconcile is not pulled under its keys" "${checked}|ready|done" \
   "$(git -C "${ROOT}/fr" rev-parse HEAD)|$(sed -n 's/^status: //p' "${ROOT}/fr/docs/stories/x.md")|$(git -C "${ROOT}/fr.git" show main:docs/stories/x.md | sed -n 's/^status: //p')"
 
-# --- The merge guard: every Claude agent starts unable to run gh pr merge, but a conductor with merge = agent.
+# --- The merge guard: every Claude agent starts unable to run gh pr merge, a conductor with merge = agent too.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
 "${GIT[@]}" clone -q "${ROOT}/svc.git" "${ROOT}/svc" 2>/dev/null
 "${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m init && "${GIT[@]}" -C "${ROOT}/svc" push -q origin main
@@ -321,8 +321,8 @@ GUARD='--disallowedTools Bash(gh pr merge:*)'
 check "merge = human (the default) starts a story agent and a conductor with gh pr merge disallowed" "yes|yes" \
   "$(has "${GUARD}" "$(start g1)")|$(has "${GUARD}" "$(conductor e)")"
 echo "merge = agent" > "${p}/.claude/swarm/config"
-check "merge = agent keeps the guard on a story agent, and starts only the conductor without it" "yes|no" \
-  "$(has "${GUARD}" "$(start g2)")|$(grep -qF -- "${GUARD}" <<< "$(conductor e)" && echo yes || echo no)"
+check "merge = agent keeps the guard on a story agent and on the conductor, which merges through swarm.sh merge" "yes|yes" \
+  "$(has "${GUARD}" "$(start g2)")|$(has "${GUARD}" "$(conductor e)")"
 check "a builder's brief says who merges: a human, or with merge = agent the conductor or the lead" "yes|yes" \
   "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
