@@ -344,6 +344,27 @@ entry's own repo (its prefix, or the story's `repo:`) has a file of that name, i
 instead, so `Makefile` or `Makefile:lint` after another entry still matches. A `<repo>: ` prefix sets the entry's repo, and otherwise the
 story's `repo:` does; the same file in another repo does not match. Parentheticals are dropped.
 
+**Stacked builds.** A story need not wait for its parents to merge. `swarm.sh unblock` also readies
+a blocked story that has no worktree yet when each `depends_on` slug is finished or is an open story
+in the same repo with an open PR (in `review` with a `prs:` line, or one that
+`gh pr list --head story/<p>` finds), and prints `ready: <slug> (stacked on <parents>)`. A parent
+that is blocked, has no open PR or lives in another repo keeps the story blocked, and so does a gh
+failure. `story` fetches each parent's branch and checks that its PR is still open. If one is not,
+the story goes back to `blocked` and nothing is made. Otherwise the worktree starts at
+`origin/story/<first parent>` with each other parent's branch merged in, events.tsv gets a
+`stacked <slug>` line, and the brief says to open the PR against the base with
+`Merge after <parent PR URLs>` in its body. A merge conflict fails, naming both branches, and leaves
+no worktree or branch. The overlap check skips a story's own parents, so `--strict` does not refuse
+a child for touching what its parent touches. While a parent is still on the board, `swarm.sh
+review` holds the child: it sets it `blocked`, puts nothing in review, keeps its builder, worktree,
+branch and PR, and exits with `held: <slug> waits for <p> to merge`. With `merge = human` the
+conductor then closes the child's builder with a bare `swarm.sh close <slug>`, which counts nothing
+for a blocked story; with `merge = agent` the builder stays open. When a parent's branch moves, the
+conductor tells the child to merge it in. A held child is readied again only once every parent has
+finished. A parent squash-merges, so its commits reach the base under new hashes: the child merges
+`origin/<base>` and is reviewed again. Parents always merge first: you are never handed a child
+before its parents, and `swarm.sh merge` refuses one too, since it merges only an item in review.
+
 ```bash
 swarm.sh story [--strict] <slug>   # worktree on story/<slug>, a pane, the agent, its brief
 swarm.sh wait <slug>       # in the background: returns when it settles
