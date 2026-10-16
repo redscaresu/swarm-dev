@@ -1430,12 +1430,12 @@ PY
 }
 
 # export [--since YYYY-MM-DD] [--format jsonl|tsv] — one row per build attempt, for training a router:
-# project (the project directory's name) and a fixed allowlist of outcomes columns, read by name, in the
-# order docs/method.md documents. Every value must match its column's type (slug, enum, integer,
-# decimal, UTC time, PR URL, bool, reviewer pairs, model token); one that does not is emitted empty
-# (null in jsonl) with a warning on stderr, so no free text gets out. decisions is not reused: it
-# carries story and finding text. --since passes through to outcomes, so attempts stay stable. It
-# writes nothing.
+# project (the project directory's name, as agent_name makes it) and a fixed allowlist of outcomes
+# columns, read by name, in the order docs/method.md documents. Every value must match its column's
+# type (slug, enum, integer, decimal, UTC time, PR URL, bool, reviewer pairs, model token); one that
+# does not is emitted empty (null in jsonl) with a warning on stderr, so no free text gets out.
+# decisions is not reused: it carries story and finding text. --since passes through to outcomes, so
+# attempts stay stable. It writes nothing.
 export_report() {
   local since="" format=jsonl rows usage="usage: swarm.sh export [--since YYYY-MM-DD] [--format jsonl|tsv]"
   while [[ $# -gt 0 ]]; do
@@ -1446,16 +1446,18 @@ export_report() {
     esac
   done
   rows="$(outcomes_report ${since:+--since "${since}"})"
-  SWARM_ROWS="${rows}" python3 - "$(basename "${PROJECT_DIR}")" "${format}" "${BUILDER_ROLES}" <<'PY'
+  # The project's name as agent_name makes one, so a directory like My.Project passes the slug check.
+  SWARM_ROWS="${rows}" python3 - "$(agent_name "$(basename "${PROJECT_DIR}")")" "${format}" "${BUILDER_ROLES}" \
+    "${CLOSE_CAUSE_WORDS}" <<'PY'
 import json, os, re, sys
-project, fmt, roles = sys.argv[1:4]
+project, fmt, roles, causes = sys.argv[1:5]
 TIME = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
 TYPES = {"slug": r"[a-z0-9][a-z0-9_-]*", "integer": r"[0-9]+", "decimal": r"[0-9]+\.[0-9]+", "time": TIME,
          "pr": r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+", "bool": "true|false",
          "reviewers": r"([a-z-]+:[0-9]+( |$))*", "model": r"[a-z0-9][a-z0-9.-]*"}
 ENUMS = {"kind": "code|docs|chore|verify|lead", "risk": "high", "role": "|".join(roles.split()),
          "effort": "low|medium|high|xhigh|max", "dialog": "accepted|dismissed",
-         "close_cause": "met|impossible|stalled|bound|paused|cleared-on-error", "pr_state": "OPEN|CLOSED|MERGED"}
+         "close_cause": "|".join(causes.split()), "pr_state": "OPEN|CLOSED|MERGED"}
 # name:type, in the documented order. attempt is outcomes attempts; project is not an outcomes column.
 COLUMNS = [c.split(":") for c in """project:slug slug:slug epic:slug kind:enum risk:enum role:enum model:model
     effort:enum started:time tokens_input:integer tokens_cache_write:integer tokens_cache_read:integer
@@ -4710,9 +4712,11 @@ archive_session() {
 }
 
 # is_close_cause <word> — true for a cause close takes: why the builder stopped. met, stalled and
-# bound are attempts; impossible, paused and cleared-on-error are not.
-is_close_cause() { case "$1" in met|impossible|stalled|bound|paused|cleared-on-error) return 0 ;; esac; return 1; }
-CLOSE_CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
+# bound are attempts; impossible, paused and cleared-on-error are not. CLOSE_CAUSE_WORDS is the one
+# list (export reads it too); CLOSE_CAUSES is it as prose, for messages.
+CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
+is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
+CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
 # close_agent <name> [cause] — close what was opened for <name> (close_panes), or with keep_panes = true
 # leave it open to read and only retire the agent. Either way, its session log is archived first.

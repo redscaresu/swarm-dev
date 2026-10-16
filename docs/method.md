@@ -456,8 +456,8 @@ story and finding text. It writes nothing.
 
 | column | type | source |
 |---|---|---|
-| `project` | slug | the project directory's name |
-| `slug` | slug | the build's worktree, from its session log |
+| `project` | slug | the project directory's name, lowercased, other characters as `-`, a letter first (`s` added when it has none) and 32 characters at most |
+| `slug` | slug | the build's worktree, from its session log (live or close's copy); with neither, its `agents.tsv` name, cut at 32 characters |
 | `epic` | slug | the story's `epic:` |
 | `kind` | enum: code, docs, chore, verify, lead | the story's `kind:` (its `escalated_from:` once escalated) |
 | `risk` | enum: high | the story's `risk:` |

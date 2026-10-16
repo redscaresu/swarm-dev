@@ -14,7 +14,7 @@ METHOD="$(dirname "${SWARM}")/../docs/method.md"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
-P="${dir}/export-fixture"; U=https://github.com/o/r/pull; S=SENTINEL-TEXT
+P="${dir}/Export.Fixture"; U=https://github.com/o/r/pull; S=SENTINEL-TEXT
 mkdir -p "${P}/.swarm/sessions" "${P}/.swarm/briefs" "${P}/docs/stories" "${dir}/projects/p" "${dir}/bin"
 git -C "${P}" init -q
 printf -- '---\nkind: code\nrisk: high\nepic: ep1\nstatus: ready\n---\n\n# One shot\n\n%s\n' "${S}" > "${P}/docs/stories/one-shot.md"
@@ -96,6 +96,7 @@ R6="export-fixture	escalated	ep2	code		escalate	fable	xhigh	2026-10-03T09:01:00Z
 R7="export-fixture	tainted				docs			2026-10-03T12:00:00Z	${T}	0.04	0	0	0	0	0			${E6}		${U}/4	OPEN		1	false"
 
 tsv="$(export_ --format tsv)"
+check "a project directory named Export.Fixture exports as export-fixture on every row" "$(tail -n +2 <<< "${tsv}" | cut -f1 | sort -u)" export-fixture
 check "tsv: exactly the documented header, and every column of every row pinned" \
   "${tsv}" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}" "${R4}" "${R5}" "${R6}" "${R7}")"
 W="swarm.sh export: row 7:"
