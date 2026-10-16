@@ -13,8 +13,8 @@ trap 'rm -rf "${ROOT}"' EXIT
 # No trust file here, so require_trusted lets the fixture agents start whatever ~/.claude.json says.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 # The herdr stub starts each session's .jsonl here, and a /goal prompt appends the entry
-# HERDR_STUB_GOAL picks: set (the default here), other (a goal for another condition), refused, or
-# none when empty. A goal wait is short.
+# HERDR_STUB_GOAL picks: set (the default here), other (a goal for another condition), refused,
+# pasted (the /goal queued as a pasted prompt), or none when empty. A goal wait is short.
 export CLAUDE_PROJECTS_DIR="${ROOT}/projects" HERDR_STUB_GOAL=set SWARM_PROMPT_TIMEOUT_MS=3000
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
@@ -115,14 +115,24 @@ goal_story() {
     "**From review (binding; overrides the scope above where they differ):**" "- FR-ONE holds" "" \
     "**From the spike (binding):**" "- SPIKE-ONE" >> "${bd}/stories/${slug}.md"
 }
-# goal_parts <goal file> <reply sentence> <bound> — has for each part a goal condition holds.
+# goal_parts <goal file> <slug> <reply sentence> <bound> — has for each part a goal condition holds:
+# the story's Done when and From review named by its path, none of its items inlined, the reply, the
+# escape and the bound.
 goal_parts() {
   local g; g="$(cat "$1" 2>&1)"
-  printf '%s|' "$(has "- DW-ONE holds" "${g}")" "$(has "- DW-TWO holds" "${g}")" "$(has "- FR-ONE holds" "${g}")" \
-    "$(grep -q SPIKE-ONE <<< "${g}" && echo spike || echo yes)" "$(has "$2" "${g}")" "$(has "IMPOSSIBLE: <why>" "${g}")"
-  has "or stop after $3 more turns" "${g}"
+  printf '%s|' "$(has "Every item under **Done when:** and **From review**, if any, in ${b}/stories/$2.md" "${g}")" \
+    "$(grep -qE 'DW-ONE|FR-ONE|SPIKE-ONE' <<< "${g}" && echo inlined || echo yes)" "$(has "$3" "${g}")" "$(has "IMPOSSIBLE: <why>" "${g}")"
+  has "or stop after $4 more turns" "${g}"
 }
-GOAL_PARTS="yes|yes|yes|yes|yes|yes|yes"
+GOAL_PARTS="yes|yes|yes|yes|yes"
+# goal_path <brief> <goal file> — the story path the brief's Implement line gives, when the goal names
+# that same path, or both.
+goal_path() {
+  local ref; ref="$(sed -n 's/^Implement \(.*\)\. Its \*\*Done when\*\* is the acceptance\.$/\1/p' "$1")"
+  ref="${ref%% (this worktree is *}"
+  if [[ -n "${ref}" ]] && grep -qF -- "in ${ref} (your brief's story" "$2"; then echo "${ref}"; else echo "brief: '${ref}', goal: $(cat "$2")"; fi
+}
+GOAL_SEND_MAX="$(sed -n 's/^GOAL_SEND_MAX=\([0-9]*\).*/\1/p' "${SWARM}")"
 # The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
 MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
@@ -173,6 +183,9 @@ now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseco
 if sys.argv[1] in ("set", "other"):   # the shapes Claude Code 2.1.299 wrote in the goal spike; other sets another goal
     cond = sys.argv[2] if sys.argv[1] == "set" else "another condition"
     print(json.dumps({"type": "attachment", "timestamp": now, "attachment": {"type": "goal_status", "met": False, "sentinel": True, "condition": cond}}))
+elif sys.argv[1] == "pasted":   # the paste collapsed and queued as a prompt, as on 2026-10-16
+    print(json.dumps({"type": "attachment", "timestamp": now, "attachment": {"type": "queued_command", "commandMode": "prompt",
+                      "prompt": '<pasted_content id="p1">\n/goal %s\n</pasted_content>' % sys.argv[2]}}))
 else:
     for c in ("<command-name>/goal</command-name>\n<command-args>%s</command-args>" % sys.argv[2],
               "<local-command-stdout>/goal can't run while hooks are restricted (disableAllHooks or allowManagedHooksOnly is set in settings or by policy).</local-command-stdout>"):
@@ -411,8 +424,10 @@ goal_story "${b}" gl1 "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
 rc=0; out="$(run story gl1)" || rc=$?
 [[ ${rc} -eq 0 ]] || echo "story gl1: ${out}"
-check "with goal = 7, story writes the condition: Done when, From review, the brief's reply, the escape and the bound" \
-  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
+check "with goal = 7, story writes the condition: the story's path for its Done when and From review, the brief's reply, the escape and the bound" \
+  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" gl1 "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
+check "built in another repo, the goal names the story by the board's path, as the brief does" "${b}/stories/gl1.md" \
+  "$(goal_path "${p}/.swarm/briefs/gl1.md" "${p}/.swarm/briefs/gl1.goal.md")"
 sent="$(cat "${ROOT}/goal.txt" 2>/dev/null || true)"
 check "with goal = 7 and the goal set, a second prompt follows the brief: /goal and the .goal.md on one line; story exits 0" \
   "0|2|/goal|one line|same" "${rc}|$(prompts)|$(grep '^agent prompt ' "${ROOT}/herdr.log" | sed -n '2s/^agent prompt [^ ]* \(\/goal\) .*/\1/p')|$(
@@ -435,6 +450,27 @@ goal_story "${b}" gl6 "status: ready" "kind: code" "repo: svc"
 rc=0; out="$(HERDR_STUB_GOAL=other run story gl6)" || rc=$?
 check "a goal set for another condition is not this goal: story fails; one /goal" "fail|yes|1" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl6: the brief was delivered, but its session log shows no goal set for its condition" "${out}")|$(goals)"
+goal_story "${b}" gl7 "status: ready" "kind: code" "repo: svc"
+: > "${ROOT}/herdr.log"
+rc=0; out="$(HERDR_STUB_GOAL=pasted run story gl7)" || rc=$?
+check "a /goal the session log shows queued as a pasted prompt fails story saying it was pasted as text; one /goal" "fail|yes|1" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo "exit ${rc}")|$(has "gl7: the brief was delivered, but its /goal was pasted as text, not run" "${out}")|$(goals)"
+# A Done when over 2,500 characters stays in the story: the /goal names its path and fits GOAL_SEND_MAX.
+goal_story "${b}" gl8 "status: ready" "kind: code" "repo: svc"
+python3 - "${b}/stories/gl8.md" <<'PY2'
+import sys; s = open(sys.argv[1]).read()
+long = "\n".join("- line %d of a long acceptance that the builder must show holds" % i for i in range(60))
+open(sys.argv[1], "w").write(s.replace("- DW-TWO holds", "- DW-TWO holds\n" + long, 1))
+PY2
+: > "${ROOT}/herdr.log"; rm -f "${ROOT}/goal.txt"   # an earlier case's /goal must not stand in for this one
+rc=0; out="$(run story gl8)" || rc=$?
+[[ ${rc} -eq 0 ]] || echo "story gl8: ${out}"
+sent="$(cat "${ROOT}/goal.txt" 2>/dev/null || true)"
+dw="$(awk '/^\*\*Done when/ { on = 1 } on && /^$/ { exit } on' "${b}/stories/gl8.md")"
+check "a Done when of over 2,500 characters: story exits 0, and the /goal it sends fits GOAL_SEND_MAX, names the story's path and ends on the bound" \
+  "over 2500|0|fits|yes|yes" "$( (( ${#dw} > 2500 )) && echo "over 2500" || echo "${#dw} characters")|${rc}|$(
+    (( ${#sent} > 0 && ${#sent} <= GOAL_SEND_MAX )) && echo fits || echo "${#sent} characters, max ${GOAL_SEND_MAX}")|$(
+    has "${b}/stories/gl8.md" "${sent}")|$([[ "${sent}" == *"or stop after 7 more turns." ]] && echo yes || echo "no, ends: ${sent: -60}")"
 # A blank line under a heading does not end its block; the next bold line that is not one does.
 item "${b}" stories/gl2.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "- DW-ONE holds" "- DW-TWO holds" "**Out of scope:** OUT-ONE" "" \
@@ -442,13 +478,13 @@ printf '%s\n' "" "**Done when:**" "" "- DW-ONE holds" "- DW-TWO holds" "**Out of
 rc=0; out="$(run story gl2)" || rc=$?   # the exit is checked: a refusal shows as a FAIL, not an abort
 [[ ${rc} -eq 0 ]] || echo "story gl2: ${out}"
 g="$(cat "${p}/.swarm/briefs/gl2.goal.md" 2>&1 || true)"
-check "a blank line before the first item keeps the items; a bold line straight after a block is not copied" "0|yes|yes|yes|no|no|no" \
-  "${rc}|$(has "- DW-ONE holds" "${g}")|$(has "- DW-TWO holds" "${g}")|$(has "- FR-ONE holds" "${g}")|$(grep -qE 'OUT-ONE|SPIKE-ONE' <<< "${g}" && echo yes || echo no)|$(grep -q 'YOU-ONE' <<< "${g}" && echo yes || echo no)|$(grep -q 'Out of scope' <<< "${g}" && echo yes || echo no)"
+check "a blank line before the first item still finds the Done when; the condition inlines no block" "0|yes|no" \
+  "${rc}|$(has "${b}/stories/gl2.md" "${g}")|$(grep -qE 'DW-ONE|FR-ONE|OUT-ONE|SPIKE-ONE|YOU-ONE' <<< "${g}" && echo yes || echo no)"
 item "${b}" stories/gl3.md "status: ready" "kind: code" "repo: svc"
 printf '%s\n' "" "**Done when:**" "" "**Out of scope:** OUT-ONE" >> "${b}/stories/gl3.md"
 check "a Done when with no item under it fails like a missing one, before any worktree" "yes|no" \
   "$(if out="$(run story gl3)"; then echo "it succeeded"; else has "gl3 has no **Done when**" "${out}"; fi)|$([[ -e "${ROOT}/svc-wt/gl3" ]] && echo yes || echo no)"
-: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-6].md; unset CLAUDE_STUB_AGENTS
+: > "${p}/.claude/swarm/config"; rm -f "${b}"/stories/gl[0-8].md; unset CLAUDE_STUB_AGENTS
 
 # --- keep_panes = true: close leaves everything open, frees the agent's name, and keeps its slot.
 echo "keep_panes = true" > "${p}/.claude/swarm/config"
@@ -532,20 +568,19 @@ printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 7" > "${p}/.cla
 goal_story "${b}" gf1 "status: ready" "kind: code" "epic: f" "repo: svc"
 run story gf1 >/dev/null
 check "with goal = 7 and pr_per = epic, the condition carries the epic-mode reply the brief holds" \
-  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gf1.goal.md" "${EPIC_REPLY}" 7)|$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/gf1.md")")"
-# A condition over Claude Code's 4000 characters is refused before the epic branch or worktree exists.
+  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gf1.goal.md" gf1 "${EPIC_REPLY}" 7)|$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/gf1.md")")"
+# A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the epic
+# branch or worktree exists, and nothing is sent.
 item "${b}" epics/gx.md "status: active"; cp "${b}/epics/gx.md" "${ROOT}/gx-epic.md"
-goal_story "${b}" gx1 "status: ready" "kind: code" "epic: gx" "repo: svc"
-python3 -c 'print("**Done when:**"); print("\n".join("- line %d of a long acceptance" % i for i in range(200)))' > "${ROOT}/long.md"
-python3 - "${b}/stories/gx1.md" "${ROOT}/long.md" <<'PY2'
-import sys; s = open(sys.argv[1]).read(); open(sys.argv[1], "w").write(s.replace("**Done when:**", open(sys.argv[2]).read().rstrip("\n"), 1))
-PY2
-out="$(run story gx1 || true)"
-check "with goal on, an over-long condition fails naming the story, and leaves no worktree, branch, epic branch or epic edit" \
-  "yes|no|no|no|no|same" \
-  "$(has "gx1: its goal condition is" "${out}")|$([[ -e "${ROOT}/svc-wt/gx1" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify refs/heads/story/gx1 && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/story/gx1 && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/epic/gx && echo yes || echo no)|$(cmp -s "${ROOT}/gx-epic.md" "${b}/epics/gx.md" && echo same || echo changed)"
+gx="gx1-$(printf 'long%.0s' {1..60})"
+goal_story "${b}" "${gx}" "status: ready" "kind: code" "epic: gx" "repo: svc"
+: > "${ROOT}/herdr.log"
+out="$(run story "${gx}" || true)"
+check "with goal on, a /goal message over GOAL_SEND_MAX fails naming the story, sends nothing, and leaves no worktree, branch, epic branch or epic edit" \
+  "yes|nothing sent|no|no|no|no|same" \
+  "$(has "${gx}: its /goal message is" "${out}")|$(grep -qE '^agent (start|prompt) ' "${ROOT}/herdr.log" && echo sent || echo "nothing sent")|$([[ -e "${ROOT}/svc-wt/${gx}" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/epic/gx && echo yes || echo no)|$(cmp -s "${ROOT}/gx-epic.md" "${b}/epics/gx.md" && echo same || echo changed)"
 printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"; unset CLAUDE_STUB_AGENTS
-rm -f "${b}/stories/gf1.md" "${b}/stories/gx1.md" "${b}/epics/gx.md"
+rm -f "${b}/stories/gf1.md" "${b}/stories/${gx}.md" "${b}/epics/gx.md"
 run conduct f >/dev/null
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
@@ -1050,6 +1085,8 @@ qrun() { (cd "${q}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PAT
 # send_goal types the /goal only into a started turn: the claude stub lists the brief's session busy.
 echo '[]' > "${ROOT}/started.json"; export CLAUDE_STUB_AGENTS="${ROOT}/started.json"
 qrun story qz >/dev/null
+check "with the board in the repo it builds, the goal names the worktree's copy of the story, as the brief does" "docs/stories/qz.md" \
+  "$(goal_path "${q}/.swarm/briefs/qz.md" "${q}/.swarm/briefs/qz.goal.md")"
 "${GIT[@]}" -C "${q}-wt/qz" rm -q docs/stories/qz.md && "${GIT[@]}" -C "${q}-wt/qz" commit -q -m qz
 "${GIT[@]}" -C "${q}-wt/qz" push -q origin story/qz story/qz:main   # the PR, merged
 qrun review qz "${UR}/15" >/dev/null; echo "${UR}/15 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"
