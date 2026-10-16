@@ -5356,20 +5356,22 @@ for l in lines("DASH_WAITING"):
     if l.startswith("later "):
         later += 1
         continue
-    m = re.match(r"awaiting your merge: (epic )?(\S+) ?(.*)$", l)
+    m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
-        what = ("epic " if m.group(1) else "") + m.group(2)
-        item = ("epics" if m.group(1) else "stories", m.group(2))
-        urls = list(URL.finditer(m.group(3)))
+        # swarm.sh merge holds a costs: money story for the user, so no lead session can merge it.
+        rows = need if m.group(1) else lq
+        what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
+        item = ("epics" if m.group(2) else "stories", m.group(3))
+        urls = list(URL.finditer(m.group(4)))
         if not urls:
-            add(lq, bang + [(f"merge {what}: no PR on its file", "")], item)
+            add(rows, bang + [(f"merge {what}: no PR on its file", "")], item)
         for u in urls:
             st = pr_state(u.group(0))
             if st is None:
-                add(lq, bang + [(f"merge {what}: ", ""), (u.group(0), "dim")], item)
+                add(rows, bang + [(f"merge {what}: ", ""), (u.group(0), "dim")], item)
                 continue
             green += st[0] == "done"
-            add(lq, bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")], item)
+            add(rows, bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")], item)
         continue
     m = re.match(r"(\S+): (\S+)$", l)
     if m:
