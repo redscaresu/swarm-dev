@@ -363,12 +363,15 @@ its PR is. With `merge = human` the conductor then closes the child's builder wi
 `swarm.sh close <slug>`, which counts nothing for a blocked story; with `merge = agent` the builder
 stays open. When a parent's branch moves, the conductor tells the child to merge it in. A held child
 is readied again only once every parent has finished, as `ready: <slug> (held: merge origin/<base>,
-review again)`. A parent squash-merges, so its commits reach the base under new hashes: the child's
-builder (a new one in its worktree, when it was closed) merges `origin/<base>`, and the child is
-reviewed again; a review that passes clears `held_by:`. `story` refuses any story whose worktree or
-branch already exists, and says what to do with a held one. Parents always merge first: you are
-never handed a child before its parents, and `swarm.sh merge` refuses one too, since it merges only
-an item in review.
+review again)` while its build is still there, or plainly when it is gone, so `story` builds it
+fresh. A parent squash-merges, so its commits reach the base under new hashes: the child's builder (a
+new one in its worktree, when it was closed) merges `origin/<base>`, and the child is reviewed again.
+`swarm.sh status` prints the same instruction as the child's Stacked line, and the conductor acts on
+that line alone. A review that passes clears `held_by:`, and so does clearing the build (a counted,
+impossible or paused close, or reconcile), which also drops the `prs:` line the hold kept. `story`
+refuses any story whose worktree or branch already exists, and says what to do with a held one.
+Parents always merge first: you are never handed a child before its parents, and `swarm.sh merge`
+refuses one too, since it merges only an item in review.
 
 ```bash
 swarm.sh story [--strict] <slug>   # worktree on story/<slug>, a pane, the agent, its brief

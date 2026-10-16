@@ -102,13 +102,15 @@ head_of() { git -C "${ROOT}/svc" rev-parse "story/$1"; }
 st() { sed -n 's/^status: //p' "${b}/stories/$1.md"; }
 fm() { sed -n "s/^$2: //p" "${b}/stories/$1.md"; }
 # held_ready <brief> — the held-child rule, as has prints its parts: the ready line, never story, the
-# tell to an open builder, and swarm.sh agent in its worktree with none open.
+# Stacked line for the same child as the one instruction (at most one builder), and the backlog
+# brief's started-story rule deferring to it.
 HELD_READY="yes|yes|yes|yes"
 held_ready() {
   # shellcheck disable=SC2016 # the backticks are the brief's
   printf '%s|%s|%s|%s' "$(has 'When `swarm.sh unblock` prints `ready: <slug> (held: merge origin/<base>, review again)`' "$1")" \
-    "$(has 'its build is kept: never run `swarm.sh story` for it' "$1")" "$(has 'tell an open builder with `swarm.sh tell <slug> findings <file>`' "$1")" \
-    "$(has 'with none open, start one in its worktree (`<repo>-wt/<slug>` beside its repo) with `swarm.sh agent <tab> <slug> <worktree>' "$1")"
+    "$(has 'its build is kept: never run `swarm.sh story` for it' "$1")" \
+    "$(has 'the Stacked line `<slug>: merge origin/<base> (<parents> merged)` that `swarm.sh status` prints for it: the same instruction, so act on that line alone, as the Stacked rule above says, and start at most one builder for it' "$1")" \
+    "$(has 'A held child unblock readied (`(held: ...)`, with `held_by:` in its front matter) is the exception: follow the rule for `(held: ...)` below instead.' "$1")"
 }
 exists() { if [[ -e "$1" ]]; then echo yes; else echo no; fi; }
 branch() { if git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/$1"; then echo yes; else echo no; fi; }
@@ -151,6 +153,16 @@ check "parents whose branches conflict fail story naming the two that conflict a
   "fail|yes|no|no|no" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "origin/story/r2 and origin/story/r1 conflict in f.txt" "${out}")|$(
   hasnt "origin/story/r3" "${out}")|$(exists "${ROOT}/svc-wt/clash")|$(branch clash)"
+# A parent whose history is unrelated: the merge fails with no conflicted file.
+git -C "${ROOT}/svc" checkout -q --orphan story/ux && git -C "${ROOT}/svc" rm -q -rf . && echo ux > "${ROOT}/svc/ux.txt"
+git -C "${ROOT}/svc" add ux.txt && git -C "${ROOT}/svc" commit -q -m ux && git -C "${ROOT}/svc" push -q origin story/ux && git -C "${ROOT}/svc" checkout -q -f main
+item "${b}" stories/ux.md "status: ready" "kind: code" "repo: svc"; echo "${URL}/ux" > "${ROOT}/open/story-ux"
+item "${b}" stories/odd.md "status: blocked" "kind: code" "repo: svc" "depends_on: [r3, ux]"
+run unblock >/dev/null || true
+rc=0; out="$(run story odd)" || rc=$?
+check "a merge that fails with no conflicted file names what the parent was merged into, and git's reason" "fail|yes|no" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "cannot merge origin/story/ux into origin/story/r3 (fatal: refusing to merge unrelated histories)" "${out}")|$(
+  exists "${ROOT}/svc-wt/odd")"
 
 # --- A parent ready with no open PR, blocked, or in another repo, or gh failing, keeps the child blocked.
 item "${b}" stories/nopr.md "status: ready" "kind: code" "repo: svc"
@@ -171,10 +183,10 @@ mkdir -p "${ROOT}/svc-wt/built"   # a worktree already there
 check "a child review held (held_by:) is not stacked again, even with no worktree, nor is one with a worktree" "|blocked|blocked" \
   "$(run unblock | grep -E 'marked|built' || true)|$(st marked)|$(st built)"
 rm -r "${ROOT}/svc-wt/built" "${b}/stories/built.md" "${b}/stories/mk.md"
-run unblock >/dev/null || true
+check "once its parents finish, a held story with no build left is readied plainly" "yes" \
+  "$(grep -qx 'ready: marked' <<< "$(run unblock)" && echo yes || echo no)"
 run story marked >/dev/null || true
-check "once its parents finish, a held story with no build left starts fresh and drops held_by:" "yes|" \
-  "$(exists "${ROOT}/svc-wt/marked")|$(fm marked held_by)"
+check "and starts fresh, dropping held_by:" "yes|" "$(exists "${ROOT}/svc-wt/marked")|$(fm marked held_by)"
 
 # --- story --strict leaves the child's own parents out of the overlap check, and no other story.
 item "${b}" stories/pa.md "status: review" "kind: code" "repo: svc" "prs: ${URL}/pa" "touches: [bin/x.sh:f]"
@@ -236,6 +248,23 @@ check "story refuses the readied held child, saying what to do, and starts no se
   grep -c '^agent start child ' "${ROOT}/herdr.log")"
 run review child "${URL}/9" >/dev/null || true
 check "and review child puts it in review, its hold cleared" "review|${URL}/9|" "$(st child)|$(fm child prs)|$(fm child held_by)"
+
+# --- A held child whose build is cleared (a counted close once it is ready again) is held no more.
+item "${b}" stories/hp.md "status: ready" "kind: code" "repo: svc"
+item "${b}" stories/hc.md "status: blocked" "kind: code" "repo: svc" "depends_on: [hp]" "touches: [bin/z.sh:h]"
+parent hp hp.txt hp open
+run unblock >/dev/null || true
+run story hc >/dev/null || true
+echo "${URL}/12" > "${ROOT}/open/story-hc"
+run review hc "${URL}/12" >/dev/null || true
+held="$(fm hc held_by)|$(fm hc prs)"
+rm "${b}/stories/hp.md"
+run unblock >/dev/null || true
+run close hc >/dev/null || true
+item "${b}" stories/ov2.md "status: ready" "kind: code" "repo: svc" "epic: e2" "touches: [bin/z.sh:h]"
+rc=0; run story --strict ov2 >/dev/null || rc=$?
+check "a counted close of a readied held child drops held_by: and its prs:, so it no longer holds other stories back" \
+  "hp|${URL}/12|1||no|0" "${held}|$(fm hc attempts)|$(fm hc held_by)$(fm hc prs)|$(exists "${ROOT}/svc-wt/hc")|${rc}"
 
 # --- The conductor briefs: start stacked stories, hold, and close (human) or keep (agent) the builder.
 run conduct --backlog >/dev/null || true
