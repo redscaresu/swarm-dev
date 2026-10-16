@@ -505,6 +505,7 @@ check "with merge = agent, the conductor reviews a pinned head, puts the story i
   "$(has "note its head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${brief}")|$(has "if the head moved, review the new head" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare \`gh pr merge\`" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
 check "it merges by the literal PR number, pinned with --match-head-commit, in the repo's method, never --auto" "yes|yes|yes|yes" \
   "$(has "by the literal PR number" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")|$(has "(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`)" "${brief}")|$(has "never --auto" "${brief}")"
+check "it runs one swarm.sh merge at a time, the next only once the last has exited" "yes" "$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"
 check "a red base stops its merging: it finds the PR pair, opens the fix or lists it, and reports it" "yes" \
   "$(has "A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing more, find the PR pair that broke it" "${brief}")"
 after="${brief#*swarm.sh merge --head}"; after="${after%%Stay inside this epic*}"
@@ -519,6 +520,8 @@ run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
 check "with merge = agent, the one-PR-per-epic conductor stops once every epic PR has merged, or what is left needs the lead, not when no story is left" "yes|yes|yes|yes|no" \
   "$(has "Stop when every PR from epic/f has merged and the epic's **Done when** holds, or when what is left needs the lead:" "${brief}")|$(has "a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running;" "${brief}")|$(has "a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch;" "${brief}")|$(has "or CI on the base red or timed out." "${brief}")|$(grep -qF "none is running" <<< "${brief}" && echo yes || echo no)"
+check "with merge = agent, the one-PR-per-epic conductor notes the epic branch's head before the whole-epic review, re-reads the PR's head before each merge, and merges one at a time" "yes|yes|yes" \
+  "$(has "review the whole epic: first note the head SHA of epic/f in each repo's epic worktree (\`git rev-parse HEAD\`)" "${brief%codex-review <base>*}")|$(has "Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if it is not the head you reviewed, review the new head." "${brief}")|$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"
 check "with merge = agent, the one-PR-per-epic conductor puts the epic in review, then merges each pinned head with swarm.sh merge" "yes|yes" \
   "$(has "run \`swarm.sh review f <every PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")"
 printf '%s\n' "escalate_after = 0" "base_branches = dev main" > "${p}/.claude/swarm/config"

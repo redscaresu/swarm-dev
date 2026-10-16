@@ -1818,7 +1818,7 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 RULE
   else
     cat <<EOF
-$(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
+$(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
 Then run \`swarm.sh unblock\`, and in this run start each story of this epic it prints as \`ready:\`
@@ -1831,19 +1831,27 @@ EOF
   fi
 }
 
-# pinned_merge_rule <review args> — with merge = agent, how a conductor merges a reviewed PR: review a
-# head it noted, put the item in review, then swarm.sh merge pinned to that head, which reconciles.
-pinned_merge_rule() {
+# pin_rule — with merge = agent and a PR per story, review each PR at a head noted before the review.
+pin_rule() {
   cat <<EOF
 Review a PR at a pinned head: before you review it, note its head SHA
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`), and once the review passes, read it again; if the head
-moved, review the new head. Merge a PR only when it is green and reviewed: run
+moved, review the new head.
+EOF
+}
+
+# pinned_merge_rule <review args> — with merge = agent, how a conductor merges a reviewed PR: put the
+# item in review, then swarm.sh merge pinned to the head it reviewed, one at a time, which reconciles.
+pinned_merge_rule() {
+  cat <<EOF
+Merge a PR only when it is green and reviewed: run
 \`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare
 \`gh pr merge\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
 repo's merge method, squash when allowed
 (\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
-and only once every check on that head has completed and passed, which it checks itself. Run it in
-the background (Bash \`run_in_background\`)
+and only once every check on that head has completed and passed, which it checks itself. Run one
+\`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and
+reconcile done. Run it in the background (Bash \`run_in_background\`)
 and wait for it: it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the merge commit on the
 base, then runs \`swarm.sh reconcile\`, never a plain \`git pull\`, which pulls the board and finishes the item. If
 it exits non-zero, read why: a refusal before \`gh pr merge\` ran merged nothing; \`unconfirmed\`
@@ -2323,7 +2331,7 @@ EOF
 
 # pr_per = epic: stories merge into epic/<epic>, and each repo gets one PR for the whole epic.
 conduct_epic_mode() {
-  local epic="$1" check sign="" merge_step tick='`'
+  local epic="$1" check sign="" merge_step pin="" tick='`'
   check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || check=" and the epic check ${tick}${check}${tick}"
   [[ "${CFG_sign_commits}" != true ]] || sign=" -S"
@@ -2331,7 +2339,10 @@ conduct_epic_mode() {
     merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
 merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
   else
-    merge_step="Merge the PRs one at a time. $(pinned_merge_rule "${epic} <every PR URL>") Reconcile takes
+    pin="first note the head SHA of epic/${epic} in each repo's epic worktree (\`git rev-parse HEAD\`): that is
+the head you review, and after a fix, the new head. Then, "
+    merge_step="Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`):
+if it is not the head you reviewed, review the new head. $(pinned_merge_rule "${epic} <every PR URL>") Reconcile takes
 the epic off the board once its last PR merges."
   fi
   cat <<EOF
@@ -2354,7 +2365,7 @@ and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\`
 \`swarm.sh close <slug>\`, and go on to the next wave.
 
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
-line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
+line lists every repo with an epic branch), review the whole epic: ${pin}in each repo's epic worktree,
 \`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
 $(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
