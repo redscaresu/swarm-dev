@@ -1,9 +1,9 @@
 ---
 kind: docs
 status: blocked
-blocked_by: [drop-epic-prs, drop-verify, drop-unused-switches, log-finding-reasons-and-reviewers, flow-and-features, cost-counts-lead-sessions, blocked-by-from-depends-on, codex-review-knows-the-story, dash-running-now, dash-both-projects, findings-checks-fail-lines, backlog-conductor, scoped-parallel-reviews, stacked-start-and-merge-order, stacked-parent-updates, wait-for-the-lead, plan-epic-rules, outcomes-timings, dash-speedometer-and-queue, plan-during-review-and-release, finish-switch-removal]
+blocked_by: [drop-epic-prs, drop-verify, drop-unused-switches, log-finding-reasons-and-reviewers, flow-and-features, cost-counts-lead-sessions, blocked-by-from-depends-on, codex-review-knows-the-story, dash-running-now, dash-both-projects, findings-checks-fail-lines, backlog-conductor, scoped-parallel-reviews, stacked-start-and-merge-order, stacked-parent-updates, wait-for-the-lead, plan-epic-rules, outcomes-timings, dash-speedometer-and-queue, plan-during-review-and-release, finish-switch-removal, reconcile-always-pulls]
 epic: leaner-faster-swarm
-depends_on: [drop-epic-prs, drop-verify, drop-unused-switches, log-finding-reasons-and-reviewers, flow-and-features, cost-counts-lead-sessions, blocked-by-from-depends-on, codex-review-knows-the-story, dash-running-now, dash-both-projects, findings-checks-fail-lines, backlog-conductor, scoped-parallel-reviews, stacked-start-and-merge-order, stacked-parent-updates, wait-for-the-lead, plan-epic-rules, outcomes-timings, dash-speedometer-and-queue, plan-during-review-and-release, finish-switch-removal]
+depends_on: [drop-epic-prs, drop-verify, drop-unused-switches, log-finding-reasons-and-reviewers, flow-and-features, cost-counts-lead-sessions, blocked-by-from-depends-on, codex-review-knows-the-story, dash-running-now, dash-both-projects, findings-checks-fail-lines, backlog-conductor, scoped-parallel-reviews, stacked-start-and-merge-order, stacked-parent-updates, wait-for-the-lead, plan-epic-rules, outcomes-timings, dash-speedometer-and-queue, plan-during-review-and-release, finish-switch-removal, reconcile-always-pulls]
 touches: [README.md, AGENTS.md, docs/assets/swarm-flow.workflow.json, docs/assets/swarm-flow-light.png, docs/assets/swarm-flow-dark.png]
 ---
 
