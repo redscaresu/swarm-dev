@@ -13,6 +13,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
 #   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
+#   swarm.sh export [--since YYYY-MM-DD] [--format jsonl|tsv]  one row per build attempt for training a router: ids, enums, numbers, UTC times and PR URLs, no free text
 #   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -765,7 +766,8 @@ record_agent() {
 }
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,
-# target, the actor's herdr pane, outcome). Names and paths only, never a brief's or a message's contents.
+# target, the actor's herdr pane, outcome). Names and paths only, never a brief's or a message's contents;
+# outcome alone can hold free text (a reset's or drop's reason, a dialog's answer, a failed command's error).
 EVENTS_LOG="${PROJECT_DIR}/.swarm/events.tsv"
 
 # record_event <command> <target> [outcome] — append one line. A log that cannot be written never
@@ -1425,6 +1427,67 @@ per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
 print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
 if epic:
     print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
+PY
+}
+
+# export [--since YYYY-MM-DD] [--format jsonl|tsv] — one row per build attempt, for training a router:
+# project (the project directory's name, as agent_name makes it) and a fixed allowlist of outcomes
+# columns, read by name, in the order docs/method.md documents. Every value must match its column's
+# type (slug, enum, integer, decimal, UTC time, PR URL, bool, reviewer pairs, model token); one that
+# does not is emitted empty (null in jsonl) with a warning on stderr, so no free text gets out.
+# decisions is not reused: it carries story and finding text. --since passes through to outcomes, so
+# attempts stay stable. It writes nothing.
+export_report() {
+  local since="" format=jsonl rows usage="usage: swarm.sh export [--since YYYY-MM-DD] [--format jsonl|tsv]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
+      --format) [[ "${2:-}" == jsonl || "${2:-}" == tsv ]] || die "${usage}"; format="$2"; shift 2 ;;
+      *) die "${usage}" ;;
+    esac
+  done
+  rows="$(outcomes_report ${since:+--since "${since}"})"
+  # The project's name as agent_name makes one, so a directory like My.Project passes the slug check.
+  SWARM_ROWS="${rows}" python3 - "$(agent_name "$(basename "${PROJECT_DIR}")")" "${format}" "${BUILDER_ROLES}" \
+    "${CLOSE_CAUSE_WORDS}" <<'PY'
+import json, os, re, sys
+project, fmt, roles, causes = sys.argv[1:5]
+TIME = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+TYPES = {"slug": r"[a-z0-9][a-z0-9_-]*", "integer": r"[0-9]+", "decimal": r"[0-9]+\.[0-9]+", "time": TIME,
+         "pr": r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+", "bool": "true|false",
+         "reviewers": r"([a-z-]+:[0-9]+( |$))*", "model": r"[a-z0-9][a-z0-9.-]*"}
+ENUMS = {"kind": "code|docs|chore|verify|lead", "risk": "high", "role": "|".join(roles.split()),
+         "effort": "low|medium|high|xhigh|max", "dialog": "accepted|dismissed",
+         "close_cause": "|".join(causes.split()), "pr_state": "OPEN|CLOSED|MERGED"}
+# name:type, in the documented order. attempt is outcomes attempts; project is not an outcomes column.
+COLUMNS = [c.split(":") for c in """project:slug slug:slug epic:slug kind:enum risk:enum role:enum model:model
+    effort:enum started:time tokens_input:integer tokens_cache_write:integer tokens_cache_read:integer
+    tokens_output:integer cost_usd:decimal tells_findings:integer tells_nudge:integer tells_resume:integer
+    findings_fixed:integer findings_declined:integer findings_fixed_by:reviewers findings_declined_by:reviewers
+    escalate_at:time dialog_at:time dialog:enum escalated_at:time reset_at:time drop_at:time close_cause:enum
+    pr:pr pr_state:enum merged_at:time attempt:integer story_merged:bool""".split()]
+TYPED = {"integer": int, "decimal": float, "bool": lambda v: v == "true"}
+
+table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
+if fmt == "tsv":
+    print("\t".join(n for n, _ in COLUMNS))
+for i, f in enumerate(table[1:], 1):
+    if len(f) != len(table[0]):
+        print(f"swarm.sh export: outcomes row {i} has {len(f)} columns, not {len(table[0])}; left out", file=sys.stderr)
+        continue
+    r = dict(zip(table[0], f), project=project)
+    r["attempt"] = r["attempts"]
+    row = {}
+    for name, typ in COLUMNS:
+        v = r[name]
+        if v and not re.fullmatch(ENUMS[name] if typ == "enum" else TYPES[typ], v):
+            print(f"swarm.sh export: row {i}: {name} is not a valid {typ}, left empty", file=sys.stderr)
+            v = ""
+        row[name] = v
+    if fmt == "tsv":
+        print("\t".join(row.values()))
+    else:
+        print(json.dumps({n: TYPED.get(t, str)(row[n]) if row[n] else None for n, t in COLUMNS}))
 PY
 }
 
@@ -4694,9 +4757,11 @@ archive_session() {
 }
 
 # is_close_cause <word> — true for a cause close takes: why the builder stopped. met, stalled and
-# bound are attempts; impossible, paused and cleared-on-error are not.
-is_close_cause() { case "$1" in met|impossible|stalled|bound|paused|cleared-on-error) return 0 ;; esac; return 1; }
-CLOSE_CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
+# bound are attempts; impossible, paused and cleared-on-error are not. CLOSE_CAUSE_WORDS is the one
+# list (export reads it too); CLOSE_CAUSES is it as prose, for messages.
+CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
+is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
+CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
 # close_agent <name> [cause] — close what was opened for <name> (close_panes), or with keep_panes = true
 # leave it open to read and only retire the agent. Either way, its session log is archived first.
@@ -5111,6 +5176,7 @@ dispatch() {
     outcomes) outcomes_report "$@" ;;
     decisions) decisions_report "$@" ;;
     review-yield) review_yield_report "$@" ;;
+    export) export_report "$@" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
@@ -5153,7 +5219,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions review-yield lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions review-yield export lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {

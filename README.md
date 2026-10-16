@@ -84,6 +84,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, and its escalation steps. |
 | `swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]` | How many findings each reviewer raised per kind, how many were fixed or declined and the decline rate, then the review rounds per PR. `--epic` counts only that epic's PRs and lists them. |
+| `swarm.sh export [--since YYYY-MM-DD] [--format jsonl\|tsv]` | One row per build attempt, for training a router that picks a model and effort. It holds only ids, enums, numbers, UTC times and PR URLs, so no finding or story text gets in ([columns](docs/method.md#building)). |
 
 Settings such as `merge = agent` go in `.claude/swarm/config`
 ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
