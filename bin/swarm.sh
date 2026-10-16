@@ -21,7 +21,7 @@
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree]  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
-#   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete or mark done)
+#   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
@@ -138,11 +138,8 @@ CFG_repos_dir=""        # empty: the project dir's parent
 CFG_base_branches=""    # empty: origin's default branch
 CFG_finished=delete
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
-CFG_merge_admin=false   # true: swarm.sh merge passes --admin, after checking the base's required checks itself
-CFG_review_bot=off      # auto: the conductor also runs the repo's PR review bot (docs/review.md)
 CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
 CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
-CFG_keep_panes=false    # true: `close` leaves a finished agent's pane and tabs open to read
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
@@ -151,7 +148,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches finished merge merge_admin review_bot sign_commits pr_per keep_panes lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir base_branches merge pr_per lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -181,14 +178,8 @@ load_config() {
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
       base_branches)
         [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches: not branch names: ${value}" ;;
-      finished)
-        [[ "${value}" == delete || "${value}" == mark ]] || die "${where}: finished must be delete or mark, not '${value}'" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
-      review_bot)
-        [[ "${value}" == off || "${value}" == auto ]] || die "${where}: review_bot must be off or auto, not '${value}'" ;;
-      sign_commits|keep_panes|merge_admin)
-        [[ "${value}" == true || "${value}" == false ]] || die "${where}: ${key} must be true or false, not '${value}'" ;;
       pr_per)
         [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes|codex_minutes)
@@ -1875,10 +1866,6 @@ stop_rule() {
 }
 sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
-review_bot_rule() {
-  [[ "${CFG_review_bot}" == auto ]] || return 0
-  printf '\n\nThen run the PR review bot of the repo as %s/docs/review.md says, and clear its findings the same way.' "${SWARM_HOME}"
-}
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
 # review_rule — for pr_per=story, where each story has its own PR and its builder stays open.
@@ -2467,7 +2454,7 @@ A PR is green only when every check on its head has passed and you have triaged 
 \`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
 conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert.$(review_bot_rule)
+never dismiss an alert.
 EOF
 }
 
@@ -2576,7 +2563,7 @@ $(green_rule)
 
 $(review_rule)
 
-$(conduct_merge_rule)$(sign_rule_if_on)
+$(conduct_merge_rule)
 EOF
 }
 
@@ -2908,19 +2895,13 @@ unblock() {
   done < <(board stories)
 }
 
-# finish <slug> — take a merged story or epic off the board: delete its file, or with
-# finished = mark set its status to done and keep it.
+# finish <slug> — take a merged story or epic off the board: delete its file.
 finish_item() {
   local slug="$1" f
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "bad slug '${slug}'"
   for f in "${BOARD}/stories/${slug}.md" "${BOARD}/epics/${slug}.md"; do
     [[ -f "${f}" ]] || continue
-    if [[ "${CFG_finished}" == mark ]]; then
-      awk '!d && /^status: /{print "status: done"; d=1; next} {print}' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
-      echo "done: ${f}"
-    else
-      rm "${f}"; echo "deleted: ${f}"
-    fi
+    rm "${f}"; echo "deleted: ${f}"
     return
   done
   die "no story or epic '${slug}' in ${BOARD}"
@@ -2964,7 +2945,7 @@ reset_story() {
 }
 
 # drop <slug> <reason> — the lead drops an escalated story (is_escalated): take it off the board as
-# finish does (delete it, or with finished = mark set status: done), so next stops naming it, and the
+# finish does (delete it), so next stops naming it, and the
 # lead commits the change in a board PR. Any other story is
 # refused. main logs the reason as the outcome.
 drop_story() {
@@ -3131,10 +3112,9 @@ MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get t
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 
-# ci_gate head <owner/repo> <sha> [base] — succeed when <sha> is green: at least one check run, every
-# run completed as success, skipped or neutral, and every commit status success; with [base]
-# (merge_admin), also every status check the base's rulesets or branch protection require present
-# among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
+# ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
+# run completed as success, skipped or neutral, and every commit status success. Else print which
+# checks and fail (1 red, 2 pending). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -3148,7 +3128,7 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 # too; fails (3) unless there are <changed> of them.
 ci_gate() {
   python3 - "$@" <<'PY'
-import json, re, subprocess, sys, time, urllib.parse
+import json, re, subprocess, sys, time
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 
@@ -3199,7 +3179,7 @@ def judge(runs, red, wait):
         elif r.get("conclusion") not in OK:
             red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
 
-def checks(repo, sha, required=(), need_run=True):
+def checks(repo, sha, need_run=True):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
     red, wait = [], ([] if runs or not need_run else ["no check runs"])
@@ -3209,30 +3189,7 @@ def checks(repo, sha, required=(), need_run=True):
             wait.append("%s (pending)" % s.get("context"))
         elif s.get("state") != "success":
             red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
-    # A required check bound to an app (not None or -1, any source) needs a run from that app.
-    have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
-    names = {n for n, _ in have} | {s.get("context") for s in sts}
-    wait += ["%s (required, absent)" % c for c, app in required
-             if (c not in names if app in (None, -1) else (c, app) not in have)]
     return red, wait
-
-def required(repo, base):
-    """The status checks base requires, its rulesets' and its classic branch protection's, each as
-    (context, the app that must report it or None). The branch is one path segment, / encoded."""
-    out, base = [], urllib.parse.quote(base, safe="")
-    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, base)):
-        if not isinstance(d, list):
-            raise Err("unreadable rules for " + base)
-        for rule in d:
-            if rule["type"] == "required_status_checks":
-                out += [(c["context"], c.get("integration_id")) for c in rule["parameters"]["required_status_checks"]]
-    try:
-        rsc = json.loads(gh("api", "repos/%s/branches/%s/protection/required_status_checks" % (repo, base)))
-    except Err as e:
-        if "HTTP 404" in str(e):   # not protected, or no required checks
-            return out
-        raise
-    return out + [(c, None) for c in rsc["contexts"]] + [(c["context"], c.get("app_id")) for c in rsc["checks"]]
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -3402,7 +3359,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
-        red, wait = checks(repo, args[0], required(repo, args[1]) if len(args) > 1 else ())
+        red, wait = checks(repo, args[0])
         if red or wait:
             print("; ".join(red + wait))
             sys.exit(1 if red else 2)
@@ -3467,14 +3424,14 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge_caller allows it, the head is <sha> (with --head), a story or epic in review lists the URL
 # (with --board instead: the PR is in the board's own repo and every path it changes, old or new, is
 # on the board), and ci_gate passes on the head.
-# Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
-# merge_admin, --admin; never --auto. Then wait for CI on the merge commit and, without --board, run
+# Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
+# --admin or --auto. Then wait for CI on the merge commit and, without --board, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own req="" method oid admin=() why rc=0 rrc ran=1
+  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board) board=1; shift ;;
@@ -3498,7 +3455,7 @@ merge_pr() {
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   if [[ -z "${board}" ]]; then
-    # Any item listing the URL may be the one in review: a done story (finished = mark) keeps prs:.
+    # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
       [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
       [[ -n "${any}" ]] || any="${p}"
@@ -3518,13 +3475,12 @@ merge_pr() {
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "--board: cannot list every file ${url} changes: ${info}"
     while IFS= read -r p; do [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"; done <<< "${info}"
   fi
-  if [[ "${CFG_merge_admin}" == true ]]; then admin=(--admin); req="${base}"; fi
-  why="$(ci_gate head "${repo}" "${head}" ${req:+"${req}"})" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
   [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
-  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
+  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" 2>&1)" || ran=""
   # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
   read -r state oid <<< "$(merged_state "${n}" "${repo}")"
   if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
@@ -3585,7 +3541,7 @@ origin_has() {
 # no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why sign=()
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -3637,8 +3593,7 @@ board_pr() {
       git -C "${wt}" add -A
       if ! git -C "${wt}" diff --cached --quiet; then
         msg="$3"; f="$(brief_trailers)"; [[ -z "${f}" ]] || msg+=$'\n\n'"${f}"
-        [[ "${CFG_sign_commits}" != true ]] || sign=(-S)
-        git -C "${wt}" commit -q ${sign[@]+"${sign[@]}"} -m "${msg}" || die "board-pr: the commit failed in ${wt}"
+        git -C "${wt}" commit -q -m "${msg}" || die "board-pr: the commit failed in ${wt}"
       fi
       git -C "${wt}" push -q -u origin "${b}" || die "board-pr: cannot push ${b}"
       [[ -n "${url}" ]] || url="$(gh pr create -R "$(git -C "${PROJECT_DIR}" remote get-url origin)" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \
@@ -5020,8 +4975,8 @@ CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
 is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
-# close_agent <name> [cause] — close what was opened for <name> (close_panes), or with keep_panes = true
-# leave it open to read and only retire the agent. Either way, its session log is archived first.
+# close_agent <name> [cause] — close what was opened for <name> (close_panes), its session log
+# archived first.
 # An unknown cause is refused before anything closes, and so, with goal on, is a missing one while
 # <name>'s story is still ready (its builder is giving up), and so is impossible for a story that
 # cannot be handed on (impossible_refused). A close that ends a failed build (failed_build, decided
@@ -5030,9 +4985,9 @@ CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or 
 # the story's attempts: by one, and when that build was escalate, the story becomes the lead's
 # (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
 # the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
-# hold it for the lead (held_story) when the close ends a build, or a ready verify story's open builder.
+# hold it for the lead (held_story) when the close ends a build.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why open
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -5043,13 +4998,12 @@ close_agent() {
   fi
   archive_session "$1"
   if prs="$(failed_build "$1")"; then counted=1; fi
-  open="$(agent_field "$(agent_name "$1")" pane_id)"
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
-  if [[ "${CFG_keep_panes}" == true ]]; then retire_agent "$1"; else close_panes "$1"; fi
+  close_panes "$1"
   if [[ "${cause}" == impossible ]]; then
-    # The build is cleared even when failed_build declined (a verify story, a builder gone, gh down),
+    # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
     clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs:-[]}"
     impossible_story "$1" "${prs}" "${counted}"
@@ -5057,10 +5011,9 @@ close_agent() {
   fi
   case "${cause}" in paused|cleared-on-error)
     # Held, its build cleared so it builds again once the hold is lifted, when the close ends a build
-    # (counted), or closes the open builder of a ready verify story, whose close never counts. A story
-    # whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
+    # (counted). A story whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
     # an agent builds the close says so (not held:).
-    if [[ ${counted} == 1 || ( -n "${open}" && -f "${f}" && "$(fm "${f}" kind)" == verify && "$(fm "${f}" status)" == ready ) ]]; then
+    if [[ ${counted} == 1 ]]; then
       clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
       held_story "$1" "${cause}" "${prs:-[]}" "${counted}"
     elif ! impossible_refused "$1" >/dev/null; then
@@ -5245,9 +5198,8 @@ close_panes() {
   close_tabs "$1"
 }
 
-# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken). With
-# keep_panes = true a finished agent keeps its name, so a second run reusing it (a second epic's
-# `lead`) failed and left an empty pane. herdr's holder decides first: with none, the name is free,
+# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken), so a second run
+# reusing a name still held (a second epic's `lead`) would fail and leave an empty pane. herdr's holder decides first: with none, the name is free,
 # whatever an old session says. A holder this project started is retired only when it has finished
 # (read_state: idle, its session gone, or herdr's idle or done) and refused in any other state,
 # naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
@@ -5313,11 +5265,11 @@ retire_agent() {
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
     awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
-  echo "kept $1 open (keep_panes)"
+  echo "retired $1 as ${new}"
 }
 
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
-# (a start that failed) or a retired agent (<name>-done, left open by keep_panes). Lists them; with
+# (a start that failed) or a retired agent (<name>-done, left open by retire_agent). Lists them; with
 # --yes, closes them and drops them from the tab records. Working, waiting and idle agents are never
 # touched, nor the pane this runs in. Run it when nothing is starting: a pane whose agent is still
 # starting has no agent yet, so it looks empty.
