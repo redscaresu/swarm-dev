@@ -20,7 +20,7 @@
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
-#   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, before it has a worktree, finished or stories in its repo with open PRs: it starts stacked on those; a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again
+#   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
@@ -2121,14 +2121,15 @@ When \`swarm.sh unblock\` prints \`ready: <slug> (held: merge origin/<base>, rev
 story's parents have merged and its build is kept: never run \`swarm.sh story\` for it. Its merge
 of the base is the Stacked line \`<slug>: merge origin/<base> (<parents> merged)\` that
 \`swarm.sh status\` prints for it: the same instruction, so act on that line alone, as the Stacked
-rule above says, and start at most one builder for it. With no such line, its branch has the base
-already. Then review its new head as any other story's PR.
+rule above says, and start at most one builder for it. A \`<slug>: could not check ...\` line in its
+place means nothing is known: read status again after your next wait. Only with no Stacked line for
+it at all does its branch have the base already. Then review its new head as any other story's PR.
 EOF
 }
 
 # stacked_start_rule — what unblock's (stacked on <parents>) means, for both merge modes.
 stacked_start_rule() {
-  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs."
+  printf '%s' "A story printed \`(stacked on <parents>)\` starts on its parents' branches while their PRs are still open, and its PR says \`Merge after\` theirs. A \`not stacked: <slug>\` line names a story whose old build is in the way: list it in your report for the lead."
 }
 
 # pin_rule — with merge = agent and a PR per story, review each PR at a head noted before the review.
@@ -2419,11 +2420,9 @@ build_story() {
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
   if build_exists "${src}" "${slug}"; then
     [[ -z "$(get_fm "${story}" held_by)" ]] \
-      || die "${slug} was held until its parents merged, and its build is kept in ${wt}: never start it again. Have its builder merge origin/${base} into ${branch} there, re-run the tests and push, then review it again and run swarm.sh review ${slug} <PR URL>"
+      || die "${slug} was held until its parents merged, and its build is kept in ${wt}: never start it again. Act on the Stacked line swarm.sh status prints for ${slug}, then review it again and run swarm.sh review ${slug} <PR URL>"
     die "${slug} has a build already (${branch} or ${wt} exists in ${src}): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first"
   fi
-  # A fresh build: a hold from a build since cleared is over.
-  [[ -z "$(get_fm "${story}" held_by)" ]] || set_fm "${story}" held_by
   parents="$(open_parents "${story}")"
   if [[ -n "${parents}" ]]; then stack_start "${story}" "${src}" "${wt}" "${parents}"
   else git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"; fi
@@ -3176,15 +3175,15 @@ open_pr() {
   [[ -n "${pr}" ]] && echo "${pr}"
 }
 
-# stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no worktree yet can
+# stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no build yet can
 # start on them: each is a story in its own repo, ready or in review, with an open PR (review's prs:
-# line, else gh's on story/<p>). Fails otherwise, a gh failure too. A child review held (held_by:), or
-# any story with a worktree, waits until its parents finish.
+# line, else gh's on story/<p>). Fails otherwise, a gh failure too, and a child review held
+# (held_by:) waits until its parents finish. Fails with 2 when only a build already there (its
+# worktree or story/<slug>) is in the way.
 stacked_on() {
   local story="$1" p f src
   [[ -z "$(get_fm "${story}" held_by)" ]] || return 1
   src="$(repo_dir "$(fm "${story}" repo)")" || return 1
-  ! build_exists "${src}" "$(basename "${story}" .md)" || return 1
   for p in $2; do
     f="${BOARD}/stories/${p}.md"
     [[ -f "${f}" && "$(repo_dir "$(fm "${f}" repo)")" == "${src}" ]] || return 1
@@ -3195,28 +3194,39 @@ stacked_on() {
     esac
     open_pr "${src}" "${p}" >/dev/null || return 1
   done
+  ! build_exists "${src}" "$(basename "${story}" .md)" || return 2
   echo "$2"
 }
 
 # unblock — a finished story is deleted or marked done, so a blocked story whose every depends_on
-# slug is finished, and names no hand step, is ready. So is one stacked_on its open ones. A child
-# review held keeps its build and held_by:, and its line says to merge the base in and review it
-# again. An old blocked_by line stays; nothing reads it. Prints each story it flips.
+# slug is finished, and names no hand step, is ready. So is one stacked_on its open ones; one that
+# only an old build keeps from it is printed as not stacked. A child review held keeps its worktree
+# and held_by:, and its line says to merge the base in and review it again; with its worktree gone
+# it is readied plainly, without held_by: or the prs: line the hold kept, to be built fresh. An old
+# blocked_by line stays; nothing reads it. Prints each story it flips.
 unblock() {
-  local story deps open why src
+  local story slug deps open on why src rc
   while IFS= read -r story; do
     grep -q '^status: blocked$' "${story}" || continue
+    slug="$(basename "${story}" .md)"
     deps=$(story_deps "${story}")
     [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
     open="$(open_deps "${deps}")"; why=""
-    if [[ -n "${open}" ]]; then why="stacked on $(stacked_on "${story}" "${open}")" || continue
-    elif [[ -n "$(get_fm "${story}" held_by)" ]] && src="$(repo_dir "$(fm "${story}" repo)")" \
-         && build_exists "${src}" "$(basename "${story}" .md)"; then
-      why="held: merge origin/$(story_base "${story}"), review again"
+    if [[ -n "${open}" ]]; then
+      rc=0; on="$(stacked_on "${story}" "${open}")" || rc=$?
+      [[ ${rc} -ne 2 ]] || echo "not stacked: ${slug} (its worktree or story/${slug} is already there, so it cannot start on ${open}; remove them, or let it wait until they merge)"
+      [[ ${rc} -eq 0 ]] || continue
+      why="stacked on ${on}"
+    elif [[ -n "$(get_fm "${story}" held_by)" ]]; then
+      if src="$(repo_dir "$(fm "${story}" repo)")" && [[ -d "$(worktree_for "${src}" "${slug}")" ]]; then
+        why="held: merge origin/$(story_base "${story}"), review again"
+      else
+        set_fm "${story}" held_by; set_fm "${story}" prs
+      fi
     fi
     sed -i.bak -e 's/^status: blocked$/status: ready/' "${story}" && rm -f "${story}.bak"
-    record_event unblock "$(basename "${story}" .md)"
-    echo "ready: $(basename "${story}" .md)${why:+ (${why})}"
+    record_event unblock "${slug}"
+    echo "ready: ${slug}${why:+ (${why})}"
   done < <(board stories)
 }
 
@@ -3348,7 +3358,7 @@ mark_review() {
   [[ "${f}" != "${BOARD}/stories/"* ]] || held="$(open_parents "${f}")"
   if [[ -n "${held:-}" ]]; then
     set_status "${f}" blocked "$*"; set_fm "${f}" held_by "${held}"
-    die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, merge origin/$(story_base "${f}") into it and review it again"
+    die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
   set_status "${f}" review "$*"; set_fm "${f}" held_by
   echo "review: $(basename "${f}" .md) $*"

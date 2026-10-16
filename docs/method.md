@@ -345,11 +345,12 @@ instead, so `Makefile` or `Makefile:lint` after another entry still matches. A `
 story's `repo:` does; the same file in another repo does not match. Parentheticals are dropped.
 
 **Stacked builds.** A story need not wait for its parents to merge. `swarm.sh unblock` also readies
-a blocked story that has no worktree yet when each `depends_on` slug is finished or is an open story
-in the same repo with an open PR (in `review` with a `prs:` line, or one that
-`gh pr list --head story/<p>` finds), and prints `ready: <slug> (stacked on <parents>)`. A parent
-that is blocked, has no open PR or lives in another repo keeps the story blocked, and so does a gh
-failure. `story` fetches each parent's branch and checks that its PR is still open. If one is not,
+a blocked story that has no build yet (no worktree and no `story/<slug>`) when each `depends_on` slug
+is finished or is an open story in the same repo with an open PR (in `review` with a `prs:` line, or
+one that `gh pr list --head story/<p>` finds), and prints `ready: <slug> (stacked on <parents>)`. A
+parent that is blocked, has no open PR or lives in another repo keeps the story blocked, and so does
+a gh failure. A story that only an old build keeps from starting stays blocked too, printed as
+`not stacked: <slug>` for the lead. `story` fetches each parent's branch and checks that its PR is still open. If one is not,
 the story goes back to `blocked` and nothing is made. Otherwise the worktree starts at
 `origin/story/<first parent>` with each other parent's branch merged in, events.tsv gets a
 `stacked <slug>` line, and the brief says to open the PR against the base with
@@ -358,18 +359,20 @@ conflict and their files, and leaves no worktree or branch. The overlap check sk
 parents and its own children, so neither holds the other back under `--strict`. While a parent is
 still on the board, `swarm.sh review` holds the child: it sets it `blocked` with `held_by: <parents>`,
 keeps its `prs:` line, builder, worktree and branch, puts nothing in review, and exits with
-`held: <slug> waits for <p> to merge`. A held child still counts as open in the overlap check, since
+`held: <slug> waits for <p> to merge`, pointing at the child's Stacked line for what comes next. A held child still counts as open in the overlap check, since
 its PR is. With `merge = human` the conductor then closes the child's builder with a bare
 `swarm.sh close <slug>`, which counts nothing for a blocked story; with `merge = agent` the builder
 stays open. When a parent's branch moves, the conductor tells the child to merge it in. A held child
 is readied again only once every parent has finished, as `ready: <slug> (held: merge origin/<base>,
-review again)` while its build is still there, or plainly when it is gone, so `story` builds it
-fresh. A parent squash-merges, so its commits reach the base under new hashes: the child's builder (a
-new one in its worktree, when it was closed) merges `origin/<base>`, and the child is reviewed again.
-`swarm.sh status` prints the same instruction as the child's Stacked line, and the conductor acts on
-that line alone. A review that passes clears `held_by:`, and so does clearing the build (a counted,
-impossible or paused close, or reconcile), which also drops the `prs:` line the hold kept. `story`
-refuses any story whose worktree or branch already exists, and says what to do with a held one.
+review again)` while its worktree is still there. With the worktree gone it is readied plainly,
+without `held_by:` or the `prs:` line, and `story` builds it fresh. A parent squash-merges, so its
+commits reach the base under new hashes: the child's builder (a new one in its worktree, when it was
+closed) merges `origin/<base>`, and the child is reviewed again. `swarm.sh status` prints the same
+instruction as the child's Stacked line, and the conductor acts on that line alone; a
+`could not check` line there means nothing is known yet, never that the base is in. A review that
+passes clears `held_by:`, and so does clearing the build (a counted, impossible, paused or
+cleared-on-error close), which also drops the `prs:` line the hold kept. `story` refuses any story
+whose worktree or branch already exists, and points a held one at its Stacked line.
 Parents always merge first: you are never handed a child before its parents, and `swarm.sh merge`
 refuses one too, since it merges only an item in review.
 
