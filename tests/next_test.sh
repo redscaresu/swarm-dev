@@ -58,6 +58,26 @@ expect "epic planned once its dependency is deleted" "plan-epic a" \
 expect "epic planned once its dependency is done" "plan-epic a" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \
   "item epics/b.md 'status: done'"
+# A dependency whose stories are all in review has built its code: the next epic is planned against
+# it. One ready or blocked story left holds it up.
+expect "epic planned once its dependency's stories are all in review" "plan-epic a" \
+  "item epics/a.md 'status: active' 'depends_on: [b]'" \
+  "item epics/b.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
+  "item stories/s2.md 'status: review' 'kind: code' 'epic: b'"
+expect "a ready story of its dependency holds an epic's planning" "conduct b" \
+  "item epics/a.md 'status: active' 'depends_on: [b]'" \
+  "item epics/b.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
+  "item stories/s2.md 'status: ready' 'kind: code' 'epic: b'"
+expect "a blocked story of its dependency holds an epic's planning" "gate" \
+  "item epics/a.md 'status: active' 'depends_on: [b]'" \
+  "item epics/b.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
+  "item stories/s2.md 'status: blocked' 'kind: code' 'epic: b'"
+expect "an open depends_on story holds an epic's planning" "gate" \
+  "item epics/a.md 'status: active' 'depends_on: [s]'" \
+  "item stories/s.md 'status: review' 'kind: code'"
 expect "active epic before a one-off" "conduct e1" \
   "item epics/e1.md 'status: active'" \
   "item stories/a-one-off.md 'status: ready' 'kind: code'" \
@@ -231,8 +251,8 @@ expect "stories before planning" "conduct e2" \
 # With a conductor in herdr: `wait` until it has written its report, then `collect`. A stub herdr
 # lists the agent; being idle must not count as finished. A long epic's agent name is cut at 32
 # characters, and its report is still found under the full epic name.
-expect_conductor() { # <name> <want> <write the report?> [epic]
-  local name="$1" want="$2" epic="${4:-e1}" dir got agent
+expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why matches] [setup...]
+  local name="$1" want="$2" epic="${4:-e1}" why="${5:-*}" dir got agent step
   dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
   [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
   # An older brief whose epic shares the cut name, as a finished long epic leaves behind.
@@ -243,7 +263,11 @@ expect_conductor() { # <name> <want> <write the report?> [epic]
   printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\",\"pane_id\":\"w:7\"}]}}'" > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
   [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
-  got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; got="${got%%$'\n'*}"
+  for step in "${@:6}"; do (cd "${dir}" && eval "${step}"); done
+  got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"
+  # shellcheck disable=SC2053 # the why is a glob
+  [[ "$(sed -n 2p <<< "${got}")" == ${why} ]] || got="${got%%$'\n'*} (why: $(sed -n 2p <<< "${got}"))"
+  got="${got%%$'\n'*}"
   if [[ "${got}" == "${want}" ]]; then echo "ok   ${name}"; else
     echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1)); fi
   rm -rf "${dir}"
@@ -251,6 +275,51 @@ expect_conductor() { # <name> <want> <write the report?> [epic]
 expect_conductor "idle conductor without a report is still waited on" "wait conduct-e1" no
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
+# While a conductor works, an epic whose dependency is all in review is planned first; the why names
+# the conductor to wait on in the background. With no such epic, next waits on the conductor.
+expect_conductor "a plannable epic comes before a working conductor's wait" "plan-epic a" no e1 \
+  "*conduct-e1*wait --until-report conduct-e1*" \
+  "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
+expect_conductor "a working conductor's dependent epic with a blocked story left: wait" "wait conduct-e1" no e1 "*" \
+  "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'" \
+  "item stories/s2.md 'status: blocked' 'kind: code' 'epic: e1'"
+
+# release: a fixture repo whose origin/HEAD is main, plugin.json says 1.2.0 and the local tag v1.2.0
+# is on origin/main; each setup runs after the tag, then the repo is pushed and fetched. herdr=1 runs
+# next with a stub herdr listing a working conductor.
+expect_release() { # <name> <want> <herdr: 0|1> <setup>...
+  local name="$1" want="$2" herdr="$3" dir got step; shift 3
+  dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+  (
+    cd "${dir}" && git init -q && git init -q --bare origin.git && git remote add origin "${dir}/origin.git"
+    printf 'origin.git\n' > .git/info/exclude
+    mkdir -p docs/stories .claude-plugin bin && echo "# Stories" > docs/stories/README.md
+    echo '{"name":"x","version":"1.2.0"}' > .claude-plugin/plugin.json
+    git add -A && git -c user.name=t -c user.email=t@t commit -q -m init && git tag v1.2.0
+    for step in "$@"; do eval "${step}"; done
+    git push -q origin HEAD:main && git fetch -q origin && git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+    mkdir -p .swarm/briefs .swarm/state && touch .swarm/briefs/conduct-e1.md && echo "w:7 conduct-e1" > .swarm/state/tab
+    printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"working\",\"pane_id\":\"w:7\"}]}}'" > bin/herdr
+    chmod +x bin/herdr
+  )
+  if [[ ${herdr} == 1 ]]; then got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"
+  else got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; fi
+  got="${got%%$'\n'*}"
+  if [[ "${got}" == "${want}" ]]; then echo "ok   ${name}"; else
+    echo "FAIL ${name}: want '${want}', got '${got}'"; fails=$((fails + 1)); fi
+  rm -rf "${dir}"
+}
+COMMIT="git add -A && git -c user.name=t -c user.email=t@t commit -q -m change"
+expect_release "a commit outside the board since the tag: release" release 0 "echo x > bin/x" "${COMMIT}"
+expect_release "only board commits since the tag: not release" "done" 0 "echo x > docs/stories/README.md" "${COMMIT}"
+expect_release "no plugin.json: not release" "done" 0 "git rm -q .claude-plugin/plugin.json" "echo x > bin/x" "${COMMIT}"
+expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" "${COMMIT}" "git tag -d v1.2.0 >/dev/null"
+# shellcheck disable=SC2016 # the setup is eval'd inside the fixture
+expect_release "the tag on a commit off origin/main: not release" "done" 0 "echo x > bin/x" "${COMMIT}" \
+  'git tag -f v1.2.0 "$(git -c user.name=t -c user.email=t@t commit-tree "HEAD^{tree}" -m side)" >/dev/null'
+expect_release "a working conductor's wait comes before release" "wait conduct-e1" 1 "echo x > bin/x" "${COMMIT}"
 
 # The stub lists this project's conductor (and its retired name) in panes the state records, as
 # next_pane does: wait addresses an agent by this project's pane, never by a bare name. herdr says

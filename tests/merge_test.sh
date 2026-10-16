@@ -312,6 +312,20 @@ merge --board "${URL}"; refused "--board with a file renamed onto the board" "ch
 check "--board reads the files with --paginate" grep -q -- "--paginate repos/o/r/pulls/7/files" "${ROOT}/gh.log"
 fresh; rm "${S}"; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
 merge --board "${URL}"; refused "--board for a PR outside the board's repo" "is not in other/repo, the board's repo"
+# --release: a PR that changes only .claude-plugin/plugin.json, in the project's own repo, merges with
+# no story listing it and runs no reconcile; any other file, or another repo, is refused.
+release_pr() { fresh; rm "${S}"; echo '[{"filename":".claude-plugin/plugin.json","status":"modified"}]' > "${FX}/files"; }
+release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge --release "${URL}"
+is "--release: exits 0" 0 "${rc}"
+check "--release: merged" merged
+is "--release: merge and main-ci under the URL, no reconcile" "merge ${URL} ok|main-ci ${URL} ok" "$(events | paste -sd'|' -)"
+release_pr; echo '[{"filename":".claude-plugin/plugin.json"},{"filename":"bin/swarm.sh"}]' > "${FX}/files"; echo 2 > "${FX}/nfiles"
+merge --release "${URL}"; refused "--release with another file" "changes bin/swarm.sh, not only .claude-plugin/plugin.json"
+release_pr; echo '[{"filename":"docs/stories/s.md"}]' > "${FX}/files"
+merge --release "${URL}"; refused "--release with a board file" "changes docs/stories/s.md, not only"
+release_pr; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
+merge --release "${URL}"; refused "--release for a PR outside the project's repo" "is not in other/repo, the project's repo"
+release_pr; merge --release --board "${URL}"; refused "--release with --board" "do not go together"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 

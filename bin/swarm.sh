@@ -27,7 +27,7 @@
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
-#   swarm.sh merge [--board] [--head <sha>] <pr-url>        merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR
+#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; --board: a board-only PR; --release: a PR that changes only .claude-plugin/plugin.json, no reconcile
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
@@ -2690,18 +2690,21 @@ epic_has_stories() {
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
-#   plan-epic <epic>  an active epic has no stories yet
+#   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
+#                     (plannable_epic); while a conductor works, this comes before its wait
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   hld <hld>         an HLD is still a draft
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
 #                     reset, or drops it
+#   release           origin/<base> has commits since the tag of plugin.json's version that change a
+#                     file outside the board (release_due): the lead cuts a release
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next HLD with /hld <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting="" b open when held
+  local f slug epic kind story_epic src buildable="" waiting="" when held n tag base
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -2714,6 +2717,9 @@ next_step() {
         # As in wait, only an idle session is auth: wait returns it at once, and /swarm-dev:swarm stops there
         # for the user's /login.
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
+      elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
+        echo "plan-epic ${epic}"
+        echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
       fi
@@ -2744,18 +2750,8 @@ next_step() {
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
     echo "story ${story_epic}"; echo "${story_epic} is ready and belongs to no epic"; return
   done <<< "${buildable}"
-  while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == active ]] || continue
-    epic=$(basename "${f}" .md)
-    epic_has_stories "${epic}" && continue
-    # Stories are scoped against the code its dependencies build, so wait until they are done.
-    open=0
-    for b in $(sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' "${f}" | tr ',' ' ' | tr -d "\"'"); do
-      if open_item "${BOARD}/stories/${b}.md" || open_item "${BOARD}/epics/${b}.md"; then open=1; fi
-    done
-    [[ ${open} -eq 0 ]] || continue
-    echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return
-  done < <(board epics)
+  epic="$(plannable_epic)"
+  if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
   while IFS= read -r f; do
     slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -2783,11 +2779,57 @@ next_step() {
     fi
     return
   done < <(board stories)
+  read -r n tag base <<< "$(release_due)"
+  if [[ -n "${n}" ]]; then
+    echo "release"; echo "origin/${base} has ${n} commit(s) since ${tag} that change files outside the board: cut a release"; return
+  fi
   waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
+}
+
+# plannable_epic — the first active epic with no stories whose depends_on holds nothing up
+# (dep_holds), or nothing.
+plannable_epic() {
+  local f epic b
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == active ]] || continue
+    epic=$(basename "${f}" .md)
+    epic_has_stories "${epic}" && continue
+    for b in $(story_deps "${f}"); do dep_holds "${b}" && continue 2; done
+    echo "${epic}"; return
+  done < <(board epics)
+}
+
+# dep_holds <slug> — true while an epic's depends_on slug holds up its planning: an open story, or an
+# open epic with no stories or with one not yet in review. Stories are scoped against the code the
+# dependency builds, and code in review is code that exists.
+dep_holds() {
+  local f n=0
+  open_item "${BOARD}/stories/$1.md" && return 0
+  open_item "${BOARD}/epics/$1.md" || return 1
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" epic)" == "$1" ]] || continue
+    case "$(fm "${f}" status)" in review) n=1 ;; done) ;; *) return 0 ;; esac
+  done < <(board stories)
+  [[ ${n} -eq 0 ]]
+}
+
+# release_due — "<commits> v<version> <base>" when the local origin/HEAD names <base>, origin/<base>
+# has .claude-plugin/plugin.json, the tag v<its version> exists here and is on origin/<base>, and
+# commits since it change a file outside the board (when the board is in the repo); else nothing.
+# Local refs only: reconcile has just pulled.
+release_due() {
+  local base version ex="" n
+  base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
+  base="${base#origin/}"
+  version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | json "d['version']" 2>/dev/null)" || return 0
+  git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
+  [[ ${BOARD_IN_REPO} != 1 ]] || ex=":(exclude)${BOARD#"${PROJECT_DIR}"/}"
+  n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex:+"${ex}"})" || return 0
+  [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
 }
 
 # is_escalated <story-file> — true for a story lead_block handed on: ready, kind: lead, with
@@ -3400,27 +3442,29 @@ merged_state() {
 # merge_fail <why> — merge's one line for a refusal, then stop. main logs nothing for merge.
 merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 
-# merge [--board] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned: refuse unless
-# merge_caller allows it, the head is <sha> (with --head), a story or epic in review lists the URL
-# (with --board instead: the PR is in the board's own repo and every path it changes, old or new, is
-# on the board), and ci_gate passes on the head.
+# merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
+# refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
+# lists the URL (with --board instead: the PR is in the board's own repo and every path it changes,
+# old or new, is on the board; with --release: the PR is in the project's own repo and every path it
+# changes is .claude-plugin/plugin.json), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
-# --admin or --auto. Then wait for CI on the merge commit and, without --board, run
+# --admin or --auto. Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
-# the slug (or the URL with --board): merge <why> for a refusal, merge unconfirmed (...) when gh pr
+# the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local board="" want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
   while [[ $# -gt 1 ]]; do
     case "$1" in
-      --board) board=1; shift ;;
+      --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
       --head) want="$2"; shift 2 ;;
       *) break ;;
     esac
   done
   url="${1:-}"; MERGE_TARGET="${url:--}"
-  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board] [--head <sha>] <pr-url>"
+  [[ -z "${clash}" ]] || merge_fail "--board and --release do not go together"
+  [[ $# -eq 1 ]] || merge_fail "usage: swarm.sh merge [--board|--release] [--head <sha>] <pr-url>"
   [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] || merge_fail "not a PR URL: ${url}"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
   [[ -z "${want}" || "${want}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "--head takes a full 40-character SHA, not '${want}'"
@@ -3434,7 +3478,7 @@ merge_pr() {
     || merge_fail "gh gave no head SHA, base branch or file count for ${url}"
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
-  if [[ -z "${board}" ]]; then
+  if [[ -z "${only}" ]]; then
     # Any item listing the URL may be the one in review.
     while IFS= read -r p; do
       [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
@@ -3445,15 +3489,25 @@ merge_pr() {
     if [[ -z "${f}" ]]; then MERGE_TARGET="$(basename "${any}" .md)"; merge_fail "${MERGE_TARGET} is $(fm "${any}" status), not review"; fi
     MERGE_TARGET="$(basename "${f}" .md)"
   else
-    [[ ${BOARD_IN_REPO} == 1 ]] || merge_fail "--board: the board is not in the project's repo"
-    origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || merge_fail "--board: ${PROJECT_DIR}, the board's repo, has no origin"
+    whose="the project's"
+    if [[ "${only}" == --board ]]; then
+      [[ ${BOARD_IN_REPO} == 1 ]] || merge_fail "--board: the board is not in the project's repo"
+      whose="the board's"
+    fi
+    origin="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || merge_fail "${only}: ${PROJECT_DIR}, ${whose} repo, has no origin"
     own="$(gh repo view "${origin}" --json nameWithOwner | json "d['nameWithOwner'].lower()")" \
-      || merge_fail "--board: gh cannot tell which GitHub repo ${origin} is"
-    [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "--board: ${url} is not in ${own}, the board's repo"
+      || merge_fail "${only}: gh cannot tell which GitHub repo ${origin} is"
+    [[ "$(tr '[:upper:]' '[:lower:]' <<< "${repo}")" == "${own}" ]] || merge_fail "${only}: ${url} is not in ${own}, ${whose} repo"
     rel="${BOARD#"${PROJECT_DIR}"/}"
     # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
-    info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "--board: cannot list every file ${url} changes: ${info}"
-    while IFS= read -r p; do [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"; done <<< "${info}"
+    info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "${only}: cannot list every file ${url} changes: ${info}"
+    while IFS= read -r p; do
+      if [[ "${only}" == --board ]]; then
+        [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
+      else
+        [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
+      fi
+    done <<< "${info}"
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
@@ -3479,7 +3533,7 @@ merge_pr() {
   fi
   record_event main-ci "${MERGE_TARGET}" "${why}"
   echo "main-ci: ${why}"
-  if [[ -z "${board}" ]]; then
+  if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
     wait $! || {
