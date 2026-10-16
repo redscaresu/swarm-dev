@@ -4028,10 +4028,11 @@ dash() {
     [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
   fi
   for ((i = 0; i < ${#DASH_DIRS[@]}; i++)); do
-    d="$(cd "${DASH_DIRS[i]}" 2>/dev/null && pwd -P)" && [[ -f "${d}/.claude/swarm/config" ]] \
+    d="$(cd "${DASH_DIRS[i]}" 2>/dev/null && pwd -P)" || d=""
+    [[ -n "${d}" && -f "${d}/.claude/swarm/config" ]] \
       || die "dash --project ${DASH_DIRS[i]}: not a swarm project (no .claude/swarm/config)"
-    b="$(SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" config board_dir)" && [[ -f "${b}/stories/README.md" ]] \
-      || die "dash --project ${DASH_DIRS[i]}: no board at ${b}; run swarm.sh init there"
+    b="$(SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" config board_dir)" || b=""
+    [[ -n "${b}" && -f "${b}/stories/README.md" ]] || die "dash --project ${DASH_DIRS[i]}: no board at ${b}; run swarm.sh init there"
     DASH_DIRS[i]="${d}"
   done
   [[ ! -t 1 ]] || tty=1
