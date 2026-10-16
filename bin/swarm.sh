@@ -826,15 +826,15 @@ record_finding() {
   local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
     || die "usage: swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <one line>"
-  if [[ "${outcome}" == declined ]]; then
-    [[ "${FINDING_REASON:-}" =~ ^[a-z-]+$ && " ${FINDING_REASONS} " == *" ${FINDING_REASON} "* ]] \
-      || die "--declined needs a reason, one of: ${FINDING_REASONS}"
-    reason=$'\t'"${FINDING_REASON}"
-  fi
   # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
   if [[ "${reviewer}" == escaped ]]; then
     [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined: drop --declined"
     outcome=escaped
+  fi
+  if [[ "${outcome}" == declined ]]; then
+    [[ "${FINDING_REASON:-}" =~ ^[a-z-]+$ && " ${FINDING_REASONS} " == *" ${FINDING_REASON} "* ]] \
+      || die "--declined needs a reason, one of: ${FINDING_REASONS}"
+    reason=$'\t'"${FINDING_REASON}"
   fi
   [[ $# -lt 5 || ( "${reviewer}" =~ ^[a-z-]+$ && " ${FINDING_REVIEWERS} " == *" ${reviewer} "* ) ]] \
     || die "reviewer '${reviewer}' must be one of: ${FINDING_REVIEWERS}"

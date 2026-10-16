@@ -68,6 +68,8 @@ done
 # An escaped defect is no finding review raised: its outcome is escaped, and it is never declined.
 check "--reviewer escaped is logged in field 6, with outcome escaped" "escaped	escaped" "$(logged --reviewer escaped rev-kind o/r#93 t)"
 check "--declined with --reviewer escaped is refused" "refused" "$(refused --declined nit --reviewer escaped rev-kind o/r#93 t)"
+check "--declined with no reason and --reviewer escaped says escaped is never declined" "refused|yes" \
+  "$(refused --declined --reviewer escaped rev-kind o/r#93 t)|$(has "never declined" "$(sw log-finding --declined --reviewer escaped rev-kind o/r#93 t || true)")"
 for pr in o/r#95 o/r#96 o/r#97; do sw log-finding --reviewer escaped late-kind "${pr}" t >/dev/null; done
 check "escaped defects in 3 PRs are a lesson candidate" "yes" "$(has "candidate late-kind: fixed in 3 PRs" "$(sw lessons)")"
 # A declined row carries its reason as a 7th field; a missing or unknown reason is refused, naming the three.
