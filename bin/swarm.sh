@@ -3092,7 +3092,7 @@ builder_state() {
 # story can be built again. With no item merged, it still pulls the main checkout when that is behind
 # its upstream (a PR merged with no review item), and dies as a failed pull below does.
 reconcile() {
-  local f slug url state closed waiting urls builder merged=()
+  local f slug url state closed waiting urls builder unread=0 merged=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -3101,7 +3101,7 @@ reconcile() {
     closed=""; waiting=0
     for url in "${urls[@]}"; do
       if ! state="$(gh pr view "${url}" --json state | json "d['state']")"; then
-        echo "cannot read ${url}; ${slug} stays in review"; waiting=1; continue
+        echo "cannot read ${url}; ${slug} stays in review"; waiting=1; unread=1; continue
       fi
       case "${state}" in
         MERGED) ;;
@@ -3133,6 +3133,11 @@ reconcile() {
   done < <(board stories; board epics)
   if [[ ${#merged[@]} -eq 0 ]]; then
     # A PR merged with no review item (a board PR, a one-off) still leaves the main checkout behind.
+    # Not after an unread PR: if it merged, the pull would take its file before its build is cleared.
+    if [[ ${unread} == 1 ]]; then
+      echo "reconcile: not pulling ${PROJECT_DIR}: a PR in review could not be read; run reconcile again" >&2
+      return 0
+    fi
     ! behind_upstream || pull_board_repo \
       || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
     return 0
@@ -3163,10 +3168,12 @@ reconcile() {
 }
 
 # behind_upstream — true when the board is in the project repo and its main checkout, once fetched, is
-# behind its upstream.
+# behind its upstream. A failed fetch is false, said on stderr.
 behind_upstream() {
-  [[ ${BOARD_IN_REPO} == 1 ]] && git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null \
-    && git -C "${PROJECT_DIR}" fetch -q && [[ -n "$(git -C "${PROJECT_DIR}" rev-list -1 'HEAD..@{upstream}')" ]]
+  [[ ${BOARD_IN_REPO} == 1 ]] && git -C "${PROJECT_DIR}" rev-parse -q --verify '@{upstream}' >/dev/null || return 1
+  git -C "${PROJECT_DIR}" fetch -q \
+    || { echo "reconcile: cannot fetch ${PROJECT_DIR}, so it may be behind its upstream" >&2; return 1; }
+  [[ -n "$(git -C "${PROJECT_DIR}" rev-list -1 'HEAD..@{upstream}')" ]]
 }
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)

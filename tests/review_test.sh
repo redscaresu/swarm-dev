@@ -341,6 +341,16 @@ setup_behind bn; echo changed >> "${ROOT}/bn/README"; before="$(tree bn)"   # a 
 out="$(at bn reconcile; echo "exit $?")"
 check "no item merged, the base not ahead: reconcile prints nothing, and HEAD is unchanged" "exit 0|same" \
   "${out}|$([[ "$(tree bn)" == "${before}" ]] && echo same || echo differs)"
+# g is in review and gh cannot read its PR: if it merged, the pull would take g before its build is cleared.
+setup_behind bu ahead; at bu review g "${U}/99" >/dev/null
+out="$(at bu reconcile; echo "exit $?")"
+check "no item merged, a PR unread: reconcile does not pull, and says why" "yes|exit 0|$(git -C "${ROOT}/bu.git" rev-parse main~1)|there" \
+  "$(has "reconcile: not pulling ${ROOT}/bu: a PR in review could not be read" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bu" rev-parse HEAD)|$([[ -e "${ROOT}/bu/docs/stories/g.md" ]] && echo there || echo gone)"
+# Offline: the fetch fails, so reconcile cannot tell it is behind, says so, and exits 0.
+setup_behind bf ahead; git -C "${ROOT}/bf" remote set-url origin "${ROOT}/missing.git"
+out="$(at bf reconcile; echo "exit $?")"
+check "no item merged, a failed fetch: reconcile says the checkout may be behind, and exits 0" "yes|exit 0" \
+  "$(has "reconcile: cannot fetch ${ROOT}/bf, so it may be behind its upstream" "${out}")|$(tail -1 <<< "${out}")"
 
 # --- The merge guard: every Claude agent starts unable to run gh pr merge, a conductor with merge = agent too.
 "${GIT[@]}" init -q --bare "${ROOT}/svc.git"
