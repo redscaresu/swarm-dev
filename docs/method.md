@@ -728,17 +728,6 @@ pane it cannot identify is refused.
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
 
-**One PR per epic.** With `pr_per = epic`, the first story of an epic built in a repo creates
-`epic/<epic>` there from the repo's base branch, and adds the repo to the epic's `repos:` line.
-Each story branches from `epic/<epic>`, and its builder pushes `story/<slug>` and opens no PR. The
-conductor reviews each branch, merges it into `epic/<epic>` with `git merge --no-ff`, runs the tests
-and the epic's `check:`, and finishes the story. When the last story is in, it runs `swarm.sh
-codex-review <base>` over the whole epic (`swarm.sh base <repo>` prints the base) and opens one PR per repo, written
-for a reader who knows nothing of the stories. Those PRs then go through the same green and merge
-rules as any other. If a conductor stops before the PRs, `next` sees an active epic with a
-`repos:` line and no open story, and starts a fresh one, which picks up there. Stories outside any
-epic keep their own PR.
-
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 
 **Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and

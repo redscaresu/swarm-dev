@@ -188,17 +188,8 @@ printf '%s\n' \
 check "findings fixed and declined, by reviewer (unknown for 4- and 5-field rows), each counted on one build" \
   "$(rows_of "${Q}" shared | cut -f14,33-35)" "$(printf '%s\n' $'1\t0\tcodex:1\t' $'2\t2\tcodex:1 unknown:1\tcode-review:1 unknown:1')"
 rm "${Q}/.swarm/findings.tsv"
-check "with pr_per = story, an epic story's builds take their PR from their logs too" \
+check "an epic story's builds take their PR from their logs too, never the epic branch's PR" \
   "$(two | grep in-epic | cut -f3 | paste -sd, -)" ","
-mkdir -p "${Q}/.claude/swarm"; echo "pr_per = epic" > "${Q}/.claude/swarm/config"
-check "with pr_per = epic, every build of an epic story gets the epic's PR, and the rest are unchanged" \
-  "$(two)" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
-    "retried	opus	${U}/1	CLOSED	1" "retried	fable	${U}/2	MERGED	2" \
-    "shared	opus	${U}/3	OPEN	1" "shared	opus	${U}/3	OPEN	2" \
-    "late	opus			1" "late	fable	${U}/4	OPEN	2" "foreign	opus			1" \
-    "in-epic	opus	${U}/10	OPEN	1" "in-epic	fable	${U}/10	OPEN	2")"
-printf '%s\t%s\n' "${U}/10" MERGED > "${dir}/prs/epic_e1"
-check "and MERGED once the epic's PR merges" "$(two | grep in-epic | cut -f4 | paste -sd' ' -)" "MERGED MERGED"
 
 # --- Kind and story_merged per story, in a fourth project with the same gh: an escalated story
 # (kind: lead with escalated_from:, either a kind or the no-kind-line value) keeps the kind it was

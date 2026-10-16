@@ -244,8 +244,8 @@ item i1 "status: ready" "kind: code" "attempts: 1"; started i1 w:p41; cs i1 impo
 is "close i1 impossible, its builder open: kind: lead, escalated_from: code, attempts: 1, still ready" "lead|code|1|ready" "$(state i1)"
 b="$(block i1)"
 # shellcheck disable=SC2016 # the backticks are the block's
-is "its block is the lead's, with no **You:** step: re-scope Done when and reset, or drop; the epic branch step, and the PR" "0|yes|yes|yes|yes" \
-  "$(grep -c '\*\*You:\*\*' <<< "${b}")|$(grep -qF -- '- Re-scope its **Done when**' <<< "${b}" && echo yes)|$(grep -qF -- '- Or drop it: run `swarm.sh drop i1 <reason>`' <<< "${b}" && echo yes)|$(grep -qF 'with pr_per = epic, then merge the base into epic/<epic>' <<< "${b}" && echo yes)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
+is "its block is the lead's, with no **You:** step: re-scope Done when and reset, or drop; no epic branch step, and the PR" "0|yes|yes|no|yes" \
+  "$(grep -c '\*\*You:\*\*' <<< "${b}")|$(grep -qF -- '- Re-scope its **Done when**' <<< "${b}" && echo yes)|$(grep -qF -- '- Or drop it: run `swarm.sh drop i1 <reason>`' <<< "${b}" && echo yes)|$(grep -qF 'epic/<epic>' <<< "${b}" && echo yes || echo no)|$(grep -qx -- "- ${U}/9" <<< "${b}" && echo yes)"
 is "and its build is cleared away" "" "$(left i1)"
 # impossible hands a ready story an agent builds to the lead, and clears its worktree and branches so
 # a reset builds it again, even when the close finds no build to count: with no builder open, gh
