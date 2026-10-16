@@ -4173,12 +4173,18 @@ dash_base_ref() {
 # PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), each
 # open story's open story/<slug> PR in that story's own repo (a builder's PR, which its story lists
 # only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
-# view per PR that matches, each with the same limit; and how many stories of each epic finished
-# (dash_finished).
+# view per PR that matches, each with the same limit; how many stories of each epic finished
+# (dash_finished); and how many distinct stories merged in the 7 days before now (DASH_NOW, else the
+# clock): `swarm.sh outcomes --since <7 days ago>` read by column name, a slug counted when its
+# merged_at falls in those 7 days. outcomes asks gh about every story built that week, which takes
+# a minute on a busy project, so it runs detached (5 minutes at most) and its output is kept beside
+# the cache: a copy over 10 minutes old starts a new run, and the old copy is read meanwhile. With no
+# copy yet, a one-shot dash waits for it until the gh views end or for 10 seconds, whichever is
+# later; a watch (DASH_SLOW_WAIT=0) never waits. No copy, or no gh, leaves the count out (dash shows ?).
 dash_slow() {
   local cache f r urls pairs
-  # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
-  cache="${TMPDIR:-/tmp}/swarm-dash-3-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  # -4: the cache gained the merged line; a name of its own, so an older swarm.sh's cache is never read.
+  cache="${TMPDIR:-/tmp}/swarm-dash-4-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
   if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
     urls="$( { board stories; board epics; } | while IFS= read -r f; do
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
@@ -4190,8 +4196,10 @@ dash_slow() {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
-      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 - ${urls} <<'PY'
-import json, os, signal, subprocess, sys
+      if command -v gh >/dev/null 2>&1; then
+        SWARM_PAIRS="${pairs}" SWARM_SELF="${SWARM_HOME}/bin/swarm.sh" SWARM_AGENTS="${AGENTS_LOG}" SWARM_OUTCOMES="${cache}-outcomes" \
+          python3 - ${urls} <<'PY'
+import datetime, json, os, signal, subprocess, sys, time
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 def gh(args):
     p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
@@ -4201,6 +4209,39 @@ def gh(args):
         os.killpg(p.pid, signal.SIGKILL); p.communicate()
         return None
     return out if p.returncode == 0 else None
+NOW = float(os.environ.get("DASH_NOW") or time.time())
+WEEK = 7 * 86400
+OUT = os.environ["SWARM_OUTCOMES"]
+def age(path):
+    try:
+        return time.time() - os.path.getmtime(path)
+    except OSError:
+        return None
+# The detached run: outcomes into a temporary file, renamed into place once it ends well.
+JOB = """
+import os, signal, subprocess, sys
+out, cmd = sys.argv[1], sys.argv[2:]
+p = subprocess.Popen(cmd, stdout=open(out + ".tmp", "w"), stderr=subprocess.DEVNULL, start_new_session=True)
+try:
+    ok = p.wait(timeout=300) == 0
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL); ok = False
+if ok:
+    os.replace(out + ".tmp", out)
+for f in (out + ".tmp", out + ".run"):
+    if os.path.exists(f):
+        os.remove(f)
+"""
+built = os.path.exists(os.environ["SWARM_AGENTS"])   # no agents.tsv: nothing was built, so nothing merged
+job = None
+stale = age(OUT) is None or age(OUT) >= 600
+running = age(OUT + ".run") is not None and age(OUT + ".run") < 600   # a run left behind by a crash is retried after 10 minutes
+if built and stale and not running:
+    open(OUT + ".run", "w").close()
+    since = (datetime.date.fromtimestamp(NOW) - datetime.timedelta(days=7)).isoformat()
+    job = subprocess.Popen([sys.executable, "-c", JOB, OUT, os.environ["SWARM_SELF"], "outcomes", "--since", since],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+deadline = time.time() + 10
 for url in sys.argv[1:]:
     out = gh(["pr", "view", url, "--json", FIELDS])
     if out is not None:
@@ -4226,6 +4267,24 @@ for repo, mine in slugs.items():
             out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
             if out is not None:
                 print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
+while job and job.poll() is None and age(OUT) is None and time.time() < deadline and os.environ.get("DASH_SLOW_WAIT") != "0":
+    time.sleep(0.1)
+try:
+    out = open(OUT).read() if built else ""
+except OSError:
+    out = None
+if out is not None:
+    rows = [l.split("\t") for l in out.splitlines()]
+    col = {n: i for i, n in enumerate(rows[0])} if rows else {}
+    slugs = set()
+    for r in rows[1:]:
+        try:
+            slug, t = r[col["slug"]], datetime.datetime.fromisoformat(r[col["merged_at"]].replace("Z", "+00:00")).timestamp()
+        except (KeyError, IndexError, ValueError):
+            continue
+        if 0 <= NOW - t <= WEEK:
+            slugs.add(slug)
+    print(f"merged\t{len(slugs)}")
 PY
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
@@ -4234,6 +4293,7 @@ PY
   DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
   DASH_HEADS="$(awk -F'\t' '$1 == "head" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
+  DASH_MERGED="$(awk -F'\t' '$1 == "merged" { print $2 }' "${cache}" 2>/dev/null || true)"
 }
 
 # dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
@@ -4330,6 +4390,8 @@ dash_watch() {
   # The installed copy this runs from, if it is one: its scope and project, to re-read each frame. A
   # dev checkout matches no entry, so it never jumps to the installed copy.
   IFS=$'\t' read -r inst path ver <<< "$(dash_installed)"
+  # A frame never waits for dash_slow's outcomes run, nor does each --project's frame.
+  export DASH_SLOW_WAIT=0
   if [[ ${tty} == 1 ]]; then
     trap 'printf "\033[?25h\033[?1049l"' EXIT
     printf '\033[?1049h\033[?25l'
@@ -4419,11 +4481,12 @@ dash_reexec() {
   SWARM_PROJECT="${PROJECT_DIR}" exec "${script}" "$@"
 }
 
-# dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading) and who
-# its step waits on, tab-separated, in one fork. The last is `held` for a held story (held_for: too), `escalated` for an escalated story
+# dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading), who
+# its step waits on and its first **You:** line's text, tab-separated, in one fork. Who is `held` for a held story (held_for: too), `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
 # else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
-# names the convention, "has no **You:** step", is no step), else empty. The keys are read from the front matter only (a leading ---, up to the next; CRLF
+# names the convention, "has no **You:** step", is no step), else empty. The text is what follows the
+# first step's **You:**, tabs as spaces. The keys are read from the front matter only (a leading ---, up to the next; CRLF
 # tolerated), by fm's rule: a key's first line wins, an empty value too. dash_finished's front()
 # reads them the same way.
 dash_fields() {
@@ -4436,9 +4499,10 @@ dash_fields() {
     n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
     n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
     n == 1 && !hh && sub(/^held_for: */, "") { hh = 1; h = $0; next }
-    n != 1 && /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/ { y = 1 }
+    n != 1 && !y && match($0, /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/) {
+      y = 1; yt = substr($0, RSTART + RLENGTH); gsub(/\t/, " ", yt); sub(/^ +/, "", yt); sub(/ +$/, "", yt) }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")) }' "$1"
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")), yt }' "$1"
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -4446,13 +4510,13 @@ dash_fields() {
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
 # session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift=0 commits="" f d r x
+  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)" \
       && workspaces="$(herdr workspace list 2>/dev/null)"; } || agents=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
-  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you.
+  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text.
   for d in hld epics stories; do
     while IFS= read -r f; do
       r="$(basename "${f}" .md)"; x="$(dash_fields "${f}")"
@@ -4483,8 +4547,12 @@ for a in agents:
   for r in $(roles); do policies+="${r} $(policy "${r}")"$'\n'; done
   if [[ ${PROJECT_IS_GIT} == 1 ]]; then
     merges="$(git -C "${PROJECT_DIR}" log --first-parent --merges -n 40 --format='%cI%x09%an%x09%s' "$(dash_base_ref)" 2>/dev/null || true)"
-    # Uncommitted board edits in the main checkout; no optional locks, so status writes no index.
-    drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" status --porcelain --untracked-files=all -- "${BOARD}" 2>/dev/null | grep -c . || true)"
+    # The board files edited and not committed in the main checkout, a rename by its new name, each
+    # relative to the board; no optional locks, so status writes no index.
+    drift="$(GIT_OPTIONAL_LOCKS=0 git -C "${PROJECT_DIR}" -c core.quotePath=false status --porcelain --untracked-files=all -- "${BOARD}" 2>/dev/null \
+      | cut -c4- | sed 's/.* -> //' || true)"
+    x="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null || true)"
+    [[ -z "${drift}" ]] || drift="$(while IFS= read -r f; do printf '%s\n' "${f#"${x}"}"; done <<< "${drift}")"
   fi
   # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
   # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
@@ -4494,11 +4562,11 @@ for a in agents:
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
-  DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
+  DASH_FINISHED="${DASH_FINISHED:-}" DASH_MERGED="${DASH_MERGED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
   DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - <<'PY'
-import collections, datetime, glob, itertools, json, os, re, time
+import collections, datetime, glob, itertools, json, os, re, subprocess, time
 E = os.environ
 exec(E["SWARM_REPORT_PY"])
 exec(E["SWARM_PANES_PY"])
@@ -4578,8 +4646,8 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you (dash_fields').
-board = [(l.split("\t") + [""] * 10)[:10] for l in lines("DASH_BOARD")]
+# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text (dash_fields').
+board = [(l.split("\t") + [""] * 11)[:11] for l in lines("DASH_BOARD")]
 stories = [b for b in board if b[0] == "stories"]
 story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
@@ -4805,12 +4873,20 @@ for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
 
 # Needs you: only what you act on, each as a short action. With lead = session a lead session acts
 # for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft HLD) and
-# the rest goes to the lead's queue (lq); with lead off, lq is needs you.
+# the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
+# **You:** step only the first is listed, with +N more for the rest (more).
 need, blocked, later, green, need_slugs = [], 0, 0, 0, set()
 LEAD = E.get("DASH_LEAD") == "session"
 queue = []
 lq = queue if LEAD else need
 bang = [sym("look")]
+waiting = []   # (dir, slug) of the board item each row waits on, where it names one: the first light's age
+yours, more = None, 0
+
+def add(rows, row, item=None):
+    rows.append(row)
+    if item:
+        waiting.append(item)
 
 def story_title(slug):
     title = (story_by_slug.get(slug) or [""] * 10)[8]
@@ -4827,43 +4903,60 @@ for l in lines("DASH_WAITING"):
     m = re.match(r"awaiting your merge: (epic )?(\S+) ?(.*)$", l)
     if m:
         what = ("epic " if m.group(1) else "") + m.group(2)
+        item = ("epics" if m.group(1) else "stories", m.group(2))
         urls = list(URL.finditer(m.group(3)))
         if not urls:
-            lq.append(bang + [(f"merge {what}: no PR on its file", "")])
+            add(lq, bang + [(f"merge {what}: no PR on its file", "")], item)
         for u in urls:
             st = pr_state(u.group(0))
             if st is None:
-                lq.append(bang + [(f"merge {what}: ", ""), (u.group(0), "dim")])
+                add(lq, bang + [(f"merge {what}: ", ""), (u.group(0), "dim")], item)
                 continue
             green += st[0] == "done"
-            lq.append(bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")])
+            add(lq, bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")], item)
         continue
     m = re.match(r"(\S+): (\S+)$", l)
     if m:
-        need_slugs.add(m.group(2))
-        you = (story_by_slug.get(m.group(2)) or [""] * 10)[9] == "you"
-        (need if you else lq).append(bang + [(f"run {m.group(1)} story {m.group(2)}{story_title(m.group(2))}", "")])
+        slug = m.group(2)
+        need_slugs.add(slug)
+        b = story_by_slug.get(slug) or [""] * 11
+        row = bang + [(f"run {m.group(1)} story {slug}{story_title(slug)}", ""), ("  waits for: ", "dim")]
+        if b[9] != "you":
+            add(lq, row + [("the lead", "")], ("stories", slug))
+        elif yours is None:
+            yours = row + [("you" + (f": {b[10]}" if b[10] else ""), "")]
+            add(need, yours, ("stories", slug))
+        else:
+            more += 1
+            waiting.append(("stories", slug))
     else:
         lq.append(bang + [(l, "")])
+if more:
+    yours.append((f"  +{more} more", "dim"))
 # An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
 # leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left, except for a
 # held story, whose hold reset always lifts (as next says).
 if LEAD:
-    queue += [bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
-                      (("" if b[1] in was_reset and b[9] != "held" else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")]
-              for b in stories if b[2] == "ready" and b[7] == "lead" and b[9] in ("escalated", "held")]
+    for b in stories:
+        if b[2] == "ready" and b[7] == "lead" and b[9] in ("escalated", "held"):
+            add(queue, bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
+                               (("" if b[1] in was_reset and b[9] != "held" else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")],
+                ("stories", b[1]))
 for r in recs:
+    item = ("stories", r["slug"]) if r.get("slug") else None
     if r["state"] == "WAITING":
         why = f" (waiting on {r['why']})" if r.get("why") else ""
-        lq.append(bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")])
+        add(lq, bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")], item)
     elif r["state"] == "auth":
-        need.append(bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm-dev:swarm tells it to resume", "")])
+        add(need, bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm-dev:swarm tells it to resume", "")], item)
     elif r["state"] == "EMPTY":
-        lq.append(bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")])
+        add(lq, bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")], item)
     elif r["state"] in ("gone", "unknown") and r["look"]:
-        lq.append(bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")])
+        add(lq, bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")], item)
 lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
-need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for b in board if b[0] == "hld" and b[2] == "draft"]
+for b in board:
+    if b[0] == "hld" and b[2] == "draft":
+        add(need, bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")], ("hld", b[1]))
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
 # its live agents and open PRs beneath it.
@@ -5016,8 +5109,10 @@ for (day, pr), fs in found.items():
     text = fs[0][3] if len(fs) == 1 else f"{len(fs)} findings: " + "; ".join(x[3] for x in fs)
     events.append((day, fs[0][1] if len(fs) == 1 else "findings", f"{text} (#{pr})", "finding"))
 # A fixed finding's log-finding line is left out: its findings.tsv row above shows it. A run of ok
-# declined lines on one PR, with nothing but fixed ones between, is one row at the newest's time.
+# declined lines on one PR, with nothing but fixed ones between, is one row at the newest's time, and
+# so is a run of lines with the same action, target and outcome, with ×N.
 run = None   # [index in events, PR, count] of the declined run still open
+same = None   # [index in events, line, count] of the run of the same line still open
 for f in read_tsv(E["DASH_EVENTS"], 5):
     ok = f[4].startswith("ok")
     if f[1] == "log-finding" and ok:
@@ -5028,8 +5123,14 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
         events[run[0]] = (f[0], f[3], f"{run[2]} findings declined on #{pr.rsplit('#', 1)[-1]}", "action")
         continue
     run = [len(events), pr, 1] if f[1] == "log-finding:declined" and ok else None
-    events.append((f[0], f[3], f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}"),
-                   "failed" if not ok else "start" if f[1] in STARTS else "escalation" if f[1] in ESCALATION else "action"))
+    text = f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}")
+    kind = "failed" if not ok else "start" if f[1] in STARTS else "escalation" if f[1] in ESCALATION else "action"
+    if same and same[1] == f[1:3] + f[4:]:
+        same[2] += 1
+        events[same[0]] = (f[0], f[3], f"{text} ×{same[2]}", kind)
+        continue
+    same = [len(events), f[1:3] + f[4:], 1]
+    events.append((f[0], f[3], text, kind))
 ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad"),
         "escalation": ("▲", "fable")}
 dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
@@ -5051,7 +5152,10 @@ def recent_box(w, n, clock=False):
             if findings > max(1, n // 3):
                 continue
         room = max(w - 4 - tw - 2 - 2 - (actor_w + 2 if actor_w else 0), 0)
-        row = [(f"{stamp(raw, t) if clock else ago:>{tw}}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (cut(text, room).ljust(room), "")]
+        # A finding's (#PR) is kept whole: its text is cut instead.
+        pr = re.search(r" \(#\d+\)$", text) if kind == "finding" else None
+        text = cut(text[:pr.start()], room - len(pr.group(0))) + pr.group(0) if pr and len(text) > room else cut(text, room)
+        row = [(f"{stamp(raw, t) if clock else ago:>{tw}}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (text.ljust(room), "")]
         if actor_w:
             row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
         rec.append(row)
@@ -5134,8 +5238,41 @@ def running_view():
     rows = [[c[0]] + [(t.ljust(width[i] + 2) if i < 4 else t, s) for i, (t, s) in enumerate(c) if i] for c in cells]
     return rows + [[sym("blocked"), (f"held {b[1]}: {held_cause(b[1]) or '?'}", "")] for b in stories if b[9] == "held"]
 
-# Layout. Header: one line, the clock at the right; then the summary line (from 140 columns, the
-# status bar at the bottom carries it, with the merge mode).
+# The speedometer: stories merged per day over 7 days (dash_slow's count, ? when it has none), and
+# two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
+# needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
+# waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
+# review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
+def waited_from(item):
+    d, slug = item
+    if slug in moved:
+        return moved[slug]
+    got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
+    return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
+
+moved = {}
+for f in read_tsv(E["DASH_EVENTS"], 5):
+    t = epoch(f[0]) if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
+    if t is not None and t > moved.get(f[2], 0):
+        moved[f[2]] = t
+
+def days_ago(day):
+    try:
+        return (TODAY - datetime.date.fromisoformat(day)).days
+    except ValueError:
+        return None
+
+n_waiting = len(need) + len(queue) + more
+since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
+escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
+merged = E.get("DASH_MERGED", "")
+speed = [(f"{int(merged) / 7:.1f}" if merged.isdigit() else "?", "b"), (" merged/day over 7 days", "")]
+for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
+                 (escaped, "escaped in 7 days")):
+    speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
+
+# Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
+# (from 140 columns, the status bar at the bottom carries it, with the merge mode).
 right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
 head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
         ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
@@ -5144,6 +5281,7 @@ if WIDE:
 if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
+out.append(fit(speed, W))
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] == "working" for r in recs)
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
@@ -5170,9 +5308,9 @@ def pack(groups, n):
 
 if not WIDE:
     out += pack([(SEP, summary), (SEP, on_call)], W)
-drift = int(E.get("DASH_DRIFT") or 0)
+drift = lines("DASH_DRIFT")
 if drift:
-    out.append(fit([(f"board: {drift} uncommitted edit{'' if drift == 1 else 's'} in the main checkout (reconcile pulls first)", "warn")], W))
+    out.append(fit([(f"board: {len(drift)} uncommitted edit{'' if len(drift) == 1 else 's'} in the main checkout: {', '.join(drift)}", "warn")], W))
 
 # The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
 # left column, LW wide.
