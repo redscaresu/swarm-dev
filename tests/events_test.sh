@@ -139,7 +139,7 @@ check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}
 
 # The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
 # that changes state (story, say) cannot be declared read-only without this test changing too.
-RO_EXPECTED="base cost config dash decisions export findings review-yield lessons next outcomes policy status wait watch _base _label _name _role _pane _target _trusted _mtime"
+RO_EXPECTED="base cost config dash flow features findings review-yield lessons next outcomes policy status wait watch _base _label _name _role _pane _target _trusted _mtime"
 ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
 check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"
@@ -196,8 +196,8 @@ check "a nudging wait appends only nudge lines" test "$(grep -cv $'^[^\t]*\tnudg
 # when build_story starts an escalate build, escalated when that build's close makes the story the
 # lead's, then reset or drop with the lead's reason. A project of its own, with its own herdr and gh.
 P="${ROOT}/esc"; LOG="${P}/.swarm/events.tsv"; EB="${ROOT}/escbin"
-mkdir -p "${P}/.claude/swarm" "${EB}"; echo "base_branches = main" > "${P}/.claude/swarm/config"
-git init -q --bare "${ROOT}/esc.git"; git init -q "${P}"; git -C "${P}" remote add origin "${ROOT}/esc.git"
+mkdir -p "${P}/.claude/swarm" "${EB}"; : > "${P}/.claude/swarm/config"
+git init -q --bare "${ROOT}/esc.git"; git -C "${ROOT}/esc.git" symbolic-ref HEAD refs/heads/main; git init -q "${P}"; git -C "${P}" remote add origin "${ROOT}/esc.git"
 git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "${P}" push -q origin HEAD:refs/heads/main
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${EB}/herdr"
 cat >> "${EB}/herdr" <<'STUB'

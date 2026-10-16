@@ -1,0 +1,51 @@
+feature	landed	metric	baseline	uses
+/hld	2026-09-29	outcomes: story_merged share of builds	132 of 144 (infrafactory, outcomes to 2026-10-16)	role:hld
+/plan-hld	2026-09-29	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:hld-lead
+/plan-epic	2026-09-29	review-yield: findings raised per PR	4.1 (565 over 137 PRs) (infrafactory, review-yield to 2026-10-16)	role:skeptic role:survey
+/swarm-dev:swarm	2026-09-29	flow: builders_mean (all)	0.37, max 8 (infrafactory, flow --until 2026-10-16)	event:conduct
+status	2026-10-02	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+dash	2026-10-11	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+wait --until-report	2026-10-15	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	unlogged: wait is read-only and logs only its nudges
+story	2026-09-29	outcomes: story_merged share of builds	132 of 144 (infrafactory, outcomes to 2026-10-16)	event:story
+merge	2026-09-30	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	event:merge
+board-pr	2026-10-16	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	event:board-pr
+cost	2026-09-29	cost: total est. $	1211.60 over 343 agents (infrafactory, cost to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+outcomes	2026-10-13	outcomes: cost_usd per build	5.75 mean over 146 builds (infrafactory, outcomes to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+review-yield	2026-10-16	review-yield: decline_rate (all all)	19% of 565 (infrafactory, review-yield to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+log-finding	2026-10-10	review-yield: raised (all all)	565 (infrafactory, review-yield to 2026-10-16)	event:log-finding
+lessons	2026-10-10	review-yield: fixed per PR	3.3 (456 over 137 PRs) (infrafactory, review-yield to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+flow	leaner-faster-swarm	flow: builders_mean, stories_per_chain, review waits, stacked	unavailable: flow is new in this epic; its first run gives the other rows' baselines	unlogged: a read-only command leaves no events.tsv line
+features	leaner-faster-swarm	cost: total est. $	1211.60 (infrafactory, cost to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
+board_dir	2026-09-30	flow: builds (all)	151 (infrafactory, flow --until 2026-10-16)	unlogged: a config key, read on every run
+repos_dir	2026-09-30	flow: builds (all)	151 (infrafactory, flow --until 2026-10-16)	unlogged: a config key, read on every run
+merge = agent	2026-09-30	flow: proxy_review_wait_min (all)	13 (swarm-dev, flow --until 2026-10-16)	unlogged: a config key; its merges log as merge
+lessons_file	2026-10-10	review-yield: fixed per PR	3.3 (infrafactory, review-yield to 2026-10-16)	unlogged: a config key, read on every run
+stall_minutes	2026-10-12	outcomes: close_cause stalled	0 of 146 builds (infrafactory, outcomes to 2026-10-16)	event:close:stalled
+sonnet_share	2026-10-13	outcomes: cost_usd of code-sonnet against code	unavailable: no code-sonnet build in infrafactory to 2026-10-16; code is 4.77 per build	role:code-sonnet
+escalate_after	2026-10-15	outcomes: story_merged of escalate builds	unavailable: no escalate build in infrafactory to 2026-10-16	role:escalate
+builder_subagent_model	2026-10-13	cost: code and code-risky est. $	823.52 (infrafactory, cost to 2026-10-16)	unlogged: a config key, read on every run
+goal	2026-10-15	outcomes: close_cause met	0 of 146 builds (infrafactory, outcomes to 2026-10-16)	event:close:met
+codex_minutes	2026-10-15	review-yield: raised by codex	1 (infrafactory, review-yield to 2026-10-16)	event:codex-review
+lead = session	2026-10-15	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a config key, read on every run
+role hld	2026-09-29	cost: hld est. $	0.96 (infrafactory, cost to 2026-10-16)	role:hld
+role hld-review	2026-09-29	cost: hld-review est. $	14.82 (infrafactory, cost to 2026-10-16)	role:hld-review
+role hld-lead	2026-09-29	cost: hld-lead est. $	3.81 (infrafactory, cost to 2026-10-16)	role:hld-lead
+role survey	2026-09-29	cost: survey est. $	25.82 (infrafactory, cost to 2026-10-16)	role:survey
+role lead	2026-09-29	cost: lead est. $	46.89 (infrafactory, cost to 2026-10-16)	role:lead
+role skeptic	2026-09-29	cost: skeptic est. $	54.31 (infrafactory, cost to 2026-10-16)	role:skeptic
+role critic	2026-09-29	cost: critic est. $	10.70 (infrafactory, cost to 2026-10-16)	role:critic
+role codex	2026-09-29	review-yield: raised by codex	1 (infrafactory, review-yield to 2026-10-16)	role:codex
+role code	2026-09-29	outcomes: findings_fixed per build	3.07 over 57 builds (infrafactory, outcomes to 2026-10-16)	role:code
+role code-risky	2026-09-29	outcomes: findings_fixed per build	3.05 over 74 builds (infrafactory, outcomes to 2026-10-16)	role:code-risky
+role code-sonnet	2026-10-13	outcomes: cost_usd per build	unavailable: no code-sonnet build in infrafactory to 2026-10-16	role:code-sonnet
+role docs	2026-09-29	outcomes: cost_usd per build	0.95 over 11 builds (infrafactory, outcomes to 2026-10-16)	role:docs
+role chore	2026-09-29	outcomes: cost_usd per build	1.43 over 4 builds (infrafactory, outcomes to 2026-10-16)	role:chore
+role escalate	2026-09-29	outcomes: story_merged of escalate builds	unavailable: no escalate build in infrafactory to 2026-10-16	role:escalate
+role conduct	2026-09-29	cost: conduct est. $	214.62 (infrafactory, cost to 2026-10-16)	role:conduct
+stacked builds	leaner-faster-swarm	flow: stacked and builders_mean (all)	stacked 0, builders_mean 0.37, max 8 (infrafactory, flow --until 2026-10-16)	event:stacked
+review agents	leaner-faster-swarm	flow: review_wait_min (all)	unavailable: no review-start event before review-agent; proxy 14 min (infrafactory, flow --until 2026-10-16)	event:review-agent
+backlog conductor	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	agent:conduct-backlog
+wait --lead	leaner-faster-swarm	outcomes: PR-to-merge time	unavailable: outcomes has no PR-to-merge time before outcomes-timings; 3 held stories waited 2 h unnoticed on 2026-10-16	event:lead-woken
+planning during review	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	role:lead
+short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:skeptic
+releases	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic (infrafactory, flow --until 2026-10-16)	unlogged: merge --release logs as merge, so a release is not told apart

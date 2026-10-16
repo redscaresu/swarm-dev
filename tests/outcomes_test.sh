@@ -78,12 +78,14 @@ check() { # <name> <output> <exact expected output>
 HEAD=$'date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts'
 HEAD+=$'\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at'
 HEAD+=$'\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by'
+HEAD+=$'\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges'
 E6=$'\t\t\t\t\t\t'   # six empty columns, each after its tab: the escalation steps
+E4=$'\t\t\t\t'       # the four timing columns, empty: this gh stub gives no createdAt or commits
 # opus 1M input = $4; sonnet 1M output = $10; fable 1M input = $10.
-R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}	e0	2026-10-03T10:00:00Z	true	1	unknown:2	unknown:1"
-R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}			false	0	unknown:1	"
+R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}	e0	2026-10-03T10:00:00Z	true	1	unknown:2	unknown:1${E4}"
+R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}			false	0	unknown:1	${E4}"
 # The retry started after every finding on #7, so it takes none of them.
-R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	0	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}	e0	2026-10-03T10:00:00Z	true	0		"
+R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	0	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}	e0	2026-10-03T10:00:00Z	true	0		${E4}"
 check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells by kind (bare as findings, refused left out), closes (close:stalled among them), findings, attempts, start to the second, tokens by type" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
 check "--since leaves earlier rows out, and attempts still count them" \
@@ -114,7 +116,7 @@ check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${P}/.swarm/sessions/"*
 # With neither, cost, tokens and started are empty and the slug is agents.tsv's cut name, whose story
 # is unknown. The close sent to that name is still the first build's, which started before it.
-R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}				0		"
+R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}				0		${E4}"
 nolog() { awk -F'\t' -v OFS='\t' '{ $8 = $9 = $18 = $19 = $20 = $21 = $22 = "" } 1' <<< "$1"; }
 check "with neither, the cells are empty, a slug with one PR keeps it, and nothing fails" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nolog "${R2}")" "${R3N}")"
@@ -127,20 +129,30 @@ check "a damaged copy stops neither the report nor the other rows" \
   "$(outcomes "${dir}/bin" 2>&1; echo "exit $?")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(zero "${R2}")" "$(zero "${R3N}")" "exit 0")"
 
 # --- Each build's own PR, in a second project. gh answers from prs/<head with / as _>: its
-# `url<TAB>state` lines, newest first as gh lists them, the first only with --limit 1.
+# `url<TAB>state` lines, newest first as gh lists them, the first only with --limit 1. A head with a
+# prs/<head>.json answers instead with that gh JSON put through the report's own --jq, by jq.
 Q="${dir}/two"; U=https://github.com/o/r/pull
 mkdir -p "${Q}/.swarm" "${Q}/docs/stories" "${dir}/projects/q" "${dir}/prs" "${dir}/bin2"
 git -C "${Q}" init -q
-for s in retried shared late foreign; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${Q}/docs/stories/${s}.md"; done
+for s in retried shared late foreign timed; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${Q}/docs/stories/${s}.md"; done
 printf -- '---\nkind: code\nepic: e1\nstatus: ready\n---\n' > "${Q}/docs/stories/in-epic.md"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\nn=99; case " $* " in *" --limit 1 "*) n=1 ;; esac\nhead -n "$n" "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" > "${dir}/bin2/gh"
+printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\nf="%s/prs/$(echo "$4" | tr / _)"\nif [ -f "$f.json" ]; then while [ "$1" != --jq ]; do shift; done; exec jq -r "$2" "$f.json"; fi\nn=99; case " $* " in *" --limit 1 "*) n=1 ;; esac\nhead -n "$n" "$f" 2>/dev/null\nexit 0\n' "${dir}" > "${dir}/bin2/gh"
 chmod +x "${dir}/bin2/gh"
 printf '%s\t%s\t%s\n' "${U}/2" MERGED 2026-10-02T12:00:00Z "${U}/1" CLOSED "" > "${dir}/prs/story_retried"
 printf '%s\t%s\n' "${U}/3" OPEN > "${dir}/prs/story_shared"
 printf '%s\t%s\n' "${U}/4" OPEN > "${dir}/prs/story_late"
 printf '%s\t%s\n' "${U}/6" OPEN > "${dir}/prs/story_foreign"
 printf '%s\t%s\n' "${U}/10" OPEN > "${dir}/prs/epic_e1"
+# timed's PR: created 40 minutes after its first build started and merged 80 minutes later, with two
+# commits that merge the base in, one that merges another branch, and one that merges nothing.
+cat > "${dir}/prs/story_timed.json" <<JSON
+[{"url": "${U}/30", "state": "MERGED", "mergedAt": "2026-10-05T12:00:00Z", "createdAt": "2026-10-05T10:40:00Z",
+  "baseRefName": "main", "commits": [{"messageHeadline": "Add the timed thing"},
+  {"messageHeadline": "Merge origin/main into story/timed"},
+  {"messageHeadline": "Merge branch 'story/other' into story/timed"},
+  {"messageHeadline": "Merge remote-tracking branch 'origin/main' into story/timed"}]}]
+JSON
 qs() { # <session id> <slug> <model> [pull URL...] — a session log for the second project
   local id="$1" slug="$2" model="$3"; shift 3
   session "${id}" "${slug}" "${model}" 1000000 0 "$@" > "${dir}/projects/q/${id}.jsonl"
@@ -155,12 +167,16 @@ printf '{"type":"user","message":{"content":"%s"}}\n' "$(printf "${U}/3 %.0s" $(
 qs l1 late claude-opus-5-5; qs l2 late claude-fable-5-1 "${U}/4"
 qs f1 foreign claude-opus-5-5 "${U}/1"
 qs e1 in-epic claude-opus-5-5 "${U}/5"; qs e2 in-epic claude-fable-5-1
+TS=2026-10-05T10:00:00Z qs t1 timed claude-opus-5-5 "${U}/30"; TS=2026-10-05T11:00:00Z qs t2 timed claude-fable-5-1 "${U}/30"
+TS=2026-10-05T10:40:20Z qs t3 timed claude-fable-5-1 "${U}/30"
 printf '%s\n' \
   $'2026-10-01\tcode\tretried\tclaude\topus\thigh\tr1' $'2026-10-02\tescalate\tretried\tclaude\tfable\txhigh\tr2' \
   $'2026-10-01\tcode\tshared\tclaude\topus\thigh\th1' $'2026-10-02\tcode\tshared\tclaude\topus\thigh\th2' \
   $'2026-10-03\tcode\tlate\tclaude\topus\thigh\tl1' $'2026-10-03\tescalate\tlate\tclaude\tfable\txhigh\tl2' \
   $'2026-10-03\tcode\tforeign\tclaude\topus\thigh\tf1' \
-  $'2026-10-04\tcode\tin-epic\tclaude\topus\thigh\te1' $'2026-10-05\tescalate\tin-epic\tclaude\tfable\txhigh\te2' > "${Q}/.swarm/agents.tsv"
+  $'2026-10-04\tcode\tin-epic\tclaude\topus\thigh\te1' $'2026-10-05\tescalate\tin-epic\tclaude\tfable\txhigh\te2' \
+  $'2026-10-05\tcode\ttimed\tclaude\topus\thigh\tt1' $'2026-10-05\tescalate\ttimed\tclaude\tfable\txhigh\tt2' \
+  $'2026-10-05\tescalate\ttimed\tclaude\tfable\txhigh\tt3' > "${Q}/.swarm/agents.tsv"
 rows_of() { # <project> <slug regex> — the rows of the slugs that match, every column
   (cd "$1" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | awk -F'\t' -v re="^($2)$" 'NR > 1 && $2 ~ re')
 }
@@ -168,7 +184,7 @@ two() { # slug, model, pr, pr_state and attempts of each row
   (cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin2:${PATH}" bash "${SWARM}" outcomes | cut -f2,6,15-17)
 }
 check "each build gets the last of its slug's PRs its own log names (named 40000 times or once); none, or another head's, leaves it empty" \
-  "$(two | grep -v in-epic)" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
+  "$(two | grep -v 'in-epic\|timed')" "$(printf '%s\n' $'slug\tmodel\tpr\tpr_state\tattempts' \
     "retried	opus	${U}/1	CLOSED	1" "retried	fable	${U}/2	MERGED	2" \
     "shared	opus	${U}/3	OPEN	1" "shared	opus	${U}/3	OPEN	2" \
     "late	opus			1" "late	fable	${U}/4	OPEN	2" "foreign	opus			1")"
@@ -188,6 +204,11 @@ printf '%s\n' \
 check "findings fixed and declined, by reviewer (unknown for 4- and 5-field rows), each counted on one build" \
   "$(rows_of "${Q}" shared | cut -f14,33-35)" "$(printf '%s\n' $'1\t0\tcodex:1\t' $'2\t2\tcodex:1 unknown:1\tcode-review:1 unknown:1')"
 rm "${Q}/.swarm/findings.tsv"
+check "pr_created_at, minutes from start to PR and from PR to merge, and base merges; a retry started after its PR was created, even by 20 seconds, has no start_to_pr_min; no PR leaves all four empty" \
+  "$(rows_of "${Q}" 'timed|late' | grep -v /pull/4 | cut -f2,15,18,36-39)" "$(printf '%s\n' $'late\t\t\t\t\t\t' \
+    "timed	${U}/30	2026-10-05T10:00:00Z	2026-10-05T10:40:00Z	40	80	2" \
+    "timed	${U}/30	2026-10-05T11:00:00Z	2026-10-05T10:40:00Z		80	2" \
+    "timed	${U}/30	2026-10-05T10:40:20Z	2026-10-05T10:40:00Z		80	2")"
 check "an epic story's builds take their PR from their logs too, never the epic branch's PR" \
   "$(two | grep in-epic | cut -f3 | paste -sd, -)" ","
 
@@ -295,12 +316,12 @@ check "a line whose time does not parse goes to no build" \
   "$(grep -c not-a-time <<< "${out}" || true) $(awk -F'\t' '$2 == "retried"' <<< "${out}" | cut -f10 | paste -sd' ' -)" "0 1 1"
 
 # verify is no longer a role policy knows, but agents.tsv keeps the verify builds made before it went:
-# outcomes and export still read them as builds, and a conductor's row is still left out.
+# outcomes and flow still read them as builds, and a conductor's row is still left out.
 V="${dir}/verify"; mkdir -p "${V}/.swarm"; git -C "${V}" init -q
 printf '%s\n' $'2026-10-13\tverify\told-check\tclaude\thaiku\tmedium\t-' $'2026-10-13\tconduct\tconduct-e\tclaude\topus\thigh\t-' > "${V}/.swarm/agents.tsv"
 vrun() { (cd "${V}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/nobin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 check "a past verify build is still a row in outcomes" "$(vrun outcomes | tail -n +2 | cut -f2,5)" $'old-check\tverify'
-check "and export takes it" "$(vrun export --format jsonl | grep -c '"slug": *"old-check"' || true)" 1
+check "and flow counts it as a build" "$(vrun flow | tail -1 | cut -f1,2)" $'all\t1'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
