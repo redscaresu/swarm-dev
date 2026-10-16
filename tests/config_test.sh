@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # config_test.sh — the project config: finding the project, parsing .claude/swarm/config, a board
-# outside the project, repos_dir, base branches, finished = mark, and the minimum Claude Code.
+# outside the project, repos_dir, base branches, unblock and finish, and the minimum Claude Code.
 # Fixture remotes are local bare repos; herdr and claude (tests/claude_stub.sh) are stubs on PATH.
 set -euo pipefail
 
@@ -63,8 +63,13 @@ run() { (cd "$1" && shift && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" "
 p="${ROOT}/parse"
 project "${p}" "# a comment" "boardd = x"
 check "unknown key names its line" "yes" "$(fails_with 'config:2: unknown key' run "${p}" config)"
-project "${p}" "finished = maybe"
-check "bad value names its line" "yes" "$(fails_with 'config:1: finished must be' run "${p}" config)"
+project "${p}" "merge = maybe"
+check "bad value names its line" "yes" "$(fails_with 'config:1: merge must be' run "${p}" config)"
+# Switches no project set are gone: a line naming one is an unknown key.
+for k in sign_commits review_bot keep_panes merge_admin finished; do
+  project "${p}" "${k} = true"
+  check "${k} is an unknown key" "yes" "$(fails_with "config:1: unknown key '${k}'" run "${p}" config)"
+done
 project "${p}" "board_dir = \$(touch ${p}/pwned)"
 check "a \$(...) value is refused" "yes" "$(fails_with 'config:1: board_dir: \$ and backticks' run "${p}" config)"
 check "a \$(...) value never runs" "no" "$([[ -e "${p}/pwned" ]] && echo yes || echo no)"
@@ -100,10 +105,6 @@ for v in 0 -1 1.5 two on; do
     "$(fails_with "${p}/.claude/swarm/config:1: goal must be off or a positive whole number" run "${p}" config)"
 done
 check "lead ships off" "off" "$(project "${p}"; run "${p}" config lead)"
-check "merge_admin ships false" "false" "$(project "${p}"; run "${p}" config merge_admin)"
-project "${p}" "merge_admin = yes"
-check "merge_admin = yes is refused, naming file and line" "yes" \
-  "$(fails_with "${p}/.claude/swarm/config:1: merge_admin must be true or false, not 'yes'" run "${p}" config)"
 project "${p}" "lead = session"
 check "lead = session is read" "session" "$(run "${p}" config lead)"
 project "${p}" "lead = on"
@@ -143,9 +144,6 @@ check "the table's goal row has the Default CFG_goal ships" "\`$(project "${p}";
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's codex_minutes row has the Default CFG_codex_minutes ships" "\`$(project "${p}"; run "${p}" config codex_minutes)\`" \
   "$(sed -n 's/^| `codex_minutes` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
-# shellcheck disable=SC2016 # the backticks are the table's
-check "the table's merge_admin row has the Default CFG_merge_admin ships" "\`$(project "${p}"; run "${p}" config merge_admin)\`" \
-  "$(sed -n 's/^| `merge_admin` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
 # shellcheck disable=SC2016 # the backticks are the table's
 check "the table's lead row has the Default CFG_lead ships" "\`$(project "${p}"; run "${p}" config lead)\`" \
   "$(sed -n 's/^| `lead` | \([^|]*\) |.*/\1/p' "${REPO}/docs/method.md")"
@@ -218,9 +216,9 @@ check "a single-branch clone still finds dev on origin" "dev" "$(base "base_bran
 check "no listed branch on origin stops" "yes" \
   "$(fails_with 'origin has none of base_branches' base "base_branches = nope" svc)"
 
-# --- finished = mark: a done item counts as finished, and stays on the board.
+# --- unblock and finish: a done item counts as finished, and finish deletes the file.
 p="${ROOT}/marked"; b="${p}/docs"
-project "${p}" "finished = mark"
+project "${p}"
 item "${b}" stories/x.md "status: done" "kind: code"
 item "${b}" stories/y.md "status: blocked" "kind: code" "blocked_by: [x]"
 check "a done blocker unblocks" "ready: y" "$(run "${p}" unblock)"
@@ -230,7 +228,7 @@ item "${b}" stories/read-set.md "status: blocked" "kind: code" "blocked_by: [x]"
 check "an open depends_on keeps a story blocked" "" "$(run "${p}" unblock)"
 run "${p}" finish gap >/dev/null
 check "it unblocks once depends_on is finished too" "ready: read-set" "$(run "${p}" unblock)"
-rm "${b}/stories/read-set.md" "${b}/stories/gap.md"
+rm "${b}/stories/read-set.md"
 # Blocked only by depends_on, with quoted slugs (YAML allows both kinds).
 item "${b}" stories/gap2.md "status: ready" "kind: code"
 item "${b}" stories/only-deps.md "status: blocked" "kind: code" "blocked_by: []" "depends_on: [\"gap2\", 'x']"
@@ -242,10 +240,7 @@ rm "${b}/stories/y.md"
 check "a done story is neither built nor a gate" "done" "$(first "$(run "${p}" next)")"
 item "${b}" stories/z.md "status: ready" "kind: code"
 run "${p}" finish z >/dev/null
-check "finish marks the story done and keeps it" "done" "$(sed -n 's/^status: //p' "${b}/stories/z.md" 2>&1)"
-project "${p}" "finished = delete"
-run "${p}" finish z >/dev/null
-check "finish with finished = delete deletes it" "gone" "$([[ -e "${b}/stories/z.md" ]] && echo there || echo gone)"
+check "finish deletes the story's file" "gone" "$([[ -e "${b}/stories/z.md" ]] && echo there || echo gone)"
 
 # --- version: a warning, with the one command to update, only when a newer version is published.
 have="$(python3 -c "import json; print(json.load(open('$(dirname "${SWARM}")/../.claude-plugin/plugin.json'))['version'])")"

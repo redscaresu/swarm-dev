@@ -38,8 +38,10 @@ F="${ROOT}/gh"
 EOF
 cat >> "${ROOT}/bin/gh" <<'EOF'
 case "$1 $2" in
-  "pr view") st=$(awk -v u="$3" '$1 == u { print $2 }' "$F/prs"); [ -n "$st" ] || exit 1
+  "pr view") case " $* " in *" body,url "*) echo '{"body":"","url":"https://github.com/o/svc/pull/7"}'; exit 0 ;; esac
+             st=$(awk -v u="$3" '$1 == u { print $2 }' "$F/prs"); [ -n "$st" ] || exit 1
              echo "{\"state\":\"$st\"}"; exit 0 ;;
+  "pr diff") exit 0 ;;
   "repo view") case " $* " in *" -q "*) echo o/svc ;; *) echo '{"nameWithOwner":"o/svc"}' ;; esac; exit 0 ;;
   "pr list") while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
              jq -r "$q" "$F/prlist.json"; exit 0 ;;
