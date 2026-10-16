@@ -645,7 +645,11 @@ or before that column existed). Columns added later go on the end, so readers ig
 **Green means more than green checks.** A check can pass and still carry a failure note (a
 code scanner often does), so the lead also triages `swarm.sh findings <repo> <pr>`: the notes on
 every check run of the PR's head, and its open code-scanning alerts (the first 100 of each). Each is fixed, or rebutted in
-the PR with a reason; none is silenced or dismissed.
+the PR with a reason; none is silenced or dismissed. findings also reads the PR's diff and body. A
+test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
+`it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
+mutation run. findings prints each test without one as `rules-unchecked`, with the `log-finding
+--reviewer ci` command that logs it.
 
 **Merging.** With `merge = human` (the default) no agent merges: each agent starts unable to run
 `gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead

@@ -31,7 +31,7 @@
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
-#   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, and its open code-scanning alerts
+#   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
 #   swarm.sh watch [repo...]                                wait until a story or epic PR needs the lead, print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
@@ -1992,9 +1992,10 @@ fix or list it for the lead, and say so in your report.
 EOF
 }
 
-# A test that passes with its fix removed proves nothing; a builder shows each one can fail.
+# A test that passes with its fix removed proves nothing; a builder shows each one can fail, and
+# findings names each new test whose FAIL line the PR body lacks.
 mutation_rule() {
-  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and note which test failed and how."
+  printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
 }
 
 # reply_sentence <epic|story> — what a builder replies, and when: the brief's rule on finishing, and
@@ -3841,6 +3842,55 @@ for a in json.load(sys.stdin):
   else
     echo "  code scanning: not available on ${full}"
   fi
+  fail_lines "${full}" "$2"
+}
+
+# fail_lines <owner/repo> <pr> — a rules-unchecked line for each test named on a line the PR's diff
+# adds (Go func TestX, Python def test_x, a check line in tests/*_test.sh, a JS it or test call) when
+# no line of the PR body holds both FAIL and its name: the builder's proof that the test can fail.
+fail_lines() {
+  local pr diff
+  pr="$(gh pr view "$2" --repo "$1" --json body,url)" || die "findings: cannot read the body of $1#$2"
+  diff="$(gh pr diff "$2" --repo "$1")" || die "findings: cannot read the diff of $1#$2"
+  PR="${pr}" python3 -c '
+import json, os, re, sys
+pr = json.loads(os.environ["PR"])
+body = [l for l in (pr.get("body") or "").splitlines() if "FAIL" in l]
+tests = [  # (path pattern, pattern whose group n is the test name)
+    (r"_test\.go$", r"func (?P<n>Test\w*)"),
+    (r"(^|/)(test_[^/]*|[^/]*_test)\.py$", r"\s*(async\s+)?def (?P<n>test\w*)"),
+    (r"(^|/)tests/[^/]*_test\.sh$", r"\s*check\s+\x22(?P<n>(\\.|[^\x22\\])*)\x22"),
+    (r"\.(test|spec)\.[cm]?[jt]sx?$", r".*?\b(it|test)\(\s*(?P<q>[\x22\x27`])(?P<n>(\\.|(?!(?P=q))[^\\])*)(?P=q)"),
+]
+path, names, end = "", [], None
+for line in sys.stdin.read().splitlines():
+    if line.startswith("+++ "):
+        path, end = line[4:].removeprefix("b/"), None
+    elif line.startswith("@@"):
+        end = None  # ponytail: a hunk that opens inside a heredoc reads its fixture as tests
+    elif line[:1] in ("+", " "):
+        # A heredoc in a shell file is a fixture, not tests: skip to its end word, on context
+        # lines as on added ones.
+        if end:
+            end = None if line[1:].strip() == end else end
+            continue
+        if path.endswith(".sh"):
+            h = re.search(r"(?<!<)<<(?!<)-?\s*[\x22\x27]?(\w+)", line[1:])
+            end = h and h[1]
+        if line[0] != "+":
+            continue
+        for p, t in tests:
+            m = re.search(p, path) and re.match(t, line[1:])
+            if m and m["n"] not in names:
+                names.append(m["n"])
+for n in names:
+    # The whole name as the test prints it: each unescaped expansion (a dollar sign, \x24, then a
+    # word, braces or parentheses) stands for what it expands to, and the rest is unescaped.
+    parts = re.split(r"(?<!\\)\x24(?:\{[^}]*\}|\([^)]*\)|\w+)", n)
+    parts = [re.escape(re.sub(r"\\(\W)", r"\1", x)) for x in parts]
+    pat = r"(?<!\w)" + ".+".join(parts) + r"(?!\w)"
+    if not any(re.search(pat, l) for l in body):
+        print("  rules-unchecked: %s has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked %s …)" % (n, pr["url"]))' <<< "${diff}"
 }
 
 # watch [--epic <slug>] [repo...] — block until a story/* or epic/* PR in these repos needs the lead, print
