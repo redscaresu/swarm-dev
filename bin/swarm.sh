@@ -12,6 +12,7 @@
 #   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
 #   swarm.sh decisions [--since YYYY-MM-DD]                 JSONL, one object per decision the logs record (model, retry, finding, nudge, close) and its outcome
+#   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
 #   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -657,9 +658,10 @@ start_agent() {
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
-      # merge = human: no agent can run `gh pr merge`. `gh api` could still merge, so the briefs say it too.
+      # No agent can run `gh pr merge`, but a conductor with merge = agent. `gh api` could still merge,
+      # so the briefs say it too.
       local guard=()
-      [[ "${CFG_merge}" == human ]] && guard=(--disallowedTools "Bash(gh pr merge:*)")
+      [[ "${CFG_merge}" == agent && "${role}" == conduct ]] || guard=(--disallowedTools "Bash(gh pr merge:*)")
       # builder_subagent_model: the session's env, through --settings since herdr passes no env. Without
       # _FORCE the model setting leaves an Explore subagent on the parent's model (opusplan-spike).
       [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && guard+=(--settings \
@@ -1363,6 +1365,69 @@ for r in sorted(out, key=lambda r: r["time"]):
 PY
 }
 
+# review-yield [--since YYYY-MM-DD] [--epic <slug>] — what review yields, for tuning the reviewers.
+# Block 1 (TSV reviewer kind raised fixed declined decline_rate): findings.tsv rows dated on or after
+# since, per reviewer (its `all` row, then its kinds by declined, most first), per kind across reviewers
+# (`all <kind>`), and last `all all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr
+# max_rounds): the tells_findings of every outcomes row with a PR dated on or after since, summed per
+# PR. So since keeps findings dated on or after it and the rounds of builds started on or after it. A
+# tell names no reviewer, so rounds are not split by one. --epic keeps only the PRs of that epic
+# (outcomes epic column) in both blocks, and a third block lists every PR either block counted. It
+# writes nothing.
+review_yield_report() {
+  local since="" epic="" rows="" usage="usage: swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
+      --epic) [[ "${2:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "${usage}"; epic="$2"; shift 2 ;;
+      *) die "${usage}" ;;
+    esac
+  done
+  # Every row, unfiltered, so an epic PR built before since still keeps its later findings.
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 - \
+    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${epic}" <<'PY'
+import collections, os, sys
+exec(os.environ["SWARM_REPORT_PY"])
+findings, since, epic = sys.argv[1:4]
+# Read by column name, as decisions does.
+table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
+rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
+rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
+urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
+# None is the all of a reviewer or kind, apart from a finding whose kind is the word all.
+c, counted = collections.defaultdict(collections.Counter), set()
+for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
+    if day >= since and (not epic or pr_key(pr) in urls):
+        counted.add(pr_key(pr))
+        for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
+            c[key][outcome] += 1
+
+def line(who, kind):
+    fixed, declined = c[(who, kind)]["fixed"], c[(who, kind)]["declined"]
+    raised = fixed + declined
+    rate = f"{int(100 * declined / raised + 0.5)}%" if raised else "-"
+    return "\t".join(["all" if x is None else x for x in (who, kind)] + [str(raised), str(fixed), str(declined), rate])
+
+def kinds(who):
+    return sorted((k for w, k in list(c) if w == who and k is not None), key=lambda k: (-c[(who, k)]["declined"], k))
+
+print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate")
+for who in sorted({w for w, _ in c if w is not None}):
+    print("\n".join(line(who, k) for k in [None] + kinds(who)))
+print("\n".join(line(None, k) for k in kinds(None) + [None]))
+rounds = collections.Counter()
+for r in rows:
+    if r["date"] >= since:
+        rounds[pr_key(r["pr"])] += int(r["tells_findings"])
+total = sum(rounds.values())
+per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
+print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
+if epic:
+    print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
+PY
+}
+
 # story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
 # the board's git history; nothing when neither has it.
 story_text() {
@@ -1733,7 +1798,14 @@ findings_goal() {
 # The merge, signing and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
-  else echo "Never merge (the lead merges)."; fi
+  else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
+}
+# stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
+# waits out every running build, or with pr_per = epic, the epic's PRs.
+stop_rule() {
+  if [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
+  elif [[ "${CFG_pr_per}" == epic ]]; then echo "Stop when every PR from epic/$1 has merged and the epic's **Done when** holds, or when what is left needs the lead: a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running; a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch; or CI on the base red or timed out."
+  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
 }
 sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
@@ -1809,16 +1881,49 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 `swarm.sh review <epic> <every PR URL still waiting>`: the epic leaves the board once they all merge.
 RULE
   else
-    cat <<'RULE'
-Merge a PR only when it is green and reviewed. A queued merge (auto-merge, a merge queue) has not
-happened yet: wait until the PR is merged. Then run `swarm.sh review <slug> <PR URL>` and
-`swarm.sh reconcile`, never a plain `git pull`: reconcile first puts back swarm.sh's own edits to the
-story (a retry's `attempts:`), which would stop the pull, then pulls the board and finishes the
-story. Only then run `swarm.sh unblock` and `swarm.sh close <slug>` to close that story's tab:
-closing a story that is still `ready` counts a failed build. When the epic's **Done when** holds, take the epic off the board with
-`swarm.sh finish <epic>`.
-RULE
+    cat <<EOF
+$(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
+printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
+
+Then run \`swarm.sh unblock\`, and in this run start each story of this epic it prints as \`ready:\`
+whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`. After a
+cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
+story of this epic that is yours to start is ready and none is running, or CI on the base is red or
+timed out. When the
+epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`.
+EOF
   fi
+}
+
+# pin_rule — with merge = agent and a PR per story, review each PR at a head noted before the review.
+pin_rule() {
+  cat <<EOF
+Review a PR at a pinned head: before you review it, note its head SHA
+(\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`), and once the review passes, read it again; if the head
+moved, review the new head.
+EOF
+}
+
+# pinned_merge_rule <review args> — with merge = agent, how a conductor merges a reviewed PR: put the
+# item in review, then swarm.sh merge pinned to the head it reviewed, one at a time, which reconciles.
+pinned_merge_rule() {
+  cat <<EOF
+Merge a PR only when it is green and reviewed: run
+\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare
+\`gh pr merge\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
+repo's merge method, squash when allowed
+(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
+and only once every check on that head has completed and passed, which it checks itself. Run one
+\`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and
+reconcile done. Run it in the background (Bash \`run_in_background\`)
+and wait for it: it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the merge commit on the
+base, then runs \`swarm.sh reconcile\`, never a plain \`git pull\`, which pulls the board and finishes the item. If
+it exits non-zero, read why: a refusal before \`gh pr merge\` ran merged nothing; \`unconfirmed\`
+means \`gh pr merge\` ran but the PR never read as merged (a merge queue may hold it), so check it by
+hand. A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing
+more, find the PR pair that broke it (this PR and one merged before it, each green alone), open the
+fix or list it for the lead, and say so in your report.
+EOF
 }
 
 # A test that passes with its fix removed proves nothing; a builder shows each one can fail.
@@ -2247,7 +2352,7 @@ EOF
 
 Stay inside this epic: start no story outside it, and leave the HLD and other epics alone. A
 story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
-for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
+for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
 of another epic (in review, or with its builder open) touches the same function or file. On a refusal
@@ -2396,7 +2501,7 @@ EOF
 
 # pr_per = epic: stories merge into epic/<epic>, and each repo gets one PR for the whole epic.
 conduct_epic_mode() {
-  local epic="$1" check sign="" merge_step tick='`'
+  local epic="$1" check sign="" merge_step pin="" tick='`'
   check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || check=" and the epic check ${tick}${check}${tick}"
   [[ "${CFG_sign_commits}" != true ]] || sign=" -S"
@@ -2404,7 +2509,11 @@ conduct_epic_mode() {
     merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
 merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
   else
-    merge_step="Merge each PR once it is green and reviewed, then run \`swarm.sh finish ${epic}\`."
+    pin="first note the head SHA of epic/${epic} in each repo's epic worktree (\`git rev-parse HEAD\`): that is
+the head you review, and after a fix, the new head. Then, "
+    merge_step="Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`):
+if it is not the head you reviewed, review the new head. $(pinned_merge_rule "${epic} <every PR URL>") Reconcile takes
+the epic off the board once its last PR merges."
   fi
   cat <<EOF
 This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`
@@ -2426,7 +2535,7 @@ and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\`
 \`swarm.sh close <slug>\`, and go on to the next wave.
 
 When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
-line lists every repo with an epic branch), review the whole epic: in each repo's epic worktree,
+line lists every repo with an epic branch), review the whole epic: ${pin}in each repo's epic worktree,
 \`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
 $(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
 base, written for a reader who knows nothing of how it was built: what changes and why, with no
@@ -5110,6 +5219,7 @@ dispatch() {
     cost)   cost_report "$@" ;;
     outcomes) outcomes_report "$@" ;;
     decisions) decisions_report "$@" ;;
+    review-yield) review_yield_report "$@" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
@@ -5152,7 +5262,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes decisions review-yield lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
