@@ -823,7 +823,7 @@ litem stories/m-green.md '' 'status: review' 'prs: https://github.com/o/l/pull/1
 litem stories/m-fail.md '' 'status: review' 'prs: https://github.com/o/l/pull/2'
 litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
 litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
-# A costs: money merge is the user's even with a lead session: swarm.sh merge holds it for them.
+# A costs: money merge: with merge = human the lead's, as any merge; with merge = agent the user's (below).
 litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/1'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
 litem hld/2026-10-01-d.md '' 'status: draft'
@@ -867,9 +867,8 @@ for l in sys.stdin.read().splitlines():
 print("\n".join(out))' "$1" <<< "$2"
 }
 joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
-YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft HLD 2026-10-01-d: /hld 2026-10-01-d"
-  "! merge l#1 (✓ green) m-paid (costs money)")
-LEADS=("! merge l#1 (✓ green) m-green" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft HLD 2026-10-01-d: /hld 2026-10-01-d")
+LEADS=("! merge l#1 (✓ green) m-green" "! merge l#1 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
   "! look at l-gone: session ended" "! look at l-stall: working 1")
@@ -896,6 +895,13 @@ for cols in 100 160; do
   check "lead = session at ${cols} columns: a ready lead story with no **You:** line waits for the lead" \
     has "! run lead story no-you waits for: the lead" "$(joined "${queue}")"
 done
+# With merge = agent swarm.sh merge holds a costs: money story for the user: no lead session can merge it.
+printf 'lead = session\nmerge = agent\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
+check "lead = session, merge = agent: a costs: money merge is under needs you" \
+  has "! merge l#1 (✓ green) m-paid (costs money)" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead = session, merge = agent: a costs: money merge is not in the lead's queue" \
+  lacks "! merge l#1 (✓ green) m-paid (costs money)" "$(joined "$(lbox "lead's queue" "${out}")")"
+echo "lead = session" > "${L}/.claude/swarm/config"
 # Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
 check "lead = session: an escalated story reset once offers only drop" \

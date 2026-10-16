@@ -28,7 +28,7 @@
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
-#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; a story marked costs: money is held for the user, never merged; --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
+#   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, held for the user when its story says costs: money; --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
@@ -2097,15 +2097,18 @@ $(held_ready_rule)${epic_end}
 EOF
   else
     [[ -n "${backlog}" ]] || epic_end=" When the
-epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`."
+epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`, but never
+while a story of it is still in review (a \`costs: money\` one waits for the user's merge): then say
+in your report that the epic waits on that merge."
     cat <<EOF
+A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
+as with merge = human. When its PR is green and reviewed,
+run \`swarm.sh review <slug> <PR URL>\` and \`swarm.sh close <slug>\`, never \`swarm.sh merge\`, which
+refuses it (\`held: <slug> costs money\`). Leave the PR for the user, and list it in your report
+under Waits on the user.
+
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
-
-A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge:
-when its PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\`, never \`swarm.sh merge\`,
-which refuses it (\`held: <slug> costs money\`). Leave the PR for the user and its builder open, since
-reconcile closes it once the PR merges, and list it in your report under Waits on the user.
 
 Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
 whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
@@ -2802,12 +2805,18 @@ EOF
 # With merge = human its own one-off in review leaves review only once /swarm-dev:swarm reconciles, after this
 # conductor reports, so a refusal naming one is reported, never waited on.
 conduct_backlog_mode() {
-  local own=""
-  [[ "${CFG_merge}" != human ]] || own="
+  local own
+  if [[ "${CFG_merge}" == human ]]; then own="
 
 A \`swarm.sh story --strict\` refusal that names another story with no epic (\`(epic none) is open\`)
 names one of yours in review, and it cannot merge while you run: do not wait for it. Report the
 refused story as \`not started: <slug> (waits on <other>'s merge)\`."
+  else own="
+
+A \`swarm.sh story --strict\` refusal that names another story with no epic (\`(epic none) is open\`)
+whose front matter says \`costs: money\` names one of yours in review that only the user merges: do
+not wait for it. Report the refused story as \`not started: <slug> (waits on <other>'s merge)\`."
+  fi
   cat <<EOF
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as method.md
 § Building describes: pick waves of them whose \`touches\` do not overlap, start each with
@@ -3088,9 +3097,15 @@ release_due() {
 # ones (impossible_block) included.
 is_escalated() { [[ "$(fm "$1" status)" == ready && "$(fm "$1" kind)" == lead && -n "$(get_fm "$1" escalated_from)" ]]; }
 
-# costs_money <item-file> — true when its front matter says costs: money (quoted or with a comment
-# too): merging its PR can spend money, so only the user merges it, under merge = agent as well.
-costs_money() { [[ "$(get_fm "$1" costs)" == *money* ]]; }
+# costs_money <item-file> — true when a story's front matter says costs: money (in any case, quoted,
+# or with a trailing # comment): merging its PR can spend money, so with merge = agent only the user
+# merges it. costs: is a story's key; an epic's is ignored.
+costs_money() {
+  local v
+  [[ "$1" == "${BOARD}/stories/"* ]] || return 1
+  v="$(get_fm "$1" costs)"; v="${v%%#*}"; v="${v//[[:space:]\"\']/}"
+  [[ "$(tr '[:upper:]' '[:lower:]' <<< "${v}")" == money ]]
+}
 
 # impossible_block <story-file> — true when the story's lead block is impossible_story's.
 impossible_block() {
@@ -3804,7 +3819,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 
 # merge [--board|--release] [--head <sha>] <pr-url> — merge a green, open PR with its head pinned:
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
-# lists the URL and does not say costs: money (held for the user, whoever calls it) (with --board instead: the PR is in the board's own repo and every path it changes,
+# lists the URL and, with merge = agent, no story listing it says costs: money (held for the user,
+# whoever calls it) (with --board instead: the PR is in the board's own repo and every path it changes,
 # old or new, is on the board; with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
@@ -3814,7 +3830,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" paid="" p rel origin own method oid why rc=0 rrc ran=1
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -3839,16 +3855,18 @@ merge_pr() {
   [[ "${state}" == OPEN ]] || merge_fail "${url} is ${state}, not open"
   [[ -z "${want}" || "${want}" == "${head}" ]] || merge_fail "the head of ${url} is ${head:0:7}, not ${want:0:7}: review the new head"
   if [[ -z "${only}" ]]; then
-    # Any item listing the URL may be the one in review.
+    # Any item listing the URL may be the one in review, and any story listing it that costs money
+    # holds it, whichever item is in review.
     while IFS= read -r p; do
       [[ " $(fm "${p}" prs) " == *" ${url} "* ]] || continue
       [[ -n "${any}" ]] || any="${p}"
-      [[ "$(fm "${p}" status)" != review ]] || { f="${p}"; break; }
+      [[ -n "${f}" || "$(fm "${p}" status)" != review ]] || f="${p}"
+      if [[ -z "${paid}" ]] && costs_money "${p}"; then paid="$(basename "${p}" .md)"; fi
     done < <(board stories; board epics)
     [[ -n "${any}" ]] || merge_fail "no story or epic lists ${url} on its prs: line: run swarm.sh review <slug> ${url} first, or pass --board for a board-only PR"
     if [[ -z "${f}" ]]; then MERGE_TARGET="$(basename "${any}" .md)"; merge_fail "${MERGE_TARGET} is $(fm "${any}" status), not review"; fi
     MERGE_TARGET="$(basename "${f}" .md)"
-    ! costs_money "${f}" || merge_fail "held: ${MERGE_TARGET} costs money; the user merges it"
+    [[ "${CFG_merge}" != agent || -z "${paid}" ]] || merge_fail "held: ${paid} costs money; the user merges it"
   else
     whose="the project's"
     if [[ "${only}" == --board ]]; then
@@ -5358,8 +5376,9 @@ for l in lines("DASH_WAITING"):
         continue
     m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
-        # swarm.sh merge holds a costs: money story for the user, so no lead session can merge it.
-        rows = need if m.group(1) else lq
+        # With merge = agent, swarm.sh merge holds a costs: money story for the user, so no lead
+        # session can merge it; with merge = human the lead may, when the user asks.
+        rows = need if m.group(1) and E["DASH_MERGE"] == "agent" else lq
         what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
         item = ("epics" if m.group(2) else "stories", m.group(3))
         urls = list(URL.finditer(m.group(4)))

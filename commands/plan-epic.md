@@ -35,7 +35,7 @@ credentials. Cite evidence as file:line. Keep free text short.*
 **0. Size** — judge the epic from its **Done when**. An epic of at most 3 stories with no `risk: high` is
 planned by the lead alone: you write the stories in a board-PR worktree (`swarm.sh board-pr start scope-$1`),
 not the main checkout, commit them there, since codex sees only committed changes, run one `swarm.sh codex-review`
-pass over them in that worktree, and report as below. A board outside the project's repo is edited where it is
+pass over them in that worktree, and report as below. A story whose merge can spend money (it adds or changes a CI job or schedule that runs against real cloud, raises a spend cap, or turns on something billed) gets `costs: money`, as in step 2. A board outside the project's repo is edited where it is
 (`board-pr` refuses it): write the stories there and skip the worktree and the commit. Skip steps 1 to 3, and start no agent. A larger or riskier epic gets the full run.
 
 **1. Survey** — role `survey`, in parallel: one agent (lands, constraints and overlaps together) unless the epic's text names another repo, three then (one, when a survey already exists; see below). The single agent is named `survey`, so its output is `.swarm/$1/survey.json`. Output `{summary, facts:[{fact, evidence}]}`.
