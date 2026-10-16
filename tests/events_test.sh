@@ -196,8 +196,8 @@ check "a nudging wait appends only nudge lines" test "$(grep -cv $'^[^\t]*\tnudg
 # when build_story starts an escalate build, escalated when that build's close makes the story the
 # lead's, then reset or drop with the lead's reason. A project of its own, with its own herdr and gh.
 P="${ROOT}/esc"; LOG="${P}/.swarm/events.tsv"; EB="${ROOT}/escbin"
-mkdir -p "${P}/.claude/swarm" "${EB}"; echo "base_branches = main" > "${P}/.claude/swarm/config"
-git init -q --bare "${ROOT}/esc.git"; git init -q "${P}"; git -C "${P}" remote add origin "${ROOT}/esc.git"
+mkdir -p "${P}/.claude/swarm" "${EB}"; : > "${P}/.claude/swarm/config"
+git init -q --bare "${ROOT}/esc.git"; git -C "${ROOT}/esc.git" symbolic-ref HEAD refs/heads/main; git init -q "${P}"; git -C "${P}" remote add origin "${ROOT}/esc.git"
 git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "${P}" push -q origin HEAD:refs/heads/main
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${EB}/herdr"
 cat >> "${EB}/herdr" <<'STUB'

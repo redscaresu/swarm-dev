@@ -135,10 +135,7 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
 CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
-CFG_base_branches=""    # empty: origin's default branch
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
-CFG_sign_commits=false  # true: every commit and merge is signed, or the agent stops
-CFG_pr_per=story        # epic: stories merge into epic/<slug>, and each repo gets one PR per epic
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
@@ -147,7 +144,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir base_branches merge pr_per lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -175,12 +172,8 @@ load_config() {
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
-      base_branches)
-        [[ "${value}" =~ ^[A-Za-z0-9._/[:space:]-]*$ ]] || die "${where}: base_branches: not branch names: ${value}" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
-      pr_per)
-        [[ "${value}" == story || "${value}" == epic ]] || die "${where}: pr_per must be story or epic, not '${value}'" ;;
       stall_minutes|codex_minutes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: ${key} must be a positive whole number, not '${value}'" ;;
       sonnet_share|escalate_after)
@@ -254,22 +247,14 @@ repo_dir() {
 # worktree_for <repo-dir> <slug> — where a story's worktree goes: beside its repo, in <repo>-wt/.
 worktree_for() { echo "$(dirname "$1")/$(basename "$1")-wt/$2"; }
 
-# base_for <repo-dir> — the branch a story starts from and merges into, fetched: the first
-# base_branches entry origin has, or origin's default branch when the list is empty. Each is asked
-# of origin itself, not the clone's cached refs, which a single-branch clone or a changed default
-# would get wrong. Never a guess.
+# base_for <repo-dir> — the branch a story starts from and merges into, fetched: origin's default
+# branch, asked of origin itself, not the clone's cached refs, which a changed default would get
+# wrong. Never a guess.
 base_for() {
-  local src="$1" b head branches
-  if [[ -n "${CFG_base_branches// /}" ]]; then
-    read -r -a branches <<< "${CFG_base_branches}"
-    for b in "${branches[@]}"; do
-      git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" 2>/dev/null && { echo "${b}"; return; }
-    done
-    die "${src}: origin has none of base_branches (${CFG_base_branches})"
-  fi
+  local src="$1" b head
   if ! git -C "${src}" remote set-head origin --auto >/dev/null 2>&1 \
      || ! head="$(git -C "${src}" symbolic-ref -q --short refs/remotes/origin/HEAD)"; then
-    die "${src}: cannot tell origin's default branch; set base_branches"
+    die "${src}: cannot tell origin's default branch"
   fi
   b="${head#origin/}"
   git -C "${src}" fetch -q origin "+refs/heads/${b}:refs/remotes/origin/${b}" || die "${src}: cannot fetch ${b}"
@@ -282,8 +267,10 @@ base_for() {
 ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
-# plus verify: nothing starts it now, but agents.tsv keeps the verify builds made before it went.
-BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } verify"
+# plus LEGACY_BUILDER_ROLES: roles nothing starts now, kept so agents.tsv's past builds still count.
+# They are in neither policy nor the ladder.
+LEGACY_BUILDER_ROLES="verify"
+BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } ${LEGACY_BUILDER_ROLES}"
 policy() {
   case "$1" in
     hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
@@ -1995,24 +1982,21 @@ findings_goal() {
   send_goal "$1" "$3" findings "$2"
 }
 
-# The merge, signing and review rules, shared by the briefs.
+# The merge and review rules, shared by the briefs.
 merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
 # stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
-# waits out every running build, or with pr_per = epic, the epic's PRs. The backlog conductor has
-# no Done when: it stops once its stories are all started and finished.
+# waits out every running build. The backlog conductor has no Done when: it stops once its stories
+# are all started and finished.
 stop_rule() {
   if [[ "$1" == backlog ]]; then
     printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
     if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when CI on the base is red or timed out."; fi
   elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
-  elif [[ "${CFG_pr_per}" == epic ]]; then echo "Stop when every PR from epic/$1 has merged and the epic's **Done when** holds, or when what is left needs the lead: a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running; a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch; or CI on the base red or timed out."
   else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
 }
-sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop and report that you are blocked; never commit unsigned."; }
-sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
 # The review every story's PR (or branch) passes before its builder is closed. The builder keeps its
 # context until then, so findings go back to it rather than to a fresh agent that has none.
 review_rule() {
@@ -2044,15 +2028,6 @@ codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
-# bump_rule — beside codex_rule, in a project that ships a plugin: an epic's release story makes the
-# plugin.json bump, so a story PR without one is not a finding. story_brief leaves it out of a one-off
-# story (no epic, so no release story) and of the release story itself (its touches name plugin.json).
-# The whole-epic review gets none: the epic PR carries the release story's bump.
-bump_rule() {
-  [[ -f "${PROJECT_DIR}/.claude-plugin/plugin.json" ]] || return 0
-  printf ' %s' "Do not bump plugin.json: the epic's release story (the one whose touches name it) does. On any other story a PR without the bump is not a finding; decline it."
-}
-
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
 # logged too, with their reason, and never count as lessons.
 finding_rule() {
@@ -2525,7 +2500,7 @@ You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (an
 is one), ${SWARM_HOME}/docs/method.md and the epic first.
 
 EOF
-    if [[ "${CFG_pr_per}" == epic ]]; then conduct_epic_mode "${epic}"; else conduct_story_mode "${epic}"; fi
+    conduct_story_mode "${epic}"
   fi
   cat <<EOF
 
@@ -2619,8 +2594,7 @@ EOF
 # answers Fable's usage-credits consent, which is not giving up. With goal on, an idle builder is the
 # goal rule's, and the stall close names its cause.
 give_up_rule() {
-  local retry idle="when it is idle with no PR
-(with one PR per epic, no pushed story/<slug>) after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
+  local retry idle="when it is idle with no PR after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
   if [[ "${CFG_goal}" != off ]]; then
     idle=""
     close="\`swarm.sh close <slug> stalled\` for a stall, or \`swarm.sh close <slug> met\` when review has not converged"
@@ -2712,61 +2686,6 @@ $(green_rule)
 $(review_rule)
 
 $(conduct_merge_rule backlog)
-EOF
-}
-
-# pr_per = epic: stories merge into epic/<epic>, and each repo gets one PR for the whole epic.
-conduct_epic_mode() {
-  local epic="$1" check sign="" merge_step pin="" tick='`'
-  check="$(fm "${BOARD}/epics/${epic}.md" check)"
-  [[ -z "${check}" ]] || check=" and the epic check ${tick}${check}${tick}"
-  [[ "${CFG_sign_commits}" != true ]] || sign=" -S"
-  if [[ "${CFG_merge}" == human ]]; then
-    merge_step="Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human
-merges. When every PR is green and reviewed, run \`swarm.sh review ${epic} <every PR URL>\`."
-  else
-    pin="first note the head SHA of epic/${epic} in each repo's epic worktree (\`git rev-parse HEAD\`): that is
-the head you review, and after a fix, the new head. Then, "
-    merge_step="Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`):
-if it is not the head you reviewed, review the new head. $(pinned_merge_rule "${epic} <every PR URL>") Reconcile takes
-the epic off the board once its last PR merges."
-  fi
-  cat <<EOF
-This project opens one PR per epic, not per story. \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`
-starts each builder on story/<slug>, branched from epic/${epic}; builders push their branch and open
-no PR. Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) as method.md
-§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap, start each,
-and wait with \`swarm.sh wait <slug>\` in the background.
-
-$(auth_rule)$(goal_rule_if_on)
-
-$(give_up_rule)
-
-When a builder reports, review its branch.$(bump_rule)$(rules_review_rule)
-
-Then, one story at a time, merge it into the epic branch
-in a worktree of epic/${epic} beside its repo (../<repo>-wt/epic-${epic}):
-\`git merge --no-ff${sign} origin/story/<slug>\`, run the repo's tests${check} there,
-and push epic/${epic}. Then run \`swarm.sh finish <slug>\`, \`swarm.sh unblock\` and
-\`swarm.sh close <slug>\`, and go on to the next wave.
-
-When the epic's stories are all finished (a fresh conductor may start here; the epic's \`repos:\`
-line lists every repo with an epic branch), review the whole epic: ${pin}in each repo's epic worktree,
-\`$(codex_review_cmd '<base>')\`, where \`swarm.sh base <repo>\` prints the base.
-$(codex_rule) Fix real findings on the epic branch and rebut the rest. Then open one PR per repo from epic/${epic} into its
-base, written for a reader who knows nothing of how it was built: what changes and why, with no
-waves, stories or board names. If a PR from epic/${epic} is already open, update its body instead,
-keeping any structure someone wrote by hand. Wait on the PRs with \`swarm.sh watch --epic ${epic}\`
-in the background.
-
-$(green_rule)
-
-An epic PR that changes code is reviewed only once the /code-review skill (\`/code-review <PR>\`)
-has also passed on it, its real findings fixed on the epic branch and the rest rebutted in the PR.
-
-$(finding_rule)
-
-${merge_step}$(sign_rule_if_on)
 EOF
 }
 
@@ -4423,14 +4342,10 @@ dash_frame() {
   return "${failed}"
 }
 
-# dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), the base branch as last fetched
-# (origin/<base>; dash never fetches), else HEAD.
+# dash_base_ref [dir] — in the repo at [dir] (default PROJECT_DIR), origin's default branch as last
+# fetched (origin/HEAD; dash never fetches), else HEAD.
 dash_base_ref() {
-  local r
-  for r in ${CFG_base_branches} HEAD; do
-    git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify "origin/${r}" >/dev/null 2>&1 && { echo "origin/${r}"; return; }
-  done
-  echo HEAD
+  if git -C "${1:-${PROJECT_DIR}}" rev-parse -q --verify origin/HEAD >/dev/null 2>&1; then echo origin/HEAD; else echo HEAD; fi
 }
 
 # dash_slow — the fields too slow for every frame, cached for a minute in a file under $TMPDIR (never
