@@ -68,6 +68,13 @@ done
 PR=https://github.com/o/svc/pull/1
 run() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 
+# --- A story named review-s1 would share s1's review agent's name: refused, nothing started. No review
+# agent runs yet, so only the refusal can stop it.
+printf '%s\n' --- "status: ready" "kind: code" --- > "${b}/stories/review-s1.md"
+check "a board with a story named review-s1 makes review-agent s1 fail with nothing started" "1|no" \
+  "$(set +e; run review-agent s1 "${PR}" >/dev/null; echo "$?")|$(grep -q 'agent start\|tab create\|pane split' "${ROOT}/herdr.log" 2>/dev/null && echo yes || echo no)"
+rm "${b}/stories/review-s1.md"
+
 # --- One review agent: started in s1's worktree with role review, its brief scoped to s1.
 out="$(run review-agent s1 "${PR}")" || { echo "FAIL review-agent s1 failed: ${out}"; exit 1; }
 check "review-agent s1 starts review-s1 in s1's worktree, with review's model and effort" "yes|yes|yes" \
@@ -78,8 +85,8 @@ check "the brief holds s1's touches, each Done when item, SWARM_STORY=s1, /code-
   "yes|yes|yes|yes|yes|yes|yes" \
   "$(has "bin/s1.sh:fn_s1" "${brief}")|$(has "- s1 DONE-ONE holds" "${brief}")|$(has "- s1 DONE-TWO holds" "${brief}")|$(has "SWARM_STORY=s1 " "${brief}")|$(has "/code-review ${PR}" "${brief}")|$(has "not a finding" "${brief}")|$(has "${p}/.swarm/reviews/s1.md" "${brief}")"
 check "the reviews directory exists" "yes" "$([[ -d "${p}/.swarm/reviews" ]] && echo yes || echo no)"
-check "events.tsv gains a review-agent line whose target is s1" "s1	ok" \
-  "$(awk -F'\t' '$2 == "review-agent" { print $3 "\t" $5 }' "${p}/.swarm/events.tsv")"
+check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusal's)" "s1	ok" \
+  "$(awk -F'\t' '$2 == "review-agent" { l = $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
 
 # --- Four at once: each returns while its agent still works, and each is waited on alone.
 for s in s2 s3 s4; do run review-agent "${s}" "${PR}" >/dev/null || { echo "FAIL review-agent ${s} failed"; exit 1; }; done
@@ -98,11 +105,6 @@ for s in s1 s2 s3 s4; do
     "$(grep -o "${p}/.swarm/reviews/[a-z0-9-]*\.md" "${p}/.swarm/briefs/review-${s}.md" | sort -u | paste -sd' ' -)"
 done
 
-# --- A story named review-s1 would share the review agent's name: refused, nothing started.
-printf '%s\n' --- "status: ready" "kind: code" --- > "${b}/stories/review-s1.md"
-: > "${ROOT}/herdr.log"
-check "a board with a story named review-s1 makes review-agent s1 fail with nothing started" "1|no" \
-  "$(set +e; run review-agent s1 "${PR}" >/dev/null; echo "$?")|$(grep -q 'agent start\|tab create\|pane split' "${ROOT}/herdr.log" && echo yes || echo no)"
 check "policy review prints claude opus high" "claude opus high" "$(run policy review)"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
