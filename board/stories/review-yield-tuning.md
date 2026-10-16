@@ -54,3 +54,12 @@ Every kind with 5 or more findings, across all reviewers:
 | unsanitized-input | 5 | 1 | 4 | 80% |
 
 What it shows before tuning: the three bump kinds (release-bump, version-bump, missing-version-bump: 28 raised, 1 fixed) are already covered by codex-bump-not-a-finding (#171). Of the rest, redundant-work (92% declined), scope-creep (88%) and duplicated-source-of-truth (80%) are the noisiest. unhandled-state is the largest declined count, at 68. The kinds that mostly get fixed are fails-open, docs-misstate-code, vacuous-test and fails-silent, all under 45% declined.
+
+## Codex budget (added 2026-10-16)
+
+Codex hit its usage limit at about 16:00 on 2026-10-16, and every review after that ran without it.
+Part of the day's budget went on board PRs; story-adding board passes found real gaps (two on
+infrafactory #587, four on a draft sync story), but tidy-ups (deletions, status flips) found
+nothing. The user agreed: code PRs come first. Among the tuning stories, file one that runs codex on
+a board PR only when it adds or rewrites a story, and never on a PR that only deletes stories or
+changes front matter.

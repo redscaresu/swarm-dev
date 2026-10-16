@@ -24,6 +24,7 @@ The lead and a Fable review (2026-10-16) went through infrafactory's logs since 
   - On a single-repo epic, plan-epic runs one survey.
   - Per-epic release stories are gone. The lead cuts a release from main when it has unreleased changes, and `bump_rule`, its brief rule and the AGENTS.md lines that exist only to serve release stories go with them.
   - `swarm.sh reconcile` pulls the main checkout whenever it is behind, not only when a review item merged (reconcile-always-pulls), so the lead never pulls by hand.
+  - Under merge = agent, a story marked `costs: money` waits for the user's merge (merge-holds-costs-money); infrafactory then runs merge = agent (merge-agent-for-infrafactory).
 - **Data.**
   - `log-finding --reviewer escaped <original PR> <kind> "…"` records a defect a later fix found in merged work.
   - `log-finding --declined` takes a reason (out-of-scope, nit, wrong).

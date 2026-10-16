@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# epic_test.sh — the layout (an epic's tab holds its conductor and a pane per story) and
-# pr_per = epic (stories branch from, and merge into, epic/<slug>). herdr is a stub on PATH that
+# epic_test.sh — the layout (an epic's tab holds its conductor and a pane per story) and the briefs
+# a builder and a conductor get. herdr is a stub on PATH that
 # hands out pane ids in order and remembers tab labels; the repo is a local bare remote. gh is a stub
 # too, so a close's PR lookup never reaches the real gh.
 set -euo pipefail
@@ -150,7 +150,6 @@ logs_findings() {
 }
 LOGS_FINDINGS="fixed codex|declined codex|yes"
 STORY_REPLY="When CI is green, reply with the PR URL, what changed in three lines, and the codex findings and the mutation, then stay open: the conductor may send review findings to fix on the same PR."
-EPIC_REPLY="When your branch is pushed, reply with the branch, what changed in three lines, the codex findings and the mutation, then stop."
 
 # herdr: logs every call; each new pane is w:<n>, each new tab t<n>, and tab list shows their labels.
 # agent start makes the session's .jsonl; a /goal prompt is kept in goal.txt and writes its entry.
@@ -243,13 +242,13 @@ nx() { (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}
 
 # --- Layout: the conductor opens the epic's tab; its stories fill it, then overflow to "<epic>-2".
 item "${b}" epics/e.md "status: active"
-for s in s1 s2 s3 s4; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: e" "repo: svc"; done
+for s in s1 s2 s3; do item "${b}" "stories/${s}.md" "status: ready" "kind: code" "epic: e" "repo: svc"; done
+item "${b}" stories/s4.md "status: ready" "kind: code" "epic: e" "repo: svc" "touches: [.claude-plugin/plugin.json]"
 item "${b}" stories/o1.md "status: ready" "kind: code" "repo: svc"
-# A project that ships a plugin: its epic's release story bumps plugin.json, so a story PR need not.
-BUMP="the epic's release story (the one whose touches name it) does"
-# bumped <text> — whether <text> carries the bump line; missing when <text> is empty, so a check for
-# its absence cannot pass on a brief or paragraph that was never written.
-bumped() { if [[ -z "$1" ]]; then echo missing; elif grep -qF -- "${BUMP}" <<< "$1"; then echo yes; else echo no; fi; }
+# A project that ships a plugin: no brief names plugin.json, the release story's (s4's touches name it) included.
+# plugin <brief> — whether the brief names plugin.json; missing when it was never written, so a check
+# for its absence cannot pass on a brief that does not exist.
+plugin() { if [[ ! -s "$1" ]]; then echo missing; elif grep -qF plugin.json "$1"; then echo yes; else echo no; fi; }
 mkdir -p "${p}/.claude-plugin"; echo '{"version": "1.0.0"}' > "${p}/.claude-plugin/plugin.json"
 mkdir -p "${p}/.swarm/inbox"; echo "a note for the last run" | tee "${p}/.swarm/inbox/conduct-e.md" > "${p}/.swarm/inbox/conduct-e.reading.md"
 run conduct e >/dev/null
@@ -274,12 +273,9 @@ check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0
 check "the story-mode conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
   "$(has "${STRICT_RULE}" "${cbrief}")|$(has "start yours in a later wave, after the named story merges" "${cbrief}")|$(has "nothing is known to be open: retry the story in a later wave" "${cbrief}")"
 check "the story-mode conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${cbrief}" || true)"
-for s in s1 s2 s3; do run story "${s}" >/dev/null; done
-mv "${p}/.claude-plugin/plugin.json" "${ROOT}/plugin.json"; run story s4 >/dev/null; mv "${ROOT}/plugin.json" "${p}/.claude-plugin/plugin.json"
-check "with plugin.json, the story-mode builder and conductor say a missing bump is not a finding; without it, no line" "yes|yes|no" \
-  "$(has "${BUMP}" "$(cat "${p}/.swarm/briefs/s1.md")")|$(has "${BUMP}" "$(para "A story is reviewed only when" "${cbrief}")")|$(bumped "$(cat "${p}/.swarm/briefs/s4.md" 2>/dev/null)")"
-check "the story-mode conductor's line keeps the release story's own PR to the bump" "yes" \
-  "$(has "On any other story a PR without the bump is not a finding" "$(para "A story is reviewed only when" "${cbrief}")")"
+check "with merge = human, the story-mode conductor stops when the Done when holds or nothing ready is left, and pins no merge" "yes|no" \
+  "$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${cbrief}")|$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)"
+for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "the story-mode builder and conductor run codex-review in the background, and know what a timeout means" "yes|yes|yes|yes|yes|yes" \
   "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(codex_form '<base>' "$(para "A story is reviewed only when" "${cbrief}")")"
 check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
@@ -293,7 +289,8 @@ check "the fourth pane splits the second, and the fifth opens <epic>-2" "yes|yes
   "$(has "pane split w:2 --direction down" "$(log)")|$(has "--label e-2 " "$(log)")"
 run story o1 >/dev/null
 check "a story outside any epic gets a tab of its own" "yes" "$(has "--label o1 " "$(log)")"
-check "a one-off story has no release story, so its brief has no bump line" "no" "$(bumped "$(cat "${p}/.swarm/briefs/o1.md" 2>/dev/null)")"
+check "with plugin.json, no builder brief (an epic's story, the release story, a one-off) and no story-mode conductor brief names it" "no|no|no|no" \
+  "$(plugin "${p}/.swarm/briefs/s1.md")|$(plugin "${p}/.swarm/briefs/s4.md")|$(plugin "${p}/.swarm/briefs/o1.md")|$(plugin "${p}/.swarm/briefs/conduct-e.md")"
 : > "${ROOT}/herdr.log"
 run close s1 >/dev/null
 check "closing a story closes its pane and leaves the epic's tab" "yes|no|no" \
@@ -502,90 +499,28 @@ run story d1 >/dev/null || true
 check "a failed split records no pane" "1" "$(wc -l < "${p}/.swarm/state/d" | tr -d ' ')"
 rm -f "${ROOT}/live" "${ROOT}/nosplit" "${b}/epics/d.md" "${b}/stories/d1.md"
 
-# --- pr_per = epic: a story branches from epic/<epic>, which is made from the base the first time.
-printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
+# --- An epic with a check:, in story mode: its story branches from the base and runs the check
+# before its PR; its conductor's brief.
+printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 item "${b}" epics/f.md "status: active" "check: make test"
 item "${b}" stories/f1.md "status: ready" "kind: code" "epic: f" "repo: svc"
-item "${b}" stories/f2.md "status: ready" "kind: code" "epic: f" "repo: svc"
 run story f1 >/dev/null
-tip() { git -C "$1" rev-parse "$2"; }
-check "epic/<epic> is made from the base (dev), and the story branches from it" \
-  "$(tip "${ROOT}/svc.git" dev)|$(tip "${ROOT}/svc.git" dev)" \
-  "$(tip "${ROOT}/svc.git" epic/f)|$(tip "${ROOT}/svc-wt/f1" HEAD)"
-check "the epic lists the repo" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md")"
 brief="$(cat "${p}/.swarm/briefs/f1.md")"
-check "the story brief opens no PR and names the epic branch" "yes|yes|yes" \
-  "$(has "open no PR" "${brief}")|$(has "codex-review epic/f" "${brief}")|$(has "Before you reply, also run the epic's check" "${brief}")"
-check "the epic-mode builder runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" "$(codex_form epic/f "${brief}")"
-check "the epic story brief asks for a mutation" "yes" \
-  "$(has "prove each new or changed test can fail" "${brief}")"
-check "the epic-mode builder says a missing bump is not a finding" "yes" "$(has "${BUMP}" "${brief}")"
-# The release story does the bump, so its brief must not tell it not to.
-item "${b}" stories/f3.md "status: ready" "kind: code" "epic: f" "repo: svc" "touches: [.claude-plugin/plugin.json]"
-run story f3 >/dev/null
-check "a story whose touches name plugin.json (the release story) gets no bump line" "no" \
-  "$(bumped "$(cat "${p}/.swarm/briefs/f3.md" 2>/dev/null)")"
-rm -f "${b}/stories/f3.md"
-# Someone merged into the epic branch: the next story starts from there, and the repo is listed once.
-"${GIT[@]}" -C "${ROOT}/svc" fetch -q origin && "${GIT[@]}" -C "${ROOT}/svc" checkout -q -b m origin/epic/f
-"${GIT[@]}" -C "${ROOT}/svc" commit -q --allow-empty -m f1 && "${GIT[@]}" -C "${ROOT}/svc" push -q origin m:epic/f
-merged="$(tip "${ROOT}/svc" HEAD)"
-run story f2 >/dev/null
-check "a later story branches from the epic branch as it is now" "${merged}|${merged}" "$(tip "${ROOT}/svc-wt/f2" HEAD)|$(tip "${ROOT}/svc.git" epic/f)"
-check "the repo is listed once" "svc" "$(sed -n 's/^repos: //p' "${b}/epics/f.md")"
-check "with goal off, the epic story brief holds the epic-mode reply, and no .goal.md is written" "yes|no" \
-  "$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/f2.md")")|$([[ -e "${p}/.swarm/briefs/f2.goal.md" ]] && echo yes || echo no)"
-printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"; export CLAUDE_STUB_AGENTS="${ROOT}/started.json"
-goal_story "${b}" gf1 "status: ready" "kind: code" "epic: f" "repo: svc"
-run story gf1 >/dev/null
-check "with goal = 7 and pr_per = epic, the condition carries the epic-mode reply the brief holds" \
-  "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gf1.goal.md" gf1 "${EPIC_REPLY}" 7)|$(has "${EPIC_REPLY}" "$(cat "${p}/.swarm/briefs/gf1.md")")"
-# A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the epic
-# branch or worktree exists, and nothing is sent.
-item "${b}" epics/gx.md "status: active"; cp "${b}/epics/gx.md" "${ROOT}/gx-epic.md"
+check "an epic's story branches from the base (dev), opens its PR against it, runs the epic's check first, and asks for a mutation" "$(git -C "${ROOT}/svc.git" rev-parse dev)|yes|yes|yes" \
+  "$(git -C "${ROOT}/svc-wt/f1" rev-parse HEAD)|$(has "Open the PR against \`dev\`" "${brief}")|$(has "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`make test\`" "${brief}")|$(has "prove each new or changed test can fail" "${brief}")"
+# A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the worktree
+# exists, and nothing is sent.
+printf '%s\n' "base_branches = dev main" "goal = 7" > "${p}/.claude/swarm/config"
 gx="gx1-$(printf 'long%.0s' {1..60})"
-goal_story "${b}" "${gx}" "status: ready" "kind: code" "epic: gx" "repo: svc"
+goal_story "${b}" "${gx}" "status: ready" "kind: code" "repo: svc"
 : > "${ROOT}/herdr.log"
 out="$(run story "${gx}" || true)"
-check "with goal on, a /goal message over GOAL_SEND_MAX fails naming the story, sends nothing, and leaves no worktree, branch, epic branch or epic edit" \
-  "yes|nothing sent|no|no|no|no|same" \
-  "$(has "${gx}: its /goal message is" "${out}")|$(grep -qE '^agent (start|prompt) ' "${ROOT}/herdr.log" && echo sent || echo "nothing sent")|$([[ -e "${ROOT}/svc-wt/${gx}" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/epic/gx && echo yes || echo no)|$(cmp -s "${ROOT}/gx-epic.md" "${b}/epics/gx.md" && echo same || echo changed)"
-printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"; unset CLAUDE_STUB_AGENTS
-rm -f "${b}/stories/gf1.md" "${b}/stories/${gx}.md" "${b}/epics/gx.md"
-run conduct f >/dev/null
-brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
-check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
-  "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
-check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
-check "the one-PR-per-epic conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
-  "$(has "${STRICT_RULE}" "${brief}")|$(has "start yours in a later wave, after the named story merges" "${brief}")|$(has "nothing is known to be open: retry the story in a later wave" "${brief}")"
-check "the one-PR-per-epic conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${brief}" || true)"
-check "with merge = human, the story-mode and one-PR-per-epic conductors stop when the Done when holds or nothing ready is left" "yes|yes" \
-  "$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${cbrief}")|$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${brief}")"
-check "with merge = human, neither the story-mode nor the one-PR-per-epic brief pins a merge" "no|no" \
-  "$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)|$(grep -qF -- --match-head-commit <<< "${brief}" && echo yes || echo no)"
-check "the epic-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${brief}")"
-check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
-  "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"
-check "the epic-mode conductor's per-story review says a missing bump is not a finding; its whole-epic review, which must see the bump, does not" "yes|no" \
-  "$(has "${BUMP}" "$(para "When a builder reports, review its branch." "${brief}")")|$(bumped "$(para "review the whole epic" "${brief}")")"
-check "the epic-mode conductor's line keeps the release story's own branch to the bump" "yes" \
-  "$(has "On any other story a PR without the bump is not a finding" "$(para "When a builder reports, review its branch." "${brief}")")"
-check "the one-PR-per-epic conductor runs /code-review on each epic PR" "yes" \
-  "$(has "An epic PR that changes code is reviewed only once the /code-review skill" "${brief}")"
-check "the one-PR-per-epic conductor's brief says what a builder's auth means, then wait on it again" "yes|yes" \
-  "$(has "stopped on an expired login, which only the user's" "${brief}")|$(has "again with \`swarm.sh wait <slug>\` in the background." "${brief}")"
-check "the one-PR-per-epic conductor gives up with close, accepts a Fable dialog itself, and leaves an escalated story to the lead" \
-  "${GIVES_UP}" "$(gives_up "${brief}")"
-check "with goal off, the one-PR-per-epic conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${brief}")"
-check "the one-PR-per-epic conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule f "${brief}")"
-printf '%s\n' "pr_per = epic" "base_branches = dev main" "goal = 5" > "${p}/.claude/swarm/config"
-run conduct f >/dev/null || true
-check "with goal = 5, the one-PR-per-epic conductor reads why a builder stopped and closes it with that cause" \
-  "${GOAL_ON}" "$(goal_on "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
-printf '%s\n' "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
+check "with goal on, a /goal message over GOAL_SEND_MAX fails naming the story, sends nothing, and leaves no worktree or branch" \
+  "yes|nothing sent|no|no|no" \
+  "$(has "${gx}: its /goal message is" "${out}")|$(grep -qE '^agent (start|prompt) ' "${ROOT}/herdr.log" && echo sent || echo "nothing sent")|$([[ -e "${ROOT}/svc-wt/${gx}" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)"
+rm -f "${b}/stories/${gx}.md"
 # lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
-printf 'lessons_file = AGENTS.md\n' >> "${p}/.claude/swarm/config"
+printf '%s\n' "base_branches = dev main" "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
 printf 'A PROJECT RULE every agent reads. <!-- lesson: brief-kind -->' > "${p}/.claude/swarm/brief.md"   # no final newline
 item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
@@ -593,12 +528,9 @@ run story g1 >/dev/null
 gbrief="$(cat "${p}/.swarm/briefs/g1.md")"
 check "a builder walks its diff against each tagged rule, and lists both kinds in the PR body" "yes|yes|yes|yes" \
   "$(has "Before you open the PR, walk your diff against each rule tagged" "${gbrief}")|$(has "the PR body a \`Rules checked:\` section" "${gbrief}")|$(has "- agents-kind: <file:line>, or n/a: <why>" "${gbrief}")|$(has "- brief-kind: <file:line>, or n/a: <why>" "${gbrief}")"
-for mode in story epic; do   # epic last: the tests below run with pr_per = epic
-  printf '%s\n' "pr_per = ${mode}" "base_branches = dev main" "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
-  run conduct f >/dev/null || true
-  check "with tagged rules, the ${mode}-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
-    "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
-done
+run conduct f >/dev/null || true
+check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
+  "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" "base_branches = dev main" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
@@ -616,15 +548,6 @@ check "it reports, and stops, only once no story of the epic is ready or running
   "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
 check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
   "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
-printf '%s\n' "merge = agent" "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
-run conduct f >/dev/null || true
-brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
-check "with merge = agent, the one-PR-per-epic conductor stops once every epic PR has merged, or what is left needs the lead, not when no story is left" "yes|yes|yes|yes|no" \
-  "$(has "Stop when every PR from epic/f has merged and the epic's **Done when** holds, or when what is left needs the lead:" "${brief}")|$(has "a story of this epic only the lead can finish (a \`lead\` story, or one escalated to the lead) with none that is yours to start ready or running;" "${brief}")|$(has "a merge that \`swarm.sh merge\` refused or left unconfirmed and you cannot fix on the branch;" "${brief}")|$(has "or CI on the base red or timed out." "${brief}")|$(grep -qF "none is running" <<< "${brief}" && echo yes || echo no)"
-check "with merge = agent, the one-PR-per-epic conductor notes the epic branch's head before the whole-epic review, re-reads the PR's head before each merge, and merges one at a time" "yes|yes|yes" \
-  "$(has "review the whole epic: first note the head SHA of epic/f in each repo's epic worktree (\`git rev-parse HEAD\`)" "${brief%codex-review <base>*}")|$(has "Before each merge, read the PR's head (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if it is not the head you reviewed, review the new head." "${brief}")|$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"
-check "with merge = agent, the one-PR-per-epic conductor puts the epic in review, then merges each pinned head with swarm.sh merge" "yes|yes" \
-  "$(has "run \`swarm.sh review f <every PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")"
 printf '%s\n' "escalate_after = 0" "base_branches = dev main" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
@@ -646,20 +569,8 @@ check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '
 run close g1 >/dev/null; rm -f "${b}/stories/g1.md" "${p}/AGENTS.md"
 grep -v '^lessons_file' "${p}/.claude/swarm/config" > "${p}/cfg.tmp" || true; mv "${p}/cfg.tmp" "${p}/.claude/swarm/config"
 check "base prints a repo's base" "dev" "$(run base svc)"
-
-# --- next: an active epic whose stories are all in its branch, with no PR yet, gets a conductor.
-rm -f "${b}"/epics/e.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
-perl -pi -e 's/^status: ready/status: blocked/' "${b}/stories/f2.md"
-check "while a story of the epic is open, it is not stalled" "no" "$(grep -q '^conduct' <<< "$(nx)" && echo yes || echo no)"
-perl -pi -e 's/^status: blocked/status: done/' "${b}/stories/f2.md"
-check "every story done (finished = mark): conduct the epic" "conduct f" "$(first "$(nx)")"
-rm "${b}/stories/f2.md"
-check "every story gone (finished = delete): conduct the epic" "conduct f" "$(first "$(nx)")"
-perl -ni -e 'print unless /^repos:/' "${b}/epics/f.md"
-check "with no repos: line nothing was built, so it is not stalled" "plan-epic f" "$(first "$(nx)")"
-item "${b}" epics/f.md "status: active" "repos: svc"
+rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
-check "with pr_per = story the rule does not apply" "plan-epic f" "$(first "$(nx)")"
 
 # --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
 # state is its session's, from the claude stub's fixture. A builder idle before its story has a PR
@@ -729,23 +640,6 @@ got="$(SWARM_STALL_POLL_MS=1000 waitrc "${ROOT}/wait.err" a 20000)"
 check "a nudge that could not be delivered is not logged, and wait returns idle, saying so" "idle|exit 0|1|0|yes" \
   "$(cut -d'|' -f1-2 <<< "${got}")|$(nudges)|$(nudged)|$(has "could not be delivered" "$(cat "${ROOT}/wait.err")")"
 rm -f "${ROOT}/promptfail"
-# pr_per = epic: a pushed story/a is an epic story's hand-off; until then it is nudged.
-item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
-printf '%s\n' "pr_per = epic" "repos_dir = ${ROOT}" "base_branches = dev main" > "${p}/.claude/swarm/config"
-"${GIT[@]}" -C "${ROOT}/svc" push -q origin main:refs/heads/story/a; : > "${ROOT}/herdr.log"
-check "epic mode: a builder whose story branch is pushed is not nudged" "idle|0" "$(run wait a | tail -1)|$(nudges)"
-# A one-off story (no epic:) opens its own PR even with pr_per = epic: pushed with no PR, it is nudged.
-item "${b}" stories/a.md "status: ready" "kind: code" "repo: svc"; : > "${ROOT}/herdr.log"
-got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "epic mode: a one-off story pushed with no PR is nudged for its PR" "idle|3|yes" \
-  "${got%%|*}|$(nudges)|$(has "you are idle and story/a has no PR" "$(log)")"
-item "${b}" stories/a.md "status: ready" "kind: code" "epic: f" "repo: svc"
-"${GIT[@]}" -C "${ROOT}/svc" push -q origin :refs/heads/story/a; : > "${ROOT}/herdr.log"
-# A tag named story/a on origin is not the branch: the story still reads as not pushed.
-"${GIT[@]}" -C "${ROOT}/svc" tag story/a && "${GIT[@]}" -C "${ROOT}/svc" push -q origin refs/tags/story/a
-got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "epic mode: a builder whose story branch is not pushed (only a tag story/a) is nudged, and told so" "idle|3|yes" \
-  "${got%%|*}|$(nudges)|$(has "you are idle and story/a is not pushed" "$(log)")"
 # The same builder, its transcript ending on an expired login: only the user's /login helps, so wait
 # returns auth at once (a minute's slice), naming it, and never nudges it. The fixture is a real
 # transcript's shape, ids replaced; without its auth entry the last turn is ordinary and the
@@ -907,6 +801,12 @@ printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 check "sonnet_share = 0 (the default): roles resolve as before" \
   "code opus high|code-risky opus xhigh|docs sonnet medium|chore haiku medium" \
   "$(build r0-code "kind: code")|$(build r0-risky "kind: code" "risk: high")|$(build r0-docs "kind: docs")|$(build r0-chore "kind: chore")"
+item "${b}" stories/r0-verify.md "status: ready" "repo: svc" "kind: verify"
+rc=0; out="$(run story r0-verify)" || rc=$?
+check "story refuses a verify story, naming code, docs and chore, and starts no agent, worktree or branch" "fail|yes|not started|no|no|no" \
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "r0-verify has kind: verify; an agent builds only code, docs or chore" "${out}")|$(started_x r0-verify)|$(
+  [[ -e "${ROOT}/svc-wt/r0-verify" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify refs/heads/story/r0-verify && echo yes || echo no)|$(
+  git -C "${ROOT}/svc.git" show-ref -q --verify refs/heads/story/r0-verify && echo yes || echo no)"
 echo "sonnet_share = 4" >> "${p}/.claude/swarm/config"
 check "sonnet_share = 4: code stories split by cksum mod 4, and a sampled one starts on code-sonnet sonnet high" \
   "code opus high|code opus high|code-sonnet sonnet high|code-sonnet sonnet high" \
@@ -1051,7 +951,7 @@ check "a merged story with no builder open still loses its worktree and both bra
 q="${ROOT}/q"
 "${GIT[@]}" init -q --bare "${q}.git" && "${GIT[@]}" clone -q "${q}.git" "${q}" 2>/dev/null
 mkdir -p "${q}/.claude/swarm"; echo "goal = 5" > "${q}/.claude/swarm/config"
-goal_story "${q}/docs" qz "status: ready" "kind: code"; item "${q}/docs" stories/qy.md "status: ready" "kind: code"
+goal_story "${q}/docs" qz "status: ready" "kind: code"; item "${q}/docs" stories/qy.md "status: ready" "kind: code" "epic: qe"
 "${GIT[@]}" -C "${q}" add docs && "${GIT[@]}" -C "${q}" commit -q -m board && "${GIT[@]}" -C "${q}" push -q origin main
 qrun() { (cd "${q}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 # send_goal types the /goal only into a started turn: the claude stub lists the brief's session busy.
@@ -1068,6 +968,13 @@ check "goal = 5, board in the repo, review uncommitted: reconcile exits 0, close
   "${rc}|$(closes)|$([[ -d "${q}-wt/qz" ]] && echo worktree)|$(git -C "${q}" show-ref --heads story/qz; git -C "${q}.git" show-ref --heads story/qz)|$([[ -e "${q}/docs/stories/qz.md" ]] && echo there || echo gone)"
 : > "${ROOT}/herdr.log"; rc=0; rout="$(qrun reconcile)" || rc=$?
 check "a second reconcile is a no-op" "0|||ready" "${rc}|${rout}|$(cat "${ROOT}/herdr.log")|$(sed -n "s/^status: //p" "${q}/docs/stories/qy.md")"
+# With the board in the repo, every builder deletes its story file in its PR: a one-off (qz) and an
+# epic's story (qy).
+: > "${q}/.claude/swarm/config"
+qrun story qy >/dev/null
+check "with the board in the repo, a one-off's and an epic story's briefs say to delete the story file" "yes|yes" \
+  "$(has "Delete docs/stories/qz.md in your PR, and nothing else under docs/stories/." "$(cat "${q}/.swarm/briefs/qz.md")")|$(
+  has "Delete docs/stories/qy.md in your PR, and nothing else under docs/stories/." "$(cat "${q}/.swarm/briefs/qy.md")")"
 rm -f "${b}"/stories/r[um][123].md
 
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
