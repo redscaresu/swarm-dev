@@ -658,10 +658,9 @@ start_agent() {
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
-      # No agent can run `gh pr merge`, but a conductor with merge = agent. `gh api` could still merge,
-      # so the briefs say it too.
-      local guard=()
-      [[ "${CFG_merge}" == agent && "${role}" == conduct ]] || guard=(--disallowedTools "Bash(gh pr merge:*)")
+      # No agent can run `gh pr merge`, a conductor with merge = agent included: it merges through
+      # swarm.sh merge, whose gh the guard never reaches. `gh api` could still merge, so the briefs say it too.
+      local guard=(--disallowedTools "Bash(gh pr merge:*)")
       # builder_subagent_model: the session's env, through --settings since herdr passes no env. Without
       # _FORCE the model setting leaves an Explore subagent on the parent's model (opusplan-spike).
       [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && guard+=(--settings \
@@ -1908,9 +1907,9 @@ EOF
 # item in review, then swarm.sh merge pinned to the head it reviewed, one at a time, which reconciles.
 pinned_merge_rule() {
   cat <<EOF
-Merge a PR only when it is green and reviewed: run
-\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare
-\`gh pr merge\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
+Merge a PR only when it is green and reviewed, and only through \`swarm.sh merge\`: run
+\`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never
+\`gh pr merge\` or \`gh api\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
 repo's merge method, squash when allowed
 (\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
 and only once every check on that head has completed and passed, which it checks itself. Run one
