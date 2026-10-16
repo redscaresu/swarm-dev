@@ -20,7 +20,7 @@
 #   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
-#   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, before it has a worktree, finished or stories in its repo with open PRs: it starts stacked on those
+#   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, before it has a worktree, finished or stories in its repo with open PRs: it starts stacked on those; a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
@@ -1978,7 +1978,8 @@ When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\`
 \`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again with its build kept: close its builder with a bare
-\`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, and go on.${epic_end}
+\`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, and go on.
+$(held_ready_rule)${epic_end}
 EOF
   else
     [[ -n "${backlog}" ]] || epic_end=" When the
@@ -1990,14 +1991,27 @@ printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says
 Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
 whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
-to merge\`), the story is blocked again and nothing merges: leave its builder open. Once its parents
-merge, \`swarm.sh unblock\` readies it again with its worktree: never run \`swarm.sh story\` for it, but
-do what the \`held:\` line says and review it again. After a
+to merge\`), the story is blocked again and nothing merges: leave its builder open.
+$(held_ready_rule) After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
 story ${scope} that is yours to start is ready and none is running, or CI on the base is red or
 timed out.${epic_end}
 EOF
   fi
+}
+
+# held_ready_rule — what to do when unblock readies a child review held, for both merge modes: its
+# build is kept, so story would refuse it.
+held_ready_rule() {
+  cat <<EOF
+When \`swarm.sh unblock\` prints \`ready: <slug> (held: merge origin/<base>, review again)\`, the
+story's parents have merged and its build is kept: never run \`swarm.sh story\` for it. Have its
+builder merge origin/<base> into its branch, re-run the tests and push: tell an open builder with
+\`swarm.sh tell <slug> findings <file>\`; with none open, start one in its worktree
+(\`<repo>-wt/<slug>\` beside its repo) with \`swarm.sh agent <tab> <slug> <worktree> <the role
+swarm.sh _role <slug> prints> <brief file>\`, the tab its epic (its slug when it has none), the brief
+saying the same and to reply with the PR URL. Then review its new head as any other story's PR.
+EOF
 }
 
 # stacked_rule — what unblock's (stacked on <parents>) means, for both merge modes.
@@ -2291,6 +2305,13 @@ build_story() {
   fi
   base="$(base_for "${src}")"
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
+  if [[ -e "${wt}" ]] || git -C "${src}" show-ref -q --verify "refs/heads/${branch}"; then
+    [[ -z "$(get_fm "${story}" held_by)" ]] \
+      || die "${slug} was held until its parents merged, and its build is kept in ${wt}: never start it again. Have its builder merge origin/${base} into ${branch} there, re-run the tests and push, then review it again and run swarm.sh review ${slug} <PR URL>"
+    die "${slug} has a build already (${branch} or ${wt} exists in ${src}): it has started, so wait on its builder, and to build it again from scratch remove that worktree and branch first"
+  fi
+  # A fresh build: a hold from a build since cleared is over.
+  [[ -z "$(get_fm "${story}" held_by)" ]] || set_fm "${story}" held_by
   parents="$(open_parents "${story}")"
   if [[ -n "${parents}" ]]; then stack_start "${story}" "${src}" "${wt}" "${parents}"
   else git -C "${src}" worktree add -q -b "${branch}" "${wt}" "origin/${base}"; fi
@@ -2312,9 +2333,10 @@ build_story() {
 # origin/story/<first parent>, with each other parent's branch merged in. Each parent's branch is
 # fetched first and its PR must still be open; when one is not, the story goes back to blocked (an
 # uncommitted board edit, as unblock's) and nothing is made. A merge that fails leaves no worktree or
-# branch. Sets STACK_PRS to the parents' PR URLs, for the brief.
+# branch, and names the two branches that conflict and their files (merge_clash). Sets STACK_PRS to the
+# parents' PR URLs, for the brief.
 stack_start() {
-  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why
+  local story="$1" src="$2" wt="$3" slug p pr first="${4%% *}" why merged
   slug="$(basename "${story}" .md)"; STACK_PRS=""
   for p in $4; do
     if ! git -C "${src}" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null \
@@ -2326,16 +2348,35 @@ stack_start() {
   done
   # No upstream: a plain push must never reach the parent's branch.
   git -C "${src}" worktree add -q --no-track -b "story/${slug}" "${wt}" "origin/story/${first}"
+  merged="origin/story/${first}"
   for p in ${4#"${first}"}; do
-    why="$(git -C "${wt}" merge -q --no-edit "origin/story/${p}" 2>&1)" && continue
+    if why="$(git -C "${wt}" merge -q --no-edit "origin/story/${p}" 2>&1)"; then merged+=" origin/story/${p}"; continue; fi
+    why="$(merge_clash "${wt}" "origin/story/${p}" "${merged}" "${why##*$'\n'}")"
     git -C "${src}" worktree remove --force "${wt}"; git -C "${src}" branch -q -D "story/${slug}"
-    die "${slug}: cannot merge origin/story/${p} into origin/story/${first} (${why##*$'\n'}); no worktree or branch was made"
+    die "${slug}: ${why}; no worktree or branch was made"
   done
   record_event stacked "${slug}" "ok (on $4)"
 }
 
+# merge_clash <worktree> <ref> <merged refs> <git's last line> — why merging <ref> failed in
+# <worktree>: the first of <merged refs> that changes a file the merge left unmerged, and those files;
+# with none unmerged, git's line.
+merge_clash() {
+  local r files other=""
+  files="$(git -C "$1" diff --name-only --diff-filter=U)"
+  [[ -n "${files}" ]] || { echo "cannot merge $2 (${4})"; return; }
+  for r in $3; do
+    # A here-string, not a pipe: grep -q can exit first, and pipefail would read that as no match.
+    if grep -qFx -f <(printf '%s\n' "${files}") <<< "$(git -C "$1" diff --name-only "$(git -C "$1" merge-base "${r}" "$2")" "${r}")"; then
+      other="${r}"; break
+    fi
+  done
+  echo "$2 and ${other:-${3%% *}} conflict in ${files//$'\n'/, }"
+}
+
 # touches_overlap <slug> [strict] — warn on stderr for each story of another epic (no epic counts as
-# another) that is open, in review or with its builder open, and whose touches overlap <slug>'s; with
+# another) that is open, in review, held (held_by:, its PR open) or with its builder open, and whose
+# touches overlap <slug>'s; with
 # strict, die naming it. builder_state runs only for overlapping ready stories (touches_rows finds
 # them; no other status can have a builder). When it is unknown, or touches_rows fails, strict
 # refuses and plain mode warns that it cannot tell.
@@ -2348,7 +2389,7 @@ touches_overlap() {
   fi
   while IFS=$'\t' read -r other epic status entry; do
     case "${status}" in
-      review) state=open ;;
+      review|held) state=open ;;
       ready) state="$(builder_state "${other}" </dev/null)" ;;
       *) continue ;;
     esac
@@ -2363,8 +2404,9 @@ touches_overlap() {
 }
 
 # touches_rows <slug> — a line per story of another epic whose touches overlap <slug>'s: slug, epic
-# (none for no epic), status and its overlapping entries. <slug>'s depends_on parents are left out: a
-# stacked story starts on their branches. Touches are a bracketed list split on commas
+# (none for no epic), status (held for a story with held_by:) and its overlapping entries. <slug>'s
+# depends_on parents, and the stories that name <slug> in theirs, are left out: a stacked story starts
+# on its parents' branches. Touches are a bracketed list split on commas
 # outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]. One with no / or .
 # before its : is a fn of the previous entry's file and repo, unless that head is a file in its own
 # repo's checkout (Makefile, Makefile:lint). (repo, file, fn) are compared: fn exactly, and a file-only entry
@@ -2423,13 +2465,16 @@ def overlap(a, b):
 
 fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
 mine = entries(fms[me])
-parents = set(re.split(r"[\s,\[\]\"']+", fms[me].get("depends_on", "").split("#")[0]))   # a stacked story starts on them
+def deps(fm):
+    return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
+
 for slug, fm in sorted(fms.items()):
-    if slug == me or slug in parents or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
+    # A stacked story starts on its parents' branches: neither holds the other back.
+    if slug == me or slug in deps(fms[me]) or me in deps(fm) or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
         continue
     hit = [e for e in entries(fm) if any(overlap(e, m) for m in mine)]
     if hit:
-        print("\t".join([slug, fm.get("epic") or "none", fm.get("status") or "-",
+        print("\t".join([slug, fm.get("epic") or "none", "held" if fm.get("held_by") else fm.get("status") or "-",
                          ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))
 PY
 }
@@ -2969,6 +3014,13 @@ blocked_why() {
   fi
 }
 
+# story_base <story> — the base its repo's stories start from and merge into (base_for), or <base>
+# when that cannot be told.
+story_base() {
+  local src b
+  if src="$(repo_dir "$(fm "$1" repo)")" && b="$(base_for "${src}" 2>/dev/null)"; then echo "${b}"; else echo "<base>"; fi
+}
+
 # open_parents <story> — its depends_on slugs that are stories still on the board and not done: the
 # parents a stacked story starts on, and waits for before review.
 open_parents() {
@@ -2990,10 +3042,11 @@ open_pr() {
 
 # stacked_on <story> <open slugs> — print <open slugs> when a blocked story with no worktree yet can
 # start on them: each is a story in its own repo, ready or in review, with an open PR (review's prs:
-# line, else gh's on story/<p>). Fails otherwise, a gh failure too. A story with a worktree is a child
-# review held, which waits until its parents finish.
+# line, else gh's on story/<p>). Fails otherwise, a gh failure too. A child review held (held_by:), or
+# any story with a worktree, waits until its parents finish.
 stacked_on() {
   local story="$1" p f src
+  [[ -z "$(get_fm "${story}" held_by)" ]] || return 1
   src="$(repo_dir "$(fm "${story}" repo)")" || return 1
   [[ ! -e "$(worktree_for "${src}" "$(basename "${story}" .md)")" ]] || return 1
   for p in $2; do
@@ -3010,19 +3063,21 @@ stacked_on() {
 }
 
 # unblock — a finished story is deleted or marked done, so a blocked story whose every depends_on
-# slug is finished, and names no hand step, is ready. So is one stacked_on its open ones. An old
-# blocked_by line stays; nothing reads it. Prints each story it flips.
+# slug is finished, and names no hand step, is ready. So is one stacked_on its open ones. A child
+# review held keeps its build and held_by:, and its line says to merge the base in and review it
+# again. An old blocked_by line stays; nothing reads it. Prints each story it flips.
 unblock() {
-  local story deps open on
+  local story deps open why
   while IFS= read -r story; do
     grep -q '^status: blocked$' "${story}" || continue
     deps=$(story_deps "${story}")
     [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
-    open="$(open_deps "${deps}")"; on=""
-    [[ -z "${open}" ]] || on="$(stacked_on "${story}" "${open}")" || continue
+    open="$(open_deps "${deps}")"; why=""
+    if [[ -n "${open}" ]]; then why="stacked on $(stacked_on "${story}" "${open}")" || continue
+    elif [[ -n "$(get_fm "${story}" held_by)" ]]; then why="held: merge origin/$(story_base "${story}"), review again"; fi
     sed -i.bak -e 's/^status: blocked$/status: ready/' "${story}" && rm -f "${story}.bak"
     record_event unblock "$(basename "${story}" .md)"
-    echo "ready: $(basename "${story}" .md)${on:+ (stacked on ${on})}"
+    echo "ready: $(basename "${story}" .md)${why:+ (${why})}"
   done < <(board stories)
 }
 
@@ -3119,9 +3174,10 @@ set_status() {
 }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
-# too, which review and unblock write. reconcile puts them back as committed on an item
-# whose PRs merged, and carries another board file's edit to them over its pull, so they never stop it.
-SET_FM_KEYS="attempts kind escalated_from held_for status prs"
+# too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
+# reconcile puts them back as committed on an item whose PRs merged, and carries another board file's
+# edit to them over its pull, so they never stop it.
+SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
 
 # set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
 # when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
@@ -3141,10 +3197,10 @@ get_fm() {
 }
 
 # review <slug> <pr-url>... — the item's PRs are green and reviewed and wait on a human merge. A story
-# whose depends_on parents are still open is held instead: back to blocked, its builder, worktree,
-# branch and PR kept, so no merge reaches a child before its parents.
+# whose depends_on parents are still open is held instead: back to blocked with held_by: <parents> and
+# its prs: line, its builder, worktree and branch kept, so no merge reaches a child before its parents.
 mark_review() {
-  local f url held src b base="<base>"
+  local f url held
   f="$(item_file "${1:?slug}")"; shift
   [[ $# -gt 0 ]] || die "review: name the PR URLs"
   for url in "$@"; do
@@ -3152,11 +3208,10 @@ mark_review() {
   done
   [[ "${f}" != "${BOARD}/stories/"* ]] || held="$(open_parents "${f}")"
   if [[ -n "${held:-}" ]]; then
-    set_status "${f}" blocked
-    if src="$(repo_dir "$(fm "${f}" repo)")" && b="$(base_for "${src}" 2>/dev/null)"; then base="${b}"; fi
-    die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, merge origin/${base} into it and review it again"
+    set_status "${f}" blocked "$*"; set_fm "${f}" held_by "${held}"
+    die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, merge origin/$(story_base "${f}") into it and review it again"
   fi
-  set_status "${f}" review "$*"
+  set_status "${f}" review "$*"; set_fm "${f}" held_by
   echo "review: $(basename "${f}" .md) $*"
 }
 

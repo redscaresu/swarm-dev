@@ -353,17 +353,22 @@ failure. `story` fetches each parent's branch and checks that its PR is still op
 the story goes back to `blocked` and nothing is made. Otherwise the worktree starts at
 `origin/story/<first parent>` with each other parent's branch merged in, events.tsv gets a
 `stacked <slug>` line, and the brief says to open the PR against the base with
-`Merge after <parent PR URLs>` in its body. A merge conflict fails, naming both branches, and leaves
-no worktree or branch. The overlap check skips a story's own parents, so `--strict` does not refuse
-a child for touching what its parent touches. While a parent is still on the board, `swarm.sh
-review` holds the child: it sets it `blocked`, puts nothing in review, keeps its builder, worktree,
-branch and PR, and exits with `held: <slug> waits for <p> to merge`. With `merge = human` the
-conductor then closes the child's builder with a bare `swarm.sh close <slug>`, which counts nothing
-for a blocked story; with `merge = agent` the builder stays open. When a parent's branch moves, the
-conductor tells the child to merge it in. A held child is readied again only once every parent has
-finished. A parent squash-merges, so its commits reach the base under new hashes: the child merges
-`origin/<base>` and is reviewed again. Parents always merge first: you are never handed a child
-before its parents, and `swarm.sh merge` refuses one too, since it merges only an item in review.
+`Merge after <parent PR URLs>` in its body. A merge conflict fails, naming the two branches that
+conflict and their files, and leaves no worktree or branch. The overlap check skips a story's own
+parents and its own children, so neither holds the other back under `--strict`. While a parent is
+still on the board, `swarm.sh review` holds the child: it sets it `blocked` with `held_by: <parents>`,
+keeps its `prs:` line, builder, worktree and branch, puts nothing in review, and exits with
+`held: <slug> waits for <p> to merge`. A held child still counts as open in the overlap check, since
+its PR is. With `merge = human` the conductor then closes the child's builder with a bare
+`swarm.sh close <slug>`, which counts nothing for a blocked story; with `merge = agent` the builder
+stays open. When a parent's branch moves, the conductor tells the child to merge it in. A held child
+is readied again only once every parent has finished, as `ready: <slug> (held: merge origin/<base>,
+review again)`. A parent squash-merges, so its commits reach the base under new hashes: the child's
+builder (a new one in its worktree, when it was closed) merges `origin/<base>`, and the child is
+reviewed again; a review that passes clears `held_by:`. `story` refuses any story whose worktree or
+branch already exists, and says what to do with a held one. Parents always merge first: you are
+never handed a child before its parents, and `swarm.sh merge` refuses one too, since it merges only
+an item in review.
 
 ```bash
 swarm.sh story [--strict] <slug>   # worktree on story/<slug>, a pane, the agent, its brief
