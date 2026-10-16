@@ -648,8 +648,8 @@ every check run of the PR's head, and its open code-scanning alerts (the first 1
 the PR with a reason; none is silenced or dismissed. findings also reads the PR's diff and body. A
 test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tests/*_test.sh`, a JS
 `it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
-mutation run. findings prints each test without one as `rules-unchecked`, with the `log-finding
---reviewer ci` command that logs it.
+mutation run. findings prints each test without one as `rules-unchecked`, with the command that
+logs it, `log-finding --reviewer ci`.
 
 **Merging.** With `merge = human` (the default) no agent merges: each agent starts unable to run
 `gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead
