@@ -55,7 +55,7 @@ status() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH
 # With `outside`, status runs outside herdr.
 section() { awk '/^Stacked$/ { s = 1; next } s && /^  / { sub(/^  /, ""); print; next } { s = 0 }'; }
 stacked() {
-  if [[ "${1:-}" == outside ]]; then (cd "${P}" && env -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1 || true) | section
+  if [[ "${1:-}" == outside ]]; then { (cd "${P}" && env -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1) || true; } | section
   else status | section; fi
 }
 moves() { "${GIT[@]}" -C "${UP}" checkout -q "$1" && "${GIT[@]}" -C "${UP}" commit -q --allow-empty -m "$2" && git -C "${UP}" push -q origin "$1"; }
