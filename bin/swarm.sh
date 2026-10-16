@@ -2081,10 +2081,11 @@ build_story() {
 # them; no other status can have a builder). When it is unknown, or touches_rows fails, strict
 # refuses and plain mode warns that it cannot tell.
 touches_overlap() {
-  local slug="$1" strict="${2:-}" rows other epic status entry state
+  local slug="$1" strict="${2:-}" rows other epic status entry state msg
   if ! rows="$(touches_rows "${slug}")"; then
-    [[ -z "${strict}" ]] || die "${slug}: cannot read the board's touches, so cannot tell whether another epic's open story overlaps it"
-    echo "warning: cannot read the board's touches, so cannot tell whether another epic's open story overlaps ${slug}" >&2; return 0
+    msg="cannot read the board's touches, so cannot tell whether another epic's open story overlaps ${slug}; retry ${slug} once they can be read"
+    [[ -z "${strict}" ]] || die "${slug}: ${msg}"
+    echo "warning: ${msg}" >&2; return 0
   fi
   while IFS=$'\t' read -r other epic status entry; do
     case "${status}" in
@@ -2093,11 +2094,12 @@ touches_overlap() {
       *) continue ;;
     esac
     case "${state}" in
-      open) [[ -z "${strict}" ]] || die "${slug}: ${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges"
-            echo "warning: ${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges" >&2 ;;
-      unknown) [[ -z "${strict}" ]] || die "${slug}: cannot tell whether ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents); start ${slug} after it merges"
-               echo "warning: cannot tell whether ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents)" >&2 ;;
+      open) msg="${other} (epic ${epic}) is open and touches ${entry}; start ${slug} after it merges" ;;
+      unknown) msg="cannot tell whether the builder of ${other} (epic ${epic}), which touches ${entry}, is open (herdr cannot list its agents); retry ${slug}" ;;
+      *) continue ;;
     esac
+    [[ -z "${strict}" ]] || die "${slug}: ${msg}"
+    echo "warning: ${msg}" >&2
   done <<< "${rows}"
 }
 
@@ -2211,8 +2213,10 @@ story whose \`kind\` is set and is not code, docs, chore or verify (a \`lead\` s
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. Stop when the epic's **Done when** holds or when nothing ready is left.
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
-of another epic (in review, or with its builder open) touches the same function or file, and names
-that story: start yours in a later wave, after the named story merges. Without --strict, story only
+of another epic (in review, or with its builder open) touches the same function or file. On a refusal
+that says the named story \`is open\`, start yours in a later wave, after the named story merges. On
+one that says it \`cannot tell\` (herdr could not list its agents, or the board's touches could not
+be read), nothing is known to be open: retry the story in a later wave. Without --strict, story only
 warns and starts it as the epic says.
 
 The lead may leave you notes while you work, in ${inbox}.md. After each

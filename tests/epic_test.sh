@@ -241,8 +241,8 @@ check "the conductor gives up on a builder with close, accepts a Fable dialog it
 check "with goal off, the story-mode conductor waits out wait's nudges, and has no goal rule" "yes|no|no" "$(goal_off "${cbrief}")"
 check "the story-mode conductor moves its inbox aside after each wait, then reads and deletes the copy" "${INBOX_RULE}" "$(inbox_rule e "${cbrief}")"
 check "the new workspace's placeholder tab is closed" "yes" "$(has "tab close t0" "$(log)")"
-check "the story-mode conductor starts every story with --strict, and after the named story merges on a refusal" "yes|yes" \
-  "$(has "${STRICT_RULE}" "${cbrief}")|$(has "start yours in a later wave, after the named story merges" "${cbrief}")"
+check "the story-mode conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
+  "$(has "${STRICT_RULE}" "${cbrief}")|$(has "start yours in a later wave, after the named story merges" "${cbrief}")|$(has "nothing is known to be open: retry the story in a later wave" "${cbrief}")"
 check "the story-mode conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${cbrief}" || true)"
 for s in s1 s2 s3; do run story "${s}" >/dev/null; done
 mv "${p}/.claude-plugin/plugin.json" "${ROOT}/plugin.json"; run story s4 >/dev/null; mv "${ROOT}/plugin.json" "${p}/.claude-plugin/plugin.json"
@@ -330,9 +330,9 @@ check "a ready story whose builder herdr lists open warns" \
 subject xi "[bin/swarm.sh:tell_agent]"; touch "${ROOT}/listfail"; : > "${ROOT}/herdr.log"
 rc=0; out="$(run story --strict xi)" || rc=$?
 check "when herdr cannot list agents, --strict refuses and starts nothing" "fail|yes|not started|no" \
-  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xi: cannot tell whether xb (epic e2), which touches bin/swarm.sh:tell_agent, is open" "${out}")|$(started_x xi)|$([[ -e "${ROOT}/svc-wt/xi" ]] && echo yes || echo no)"
+  "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xi: cannot tell whether the builder of xb (epic e2), which touches bin/swarm.sh:tell_agent, is open (herdr cannot list its agents); retry xi" "${out}")|$(started_x xi)|$([[ -e "${ROOT}/svc-wt/xi" ]] && echo yes || echo no)"
 check "and plain story warns that it cannot tell" \
-  "warning: cannot tell whether xb (epic e2), which touches bin/swarm.sh:tell_agent, is open (herdr cannot list its agents)" "$(warns xi)"
+  "warning: cannot tell whether the builder of xb (epic e2), which touches bin/swarm.sh:tell_agent, is open (herdr cannot list its agents); retry xi" "$(warns xi)"
 rm -f "${ROOT}/listfail"
 item "${b}" stories/xb.md "status: review" "kind: code" "repo: svc" "touches: [bin/swarm.sh:tell_agent]"
 item "${b}" stories/xj.md "status: ready" "kind: code" "repo: svc" "touches: [bin/swarm.sh:tell_agent]"
@@ -344,7 +344,7 @@ mkdir "${b}/stories/xbroken.md"; subject xo "[bin/swarm.sh:merge_cmd]"; : > "${R
 rc=0; out="$(run story --strict xo)" || rc=$?
 check "when the touches cannot be read, --strict refuses and starts nothing, and plain story warns" "fail|yes|not started|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xo: cannot read the board's touches" "${out}")|$(started_x xo)|$(
-  has "warning: cannot read the board's touches, so cannot tell whether another epic's open story overlaps xo" "$(run story xo)")"
+  has "warning: cannot read the board's touches, so cannot tell whether another epic's open story overlaps xo; retry xo once they can be read" "$(run story xo)")"
 rmdir "${b}/stories/xbroken.md"
 # Only a ready story can have a builder: a blocked or done one is never asked about, even when herdr fails.
 touch "${ROOT}/listfail"
@@ -534,8 +534,8 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
-check "the one-PR-per-epic conductor starts every story with --strict, and after the named story merges on a refusal" "yes|yes" \
-  "$(has "${STRICT_RULE}" "${brief}")|$(has "start yours in a later wave, after the named story merges" "${brief}")"
+check "the one-PR-per-epic conductor starts every story with --strict, waits for the merge on an is-open refusal, and retries on cannot-tell" "yes|yes|yes" \
+  "$(has "${STRICT_RULE}" "${brief}")|$(has "start yours in a later wave, after the named story merges" "${brief}")|$(has "nothing is known to be open: retry the story in a later wave" "${brief}")"
 check "the one-PR-per-epic conductor's brief never starts a story without --strict" "0" "$(grep -c 'swarm.sh story <slug>' <<< "${brief}" || true)"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
   "$(codex_form '<base>' "$(para "review the whole epic" "${brief}")")"

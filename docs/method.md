@@ -276,7 +276,8 @@ same function or file, `story` prints `warning: <other> (epic <e>) is open and t
 start <slug> after it merges` and starts the story anyway. `story --strict` refuses instead, naming
 the other story, and leaves no branch, worktree, pane or brief behind. It also refuses when herdr
 cannot list its agents or the board's `touches` cannot be read, where plain `story` warns that it
-cannot tell. `--strict` may come before or after the slug. Conductors always pass
+cannot tell. Then nothing is known to be open, so the message says to retry the story, not to wait
+for a merge. `--strict` may come before or after the slug. Conductors always pass
 `--strict`. With `pr_per = epic` the check misses stories already merged into an epic branch: they
 are finished on the board, though their changes have not reached the base.
 
