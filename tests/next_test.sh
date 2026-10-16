@@ -196,16 +196,22 @@ rm -rf "${HOLD_BIN}"
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 arm="$(sed -n '/^   - `resume <slug>`:/,/^   - `plan-epic <epic>`:/p' "$(dirname "${SWARM}")/../commands/swarm.md")"
 got=""
+# Each arm on its own: the resume arm stops on a dead build, naming its worktree and the commands
+# that remove it; the story arm stops on any unchanged report, reading only stories/ and epics/.
+# armwords <arm heading> <phrase>... — "<arm> missing '<phrase>'" for each phrase that arm lacks.
+armwords() {
+  local a="$1" part w; shift
+  part="$(awk -v a="${a}" 'index($0, a) == 1 { on = 1; print; next } on && /^   - `/ { exit } on' <<< "${arm}" | tr -s '[:space:]' ' ')"
+  for w in "$@"; do grep -qF -- "${w}" <<< "${part}" || printf " %s missing '%s'" "${a# *- }" "${w}"; done
+}
 # shellcheck disable=SC2016 # the backticks are literal Markdown
-for a in '   - `resume <slug>`:' '   - `story <slug>`:'; do
-  part="$(awk -v a="${a}" 'index($0, a) == 1 { on = 1; print; next } on && /^   - `/ { exit } on' <<< "${arm}")"
-  for w in 'swarm.sh conduct --backlog' 'not started:'; do grep -qF -- "${w}" <<< "${part}" || got+=" ${a# *- } missing '${w}'"; done
-done
-# The resume arm stops on a dead build, naming its worktree; the story arm stops on any unchanged report.
+got+="$(armwords '   - `resume <slug>`:' 'swarm.sh conduct --backlog' 'not started:' 'name its worktree' \
+  '`git worktree remove --force <repo>-wt/<slug>`' '`git worktree prune`' '`git branch -D story/<slug>`' \
+  'then delete `.swarm/conduct-backlog.report.md`')"
 # shellcheck disable=SC2016 # the backticks are literal Markdown
-for w in 'name its worktree' 'whatever the report says: start no' "\`find <board> -name '*.md' -newer" \
-         'delete `.swarm/conduct-backlog.report.md`'; do
-  grep -qF -- "${w}" <<< "$(tr -s '[:space:]' ' ' <<< "${arm}")" || got+=" missing '${w}'"; done
+got+="$(armwords '   - `story <slug>`:' 'swarm.sh conduct --backlog' 'not started:' 'whatever the report says: start no' \
+  '`find <board>/stories <board>/epics -newer .swarm/conduct-backlog.report.md`' \
+  'deleting `.swarm/conduct-backlog.report.md` once the cause is fixed')"
 if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog and stop on not started:"
 else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.

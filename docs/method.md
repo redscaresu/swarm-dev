@@ -301,13 +301,17 @@ ready stories with no `epic:` (the one-offs) the way an epic's conductor builds 
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
-`not started: <slug> (<why>)`. `/swarm-dev:swarm` runs it for a `story` or `resume` step. While
-that report is newer than every Markdown file on the board, `/swarm-dev:swarm` starts no
-new one, whatever the report says, and tells you why the story waits. For a `resume` step it also
-stops when the report lists the story under `not started:` (a build that died), even after the board
-changes. A fix that changes no board file, such as a code PR that turns CI on the base green or a
-dead worktree you removed by hand, does not clear the stop: delete
-`.swarm/conduct-backlog.report.md` once the cause is fixed.
+`not started: <slug> (<why>)`. With `merge = human`, a story refused because another of its
+one-offs is in review is reported as `not started: <slug> (waits on <other>'s merge)`, since that
+merge cannot happen while the conductor runs. `/swarm-dev:swarm` runs it for a `story` or `resume`
+step. Until a story or epic is added, changed or removed under `stories/` or `epics/` (a merge
+removes one), it starts no new backlog conductor while that report exists, whatever the report
+says, and tells you why the story waits. For a `resume` step it also stops when the report lists
+the story under `not started:` (a build that died), even after the board changes; clear that by
+removing the build in its repo (`git worktree remove --force <repo>-wt/<slug>`,
+`git worktree prune`, `git branch -D story/<slug>`, and the remote branch if it was pushed). A fix
+that touches no story or epic, such as a code PR that turns CI on the base green, does not clear
+the stop either: once the cause is fixed, delete `.swarm/conduct-backlog.report.md`.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
