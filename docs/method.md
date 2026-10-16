@@ -19,8 +19,10 @@ at every level runs in its own herdr pane so it can be watched.
 story, or a `later` epic. The board is the only state, so a run can stop anywhere and the next
 `/swarm-dev:swarm` continues. Building comes first (a conductor still working, then an active epic's ready
 stories, then one-offs), then planning (an active epic with no stories, then an agreed HLD with
-no epics). An epic is planned only once every epic it `depends_on` is done, so its stories are
-scoped against code that exists.
+no epics). An epic is planned only once every epic it `depends_on` is done or has only stories in
+`review` left, so its stories are scoped against code that exists. That can happen while a
+conductor is still working: `next` then names the planning first, and the lead keeps waiting on
+the conductor in the background while it plans.
 
 A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
 the user's is marked **You:** in it (§ Who does what). An open question for the user is a `lead`
@@ -703,11 +705,15 @@ the lead can finish, or a merge that `swarm.sh merge` refused or could not confi
 with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
 `merge = human` too.
 
-`swarm.sh merge [--board] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
+`swarm.sh merge [--board|--release] [--head <sha>] <PR URL>` merges one PR. It refuses, merging nothing,
 unless the PR is open, its head is `<sha>` when `--head` names one, and a story or epic in `review`
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
-under the board instead. The head must be green: at least one check run, every run
+under the board instead. With `--release`, for a release PR, the PR must be in the project's own
+repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
+hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
+greater than the base's. No story or epic need list it.
+The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
@@ -722,13 +728,22 @@ files the PR changes must have a run on that commit, and every run and check the
 commit needs no check run of its own when no workflow is expected on it, but then it waits a minute
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. Without
-`--board` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
+`--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
 exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
+
+**Releases.** No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the last
+release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
+`v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
+outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR
+from `release/v<new>` that bumps only that file, to the next minor version (a patch when every
+change since the tag is a fix), and lists the PRs merged since the tag. With `merge = agent` the
+lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
+exist. With `merge = human` it waits on your merge.
 
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 

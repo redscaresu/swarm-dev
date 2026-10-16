@@ -103,6 +103,9 @@ Repeat until a step below says stop:
      `swarm.sh conduct --backlog`, then handle it as `wait conduct-backlog`.
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
+     When `next`'s why names a conductor that is still working, start
+     `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
+     you plan.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.
    - `hld <hld>`: the HLD is a draft, and only the user can write it. Follow `/hld` to resume it
      (the title is in the file): the user works in the co-author's pane, and the review and the
@@ -134,6 +137,17 @@ Repeat until a step below says stop:
        the change.
 
      Then go back to 1.
+   - `release`: the base has changes since the last release tag (`next`'s why names both), so cut
+     a release. If a PR from a `release/v<new>` branch is open, use it. Otherwise, make a worktree
+     of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
+     `.claude-plugin/plugin.json`, to the next minor version (a patch when every change since the
+     tag is a fix). Commit with the brief's trailers, push, and open the PR titled
+     `Release v<new>`, listing the PRs merged since the tag. Wait for its checks in the
+     background. If `swarm.sh config merge` is `agent`, run
+     `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
+     Then check that the tag `v<new>` exists and that `gh release view v<new>` shows the release,
+     remove the worktree and the branch, and go back to 1. If it is `human`, tell the user the PR
+     waits on their merge, show what `swarm.sh status` lists under Waiting on you, and stop.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
