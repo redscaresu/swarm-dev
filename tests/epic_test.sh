@@ -442,6 +442,8 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "the conductor merges stories into the epic branch, then opens one PR per repo" "yes|yes|yes" \
   "$(has "git merge --no-ff origin/story/<slug>" "${brief}")|$(has "epic check \`make test\`" "${brief}")|$(has "open one PR per repo from epic/f" "${brief}")"
 check "the one-PR-per-epic brief also watches only its own epic's PRs" "yes" "$(has "swarm.sh watch --epic f\`" "${brief}")"
+check "with merge = human, the conductor stops when the Done when holds or nothing ready is left" "yes" \
+  "$(has "Stop when the epic's **Done when** holds or when nothing ready is left." "${cbrief}")"
 check "with merge = human, neither the story-mode nor the one-PR-per-epic brief pins a merge" "no|no" \
   "$(grep -qF -- --match-head-commit <<< "${cbrief}" && echo yes || echo no)|$(grep -qF -- --match-head-commit <<< "${brief}" && echo yes || echo no)"
 check "the whole-epic review runs codex-review in the background, and knows what a timeout means" "yes|yes|yes" \
@@ -482,16 +484,18 @@ cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" "base_br
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
 check "with merge = agent, the conductor reviews a pinned head, puts the story in review, then merges that head with swarm.sh merge, which reconciles" "yes|yes|yes|yes" \
-  "$(has "note its head SHA (\`gh pr view <n> --json headRefOid\`)" "${brief}")|$(has "if the head moved, review the new head" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare \`gh pr merge\`" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
+  "$(has "note its head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${brief}")|$(has "if the head moved, review the new head" "${brief}")|$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare \`gh pr merge\`" "${brief}")|$(has "\`swarm.sh reconcile\`, never a plain \`git pull\`" "${brief}")"
 check "it merges by the literal PR number, pinned with --match-head-commit, in the repo's method, never --auto" "yes|yes|yes|yes" \
   "$(has "by the literal PR number" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")|$(has "(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`)" "${brief}")|$(has "never --auto" "${brief}")"
 check "a red base stops its merging: it finds the PR pair, opens the fix or lists it, and reports it" "yes" \
   "$(has "A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing more, find the PR pair that broke it" "${brief}")"
 after="${brief#*swarm.sh merge --head}"; after="${after%%Stay inside this epic*}"
-check "after the merge it closes no builder, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "no|yes|yes" \
-  "$(grep -qF 'swarm.sh close <slug>' <<< "${after}" && echo yes || echo no)|$(has "start each story of this epic it prints as \`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story <slug>\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
-check "it reports only once no story of the epic is ready or running" "yes" \
-  "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")"
+check "after the merge it closes a builder only when reconcile printed build cleared, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "1|yes|yes|yes" \
+  "$(grep -oF 'swarm.sh close <slug>' <<< "${after}" | wc -l | tr -d ' ')|$(has "Reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${after}")|$(has "start each story of this epic it prints as \`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story <slug>\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
+check "it reports, and stops, only once no story of the epic is ready or running, never just because nothing is ready" "yes|yes|no" \
+  "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when the base is red." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
+check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
+  "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "merge = agent" "pr_per = epic" "base_branches = dev main" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
@@ -508,8 +512,8 @@ oneoff="$(sed -n '/`story <slug>`: a one-off/,/`plan-epic <epic>`/p' "$(dirname 
 oneoff_flat="$(tr -s '[:space:]' ' ' <<< "${oneoff}")"
 check "/swarm-dev:swarm's one-off merge = agent step reviews, then merges the reviewed head with swarm.sh merge, in the background, which reconciles" "yes|yes|yes|yes" \
   "$(has "run \`swarm.sh review <slug> <PR URL>\`, then \`swarm.sh merge --head <the SHA you reviewed> <PR URL>\`, never a bare \`gh pr merge\`" "${oneoff_flat}")|$(has "Run it in the background (Bash \`run_in_background\`) and wait for it" "${oneoff_flat}")|$(has "runs \`swarm.sh reconcile\`" "${oneoff_flat}")|$(has "a red or timed-out CI on the base means the PR merged" "${oneoff_flat}")"
-check "/swarm-dev:swarm's one-off merge = agent step pins the head it reviewed, and leaves the builder to reconcile" "yes|yes|yes" \
-  "$(has "note the PR's head SHA (\`gh pr view <PR> --json headRefOid\`) before you review it" "${oneoff_flat}")|$(has "by the literal PR number with \`--match-head-commit\`" "${oneoff_flat}")|$(has "Then \`swarm.sh unblock\`; reconcile has closed the builder, so leave it." "${oneoff_flat}")"
+check "/swarm-dev:swarm's one-off merge = agent step notes the head before the review starts, re-reads it after, and leaves the builder to reconcile" "yes|yes|yes|yes" \
+  "$(has "If \`swarm.sh config merge\` is \`agent\`, first note the PR's head SHA (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`)" "${oneoff_flat%%codex-review <base>*}")|$(has "read the head SHA again once review passes; if it moved from the one you noted, review the new head." "${oneoff_flat}")|$(has "by the literal PR number with \`--match-head-commit\`" "${oneoff_flat}")|$(has "Then \`swarm.sh unblock\`; reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${oneoff_flat}")"
 check "/swarm-dev:swarm's one-off step gives up with close, sends an escalated story to its step, and answers only Fable's consent" "yes|yes|yes|yes|yes|yes" \
   "$(has "run \`swarm.sh close <slug>\`, which, on a code, docs or chore story still \`ready\`," "${oneoff}")|$(has "go back to 1, where \`next\` names its \`escalated <slug>\` step" "${oneoff}")|$(has "\`waiting: dialog open\` for an escalate build" "${oneoff}")|$(has "only if it shows that consent" "${oneoff}")|$(has "\`swarm.sh dialog <slug> accepted\`" "${oneoff}")|$(has "every permission or tool prompt, is the user's: never send keys to it" "${oneoff}")"
 check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
