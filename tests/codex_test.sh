@@ -2,7 +2,8 @@
 # codex_test.sh — swarm.sh codex-review <base>: codex's review against origin/<base>, with no prompt
 # and stdin from /dev/null, its output and exit passed through. One that runs past the limit
 # (SWARM_CODEX_SECONDS here) is stopped, TERM then KILL, leaving nothing of it running, and the
-# command dies with "codex skipped: timed out", which events.tsv records. codex is a stub on PATH.
+# command dies with "codex skipped: timed out", which events.tsv records. With SWARM_STORY, a prompt
+# holding the story's touches and Done when replaces --base. codex is a stub on PATH.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -120,6 +121,30 @@ rm "${P}/.swarm/state/codex-review.123.tmp"
 check "a codex that finishes passes its exit and findings through" "0|yes" "${rc}|$(has "P1: x.sh:3 drops the error" "${out}")"
 check "codex runs as exec review --base origin/main, with no prompt" "[exec][review][--base][origin/main]" "$(cat "${BIN}/args")"
 check "codex reads /dev/null, never the caller's stdin" "" "$(cat "${BIN}/stdin")"
+
+# --- With SWARM_STORY, codex gets a prompt holding the story's touches and Done when, and no --base.
+mkdir -p "${P}/docs/stories"
+printf '%s\n' '---' 'kind: code' 'touches: [bin/a.sh:fn_one, tests/a_test.sh]' '---' '' '# S1' '' \
+  '**Done when:**' '- the first item holds' '- the second item holds' '' '**From review:**' '- not this one' \
+  > "${P}/docs/stories/s1.md"
+stub 'exit 0'
+SWARM_STORY=s1 review
+args="$(cat "${BIN}/args")"
+check "with SWARM_STORY, codex runs as exec review <prompt>, with no --base" "0|[exec][review][|no" \
+  "${rc}|${args:0:15}|$(grep -qF -- '--base' <<< "${args}" && echo yes || echo no)"
+for want in "origin/main" "bin/a.sh:fn_one" "tests/a_test.sh" "- the first item holds" "- the second item holds" "not a finding"; do
+  check "the story prompt holds ${want}" "yes" "$(has "${want}" "${args}")"
+done
+check "the story prompt stops at the next bold line" "no" "$(grep -qF 'not this one' <<< "${args}" && echo yes || echo no)"
+printf '%s\n' '---' 'touches: [x.sh]' '---' '**Done when:** the inline item holds.' > "${P}/docs/stories/s2.md"
+SWARM_STORY=s2 review
+check "the story prompt keeps a Done when written on its heading line" "yes" "$(has "the inline item holds." "$(cat "${BIN}/args")")"
+
+# --- A SWARM_STORY that names no story fails, naming the file, before codex starts.
+rm -f "${BIN}/args"
+SWARM_STORY=missing review
+check "SWARM_STORY=missing fails naming the story file, and codex never runs" "fails|yes|no" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "${P}/docs/stories/missing.md" "${out}")|$([[ -e "${BIN}/args" ]] && echo yes || echo no)"
 
 # --- A usage limit is codex's own exit, never taken for a timeout.
 stub 'echo "You have hit your usage limit."; exit 1'

@@ -36,7 +36,7 @@
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
-#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes
+#   swarm.sh codex-review <base>                            codex's review of this directory against origin/<base>, stopped after codex_minutes; with SWARM_STORY=<slug>, against that story's touches and Done when
 #   swarm.sh version                                        the installed version, and a warning when a newer one is out
 #   swarm.sh update                                         update the plugin to the newest version
 #
@@ -1897,9 +1897,13 @@ $(finding_rule)
 EOF
 }
 
-# codex_review_cmd <base> — how a brief runs codex: through codex-review, which stops it after
-# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config.
-codex_review_cmd() { printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"; }
+# codex_review_cmd <base> [slug] — how a brief runs codex: through codex-review, which stops it after
+# codex_minutes. SWARM_PROJECT, as in finding_rule, so a sibling repo's worktree reads this config;
+# SWARM_STORY, given a slug, so codex reviews against that story.
+codex_review_cmd() {
+  [[ -z "${2:-}" ]] || printf 'SWARM_STORY=%q ' "$2"
+  printf 'SWARM_PROJECT=%q %q codex-review %s' "${PROJECT_DIR}" "${SWARM_HOME}/bin/swarm.sh" "$1"
+}
 # codex_rule — how to run codex-review, and what a usage limit or a timeout means, for a builder, a
 # conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
 # Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
@@ -5517,15 +5521,32 @@ stop_codex() {
   } 2>/dev/null || true
 }
 
+# codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
+# the story's touches and its **Done when** items (any text on its line, then the lines under it, up to
+# the next bold line), and that work outside them is not a finding.
+codex_story_prompt() {
+  printf 'Review the changes on this branch against origin/%s (git diff origin/%s...HEAD). They implement a story that touches: %s\n\nIts Done when:\n%s\n\nReview them against these touches and Done when items. Work outside them is not a finding.' \
+    "$1" "$1" "$(fm "$2" touches)" \
+    "$(awk '/^\*\*Done when/ { on = 1; sub(/^\*\*[^*]*\*\*[[:space:]]*/, ""); if ($0 != "") print; next }
+      on && /^\*\*/ { exit } on && /[^[:space:]]/' "$2")"
+}
+
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
-# beside --base) and stdin from /dev/null, so it never waits on input. codex stays in the caller's
-# process group, so a harness that kills that group kills codex too. stop_codex stops it after
+# beside --base) and stdin from /dev/null, so it never waits on input. With SWARM_STORY=<slug>, a
+# prompt instead of --base (codex_story_prompt), so codex reviews against that story. codex stays in
+# the caller's process group, so a harness that kills that group kills codex too. stop_codex stops it after
 # codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent TERM or
 # HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did, a usage limit too.
 codex_review() {
-  local pid left rc=0 m
+  local pid left rc=0 m args
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
+  args=(--base "origin/$1")
+  if [[ -n "${SWARM_STORY:-}" ]]; then
+    m="${BOARD}/stories/${SWARM_STORY}.md"
+    [[ -f "${m}" ]] || die "SWARM_STORY=${SWARM_STORY}: no story file ${m}"
+    args=("$(codex_story_prompt "$1" "${m}")")
+  fi
   left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
@@ -5539,7 +5560,7 @@ codex_review() {
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
   # shellcheck disable=SC2064 # this run's marker, fixed now
   trap "rm -f $(printf %q "${m}")" EXIT
-  codex exec review --base "origin/$1" < /dev/null &
+  codex exec review "${args[@]}" < /dev/null &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
