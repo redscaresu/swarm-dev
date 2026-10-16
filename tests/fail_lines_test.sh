@@ -21,7 +21,8 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$1 $2" in
   "repo view") echo '{"nameWithOwner":"o/r"}' ;;
   "pr view") cat "${FX}/pr.json" ;;
-  "pr diff") cat "${FX}/diff" ;;
+  "pr diff") [ ! -e "${FX}/diff.fail" ] || { echo "gh: HTTP 406: diff exceeded the maximum number of lines" >&2; exit 1; }
+             cat "${FX}/diff" ;;
   api*)
     for a in "$@"; do path="${a}"; done
     case "${path}" in
@@ -114,6 +115,48 @@ body "Nothing."
 check "a heredoc left open at the end of a hunk does not hide the next hunk's checks" \
   "  rules-unchecked: a check in the next hunk has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
   "$(unchecked)"
+
+cat > "${FX}/diff" <<'EOF'
+diff --git a/tests/x_test.sh b/tests/x_test.sh
+--- a/tests/x_test.sh
++++ b/tests/x_test.sh
+@@ -1,1 +1,3 @@
++check "empty ${2}x" "yes" "$(x)"
+EOF
+body "FAIL empty x: want 'yes'"
+check "an expansion that prints nothing still matches its FAIL line" "" "$(unchecked)"
+
+cat > "${FX}/diff" <<'EOF'
+diff --git a/tests/x_test.sh b/tests/x_test.sh
+--- a/tests/x_test.sh
++++ b/tests/x_test.sh
+@@ -1,1 +1,3 @@
++n=$((1<<3))
++check "after a shift" "yes" "$(x)"
+EOF
+body "Nothing."
+check "an arithmetic shift is no heredoc" \
+  "  rules-unchecked: after a shift has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
+  "$(unchecked)"
+
+cat > "${FX}/diff" <<'EOF'
+diff --git a/main_test.go b/main_test.go
+--- a/main_test.go
++++ b/main_test.go
+@@ -1,1 +1,3 @@
++func TestMain(m *testing.M) { os.Exit(m.Run()) }
++func TestMainPath(t *testing.T) {}
+EOF
+body "Nothing."
+check "TestMain is not a test, though TestMainPath is" \
+  "  rules-unchecked: TestMainPath has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
+  "$(unchecked)"
+
+: > "${FX}/diff.fail"
+out="$(cd "${P}" && PATH="${ROOT}/bin:${PATH}" env -u SWARM_PROJECT bash "${SWARM}" findings proj 7 2>&1)" && st=0 || st=$?
+check "a diff gh refuses leaves a note that the FAIL lines were not checked, and exits 0" "0|yes" \
+  "${st}|$(grep -qF "FAIL lines: not checked, gh pr diff failed on o/r#7" <<< "${out}" && echo yes || echo "no, got: ${out}")"
+rm -f "${FX}/diff.fail"
 
 cat > "${FX}/diff" <<'EOF'
 diff --git a/foo.go b/foo.go

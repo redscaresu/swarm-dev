@@ -3851,13 +3851,15 @@ for a in json.load(sys.stdin):
 fail_lines() {
   local pr diff
   pr="$(gh pr view "$2" --repo "$1" --json body,url)" || die "findings: cannot read the body of $1#$2"
-  diff="$(gh pr diff "$2" --repo "$1")" || die "findings: cannot read the diff of $1#$2"
+  # GitHub refuses a diff over 20,000 lines or 300 files (HTTP 406); the notes above still stand.
+  diff="$(gh pr diff "$2" --repo "$1")" \
+    || { echo "  FAIL lines: not checked, gh pr diff failed on $1#$2 (a diff over 20,000 lines or 300 files is refused)"; return 0; }
   PR="${pr}" python3 -c '
 import json, os, re, sys
 pr = json.loads(os.environ["PR"])
 body = [l for l in (pr.get("body") or "").splitlines() if "FAIL" in l]
 tests = [  # (path pattern, pattern whose group n is the test name)
-    (r"_test\.go$", r"func (?P<n>Test\w*)"),
+    (r"_test\.go$", r"func (?P<n>Test(?!Main\b)\w*)"),  # TestMain runs the tests; it is not one
     (r"(^|/)(test_[^/]*|[^/]*_test)\.py$", r"\s*(async\s+)?def (?P<n>test\w*)"),
     (r"(^|/)tests/[^/]*_test\.sh$", r"\s*check\s+\x22(?P<n>(\\.|[^\x22\\])*)\x22"),
     (r"\.(test|spec)\.[cm]?[jt]sx?$", r".*?\b(it|test)\(\s*(?P<q>[\x22\x27`])(?P<n>(\\.|(?!(?P=q))[^\\])*)(?P=q)"),
@@ -3875,7 +3877,7 @@ for line in sys.stdin.read().splitlines():
             end = None if line[1:].strip() == end else end
             continue
         if path.endswith(".sh"):
-            h = re.search(r"(?<!<)<<(?!<)-?\s*[\x22\x27]?(\w+)", line[1:])
+            h = re.search(r"(?<!<)<<(?!<)-?\s*[\x22\x27]?([A-Za-z_]\w*)", line[1:])  # not 1<<3
             end = h and h[1]
         if line[0] != "+":
             continue
@@ -3885,10 +3887,11 @@ for line in sys.stdin.read().splitlines():
                 names.append(m["n"])
 for n in names:
     # The whole name as the test prints it: each unescaped expansion (a dollar sign, \x24, then a
-    # word, braces or parentheses) stands for what it expands to, and the rest is unescaped.
+    # word, braces or parentheses) stands for what it expands to, maybe nothing, and the rest is
+    # unescaped.
     parts = re.split(r"(?<!\\)\x24(?:\{[^}]*\}|\([^)]*\)|\w+)", n)
     parts = [re.escape(re.sub(r"\\(\W)", r"\1", x)) for x in parts]
-    pat = r"(?<!\w)" + ".+".join(parts) + r"(?!\w)"
+    pat = r"(?<!\w)" + ".*".join(parts) + r"(?!\w)"
     if not any(re.search(pat, l) for l in body):
         print("  rules-unchecked: %s has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked %s …)" % (n, pr["url"]))' <<< "${diff}"
 }
