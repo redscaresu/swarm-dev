@@ -9,7 +9,7 @@ what to change, and **Done when** — the acceptance. The PR that finishes a sto
 file; the PR is the record. A story in `review` has a PR that is green and reviewed and waits for
 a human to merge it; its `prs:` line lists the PR URLs. List them with `grep -H '^status:' docs/stories/*.md`.
 
-`kind` (code | docs | chore | verify | lead) and `risk: high` choose who builds it
+`kind` (code | docs | chore | lead) and `risk: high` choose who builds it
 and with which model (swarm-dev `docs/method.md` § Model and effort); `lead` stories are
 never given to a swarm agent. A `lead` story says what it needs from you, and marks each step
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
@@ -27,7 +27,7 @@ run `swarm.sh reset <slug> <reason>`, or drop it. As with a failed Fable build, 
 so the block has no **You:** step.
 
 When `swarm.sh close <slug> paused` or `cleared-on-error` closes a builder whose close would count
-a failed build, or the open builder of a `ready` verify story, the story is held the same way: `kind: lead`, `escalated_from: <its kind>`, `held_for: <cause>`, and a block with
+a failed build, the story is held the same way: `kind: lead`, `escalated_from: <its kind>`, `held_for: <cause>`, and a block with
 the lead's choices, so no conductor or `/swarm-dev:swarm` run builds it again. `attempts:` stays as it was.
 The lead drops it, or lifts the hold with `swarm.sh reset <slug> <reason>`, which puts the kind
 back and removes `held_for:`, `escalated_from:` and the block but keeps `attempts:`. Lifting a hold

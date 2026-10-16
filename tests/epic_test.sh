@@ -905,15 +905,15 @@ build() { # <slug> <front-matter line>... — build a ready story in svc, then p
 }
 printf '%s\n' "base_branches = dev main" > "${p}/.claude/swarm/config"
 check "sonnet_share = 0 (the default): roles resolve as before" \
-  "code opus high|code-risky opus xhigh|docs sonnet medium|chore haiku medium|verify haiku medium" \
-  "$(build r0-code "kind: code")|$(build r0-risky "kind: code" "risk: high")|$(build r0-docs "kind: docs")|$(build r0-chore "kind: chore")|$(build r0-verify "kind: verify")"
+  "code opus high|code-risky opus xhigh|docs sonnet medium|chore haiku medium" \
+  "$(build r0-code "kind: code")|$(build r0-risky "kind: code" "risk: high")|$(build r0-docs "kind: docs")|$(build r0-chore "kind: chore")"
 echo "sonnet_share = 4" >> "${p}/.claude/swarm/config"
 check "sonnet_share = 4: code stories split by cksum mod 4, and a sampled one starts on code-sonnet sonnet high" \
   "code opus high|code opus high|code-sonnet sonnet high|code-sonnet sonnet high" \
   "$(build r4-a "kind: code")|$(build r4-b)|$(build r4-f "kind: code")|$(build r4-g "kind: code")"
-check "sonnet_share = 4: risk: high stays code-risky, and docs, chore and verify are unchanged" \
-  "code-risky opus xhigh|docs sonnet medium|chore haiku medium|verify haiku medium" \
-  "$(build s4-risky4 "kind: code" "risk: high")|$(build s4-docs4 "kind: docs")|$(build s4-chore2 "kind: chore")|$(build s4-verify2 "kind: verify")"
+check "sonnet_share = 4: risk: high stays code-risky, and docs and chore are unchanged" \
+  "code-risky opus xhigh|docs sonnet medium|chore haiku medium" \
+  "$(build s4-risky4 "kind: code" "risk: high")|$(build s4-docs4 "kind: docs")|$(build s4-chore2 "kind: chore")"
 printf '2026-10-13\tcode-sonnet\ts4-retry2\tclaude\tsonnet\thigh\tsess-r\n' >> "${p}/.swarm/agents.tsv"
 check "only a first attempt is sampled: a slug already in agents.tsv goes back to code" "code opus high" \
   "$(build s4-retry2 "kind: code")"
@@ -929,8 +929,8 @@ ladder() { # <slug> <attempts>... -- <front-matter line>... — _role at each at
 }
 printf '%s\n' "base_branches = dev main" "sonnet_share = 4" > "${p}/.claude/swarm/config"
 check "escalate_after = 2 (the default): every kind an agent builds escalates at attempts: 2" \
-  "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate|verify verify escalate" \
-  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")|$(ladder e4-a 0 1 2 -- "kind: verify")"
+  "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate" \
+  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")"
 check "no attempts: and no kind: is a first attempt at code" "code" "$(role e4-a)"
 item "${b}" stories/e4-a.md "status: ready" "kind: code"; echo "attempts: 2" >> "${b}/stories/e4-a.md"
 check "attempts: is read from the front matter, never from a body line" "code" "$(run _role e4-a)"

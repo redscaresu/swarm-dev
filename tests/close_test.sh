@@ -246,8 +246,8 @@ is "its block is the lead's, with no **You:** step: re-scope Done when and reset
 is "and its build is cleared away" "" "$(left i1)"
 # impossible hands a ready story an agent builds to the lead, and clears its worktree and branches so
 # a reset builds it again, even when the close finds no build to count: with no builder open, gh
-# failing, or a verify story (no PR tells its pass from a failure). Then it closes no PR, and the block
-# says the PRs were not listed. Any other story, and a name with no story file, is refused before
+# failing. Then it closes no PR, and the block says the PRs were not listed. Any other story (a
+# verify story too, a kind no agent builds), and a name with no story file, is refused before
 # anything closes.
 unlisted() { grep -qxF "swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo." <<< "$(block "$1")" && echo yes; }
 closed_prs="$(grep -c '^pr close' "${ROOT}/gh.log")"
@@ -262,9 +262,9 @@ is "with gh failing, close i3 impossible closes its pane, hands it on and clears
   "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(unlisted i3)|$(left i3)"
 item v1 "status: ready" "kind: verify" "attempts: 1"; echo "w:p14 v1" > "${P}/.swarm/state/v1"
 rc=0; cs v1 impossible >/dev/null || rc=$?
-is "close v1 impossible on a ready verify story: exit 0, kind: lead, escalated_from: verify, attempts: 1, the lead's block, its build cleared" \
-  "0|lead|verify|1|ready|1|yes|" "${rc}|$(state v1)|$(grep -c '^- Re-scope its \*\*Done when\*\*' <<< "$(block v1)")|$(unlisted v1)|$(left v1)"
-is "and none of the three closes a PR, since none was listed" "${closed_prs}" "$(grep -c '^pr close' "${ROOT}/gh.log")"
+is "close v1 impossible on a ready verify story is refused, as for any kind no agent builds: exit 1, the story as it was" \
+  "1|verify||1|ready|0||" "${rc}|$(state v1)|$(grep -c '^- Re-scope its \*\*Done when\*\*' <<< "$(block v1)")|$(unlisted v1)|$(left v1)"
+is "and none of them closes a PR, since none was listed" "${closed_prs}" "$(grep -c '^pr close' "${ROOT}/gh.log")"
 echo '[]' > "${ROOT}/prs.json"; item i4 "status: ready" "kind: code"; started i4 w:p61; cs i4 impossible >/dev/null
 is "when gh lists no PR on story/i4, the block says none was found" "lead|yes" "$(fmv i4 kind)|$(grep -qx 'No PR was found on story/i4.' <<< "$(block i4)" && echo yes)"
 echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.json"
