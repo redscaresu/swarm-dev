@@ -9,6 +9,13 @@ so it asks herdr for the agents whenever `herdr` is on your PATH. It never chang
 state or the logs, and never opens or closes a pane. In a folder with no board it stops with one line
 naming `swarm.sh init`.
 
+To watch more than one project, name each with `--project <dir>`: `swarm.sh dash --project
+~/src/app --project ~/src/infra` draws app's screen and then infra's, each headed by its project's
+name and given its share of the terminal's height. `--watch` redraws them together, as one
+screen. It checks every folder before it draws anything, and stops at the first one that has no
+`.claude/swarm/config` or no board, naming it. With `--project` it shows only the projects you name, so you
+can run it from any git repo, even one with no board of its own.
+
 When `claude plugin update` installs a new version while `--watch` runs from the installed plugin,
 the watch switches to the new version's `swarm.sh` before its next frame and keeps your `t` and `l`
 choices. It reads the version from Claude Code's `installed_plugins.json`. Run from a checkout of
