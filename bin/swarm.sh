@@ -17,7 +17,7 @@
 #   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
-#   swarm.sh status [--all]                                 agents that need a look, what waits on you, and the next step
+#   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose blockers are all finished
@@ -2541,6 +2541,25 @@ EOF
 # goal_rule_if_on — goal_rule after a blank line, or nothing with goal off.
 goal_rule_if_on() { [[ "${CFG_goal}" == off ]] || printf '\n\n%s' "$(goal_rule)"; }
 
+# stacked_rule — how a conductor keeps a stacked build on its parents: unblock after each wait,
+# watch and new PR, then act on status's Stacked lines (stacked_lines).
+stacked_rule() {
+  cat <<EOF
+After each \`swarm.sh wait\` or \`swarm.sh watch\` returns, and after a builder opens a PR, run
+\`swarm.sh unblock\` and start what it readies (a ready story whose worktree exists has started:
+never run \`swarm.sh story\` for it), then run \`swarm.sh status\` and read its Stacked lines:
+- \`<child>: merge <ref>\`: write a file saying to merge <ref> into its branch, re-run the tests and
+  push, and send it with \`swarm.sh tell <child> findings <file>\`. On a line that ends \`(no builder)\`,
+  first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with
+  \`swarm.sh agent <tab> <child> <worktree> <role> <brief>\`, where <tab> is the child's \`epic:\` (its
+  slug when it has none), <role> is what \`swarm.sh _role <child>\` prints, and the brief says the
+  same and to reply with the PR URL. Any review of the child from before that merge is stale: review
+  the new head.
+- \`<child>: lost story/<p>\`: on a ready child, run \`swarm.sh close <child> paused\`, which holds
+  it for the lead. A lost line on a held (blocked) child goes in your report.
+EOF
+}
+
 # A PR per story.
 conduct_story_mode() {
   local epic="$1"
@@ -2550,6 +2569,8 @@ Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
+
+$(stacked_rule)
 
 $(auth_rule)$(goal_rule_if_on)
 
@@ -2587,6 +2608,8 @@ start it, and report it as not started, with the reason \`build died\`.
 
 List each ready story with no \`epic:\` that you could not start in your report, one line each:
 \`not started: <slug> (<the refusal's first line>)\`.${own}
+
+$(stacked_rule)
 
 $(auth_rule)$(goal_rule_if_on)
 
@@ -4021,7 +4044,59 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   done
 }
 
-# status [--all] — one summary for the user: the agents that need a look or are working, what is
+# not_in <repo-dir> <ref> <branch> — <ref>'s head is not in <branch>. A git error is not a no.
+not_in() { local rc=0; git -C "$1" merge-base --is-ancestor "$2" "$3" 2>/dev/null || rc=$?; [[ ${rc} == 1 ]]; }
+
+# stacked_parent <repo-dir> <child> <p> — what the child must do about parent p, or nothing: merge
+# origin/story/<p> when p's PR is open (or p has none yet) and its head is not in story/<child>;
+# merge origin/<base> once p's file is gone or its PR merged and the base's head is not in
+# story/<child>, so after a squash merge the child takes the base; lost when p's PR closed
+# unmerged, or its branch is gone while p is on the board. A gh or git call that fails returns 1.
+stacked_parent() {
+  local src="$1" child="$2" p="$3" state base rc=0
+  if [[ -f "${BOARD}/stories/${p}.md" ]]; then
+    state="$( (cd "${src}" && gh pr list --head "story/${p}" --state all --json state) 2>/dev/null \
+      | json "next((s for s in ('OPEN', 'MERGED', 'CLOSED') if any(x['state'] == s for x in d)), '')" 2>/dev/null)" || return 1
+    case "${state}" in
+      CLOSED) echo "lost story/${p}"; return ;;
+      MERGED) ;;
+      *)
+        if ! git -C "${src}" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null; then
+          git -C "${src}" ls-remote --exit-code -q origin "refs/heads/story/${p}" >/dev/null 2>&1 || rc=$?
+          [[ ${rc} == 2 ]] || return 1   # 2: origin answered, and has no such branch
+          echo "lost story/${p}"; return
+        fi
+        ! not_in "${src}" "origin/story/${p}" "story/${child}" || echo "merge origin/story/${p}"
+        return ;;
+    esac
+  fi
+  base="$(base_for "${src}" 2>/dev/null)" || return 1
+  ! not_in "${src}" "origin/${base}" "story/${child}" || echo "merge origin/${base} (${p} merged)"
+}
+
+# stacked_lines — one line per parent of a stacked build that needs action (stacked_parent): a
+# ready or blocked story with a worktree and a `stacked <slug>` event, the last of which names its
+# parents. A line ends (no builder) when herdr shows no builder open for the child.
+stacked_lines() {
+  local story child src parents p line builder
+  while IFS= read -r story; do
+    case "$(fm "${story}" status)" in ready|blocked) ;; *) continue ;; esac
+    child="$(basename "${story}" .md)"
+    src="$(repo_dir "$(fm "${story}" repo)")" || continue
+    [[ -d "$(worktree_for "${src}" "${child}")" ]] || continue
+    parents="$(awk -F'\t' -v s="${child}" '$2 == "stacked" && $3 == s && index($5, "ok (on ") == 1 { p = substr($5, 8, length($5) - 8) } END { print p }' "${EVENTS_LOG}" 2>/dev/null)" || continue
+    [[ -n "${parents}" ]] || continue
+    builder=""; [[ "$(builder_state "${child}")" != none ]] || builder=" (no builder)"
+    for p in ${parents//,/ }; do
+      [[ "${p}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+      line="$(stacked_parent "${src}" "${child}" "${p}")" || continue
+      [[ -z "${line}" ]] || echo "${child}: ${line}${builder}"
+    done
+  done < <(board stories)
+}
+
+# status [--all] — one summary for the user: the agents that need a look or are working, the stacked
+# builds whose parent moved or merged (stacked_lines; no section when there are none), what is
 # waiting on them, and what `next` would do; idle agents and blocked stories are only counted unless
 # --all. A pane with no agent in it is shown as empty: a start that failed. Panes closed by hand are
 # left out. A Claude agent's state is its session's (one claude_agents call per run); herdr's word
@@ -4069,6 +4144,8 @@ PY
   else
     echo "Agents: not inside herdr, so their states are not available"
   fi
+  local stacked; stacked="$(stacked_lines)" || true
+  [[ -z "${stacked}" ]] || printf '\nStacked\n  %s\n' "${stacked//$'\n'/$'\n'  }"
   echo; echo "Waiting on you"
   waiting="$(waiting_on_user)"
   if [[ "${all}" != --all ]]; then
