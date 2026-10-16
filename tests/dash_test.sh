@@ -44,7 +44,7 @@ item hld/2026-01-01-x.md 'status: agreed'
 item epics/e1.md 'status: active' 'hld: 2026-01-01-x'
 item epics/e2.md 'status: later'
 item stories/s-one.md 'status: review' 'epic: e1' 'prs: https://github.com/o/r/pull/7'
-item stories/s-two.md 'status: blocked' 'epic: e1' 'blocked_by: [s-one]'
+item stories/s-two.md 'status: blocked' 'epic: e1' 'depends_on: [s-one]'
 item stories/s-three.md 'status: ready' 'epic: e1'
 item stories/ask.md 'status: ready' 'kind: lead'
 sed -i.bak 's/^# ask$/# Create the read-only IAM user/' "${P}/docs/stories/ask.md" && rm "${P}/docs/stories/ask.md.bak"
@@ -710,7 +710,7 @@ git -C "${Q}" init -q -b main
 echo .swarm/ > "${Q}/.gitignore"; echo "status" > "${Q}/STATUS.md"
 qitem epics/x.md 'status: active'
 qitem epics/y.md 'status: active'
-qitem stories/y-wait.md 'status: blocked' 'epic: y' 'blocked_by: [x-b]'
+qitem stories/y-wait.md 'status: blocked' 'epic: y' 'depends_on: [x-b]'
 qitem stories/y-then.md 'status: later' 'epic: y'
 for s in x-merged x-big x-fin x-again x-gone x-scope x-scope2 x-twice x-squash x-ops; do qitem "stories/${s}.md" 'status: ready' 'epic: x'; done
 qitem stories/x-own.md 'status: ready' 'epic: x' 'prs: https://github.com/o/r/pull/5'

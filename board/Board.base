@@ -13,8 +13,6 @@ properties:
     displayName: Depends on
   note.kind:
     displayName: Kind
-  note.blocked_by:
-    displayName: Blocked by
 views:
   - type: table
     name: Board

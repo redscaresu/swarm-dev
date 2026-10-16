@@ -67,8 +67,8 @@ item epics/audit-log.md "Audit log" 'status: active' 'hld: 2026-10-01-rate-limit
 item epics/metrics.md "Metrics" 'status: later'
 for s in rl-config rl-middleware rl-token-bucket rl-redis-store; do item "stories/${s}.md" "${s}" 'kind: code' 'epic: rate-limiting' 'status: ready'; done
 item stories/rl-token-bucket.md "Token bucket per API key" 'kind: code' 'epic: rate-limiting' 'status: review' 'prs: https://github.com/acme/api/pull/41'
-item stories/rl-headers.md "RateLimit-* response headers" 'kind: code' 'epic: rate-limiting' 'status: blocked' 'blocked_by: [rl-token-bucket]'
-item stories/rl-docs.md "Document the limits" 'kind: docs' 'epic: rate-limiting' 'status: blocked' 'blocked_by: [rl-headers]'
+item stories/rl-headers.md "RateLimit-* response headers" 'kind: code' 'epic: rate-limiting' 'status: blocked' 'depends_on: [rl-token-bucket]'
+item stories/rl-docs.md "Document the limits" 'kind: docs' 'epic: rate-limiting' 'status: blocked' 'depends_on: [rl-headers]'
 for s in audit-events audit-schema; do item "stories/${s}.md" "${s}" 'kind: code' 'epic: audit-log' 'status: ready'; done
 item stories/audit-export.md "Export the audit log as CSV" 'kind: code' 'epic: audit-log' 'status: ready'
 item stories/rotate-staging-key.md "Rotate the staging API key" 'kind: lead' 'status: ready'
@@ -98,7 +98,7 @@ agents conduct-rate-limiting:working:w1-p1 rl-token-bucket:idle:w1-p2 rl-redis-s
   sleep 4; merge 0 41 rl-token-bucket; event 0 close rl-token-bucket w1:p1; fresh
   agents conduct-rate-limiting:working:w1-p1 rl-redis-store:working:w1-p3 conduct-audit-log:working:w1-p5 audit-schema:working:w1-p6 \
     cx-audit-schema:working:w1-p7
-  sleep 3; sed -i.bak -e 's/^status: blocked/status: ready/' -e '/^blocked_by/d' "${P}/docs/stories/rl-headers.md"; rm -f "${P}"/docs/stories/*.bak
+  sleep 3; sed -i.bak -e 's/^status: blocked/status: ready/' "${P}/docs/stories/rl-headers.md"; rm -f "${P}"/docs/stories/*.bak
   "${G[@]}" commit -qam "unblock rl-headers"; event 0 unblock rl-headers w1:p1; fresh
   sleep 2; echo 'w1:p4 rl-headers' >> "${P}/.swarm/state/rate-limiting"; event 0 story rl-headers w1:p1
   printf '%s\tcode\trl-headers\tclaude\thaiku\tlow\trl-headers\n' "$T" >> "${P}/.swarm/agents.tsv"

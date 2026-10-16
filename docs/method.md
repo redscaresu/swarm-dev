@@ -672,17 +672,17 @@ back to what is committed (the `review` status, and a retry's `attempts:`), and 
 if the pull fails. It also puts back any board file the main checkout
 left unstaged with content already the base's, so a hand edit that matches what merged does not
 stop it. When the pull changes a board file whose only unstaged edit is to keys swarm.sh writes
-(`status`, `prs`, `blocked_by`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
+(`status`, `prs`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
 another story in review, reconcile checks the file out, pulls, then sets those keys again. If the
 pull deleted the file, it stays deleted; reconcile prints its name and keeps the backup, which holds
 the edit. If the base changed one of those keys as well, to a different value, reconcile stops
 before it touches anything and names the file. It also stops when the edit changes `status` and the
-base changed `blocked_by` or `depends_on`, so a flip to `ready` never lands over a new dependency.
+base changed `depends_on`, so a flip to `ready` never lands over a new dependency.
 Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and
 reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
 again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
-blocked story once every slug in both its `blocked_by` and its `depends_on` is finished. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`,
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`,
 and no other agent can. Every agent, the conductor included, still starts unable to run `gh pr merge`. It notes a PR's head SHA before it reviews it and
 reads it again after; if the head moved, it reviews the new one. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
