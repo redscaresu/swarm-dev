@@ -2017,25 +2017,32 @@ sign_rule() { echo "Sign every commit and merge with -S. If signing fails, stop 
 sign_rule_if_on() { [[ "${CFG_sign_commits}" != true ]] || printf '\n\n%s' "$(sign_rule)"; }
 # The review every story's PR passes before its builder is closed. The builder keeps its context
 # until then, so findings go back to it rather than to a fresh agent that has none. Each PR gets its
-# own review agent (review_agent) as soon as it is green, so PRs that land together are reviewed at once.
+# own review agent (review_agent) as soon as it is green, so PRs that land together are reviewed at
+# once; the agent runs codex, so the conductor runs it only in codex's place when it was skipped.
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
 A story is reviewed only when its latest head has passed a review agent's review. As soon as a
 story's PR is green, start one with \`${sw} review-agent <slug> <PR URL>\`.
 Do not wait for other PRs or reviews: start one for each green PR, so PRs that land together are
-reviewed at once. It returns at once. The review agent, review-<slug>, is read-only and runs in the
-story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not only
-docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches and
-**Done when**, and writes its findings to ${PROJECT_DIR}/.swarm/reviews/<slug>.md. Wait on each with
-\`swarm.sh wait review-<slug>\` in the background, then triage that story's file. Send the real
-findings to the story's builder with \`${sw} tell <slug> findings <file>\` (a file holding the
-findings and what to decline). Log each finding outside the story's touches and **Done when** with
-\`log-finding --declined out-of-scope --reviewer <who>\`, as below. Close the review agent
-(\`swarm.sh close review-<slug>\`), wait for the builder, and start a new review agent on the new head.
-$(codex_rule) Stop at the first pass on the latest head
+reviewed at once. It returns at once. It refuses when the story's worktree is not at the PR's head:
+wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
+the story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not
+only docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches
+and **Done when**, and writes ${PROJECT_DIR}/.swarm/reviews/<slug>.md: a \`head: <SHA>\` line
+naming the commit it reviewed, its findings, and an out-of-scope section. Wait on each with
+\`swarm.sh wait review-<slug>\` in the background, triage that story's file, then close the review
+agent (\`swarm.sh close review-<slug>\`) whatever it found. Send the real findings to the story's
+builder with \`${sw} tell <slug> findings <file>\` (a file holding the findings and what to
+decline). Log each item of the out-of-scope section with
+\`log-finding --declined out-of-scope --reviewer <who>\`, as below.
+When a review agent reports \`codex skipped: <why>\`, read the diff yourself in codex's place.
+Wait for the builder, then start a new review agent on its new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
-declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
+declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason.
+Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
+(\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
+not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
 its latest head has passed.$(rules_review_rule)
 
 $(finding_rule)
@@ -2055,7 +2062,6 @@ codex_review_cmd() {
 codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
-  printf ' %s' "When a review agent reports \`codex skipped: <why>\`, the conductor reads the diff itself in codex's place."
 }
 # bump_rule — beside codex_rule, in a project that ships a plugin: an epic's release story makes the
 # plugin.json bump, so a story PR without one is not a finding. story_brief leaves it out of a one-off
@@ -2423,11 +2429,13 @@ build_story() {
 
 # review_agent <slug> <PR URL> — start review-<slug> on a story's PR in the story's worktree and tab,
 # with role review and review_brief, and return at once: the conductor waits on it with `swarm.sh
-# wait review-<slug>`. Its earlier findings file goes first, so the conductor reads only this head's.
-# Refused, starting nothing, when the board has a story named review-<slug>: its builder would hold
-# the same agent name.
+# wait review-<slug>`. It reviews the PR's head, and only when the worktree is at it, so the findings
+# file's head: line names the commit reviewed. Refused, starting nothing and touching no file, when
+# the board has a story named review-<slug> (its builder would hold the same agent name), or when
+# review-<slug> cannot start (still working). Its earlier findings file then goes, so the conductor
+# reads only this head's.
 review_agent() {
-  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic
+  local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
   [[ "${pr}" =~ ^https://[^[:space:]]+/pull/[0-9]+$ ]] || die "review-agent: '${pr}' is not a PR URL (swarm.sh review-agent <slug> <PR URL>)"
   [[ -f "${story}" ]] || die "no story ${story}"
@@ -2437,24 +2445,32 @@ review_agent() {
   src="$(repo_dir "$(fm "${story}" repo)")" || die "${slug}: ${src}"
   wt="$(worktree_for "${src}" "${slug}")"
   [[ -d "${wt}" ]] || die "${slug}: no worktree at ${wt}: review-agent reviews a story built here"
+  head="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid 2>/dev/null)" && [[ "${head}" =~ ^[0-9a-f]{40}$ ]] \
+    || die "review-agent: could not read ${pr}'s head (gh pr view --json headRefOid)"
+  at="$(git -C "${wt}" rev-parse HEAD)"
+  [[ "${at}" == "${head}" ]] \
+    || die "review-agent: ${slug}'s worktree is at ${at}, not the PR's head ${head}; nothing was started: wait for its builder, then start the review again"
+  # What start_agent would refuse on, before any file is touched.
+  require_trusted "${wt}"; require_claude; free_agent_name "$(agent_name "review-${slug}")"
   base="$(base_for "${src}")"
   out="${PROJECT_DIR}/.swarm/reviews/${slug}.md"
-  mkdir -p "${out%/*}"; rm -f "${out}"
+  mkdir -p "${out%/*}"; printf 'head: %s\n' "${head}" > "${out}"
   prompt="${PROJECT_DIR}/.swarm/briefs/review-${slug}.md"; mkdir -p "${prompt%/*}"
-  review_brief "${slug}" "${pr}" "${base}" "${out}" > "${prompt}"
+  review_brief "${slug}" "${pr}" "${base}" "${out}" "${head}" > "${prompt}"
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
   start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"
 }
 
-# review_brief <slug> <PR URL> <base> <findings file> — a review agent's brief: read-only, the story's
-# touches and Done when, codex-review with the slug, /code-review when the PR changes code, and each
-# finding written to the absolute <findings file>, since the agent's cwd is the worktree.
+# review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
+# story's touches and Done when, codex-review with the slug, /code-review when the PR changes code, the
+# project's rules, and each finding written to the absolute <findings file> (the agent's cwd is the
+# worktree) under its head: line, with work outside the story listed apart for the conductor to decline.
 review_brief() {
-  local story="${BOARD}/stories/$1.md"
+  local story="${BOARD}/stories/$1.md" rules
   cat <<EOF
-Review $2, the PR of story $1, in this worktree. You are read-only: never edit, commit or push here,
-and never merge, by any route. The one file you write is ${4}.
+Review $2, the PR of story $1, at its head $5, in this worktree. You are read-only: never edit,
+commit or push here, and never merge, by any route. The one file you write is ${4}.
 
 The story touches: $(fm "${story}" touches)
 
@@ -2470,10 +2486,17 @@ it again: you report \`codex skipped: usage limit\` or \`codex skipped: timed ou
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
 above, then run \`/code-review $2\`.
 
-Write each finding to ${4} with the Write tool, one per line: its reviewer (codex or code-review),
-file:line, and the finding. With none, write that there are none. Then reply with ${4}, and with
-\`codex skipped: <why>\` when codex was.
+When both are done, check that \`git rev-parse HEAD\` still prints $5. If it does not, the head
+moved under you: write \`head moved: <the new SHA>\` under the first line and stop there.
+
+Read ${4}, then write it with the Write tool. Keep its first line, \`head: $5\`. Under a \`## Findings\` heading,
+one line per finding: its reviewer (codex or code-review), file:line, and the finding; with none, say
+so. Under a \`## Out of scope\` heading, the same for each point a reviewer raised outside the
+story's touches and Done when, so the conductor can decline it; with none, say so. Then reply with
+${4}, and with \`codex skipped: <why>\` when codex was.
 EOF
+  rules="$(project_rules)"
+  [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
 }
 
 # touches_overlap <slug> [strict] — warn on stderr for each story of another epic (no epic counts as

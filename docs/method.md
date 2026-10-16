@@ -593,14 +593,19 @@ wait for other PRs or reviews, so PRs that land together are reviewed at once. T
 straight away. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
 runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
 It judges the PR against the story's touches and **Done when** only: work outside them is not a
-finding. It writes each finding, with its reviewer and file:line, to the absolute path
-`<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the project),
-and replies with that path. `review-agent` refuses, starting nothing, when the board has a story
-named `review-<slug>`, whose builder would hold the same agent name. The conductor waits on each
-review in the background with `swarm.sh wait review-<slug>` and triages that story's file. It sends
-the real findings to the story's builder with `swarm.sh tell <slug> findings <file>`, and logs each
-finding outside the touches and **Done when** with `log-finding --declined out-of-scope --reviewer <who>`. Then it
-closes the review agent and starts a new one on the builder's next head. `tell`'s kind (`findings`, `nudge`
+finding. Its brief carries the project's own rules, as a builder's does. It writes to the absolute
+path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the
+project), and replies with that path. The file starts with `head: <SHA>`, the PR's head, which
+`review-agent` reads from `gh` and writes before the agent starts. Under it go the findings, each
+with its reviewer and file:line, then an out-of-scope section for points raised outside the story.
+`review-agent` refuses, starting nothing and touching no file, when the board has a story named
+`review-<slug>` (whose builder would hold the same agent name), when the worktree is not at the PR's
+head, or when `review-<slug>` is still working. The conductor waits on each review in the background
+with `swarm.sh wait review-<slug>`, triages that story's file, and closes the review agent whatever
+it found. It sends the real findings to the story's builder with `swarm.sh tell <slug> findings
+<file>`, and logs each out-of-scope item with `log-finding --declined out-of-scope --reviewer <who>`.
+It starts a new review agent on the builder's next head. Before a story merges or goes to review, it
+compares the file's `head:` line with the PR's head, and reviews the new head when they differ. `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. To reach a busy conductor, the lead runs
