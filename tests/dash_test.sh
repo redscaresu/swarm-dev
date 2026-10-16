@@ -143,6 +143,7 @@ touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 "${G[@]}" checkout -q - && GIT_COMMITTER_DATE=2026-10-05T12:00:00Z "${G[@]}" merge -q --no-ff -m "Merge pull request #9 from o/story/s-zero" story/s-zero
 fresh; clean="$(cd "${P}" || exit 1; PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a committed board shows no drift line" lacks "board:" "${clean}"
+check "with no agent open and nothing held, the frame has no running-now box" lacks "running now" "${clean}"
 echo "more" >> "${P}/docs/stories/s-three.md"
 
 snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
@@ -937,6 +938,100 @@ for cols in 100 160; do
 done
 check "codex row at 160 columns: a long slug's row keeps its base and age" grep -qE 'codex review a-rather.*running 4m vs epic/alpha' <<< "${out}"
 check "dash leaves every codex-review marker, dead or overdue, as it was" test "$(cksum "${S}"/codex-review.*)" = "${before}"
+
+# --- Running now, in a project of its own (D) whose panes are w5's: two epic builders at work, three
+# idle one-off builders (their stories on no epic) and one held story.
+D="${ROOT}/running"; mkdir -p "${D}/.swarm/state" "${D}/docs/epics" "${D}/docs/stories" "${ROOT}/dbin"; git -C "${D}" init -q
+# An upstream remote beside origin: gh is asked about origin by name, never left to pick.
+git -C "${D}" remote add upstream https://github.com/up/d.git && git -C "${D}" remote add origin https://github.com/o/d.git
+touch "${D}/docs/stories/README.md"
+ditem() { local path="${D}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
+# The epic's file lists PR 20 too, so dash_slow views it once, and story/ro-retry still maps to it.
+ditem epics/re.md 'status: active' 'prs: https://github.com/o/d/pull/20'
+ditem stories/rb-one.md 'status: ready' 'epic: re' 'prs: https://github.com/o/d/pull/11'
+ditem stories/rb-two.md 'status: ready' 'epic: re' 'prs: https://github.com/o/d/pull/12'
+# ro-review's PR is open on story/ro-review, which its file lists only from review on: gh pr list finds it.
+ditem stories/ro-review.md 'status: ready'
+ditem stories/ro-merge.md 'status: review' 'prs: https://github.com/o/d/pull/14'
+ditem stories/ro-imp.md 'status: ready'
+# A retry: the story still lists the earlier attempt's closed PR 16; the retry's PR 20 is open on story/ro-retry.
+ditem stories/ro-retry.md 'status: ready' 'prs: https://github.com/o/d/pull/16'
+ditem stories/rh-held.md 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
+printf 'w5:p1 rb-one\nw5:p2 rb-two\nw5:p3 ro-review\nw5:p4 ro-merge\nw5:p5 ro-imp\nw5:p6 ro-retry\n' > "${D}/.swarm/state/d"
+printf '%s\tcode\t%s\tclaude\topus\thigh\t%s\n' "$(date +%F)" rb-one drb1 "$(date +%F)" rb-two drb2 \
+  "$(date +%F)" ro-review dro1 "$(date +%F)" ro-merge dro2 "$(date +%F)" ro-imp dro3 "$(date +%F)" ro-retry dro4 > "${D}/.swarm/agents.tsv"
+printf '%s\tstory\trb-one\tw5:p1\tok\n' "$(ago 25)" > "${D}/.swarm/events.tsv"
+dlog() { # <session> <minutes ago> <content block>
+  printf '{"type":"assistant","timestamp":"%s","message":{"content":[%s]}}\n' "$(ago "$2")" "$3" >> "${ROOT}/projects/p/$1.jsonl"
+}
+dlog drb1 3 '{"type":"tool_use","name":"Bash","input":{}}'
+dlog drb2 12 '{"type":"text","text":"reading"},{"type":"tool_use","name":"Read","input":{}}'
+# rb-two's newest tool is a Write of 80 KB, longer than the 64 KB dash reads first, then its short result.
+dlog drb2 10 "{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"content\":\"$(head -c 81920 /dev/zero | tr '\0' x)\"}}"
+printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"ok"}]}}\n' "$(ago 9)" >> "${ROOT}/projects/p/drb2.jsonl"
+dlog dro4 30 '{"type":"text","text":"Opened the retry PR."}'
+dlog dro1 30 '{"type":"text","text":"Opened the PR."}'
+# A newest line whose message is not an object costs nothing: ro-review's row still reads.
+echo '{"type":"assistant","timestamp":"2026-10-01T00:00:00Z","message":"odd"}' >> "${ROOT}/projects/p/dro1.jsonl"
+dlog dro2 30 '{"type":"text","text":"Done; the PR is in review."}'
+dlog dro3 40 '{"type":"text","text":"The plan first."}'
+dlog dro3 20 '{"type":"text","text":"IMPOSSIBLE: the API has no such call"}'
+# Then 80 KB of hook output and a small tool call: the reply is past the 64 KB read first, so dash
+# reads further back for an idle one-off builder, the one row that needs it.
+printf '{"type":"attachment","timestamp":"%s","content":"%s"}\n' "$(ago 19)" "$(head -c 81920 /dev/zero | tr '\0' x)" >> "${ROOT}/projects/p/dro3.jsonl"
+dlog dro3 18 '{"type":"tool_use","name":"Bash","input":{}}'
+printf '[{"sessionId":"drb1","status":"busy"},{"sessionId":"drb2","status":"busy"},{"sessionId":"dro1","status":"idle"},{"sessionId":"dro2","status":"idle"},{"sessionId":"dro3","status":"idle"},{"sessionId":"dro4","status":"idle"}]' > "${ROOT}/d.json"
+cat > "${ROOT}/dbin/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"rb-one","agent_status":"working","pane_id":"w5:p1"},{"name":"rb-two","agent_status":"working","pane_id":"w5:p2"},{"name":"ro-review","agent_status":"idle","pane_id":"w5:p3"},{"name":"ro-merge","agent_status":"idle","pane_id":"w5:p4"},{"name":"ro-imp","agent_status":"idle","pane_id":"w5:p5"},{"name":"ro-retry","agent_status":"idle","pane_id":"w5:p6"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w5:p1"},{"pane_id":"w5:p2"},{"pane_id":"w5:p3"},{"pane_id":"w5:p4"},{"pane_id":"w5:p5"},{"pane_id":"w5:p6"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w5","label":"running"}]}}' ;;
+  *) exit 1 ;;
+esac
+STUB
+# gh: PR 11 is green, PR 12 failing, PR 14 green, and origin's open PR list (url and head only) has
+# PR 13 on story/ro-review, whose CI is running, and PR 20 on story/ro-retry, green; PR 16 is closed.
+cat > "${ROOT}/dbin/gh" <<'STUB'
+#!/bin/sh
+case "$1 $2 $3" in
+  "pr view https://github.com/o/d/pull/11"|"pr view https://github.com/o/d/pull/14") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/d/pull/12") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
+  "pr list -R") [ "$4" = https://github.com/o/d.git ] || exit 1
+    echo '[{"url":"https://github.com/o/d/pull/13","headRefName":"story/ro-review"},{"url":"https://github.com/o/d/pull/15","headRefName":"other"},{"url":"https://github.com/o/d/pull/20","headRefName":"story/ro-retry"}]' ;;
+  "pr view https://github.com/o/d/pull/16") echo '{"state":"CLOSED","statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
+  "pr view https://github.com/o/d/pull/20") echo '{"state":"OPEN","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/d/pull/13") echo '{"state":"OPEN","statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "${ROOT}/dbin/herdr" "${ROOT}/dbin/gh"
+for cols in 100 160; do
+  out="$(fresh; cd "${D}" || exit 1; env -u HERDR_ENV COLUMNS="${cols}" CLAUDE_STUB_AGENTS="${ROOT}/d.json" PATH="${ROOT}/dbin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
+  run="$(lbox "running now" "${out}")"; epicp="$(lbox "epics" "${out}")"
+  check "running now at ${cols} columns: a builder's row has its running time, last tool and PR's CI state" grep -qE '● rb-one +up 25m +Bash 3m ago +#11 green' <<< "${run}"
+  check "running now at ${cols} columns: the other builder's row too, its time from agents.tsv, its last entry past 64 KB" grep -qE '● rb-two +up [0-9hm]+ +Write 9m ago +#12 failing' <<< "${run}"
+  check "running now at ${cols} columns: a held story with its cause" has "⏸ held rh-held: paused" "${run}"
+  # Narrower than 140 columns it sits just above recent; from 140, in the left column just under the epics.
+  check "running now at ${cols} columns: sits where its layout puts it" python3 -c '
+import sys
+t, wide = sys.stdin.read().splitlines(), sys.argv[1] == "160"
+r = next(i for i, l in enumerate(t) if l.startswith("╭─ running now"))
+end = next(i for i in range(r, len(t)) if t[i].startswith("╰"))
+sys.exit(not (t[r - 1].startswith("╰") and "╭─ epics" in "".join(t[:r]) if wide else t[end + 1].startswith("╭─ recent")))' "${cols}" <<< "${out}"
+  check "one-off builder at ${cols} columns: an open PR not in review waits for review" grep -qE 'ro-review .*#13 waits for review' <<< "${epicp}"
+  check "running now at ${cols} columns: a PR found on the builder's branch shows its CI state" grep -qE 'ro-review .*#13 CI running' <<< "${run}"
+  check "one-off builder at ${cols} columns: a story in review waits for the lead's merge" grep -qE "ro-merge .*#14 waits for the lead's merge" <<< "${epicp}"
+  check "one-off builder at ${cols} columns: a last reply of IMPOSSIBLE: reads IMPOSSIBLE" grep -qE 'ro-imp .*IMPOSSIBLE' <<< "${epicp}"
+  check "running now at ${cols} columns: a builder with no PR says so" grep -qE '! ro-imp .*no PR yet|✓ ro-imp .*no PR yet' <<< "${run}"
+  check "one-off builder at ${cols} columns: a retry's open PR stands in for the closed one its story lists" grep -qE 'ro-retry .*#20 waits for review' <<< "${epicp}"
+  check "running now at ${cols} columns: a retry shows its open PR, not the closed one" grep -qE 'ro-retry .*#20 green' <<< "${run}"
+  check "running now at ${cols} columns: a closed PR is not shown" lacks "#16" "${run}"
+  check "no agent row at ${cols} columns reads a bare idle" lacks " idle " "${out}"
+  out="$(fresh; cd "${D}" || exit 1; env -u HERDR_ENV COLUMNS="${cols}" CLAUDE_STUB_AGENTS="${ROOT}/d.json" PATH="${ROOT}/dbin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)"
+  check "--tree at ${cols} columns: an idle one-off builder says what it waits on" grep -qE 'ro-review .*#13 waits for review' <<< "${out}"
+  check "--tree at ${cols} columns: no agent row reads a bare idle" lacks " idle " "${out}"
+done
 
 # --- A git repo with no board: dash and dash --watch stop at once and name swarm.sh init.
 N="${ROOT}/noboard"; mkdir -p "${N}"; git -C "${N}" init -q

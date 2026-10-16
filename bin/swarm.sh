@@ -4014,7 +4014,7 @@ PY
 }
 
 # dash [--watch [seconds]] [--ladder] [--tree] — a read-only dashboard: a header and a summary
-# line, what needs you, each active epic's progress with its live agents and open PRs, and the recent
+# line, what needs you, what runs now, each active epic's progress with its live agents and open PRs, and the recent
 # events. --ladder adds the model per role; --tree shows the agents by herdr workspace and tab in
 # place of the epics. It never writes the board, state or logs, and never opens or closes a pane.
 # --watch rebuilds it every N seconds (default 2) and repaints in place; q quits, t and l toggle the
@@ -4169,32 +4169,63 @@ dash_base_ref() {
 
 # dash_slow — the fields too slow for every frame, cached for a minute in a file under $TMPDIR (never
 # under .swarm), so a one-shot dash reuses it too: today's estimated cost (the total line of
-# cost_report), each open board item's PR checks, merge state and last update, one gh pr view per
-# PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), and how
-# many stories of each epic finished (dash_finished).
+# cost_report), each open board item's PR checks, merge state, last update and whether it is open, one gh pr view per
+# PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), each
+# open story's open story/<slug> PR in that story's own repo (a builder's PR, which its story lists
+# only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
+# view per PR that matches, each with the same limit; and how many stories of each epic finished
+# (dash_finished).
 dash_slow() {
-  local cache f urls
-  # -2: the cache gained finished-story lines; a name of its own, so an older swarm.sh's cache is never read.
-  cache="${TMPDIR:-/tmp}/swarm-dash-2-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  local cache f r urls pairs
+  # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
+  cache="${TMPDIR:-/tmp}/swarm-dash-3-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
   if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
     urls="$( { board stories; board epics; } | while IFS= read -r f; do
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
+    # Each open story's repo and slug, so a story/<slug> branch counts only in the story's own repo.
+    pairs="$(board stories | while IFS= read -r f; do
+        [[ "$(get_fm "${f}" status)" == "done" ]] || { r="$(repo_dir "$(get_fm "${f}" repo)")" && printf '%s\t%s\n' "${r}" "$(basename "${f}" .md)"; }
+      done || true)"
     {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
-      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}" ]]; then python3 - ${urls} <<'PY'
-import os, signal, subprocess, sys
-for url in sys.argv[1:]:
-    p = subprocess.Popen(["gh", "pr", "view", url, "--json", "statusCheckRollup,mergeStateStatus,updatedAt"],
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 - ${urls} <<'PY'
+import json, os, signal, subprocess, sys
+FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
+def gh(args):
+    p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
         out, _ = p.communicate(timeout=5)
     except subprocess.TimeoutExpired:
         os.killpg(p.pid, signal.SIGKILL); p.communicate()
-        continue
-    if p.returncode == 0:
+        return None
+    return out if p.returncode == 0 else None
+for url in sys.argv[1:]:
+    out = gh(["pr", "view", url, "--json", FIELDS])
+    if out is not None:
         print(url + "\t" + out.replace("\n", "").replace("\t", ""))
+slugs = {}
+for l in os.environ["SWARM_PAIRS"].splitlines():
+    repo, _, slug = l.partition("\t")
+    slugs.setdefault(repo, set()).add(slug)
+for repo, mine in slugs.items():
+    # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
+    origin = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+    # ponytail: only the newest 200 open PRs per repo are read, so a builder's older PR in a repo with
+    # more shows as no PR yet; query each unmatched story/<slug> head if a repo ever has that many.
+    try:
+        prs = json.loads(gh(["pr", "list", "-R", origin, "--state", "open", "--limit", "200", "--json", "url,headRefName"]) or "[]") if origin else []
+    except ValueError:
+        continue
+    for pr in prs if isinstance(prs, list) else []:
+        head = str(pr.get("headRefName")) if isinstance(pr, dict) else ""
+        if head.startswith("story/") and head[len("story/"):] in mine:
+            print("head\t" + head[len("story/"):] + "\t" + pr["url"])
+            # A PR a board item lists was viewed above.
+            out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
+            if out is not None:
+                print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
 PY
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
@@ -4202,6 +4233,7 @@ PY
   DASH_COST="$(awk -F'\t' '$1 == "cost" { print $2 }' "${cache}" 2>/dev/null || true)"
   DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
+  DASH_HEADS="$(awk -F'\t' '$1 == "head" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
 }
 
 # dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
@@ -4459,9 +4491,9 @@ for a in agents:
   DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
-  DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" \
+  DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
-  DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_COST="${DASH_COST:-}" \
+  DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
@@ -4566,6 +4598,8 @@ for l in lines("DASH_PRSTATE"):
     except ValueError:
         pass
 URL = re.compile(r"https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
+# A builder's open PR on story/<slug> (dash_slow's), for a story whose file lists none yet.
+HEADS = dict(l.split("\t", 1) for l in lines("DASH_HEADS") if "\t" in l)
 FAILED = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")
 
 def pr_state(url):
@@ -4579,6 +4613,18 @@ def pr_state(url):
     k, words = ("failed", "failing") if bad else ("review", "CI running") if running else ("done", "green") if roll else ("review", "no checks")
     behind = {"BEHIND": " · behind", "DIRTY": " · conflicts"}.get((s.get("mergeStateStatus") or "").upper(), "")
     return k, words + behind
+
+def is_open(url):
+    # A PR gh did not say is merged or closed counts as open.
+    return (PRS.get(url) or {}).get("state", "OPEN").upper() not in ("MERGED", "CLOSED")
+
+def builder_prs(slug):
+    # A story's PRs, and its builder's open story/<slug> PR (HEADS) while none it lists is open: a
+    # retry's PR beside the closed one an earlier attempt left on the story.
+    listed = (story_by_slug.get(slug) or [""] * 4)[3]
+    if any(is_open(m.group(0)) for m in URL.finditer(listed)) or not HEADS.get(slug or ""):
+        return listed
+    return f"{listed} {HEADS[slug]}".strip()
 
 def pr_ref(m):
     return f"{m.group(2)}#{m.group(3)}"
@@ -4634,6 +4680,50 @@ def epic_for(base, slug, tab):
         return tab
     return (story_by_slug.get(tab) or [""] * 10)[6] or None
 
+def scan_tail(entries):
+    # Newest first: (the newest entry's timestamp, the newest tool it ran, the newest reply's text).
+    t = tool = reply = None
+    for l in reversed(entries):
+        try:
+            d = json.loads(l)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        t = t or d.get("timestamp")
+        msg = d.get("message") if d.get("type") == "assistant" else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in reversed(content) if isinstance(content, list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_use" and tool is None:
+                tool = str(c.get("name") or "")
+            if isinstance(c, dict) and c.get("type") == "text" and reply is None:
+                reply = str(c.get("text") or "")
+        if t and tool is not None and reply is not None:
+            break
+    return t, tool, reply
+
+def tail_of(rec, reply_wanted):
+    # An agent's last activity from its session log (agents.tsv's session), read from its last 64 KB
+    # so every frame can afford it, and from 4 times as much while that misses the newest timestamp,
+    # tool or (when reply_wanted: only an idle one-off builder's IMPOSSIBLE check needs it) reply, as a
+    # big Write entry cut there does: (the newest entry's timestamp, the newest tool it ran, whether
+    # its newest reply starts IMPOSSIBLE:). (None, "", False) with no log.
+    # ponytail: at most the last 4 MB per frame; a tool or reply older than that is not found.
+    path = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
+    size = 65536
+    try:
+        with open(path, "rb") as f:
+            end = f.seek(0, 2)
+            while True:
+                f.seek(max(end - size, 0))
+                t, tool, reply = scan_tail(f.read().decode("utf-8", "replace").splitlines())
+                if (t and tool is not None and (reply is not None or not reply_wanted)) or size >= min(end, 1 << 22):
+                    break
+                size *= 4
+    except OSError:
+        return None, "", False
+    return t, tool or "", (reply or "").lstrip().startswith("IMPOSSIBLE:")
+
 if agents is not None:
     by_session, by_name = {}, {}
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
@@ -4673,9 +4763,9 @@ if agents is not None:
                 elif age is not None:
                     words = f"working {age}m"
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
-                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=(story_by_slug.get(slug) or [""] * 4)[3],
+                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=builder_prs(slug),
                      open=bool(slug) and story_by_slug[slug][2] != "done",
-                     since=since,
+                     since=since, day=rec[0] if rec else "", tail=tail_of(rec, bool(slug) and st in ("idle", "done") and epic_for(base, slug, label) not in epics),
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
@@ -4777,6 +4867,17 @@ need += [bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")] for
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
 # its live agents and open PRs beneath it.
+def one_off(r):
+    # An idle one-off builder (its story on no epic) says what it waits on, never a bare idle.
+    if r.get("epic") in epics or not r.get("slug") or r["state"] not in ("idle", "done"):
+        return r
+    pr = next((m for m in URL.finditer(r["prs"]) if is_open(m.group(0))), None)
+    ref = f"#{pr.group(3)} " if pr else ""
+    wait = ("IMPOSSIBLE" if (r.get("tail") or (0, 0, False))[2] else "waits for the lead's merge" if story_by_slug[r["slug"]][2] == "review"
+            else "waits for review" if pr else "no PR yet")
+    return dict(r, words=ref + wait)
+
+shown = [one_off(r) for r in shown]   # before any width is measured
 groups = collections.OrderedDict((s, []) for s, b in epics.items() if b[2] == "active")
 for r in shown:
     groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
@@ -4876,7 +4977,7 @@ def tree_view():
             rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
             for j, r in enumerate(items):
                 stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
-                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(r)
+                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(one_off(r))
                 rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim")])
     return rows or [[("no agents open in this project's panes", "dim")]]
 
@@ -4993,6 +5094,46 @@ def ladder_box(w):
     per = max(1, (w - 4) // cell)
     return box("ladder", [sum(rows[i:i + per], []) for i in range(0, len(rows), per)], w)
 
+# Running now: each open agent with how long it has run (its events.tsv start, else its agents.tsv
+# day from midnight), its last activity (its session log's newest entry and tool) and, for a builder,
+# its PR and CI state; then each held story with its cause. Empty when nothing is open or held.
+def held_cause(slug):
+    try:
+        text = open(os.path.join(E["DASH_BOARD_DIR"], "stories", slug + ".md"), encoding="utf-8", errors="replace").read()
+    except OSError:
+        return ""
+    m = re.search(r"^held_for: *(.*?)\r?$", text.split("\n---", 1)[0], re.M)
+    return m.group(1) if m else ""
+
+def dur(s):
+    m = max(int(s) // 60, 0)
+    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m" if m < 1440 else f"{m // 1440}d"
+
+def running_view():
+    cells = []
+    for r in recs:
+        if r["state"] in ("EMPTY", "retired"):
+            continue
+        try:
+            up = r.get("since") or datetime.datetime.strptime(r.get("day", ""), "%Y-%m-%d").timestamp()
+        except ValueError:
+            up = None
+        t, tool, _ = r.get("tail") or (None, "", False)
+        ago = when(t)[1] if isinstance(t, str) else ""
+        act = f"{tool} {ago}" if tool and ago else ago or "no session log"
+        pr = []
+        for m in URL.finditer(r.get("prs") or "") if r.get("slug") else []:
+            if not is_open(m.group(0)):
+                continue
+            st = pr_state(m.group(0))
+            pr.append((f"#{m.group(3)} {st[1] if st else 'checks unknown'}  ", SYM[st[0] if st else "review"][1]))
+        if r.get("slug") and not pr:
+            pr = [("no PR yet", "dim")]
+        cells.append([sym(r["sym"]), (cut(r["name"], 30), ""), (f"up {dur(NOW - up)}" if up else "up ?", "dim"), (act, "dim")] + pr)
+    width = [max((len(c[i][0]) for c in cells if len(c) > i), default=0) for i in range(4)]
+    rows = [[c[0]] + [(t.ljust(width[i] + 2) if i < 4 else t, s) for i, (t, s) in enumerate(c) if i] for c in cells]
+    return rows + [[sym("blocked"), (f"held {b[1]}: {held_cause(b[1]) or '?'}", "")] for b in stories if b[9] == "held"]
+
 # Layout. Header: one line, the clock at the right; then the summary line (from 140 columns, the
 # status bar at the bottom carries it, with the merge mode).
 right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
@@ -5042,6 +5183,11 @@ if E.get("DASH_TREE") == "1":
     left += box("agents by workspace and tab", tree_view(), LW)
 elif epic_view:
     left += box("epics", epic_view, LW)
+# Running now: from 140 columns under the epics; narrower, under the ladder and above recent, which
+# gives up the height it takes, so a watched frame keeps the ladder.
+running = running_view()
+if WIDE and running:
+    left += box("running now", running, LW)
 if blocked or later:
     left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
 
@@ -5053,8 +5199,8 @@ if WIDE:
     foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
                  + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
 
-# Recent fills the height left. Under 140 columns it and a shown ladder are stacked under the main
-# column; from 140 they are the right column, the ladder on top.
+# Recent fills the height left. Under 140 columns it, a shown ladder and running now are stacked
+# under the main column; from 140 recent and the ladder are the right column, the ladder on top.
 # A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
 ladder = E.get("DASH_LADDER") == "1"
 if WIDE:
@@ -5069,6 +5215,8 @@ else:
     out += left
     if ladder:
         out += ladder_box(W)
+    if running:
+        out += box("running now", running, W)
     room = H - len(out) - 2 - len(foot) if H else 8
     if not KEYS:
         room = max(5, room)
