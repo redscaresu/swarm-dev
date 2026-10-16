@@ -120,11 +120,18 @@ goal_story() {
 # escape and the bound.
 goal_parts() {
   local g; g="$(cat "$1" 2>&1)"
-  printf '%s|' "$(has "Every item under **Done when:** and **From review** in ${b}/stories/$2.md" "${g}")" \
+  printf '%s|' "$(has "Every item under **Done when:** and **From review**, if any, in ${b}/stories/$2.md" "${g}")" \
     "$(grep -qE 'DW-ONE|FR-ONE|SPIKE-ONE' <<< "${g}" && echo inlined || echo yes)" "$(has "$3" "${g}")" "$(has "IMPOSSIBLE: <why>" "${g}")"
   has "or stop after $4 more turns" "${g}"
 }
 GOAL_PARTS="yes|yes|yes|yes|yes"
+# goal_path <brief> <goal file> — the story path the brief's Implement line gives, when the goal names
+# that same path, or both.
+goal_path() {
+  local ref; ref="$(sed -n 's/^Implement \(.*\)\. Its \*\*Done when\*\* is the acceptance\.$/\1/p' "$1")"
+  ref="${ref%% (this worktree is *}"
+  if [[ -n "${ref}" ]] && grep -qF -- "in ${ref} (your brief's story" "$2"; then echo "${ref}"; else echo "brief: '${ref}', goal: $(cat "$2")"; fi
+}
 GOAL_SEND_MAX="$(sed -n 's/^GOAL_SEND_MAX=\([0-9]*\).*/\1/p' "${SWARM}")"
 # The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
 MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
@@ -419,6 +426,8 @@ rc=0; out="$(run story gl1)" || rc=$?
 [[ ${rc} -eq 0 ]] || echo "story gl1: ${out}"
 check "with goal = 7, story writes the condition: the story's path for its Done when and From review, the brief's reply, the escape and the bound" \
   "${GOAL_PARTS}|yes" "$(goal_parts "${p}/.swarm/briefs/gl1.goal.md" gl1 "${STORY_REPLY}" 7)|$(has "${STORY_REPLY}" "$(cat "${p}/.swarm/briefs/gl1.md")")"
+check "built in another repo, the goal names the story by the board's path, as the brief does" "${b}/stories/gl1.md" \
+  "$(goal_path "${p}/.swarm/briefs/gl1.md" "${p}/.swarm/briefs/gl1.goal.md")"
 sent="$(cat "${ROOT}/goal.txt" 2>/dev/null || true)"
 check "with goal = 7 and the goal set, a second prompt follows the brief: /goal and the .goal.md on one line; story exits 0" \
   "0|2|/goal|one line|same" "${rc}|$(prompts)|$(grep '^agent prompt ' "${ROOT}/herdr.log" | sed -n '2s/^agent prompt [^ ]* \(\/goal\) .*/\1/p')|$(
@@ -1076,6 +1085,8 @@ qrun() { (cd "${q}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PAT
 # send_goal types the /goal only into a started turn: the claude stub lists the brief's session busy.
 echo '[]' > "${ROOT}/started.json"; export CLAUDE_STUB_AGENTS="${ROOT}/started.json"
 qrun story qz >/dev/null
+check "with the board in the repo it builds, the goal names the worktree's copy of the story, as the brief does" "docs/stories/qz.md" \
+  "$(goal_path "${q}/.swarm/briefs/qz.md" "${q}/.swarm/briefs/qz.goal.md")"
 "${GIT[@]}" -C "${q}-wt/qz" rm -q docs/stories/qz.md && "${GIT[@]}" -C "${q}-wt/qz" commit -q -m qz
 "${GIT[@]}" -C "${q}-wt/qz" push -q origin story/qz story/qz:main   # the PR, merged
 qrun review qz "${UR}/15" >/dev/null; echo "${UR}/15 MERGED" >> "${ROOT}/pr-states"; : > "${ROOT}/herdr.log"

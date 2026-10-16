@@ -2007,11 +2007,18 @@ reply_sentence() {
   fi
 }
 
-# goal_condition <slug> <epic|story> — the builder's /goal, on one line: the story's **Done when** and
-# **From review** items named by the story's path (inlined, a long Done when made the /goal arrive as
-# pasted text), the reply its brief asks for in that mode, an escape for a story that cannot be done,
-# and the goal's turn bound. Fails, printing why, with no Done when or no item under it: a blank line
-# under the heading is skipped, and a bold line before any item ends it.
+# story_path <slug> <src> — the story file as its builder names it: relative to the worktree when the
+# board is in the repo it builds (the copy it reads, and its PR deletes), else the board's own.
+story_path() {
+  if [[ ${BOARD_IN_REPO} == 1 && "$2" == "${PROJECT_DIR}" ]]; then echo "${BOARD#"${PROJECT_DIR}/"}/stories/$1.md"
+  else echo "${BOARD}/stories/$1.md"; fi
+}
+
+# goal_condition <slug> <epic|story> <src> — the builder's /goal, on one line: the story's **Done when**
+# and **From review** items named by the path its brief gives (story_path; inlined, a long Done when
+# made the /goal arrive as pasted text), the reply its brief asks for in that mode, an escape for a
+# story that cannot be done, and the goal's turn bound. Fails, printing why, with no Done when or no
+# item under it: a blank line under the heading is skipped, and a bold line before any item ends it.
 goal_condition() {
   local f="${BOARD}/stories/$1.md"
   awk '/^\*\*Done when/ { on = 1; rest = $0; sub(/^\*\*[^*]*\*\*[[:space:]]*/, "", rest); if (rest != "") { found = 1; exit }; next }
@@ -2019,7 +2026,7 @@ goal_condition() {
     on && /[^[:space:]]/ { found = 1; exit }
     END { exit !found }' "${f}" \
     || { echo "$1 has no **Done when** with an item under it, so its goal would have nothing to meet"; return 1; }
-  printf '%s %s %s\n' "Every item under **Done when:** and **From review** in ${f} (your brief's story, already in this session) holds and is shown in this session." \
+  printf '%s %s %s\n' "Every item under **Done when:** and **From review**, if any, in $(story_path "$1" "$3") (your brief's story, already in this session) holds and is shown in this session." \
     "$(reply_sentence "$2")" \
     "If the story cannot be done, reply \`IMPOSSIBLE: <why>\` and stop; that reply meets this goal. The goal is met once all of the above holds and you have replied, or stop after ${CFG_goal} more turns."
 }
@@ -2027,7 +2034,7 @@ goal_condition() {
 goal_message() { local c; c="$(tr -s '[:space:]' ' ' <<< "$1")"; c="${c# }"; printf '/goal %s' "${c% }"; }
 # GOAL_SEND_MAX: the longest /goal message story sends. Claude Code collapses a longer paste into a
 # "[Pasted text]" block and queues it as a prompt, so the /goal never runs.
-GOAL_SEND_MAX=700   # MEASUREMENT PENDING; the 2026-10-16 logs: a 704-character /goal ran, 1198 was pasted
+GOAL_SEND_MAX=700   # Claude Code 2.1.301, measured in a herdr pane: 800 ran, 801 pasted
 
 # goal_entry <name> <since-epoch> [<goal-file>] — the kind of the newest goal entry written at or
 # after <since> in <name>'s session log (its agents.tsv session id, REPORT_PY's session_log under
@@ -2121,14 +2128,12 @@ story_brief() {
   local slug="$1" src="$2" base="$3" epic_branch="${4:-}" story_ref cleanup rel epic check extra="" before bump=""
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   [[ -z "${epic}" || "$(fm "${BOARD}/stories/${slug}.md" touches)" == *.claude-plugin/plugin.json* ]] || bump="$(bump_rule)"
+  story_ref="$(story_path "${slug}" "${src}")"
   if [[ -n "${epic_branch}" ]]; then
-    story_ref="${BOARD}/stories/${slug}.md"
-    [[ ${BOARD_IN_REPO} == 1 && "${src}" == "${PROJECT_DIR}" ]] && story_ref="${BOARD#"${PROJECT_DIR}/"}/stories/${slug}.md"
     cleanup="Do not touch the story file; the conductor takes it off the board."
   elif [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in this repo: the PR takes the story off it.
     rel="${BOARD#"${PROJECT_DIR}/"}/stories"
-    story_ref="${rel}/${slug}.md"
     if [[ "${CFG_finished}" == mark ]]; then
       cleanup="In your PR, set \`status: done\` in ${rel}/${slug}.md, and change nothing else under ${rel}/."
     else
@@ -2136,7 +2141,7 @@ story_brief() {
     fi
   else
     # The board is elsewhere: read the story there, and leave it for the lead.
-    story_ref="${BOARD}/stories/${slug}.md (this worktree is $(basename "${src}"))"
+    story_ref="${story_ref} (this worktree is $(basename "${src}"))"
     cleanup="Do not touch the story file; the lead takes it off the board after your PR merges."
   fi
   if [[ -n "${epic_branch}" ]]; then
@@ -2266,7 +2271,7 @@ build_story() {
   # Before the epic branch and the worktree exist, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
   if [[ "${CFG_goal}" == off ]]; then require_claude; else
-    goal="$(goal_condition "${slug}" "${mode}")" || die "${goal}"
+    goal="$(goal_condition "${slug}" "${mode}" "${src}")" || die "${goal}"
     msg="$(goal_message "${goal}")"
     (( ${#msg} <= GOAL_SEND_MAX )) \
       || die "${slug}: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
