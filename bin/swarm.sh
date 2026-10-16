@@ -11,7 +11,7 @@
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
 #   swarm.sh features [--since YYYY-MM-DD]                  each feature in docs/features.tsv: its uses in the logs, its metric and baseline, and delete? when unused or unmeasured
-#   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt
+#   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]  per epic and project: builders at once, stories per chain, review wait, stacked starts
 #   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
 #   swarm.sh log-finding [--declined] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined), by its kind and the reviewer that raised it (the outer loop)
@@ -1081,7 +1081,8 @@ PY
 # Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
 # cause, the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
 # drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
-# unknown), the findings declined, and both counts by reviewer. A finding goes to the latest build on
+# unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
+# its start to that and from that to the merge, and the commits on the PR that merge the base into it. A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -1242,7 +1243,9 @@ for b in builds:
 PY
 )"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
-  # story/<slug> (newest first, as `url state mergedAt` triples joined by commas), its epic: and
+  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
+  # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
+  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -1252,31 +1255,48 @@ PY
     from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    # shellcheck disable=SC2016 # $b is jq's
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
-        --json url,state,mergedAt --jq '.[] | [.url, .state, .mergedAt // ""] | @tsv') 2>/dev/null)"; then
+        --json url,state,mergedAt,createdAt,baseRefName,commits --jq '.[] | [.url, .state, .mergedAt // "",
+          .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
+          | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
+          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length)] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
-import collections, os, sys
+import collections, datetime, os, sys
 exec(os.environ["SWARM_REPORT_PY"])
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
+NO_PR = ("", "", "", "", "")
+
 def parsed(prs):
-    # The (url, state, mergedAt) of each PR in the meta column; a stub or older gh may leave out mergedAt.
-    return [(p.split(" ") + [""])[:3] for p in prs.split(",") if " " in p]
+    # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
+    # leave out the last three.
+    return [tuple((p.split(" ") + [""] * 4)[:5]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
-    # (url, state, mergedAt) of a build's PR, or empty: see outcomes_report. pulls is the first python's
-    # column: "-" for no log.
+    # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
+    # for no log.
     prs = parsed(prs)
     if pulls == "-":
-        return prs[0] if len(prs) == 1 else ("", "", "")
-    keyed = {pr_key(u): (u, s, m) for u, s, m in prs}
-    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), ("", "", ""))
+        return prs[0] if len(prs) == 1 else NO_PR
+    keyed = {pr_key(p[0]): p for p in prs}
+    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), NO_PR)
+
+def minutes(start, end):
+    # Whole minutes from one UTC time to a later one; empty when either is empty or does not parse, or
+    # end comes first (a retry started after the PR it took over was created).
+    try:
+        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+        d = t(end) - t(start)
+    except ValueError:
+        return ""
+    return str(round(d / 60)) if d >= 0 else ""
 
 rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():
@@ -1294,20 +1314,23 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
 
-# Columns are only ever appended: review-yield and flow read them by name.
+# Columns are only ever appended, never inserted or reordered: review-yield and flow read them by name,
+# and a saved report or a script that cuts by position still lines up with a new one.
 print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
-      "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by")
-for (f, kind, risk, story_epic, asked, prs, pr, state, merged), c in zip(rows, found):
+      "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
+      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges")
+for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c in zip(rows, found):
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
-    story_merged = ("true" if any(s == "MERGED" for _, s, _ in parsed(prs)) else "false") if asked else ""
+    story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
+    merged = merged if asked and state == "MERGED" else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[13:]
-                     + [story_epic, merged if asked and state == "MERGED" else "", story_merged, str(declined),
-                        by(c, "fixed"), by(c, "declined")]))
+                     + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
+                        created, minutes(f[13], created), minutes(created, merged), main_merges]))
 PY
 }
 

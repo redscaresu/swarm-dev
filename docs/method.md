@@ -489,8 +489,16 @@ never printed. After those: `epic` (the story's `epic:`), `merged_at` (when the 
 none merged, and empty when that is unknown: the story is gone, it names no repo here, or `gh`
 failed), `findings_declined`, and `findings_fixed_by` and `findings_declined_by`, which count each by
 reviewer as `<reviewer>:<n>` pairs in name order (`unknown` for rows logged before the reviewer
-column). A story the lead holds after an escalation (`kind: lead` with `escalated_from:`) shows the
-kind it was built as. New columns go on the end, so `decisions`, which reads them by name, keeps working. The slug comes
+column). Four more columns come from `gh`: `pr_created_at` (UTC), `start_to_pr_min` (minutes from
+`started` to `pr_created_at`, empty when the build started after its PR already existed, as a retry
+does), `pr_to_merge_min` (minutes from `pr_created_at` to `merged_at`), and `main_merges`, the
+commits on the PR whose headline merges the base branch into it (`Merge origin/main into …`,
+`Merge branch 'main' into …`, `Merge remote-tracking branch 'origin/main' into …`). Each is empty
+when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` describe the PR, not the
+build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. A story the lead holds after an escalation (`kind: lead` with
+`escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
+`review-yield` and `flow`, which read them by name, and anything that cuts columns by position keep
+working. The slug comes
 from the session's worktree, because agents.tsv cuts names at 32 characters. Each build gets its own
 PR: the last of the story's PRs that its session log names, so a retried story shows the first build's
 closed PR beside the retry's merged one. A build whose log names none of them has no PR, and a build
