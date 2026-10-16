@@ -65,11 +65,12 @@ expect "epic planned once its dependency's stories are all in review" "plan-epic
   "item epics/b.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
   "item stories/s2.md 'status: review' 'kind: code' 'epic: b'"
-expect "a ready story of its dependency holds an epic's planning" "conduct b" \
+# A ready lead story: no agent builds it, so next reaches the plan-epic arm instead of conduct b.
+expect "a ready story of its dependency holds an epic's planning" "gate" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \
   "item epics/b.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
-  "item stories/s2.md 'status: ready' 'kind: code' 'epic: b'"
+  "item stories/s2.md 'status: ready' 'kind: lead' 'epic: b'"
 expect "a blocked story of its dependency holds an epic's planning" "gate" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \
   "item epics/b.md 'status: active'" \

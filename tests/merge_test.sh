@@ -66,7 +66,9 @@ case "$1 $2" in
       */rules/branches/*) serve rules ;;
       */branches/*) serve branch ;;
       */contents/.github/workflows\?*) serve workflows ;;
-      */contents/*) f="${path%%\?*}"; serve "wf.${f##*/}" ;;
+      # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
+      */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
+                    [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
       *) echo "stub: no fixture for ${path}" >&2; exit 1 ;;
     esac ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -312,9 +314,16 @@ merge --board "${URL}"; refused "--board with a file renamed onto the board" "ch
 check "--board reads the files with --paginate" grep -q -- "--paginate repos/o/r/pulls/7/files" "${ROOT}/gh.log"
 fresh; rm "${S}"; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
 merge --board "${URL}"; refused "--board for a PR outside the board's repo" "is not in other/repo, the board's repo"
-# --release: a PR that changes only .claude-plugin/plugin.json, in the project's own repo, merges with
-# no story listing it and runs no reconcile; any other file, or another repo, is refused.
-release_pr() { fresh; rm "${S}"; echo '[{"filename":".claude-plugin/plugin.json","status":"modified"}]' > "${FX}/files"; }
+# --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json,
+# in the project's own repo, merges with no story listing it and runs no reconcile; any other file or
+# field, another base, or another repo, is refused. origin's default branch is main.
+git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "${P}" push -q origin HEAD:refs/heads/main; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+release_pr() {
+  fresh; rm "${S}"; echo '[{"filename":".claude-plugin/plugin.json","status":"modified"}]' > "${FX}/files"
+  echo '{"name":"x","version":"1.2.0","hooks":{}}' > "${FX}/wf.plugin.json.main"
+  echo '{"name":"x","version":"1.3.0","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"
+}
 release_pr; item s "status: review" "prs: https://github.com/o/r/pull/8"; merge --release "${URL}"
 is "--release: exits 0" 0 "${rc}"
 check "--release: merged" merged
@@ -326,6 +335,12 @@ merge --release "${URL}"; refused "--release with a board file" "changes docs/st
 release_pr; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
 merge --release "${URL}"; refused "--release for a PR outside the project's repo" "is not in other/repo, the project's repo"
 release_pr; merge --release --board "${URL}"; refused "--release with --board" "do not go together"
+release_pr; echo '{"name":"x","version":"1.3.0","hooks":{},"mcpServers":{"m":{"command":"sh"}}}' > "${FX}/wf.plugin.json.${H1}"
+merge --release "${URL}"; refused "--release that adds mcpServers to plugin.json" "changes more of .claude-plugin/plugin.json than its version"
+release_pr; echo '{"name":"x","hooks":{}}' > "${FX}/wf.plugin.json.${H1}"
+merge --release "${URL}"; refused "--release that drops the version" "changes more of .claude-plugin/plugin.json than its version"
+release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json.main" "${FX}/wf.plugin.json.feature"
+merge --release "${URL}"; refused "--release for a PR into another branch" "goes into feature, not main, the project's base"
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 

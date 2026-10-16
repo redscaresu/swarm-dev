@@ -709,7 +709,8 @@ unless the PR is open, its head is `<sha>` when `--head` names one, and a story 
 lists the URL on its `prs:` line. With `--board`, for a board-only PR, the PR must be in the
 board's own repo (its origin) and every path it changes, a renamed file's old path too, must be
 under the board instead. With `--release`, for a release PR, the PR must be in the project's own
-repo and every path it changes must be `.claude-plugin/plugin.json`; no story or epic need list it.
+repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
+hooks, MCP servers and command paths there run code. No story or epic need list it.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash

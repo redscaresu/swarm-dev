@@ -2825,7 +2825,7 @@ release_due() {
   local base version ex="" n
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
-  version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | json "d['version']" 2>/dev/null)" || return 0
+  version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
   [[ ${BOARD_IN_REPO} != 1 ]] || ex=":(exclude)${BOARD#"${PROJECT_DIR}"/}"
   n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex:+"${ex}"})" || return 0
@@ -3446,7 +3446,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # refuse unless merge_caller allows it, the head is <sha> (with --head), a story or epic in review
 # lists the URL (with --board instead: the PR is in the board's own repo and every path it changes,
 # old or new, is on the board; with --release: the PR is in the project's own repo and every path it
-# changes is .claude-plugin/plugin.json), and ci_gate passes on the head.
+# changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
 # --admin or --auto. Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
@@ -3508,6 +3508,7 @@ merge_pr() {
         [[ "${p}" == .claude-plugin/plugin.json ]] || merge_fail "--release: ${url} changes ${p}, not only .claude-plugin/plugin.json"
       fi
     done <<< "${info}"
+    [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}"
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
@@ -3543,6 +3544,24 @@ merge_pr() {
     }
   fi
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
+}
+
+# release_check <owner/repo> <base> <head> — merge --release's checks past the file list: the PR goes
+# into the project's base, and its plugin.json differs from the base's only in "version", since
+# hooks, mcpServers and command paths there run code.
+release_check() {
+  local want old new
+  want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
+  [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
+  old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
+    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json on $2"
+  new="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$3")" \
+    || merge_fail "--release: gh cannot read .claude-plugin/plugin.json at ${3:0:7}"
+  OLD="${old}" NEW="${new}" python3 -c 'import json,os
+o, n = json.loads(os.environ["OLD"]), json.loads(os.environ["NEW"])
+v = n.pop("version", None); o.pop("version", None)
+raise SystemExit(0 if isinstance(v, str) and o == n else 1)' 2>/dev/null \
+    || merge_fail "--release: ${MERGE_TARGET} changes more of .claude-plugin/plugin.json than its version"
 }
 
 # brief_trailers — the commit trailers the project's brief names, wherever a line has one (quoted or
