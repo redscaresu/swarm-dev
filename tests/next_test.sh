@@ -206,13 +206,14 @@ armwords() {
 }
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 got+="$(armwords '   - `resume <slug>`:' 'swarm.sh conduct --backlog' 'not started:' 'name its worktree' \
-  '`git worktree remove --force <repo>-wt/<slug>`' '`git worktree prune`' '`git branch -D story/<slug>`' \
-  'then delete `.swarm/conduct-backlog.report.md`')"
+  'has commits worth keeping (`git log origin/<base>..story/<slug>`' \
+  '`git worktree remove --force ../<repo>-wt/<slug>`' '`git worktree prune`' '`git branch -D story/<slug>`' \
+  '`git push origin --delete story/<slug>` if it was pushed' 'then delete `.swarm/conduct-backlog.report.md`')"
 # shellcheck disable=SC2016 # the backticks are literal Markdown
 got+="$(armwords '   - `story <slug>`:' 'swarm.sh conduct --backlog' 'not started:' 'whatever the report says: start no' \
-  '`find <board>/stories <board>/epics -newer .swarm/conduct-backlog.report.md`' \
+  "\`find <board>/stories <board>/epics \\( -name '*.md' -o -type d \\) -newer .swarm/conduct-backlog.report.md\`" \
   'deleting `.swarm/conduct-backlog.report.md` once the cause is fixed')"
-if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog and stop on not started:"
+if [[ -z "${got}" ]]; then echo "ok   commands/swarm.md's story and resume arms run conduct --backlog, stop on not started: or an unchanged report, and say what clears each stop"
 else echo "FAIL commands/swarm.md's story and resume arms:${got}"; fails=$((fails + 1)); fi
 # /swarm acts on `escalated <slug>` itself: its arm resets or drops the story and tells the user why.
 # shellcheck disable=SC2016 # the backticks are literal Markdown

@@ -307,11 +307,14 @@ merge cannot happen while the conductor runs. `/swarm-dev:swarm` runs it for a `
 step. Until a story or epic is added, changed or removed under `stories/` or `epics/` (a merge
 removes one), it starts no new backlog conductor while that report exists, whatever the report
 says, and tells you why the story waits. For a `resume` step it also stops when the report lists
-the story under `not started:` (a build that died), even after the board changes; clear that by
-removing the build in its repo (`git worktree remove --force <repo>-wt/<slug>`,
-`git worktree prune`, `git branch -D story/<slug>`, and the remote branch if it was pushed). A fix
-that touches no story or epic, such as a code PR that turns CI on the base green, does not clear
-the stop either: once the cause is fixed, delete `.swarm/conduct-backlog.report.md`.
+the story under `not started:` (a build that died), even after the board changes. If story/<slug>
+has commits worth keeping (`git log origin/<base>..story/<slug>`), push it and open a PR from it.
+Otherwise clear the stop by discarding the build from its repo
+(`git worktree remove --force ../<repo>-wt/<slug>`, `git worktree prune`,
+`git branch -D story/<slug>`, and `git push origin --delete story/<slug>` if it was pushed), then
+deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic, such as a code PR
+that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
+`.swarm/conduct-backlog.report.md`.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
