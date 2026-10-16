@@ -378,7 +378,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
-`cost`, `outcomes`, `decisions`, `review-yield`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
+`cost`, `outcomes`, `decisions`, `review-yield`, `export`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
@@ -395,7 +395,8 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
-fails the command.
+fails the command. The outcome field is the one place free text gets in: the reason given to a
+`reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
@@ -442,6 +443,58 @@ by the end of the day it started, or the finding's text), `options`, `chosen`, a
 that build's `outcomes` row: merged, PR, `tells_findings` (its review rounds), `tells_nudge`,
 `tells_resume`, fixed findings, attempts and cost. A field the logs
 don't hold is null. It writes nothing.
+
+`swarm.sh export [--since YYYY-MM-DD] [--format jsonl|tsv]` writes one row per build attempt, for
+training a router that picks a model and effort. It runs `outcomes`, passing `--since` on so attempt
+numbers stay the same, adds `project`, and keeps the columns below, in this order. `jsonl`, the
+default, writes one JSON object per line, with integers, decimals and bools typed and an empty cell
+as null. `tsv` writes a header line first. Every value must match its column's type. One that
+doesn't is written empty (null in jsonl), and a warning on stderr names its row and column but not
+the value. So no free text gets out, such as a finding's or story's text, a brief, a reply, a
+reset or drop reason, or an error message. `decisions` is not reused, because its output carries
+story and finding text. It writes nothing.
+
+| column | type | source |
+|---|---|---|
+| `project` | slug | the project directory's name |
+| `slug` | slug | the build's worktree, from its session log |
+| `epic` | slug | the story's `epic:` |
+| `kind` | enum: code, docs, chore, verify, lead | the story's `kind:` (its `escalated_from:` once escalated) |
+| `risk` | enum: high | the story's `risk:` |
+| `role` | enum: code, code-risky, code-sonnet, docs, chore, verify, escalate | `agents.tsv` |
+| `model` | model | `agents.tsv` |
+| `effort` | enum: low, medium, high, xhigh, max | `agents.tsv` |
+| `started` | UTC time | the session log's first timestamp |
+| `tokens_input` | integer | the session log |
+| `tokens_cache_write` | integer | the session log |
+| `tokens_cache_read` | integer | the session log |
+| `tokens_output` | integer | the session log |
+| `cost_usd` | decimal | the session log, at list price |
+| `tells_findings` | integer | `events.tsv` |
+| `tells_nudge` | integer | `events.tsv` |
+| `tells_resume` | integer | `events.tsv` |
+| `findings_fixed` | integer | `findings.tsv` |
+| `findings_declined` | integer | `findings.tsv` |
+| `findings_fixed_by` | reviewer pairs | `findings.tsv` |
+| `findings_declined_by` | reviewer pairs | `findings.tsv` |
+| `escalate_at` | UTC time | `events.tsv` |
+| `dialog_at` | UTC time | `events.tsv` |
+| `dialog` | enum: accepted, dismissed | `events.tsv` |
+| `escalated_at` | UTC time | `events.tsv` |
+| `reset_at` | UTC time | `events.tsv` |
+| `drop_at` | UTC time | `events.tsv` |
+| `close_cause` | enum: met, impossible, stalled, bound, paused, cleared-on-error | `events.tsv` |
+| `pr` | PR URL | the session log and `gh` |
+| `pr_state` | enum: OPEN, CLOSED, MERGED | `gh` |
+| `merged_at` | UTC time | `gh` |
+| `attempt` | integer | `agents.tsv` (`outcomes` calls it `attempts`) |
+| `story_merged` | bool | `gh` |
+
+A slug is `[a-z0-9][a-z0-9_-]*`, an integer is digits, a decimal is digits, a point and digits, a UTC
+time is `YYYY-MM-DDTHH:MM:SSZ`, a PR URL is `https://github.com/<owner>/<repo>/pull/<n>`, a bool is
+`true` or `false`, and reviewer pairs are `<reviewer>:<n>` separated by spaces. A model is any
+`[a-z0-9][a-z0-9.-]*`, so a model nobody has listed yet still gets through. Each column's
+meaning is the `outcomes` column of the same name.
 
 `swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]` shows what review yields, so the
 reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate`,
