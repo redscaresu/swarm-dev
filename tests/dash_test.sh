@@ -911,39 +911,39 @@ check "lead off: the legend says ! is needs you" has "! needs you (session gone 
 check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
 check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
 
-# --- The speedometer, in a project of its own (Q, lead = session): stories merged per day over 7
-# days, from outcomes' merged_at (a gh stub answers pr list from Q/prs), and two lights.
-Q="${ROOT}/speed"; mkdir -p "${Q}/.swarm" "${Q}/.claude/swarm" "${Q}/docs/stories" "${Q}/prs" "${ROOT}/qbin"
-git -C "${Q}" init -q; touch "${Q}/docs/stories/README.md"; echo "lead = session" > "${Q}/.claude/swarm/config"
-GS=(git -C "${Q}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
-qitem() { local path="${Q}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
+# --- The speedometer, in a project of its own (SPD, lead = session): stories merged per day over 7
+# days, from outcomes' merged_at (a gh stub answers pr list from SPD/prs), and two lights.
+SPD="${ROOT}/speed"; mkdir -p "${SPD}/.swarm" "${SPD}/.claude/swarm" "${SPD}/docs/stories" "${SPD}/prs" "${ROOT}/qbin"
+git -C "${SPD}" init -q; touch "${SPD}/docs/stories/README.md"; echo "lead = session" > "${SPD}/.claude/swarm/config"
+GSP=(git -C "${SPD}" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false)
+sitem() { local path="${SPD}/docs/$1" title; title="$(basename "$1" .md)"; shift; { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"; }
 day6="$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=6))')"
 # 14 stories merged in the last 7 days, one dropped with no PR merged, and one merged 8 days ago:
 # every file is deleted, the old one's only yesterday.
 for i in $(seq 1 14); do
-  qitem "stories/m${i}.md" 'status: review'
-  printf 'https://github.com/o/q/pull/%s\tMERGED\t%s\n' "${i}" "$(ago $((i * 600)))" > "${Q}/prs/story_m${i}"
+  sitem "stories/m${i}.md" 'status: review'
+  printf 'https://github.com/o/q/pull/%s\tMERGED\t%s\n' "${i}" "$(ago $((i * 600)))" > "${SPD}/prs/story_m${i}"
 done
-qitem stories/m-drop.md 'status: ready'; qitem stories/m-old.md 'status: review'
-printf 'https://github.com/o/q/pull/40\tMERGED\t%s\n' "$(ago $((8 * 1440)))" > "${Q}/prs/story_m-old"
-for i in $(seq 1 14) -drop -old; do printf '%s\tcode\tm%s\tclaude\topus\thigh\t-\n' "${day6}" "${i}" >> "${Q}/.swarm/agents.tsv"; done
-"${GS[@]}" add docs && "${GS[@]}" commit -qm board
-"${GS[@]}" rm -q docs/stories/m[0-9]*.md docs/stories/m-drop.md && "${GS[@]}" commit -qm "finish and drop"
-GIT_COMMITTER_DATE="$(ago 1440)" "${GS[@]}" rm -q docs/stories/m-old.md && GIT_COMMITTER_DATE="$(ago 1440)" "${GS[@]}" commit -qm "clean m-old"
+sitem stories/m-drop.md 'status: ready'; sitem stories/m-old.md 'status: review'
+printf 'https://github.com/o/q/pull/40\tMERGED\t%s\n' "$(ago $((8 * 1440)))" > "${SPD}/prs/story_m-old"
+for i in $(seq 1 14) -drop -old; do printf '%s\tcode\tm%s\tclaude\topus\thigh\t-\n' "${day6}" "${i}" >> "${SPD}/.swarm/agents.tsv"; done
+"${GSP[@]}" add docs && "${GSP[@]}" commit -qm board
+"${GSP[@]}" rm -q docs/stories/m[0-9]*.md docs/stories/m-drop.md && "${GSP[@]}" commit -qm "finish and drop"
+GIT_COMMITTER_DATE="$(ago 1440)" "${GSP[@]}" rm -q docs/stories/m-old.md && GIT_COMMITTER_DATE="$(ago 1440)" "${GSP[@]}" commit -qm "clean m-old"
 # A held story whose builder was closed paused 3 hours ago, and a story in review: the lead's two items.
-qitem stories/q-held.md 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
-qitem stories/q-rev.md 'status: review' 'prs: https://github.com/o/q/pull/50'
-"${GS[@]}" add docs && "${GS[@]}" commit -qm "held and review"
-printf '%s\tclose:paused\tq-held\tw5:p1\tok\n' "$(ago 180)" > "${Q}/.swarm/events.tsv"
+sitem stories/q-held.md 'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
+sitem stories/q-rev.md 'status: review' 'prs: https://github.com/o/q/pull/50'
+"${GSP[@]}" add docs && "${GSP[@]}" commit -qm "held and review"
+printf '%s\tclose:paused\tq-held\tw5:p1\tok\n' "$(ago 180)" > "${SPD}/.swarm/events.tsv"
 # Three identical lines in a row: one recent row, ×3.
-for _ in 1 2 3; do printf '%s\ttell:nudge\tq-rev\tw5:p1\tok\n' "$(ago 5)" >> "${Q}/.swarm/events.tsv"; done
+for _ in 1 2 3; do printf '%s\ttell:nudge\tq-rev\tw5:p1\tok\n' "$(ago 5)" >> "${SPD}/.swarm/events.tsv"; done
 # A fixed finding far longer than recent's column: its text is cut, never its (#PR).
-printf '%s\tlong\thttps://github.com/o/q/pull/42\t%s\n' "$(date +%F)" "$(printf 'word %.0s' $(seq 1 40))" > "${Q}/.swarm/findings.tsv"
+printf '%s\tlong\thttps://github.com/o/q/pull/42\t%s\n' "$(date +%F)" "$(printf 'word %.0s' $(seq 1 40))" > "${SPD}/.swarm/findings.tsv"
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${Q}" > "${ROOT}/qbin/gh"
+printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${SPD}" > "${ROOT}/qbin/gh"
 chmod +x "${ROOT}/qbin/gh"
-qdash() { fresh; (cd "${Q}" || exit 1; env -u HERDR_ENV COLUMNS=100 PATH="${ROOT}/qbin:${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
-out="$(qdash)"; top="$(sed -n 2p <<< "${out}")"
+spdash() { fresh; (cd "${SPD}" || exit 1; env -u HERDR_ENV COLUMNS=100 PATH="${ROOT}/qbin:${ROOT}/nobin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
+out="$(spdash)"; top="$(sed -n 2p <<< "${out}")"
 check "speedometer: 14 stories merged in 7 days are 2.0 a day; a drop and a merge 8 days ago do not count" has "2.0 merged/day over 7 days" "${top}"
 check "speedometer: a held story closed 3h ago and a review story light the first light, 2 items, oldest 3h" \
   grep -qE '! 2 waiting on you or the lead, oldest 3h0[01]m' <<< "${top}"
@@ -955,12 +955,12 @@ check "recent: a findings row cut to width keeps its (#PR)" has "… (#42)" "${r
 # One escaped finding 2 days old lights the second light; one 9 days old does not count.
 printf '%s\tmissed\thttps://github.com/o/q/pull/3\tescaped %s\tescaped\tescaped\n' \
   "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=2))')" two \
-  "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=9))')" nine >> "${Q}/.swarm/findings.tsv"
-check "speedometer: one escaped finding 2 days old lights the second light" has "! 1 escaped in 7 days" "$(sed -n 2p <<< "$(qdash)")"
+  "$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=9))')" nine >> "${SPD}/.swarm/findings.tsv"
+check "speedometer: one escaped finding 2 days old lights the second light" has "! 1 escaped in 7 days" "$(sed -n 2p <<< "$(spdash)")"
 # With no agents.tsv nothing was built: 0.0.
-mv "${Q}/.swarm/agents.tsv" "${Q}/.swarm/agents.tsv.bak"
-check "speedometer: with no agents.tsv it shows 0.0" has "0.0 merged/day" "$(sed -n 2p <<< "$(qdash)")"
-mv "${Q}/.swarm/agents.tsv.bak" "${Q}/.swarm/agents.tsv"
+mv "${SPD}/.swarm/agents.tsv" "${SPD}/.swarm/agents.tsv.bak"
+check "speedometer: with no agents.tsv it shows 0.0" has "0.0 merged/day" "$(sed -n 2p <<< "$(spdash)")"
+mv "${SPD}/.swarm/agents.tsv.bak" "${SPD}/.swarm/agents.tsv"
 
 # --- A running codex review (codex-review's marker, .swarm/state/codex-review.<pid>: start epoch, base,
 # cwd) is a row under its worktree's epic, with its age, in neither needs you nor the lead's queue. A
