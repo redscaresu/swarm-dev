@@ -69,8 +69,7 @@ installed 0.1.0 0.1.0
 # It starts in a subdirectory that is then removed: the new script must still find the project.
 mkdir "${P}/sub"
 watch 0.1.0 "${ROOT}/a.out" "${P}/sub"; A="${WPID}"
-sleep 3
-check "0.1.0's watch draws its frame" grep -qF "agents by workspace and tab" "${ROOT}/a.out"
+check "0.1.0's watch draws its frame" within 15 grep -qF "agents by workspace and tab" "${ROOT}/a.out"
 check "0.1.0's watch shows no marker" bash -c "! grep -qF '${MARK}' '${ROOT}/a.out'"
 # Another project's install and the user install moving to 0.2.0 are not this copy's: no re-exec.
 installed 0.1.0 0.2.0
@@ -88,10 +87,10 @@ kill "${A}" 2>/dev/null || true
 # A copy that is not the installPath (a dev checkout) never jumps to the installed copy.
 installed 0.1.0 0.1.0
 watch dev "${ROOT}/b.out"; B="${WPID}"
-sleep 3
+# The frame comes after the watch reads its version, so the swap below is one it can see.
+check "a dev copy's watch draws its frame" within 15 grep -qF "agents by workspace and tab" "${ROOT}/b.out"
 installed 0.2.0 0.2.0
 sleep 10
-check "a dev copy's watch draws its frame" grep -qF "agents by workspace and tab" "${ROOT}/b.out"
 check "a dev copy shows no marker 10s after the swap" bash -c "! grep -qF '${MARK}' '${ROOT}/b.out'"
 check "a dev copy is still watching" alive "${B}"
 kill "${B}" 2>/dev/null || true

@@ -1,21 +1,18 @@
-import datetime, os, sys
+# Cost, a flow section (flow_report.py gives its globals): tokens and estimated cost per role, in the window.
+import datetime, os
 from report import *
-log, since, lead, projects, archive, own = sys.argv[1:7]
-agents, named = [], set()
+log, agents, named = agents, [], set()
 if os.path.exists(log):
     for line in open(log):
         f = line.rstrip("\n").split("\t")
         if len(f) == 7:
             named.add(f[6])
-            if f[0] >= since:
+            if since <= f[0] <= until:
                 agents.append({"role": f[1], "kind": f[3], "session": f[6]})
-if lead and lead not in named:  # a conductor's own pane is already its agents.tsv row
-    agents.append({"role": "lead", "kind": "claude", "session": lead})
-    named.add(lead)
 
 def started(path):
     # The first timestamp's local day, as since and agents.tsv's dates are, or "".
-    for line in log_lines(path):
+    for line in log_lines(path) if path else ():
         try:
             ts = json.loads(line).get("timestamp")
             return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
@@ -23,10 +20,19 @@ def started(path):
             continue
     return ""
 
+def in_window(path):
+    # A lead session counts by its first timestamp's local day; one with none (or no log) only without --since.
+    day = started(path)
+    return since <= day <= until if day else since == "0000-00-00"
+
+if lead and lead not in named and in_window(session_log(projects, lead, archive)):   # a conductor's own pane is already its agents.tsv row
+    agents.append({"role": "lead", "kind": "claude", "session": lead})
+    named.add(lead)
+
 # The lead's own sessions: Claude Code keeps them under the project's path, all but letters and digits turned into -.
 for path in sorted(glob.glob(os.path.join(glob.escape(own), "*.jsonl"))):
     session = os.path.basename(path)[:-len(".jsonl")]
-    if session not in named and (since == "0000-00-00" or started(path) >= since):
+    if session not in named and in_window(path):
         agents.append({"role": "lead", "kind": "claude", "session": session, "path": path})
 rows, seen = {}, set()
 for a in agents:
@@ -51,3 +57,5 @@ for role, r in sorted(rows.items(), key=lambda kv: -kv[1]["usd"]):
     print(f"| {role} | {r['agents']}{note} | {', '.join(sorted(r['models'])) or '-'} | " + " | ".join(n(x) for x in r["tok"]) + f" | {r['usd']:.2f} |")
 print(f"| **total** | {sum(r['agents'] for r in rows.values())} | | " + " | ".join(n(x) for x in tot) + f" | {usd:.2f} |")
 print("\nList prices; on a subscription this is plan usage, not a bill. Codex agents are not priced.")
+if epic:
+    print(f"Every agent in the window, not only epic {epic}'s.")

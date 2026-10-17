@@ -79,7 +79,7 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
 # A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
-# escalation block's fixed now (DASH_NOW, 2026-10-10 noon).
+# escalation block's fixed now (SWARM_DASH_NOW, 2026-10-10 noon).
 touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
@@ -419,7 +419,7 @@ fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "
 check "the same file edited 2 hours ago leaves it stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 rm -rf "${P}-wt"
 
-# --- Escalation. DASH_NOW fixes dash's now at local noon on 2026-10-10, and every line here is
+# --- Escalation. SWARM_DASH_NOW fixes dash's now at local noon on 2026-10-10, and every line here is
 # minutes before it, so "today" cannot drift across midnight. Two ok escalate builds today (x-esc's
 # attempt 3 an hour ago), one yesterday and one failed; each other escalation kind once ok, and a
 # reset, a drop and a dialog that failed. x-esc, an escalate agent (agents.tsv), gets a pane and a busy
@@ -445,7 +445,7 @@ printf 'w2:p8 x-esc\n' > "${P}/.swarm/state/x-esc"
 mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 120" > "${P}/.claude/swarm/config"
 esc_at="$(python3 -c 'import datetime, sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]) - 3600).strftime("%H:%M"))' "${NOW}")"
 printf '[{"sessionId":"sess-esc","status":"busy"}]' > "${ROOT}/claude-esc.json"
-escdash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/claude-esc.json" DASH_NOW="${NOW}" LINES=80 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
+escdash() { (cd "${P}" || exit 1; fresh; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/claude-esc.json" SWARM_DASH_NOW="${NOW}" LINES=80 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true); }
 out="$(COLUMNS=160 escdash)"
 check "at 160 columns the status bar says who is on call" has "on call: fable·xhigh" "$(tail -2 <<< "${out}")"
 check "at 160 columns the status bar counts today's ok escalate builds, not yesterday's or a failed one" has " · 2 escalations today" "$(tail -2 <<< "${out}")"
