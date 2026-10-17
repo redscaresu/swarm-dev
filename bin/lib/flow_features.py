@@ -1,7 +1,9 @@
+# Features, a flow section (flow_report.py gives its globals): each feature's uses since --since (by
+# default the last 30 days), its metric and baseline, and delete? when unused or unmeasured.
 import datetime, os, re, subprocess, sys
 from report import *
-features, agents, events, findings, since = sys.argv[1:6]
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+since = recent if since == "0000-00-00" else since
 
 def rows(path):
     return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []
@@ -59,16 +61,16 @@ def settled(feature, landed):
         return day < recent if day else True
     if day:
         return day < recent
-    print(f"swarm.sh features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
+    print(f"swarm.sh flow: features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
           file=sys.stderr)
     return True
 
-print("feature\tuses\tmetric\tbaseline\tverdict")
+print("feature\tuses\tmetric\tbaseline\tverdict" if os.path.exists(features) else f"no feature list at {features}")
 for f in rows(features)[1:]:
     feature, landed, metric, baseline, sources = (f + [""] * 5)[:5]
     if not feature:
         continue
     unlogged = sources.startswith("unlogged:")
     stale = settled(feature, landed) and not unlogged and count(sources, recent) == 0
-    print("\t".join([feature, "-" if unlogged else str(count(sources, since or recent)), metric, baseline,
+    print("\t".join([feature, "-" if unlogged else str(count(sources, since)), metric, baseline,
                      "delete?" if not metric.strip() or stale else ""]))

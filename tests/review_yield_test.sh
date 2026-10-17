@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# review_yield_test.sh — `swarm.sh review-yield` against fixtures. The first project: findings.tsv rows
+# review_yield_test.sh — `swarm.sh flow`'s reviewers section against fixtures. The first project: findings.tsv rows
 # of four, five, six and seven fields (the first two read as reviewer unknown), one dated before a --since, and
 # builders for slugs a (PR #1) and b (PR #2), whose tells give the rounds. The second: a story built
 # twice on one PR, a story built twice with a PR per attempt, each in its own epic, for --epic. gh is a
@@ -43,10 +43,12 @@ printf '%s\n' \
   $'2026-10-03\tnit\to/r#2\tt\tfixed\tlead' \
   $'2026-10-03\tmissing-check\to/r#1\tt\tfixed\tlead' > "${P}/.swarm/findings.tsv"
 
-yield_of() { # <project> [args] — the report and its exit code
-  local p="$1"; shift
-  (cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
-    bash "${SWARM}" review-yield "$@" 2>&1; echo "exit $?")
+yield_of() { # <project> [args] — flow's reviewers section (or all flow printed, when it failed) and its exit code
+  local p="$1" out code; shift
+  out="$(cd "${p}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+    bash "${SWARM}" flow "$@" 2>&1)" && code=0 || code=$?
+  [[ ${code} -ne 0 ]] || out="$(awk '/^## / { f = $0 == "## reviewers"; next } f' <<< "${out}")"
+  printf '%s\nexit %s\n' "${out}" "${code}"
 }
 fails=0
 check() { # <name> <output> <exact expected output>
@@ -84,7 +86,7 @@ check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   $'unknown\tall\t1\t0\t1\t100%' $'unknown\tscope\t1\t0\t1\t100%' \
   $'all\tvacuous\t3\t1\t2\t67%' $'all\tnit\t2\t1\t1\t50%' $'all\tscope\t1\t0\t1\t100%' $'all\tmissing-check\t1\t1\t0\t0%' \
   $'all\tall\t7\t3\t4\t57%' "" "${H2}" $'2\t3\t1.5\t3' "exit 0")"
-USAGE="swarm: usage: swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]"
+USAGE="swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 for args in "--since 2026-1-5" "--since" "--bogus"; do
   # shellcheck disable=SC2086 # split on purpose: each case is its own arguments
   check "${args} exits non-zero with the usage line" "$(yield_of "${P}" ${args})" "$(printf '%s\n' "${USAGE}" "exit 1")"

@@ -14,7 +14,7 @@ All state lives in the board, the directory `swarm.sh config board_dir` prints.
 
 Work from the root of a git repo with a GitHub origin. `/hld`, `/swarm-dev:swarm` and the agents they start
 run inside herdr (`HERDR_ENV=1`), as does `swarm.sh conduct`. `swarm.sh init`, `next`, `status`,
-`config`, `cost`, `version` and `update` work outside herdr too.
+`config`, `flow`, `version` and `update` work outside herdr too.
 
 1. `swarm.sh init` creates the board and `.claude/swarm/`. It never overwrites a file.
 2. The user runs `claude` in that folder once and accepts the trust prompt. Only the user can do
@@ -44,7 +44,7 @@ user why. The full table of stops and what to do is in README § When `/swarm-de
 | `swarm.sh status` | agents that need a look, and what waits on the user |
 | `swarm.sh dash --watch` | live dashboard: board, agents, recent events |
 | `swarm.sh conduct <epic>` | start a conductor that builds one epic |
-| `swarm.sh cost` | tokens and estimated cost per role |
+| `swarm.sh flow` | the project's numbers: cost per role, feature use, incidents, review yield, throughput |
 | `swarm.sh reset <slug> <reason>` | put an escalated story back in the queue, with its kind and no attempts |
 | `swarm.sh version` | the installed version, and whether a newer one is out |
 | `swarm.sh update` | fetch the newest version (restart Claude Code after) |

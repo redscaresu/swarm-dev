@@ -37,7 +37,8 @@
 #     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
-#     line is the lead's board edit, whose name may be a story's slug, so it is never one either.
+#     line is the lead's board edit, whose name may be a story's slug, so it is never one either, and
+#     nor is an `incident` line, which wait and close write about the agent, not the agent itself.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
@@ -550,6 +551,8 @@ settle() {
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
+# Each of these logs an incident event: a timeout (wait-timeout, unless WAIT_SLICE is set: the caller
+# waits again), an expired login (login), and an idle return while nudge_reason still holds (idle-no-pr).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake="" reason
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
@@ -557,17 +560,22 @@ wait_agent() {
   while :; do
     rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
-    [[ ${rc} -eq 0 ]] || { echo "${status}"; return "${rc}"; }
+    if [[ ${rc} -ne 0 ]]; then
+      [[ -n "${WAIT_SLICE:-}" ]] || record_event incident "${name}" "wait-timeout: ${status}"
+      echo "${status}"; return "${rc}"
+    fi
     if [[ "${status}" == idle ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
+      record_event incident "${name}" "login: Login expired"
       echo auth; return 0
     fi
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
-    [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
+    reason=""
+    if [[ "${status}" == idle && "$(session_state "${name}")" == idle ]]; then reason="$(nudge_reason "${name}")" || true; fi
+    [[ -n "${reason}" ]] || break
     # With goal on, the conductor reads why the builder stopped from its reply and session log.
     # shellcheck disable=SC2154 # assigned in another file
-    [[ "${CFG_goal}" == off ]] || break
-    reason="$(nudge_reason "${name}")" || break
+    [[ ${nudges} -lt ${IDLE_NUDGES} && "${CFG_goal}" == off ]] || break
     if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
       >/dev/null 2>&1; then
       echo "swarm: ${name}: ${reason}, but the nudge could not be delivered; returning ${status}" >&2; break
@@ -576,6 +584,7 @@ wait_agent() {
     record_event nudge "${name}"
     echo "swarm: ${name}: ${reason}; told it to carry on (${nudges}/${IDLE_NUDGES})" >&2
   done
+  [[ -z "${reason}" ]] || record_event incident "${name}" "idle-no-pr: ${reason}"
   echo "${status}"
 }
 
@@ -594,7 +603,7 @@ wait_conductor() {
   while :; do
     ms=$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))
     [[ -z "${forever}" ]] || ms="${SWARM_CONDUCTOR_SLICE_MS:-3600000}"
-    t0="$(now_ms)"; rc=0; status="$(wait_agent "${name}" "${ms}")" || rc=$?
+    t0="$(now_ms)"; rc=0; status="$(WAIT_SLICE="${forever}" wait_agent "${name}" "${ms}")" || rc=$?
     [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
     [[ "${status}" =~ ^(idle|done)$ && ! -f "${report:-$(conductor_report "${name}")}" ]] || break
     [[ -n "${forever}" || ${SECONDS} -lt ${deadline} ]] || break
