@@ -150,6 +150,11 @@ inrepo reconcile >/dev/null || true
 gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
 check "the PR's own delete is pulled, and finish takes off what it left" "gone|gone|$(git -C "${ROOT}/app.git" rev-parse main)" \
   "$(gone "${ROOT}/app/docs/stories/r.md")|$(gone "${ROOT}/app/docs/stories/s.md")|$(git -C "${ROOT}/app" rev-parse HEAD)"
+# A new story r, with the front matter the old one had (written by hand: item would clear its state).
+{ echo ---; echo "status: ready"; echo "kind: code"; echo ---; echo; echo "# r"; } > "${ROOT}/app/docs/stories/r.md"
+check "a new story r, after r's PR deleted the old one: ready, with no prs and no state file" "ready||gone" \
+  "$(val "${ROOT}/app/docs/stories/r.md" status)|$(val "${ROOT}/app/docs/stories/r.md" prs)|$(gone "${ROOT}/app/.swarm/board-state/stories/r")"
+rm "${ROOT}/app/docs/stories/r.md"
 
 # --- A board edit in the main checkout that is already the base's does not stop the pull; one that
 # differs still does, and is named. The base gets a new story t and an edit to u.

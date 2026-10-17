@@ -752,6 +752,13 @@ got="${waits}|$(ls "${es}" 2>/dev/null)"
 if [[ "${got}" == "yes|" && "${out}" == *"epic e: could not write its state in "*", so it is still later"*"exit 0" ]]; then
   echo "ok   conduct whose state mv fails leaves the epic later, says so, and exits 0"; else
   echo "FAIL conduct whose state mv fails: got '${got}': ${out}"; fails=$((fails + 1)); fi
+# The same when the epic's lock is held: set_fm dies after SWARM_LOCK_WAIT, and conduct says why.
+rm -rf "${dir}/.swarm/state"; (cd "${dir}" && item epics/e.md "status: later"); rm -rf "${es}"; mkdir -p "${es}/e.lock"
+out="$(SWARM_LOCK_WAIT=1 conduct; echo "exit $?")"
+waits=no; grep -q 'later epic: e' <<< "$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status)" && waits=yes
+if [[ "${waits}" == yes && "${out}" == *"epic e: could not write its state in "*", so it is still later; set status: active by hand (board state: "*"/e.lock is still there after 1s"*"exit 0" ]]; then
+  echo "ok   conduct whose epic lock is held leaves the epic later, says why, and exits 0"; else
+  echo "FAIL conduct whose epic lock is held: waits on you '${waits}': ${out}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

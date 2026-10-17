@@ -927,7 +927,7 @@ conduct_epic() {
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog, in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -956,11 +956,11 @@ start_conductor() {
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
   # The conductor is already running, so a state file that cannot be written is reported, never
-  # fatal: a failed conduct would invite a second conductor.
+  # fatal: a failed conduct would invite a second conductor. set_fm dies, so it runs in a subshell.
   [[ -f "${epic_file}" && "$(get_fm "${epic_file}" status)" == later ]] || return 0
-  if set_fm "${epic_file}" status active 2>/dev/null; then
+  if err="$(set_fm "${epic_file}" status active 2>&1)"; then
     echo "epic ${epic}: status later -> active (in .swarm/board-state)"
   else
-    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand" >&2
+    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand (${err#swarm: })" >&2
   fi
 }

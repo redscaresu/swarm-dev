@@ -7,10 +7,11 @@
 # wins over its state line; a failed state write fails the command; a tab record named board is no
 # clash; review and unblock write an item's keys in one write; two writers to one item keep both keys,
 # and a lock left behind stops a write; touches_rows.py compares a value with a trailing space as
-# state_value does. gh is a stub on PATH that logs every call to gh.log: pr view answers the state in
-# ${ROOT}/pr-<n> (OPEN without one) and a head. mv is a wrapper that, on a board-state path, waits
-# 0.5s while ${ROOT}/mv.slow exists, and fails while ${ROOT}/mv.fail exists, after the number of moves
-# it holds (none when it is empty).
+# state_value does; a state directory that cannot be written and a state file that cannot be read
+# each stop the command, naming the file. gh is a stub on PATH that logs every call to gh.log: pr
+# view answers the state in ${ROOT}/pr-<n> (OPEN without one) and a head. mv is a wrapper that, on a
+# board-state path, waits 0.5s while ${ROOT}/mv.slow exists, and fails while ${ROOT}/mv.fail exists,
+# after the number of moves it holds (none when it is empty).
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -172,6 +173,15 @@ perl -pi -e 's/^status: ready $/status: ready/' "${P}/board/stories/t.md"; commi
 sw status
 is "t's committed status, a trailing space dropped since review: status and touches_rows read it as ready" "no|ready" \
   "$(said "awaiting your merge: t ${U}/50" && echo yes || echo no)|$(python3 "${SWARM%/*}/lib/touches_rows.py" "${P}/board/stories" o "${P}" "${ROOT}/repos" "${ST}/stories" | cut -f3)"
+
+# --- A state directory that cannot be written: review dies naming the state file.
+chmod u-w "${ST}/stories"; sw review o "${U}/70"; chmod u+w "${ST}/stories"
+is "review of o with its state directory unwritable: dies naming the state file" "1|yes|ready" \
+  "${rc}|$(said "board state: cannot write ${ST}/stories/o" && echo yes)|$(v o status)"
+# --- A state file that cannot be read: m, in review there, is not read as the ready its file says.
+chmod 000 "${ST}/stories/m"; lead story m; chmod 644 "${ST}/stories/m"
+is "story m with its state file unreadable: refused as not ready, naming the file" "1|yes|yes" \
+  "${rc}|$(said "board state: cannot read ${ST}/stories/m" && echo yes)|$(said "m is not status: ready" && echo yes)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failure(s)"; exit 1; }
 echo "all passed"
