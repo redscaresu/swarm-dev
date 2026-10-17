@@ -2,8 +2,9 @@
 # merge_guard_test.sh — hooks/merge-guard.sh, the plugin's PreToolUse hook on Bash: inside a swarm
 # project it exits 2 on every raw merge (gh pr merge, gh api, graphql, through a shell, eval, an
 # interpreter, a pipe or a file) and on swarm.sh merge joined to another command, and lets a lone
-# swarm.sh merge and plain mentions through; outside one it allows everything. A block writes one
-# incident line to the project's .swarm/events.tsv, and hooks.json runs the script on Bash calls.
+# swarm.sh merge and plain mentions through; outside one it allows everything. A call that says merge
+# is refused when the check cannot run. A block writes one incident line to the project's
+# .swarm/events.tsv, and hooks.json runs the script on Bash calls.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,6 +66,20 @@ passes "echo of gh pr merge" 'echo "gh pr merge"'
 passes "grep for swarm.sh merge" "grep 'swarm.sh merge' f"
 passes "a PR body that mentions gh pr merge" "$(printf '%s\n' "gh pr create --title t --body \"\$(cat <<'EOF'" "it's gh pr merge (no)" EOF ')"')"
 passes "gh pr view mergeable" "gh pr view 7 --json mergeable"
+blocks "a ( ) group piped into a shell" "(echo 'gh pr merge 1') | sh"
+blocks "a { } group piped into a shell" "{ echo 'gh pr merge 1'; } | sh"
+# shellcheck disable=SC2016 # the heredoc's substitution is the hook's to see
+blocks "a substitution in an unquoted heredoc" "$(printf '%s\n' 'cat <<EOF' '$(gh pr merge 7)' EOF)"
+# shellcheck disable=SC2016 # the heredoc's substitution is the hook's to see
+passes "a substitution in a quoted heredoc" "$(printf '%s\n' "cat <<'EOF'" '$(gh pr merge 7)' EOF)"
+# shellcheck disable=SC2016 # the substitution is the hook's to see
+blocks "a heredoc into sh -c" "$(printf '%s\n' 'sh -c "$(cat)" <<EOF' 'gh pr merge 1' EOF)"
+blocks "a here-string into python3 -c" "python3 -c \"import os, sys; os.system(sys.stdin.read())\" <<< 'gh pr merge 1'"
+blocks "a pipe into gh api graphql --input -" "echo '{\"query\":\"mutation{mergePullRequest(input:{}){clientMutationId}}\"}' | gh api graphql --input -"
+blocks "gh -Ro/r pr merge" "gh -Ro/r pr merge 7"
+blocks "gh -R=o/r pr merge" "gh -R=o/r pr merge 7"
+blocks "gh pr -Ro/r merge" "gh pr -Ro/r merge 7"
+passes "a python3 script's argument" "python3 tools/notes.py 'gh pr merge'"
 
 was="$(lines)"
 call "${P}" "gh pr merge 7" >/dev/null
@@ -75,6 +90,32 @@ call "${P}" "swarm.sh merge ${U}" >/dev/null
 check "a pass writes nothing" test "$(lines)" -eq $((was + 1))
 check "a worktree's block logs to its main checkout" exits "${ROOT}/wt" 2 "gh pr merge 7"
 check "  ... in the main checkout's events.tsv" test "$(lines)" -eq $((was + 2))
+
+# swarm.sh init makes a .claude/swarm/ and no config. Left untracked, a story worktree beside the
+# repo has no .claude at all, so the guard looks from its main checkout too.
+Q="${ROOT}/plain"; mkdir -p "${Q}/.claude/swarm"
+git -C "${Q}" init -q && git -C "${Q}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "${Q}" worktree add -q "${ROOT}/plain-wt/s" -b story/s
+check "a .claude/swarm/ with no config is a project" exits "${Q}" 2 "gh pr merge 7"
+check "its story worktree, with no .claude, is guarded" exits "${ROOT}/plain-wt/s" 2 "gh pr merge 7"
+check "  ... and logs to the main checkout" test "$(wc -l < "${Q}/.swarm/events.tsv" | tr -d ' ')" -eq 2
+
+# Once a call says merge the guard fails closed: no python3, input it cannot read, a call too big
+# for an environment variable.
+feed() { local rc=0; PATH="${2:-${PATH}}" "${BASH}" "${HOOK}" < "$1" >/dev/null 2>&1 || rc=$?; echo "${rc}"; } # <file> [PATH]
+mkdir -p "${ROOT}/nopy" && ln -s "$(command -v cat)" "${ROOT}/nopy/cat"
+printf '{"cwd": "%s", "tool_input": {"command": "git merge x"}}' "${OUT}" > "${ROOT}/says-merge.json"
+printf '{"tool_input": {"command": "ls"}}' > "${ROOT}/ls.json"
+printf '{"tool_input": {"command": "merge' > "${ROOT}/bad.json"
+python3 -c 'import json, sys
+for c in ("gh pr merge 7 # ", "echo \"gh pr merge 7\" # "):
+    print(json.dumps({"cwd": sys.argv[1], "tool_input": {"command": c + "x" * 3000000}}))' "${P}" > "${ROOT}/big.jsonl"
+head -1 "${ROOT}/big.jsonl" > "${ROOT}/big-merge.json"; tail -1 "${ROOT}/big.jsonl" > "${ROOT}/big-echo.json"
+check "with no python3 a call that says merge is refused" test "$(feed "${ROOT}/says-merge.json" "${ROOT}/nopy")" == 2
+check "  ... and one that does not passes" test "$(feed "${ROOT}/ls.json" "${ROOT}/nopy")" == 0
+check "input it cannot read that says merge is refused" test "$(feed "${ROOT}/bad.json")" == 2
+check "a 3 MB raw merge is refused" test "$(feed "${ROOT}/big-merge.json")" == 2
+check "a 3 MB mention reaches the check and passes" test "$(feed "${ROOT}/big-echo.json")" == 0
 
 hook_cmd="$(python3 -c 'import json, sys
 h = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]

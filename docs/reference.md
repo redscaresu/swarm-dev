@@ -755,15 +755,18 @@ from a pane this project did not start (the lead's), or from a conductor's with 
 pane it cannot identify is refused.
 
 The plugin also ships a guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
-`hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. In a project with a
-`.claude/swarm/config` at or above the session's folder, it refuses a call that merges any way but a lone
-`swarm.sh merge <PR URL>`: `gh pr merge`, `gh api` on `pulls/<n>/merge`, a graphql `mergePullRequest`
+`hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm project (a
+`.claude/swarm/` folder at or above the session's folder, or above its main checkout when the session
+is in a git worktree) it refuses a call that merges any way but a lone `swarm.sh merge <PR URL>`: `gh pr merge`, `gh api` on `pulls/<n>/merge`, a graphql `mergePullRequest`
 or `enablePullRequestAutoMerge`, any of these in code handed to a shell or an interpreter (`bash -c`,
-`eval`, `python3 -c`, `node -e`, a heredoc or a pipe into one) or written to a file, and `swarm.sh
+`eval`, `python3 -c`, `node -e`, or a heredoc, here-string or pipe into one, with a code flag or
+without) or written to a file, and `swarm.sh
 merge` joined to another command by `;`, `&`, `&&`, `||`, `|`, a newline, `$( )` or backticks. A
 command that only mentions a merge passes: `echo`, `printf` and `grep`, a commit message, and a PR
 body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
-sees its reason, and `.swarm/events.tsv` gets an incident line. Outside a swarm project the guard allows everything.
+sees its reason, and `.swarm/events.tsv` gets an incident line. Once a call says merge the guard fails closed: if
+it cannot run its check (no `python3`, input it cannot read, an error of its own), it refuses the
+call. Outside a swarm project the guard allows everything else.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
