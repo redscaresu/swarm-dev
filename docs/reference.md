@@ -141,7 +141,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block with the attempts' PRs (from the same `gh pr
-  list`) and the lead's two choices. The block is in `.swarm/state/board/stories/<slug>.escalated`,
+  list`) and the lead's two choices. The block is in `.swarm/escalated/<slug>`,
   not in the tracked story file. It has no **You:** step, because by the
   user's decision of 2026-10-15 the lead decides and then tells the user what it chose and why.
   `next` prints `escalated <slug>` for it, ahead of `gate`. The lead either re-scopes the story and

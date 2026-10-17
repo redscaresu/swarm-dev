@@ -167,7 +167,7 @@ sw() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" b
 built() { printf '2026-10-15\t%s\t%s\tclaude\topus\thigh\tsess-%s\n' "$2" "$1" "$1" >> "${P}/.swarm/agents.tsv"; }   # <slug> <role>
 fmv() { awk -v k="$2" '/^---$/ && ++n == 2 { exit } n == 1 && index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "${P}/docs/stories/$1.md"; }
 state() { echo "$(fmv "$1" kind)|$(fmv "$1" escalated_from)|$(fmv "$1" attempts)|$(fmv "$1" status)"; }
-block() { cat "${P}/.swarm/state/board/stories/$1.escalated" 2>/dev/null || true; }
+block() { cat "${P}/.swarm/escalated/$1" 2>/dev/null || true; }
 echo "[{\"number\":7,\"state\":\"CLOSED\",\"url\":\"${U}/7\"},{\"number\":8,\"state\":\"OPEN\",\"url\":\"${U}/8\"}]" > "${ROOT}/prs.json"
 item e1 "status: ready" "kind: code"; cp "${P}/docs/stories/e1.md" "${ROOT}/e1.orig"
 for i in 1 2; do started e1 "w:p3${i}"; built e1 code; close e1; done
