@@ -217,6 +217,14 @@ check "with merge = agent, a green costs: money review story wakes it: the user 
 check "it prints merge: <slug> <PR URL> for it under merge = agent" test "$(out)|$(rc)" == "merge: r ${URL}|0"
 stop
 
+fresh "merge = agent"; mkdir -p "${P}/docs/epics"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL}" "costs: money"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+check "a held PR that a story and its epic both list wakes it" returned 25
+check "it prints the held PR once, under the story" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+stop; rm -rf "${P}/docs/epics"
+
 # --- no change: a short timeout.
 fresh
 start 3000

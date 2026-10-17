@@ -318,6 +318,9 @@ check "story --strict refuses naming the open story; no agent, branch or worktre
   awk -F'\t' '$2 == "story" { print $3 }' "${p}/.swarm/events.tsv")"
 check "story warns naming the open story and the function, and still starts it" \
   "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xa after it merges|started" "$(warns xa)|$(started_x xa)"
+other "status: review" "epic: e2" "costs: money" "touches: [bin/swarm.sh:tell_agent (kinds)]"; subject xm "[bin/swarm.sh:tell_agent]"
+check "story names an open story whose merge is the user's (costs money)" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xm after it merges (costs money)" "$(warns xm)"
 for s in xc1 xc2 xc3; do subject "${s}" "[bin/swarm.sh:tell_agent]"; done
 check "no warning for a ready story with no builder, a story of the same epic, or another function" "none|none|none" \
   "$(other "status: ready" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; warns xc1)|$(
