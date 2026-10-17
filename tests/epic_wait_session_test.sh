@@ -124,9 +124,7 @@ run() { (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH
 mkdir -p "${p}/.swarm/state"
 
 # --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
-# state is its session's, from the claude stub's fixture. A builder idle before its story has a PR
-# is nudged; any other idle agent is left alone. The pane shows an API error throughout, so the old
-# rule (nudge on an API error on screen) would nudge every case here: none of these read the pane.
+# state is its session's, from the claude stub's fixture.
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 session() { # <file> <session>=<status>... — a `claude agents --json` fixture
   local f="$1" e out=""; shift

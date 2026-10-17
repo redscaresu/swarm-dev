@@ -163,13 +163,13 @@ check "--watch off a terminal has no ANSI escapes" lacks $'\033' "${w}"
 # --watch on a terminal: a pty, 30x120, its size read with the real stty. ptywatch.py runs
 # `dash --watch <seconds>`, resizes the pty to 30x150 and sends SIGWINCH at <resize-at> seconds (0:
 # never), types each <key>@<seconds> given after <q-at>, types q at <q-at>, and kills the watch if
-# it is still running 5 seconds later. A <q-at> of H<n> types q once the watch has homed the cursor n
-# times, or at 15 seconds, so a slow render only makes the run longer.
+# it is still running 5 seconds later. A <q-at> of F<seconds> types q that long after the first frame
+# (its first cursor home), or at 15 seconds when none comes, so a slow start only makes the run longer.
 cat > "${ROOT}/ptywatch.py" <<'PY'
 import fcntl, os, pty, select, signal, struct, sys, termios, time
 swarm, out_path, every, resize_at, q_at = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5]
-homes = int(q_at[1:]) if q_at.startswith("H") else 0
-q_at = 15.0 if homes else float(q_at)
+after = float(q_at[1:]) if q_at.startswith("F") else 0
+q_at = 15.0 if after else float(q_at)
 keys = [(k.split("@")[0].encode(), float(k.split("@")[1])) for k in sys.argv[6:]]
 def size(fd, rows, cols):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -184,8 +184,10 @@ while status is None:
         size(fd, 30, 150); os.kill(pid, signal.SIGWINCH); resized = True
     while keys and now > keys[0][1]:
         os.write(fd, keys.pop(0)[0])
-    if not typed and (now > q_at or (homes and out.count(b"\x1b[H") >= homes)):
-        os.write(fd, b"q"); typed = True; q_at = min(q_at, now)
+    if after and b"\x1b[H" in out:
+        q_at, after = min(q_at, now + after), 0
+    if not typed and now > q_at:
+        os.write(fd, b"q"); typed = True
     if now > q_at + 5:
         os.kill(pid, signal.SIGKILL)
     r, _, _ = select.select([fd], [], [], 0.2)
@@ -206,9 +208,9 @@ ptywatch() { # <out> <seconds> <resize-at> <q-at> [<key>@<seconds>...]; PTY_BIN 
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '╭─ needs you' | wc -l | tr -d ' '; }
 
-# Nothing changes at --watch 1 while the watch homes the cursor 3 times: one full frame, the header
-# line rewritten each second.
-if ptywatch "${ROOT}/pty.out" 1 0 H3; then rc=0; else rc=$?; fi
+# Nothing changes for 3.5 seconds after the first frame at --watch 1: one full frame, the header line
+# rewritten each second.
+if ptywatch "${ROOT}/pty.out" 1 0 F3.5; then rc=0; else rc=$?; fi
 w="$(cat "${ROOT}/pty.out")"; text="$(plain "${ROOT}/pty.out")"
 check "--watch on a terminal quits on q" test "${rc}" -eq 0
 check "--watch enters the alternate screen and hides the cursor" test "${w:0:14}" == $'\033[?1049h\033[?25l'

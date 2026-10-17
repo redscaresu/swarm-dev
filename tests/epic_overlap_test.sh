@@ -212,7 +212,6 @@ rc=0; out="$(run story xq --strict)" || rc=$?
 check "--strict after the slug is strict too; any other extra argument stops story" "fail|yes|not started|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fail || echo ok)|$(has "xq: xb (epic e2) is open and touches bin/swarm.sh:merge_cmd" "${out}")|$(started_x xq)|$(
   has "story: unknown argument '--strct'" "$(run story xq --strct || true)")"
-for s in xa xc1 xc2 xc3 xd xe xk xl xr xm xn xf xg xb xh xi xj xo xp-blocked xp-done xq; do run close "${s}" >/dev/null 2>&1 || true; rm -f "${b}/stories/${s}.md"; done
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
