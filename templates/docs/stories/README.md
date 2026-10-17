@@ -10,13 +10,13 @@ file; the PR is the record. A story in `review` has a PR that is green and revie
 a human to merge it; its `prs:` line lists the PR URLs. List them with `grep -H '^status:' docs/stories/*.md`.
 
 `kind` (code | docs | chore | lead) and `risk: high` choose who builds it
-and with which model (swarm-dev `docs/method.md` § Model and effort); `lead` stories are
+and with which model (swarm-dev `docs/reference.md` § Model and effort); `lead` stories are
 never given to a swarm agent. A `lead` story says what it needs from you, and marks each step
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
 `attempts: <n>` is how many builds of the story failed. Only `swarm.sh close` writes it, when it
 closes the builder of a code, docs or chore story that is still `ready`; once it reaches `escalate_after` (2 by default) the
-story is built on Fable (swarm-dev `docs/method.md` § Model and effort). `swarm.sh close <slug> <cause>`
+story is built on Fable (swarm-dev `docs/reference.md` § Model and effort). `swarm.sh close <slug> <cause>`
 says why the builder stopped (`met`, `impossible`, `stalled`, `bound`, `paused` or `cleared-on-error`;
 with `goal` on, closing a `ready` story's builder needs one). `impossible`, `paused` and
 `cleared-on-error` are not counted in `attempts:`.
@@ -45,5 +45,5 @@ A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the f
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
 worktree of `../<name>`, and the lead deletes the story file once that PR merges.
 
-Running several at once: swarm-dev `docs/method.md` § Building. In Obsidian, `docs/` is
+Running several at once: swarm-dev `docs/reference.md` § Building. In Obsidian, `docs/` is
 the vault and `docs/Board.base` is the board.

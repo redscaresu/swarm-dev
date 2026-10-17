@@ -264,7 +264,7 @@ base_for() {
 }
 
 # The model and effort for each role. This is the one place the policy lives
-# (docs/method.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
+# (docs/reference.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
 ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
@@ -2749,14 +2749,14 @@ conduct_brief() {
     scope="Start only stories with no \`epic:\`, and leave every epic and its stories alone."
     cat <<EOF
 You are the backlog conductor: you build the ready stories on the board with no \`epic:\`. Read
-AGENTS.md (and STATUS.md if there is one) and ${SWARM_HOME}/docs/method.md first.
+AGENTS.md (and STATUS.md if there is one), ${SWARM_HOME}/docs/method.md and ${SWARM_HOME}/docs/reference.md § Building first.
 
 EOF
     conduct_backlog_mode
   else
     cat <<EOF
 You are the conductor for the epic ${BOARD}/epics/${epic}.md. Read AGENTS.md (and STATUS.md if there
-is one), ${SWARM_HOME}/docs/method.md and the epic first.
+is one), ${SWARM_HOME}/docs/method.md, ${SWARM_HOME}/docs/reference.md § Building and the epic first.
 
 EOF
     conduct_story_mode "${epic}"
@@ -2922,7 +2922,7 @@ EOF
 conduct_story_mode() {
   local epic="$1"
   cat <<EOF
-Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as method.md
+Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as reference.md
 § Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
@@ -2955,7 +2955,7 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`."
   else own=""
   fi
   cat <<EOF
-Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as method.md
+Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as reference.md
 § Building describes: pick waves of them whose \`touches\` do not overlap, start each with
 \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --backlog\` in the background, and review each PR. Each story's base branch is in

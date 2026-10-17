@@ -488,8 +488,8 @@ check "plan-epic's skeptic brief names costs: money" grep -qF 'costs: money' <<<
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
-check "method.md § Merging merges with swarm.sh merge" \
-  bash -c "sed -n '/^\*\*Merging\.\*\*/,/^\*\*Merge one at a time/p' '${REPO}/docs/method.md' | grep -q 'swarm.sh merge'"
+check "reference.md § Merging merges with swarm.sh merge" \
+  bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 
 echo
 if [[ ${fails} -eq 0 ]]; then echo "all merge tests passed"; else echo "${fails} merge test(s) failed"; exit 1; fi

@@ -8,7 +8,7 @@ is inside it.
 
 Drive the chain end to end, picking up wherever the board says it stands. Requires herdr
 (`HERDR_ENV=1`); if not inside herdr, say so and stop. Read `${CLAUDE_PLUGIN_ROOT}/docs/method.md`
-first if you have not this session.
+and, for the sections it names, `${CLAUDE_PLUGIN_ROOT}/docs/reference.md` first if you have not this session.
 
 If `<board>/stories/README.md` does not exist, the project has no board yet. Offer to run
 `swarm.sh init` from the project's git root, and wait for the user's yes before you run it. It adds

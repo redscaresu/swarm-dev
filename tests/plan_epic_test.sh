@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # plan_epic_test.sh — pins the plan-epic rules with a grep each. Run on another copy with
-# `bash tests/plan_epic_test.sh <plan-epic.md> <method.md>`.
+# `bash tests/plan_epic_test.sh <plan-epic.md> <reference.md>`.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 F="${1:-$ROOT/commands/plan-epic.md}"
-M="${2:-$ROOT/docs/method.md}"
+M="${2:-$ROOT/docs/reference.md}"
 fails=0
 
 has() { # <name> <pattern> [text]

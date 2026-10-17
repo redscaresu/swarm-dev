@@ -2,7 +2,7 @@
 # skill_test.sh — skills/swarm-dev/SKILL.md names only real commands: every `swarm.sh <sub>` is one of
 # dispatch's arms (or version/update, which main handles first), and every backticked `/<name>` is a
 # plugin command or a Claude Code built-in. Its description carries the trigger phrases; its body is
-# short, names no board path, and copies no line from README.md or docs/method.md.
+# short, names no board path, and copies no line from README.md, docs/method.md or docs/reference.md.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,9 +51,11 @@ check "the body names no docs/ or board/ path" "" \
 copied=""
 while IFS= read -r line; do
   [[ ${#line} -ge 40 ]] || continue
-  if grep -qFx -- "${line}" "${REPO}/README.md" "${REPO}/docs/method.md"; then copied="${copied}${line}"$'\n'; fi
+  if grep -qFx -- "${line}" "${REPO}/README.md" "${REPO}/docs/method.md" "${REPO}/docs/reference.md"; then copied="${copied}${line}"$'\n'; fi
 done < "${SKILL}"
-check "no line of 40+ characters is copied from README.md or docs/method.md" "" "${copied%$'\n'}"
+check "no line of 40+ characters is copied from README.md, docs/method.md or docs/reference.md" "" "${copied%$'\n'}"
+
+check "docs/method.md is at most 150 lines" "yes" "$([[ $(wc -l < "${REPO}/docs/method.md") -le 150 ]] && echo yes || echo no)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
