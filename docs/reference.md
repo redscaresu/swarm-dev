@@ -264,9 +264,8 @@ read, and the next write to the item drops the old line. A write holds the item'
 changes; a command that finds the lock still there after 10 seconds stops and names it, as one
 does when a state file cannot be read or written. `finish` deletes an item's state file along with
 the item, and so does `reconcile` when an item's PR took it off the board or marked it `done`. The
-escalated block that `close` appends for the lead is still in the story file, and where an older
-swarm.sh left these keys uncommitted in a file, `reconcile` still carries them over its pull
-(§ Merging).
+escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Where an older swarm.sh
+left these keys uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
