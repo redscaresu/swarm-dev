@@ -5,8 +5,9 @@ from panes import *
 from stall import *
 W = max(int(E.get("DASH_COLS") or 100), 40)
 H = int(E.get("DASH_LINES") or 0)
-# Now, and so today: DASH_NOW (epoch seconds) fixes them, so a test's "today" holds across midnight.
-NOW = float(E.get("DASH_NOW") or time.time())
+# Now, and so today and the header's clock: SWARM_DASH_NOW (epoch seconds) fixes them, so a test's
+# "today" holds across midnight and a golden frame is the same on every run.
+NOW = float(E.get("SWARM_DASH_NOW") or time.time())
 TODAY = datetime.date.fromtimestamp(NOW)
 NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
 WIDE = W >= 140   # two columns: needs you and the epics on the left, recent as a log on the right
@@ -718,7 +719,7 @@ for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}
 
 # Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
 # (from 140 columns, the status bar at the bottom carries it, with the merge mode).
-right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
+right = E.get("DASH_CLOCK") or datetime.datetime.fromtimestamp(NOW).strftime("%H:%M:%S")
 head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
         ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
 if WIDE:
