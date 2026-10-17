@@ -34,6 +34,12 @@ The throughput numbers come from `swarm.sh outcomes` and git:
   - rework (a later fix within 7 days) and escaped findings;
   - minutes from start to merge.
   A cell with fewer than 5 stories prints its count and no verdict. The table reads events.tsv, findings.tsv and the logs, with no new store, and covers builders, subagents and escalations to Fable. A test on fixture data checks each column. Choosing a model per story from this table is left for later, once the cells hold enough stories. The `sonnet_share` and subagent-model trials report through this table.
+- **A stronger model steps in when a cheaper one struggles (user, 2026-10-17).** Today `escalate_after` moves a story to Fable only after whole failed attempts. This adds a ladder (`escalate_ladder = sonnet,opus,fable`, off by default) and earlier triggers during a build. A builder on a cheaper model moves one rung up when any of these happens:
+  - its PR needs a third findings round;
+  - CI fails twice on its own changes;
+  - it is `stalled?`;
+  - it closes with no PR.
+  The stronger model takes over the same branch and worktree with a handover brief (the story, the diff so far, open findings, failing checks), so the cheaper model's work is kept rather than redone. Each step is an `escalate` event with the trigger and both models, the PR body names every model that worked on it, and the model-fit table counts the story against the model it started on. A test stubs each trigger and shows the next rung takes over the same branch. Turning the ladder on is its own lead story.
 - **Story size cap.** plan-epic's decompose and skeptic briefs cap a story at one new command or one changed behaviour, and an estimated diff of about 300 lines. A skeptic refutes any story over the cap. The plan report lists each story's estimate.
 - **CI under 3 minutes, and board PRs in under 1.** Measured on 2026-10-17: the test job runs 32 files one after another for about 9 minutes. The slowest are epic_test 117 s, dash_test 98 s, review_test 70 s and next_test 44 s.
   - The test files run in parallel (a CI matrix or `xargs -P`, and the same in `make test`). epic_test and dash_test are split so no file takes over 60 s.
