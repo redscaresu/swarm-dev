@@ -152,8 +152,12 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   Then the lead runs `reset` and pulls the board in one go: `reset` puts the file back to its
   committed text, so the pull brings in the re-scope, and `story` reads its kind, repo, epic and
   risk from that. `swarm.sh drop <slug> <reason>` takes a dropped story off the board as `finish`
-  does (deleted), and the lead commits the change in a
-  board PR; it refuses any story that is not escalated. A story is reset at most once: `reset`
+  does, and it refuses any story that is not escalated. On a board in the repo, `finish` and `drop`
+  never touch the main checkout: each deletes the file in the board PR `finish-<slug>` or
+  `drop-<slug>` (titled `Drop <slug>: <reason>`) and prints the `swarm.sh merge --board <url>` that
+  lands it; a second run pushes to the same PR. A file that is not on origin's base yet (an unmerged
+  board PR adds it) is refused, and the worktree and branch the failed run started are removed. On a
+  board outside the repo they delete the file where it is. A story is reset at most once: `reset`
   refuses a slug that events.tsv already shows reset, and names when, and a story that escalates
   again after its reset is offered only drop, in its block and in `next`. `reset` also refuses a
   block whose closing marker is gone, rather than remove everything after the opening one. An
@@ -789,6 +793,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
 | `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
+| `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
 | `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date, with a row for the lead's own sessions. |
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
