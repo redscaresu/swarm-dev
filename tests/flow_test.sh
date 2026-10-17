@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# flow_test.sh — `swarm.sh flow` against a fixture. Epic e1 has stories a to d, b depending on a (a
+# flow_test.sh — `swarm.sh flow`'s throughput section against a fixture. Epic e1 has stories a to d, b depending on a (a
 # chain of 2). a runs 10:00-11:00 (its close) and b 10:20-12:00 (its session log's last entry), so
 # 1, then 2, then 1 builders run: 160 build-minutes over a 120-minute span is a mean of 1.33. c and d
 # have no session log or close, so they count as stories but not as running. a's PR, created at
@@ -60,6 +60,7 @@ printf '#!/bin/sh\ncase "$1 $2 $3 $4" in\n"pr list --head story/a") printf "%s/1
 chmod +x "${dir}/bin/gh"
 
 run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" "$@"); }
+tp() { awk '/^## / { f = $0 == "## throughput"; next } f'; } # flow's throughput section
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
@@ -67,21 +68,22 @@ check() { # <name> <output> <exact expected output>
 H=$'epic\tbuilds\tbuilders_mean\tbuilders_max\tstories\tlongest_chain\tstories_per_chain\treview_wait_min\tproxy_review_wait_min\tstacked'
 before="$(cat "${P}/.swarm/events.tsv")"
 check "per epic: builders at once (mean 1.33, max 2), stories per chain (4 / 2 = 2.0), a review wait of 20 or a proxy of 50, stacked starts" \
-  "$(run flow)" "${H}"$'
+  "$(run flow | tp)" "${H}"$'
 e1\t4\t1.33\t2\t4\t2\t2.0\t20\t\t3
 e2\t1\t1.00\t1\t1\t1\t1.0\t\t50\t0
 e3\t2\t0.67\t1\t1\t1\t1.0\t10\t\t0
 e4\t2\t1.01\t2\t2\t1\t2.0\t\t\t0
 all\t9\t0.97\t2\t8\t2\t4.0\t15\t50\t3'
 check "--until drops the events after its date: two stacked events give 2" \
-  "$(run flow --until 2026-10-02 | sed -n 2p)" $'e1\t4\t1.33\t2\t4\t2\t2.0\t20\t\t2'
+  "$(run flow --until 2026-10-02 | tp | sed -n 2p)" $'e1\t4\t1.33\t2\t4\t2\t2.0\t20\t\t2'
 check "a close after --until still ends its build, at the cutoff: h runs into i's day" \
-  "$(run flow --until 2026-10-02 | grep '^e4')" $'e4\t2\t1.02\t2\t2\t1\t2.0\t\t\t0'
+  "$(run flow --until 2026-10-02 | tp | grep '^e4')" $'e4\t2\t1.02\t2\t2\t1\t2.0\t\t\t0'
 check "--since keeps the builds and events from its date" \
-  "$(run flow --since 2026-10-02 | tail -1)" $'all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1'
-check "flow and features add no line to events.tsv" "$(run features >/dev/null; cat "${P}/.swarm/events.tsv")" "${before}"
+  "$(run flow --since 2026-10-02 | tp | tail -1)" $'all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1'
+check "--epic prints that epic's row alone" "$(run flow --epic e2 | tp)" "${H}"$'\ne2\t1\t1.00\t1\t1\t1\t1.0\t\t50\t0'
+check "flow adds no line to events.tsv" "$(cat "${P}/.swarm/events.tsv")" "${before}"
 check "a bad flag prints the usage" "$(run flow --until yesterday 2>&1 || true)" \
-  "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+  "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 # A second project, in UTC-7: epic `all` (j) is an epic beside the project row; j's agents.tsv day is
 # --until's (local), but its session starts at 03:00Z the next UTC day, still inside the local cutoff;
 # k's agents.tsv date does not parse and it has no session log, so it is left out.
@@ -93,7 +95,7 @@ printf '%s\n' $'2026-10-02\tcode\tj\tclaude\topus\thigh\tsj' $'2026-10-01x\tcode
 printf '%s\n' $'2026-10-03T03:10:00Z\tstacked\tj\tw:1\tok' > "${Q}/.swarm/events.tsv"
 check "an epic named all keeps its row; a build and its event late on --until's local day count; a bad date is left out" \
   "$(cd "${Q}" && env -u HERDR_ENV -u SWARM_PROJECT TZ=America/Los_Angeles CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
-    bash "${SWARM}" flow --until 2026-10-02 2>&1)" "${H}"$'
+    bash "${SWARM}" flow --until 2026-10-02 2>&1 | tp)" "${H}"$'
 all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1
 all\t1\t1.00\t1\t1\t1\t1.0\t\t\t1'
 
@@ -113,14 +115,14 @@ printf '%s\n' $'2026-10-01T08:00:00Z\tclose\tp\tw:1\tok' $'2026-10-01T12:00:00Z\
   $'2026-10-01T12:00:00Z\tclose\tn\tw:1\tok' $'2026-10-01T15:30:00Z\tclose\tm\tw:1\tok' \
   $'2026-10-01T18:00:00Z\tclose\tn\tw:1\tok' > "${R}/.swarm/events.tsv"
 check "each close goes to one build of its slug, in agents.tsv order, and a log-less retry starts when the slug's last known build ended" \
-  "$(cd "${R}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow 2>&1)" "${H}"$'
+  "$(cd "${R}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow 2>&1 | tp)" "${H}"$'
 e6\t3\t1.64\t2\t2\t1\t2.0\t\t\t0
 e7\t2\t1.00\t1\t1\t1\t1.0\t\t\t0
 e8\t3\t1.00\t1\t1\t1\t1.0\t\t\t0
 all\t8\t1.56\t3\t4\t1\t4.0\t\t\t0'
 for d in --since=9999-12-31 --until=2026-02-30; do
   check "flow ${d%%=*} ${d#*=}, not a real date with a day after it, prints the usage" \
-    "$(run flow "${d%%=*}" "${d#*=}" 2>&1 || true)" "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+    "$(run flow "${d%%=*}" "${d#*=}" 2>&1 || true)" "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 done
 for gone in decisions export; do
   out="$(run "${gone}" 2>&1)" && code=0 || code=$?

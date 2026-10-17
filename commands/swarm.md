@@ -129,7 +129,7 @@ Repeat until a step below says stop:
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
      its block starts **Held (<cause>).**, and `next`'s line names the hold): its builder paused or
      its goal was cleared on an error, nothing failed, and there is nothing to re-scope. Deciding what happens to it is
-     yours, not the user's, so this is not a stop. Read the story, the block at its end and the attempts'
+     yours, not the user's, so this is not a stop. Read the story, its block (`.swarm/escalated/<slug>`) and the attempts'
      PRs it lists, with their review findings. Then decide on the spot, and tell the user in a line
      or two what you chose and why:
      - A held story: lift the hold with `swarm.sh reset <slug> <reason>`, which puts its kind back
