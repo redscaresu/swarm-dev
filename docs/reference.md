@@ -140,11 +140,12 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
-  had no `kind:` line), still `ready`, and a block at the end of the file with the attempts' PRs
-  (from the same `gh pr list`) and the lead's two choices. It has no **You:** step, because by the
+  had no `kind:` line), still `ready`, and a block with the attempts' PRs (from the same `gh pr
+  list`) and the lead's two choices. The block is in `.swarm/escalated/<slug>`,
+  not in the tracked story file. It has no **You:** step, because by the
   user's decision of 2026-10-15 the lead decides and then tells the user what it chose and why.
   `next` prints `escalated <slug>` for it, ahead of `gate`. The lead either re-scopes the story and
-  runs `swarm.sh reset <slug> <reason>`, which removes `attempts:`, `escalated_from:` and the block,
+  runs `swarm.sh reset <slug> <reason>`, which removes `attempts:` and `escalated_from:` and deletes the block,
   or drops it. While the story still says `kind: lead`, reset puts its kind back (no `kind:` line
   for `code (default)`), so the file is its committed text again; a kind the lead set itself stays.
   A builder reads its story in its worktree, so when the board is in the story's repo the re-scope
@@ -155,8 +156,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   does (deleted), and the lead commits the change in a
   board PR; it refuses any story that is not escalated. A story is reset at most once: `reset`
   refuses a slug that events.tsv already shows reset, and names when, and a story that escalates
-  again after its reset is offered only drop, in its block and in `next`. `reset` also refuses a
-  block whose closing marker is gone, rather than remove everything after the opening one. An
+  again after its reset is offered only drop, in its block and in `next`. An
   escalated story is the lead's, so it is not listed under waiting on you (`status`, `dash`,
   `gate`). Each step is a line in events.tsv with its UTC time, for the training data:
   `escalate <slug>` when the build starts (`ok (attempt <n>)`), `dialog <slug>` when a conductor
