@@ -723,12 +723,12 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
 conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
-es="${dir}/.swarm/state/board/epics"
+es="${dir}/.swarm/board-state/epics"
 for st in later active; do
   (cd "${dir}" && item epics/e.md "status: ${st}"); rm -rf "${es}"
   # Its tab records go, so the next conduct starts afresh; its state stays.
   out="$(conduct)"; find "${dir}/.swarm/state" -maxdepth 1 -type f -exec rm -f {} +
-  said=no; grep -q '^epic e: status later -> active (in .swarm/state)$' <<< "${out}" && said=yes
+  said=no; grep -q '^epic e: status later -> active (in .swarm/board-state)$' <<< "${out}" && said=yes
   # The whole output, then grep: grep -q can close the pipe on status, which fails under pipefail.
   waits=no; grep -q 'later epic: e' <<< "$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status)" && waits=yes
   got="$(sed -n 's/^status: //p' "${es}/e" 2>/dev/null)|$(sed -n 's/^status: //p' "${dir}/docs/epics/e.md")|${said}|${waits}"
@@ -739,9 +739,19 @@ done
 (cd "${dir}" && item epics/e.md "status: later"); rm -rf "${es}"; mkdir -p "${es}"; chmod a-w "${es}"
 out="$(conduct; echo "exit $?")"; chmod u+w "${es}"
 got="$(sed -n 's/^status: //p' "${dir}/docs/epics/e.md")|$(ls "${es}")"; rm -rf "${dir}/.swarm/state"
-if [[ "${got}" == "later|" && "${out}" == *"epic e: could not write its state in "*"/.swarm/state/board/epics, so it is still later"*"exit 0" ]]; then
+if [[ "${got}" == "later|" && "${out}" == *"epic e: could not write its state in "*"/.swarm/board-state/epics, so it is still later"*"exit 0" ]]; then
   echo "ok   conduct on a later epic it cannot write leaves it later, says so, and exits 0"; else
   echo "FAIL conduct on a later epic it cannot write: got '${got}': ${out}"; fails=$((fails + 1)); fi
+# The same when only the state file's mv fails (a wrapper on PATH): conduct tests set_fm in an if,
+# where set -e is off, so set_fm must fail by itself.
+printf '#!/bin/sh\ncase "$*" in *board-state*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v mv)" > "${dir}/bin/mv"; chmod +x "${dir}/bin/mv"
+(cd "${dir}" && item epics/e.md "status: later"); rm -rf "${es}"
+out="$(conduct; echo "exit $?")"; rm -f "${dir}/bin/mv"
+waits=no; grep -q 'later epic: e' <<< "$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status)" && waits=yes
+got="${waits}|$(ls "${es}" 2>/dev/null)"
+if [[ "${got}" == "yes|" && "${out}" == *"epic e: could not write its state in "*", so it is still later"*"exit 0" ]]; then
+  echo "ok   conduct whose state mv fails leaves the epic later, says so, and exits 0"; else
+  echo "FAIL conduct whose state mv fails: got '${got}': ${out}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

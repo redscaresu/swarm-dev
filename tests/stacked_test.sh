@@ -26,7 +26,7 @@ check() { # <name> <want> <got>
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 hasnt() { if grep -qF -- "$1" <<< "$2"; then echo "has '$1'"; else echo no; fi; }
 item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
-  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/state/board/${2%.md}"; shift 2
+  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/board-state/${2%.md}"; shift 2
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
@@ -101,7 +101,7 @@ parent() {
 head_of() { git -C "${ROOT}/svc" rev-parse "story/$1"; }
 # fm <slug> <key> — <key> as swarm.sh reads it: the story's state file first, its file second.
 fm() {
-  local s="${p}/.swarm/state/board/stories/$1"
+  local s="${p}/.swarm/board-state/stories/$1"
   if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "${b}/stories/$1.md"; fi
 }
 st() { fm "$1" status; }

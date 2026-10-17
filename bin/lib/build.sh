@@ -561,7 +561,7 @@ EOF
 # stack_start <story> <repo-dir> <worktree> <parents> — a stacked story's worktree, on story/<slug> at
 # origin/story/<first parent>, with each other parent's branch merged in. Each parent's branch is
 # fetched first and its PR must still be open; when one is not, the story goes back to blocked (in
-# STATE_DIR, as unblock's) and nothing is made. A merge that fails leaves no worktree or
+# BOARD_STATE_DIR, as unblock's) and nothing is made. A merge that fails leaves no worktree or
 # branch, and names the two branches that conflict and their files (merge_clash). Sets STACK_PRS to the
 # parents' PR URLs, for the brief.
 stack_start() {
@@ -645,7 +645,7 @@ touches_overlap() {
 # overlaps the whole file. An empty status prints as -. Its own function, not inside a <(...):
 # bash 3.2 misreads the parentheses in a heredoc there.
 touches_rows() {
-  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" "${STATE_DIR}/board/stories"
+  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
@@ -954,13 +954,13 @@ start_conductor() {
   inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
   echo "workspace ${hld} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
-  # In STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
+  # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
   # The conductor is already running, so a state file that cannot be written is reported, never
   # fatal: a failed conduct would invite a second conductor.
   [[ -f "${epic_file}" && "$(get_fm "${epic_file}" status)" == later ]] || return 0
   if set_fm "${epic_file}" status active 2>/dev/null; then
-    echo "epic ${epic}: status later -> active (in .swarm/state)"
+    echo "epic ${epic}: status later -> active (in .swarm/board-state)"
   else
-    echo "epic ${epic}: could not write its state in ${STATE_DIR}/board/epics, so it is still later; set status: active by hand" >&2
+    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand" >&2
   fi
 }

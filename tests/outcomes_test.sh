@@ -216,12 +216,12 @@ check "an epic story's builds take their PR from their logs too, never the epic 
 # (kind: lead with escalated_from:, either a kind or the no-kind-line value) keeps the kind it was
 # built as, and one the user holds stays lead; a slug with only a closed PR has not merged; a story
 # whose repo: names no repo here is unknown. esc-state was escalated in its state file
-# (.swarm/state/board/stories/), which outcomes reads before the file, which the lead re-scoped to docs.
+# (.swarm/board-state/stories/), which outcomes reads before the file, which the lead re-scoped to docs.
 F="${dir}/four"; mkdir -p "${F}/.swarm" "${F}/docs/stories"; git -C "${F}" init -q
 printf -- '---\nkind: lead\nescalated_from: code\nstatus: ready\n---\n' > "${F}/docs/stories/esc-code.md"
 printf -- '---\nkind: lead\nescalated_from: code (default)\nstatus: ready\n---\n' > "${F}/docs/stories/esc-default.md"
 printf -- '---\nkind: docs\nstatus: ready\n---\n' > "${F}/docs/stories/esc-state.md"
-mkdir -p "${F}/.swarm/state/board/stories"; printf 'kind: lead\nescalated_from: code\n' > "${F}/.swarm/state/board/stories/esc-state"
+mkdir -p "${F}/.swarm/board-state/stories"; printf 'kind: lead\nescalated_from: code\n' > "${F}/.swarm/board-state/stories/esc-state"
 printf -- '---\nkind: lead\nstatus: ready\n---\n' > "${F}/docs/stories/held.md"
 printf -- '---\nkind: code\nstatus: ready\n---\n' > "${F}/docs/stories/closed-only.md"
 printf -- '---\nkind: code\nrepo: nowhere\nstatus: ready\n---\n' > "${F}/docs/stories/norepo.md"

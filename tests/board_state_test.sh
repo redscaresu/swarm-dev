@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# board_state_test.sh — the front-matter keys swarm.sh writes (SET_FM_KEYS) go to .swarm/state/board/,
+# board_state_test.sh — the front-matter keys swarm.sh writes (SET_FM_KEYS) go to .swarm/board-state/,
 # never to a tracked story or epic file, and every reader takes them from there first: review leaves
 # git status clean while next and status show the story in review; a story lead_block hands on is
 # refused as kind: lead though its file says kind: code; merge holds a costs: money story whose prs:
-# is only in state; an epic and a story with one slug keep separate state. gh is a stub on PATH that
-# logs every call to gh.log: pr view answers the state in ${ROOT}/pr-<n> (OPEN without one) and a head.
+# is only in state; an epic and a story with one slug keep separate state; a later commit to a key
+# wins over its state line; a failed state write fails the command; a tab record named board is no
+# clash. gh is a stub on PATH that logs every call to gh.log: pr view answers the state in
+# ${ROOT}/pr-<n> (OPEN without one) and a head. mv is a wrapper that fails on a board-state path while
+# ${ROOT}/mv.fail exists.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -13,7 +16,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
-P="${ROOT}/proj"; ST="${P}/.swarm/state/board"; U=https://github.com/o/r/pull
+P="${ROOT}/proj"; ST="${P}/.swarm/board-state"; U=https://github.com/o/r/pull
 H=1111111111111111111111111111111111111111
 mkdir -p "${P}/.claude/swarm" "${P}/board/stories" "${P}/board/epics" "${ROOT}/bin"
 printf 'board_dir = board\nmerge = agent\n' > "${P}/.claude/swarm/config"
@@ -44,7 +47,14 @@ case "$1 $2" in
   "tab list") echo '{"result":{"tabs":[]}}' ;;
 esac
 STUB
-chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
+printf '#!/bin/sh\nR="%s"; MV="%s"\n' "${ROOT}" "$(command -v mv)" > "${ROOT}/bin/mv"
+cat >> "${ROOT}/bin/mv" <<'STUB'
+case "$*" in *board-state*) [ ! -e "${R}/mv.fail" ] || exit 1 ;; esac
+exec "${MV}" "$@"
+STUB
+chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/mv"
+# A tab record named board, as a story or epic slug of that name makes one in .swarm/state.
+mkdir -p "${P}/.swarm/state"; echo "w:9 board" > "${P}/.swarm/state/board"
 
 # sw [VAR=value]... <args> — swarm.sh outside herdr, unless VARs say otherwise, from the main
 # checkout; sets rc, stdout and stderr in ${ROOT}/out.
@@ -63,26 +73,40 @@ check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "
 is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
 said() { grep -qF -- "$1" "${ROOT}/out"; }
 
-# --- review writes status and prs to the story's state file; the tracked file is as committed.
+# --- review writes status and prs to the story's state file, each with the file's value as its
+# base; the tracked file is as committed, and the tab record named board is left alone.
 sw review s "${U}/10"
-is "review s: exits 0, git status clean" "0|" "${rc}|$(clean)"
-is "review s: its state file holds status and prs" "status: review|prs: ${U}/10" "$(paste -sd'|' - < "${ST}/stories/s")"
+is "review s beside a tab record named board: exits 0, git status clean" "0|" "${rc}|$(clean)"
+is "review s: its state file holds status and prs, with their bases" "status: review|status@base: ready|prs: ${U}/10|prs@base:" \
+  "$(paste -sd'|' - < "${ST}/stories/s")"
 sw next
 check "next lists s as awaiting your merge" said "awaiting your merge: s ${U}/10"
 sw status
 check "status lists s as awaiting your merge" said "awaiting your merge: s ${U}/10"
 
+# --- A board PR then commits s as blocked: the file's value now differs from the base, so it wins.
+perl -pi -e 's/^status: ready$/status: blocked/' "${P}/board/stories/s.md"; commit "s blocked"
+sw status --all
+is "a committed status: blocked wins over s's review in state" "yes|no" \
+  "$(said 'blocked: s (' && echo yes)|$(said "awaiting your merge: s ${U}/10" && echo yes || echo no)"
+
 # --- A costs: money story whose prs: is only in state: merge holds its PR (merge = agent).
 item stories m "status: ready" "kind: code" "costs: money"
 item stories c "status: ready" "kind: code"
 item stories same "status: ready" "kind: code"
+item stories s3 "status: ready" "kind: code"
 commit more
+
+# --- A state write that fails (its mv) fails review, and s3 is not in review.
+touch "${ROOT}/mv.fail"; sw review s3 "${U}/11"; rm "${ROOT}/mv.fail"
+is "review s3 with its state write failing: exits non-zero, no state file" "1|none" "${rc}|$([[ -e "${ST}/stories/s3" ]] && echo some || echo none)"
+
 sw review m "${U}/20"
 is "review m: prs: in state only, git status clean" "|${U}/20|" "$(sed -n 's/^prs: *//p' "${P}/board/stories/m.md")|$(sed -n 's/^prs: *//p' "${ST}/stories/m")|$(clean)"
 : > "${ROOT}/gh.log"; sw merge --head "${H}" "${U}/20"
 is "merge of m's PR: refused" 1 "${rc}"
 check "merge of m's PR: held, m costs money" said "held: m costs money"
-check "merge of m's PR: no pr merge" bash -c "! grep -q '^pr merge' '${ROOT}/gh.log'"
+check "merge of m's PR: held before its checks are read, no pr merge" bash -c "! grep -qE '^(api|pr merge)' '${ROOT}/gh.log'"
 
 # --- An epic and a story named same: review writes the story's state, reconcile the epic's.
 sw review same "${U}/31"

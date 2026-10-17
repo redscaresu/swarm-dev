@@ -4,7 +4,11 @@
 # <key> anywhere in <file>, or nothing.
 fm() { state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" | head -1; }
 
-# state_path <item-file> [key] — set STATE_PATH to the file under STATE_DIR/board/ (stories/<slug> or
+# BOARD_STATE_DIR: where swarm.sh keeps the SET_FM_KEYS it writes for the board's items, a root of its
+# own: STATE_DIR's files are tab records named after epic and story slugs.
+BOARD_STATE_DIR="${PROJECT_DIR}/.swarm/board-state"
+
+# state_path <item-file> [key] — set STATE_PATH to the file under BOARD_STATE_DIR (stories/<slug> or
 # epics/<slug>) that holds the SET_FM_KEYS swarm.sh wrote for a story or epic on the board, or to
 # nothing for any other file, one that is gone, or a [key] not in SET_FM_KEYS. It sets a variable,
 # not output, so fm reads it without a subshell.
@@ -13,21 +17,23 @@ state_path() {
   STATE_PATH=""
   [[ -z "${2:-}" || " ${SET_FM_KEYS} " == *" $2 "* ]] || return 0
   [[ -f "$1" && ( "${d}" == "${BOARD}/stories" || "${d}" == "${BOARD}/epics" ) && "${n}" == *.md ]] || return 0
-  STATE_PATH="${STATE_DIR}/board/${d##*/}/${n%.md}"
+  STATE_PATH="${BOARD_STATE_DIR}/${d##*/}/${n%.md}"
 }
 
-# state_value <item-file> <key> — print <key>'s value from the item's state file (state_path) and
-# succeed when that file has a line for it (an empty one clears it); fail otherwise.
+# state_value <item-file> <key> — print <key>'s value from the item's state file (state_path; nothing
+# when the line is empty, which clears the key) and succeed; fail when the state file has no line for
+# it, or the item file's front matter no longer has the value its <key>@base: line recorded (a later
+# edit to the file wins over what swarm.sh wrote before it).
 state_value() {
   state_path "$1" "$2"
-  [[ -f "${STATE_PATH}" ]] && state_key "${STATE_PATH}" "$2"
-}
-
-# state_key <state-file> <key> — print <key>'s value from a state file's `key: value` lines (nothing
-# when it is empty) and succeed, or fail when the file has no line for <key>.
-state_key() {
-  awk -v k="$2" 'index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); if (v != "") print v; f = 1; exit }
-    END { exit !f }' "$1"
+  [[ -f "${STATE_PATH}" ]] || return 1
+  awk -v k="$2" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+    FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
+      if (!hb && index($0, k "@base:") == 1) { b = val($0, length(k) + 6); hb = 1 }
+      next }
+    /^---$/ && ++n == 2 { exit }
+    n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
 }
 
 # board <dir> — the item files in <board>/<dir>/, never the README.
@@ -238,22 +244,24 @@ pr_held() {
 }
 
 # pr_stories <pr-url> — the slugs of the stories whose prs: (split on spaces and commas), from their
-# state file when it has a prs: line and their front matter otherwise, lists the PR in any spelling:
-# owner and repo in any case, the number with leading zeros. Fails when a story or its state file
-# cannot be read.
+# state file when it holds one (state_value) and their front matter otherwise, lists the PR in any
+# spelling: owner and repo in any case, the number with leading zeros. Fails when a story or its state
+# file cannot be read.
 pr_stories() {
-  local f s files=()
+  local f v over="" files=()
   while IFS= read -r f; do
-    files+=("${f}"); s="${STATE_DIR}/board/stories/${f##*/}"
-    [[ ! -e "${s%.md}" || -r "${s%.md}" ]] || return 1
+    files+=("${f}"); state_path "${f}" prs
+    [[ -f "${STATE_PATH}" ]] || continue
+    [[ -r "${STATE_PATH}" ]] || return 1
+    if v="$(state_value "${f}" prs)"; then over+="${f}"$'\t'"${v}"$'\n'; fi
   done < <(board stories)
   [[ ${#files[@]} -gt 0 ]] || return 0
-  awk -v k="$1" -v st="${STATE_DIR}/board/stories" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
+  SWARM_PRS_OVER="${over}" awk -v k="$1" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
     function hit(v,   m, i, u) { m = split(v, u, /[ \t,]+/); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print s; return } }
-    BEGIN { k = canon(k) }
+    BEGIN { k = canon(k); m = split(ENVIRON["SWARM_PRS_OVER"], o, "\n")
+      for (i = 1; i <= m; i++) if ((p = index(o[i], "\t")) > 0) over[substr(o[i], 1, p - 1)] = substr(o[i], p + 1) }
     FNR == 1 { n = 0; d = 0; s = FILENAME; sub(/.*\//, "", s); sub(/\.md$/, "", s)
-      while (!d && (getline l < (st "/" s)) > 0) if (index(l, "prs:") == 1) { d = 1; hit(substr(l, 5)) }
-      close(st "/" s) }
+      if (FILENAME in over) { d = 1; hit(over[FILENAME]) } }
     /^---$/ { n++; next }
     n == 1 && !d && index($0, "prs:") == 1 { d = 1; hit(substr($0, 5)) }' "${files[@]}"
 }
@@ -451,8 +459,6 @@ reset_story() {
   awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } $0 == c { s = 0 } END { exit s }' "${f}" \
     || die "reset: ${f} has the line '${ESCALATED_OPEN}' and no '${ESCALATED_CLOSE}' after it, so the block's end is unknown; put that line back where the block ends, then reset again"
   put="${from}"; [[ "${from}" != "${NO_KIND_LINE}" ]] || put=""
-  # A kind the file itself has, unless lead, is the lead's re-scope: set_fm then drops the state's line.
-  kind="$(get_fm - kind < "${f}")"; [[ "${kind}" == lead ]] || put="${kind}"
   [[ -z "${from}" || "$(get_fm "${f}" kind)" != lead ]] || set_fm "${f}" kind "${put}"
   set_fm "${f}" escalated_from
   set_fm "${f}" held_for
@@ -496,33 +502,55 @@ item_file() {
   else die "no story or epic '$1' in ${BOARD}"; fi
 }
 
-# set_status <file> <status> [prs] — set the item's status, and its prs to [prs] or nothing (set_fm).
-set_status() { set_fm "$1" status "$2"; set_fm "$1" prs "${3:-}"; }
+# set_status <file> <status> [prs] — set the item's status, and its prs to [prs] or nothing, in one
+# write (state_set).
+set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
 # too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
-# They live in STATE_DIR/board/, never in a tracked file. reconcile puts an older swarm.sh's edit to
+# They live in BOARD_STATE_DIR, never in a tracked file. reconcile puts an older swarm.sh's edit to
 # them in a board file back as committed on an item whose PRs merged, and carries another board
 # file's over its pull, so they never stop it.
 SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
 
-# set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> in its state file
-# (state_path), never in <file>; an empty <value> clears it. A value <file>'s front matter already
-# has needs no line, so the line goes and the file's reads again; a state file left with no line
-# goes too. <key> must be one of SET_FM_KEYS.
+# set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
+# an empty <value> clears it. <key> must be one of SET_FM_KEYS.
 set_fm() {
-  local s
   [[ " ${SET_FM_KEYS} " == *" $2 "* ]] || die "set_fm: $2 is not in SET_FM_KEYS"
-  state_path "$1"; s="${STATE_PATH}"
-  [[ -n "${s}" ]] || die "set_fm: $1 is not a story or epic in ${BOARD}"
-  mkdir -p "${s%/*}" && touch "${s}" || return 1
-  if ! awk -v k="$2" -v v="${3:-}" 'FILENAME == ARGV[1] { if (index($0, k ":") != 1) print; next }
-    /^---$/ && ++n == 2 { exit }
-    n == 1 && index($0, k ":") == 1 { t = substr($0, length(k) + 2); sub(/^ +/, "", t); exit }
-    END { if (t != v) print k ":" (v == "" ? "" : " " v) }' "${s}" "$1" > "${s}.tmp"; then
+  state_set "$1" "$2" "${3:-}"
+}
+
+# state_set <file> <key> <value> [<key> <value>]... — in one write to the item's state file
+# (state_path), never <file>: each <key>: <value> line, and <key>@base: with <file>'s front-matter
+# value now, which state_value compares. A value <file> already has needs no line, so its lines go and
+# the file's reads again; so do the lines of any key whose base <file> no longer has. A state file
+# left with no line goes. Fails, saying nothing, when any step fails.
+state_set() {
+  local f="$1" s in pairs=""
+  state_path "${f}"; s="${STATE_PATH}"; in="${s}"
+  [[ -n "${s}" ]] || die "set_fm: ${f} is not a story or epic in ${BOARD}"
+  shift
+  while [[ $# -gt 0 ]]; do pairs+="$1"$'\t'"${2:-}"$'\n'; shift 2 || shift; done
+  [[ -f "${s}" ]] || in=/dev/null
+  mkdir -p "${s%/*}" || return 1
+  # Either step failing fails the write, with no tmp file left.
+  if ! { SWARM_SET="${pairs}" awk 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+    function put(k, v) { print k ":" (v == "" ? "" : " " v) }
+    BEGIN { n = split(ENVIRON["SWARM_SET"], L, "\n")
+      for (i = 1; i <= n; i++) if ((p = index(L[i], "\t")) > 0) { k = substr(L[i], 1, p - 1); set[k] = substr(L[i], p + 1); order[++o] = k } }
+    FILENAME == ARGV[1] { if ($0 == "---") { m++; next }
+      if (m == 1 && (p = index($0, ":")) > 1 && !((k = substr($0, 1, p - 1)) in fv)) fv[k] = val($0, p)
+      next }
+    (p = index($0, ":")) > 1 { k = substr($0, 1, p - 1)
+      if (k ~ /@base$/) { k = substr(k, 1, length(k) - 5); if (!(k in b)) b[k] = val($0, p) }
+      else if (!(k in sv)) { sv[k] = val($0, p); keep[++c] = k } }
+    END { for (i = 1; i <= c; i++) { k = keep[i]
+        if (k in set || (k in b && b[k] != fv[k])) continue
+        put(k, sv[k]); if (k in b) put(k "@base", b[k]) }
+      for (i = 1; i <= o; i++) { k = order[i]; if (set[k] != fv[k]) { put(k, set[k]); put(k "@base", fv[k]) } } }' "${f}" "${in}" > "${s}.tmp" \
+    && mv "${s}.tmp" "${s}"; }; then
     rm -f "${s}.tmp"; return 1
   fi
-  mv "${s}.tmp" "${s}"
   [[ -s "${s}" ]] || rm -f "${s}"
 }
 

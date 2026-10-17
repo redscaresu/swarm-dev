@@ -252,14 +252,15 @@ that turns CI on the base green, does not clear the stop either: once the cause 
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
 `escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
 `close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to
-`.swarm/state/board/stories/<slug>` or `.swarm/state/board/epics/<slug>`, so a story and an epic with
+`.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
 the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
 reads a key from that file first and from the item's front matter second, so a key with no line
 there, as on an existing board, reads from the file; `dash` still draws its board rows from the
-files alone. A line with no value clears the key, and
-swarm.sh writes no line that would only repeat the file's value. A value in state wins over a later
-edit to the same key in the file; to let the file's value read again, delete that line or the whole
-state file. `finish` deletes an item's state file along with the item. The escalated block that
+files alone. A line with no value clears the key, and swarm.sh writes no line that would only repeat
+the file's value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
+Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
+read, and the next write to the item drops the old line. `finish` deletes an item's state file along
+with the item. The escalated block that
 `close` appends for the lead is still in the story file, and where an older swarm.sh left these keys
 uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
 

@@ -24,16 +24,16 @@ check() { # <name> <want> <got>
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 
 item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
-  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/state/board/${2%.md}"; shift 2
+  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/board-state/${2%.md}"; shift 2
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
-# val <item file> <key> — <key> as swarm.sh reads it: the item's state file (.swarm/state/board/ beside
+# val <item file> <key> — <key> as swarm.sh reads it: the item's state file (.swarm/board-state/ beside
 # its board) first, its file second.
 val() {
   local d="${1%/*}" s
-  s="${d%/*/*}/.swarm/state/board/${d##*/}/$(basename "$1" .md)"
+  s="${d%/*/*}/.swarm/board-state/${d##*/}/$(basename "$1" .md)"
   if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "$1"; fi
 }
 # legacy_review <story file> <url> — what an older swarm.sh's review wrote, in the file itself.

@@ -157,12 +157,13 @@ outcomes_report() {
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
     text="$(story_text "${slug}")"; prs=""; asked=""
-    # kind: and escalated_from: from the story's state file (set_fm) first, its text second.
-    kind="$(state_key "${STATE_DIR}/board/stories/${slug}" kind 2>/dev/null)" \
-      || kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"
+    # A story on the board: kind: and escalated_from: through fm, its state file first.
+    if [[ -f "${BOARD}/stories/${slug}.md" ]]; then
+      kind="$(fm "${BOARD}/stories/${slug}.md" kind)"; from="$(fm "${BOARD}/stories/${slug}.md" escalated_from)"
+    else
+      kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
+    fi
     [[ -z "${text}" ]] || kind="${kind:-code}"
-    from="$(state_key "${STATE_DIR}/board/stories/${slug}" escalated_from 2>/dev/null)" \
-      || from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
     # shellcheck disable=SC2016 # $b is jq's
