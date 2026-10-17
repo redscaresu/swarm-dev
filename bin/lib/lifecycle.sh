@@ -431,13 +431,14 @@ lead_block() {
   from="$(get_fm "${f}" kind)"
   urls="$(json "'\n'.join('- ' + p['url'] for p in d)" <<< "${3:-[]}")"
   [[ -z "${urls}" ]] || k="$(grep -c . <<< "${urls}")"
-  set_fm "${f}" kind lead
-  set_fm "${f}" escalated_from "${from:-${NO_KIND_LINE}}"
-  mkdir -p "$(dirname "${e}")"
+  # The block first: a story escalated with no block would leave the lead nothing to decide from.
+  mkdir -p "$(dirname "${e}")" 2>/dev/null || die "$1: could not create $(dirname "${e}") for its block, so the story is left as it was"
   { printf '%s\n' "$2"
     echo
     if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "${4:-No PR was found on story/$1.}"; fi
-  } > "${e}"
+  } 2>/dev/null > "${e}" || die "$1: could not write its block to ${e}, so the story is left as it was"
+  set_fm "${f}" kind lead
+  set_fm "${f}" escalated_from "${from:-${NO_KIND_LINE}}"
   echo "${k}"
 }
 
