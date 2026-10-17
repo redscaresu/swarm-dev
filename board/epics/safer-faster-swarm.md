@@ -1,6 +1,5 @@
 ---
 status: active
-depends_on: [leaner-faster-swarm]
 ---
 
 # Merges that need no hand cleanup, agents that cannot leak secrets, and builds that wait less
@@ -19,12 +18,41 @@ The throughput numbers come from `swarm.sh outcomes` and git:
 - swarm-dev CI takes about 10 minutes, and every review round waits on it.
 
 **Done when:**
-- **Board state out of git.** A story's `status`, `attempts`, `prs` and other front-matter fields that swarm.sh writes live in `.swarm/state/`, not in tracked files. Tracked story files change only through PRs. `reconcile` loses its backup-and-restore step. A test shows that a conductor marking a story `review` leaves `git status` clean, and that a PR deleting that story pulls cleanly.
+- **Board state out of git.** A story's `status`, `attempts`, `prs` and other front-matter fields that swarm.sh writes live in `.swarm/state/`, not in tracked files. Tracked story files change only through PRs. `reconcile` loses its backup-and-restore step. A test shows that a conductor marking a story `review` leaves `git status` clean, and that a PR deleting that story pulls cleanly. No role leaves any board edit in the main checkout: a conductor's scope or body edit to a story goes through its own board PR, as the lead's do. On 2026-10-17 three such edits sat uncommitted in swarm-dev's main checkout, and one blocked the pull after infrafactory #597.
 - **A story's PR removes its story.** When the board is inside the repo being built, a builder's PR deletes its own story file (the epic's last story deletes the epic file too), so the board updates when the code merges. A story on an external board (another repo or a notes vault, which the builder leaves alone today, bin/swarm.sh:2330-2333) and a story that ends with no PR still leave through `finish` after the merge. A test covers a one-off, an epic story and an external-board story.
 - **Agents get an allowlist, not the user's environment.** Panes start with a fixed set of environment variables (`PATH`, `HOME`, `TERM`, locale, and the ones swarm.sh sets). Any other variable reaches a pane only when the story names it under `env:`. A test starts a pane with a fake secret in the parent environment and shows the builder cannot see it unless the story names it.
 - **One merge path.** `swarm.sh merge` is the only merge command any role runs. It checks the head SHA and green checks, and holds `costs: money` stories. The merge guard hook blocks every other form, and the lead's docs stop telling it to write merge scripts. A test shows the hook blocks a raw `gh pr merge` and a `swarm.sh merge` chained into another command.
 - **A fallback reviewer.** When codex answers with a usage limit, the review step starts a review agent on another model family or tier (set in config), logs it as `reviewer: fallback`, and the PR body says so. A test stubs codex's limit message and shows the fallback runs.
 - **swarm.sh split by command.** `bin/swarm.sh` keeps dispatch and shared helpers, and each command group lives in `bin/lib/<group>.sh`. No file is over 1500 lines. The 19 Python heredocs inside swarm.sh (dash, outcomes and the reports) move to real files under `bin/lib/*.py`, so they can be linted and tested on their own, and the bash calls them. The split moves code without changing it (the test suite passes unchanged), so the story size cap below does not apply to it; it may land as up to three PRs, one per group of commands. It merges first, alone, before any other story of the epic starts. After the epic, `flow` reports the share of PRs that needed main merged in, set beside the 55% baseline.
+- **A PR wait that fails loudly.** `swarm.sh wait-pr <url>` returns when no check on the PR's head is pending, prints each check and the head SHA, and exits non-zero on any `gh` error or an empty check list. It never reads an error as "still pending". The lead's docs use it instead of hand-written loops. On 2026-10-17 a hand-written wait ran under zsh, which does not split words, so every `gh` call failed into `2>/dev/null` and the wait looped silently while both PRs were green. A test stubs `gh` to fail and shows `wait-pr` exits non-zero within one poll.
+- **Follow-ups do not hold an epic open.** An epic is done when its agent stories have merged. A `kind: lead` story that only measures after the epic (it waits for a later epic or a release) is marked `after: <epic>`, stays on the board as a standalone lead story, and does not count toward the epic's progress or keep it active. On 2026-10-17 four swarm-dev epics sat one story short of done this way (flow-speedups 11/12, goal-for-builders 8/9, review-yield 4/5, leaner-faster-swarm 25/27). A test shows an epic whose only open story is an `after:` lead story counts as done in `next`, `dash` and `status`.
+- **Builder subagents measured.** `outcomes` and `flow` show the tokens and cost of builder subagents separately from the builder's own, by model. `builder_subagent_model` is empty, so subagents run on the builder's model (Opus). If their share of build cost is over 10%, the lead files a lead story to trial `builder_subagent_model = haiku` on one epic, set beside the Opus baseline the way `sonnet_share` was trialled.
+- **Cost against effectiveness, per model and kind of story (user, 2026-10-17).** Before more work moves to cheaper models, `flow` gets a model-fit table. Each row is a model (and effort) crossed with a story class: `kind`, `risk`, the size estimate bucket, and the top-level area the story touches (for example `bin/`, `commands/`, `docs/`, `tests/`). Each cell shows:
+  - stories built and cost per merged story;
+  - first-attempt merge rate and mean attempts;
+  - substantive findings per PR;
+  - rework (a later fix within 7 days) and escaped findings;
+  - minutes from start to merge.
+  A cell with fewer than 5 stories prints its count and no verdict. The table reads events.tsv, findings.tsv and the logs, with no new store, and covers builders, subagents and escalations to Fable. A test on fixture data checks each column. Choosing a model per story from this table is left for later, once the cells hold enough stories. The `sonnet_share` and subagent-model trials report through this table.
+- **A stronger model steps in when a cheaper one struggles (user, 2026-10-17).** Today `escalate_after` moves a story to Fable only after whole failed attempts. This adds a ladder (`escalate_ladder = sonnet,opus,fable`, off by default) and earlier triggers during a build. A builder on a cheaper model moves one rung up when any of these happens:
+  - its PR needs a third findings round;
+  - CI fails twice on its own changes;
+  - it is `stalled?`;
+  - it closes with no PR.
+  The stronger model takes over the same branch and worktree with a handover brief (the story, the diff so far, open findings, failing checks), so the cheaper model's work is kept rather than redone. Each step is an `escalate` event with the trigger and both models, the PR body names every model that worked on it, and the model-fit table counts the story against the model it started on. A test stubs each trigger and shows the next rung takes over the same branch. Turning the ladder on is its own lead story.
+- **Sonnet only on easy stories (user, 2026-10-17).** Today `sonnet_share` picks one in N of any `kind: code` story without `risk: high` (bin/swarm.sh:2420-2435), however large. The pick also requires an `easy` story: plan-epic marks a story `easy: true` when its size estimate is under about 100 lines, it adds no new command, and it does not touch the split's shared helpers. Docs and chore stories marked easy are eligible too. Every other story stays on Opus. A test shows a non-easy story is never built on Sonnet at any `sonnet_share`. The model-fit table decides whether the bar later moves.
+- **Predictions scored, and kept as training data (user, 2026-10-17).** Each plan-time prediction is checked against what happened, and every story becomes one labelled example.
+  - `swarm.sh dataset` writes one JSON line per finished story. The inputs are the story as planned: its text, `kind`, `risk`, `touches`, `depends_on`, size estimate and `easy` label, read from git at the board PR that added it, so nothing new is stored at plan time. The results come from events.tsv, findings.tsv and git:
+    - actual diff lines and files;
+    - attempts and findings rounds;
+    - substantive findings;
+    - rework within 7 days;
+    - cost and minutes;
+    - every model that worked on it, and any escalation with its trigger.
+  - Each line also carries a derived `was_easy` label: merged on the first attempt, at most one findings round, no rework, and a diff under the easy bound. The label's rule is versioned in the line.
+  - `flow` prints how good the `easy` prediction was (precision and recall against `was_easy`) and the planner's size-estimate error, per planner model.
+  - The dataset stays local under `.swarm/`, is never committed, and carries no environment, credentials or transcript text.
+  - A test on fixture data checks one easy-and-was-easy story, one easy-but-was-hard story and one escalated story.
 - **Story size cap.** plan-epic's decompose and skeptic briefs cap a story at one new command or one changed behaviour, and an estimated diff of about 300 lines. A skeptic refutes any story over the cap. The plan report lists each story's estimate.
 - **CI under 3 minutes, and board PRs in under 1.** Measured on 2026-10-17: the test job runs 32 files one after another for about 9 minutes. The slowest are epic_test 117 s, dash_test 98 s, review_test 70 s and next_test 44 s.
   - The test files run in parallel (a CI matrix or `xargs -P`, and the same in `make test`). epic_test and dash_test are split so no file takes over 60 s.
@@ -53,11 +81,13 @@ The throughput numbers come from `swarm.sh outcomes` and git:
   - **Two reporting commands, not six.** `cost`, `features` and `review-yield` fold into `outcomes` (one row per story) and `flow` (totals per epic and per day). `findings` stays, because it is a review tool and not a report. The telemetry above lands as columns and sections in those two, not as new commands. Each removed command prints where its numbers went, for one release.
 - **init sets up a new project like infrafactory.** `swarm.sh init` writes a CI board-only fast path, a pre-commit hook that runs the project's `check`, and an optional `commit_trailers` config line that builders add to every commit. A test runs init on an empty repo and checks each one.
 
+- **Docs a newcomer and an agent can use (user, 2026-10-17).** After the epic's other stories merge, one docs story reviews README.md, docs/*.md, commands/*.md, templates/ and every diagram against the code as it then stands. Each claim, command, flag and file path must match the code, and each section is cut to what a person needs to start. `make doc-check` (or the existing hygiene test) fails on a command, setting or path in the docs that `swarm.sh` does not have. For agents: `llms.txt` at the repo root maps the docs in a few lines, plugin.json's description and keywords say what the plugin does and when to use it, and each skill's description names the request that should trigger it. A fresh-agent test: an agent given only the repo URL and "set up swarm-dev for this repo" finds `swarm.sh init` and the first `/swarm-dev:swarm` from llms.txt or the README. It is the last story before the release.
+
 **Out of scope:** remote or cloud-hosted agents, and a web UI beyond `dash`.
 
 **Constraints:**
 - The split story merges before any other story of this epic, because every other story touches swarm.sh.
 - New settings ship off where they change behaviour (the env allowlist ships on, because it is a safety fix). A switch-on is its own lead story.
-- Planned with the plan-epic and conductor that leaner-faster-swarm releases. The lead installs that release (`claude plugin update`) before planning.
+- Planned with the plan-epic and conductor that leaner-faster-swarm released in 0.21.0 (installed 2026-10-17). leaner-faster-swarm's two open stories are lead measurements after the release, so this epic no longer waits on it.
 
 **Your part:** none. The lead plans, builds and merges, since swarm-dev is merge = agent.
