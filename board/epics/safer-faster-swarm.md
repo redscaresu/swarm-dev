@@ -41,6 +41,18 @@ The throughput numbers come from `swarm.sh outcomes` and git:
   - it closes with no PR.
   The stronger model takes over the same branch and worktree with a handover brief (the story, the diff so far, open findings, failing checks), so the cheaper model's work is kept rather than redone. Each step is an `escalate` event with the trigger and both models, the PR body names every model that worked on it, and the model-fit table counts the story against the model it started on. A test stubs each trigger and shows the next rung takes over the same branch. Turning the ladder on is its own lead story.
 - **Sonnet only on easy stories (user, 2026-10-17).** Today `sonnet_share` picks one in N of any `kind: code` story without `risk: high` (bin/swarm.sh:2420-2435), however large. The pick also requires an `easy` story: plan-epic marks a story `easy: true` when its size estimate is under about 100 lines, it adds no new command, and it does not touch the split's shared helpers. Docs and chore stories marked easy are eligible too. Every other story stays on Opus. A test shows a non-easy story is never built on Sonnet at any `sonnet_share`. The model-fit table decides whether the bar later moves.
+- **Predictions scored, and kept as training data (user, 2026-10-17).** Each plan-time prediction is checked against what happened, and every story becomes one labelled example.
+  - `swarm.sh dataset` writes one JSON line per finished story. The inputs are the story as planned: its text, `kind`, `risk`, `touches`, `depends_on`, size estimate and `easy` label, read from git at the board PR that added it, so nothing new is stored at plan time. The results come from events.tsv, findings.tsv and git:
+    - actual diff lines and files;
+    - attempts and findings rounds;
+    - substantive findings;
+    - rework within 7 days;
+    - cost and minutes;
+    - every model that worked on it, and any escalation with its trigger.
+  - Each line also carries a derived `was_easy` label: merged on the first attempt, at most one findings round, no rework, and a diff under the easy bound. The label's rule is versioned in the line.
+  - `flow` prints how good the `easy` prediction was (precision and recall against `was_easy`) and the planner's size-estimate error, per planner model.
+  - The dataset stays local under `.swarm/`, is never committed, and carries no environment, credentials or transcript text.
+  - A test on fixture data checks one easy-and-was-easy story, one easy-but-was-hard story and one escalated story.
 - **Story size cap.** plan-epic's decompose and skeptic briefs cap a story at one new command or one changed behaviour, and an estimated diff of about 300 lines. A skeptic refutes any story over the cap. The plan report lists each story's estimate.
 - **CI under 3 minutes, and board PRs in under 1.** Measured on 2026-10-17: the test job runs 32 files one after another for about 9 minutes. The slowest are epic_test 117 s, dash_test 98 s, review_test 70 s and next_test 44 s.
   - The test files run in parallel (a CI matrix or `xargs -P`, and the same in `make test`). epic_test and dash_test are split so no file takes over 60 s.
