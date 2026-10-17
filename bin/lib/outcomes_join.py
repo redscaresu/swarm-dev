@@ -67,12 +67,18 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
     # finds a merged story), as (slug, day it was deleted); None when git has none. Read on the
-    # default branch, where merges land, so a story branch deleting its own file is no merge. Each
-    # commit prints as "\x01<day>\0" and then its deleted paths (from the repo root, any characters),
-    # each ending "\0". Without --pickaxe-all, -G lists only the files whose removed lines name the
-    # kind, so a story deleted beside it is never taken for it.
-    got = subprocess.run(["git", "-C", sys.argv[2], "log", "origin/HEAD", "--diff-filter=D", "-z", "--name-only",
-                          "--format=%x01%cs", "-G", f"^checks: *{kind} *$", "--", "stories/"], capture_output=True, text=True)
+    # default branch, where merges land (HEAD when there is no origin/HEAD, as dash_base_ref), so a
+    # story branch deleting its own file is no merge. --first-parent dates it by the merge commit, and
+    # --no-renames keeps a story deleted beside a similar new one a deletion. Each commit prints as
+    # "\x01<day>\0" and then its deleted paths (from the repo root, any characters), each ending "\0".
+    # Without --pickaxe-all, -G lists only the files whose removed lines name the kind, so a story
+    # deleted beside it is never taken for it.
+    board = sys.argv[2]
+    has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
+    got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
+                          "--first-parent", "--diff-merges=first-parent", "--no-renames", "--diff-filter=D", "-z",
+                          "--name-only", "--format=%x01%cs", "-G", f"^checks: *{kind} *$", "--", "stories/"],
+                         capture_output=True, text=True)
     commits = got.stdout.split("\x01")[1:] if got.returncode == 0 else []
     if not commits:
         return None

@@ -573,8 +573,9 @@ fixed (or escaped) on 3 or more distinct PRs in the last 30 days, today included
 TSV with the columns `recurring prs_30d check check_merged before_30d since_30d`. A declined finding
 does not count, and neither does a row whose date is impossible or in the future. Once a story that
 names the kind in its front matter (`checks: <kind>`) has merged, which means it was deleted on the
-default branch (`origin/HEAD`) and git still has it, `check` is its slug and `check_merged` is the
-day it was deleted. `before_30d` is how many PRs the kind was fixed on in the 30 days before that
+default branch (`origin/HEAD`, or `HEAD` when there is none) and git still has it, `check` is its
+slug and `check_merged` is the day of the commit on that branch that deleted it (the merge commit,
+for a merged branch). `before_30d` is how many PRs the kind was fixed on in the 30 days before that
 day, and `since_30d` the same for the 30 days from it, so you can see whether the check helped. Until
 30 days have passed, `since_30d` reads `<n>/<days>d`, the days it covers so far: `1/3d` three days
 after the merge is too soon to judge. With nothing recurring, the block is left out. `flow` and `review-yield` skip these lines.

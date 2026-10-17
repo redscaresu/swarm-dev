@@ -69,15 +69,27 @@ check "a check story still on the board shows no counts" "$(block)" "${UNCHECKED
 # One commit deletes the spaced check story and a story without checks: (which sorts first).
 git -C "${P}" rm -q "docs/stories/missing check.md" docs/stories/a-note.md
 GIT_COMMITTER_DATE="${OLD}T12:00:00" commit merged-old && merged
+# The story branch deletes vacuous-check beside a new story much like it (a rename, to git's eye), 12
+# days ago; main merges it with a merge commit 10 days ago.
+base="$(git -C "${P}" symbolic-ref --short HEAD)"
+git -C "${P}" checkout -q -b story/vacuous
 git -C "${P}" rm -q docs/stories/vacuous-check.md
-GIT_COMMITTER_DATE="$(ago 10)T12:00:00" commit merged-recent
+printf -- '---\nkind: code\nstatus: ready\n---\n' > "${P}/docs/stories/vacuous-next.md"
+git -C "${P}" add -A && GIT_COMMITTER_DATE="$(ago 12)T12:00:00" commit story-deletes
 check "a check story deleted only on the local branch, not on origin/HEAD, shows no counts" \
   "$(block | grep '^vacuous-test')" $'vacuous-test\t3\t\t\t\t'
-merged
+git -C "${P}" checkout -q "${base}"
+GIT_COMMITTER_DATE="$(ago 10)T12:00:00" git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false \
+  merge -q --no-ff -m merged-recent story/vacuous && merged
 check "a merged check story (a path with a space, deleted beside a story without checks:) shows its PRs in the 30 days before and since; an impossible date counts in neither" \
   "$(block | grep '^missing-check')" $'missing-check\t3\tmissing check\t'"${OLD}"$'\t1\t0'
+VACUOUS=$'vacuous-test\t3\tvacuous-check\t'"$(ago 10)"$'\t3\t1/11d'
 check "fewer than 30 days after the merge, since_30d shows the days it covers, and a future fix is not counted" \
-  "$(block | grep '^vacuous-test')" $'vacuous-test\t3\tvacuous-check\t'"$(ago 10)"$'\t3\t1/11d'
+  "$(block | grep '^vacuous-test')" "${VACUOUS}"
+check "a check story deleted beside a similar new one still counts, dated by the merge commit, not the branch's" \
+  "$(block | grep '^vacuous-test' | cut -f3,4)" "vacuous-check"$'\t'"$(ago 10)"
+git -C "${P}" symbolic-ref --delete refs/remotes/origin/HEAD
+check "with no origin/HEAD (a clone that never set it), HEAD is read" "$(block | grep '^vacuous-test')" "${VACUOUS}"
 
 echo "${fails} failure(s)"
 [[ "${fails}" -eq 0 ]]
