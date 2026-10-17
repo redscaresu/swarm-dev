@@ -10,11 +10,9 @@
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
-#   swarm.sh cost [--since YYYY-MM-DD]                      tokens and estimated cost per role, from the agents' logs
-#   swarm.sh features [--since YYYY-MM-DD]                  each feature in docs/features.tsv: its uses in the logs, its metric and baseline, and delete? when unused or unmeasured
+#   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
-#   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]  per epic and project: builders at once, stories per chain, review wait, stacked starts
-#   swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]  findings raised, fixed and declined and the decline rate per reviewer and kind, and review rounds per PR
+#   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
@@ -131,7 +129,14 @@ find_project() {
   main_checkout "$(pwd -P)" || die "not in a swarm project: no .claude/swarm/config above here and not in a git repo"
 }
 
-PROJECT_DIR="$(find_project)"
+# dash --project draws only the projects it names, so it runs anywhere: with no project here, the
+# cwd stands in (no config there, so every setting keeps its default). Without SWARM_PROJECT the
+# lookup's only failure is "not in a swarm project"; a bad SWARM_PROJECT still stops it.
+if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]]; then
+  PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
+else
+  PROJECT_DIR="$(find_project)"
+fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
@@ -341,14 +346,14 @@ dispatch() {
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
-    cost)   cost_report "$@" ;;
+    cost)   moved cost cost "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     outcomes) outcomes_report "$@" ;;
     flow)   flow_report "$@" ;;
-    review-yield) review_yield_report "$@" ;;
+    review-yield) moved review-yield reviewers "[--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
-    features) features_report "$@" ;;
+    features) moved features features "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
     reset)  reset_story "${1:-}" "${*:2}" ;;
@@ -367,6 +372,7 @@ dispatch() {
     _base)  base_for "${1:?repo dir}" ;;                          # test hook: the base branch for a repo
     _role)  role="$(story_role "${1:?slug}")" || die "${role}"; echo "${role}" ;;   # test hook: the role a story is built as
     _name)  agent_name "${1:?slug}"; echo ;;                      # test hook: the agent name for a slug
+    _brief) src="$(repo_dir "$(fm "${BOARD}/stories/${1:?slug}.md" repo)")" || die "${src}"; story_brief "$1" "${src}" main ;;   # test hook: a story's builder brief
     _target) own_target "$(agent_name "${1:?name}")" ;;          # this project's pane for an agent name, to address herdr by
     _label) tab_label "${1:?name}" ;;                             # test hook: the tab label for an agent name
     _archive) archive_session "${1:?name}" ;;                     # test hook: close's copy of an agent's session log
@@ -383,7 +389,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait watch base _base _role _name _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait watch base _base _role _name _brief _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {

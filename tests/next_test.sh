@@ -145,14 +145,14 @@ expect "an escalated story is the lead's to decide, ahead of gate" "escalated b"
   "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'"
 # `close <slug> impossible` hands a story on with an **Impossible.** block: the lead's, like a failed
 # Fable build, so escalated, never a gate; next's reason says its builder called it impossible.
-IMPOSSIBLE_BLOCK="printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**Impossible.** The builder replied' '<!-- /swarm.sh escalated -->' >> docs/stories/b.md"
+IMPOSSIBLE_BLOCK="mkdir -p .swarm/escalated && echo '**Impossible.** The builder replied' > .swarm/escalated/b"
 expect "an impossible story is the lead's to decide, escalated, not a gate" "escalated b" \
   "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 1' 'escalated_from: code'" "${IMPOSSIBLE_BLOCK}"
-# shellcheck disable=SC2016 # the setup is eval'd inside the fixture
+# drop deletes the story in a board PR (pr_removes_story_test.sh); here that PR has landed.
 expect "once the lead drops it, next no longer names it" "gate" \
   "item stories/a.md 'status: ready' 'kind: lead'" \
   "item stories/b.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'" \
-  'bash "${SWARM}" drop b "two Fable builds failed" >/dev/null'
+  'rm docs/stories/b.md'
 # The escalated story is the lead's, so status's Waiting on you lists the plain lead story, not it.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories && item stories/a.md 'status: ready' 'kind: lead' \
