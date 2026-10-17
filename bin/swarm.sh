@@ -4005,12 +4005,13 @@ merge_pr() {
 }
 
 # costs_diff — the path of the first file in a unified diff (stdin) whose added or removed lines include
-# a costs: line, or a block-list line under one in the hunk's view; else nothing.
+# a costs: line, or a block-list line under one: the key above it in the hunk, or, past the context,
+# the one git names after the hunk's @@ (the last line above it that starts with a letter).
 costs_diff() {
   awk '/^diff / { f = ""; key = ""; next }
     /^--- / { if ($2 != "/dev/null") { f = $2; sub(/^a\//, "", f) }; next }
     /^\+\+\+ / { if ($2 != "/dev/null") { f = $2; sub(/^b\//, "", f) }; next }
-    /^@@/ { key = ""; next }
+    /^@@/ { key = $0; if (!sub(/^@@[^@]*@@ ?/, "", key)) key = ""; key = tolower(key); next }
     /^[ +-]/ { l = substr($0, 2)
       if (l ~ /^([[:space:]]|-)/) { c = 1 } else { c = 0; key = tolower(l) }
       if ($0 ~ /^[+-]/ && (tolower(l) ~ /^costs:/ || (c && key ~ /^costs:/))) { print f; exit } }'

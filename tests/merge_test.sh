@@ -424,6 +424,9 @@ merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose dif
 fresh "merge = agent"; rm "${S}"
 printf 'diff --git a/docs/stories/t.md b/docs/stories/t.md\n--- a/docs/stories/t.md\n+++ b/docs/stories/t.md\n@@ -2,4 +2,4 @@\n status: review\n costs:\n-  - money\n+  - none\n' > "${FX}/diff"
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose diff changes a costs: block-list line" "changes a costs: line in docs/stories/t.md"
+fresh "merge = agent"; rm "${S}"
+printf 'diff --git a/docs/stories/t.md b/docs/stories/t.md\n--- a/docs/stories/t.md\n+++ b/docs/stories/t.md\n@@ -5,6 +5,6 @@ costs:\n   # two\n   # three\n   # four\n-  - money\n+  - none\n status: review\n' > "${FX}/diff"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose diff changes a block-list line past the context, named by the hunk header" "changes a costs: line in docs/stories/t.md"
 # review's held line names a parent that costs money.
 fresh "merge = agent"; item s "status: blocked" "depends_on: [p]"; item p "status: ready" "costs: money"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review s "${URL}" > "${ROOT}/out" 2>&1) || true
