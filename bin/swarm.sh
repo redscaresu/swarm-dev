@@ -579,9 +579,9 @@ claude_agents() { claude agents --json 2>"${1:-/dev/null}"; }
 session_state() {
   local list ok=1 out
   list="$(claude_agents)" || ok=""
-  out="$(printf '%s' "${list}" | SWARM_LIST_OK="${ok}" PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
+  out="$(printf '%s' "${list}" | SWARM_LIST_OK="${ok}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
-from panes import *
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 s = session_state(sys.argv[1], sys.argv[2], sys.stdin.read() if os.environ["SWARM_LIST_OK"] else None)
 print("herdr" if s is None else s[0] + (": " + s[1] if s[1] else ""))' "${AGENTS_LOG}" "$1")" || out=""
   echo "${out:-unknown}"
@@ -604,9 +604,9 @@ waiting_for() { local w="${1#waiting: }"; [[ "${w}" != "$1" ]] || w="a prompt"; 
 # login_expired <name> — succeed when <name>'s Claude session stopped on an expired login (panes.py's
 # login_expired): only the user's /login clears it, so nudging or waiting on it is wasted.
 login_expired() {
-  PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
-from panes import *
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
@@ -3462,9 +3462,9 @@ watch_prs() {
       # Code's, or the reader) changes nothing: a failed Claude list would read every session unknown.
       if agents="$(herdr agent list 2>/dev/null)" && sessions="$(claude_agents)" \
         && now="$(printf '%s' "${agents}" | SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
-        PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
+        SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
-from panes import *
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 own = set(os.environ["SWARM_OWN"].split())
 for a in json.load(sys.stdin)["result"]["agents"]:
     name = a.get("name")
@@ -3701,9 +3701,9 @@ dash_size() {
 # dash_legend — the legend dash_frame draws once under several projects: legend_lines, then from 140
 # columns the keys on a line of their own; dim when DASH_COLOR is 1.
 dash_legend() {
-  PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
-from dash_legend import *
+sys.path.insert(0, os.environ["SWARM_LIB"]); from dash_legend import *
 w, keys, lead, color = max(int(sys.argv[1]), 40), sys.argv[2] == "1", sys.argv[3] == "session", sys.argv[4] == "1"
 rows = legend_lines(w, keys, w >= 140, lead) + (["   " + KEYWORDS + ("" if keys else " (with --watch)")] if w >= 140 else [])
 rows = [r if len(r) <= w else r[:w - 1] + "…" for r in rows]
@@ -3937,10 +3937,9 @@ dash_render() {
     [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_work_time "${r}")"$'\n'
   done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
     | SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
-      DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
+      DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import json, os, sys
-from stall import *
-from panes import *
+sys.path.insert(0, os.environ["SWARM_LIB"]); from stall import *; from panes import *
 E = os.environ
 rows = [l.rstrip("\n").split("\t") for l in sys.stdin]
 own = set(E["SWARM_OWN"].split())
@@ -4007,7 +4006,7 @@ archive_session() {
   [[ -n "${session}" && "${session}" != - ]] || return 0
   dir="${SESSIONS_DIR}"
   for f in "${dir}"/*-"${session}".jsonl.gz; do [[ ! -e "${f}" ]] || return 0; done
-  src="$(PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c 'import os, sys; from report import *; print(session_log(*sys.argv[1:3]))' \
+  src="$(SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c 'import os, sys; sys.path.insert(0, os.environ["SWARM_LIB"]); from report import *; print(session_log(*sys.argv[1:3]))' \
     "${CLAUDE_PROJECTS}" "${session}" 2>/dev/null || true)"
   [[ -n "${src}" ]] || return 0
   # Readable by this user only: the copy may hold secrets.
