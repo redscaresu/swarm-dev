@@ -183,3 +183,9 @@ error that stopped it, or `failed (exit N)`). Every command writes it except the
 (`dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, `wait`, `watch`,
 `base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
 holds names and paths, never the contents of a brief or a message.
+
+`tests/dash_golden_test.sh` draws a fixed two-project board (`tests/fixtures/dash/two_projects.sh`)
+at 60, 100 and 200 columns and compares each frame with `tests/fixtures/dash/golden-<cols>.txt`.
+The fixture sets `SWARM_DASH_NOW`, which fixes dash's clock, so the frames come out the same on
+every run. If you change what dash draws, run `UPDATE_GOLDEN=1 bash tests/dash_golden_test.sh` and
+commit the regenerated frames in the same PR, so the review shows the new look as a diff.
