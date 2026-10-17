@@ -45,5 +45,9 @@ A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the f
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
 worktree of `../<name>`, and the lead deletes the story file once that PR merges.
 
+A story that adds a test, lint rule, hook or review-prompt line for a kind of finding that keeps
+recurring names it with `checks: <kind>`. Once it merges, `swarm.sh outcomes` shows how many PRs the
+kind was fixed on in the 30 days before the merge and in the 30 days since.
+
 Running several at once: swarm-dev `docs/reference.md` § Building. In Obsidian, `docs/` is
 the vault and `docs/Board.base` is the board.

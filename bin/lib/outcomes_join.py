@@ -1,8 +1,10 @@
-import collections, datetime, os, sys
+import collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
 NO_PR = ("", "", "", "", "")
+RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct PRs recurs
+RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
     # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
@@ -61,3 +63,34 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
                      str(fixed), pr, state, attempts] + f[13:]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[13], created), minutes(created, merged), main_merges]))
+
+def check_story(kind):
+    # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
+    # finds a merged story), as (slug, day it was deleted); None when git has none.
+    got = subprocess.run(["git", "-C", sys.argv[2], "log", "--diff-filter=D", "--format=%cs", "--name-only",
+                          "-G", f"^checks: *{kind} *$", "--", "stories/"], capture_output=True, text=True)
+    lines = got.stdout.split() if got.returncode == 0 else []
+    return (os.path.splitext(os.path.basename(lines[1]))[0], lines[0]) if len(lines) > 1 else None
+
+def day(d, days=0):
+    return (d + datetime.timedelta(days=days)).isoformat()
+
+# After a blank line, every kind fixed (or escaped) on RECURRING_MIN_PRS or more PRs in the last
+# RECURRING_DAYS days, most PRs first; once its check story merged, its PRs in the RECURRING_DAYS
+# before that day and in the RECURRING_DAYS from it. flow and review-yield skip these lines: they
+# are not a row's width.
+fixed = [f for f in fixed_rows(sys.argv[1]) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f[0])]
+def prs(kind, start, end):
+    return len({pr_key(pr) for d, k, pr, _ in fixed if k == kind and start <= d < end})
+today = datetime.date.today()
+recent = {k: prs(k, day(today, -RECURRING_DAYS), day(today, 1)) for k in {f[1] for f in fixed}}
+flagged = sorted((k for k, n in recent.items() if n >= RECURRING_MIN_PRS), key=lambda k: (-recent[k], k))
+if flagged:
+    print("\nrecurring\tprs_30d\tcheck\tcheck_merged\tbefore_30d\tsince_30d")
+for kind in flagged:
+    check, merged = (re.fullmatch(r"[a-z0-9-]+", kind) and check_story(kind)) or ("", "")
+    counts = ["", ""]
+    if merged:
+        m = datetime.date.fromisoformat(merged)
+        counts = [str(prs(kind, day(m, -RECURRING_DAYS), merged)), str(prs(kind, merged, day(m, RECURRING_DAYS)))]
+    print("\t".join([kind, str(recent[kind]), check, merged] + counts))
