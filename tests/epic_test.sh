@@ -106,11 +106,9 @@ item() { # <board> <path> <front-matter line>... — a fresh item: its file, and
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
-# val <slug> <key> — <key> of a story on ${b} as swarm.sh reads it: its state file first, its file second.
-val() {
-  local s="${p}/.swarm/board-state/stories/$1"
-  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "${b}/stories/$1.md"; fi
-}
+# val <slug> <key> — <key> of a story on ${b} as swarm.sh reads it: board.sh's own get_fm.
+# shellcheck source=/dev/null
+val() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
 
 # goal_story <board> <slug> <front-matter line>... — a story with a Done when and a From review block,
 # and a From the spike block that is not part of a goal.

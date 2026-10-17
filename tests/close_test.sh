@@ -77,12 +77,9 @@ git -C "${P}" remote add origin "${ROOT}/origin.git"
 "${GIT[@]}" -C "${P}" commit -q --allow-empty -m init && git -C "${P}" push -q origin HEAD:refs/heads/main
 # item <slug> <front-matter line>... — a fresh story: its file, and no state file.
 item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/docs/stories/$1.md"; rm -f "${P}/.swarm/board-state/stories/$1"; }
-# fmv <slug> <key> — <key> as swarm.sh reads it: the story's state file first, its front matter second.
-fmv() {
-  local s="${P}/.swarm/board-state/stories/$1"
-  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; return; fi
-  awk -v k="$2" '/^---$/ && ++n == 2 { exit } n == 1 && index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "${P}/docs/stories/$1.md"
-}
+# fmv <slug> <key> — <key> as swarm.sh reads it: board.sh's own get_fm.
+# shellcheck source=/dev/null
+fmv() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${BOARD}/stories/$1.md" "$2"); }
 # put <slug> <key: value>... — lines in the story's state file, as swarm.sh writes them.
 put() { mkdir -p "${P}/.swarm/board-state/stories"; printf '%s\n' "${@:2}" >> "${P}/.swarm/board-state/stories/$1"; }
 started() { # <slug> [pane] — its worktree on story/<slug>, pushed, and an untracked file; with a pane, its builder open there
@@ -99,7 +96,7 @@ left() { # <slug> — which of its worktree, local story/<slug> and origin's are
   ! git -C "${ROOT}/origin.git" show-ref -q --verify "refs/heads/story/$1" || o+=" origin"
   echo "${o# }"
 }
-attempts() { fmv "$1" attempts 2>/dev/null || true; }   # front matter only, under the state file
+attempts() { fmv "$1" attempts 2>/dev/null || true; }
 U="https://github.com/o/proj/pull"
 echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
 item s1 "status: ready" "kind: code"; started s1 w:p1

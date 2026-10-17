@@ -99,11 +99,9 @@ parent() {
   [[ -z "${4:-}" ]] || echo "${URL}/$1" > "${ROOT}/open/story-$1"
 }
 head_of() { git -C "${ROOT}/svc" rev-parse "story/$1"; }
-# fm <slug> <key> — <key> as swarm.sh reads it: the story's state file first, its file second.
-fm() {
-  local s="${p}/.swarm/board-state/stories/$1"
-  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "${b}/stories/$1.md"; fi
-}
+# fm <slug> <key> — <key> as swarm.sh reads it: board.sh's own get_fm.
+# shellcheck source=/dev/null
+fm() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
 st() { fm "$1" status; }
 # held_ready <brief> — the held-child rule, as has prints its parts: the ready line, never story, the
 # Stacked line for the same child as the one instruction (at most one builder), and the backlog

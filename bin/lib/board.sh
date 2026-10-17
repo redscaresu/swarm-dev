@@ -243,27 +243,20 @@ pr_held() {
   money_walk "${s}"
 }
 
-# pr_stories <pr-url> — the slugs of the stories whose prs: (split on spaces and commas), from their
-# state file when it holds one (state_value) and their front matter otherwise, lists the PR in any
-# spelling: owner and repo in any case, the number with leading zeros. Fails when a story or its state
-# file cannot be read.
+# pr_stories <pr-url> — the slugs of the stories whose prs: (get_fm: their state file over their
+# front matter; split on spaces and commas) lists the PR in any spelling: owner and repo in any case,
+# the number with leading zeros. Fails when a story or its state file cannot be read.
 pr_stories() {
-  local f v over="" files=()
+  local f v rows=""
   while IFS= read -r f; do
-    files+=("${f}"); state_path "${f}" prs
-    [[ -f "${STATE_PATH}" ]] || continue
-    [[ -r "${STATE_PATH}" ]] || return 1
-    if v="$(state_value "${f}" prs)"; then over+="${f}"$'\t'"${v}"$'\n'; fi
+    state_path "${f}" prs
+    [[ ! -e "${STATE_PATH}" || -r "${STATE_PATH}" ]] || return 1
+    v="$(get_fm "${f}" prs)" || return 1
+    rows+="$(basename "${f}" .md) ${v}"$'\n'
   done < <(board stories)
-  [[ ${#files[@]} -gt 0 ]] || return 0
-  SWARM_PRS_OVER="${over}" awk -v k="$1" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
-    function hit(v,   m, i, u) { m = split(v, u, /[ \t,]+/); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print s; return } }
-    BEGIN { k = canon(k); m = split(ENVIRON["SWARM_PRS_OVER"], o, "\n")
-      for (i = 1; i <= m; i++) if ((p = index(o[i], "\t")) > 0) over[substr(o[i], 1, p - 1)] = substr(o[i], p + 1) }
-    FNR == 1 { n = 0; d = 0; s = FILENAME; sub(/.*\//, "", s); sub(/\.md$/, "", s)
-      if (FILENAME in over) { d = 1; hit(over[FILENAME]) } }
-    /^---$/ { n++; next }
-    n == 1 && !d && index($0, "prs:") == 1 { d = 1; hit(substr($0, 5)) }' "${files[@]}"
+  awk -v k="$1" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
+    BEGIN { k = canon(k) }
+    { for (j = 2; j <= NF; j++) { m = split($j, u, ","); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print $1; next } } }' <<< "${rows}"
 }
 
 # money_walk <slugs> — why their PRs wait for the user's merge, or nothing: the first of these stories,
@@ -393,9 +386,10 @@ open_pr() {
 # it is readied plainly, without held_by: or the prs: line the hold kept, to be built fresh. An old
 # blocked_by line stays; nothing reads it. Prints each story it flips.
 unblock() {
-  local story slug deps open on why src rc
+  local story slug deps open on why src rc drop
   while IFS= read -r story; do
     [[ "$(fm "${story}" status)" == blocked ]] || continue
+    drop=()
     slug="$(basename "${story}" .md)"
     deps=$(story_deps "${story}")
     [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
@@ -409,10 +403,10 @@ unblock() {
       if src="$(repo_dir "$(fm "${story}" repo)")" && [[ -d "$(worktree_for "${src}" "${slug}")" ]]; then
         why="held: merge origin/$(story_base "${story}"), review again"
       else
-        set_fm "${story}" held_by; set_fm "${story}" prs
+        drop=(held_by "" prs "")
       fi
     fi
-    set_fm "${story}" status ready
+    state_set "${story}" ${drop[@]+"${drop[@]}"} status ready
     record_event unblock "${slug}"
     echo "ready: ${slug}${why:+ (${why})}"
   done < <(board stories)
@@ -524,17 +518,45 @@ set_fm() {
 # (state_path), never <file>: each <key>: <value> line, and <key>@base: with <file>'s front-matter
 # value now, which state_value compares. A value <file> already has needs no line, so its lines go and
 # the file's reads again; so do the lines of any key whose base <file> no longer has. A state file
-# left with no line goes. Fails, saying nothing, when any step fails.
+# left with no line goes. It holds the item's lock (state_lock) from its read to its write, so two
+# writers to one item keep each other's keys. Fails, saying nothing, when any step fails.
 state_set() {
-  local f="$1" s in pairs=""
-  state_path "${f}"; s="${STATE_PATH}"; in="${s}"
+  local f="$1" s pairs="" rc=0
+  state_path "${f}"; s="${STATE_PATH}"
   [[ -n "${s}" ]] || die "set_fm: ${f} is not a story or epic in ${BOARD}"
   shift
   while [[ $# -gt 0 ]]; do pairs+="$1"$'\t'"${2:-}"$'\n'; shift 2 || shift; done
-  [[ -f "${s}" ]] || in=/dev/null
   mkdir -p "${s%/*}" || return 1
-  # Either step failing fails the write, with no tmp file left.
-  if ! { SWARM_SET="${pairs}" awk 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+  [[ -w "${s%/*}" ]] || return 1   # else the lock's mkdir fails as if it were held
+  state_lock "${s}.lock"
+  state_write "${f}" "${s}" "${pairs}" || rc=1
+  rmdir "${s}.lock" || rc=1
+  return "${rc}"
+}
+
+# STATE_LOCK_WAIT: seconds state_lock waits for an item's lock (SWARM_LOCK_WAIT).
+STATE_LOCK_WAIT=10
+
+# state_lock <dir> — take the lock <dir>: mkdir makes it or fails, so one writer holds it (macOS has no
+# flock). It tries every 0.1s, and dies naming it after STATE_LOCK_WAIT seconds.
+# ponytail: a writer killed holding the lock leaves it; the next write dies, saying to remove it.
+state_lock() {
+  local i n=$(( ${SWARM_LOCK_WAIT:-${STATE_LOCK_WAIT}} * 10 ))
+  for ((i = 0; i < n; i++)); do
+    if mkdir "$1" 2>/dev/null; then return 0; fi
+    sleep 0.1
+  done
+  die "board state: ${1%.lock} is locked (${1} is still there after ${SWARM_LOCK_WAIT:-${STATE_LOCK_WAIT}}s); if no swarm.sh is writing it, remove ${1} and run this again"
+}
+
+# state_write <file> <state-file> <pairs> — state_set's read and write, under its lock: <pairs> (lines
+# of <key><tab><value>) over the state file, through a temp file of its own. Either step failing fails
+# the write, with no temp file left.
+state_write() {
+  local in="$2" t
+  [[ -f "$2" ]] || in=/dev/null
+  t="$(mktemp "$2.XXXXXX")" || return 1
+  if ! { SWARM_SET="$3" awk 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
     function put(k, v) { print k ":" (v == "" ? "" : " " v) }
     BEGIN { n = split(ENVIRON["SWARM_SET"], L, "\n")
       for (i = 1; i <= n; i++) if ((p = index(L[i], "\t")) > 0) { k = substr(L[i], 1, p - 1); set[k] = substr(L[i], p + 1); order[++o] = k } }
@@ -547,11 +569,10 @@ state_set() {
     END { for (i = 1; i <= c; i++) { k = keep[i]
         if (k in set || (k in b && b[k] != fv[k])) continue
         put(k, sv[k]); if (k in b) put(k "@base", b[k]) }
-      for (i = 1; i <= o; i++) { k = order[i]; if (set[k] != fv[k]) { put(k, set[k]); put(k "@base", fv[k]) } } }' "${f}" "${in}" > "${s}.tmp" \
-    && mv "${s}.tmp" "${s}"; }; then
-    rm -f "${s}.tmp"; return 1
+      for (i = 1; i <= o; i++) { k = order[i]; if (set[k] != fv[k]) { put(k, set[k]); put(k "@base", fv[k]) } } }' "$1" "${in}" > "${t}" && mv "${t}" "$2"; }; then
+    rm -f "${t}"; return 1
   fi
-  [[ -s "${s}" ]] || rm -f "${s}"
+  [[ -s "$2" ]] || rm -f "$2"
 }
 
 # set_file_fm <file> <key> [value] — in <file>'s own front matter, set <key>'s line to <value>, adding
@@ -584,12 +605,12 @@ mark_review() {
   done
   [[ "${f}" != "${BOARD}/stories/"* ]] || held="$(open_parents "${f}")"
   if [[ -n "${held:-}" ]]; then
-    set_status "${f}" blocked "$*"; set_fm "${f}" held_by "${held}"
+    state_set "${f}" status blocked prs "$*" held_by "${held}"
     # A parent that costs money waits on the user's merge (money_walk), maybe for days.
     [[ -z "$(money_walk "${held}")" ]] || held+=" (costs money)"
     die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
-  set_status "${f}" review "$*"; set_fm "${f}" held_by
+  state_set "${f}" status review prs "$*" held_by ""
   echo "review: $(basename "${f}" .md) $*"
 }
 

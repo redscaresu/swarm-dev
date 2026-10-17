@@ -2,17 +2,18 @@ import glob, os, re, sys
 stories, me, project_dir, repos_dir, state = sys.argv[1:]
 project = os.path.basename(project_dir)
 
+# pairs(lines, out, stop) — each key's first value, as board.sh's awk reads it: leading spaces dropped.
 def pairs(lines, out, stop=None):
-    seen = set()
     for line in lines:
         if line == stop:
             break
         k, sep, v = line.partition(":")
-        if sep and k not in seen:
-            seen.add(k); out[k] = v.strip()
+        if sep and k not in out:
+            out[k] = v.lstrip(" ")
 
 # front(path) — the story's front matter, under what swarm.sh wrote to its state file (state_set),
-# but for a key whose <key>@base: the file no longer has: a later edit to the file wins.
+# but for a key whose <key>@base: the file no longer has: a later edit to the file wins. The values
+# are compared as state_value compares them, then trimmed.
 def front(path):
     lines, out, st = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}, {}
     if lines[0] == "---":
@@ -24,7 +25,7 @@ def front(path):
     for k, v in st.items():
         if not k.endswith("@base") and st.get(k + "@base", out.get(k, "")) == out.get(k, ""):
             out[k] = v
-    return out
+    return {k: v.strip() for k, v in out.items()}
 
 def entries(fm):
     repo = fm.get("repo", "")

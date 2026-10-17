@@ -29,13 +29,10 @@ item() { # <board> <path> <front-matter line>... — a fresh item: its file, and
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
-# val <item file> <key> — <key> as swarm.sh reads it: the item's state file (.swarm/board-state/ beside
-# its board) first, its file second.
-val() {
-  local d="${1%/*}" s
-  s="${d%/*/*}/.swarm/board-state/${d##*/}/$(basename "$1" .md)"
-  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "$1"; fi
-}
+# val <item file> <key> — <key> as swarm.sh reads it: board.sh's own get_fm, with the item's board as
+# BOARD, in the project that holds it.
+# shellcheck source=/dev/null
+val() { local d="${1%/*}"; (export BOARD="${d%/*}"; export PROJECT_DIR="${BOARD%/*}"; . "${SWARM%/*}/lib/board.sh"; get_fm "$1" "$2"); }
 # legacy_review <story file> <url> — what an older swarm.sh's review wrote, in the file itself.
 legacy_review() { perl -pi -e 's|^status: .*$|status: review\nprs: '"$2"'|' "$1"; }
 

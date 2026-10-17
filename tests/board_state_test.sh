@@ -5,9 +5,12 @@
 # refused as kind: lead though its file says kind: code; merge holds a costs: money story whose prs:
 # is only in state; an epic and a story with one slug keep separate state; a later commit to a key
 # wins over its state line; a failed state write fails the command; a tab record named board is no
-# clash. gh is a stub on PATH that logs every call to gh.log: pr view answers the state in
-# ${ROOT}/pr-<n> (OPEN without one) and a head. mv is a wrapper that fails on a board-state path while
-# ${ROOT}/mv.fail exists.
+# clash; review and unblock write an item's keys in one write; two writers to one item keep both keys,
+# and a lock left behind stops a write; touches_rows.py compares a value with a trailing space as
+# state_value does. gh is a stub on PATH that logs every call to gh.log: pr view answers the state in
+# ${ROOT}/pr-<n> (OPEN without one) and a head. mv is a wrapper that, on a board-state path, waits
+# 0.5s while ${ROOT}/mv.slow exists, and fails while ${ROOT}/mv.fail exists, after the number of moves
+# it holds (none when it is empty).
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -49,7 +52,10 @@ esac
 STUB
 printf '#!/bin/sh\nR="%s"; MV="%s"\n' "${ROOT}" "$(command -v mv)" > "${ROOT}/bin/mv"
 cat >> "${ROOT}/bin/mv" <<'STUB'
-case "$*" in *board-state*) [ ! -e "${R}/mv.fail" ] || exit 1 ;; esac
+case "$*" in *board-state*)
+  [ ! -e "${R}/mv.slow" ] || sleep 0.5
+  if [ -e "${R}/mv.fail" ]; then n="$(cat "${R}/mv.fail")"; [ "${n:-0}" -gt 0 ] || exit 1; echo $((n - 1)) > "${R}/mv.fail"; fi ;;
+esac
 exec "${MV}" "$@"
 STUB
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/bin/mv"
@@ -67,6 +73,11 @@ sw() {
 }
 lead() { sw HERDR_ENV=1 HERDR_PANE_ID=w:me "$@"; }
 clean() { git -C "${P}" status --porcelain; }
+# bs <function> <arg>... — a board.sh function on ${P}'s board, with the stubs on PATH, as swarm.sh runs it.
+# shellcheck source=/dev/null disable=SC2329
+bs() { (export PATH="${ROOT}/bin:${PATH}" BOARD="${P}/board" PROJECT_DIR="${P}"; die() { echo "swarm: $*" >&2; exit 1; }
+  . "${SWARM%/*}/lib/board.sh"; "$@"); }
+v() { bs get_fm "${P}/board/stories/$1.md" "$2"; }   # <slug> <key>: as swarm.sh reads it
 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
@@ -124,6 +135,43 @@ is "close c impossible: exits 0, kind: lead in state" "0|lead" "${rc}|$(sed -n '
 lead story c
 is "story c: refused as kind: lead" "1|yes" "${rc}|$(said 'c is kind: lead' && echo yes)"
 is "c's tracked file still says kind: code" "code" "$(sed -n 's/^kind: //p' "${P}/board/stories/c.md")"
+
+item stories par "status: ready" "kind: code"
+item stories kid "status: ready" "kind: code" "depends_on: [par]"
+item stories w "status: ready" "kind: code"
+item stories t "status: ready " "kind: code" "touches: [lib.sh]"
+item stories o "status: ready" "kind: code" "touches: [lib.sh]"
+commit last
+
+# --- review holds kid, whose parent is open, in one write: with the second state mv failing, its
+# status, prs and held_by are all there.
+echo 1 > "${ROOT}/mv.fail"; sw review kid "${U}/40"; rm -f "${ROOT}/mv.fail"
+is "review of kid, held with only one state write left: status, prs and held_by written together" "1|yes|blocked|${U}/40|par" \
+  "${rc}|$(said 'held: kid waits for par' && echo yes)|$(v kid status)|$(v kid prs)|$(v kid held_by)"
+# --- par finishes; unblock readies kid, its worktree gone, in one write too.
+perl -pi -e 's/^status: ready$/status: done/' "${P}/board/stories/par.md"; commit "par done"
+echo 1 > "${ROOT}/mv.fail"; sw unblock; rm -f "${ROOT}/mv.fail"
+is "unblock of kid with only one state write left: ready, without held_by or prs" "0|ready||" "${rc}|$(v kid status)|$(v kid held_by)|$(v kid prs)"
+
+# --- Two writers to w at once, each move slowed so their reads and writes overlap: the lock keeps both keys.
+touch "${ROOT}/mv.slow"; rc=0
+bs set_fm "${P}/board/stories/w.md" attempts 2 & a=$!
+bs set_fm "${P}/board/stories/w.md" held_for pause & b=$!
+wait "${a}" || rc=1; wait "${b}" || rc=1; rm "${ROOT}/mv.slow"
+is "two writers to w at once: both succeed, both keys survive, no temp file or lock left" "0|2|pause|" \
+  "${rc}|$(v w attempts)|$(v w held_for)|$(cd "${ST}/stories" && ls -d w.* 2>/dev/null)"
+# --- A lock left behind: review waits SWARM_LOCK_WAIT seconds, then dies naming it, and writes nothing.
+mkdir "${ST}/stories/w.lock"; sw SWARM_LOCK_WAIT=1 review w "${U}/60"; rmdir "${ST}/stories/w.lock"
+is "review of w with its lock left behind: dies naming the lock, w still ready" "1|yes|ready" \
+  "${rc}|$(said "stories/w.lock is still there after 1s" && echo yes)|$(v w status)"
+
+# --- t's status had a trailing space when review wrote its base; a board PR then drops the space.
+# The file's value now differs from the base, so status and touches_rows.py both read it, as ready.
+sw review t "${U}/50"
+perl -pi -e 's/^status: ready $/status: ready/' "${P}/board/stories/t.md"; commit "t trimmed"
+sw status
+is "t's committed status, a trailing space dropped since review: status and touches_rows read it as ready" "no|ready" \
+  "$(said "awaiting your merge: t ${U}/50" && echo yes || echo no)|$(python3 "${SWARM%/*}/lib/touches_rows.py" "${P}/board/stories" o "${P}" "${ROOT}/repos" "${ST}/stories" | cut -f3)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failure(s)"; exit 1; }
 echo "all passed"

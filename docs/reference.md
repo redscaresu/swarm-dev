@@ -219,9 +219,9 @@ A story's **Done when** names what the builder's session can show (a test run, a
 stops and reports; the session it was started from stays free. Its last act is writing that report
 to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how
 `/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
-background work. When it starts, an epic still `later` is set `active` (in `.swarm/state`, which
-`conduct` reports in one line), so `status` and `next` stop listing it as waiting on you. It
-runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
+background work. When it starts, an epic still `later` is set `active` (in
+`.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
+stop listing it as waiting on you. It runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
 it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
@@ -259,8 +259,10 @@ there, as on an existing board, reads from the file; `dash` still draws its boar
 files alone. A line with no value clears the key, and swarm.sh writes no line that would only repeat
 the file's value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
 Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
-read, and the next write to the item drops the old line. `finish` deletes an item's state file along
-with the item. The escalated block that
+read, and the next write to the item drops the old line. A write holds the item's lock, a
+`<slug>.lock` directory beside its state file, so two commands writing one item at once keep both
+changes; a command that finds the lock still there after 10 seconds stops and names it. `finish`
+deletes an item's state file along with the item. The escalated block that
 `close` appends for the lead is still in the story file, and where an older swarm.sh left these keys
 uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
 

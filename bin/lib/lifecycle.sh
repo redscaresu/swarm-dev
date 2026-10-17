@@ -494,7 +494,7 @@ clear_build() {
   fi
   # A held child's hold goes with its build, and so does the prs: line the hold kept.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
-    set_fm "${BOARD}/stories/$1.md" held_by; set_fm "${BOARD}/stories/$1.md" prs
+    state_set "${BOARD}/stories/$1.md" held_by "" prs ""
   fi
 }
 
