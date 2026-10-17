@@ -29,7 +29,8 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 case "$1 $2" in "pr list") echo '[]' ;; esac
 exit 0
 STUB
-chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
+cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"   # story's require_claude, on a machine with none
+chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh" "${ROOT}/bin/claude"
 
 fails=0
 is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
