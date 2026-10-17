@@ -1,8 +1,8 @@
 ---
 kind: lead
-status: blocked
-blocked_by: [flow-and-features, scoped-parallel-reviews, stacked-start-and-merge-order, stacked-parent-updates, backlog-conductor, plan-during-review-and-release, plan-epic-rules]
+status: ready
 epic: leaner-faster-swarm
+after: leaner-faster-swarm
 depends_on: [flow-and-features, scoped-parallel-reviews, stacked-start-and-merge-order, stacked-parent-updates, backlog-conductor, plan-during-review-and-release, plan-epic-rules]
 touches: []
 ---
