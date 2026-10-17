@@ -25,11 +25,18 @@ terminal pane. The run stops whenever a decision is yours.
    Each PR is reviewed by codex and `/code-review`, and the builder fixes what they find
    (with `goal` on, under a fresh goal that holds until the fixes are in). A codex review that
    runs past 10 minutes (`codex_minutes`) is stopped, and the PR says codex was skipped.
+   A story need not wait for its parents' PRs to merge: it starts stacked on their open branches, and
+   its own PR is held out of review until they merge. Each green PR gets its own review agent, scoped
+   to its story's `touches` and **Done when**. Ready stories that belong to no epic go to a backlog
+   conductor (`swarm.sh conduct --backlog`).
 4. Green, reviewed PRs wait for you to merge. The next `/swarm-dev:swarm` starts the stories that were waiting on them.
    With `merge = agent` the conductor merges each one itself, pinned to the head it reviewed, and
-   starts the stories it unblocked in the same run.
+   starts the stories it unblocked in the same run. A story marked `costs: money` is always held for you.
+5. While PRs are in review, the next epic is planned; a small epic (three stories or fewer, none
+   `risk: high`) is planned by the lead alone, without the full swarm. When `main` has changes since the
+   last `v<version>` tag, `swarm.sh next` prints `release` and the lead cuts the release.
 
-Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, and handles
+Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, cuts releases, and handles
 `kind: lead` stories: real cloud, credentials and anything hard to undo. Your steps in those
 stories are marked **You:**.
 
@@ -77,16 +84,22 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `/hld <title>` | Write a design with a co-author agent. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh status` | Show agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh dash --watch` | Open the live dashboard shown above, with how long each working agent has gone without a sign of life and how long each running codex review has run. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
+| `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
+| `swarm.sh dash --watch` | Open the live dashboard shown above: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights. `swarm.sh dash --project <dir>` (repeatable) draws several projects. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
+| `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
+| `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
+| `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](docs/method.md)). |
-| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. |
+| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
-| `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date. |
-| `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, and its escalation steps. |
+| `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date, with a row for the lead's own sessions. |
+| `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
+| `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
+| `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]` | Throughput per epic and project: builders at once, stories per chain, review wait and stacked starts. |
+| `swarm.sh features [--since YYYY-MM-DD]` | Check each feature in `docs/features.tsv` against its metric and baseline, and flag the ones nobody uses or measures as candidates to delete. |
 | `swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]` | How many findings each reviewer raised per kind, how many were fixed or declined and the decline rate, then the review rounds per PR. `--epic` counts only that epic's PRs and lists them. |
-| `swarm.sh export [--since YYYY-MM-DD] [--format jsonl\|tsv]` | One row per build attempt, for training a router that picks a model and effort. It holds only ids, enums, numbers, UTC times and PR URLs, so no finding or story text gets in ([columns](docs/method.md#building)). |
 
 Settings such as `merge = agent` go in `.claude/swarm/config`
 ([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
@@ -134,7 +147,7 @@ escalated today, which attempt each Fable builder is on, and each escalation ste
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
 saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
-`cost`, `outcomes` and `decisions` read the copy once the original is gone.
+`cost` and `outcomes` read the copy once the original is gone.
 
 `/swarm-dev:swarm` tells you when a new version is out. To update, run
 `! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,

@@ -56,7 +56,7 @@
     "board",
     "conduct",
     "builders",
-    "review"
+    "review-agent"
   ],
   "nodes": [
     {
@@ -92,7 +92,7 @@
       "col": 5,
       "type": "security",
       "label": "Merge",
-      "sublabel": "or let agents merge",
+      "sublabel": "or the conductor merges",
       "width": 140
     },
     {
@@ -128,7 +128,7 @@
       "col": 2,
       "type": "messagebus",
       "label": "/plan-epic",
-      "sublabel": "lead, skeptics, codex, critic",
+      "sublabel": "lead, skeptics, critic",
       "width": 140
     },
     {
@@ -146,16 +146,16 @@
       "col": 4,
       "type": "backend",
       "label": "Builders",
-      "sublabel": "one per story, own pane",
+      "sublabel": "one per story, stackable",
       "width": 140
     },
     {
-      "id": "review",
+      "id": "review-agent",
       "lane": "build",
       "col": 5,
       "type": "security",
-      "label": "PR review",
-      "sublabel": "codex + /code-review",
+      "label": "Review agent",
+      "sublabel": "one per PR",
       "width": 140
     },
     {
@@ -165,6 +165,24 @@
       "type": "backend",
       "label": "swarm.sh init",
       "sublabel": "once per project",
+      "width": 140
+    },
+    {
+      "id": "backlog",
+      "lane": "plan",
+      "col": 3,
+      "type": "backend",
+      "label": "Backlog conductor",
+      "sublabel": "ready stories with no epic",
+      "width": 140
+    },
+    {
+      "id": "release",
+      "lane": "lead",
+      "col": 5,
+      "type": "backend",
+      "label": "Release",
+      "sublabel": "lead cuts it",
       "width": 140
     }
   ],
@@ -222,12 +240,12 @@
     {
       "id": "pr",
       "from": "builders",
-      "to": "review",
+      "to": "review-agent",
       "label": "PR"
     },
     {
       "id": "findings",
-      "from": "review",
+      "from": "review-agent",
       "to": "builders",
       "label": "findings (tell)",
       "role": "return",
@@ -238,7 +256,7 @@
     },
     {
       "id": "green",
-      "from": "review",
+      "from": "review-agent",
       "to": "merge",
       "label": "green + reviewed",
       "variant": "emphasis"
@@ -256,6 +274,30 @@
       "from": "init",
       "to": "hld",
       "label": "board ready"
+    },
+    {
+      "id": "no-epic",
+      "from": "board",
+      "to": "backlog",
+      "label": "no epic",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "backlog-wave",
+      "from": "backlog",
+      "to": "builders",
+      "label": "wave",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "id": "cut",
+      "from": "merge",
+      "to": "release",
+      "label": "main has changes",
+      "role": "branch",
+      "variant": "dashed"
     }
   ]
 }
