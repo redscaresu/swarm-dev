@@ -21,7 +21,7 @@ epic_has_stories() {
     [[ "$(fm "${s}" epic)" == "$1" ]] || continue
     [[ -n "${2:-}" ]] || return 0
     [[ "$(basename "${s}" .md)" == "$2" ]] && continue
-    [[ "$(fm "${s}" kind)" == lead && -n "$(get_fm "${s}" after)" ]] && continue
+    [[ "$(get_fm "${s}" kind)" == lead && -n "$(get_fm "${s}" after)" ]] && continue
     return 0
   done < <(board stories)
   return 1

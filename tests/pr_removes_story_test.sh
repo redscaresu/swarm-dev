@@ -50,6 +50,7 @@ item "${B}/stories/f2.md" "status: ready" "epic: f" "kind: lead" "after: f"
 item "${B}/epics/h.md" "status: active"
 item "${B}/stories/h1.md" "status: ready" "epic: h"
 item "${B}/stories/h2.md" "status: ready" "epic: h" "after: h"
+echo "kind: lead" >> "${B}/stories/h2.md" # in the body, not the front matter: h2 is still a code story
 item "${B}/stories/done-one.md" "status: review"
 item "${B}/stories/esc.md" "status: ready" "kind: lead" "escalated_from: code"
 git init -q --bare "${ROOT}/origin.git"; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
@@ -73,7 +74,14 @@ sw() {
 fails=0
 is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
-cleanup() { sw "$1" _brief "$2"; grep -oE 'Delete .* under [^ ]*/\.|Do not touch [^.]*\.' <<< "${out}" | head -1; }
+cleanup() { sw "$1" _brief "$2"; grep -oE 'Delete .* under [^ ]*/( or [^ ]*/)?\.|Do not touch [^.]*\.' <<< "${out}" | head -1; }
+
+# A board at the default board_dir = docs, beside the project's own docs.
+D="${ROOT}/dproj"
+mkdir -p "${D}/.claude/swarm"; printf 'board_dir = docs\n' > "${D}/.claude/swarm/config"
+item "${D}/docs/epics/k.md" "status: active"
+item "${D}/docs/stories/k1.md" "status: ready" "epic: k" "kind: docs"
+git -C "${D}" init -q -b main && git -C "${D}" add -A && git -C "${D}" commit -qm init
 
 # --- The builder's brief.
 is "a one-off's brief deletes only its story" \
@@ -81,13 +89,15 @@ is "a one-off's brief deletes only its story" \
 is "an epic story's brief, with another open story, leaves the epic" \
   "Delete board/stories/e1.md in your PR, and nothing else under board/stories/." "$(cleanup "${P}" e1)"
 is "an epic story's brief, with only an after: lead story left, deletes the epic too" \
-  "Delete board/stories/f1.md and board/epics/f.md (its epic's last story) in your PR, and nothing else under board/." "$(cleanup "${P}" f1)"
+  "Delete board/stories/f1.md and board/epics/f.md (its epic's last story) in your PR, and nothing else under board/stories/ or board/epics/." "$(cleanup "${P}" f1)"
 is "an epic story's brief, with an after: code story left, leaves the epic" \
   "Delete board/stories/h1.md in your PR, and nothing else under board/stories/." "$(cleanup "${P}" h1)"
 rm "${B}/stories/e2.md"
 is "an epic story's brief, with no other story, deletes the epic too" \
-  "Delete board/stories/e1.md and board/epics/e.md (its epic's last story) in your PR, and nothing else under board/." "$(cleanup "${P}" e1)"
+  "Delete board/stories/e1.md and board/epics/e.md (its epic's last story) in your PR, and nothing else under board/stories/ or board/epics/." "$(cleanup "${P}" e1)"
 git -C "${P}" checkout -q -- board
+is "with board_dir = docs, an epic's last story may still change the rest of docs/" \
+  "Delete docs/stories/k1.md and docs/epics/k.md (its epic's last story) in your PR, and nothing else under docs/stories/ or docs/epics/." "$(cleanup "${D}" k1)"
 is "an external-board story's brief deletes nothing" "Do not touch the story file; the lead takes it off the board after your PR merges." \
   "$(cleanup "${X}" g1)"
 

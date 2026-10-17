@@ -320,7 +320,7 @@ story_brief() {
     # The board is in this repo: the PR takes the story off it, and the epic with its last story.
     rel="${BOARD#"${PROJECT_DIR}/"}"
     if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && ! epic_has_stories "${epic}" "${slug}"; then
-      cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/."
+      cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/stories/ or ${rel}/epics/."
     else
       cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
     fi
