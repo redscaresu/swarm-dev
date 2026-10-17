@@ -1,0 +1,49 @@
+alpha  swarm-dev 0.0.0  next conduct alpha-core                                                                                                                                                 12:00:00
+0.6 merged/day over 7 days · ! 3 waiting on you or the lead, oldest 3d · ✓ 0 escaped in 7 days
+╭─ needs you ─────────────────────────────────────────────────────────────────────────────────────────────────────────╮ ╭─ recent ─────────────────────────────────────────────────────────────────────╮
+│ ! run lead story a-key: create the deploy key  waits for: you: create the deploy key in the vault                   │ │ 11:00  ▶ story a-building                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 10:35  · finish a-done-2                                                     │
+╭─ lead's queue ──────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 10:30  ⇡ merged #10 story/a-done-2                                           │
+│ ! merge alpha#11 (✓ green)  a-review                                                                                │ │ 10:00  · review a-review                                                     │
+│ ! run lead story a-tag: tag the first release  waits for: the lead                                                  │ │ 09:00  ▶ conduct alpha-core                                                  │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 10-09  ✎ parser accepted an empty file (#10)                                 │
+╭─ epics ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 10-09  · finish a-x                                                          │
+│ ! alpha-core  ███░░░░░░░░░  2/7   1 review · 3 ready · 1 blocked                                                    │ │ 10-08  · finish a-done-1                                                     │
+│   ● conduct-alpha-core  conduct     opus·high      working 2m  3h00m                                                │ │ 10-08  ⇡ merged #9 story/a-done-1                                            │
+│   ● a-building          code        opus·high      working 6m  1h00m                                                │ │ 10-05  · finish a-old                                                        │
+│   ✓ alpha#11            green  a-review                                                                             │ ╰──────────────────────────────────────────────────────────────────────────────╯
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ running now ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ● conduct-alpha-core  up 3h00m  Bash 2m ago                                                                         │
+│ ● a-building          up 1h00m  Edit 6m ago  no PR yet                                                              │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+⏸ 1 blocked · 1 later  (swarm.sh status --all lists them)
+merge agent · 1 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $14.60 today · on call: fable·xhigh · 0 escalations today
+bravo  swarm-dev 0.0.0  next conduct bravo-ui                                                                                                                                                   12:00:00
+0.9 merged/day over 7 days · ! 5 waiting on you or the lead, oldest 4d · ✓ 0 escaped in 7 days
+╭─ needs you ─────────────────────────────────────────────────────────────────────────────────────────────────────────╮ ╭─ recent ─────────────────────────────────────────────────────────────────────╮
+│ ! run lead story b-cert: renew the cert  waits for: you: approve the renewal email  +1 more                         │ │ today  ✎ retry never backed off (#21)                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 11:45  · tell:findings b-fix                                                 │
+╭─ lead's queue ──────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 11:35  · finish b-done-2                                                     │
+│ ! merge bravo#21 (✗ failing · behind)  b-fix                                                                        │ │ 11:30  ⇡ merged #22 story/b-done-2                                           │
+│ ! answer b-fix (waiting on input): herdr agent read b-fix                                                           │ │ 11:10  · review b-fix                                                        │
+│ ! look at b-page: working 45 min with no commit, edit, session-log write or PR update                               │ │ 08:40  ▶ story b-page                                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ 08:05  · finish b-done-1                                                     │
+╭─ epics ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ 08:00  ⇡ merged #20 story/b-done-1                                           │
+│ ! bravo-api  ███░░░░░░░░░  1/4   1 review · 2 ready                                                                 │ │ 10-09  · finish b-old-1                                                      │
+│   ! b-fix   code        sonnet·high    waiting on input                                                             │ │ 10-08  · finish b-old-2                                                      │
+│   ✗ bravo…  failing · behind  b-fix                                                                                 │ │ 10-08  · finish b-old-3                                                      │
+│ ! bravo-ui   ████░░░░░░░░  1/3   1 ready · 1 blocked                                                                │ │ 10-07  · finish b-old-4                                                      │
+│   ! b-page  code        opus·high      stalled 45m                                                                  │ ╰──────────────────────────────────────────────────────────────────────────────╯
+│ ✓ 1 active epic with no open story: bravo-docs                                                                      │
+│ +1 idle  (--tree lists them)                                                                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ running now ───────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ✓ conduct-bravo-api  up 1d      Read 5h ago                                                                         │
+│ ! b-fix              up 12h00m  Bash 12m ago  #21 failing · behind                                                  │
+│ ! b-page             up 3h20m   Grep 45m ago  no PR yet                                                             │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+⏸ 1 blocked · 0 later  (swarm.sh status --all lists them)
+merge human · 3 epics active · 0 agents working · 0 PRs green, waiting · 1 stalled · $2.80 today · on call: fable·xhigh · 0 escalations today
+● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you or the lead (session gone or unknown)   ? unknown
+   q quit · t tree · l ladder · r redraw (with --watch)
