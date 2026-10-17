@@ -380,22 +380,47 @@ unblock() {
 # delete_item <slug> — delete a story or epic's file where it is: reconcile's, after its pull.
 delete_item() { local f; f="$(item_file "$1")"; rm "${f}"; echo "deleted: ${f}"; }
 
-# finish <slug> — take a merged story or epic off the board: delete its file. A board outside the
-# repo is edited in place; one in it through the board PR finish-<slug> (board_pr), never the main
-# checkout. A second finish pushes to that PR. It prints the PR and the merge --board that lands it.
-finish_item() {
-  local slug="$1" f name wt body url
+# finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
+finish_item() { remove_item finish "$1"; }
+
+# remove_item <verb> <slug> [<reason>] — finish's and drop's delete. A board outside the repo is
+# edited in place; one in it through the board PR <verb>-<slug> (board_pr), never the main checkout,
+# and a second run pushes to that PR. It prints the PR and the merge --board that lands it. A file
+# that is not on origin's base (an unmerged board PR adds it) is refused, and a run that fails clears
+# away the worktree and branch it started (unstart), so the next run starts clean.
+remove_item() {
+  local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
   f="$(item_file "${slug}")"
   [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${slug}"; return; }
-  name="finish-${slug}"; wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
-  [[ -d "${wt}" ]] || wt="$(board_pr start "${name}")" || die "finish: cannot start the board PR ${name}"
-  rm -f "${wt}/${f#"${PROJECT_DIR}"/}"
-  body="$(mktemp "${TMPDIR:-/tmp}/swarm-finish.XXXXXX")" || die "finish: mktemp failed"
-  echo "Takes ${slug} off the board (\`swarm.sh finish ${slug}\`)." > "${body}"
-  url="$(board_pr open "${name}" "Finish ${slug}" "${body}")" || { rm -f "${body}"; die "finish: cannot open the board PR ${name}"; }
+  rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
+  wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
+  if [[ ! -d "${wt}" ]]; then
+    wt="$(board_pr start "${name}")" || die "${verb}: cannot start the board PR ${name}"
+    new=1
+    [[ -f "${wt}/${rel}" ]] || { unstart "${name}"; die "${verb}: ${rel} is not on origin/$(base_for "${PROJECT_DIR}") (is it in a board PR that has not merged?), so no board PR can delete it; merge that first"; }
+  fi
+  # An earlier run's worktree has the file deleted already; its PR is open, so a failure leaves it.
+  [[ ! -e "${wt}/${rel}" ]] || git -C "${wt}" rm -q -- "${rel}" \
+    || { [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: git rm ${rel} failed in ${wt}"; }
+  case "${verb}" in finish) title="Finish ${slug}" ;; *) title="Drop ${slug}: ${why}" ;; esac
+  body="$(mktemp "${TMPDIR:-/tmp}/swarm-${verb}.XXXXXX")" || { [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: mktemp failed"; }
+  echo "Takes ${slug} off the board (\`swarm.sh ${verb} ${slug}${why:+ ${why}}\`)." > "${body}"
+  url="$(board_pr open "${name}" "${title}" "${body}")" \
+    || { rm -f "${body}"; [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: cannot open the board PR ${name}"; }
   rm -f "${body}"
-  echo "deleted: ${f#"${PROJECT_DIR}"/} in the board PR ${url}"
+  echo "deleted: ${rel} in the board PR ${url}"
   echo "land it: swarm.sh merge --board ${url}"
+}
+
+# unstart <name> — undo a board_pr start whose PR never opened: its worktree, board/<name> here, and
+# board/<name> on origin if open pushed it before gh failed. Best effort: it runs on the way to a die.
+unstart() {
+  local wt b="board/$1"; wt="$(worktree_for "${PROJECT_DIR}" "_board-$1")"
+  git -C "${PROJECT_DIR}" worktree remove --force "${wt}" >/dev/null 2>&1 || true
+  git -C "${PROJECT_DIR}" branch -q -D "${b}" >/dev/null 2>&1 || true
+  if git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/heads/${b}" >/dev/null 2>&1; then
+    git -C "${PROJECT_DIR}" push -q origin --delete "${b}" >/dev/null 2>&1 || true
+  fi
 }
 
 # reset_at <slug> — when the slug was reset (its first ok reset line in events.tsv), or nothing. A story
@@ -445,7 +470,7 @@ drop_story() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "drop: bad slug '$1'"
   [[ -f "${f}" ]] || die "drop: no story ${f}"
   is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
-  finish_item "$1"
+  remove_item drop "$1" "$2"
   echo "dropped: $1"
 }
 

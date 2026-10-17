@@ -104,8 +104,21 @@ sw "${P}" drop esc "no longer needed"
 is "drop: exits 0" 0 "${rc}"
 is "drop: the main checkout is clean" "" "$(git -C "${P}" status --porcelain)"
 is "drop: opens a second board PR" 2 "$(grep -c '^pr create' "${ROOT}/gh.log")"
-is "drop: the board PR deletes the story" "D	board/stories/esc.md" "$(git -C "${ROOT}/origin.git" diff --name-status main board/finish-esc)"
+is "drop: the board PR deletes the story, on board/drop-esc" "D	board/stories/esc.md" "$(git -C "${ROOT}/origin.git" diff --name-status main board/drop-esc)"
+is "drop: the PR is titled with the verb and the reason" yes "$(has "--head board/drop-esc --title Drop esc: no longer needed --body-file" "$(cat "${ROOT}/gh.log")")"
 is "drop: prints the merge --board line" yes "$(has "land it: swarm.sh merge --board ${URL}" "${out}")"
+
+# --- A story that is not on origin/main (an unmerged board PR adds it): refused with the reason, and
+# the worktree and branch the run started are gone, so a second run fails the same way.
+item "${B}/stories/fresh.md" "status: review"
+for run in first second; do
+  sw "${P}" finish fresh
+  is "finish of a story not on origin/main, ${run} run: refused with the reason" "1 yes" \
+    "${rc} $(has "board/stories/fresh.md is not on origin/main (is it in a board PR that has not merged?)" "${out}")"
+  is "finish of a story not on origin/main, ${run} run: no worktree or branch left" "no no no" \
+    "$([[ -e "${ROOT}/proj-wt/_board-finish-fresh" ]] && echo yes || echo no) $(git -C "${P}" show-ref -q --verify refs/heads/board/finish-fresh && echo yes || echo no) $(git -C "${ROOT}/origin.git" show-ref -q --verify refs/heads/board/finish-fresh && echo yes || echo no)"
+done
+rm "${B}/stories/fresh.md"
 
 # --- finish on the external board deletes the file where it is.
 sw "${X}" finish g1
@@ -116,6 +129,14 @@ is "finish on an external board: deletes the file" no "$([[ -f "${XB}/stories/g1
 # shellcheck disable=SC2016 # the backticks are the brief's, escaped in its heredoc
 is "conduct_brief names board-pr for a story edit" yes \
   "$(has '(\`swarm.sh board-pr\`), as the lead does, never in the main checkout.' "$(awk '/^conduct_brief\(\)/,/^}/' "${REPO}/bin/lib/build.sh")")"
+# shellcheck disable=SC2016 # the backticks are the brief's, escaped in its heredoc
+is "the conductor's epic end: the epic leaves with its last story's PR on an in-repo board" "yes|yes" \
+  "$(has "the epic leaves the board with its last story's PR, whose brief deletes the epic file. Run" "$(cat "${REPO}/bin/lib/build.sh")")|$(has '\`swarm.sh finish <epic>\` only on a board outside the repo, or when the epic file is still there after' "$(cat "${REPO}/bin/lib/build.sh")")"
+is "the conductor's board PR: the user lands it with merge = human, and its story waits for the merge" "yes|yes" \
+  "$(has "With merge = human you cannot land that PR: list it in your report for the user." "$(cat "${REPO}/bin/lib/build.sh")")|$(has "start again, a story whose edit is still in a board PR." "$(cat "${REPO}/bin/lib/build.sh")")"
+# shellcheck disable=SC2016 # literal backticks
+is "commands/swarm.md's drop arm stops until the board PR merges, and hands it to the user with merge = human" "yes|yes" \
+  "$(has '`swarm.sh merge --board` line it prints. With `merge = human` you never merge: hand the PR' "$(cat "${REPO}/commands/swarm.md")")|$(has "user's merge, so name the board PR, show what \`swarm.sh status\` lists under Waiting on" "$(cat "${REPO}/commands/swarm.md")")"
 is "commands/swarm.md names board-pr for a conductor's story edit" yes \
   "$(has "edit to a story goes through \`swarm.sh board-pr\` too (its brief says so)." "$(cat "${REPO}/commands/swarm.md")")"
 

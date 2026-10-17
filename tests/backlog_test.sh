@@ -130,7 +130,7 @@ check "with merge = agent, the backlog brief merges with swarm.sh merge --head, 
 run close conduct-backlog >/dev/null
 run conduct e >/dev/null
 # shellcheck disable=SC2016 # the backticks are the brief's
-check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has 'take the epic off the board with `swarm.sh finish <epic>`' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
+check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has '`swarm.sh finish <epic>` only on a board outside the repo' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
