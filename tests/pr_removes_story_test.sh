@@ -46,7 +46,10 @@ item "${B}/stories/one.md" "status: ready"
 item "${B}/stories/e1.md" "status: ready" "epic: e"
 item "${B}/stories/e2.md" "status: ready" "epic: e"
 item "${B}/stories/f1.md" "status: ready" "epic: f"
-item "${B}/stories/f2.md" "status: ready" "epic: f" "after: f"
+item "${B}/stories/f2.md" "status: ready" "epic: f" "kind: lead" "after: f"
+item "${B}/epics/h.md" "status: active"
+item "${B}/stories/h1.md" "status: ready" "epic: h"
+item "${B}/stories/h2.md" "status: ready" "epic: h" "after: h"
 item "${B}/stories/done-one.md" "status: review"
 item "${B}/stories/esc.md" "status: ready" "kind: lead" "escalated_from: code"
 git init -q --bare "${ROOT}/origin.git"; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
@@ -77,8 +80,10 @@ is "a one-off's brief deletes only its story" \
   "Delete board/stories/one.md in your PR, and nothing else under board/stories/." "$(cleanup "${P}" one)"
 is "an epic story's brief, with another open story, leaves the epic" \
   "Delete board/stories/e1.md in your PR, and nothing else under board/stories/." "$(cleanup "${P}" e1)"
-is "an epic story's brief, with only an after: story left, deletes the epic too" \
+is "an epic story's brief, with only an after: lead story left, deletes the epic too" \
   "Delete board/stories/f1.md and board/epics/f.md (its epic's last story) in your PR, and nothing else under board/." "$(cleanup "${P}" f1)"
+is "an epic story's brief, with an after: code story left, leaves the epic" \
+  "Delete board/stories/h1.md in your PR, and nothing else under board/stories/." "$(cleanup "${P}" h1)"
 rm "${B}/stories/e2.md"
 is "an epic story's brief, with no other story, deletes the epic too" \
   "Delete board/stories/e1.md and board/epics/e.md (its epic's last story) in your PR, and nothing else under board/." "$(cleanup "${P}" e1)"

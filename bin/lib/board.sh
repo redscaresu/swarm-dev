@@ -12,11 +12,17 @@ board() {
   return 0
 }
 
-# epic_has_stories <epic> — true when any story names <epic>.
+# epic_has_stories <epic> [<slug>] — true when any story names <epic>. With <slug>, true when any
+# story but <slug> does, not counting a kind: lead story with after: (it waits on the epic, so the
+# epic goes without it): story_brief's test for the epic's last story.
 epic_has_stories() {
   local s
   while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "$1" ]] && return 0
+    [[ "$(fm "${s}" epic)" == "$1" ]] || continue
+    [[ -n "${2:-}" ]] || return 0
+    [[ "$(basename "${s}" .md)" == "$2" ]] && continue
+    [[ "$(fm "${s}" kind)" == lead && -n "$(get_fm "${s}" after)" ]] && continue
+    return 0
   done < <(board stories)
   return 1
 }

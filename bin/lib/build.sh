@@ -311,16 +311,6 @@ send_goal() {
   esac
 }
 
-# last_of_epic <slug> <epic> — true when every other story of <epic> carries after: (it waits on the
-# epic, so the epic goes without it).
-last_of_epic() {
-  local s
-  while IFS= read -r s; do
-    [[ "$(basename "${s}" .md)" != "$1" && "$(fm "${s}" epic)" == "$2" && -z "$(get_fm "${s}" after)" ]] && return 1
-  done < <(board stories)
-  return 0
-}
-
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
   local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules
@@ -329,7 +319,7 @@ story_brief() {
   if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
     # The board is in this repo: the PR takes the story off it, and the epic with its last story.
     rel="${BOARD#"${PROJECT_DIR}/"}"
-    if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && last_of_epic "${slug}" "${epic}"; then
+    if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && ! epic_has_stories "${epic}" "${slug}"; then
       cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/."
     else
       cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
