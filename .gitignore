@@ -8,3 +8,6 @@
 .DS_Store
 board/.obsidian/*
 !board/.obsidian/app.json
+
+# Python bytecode from bin/lib imports.
+__pycache__/
