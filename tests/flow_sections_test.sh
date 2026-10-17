@@ -2,7 +2,8 @@
 # flow_sections_test.sh — flow runs every bin/lib/flow_*.py: a section file dropped into a copy of
 # bin/lib prints its line in flow's output, under its own `## <name>` line and after the others in
 # name order, with no other file changed. A section that raises prints its error under its heading,
-# the sections after it still run, and flow exits 1.
+# the sections after it still run, and flow exits 1. So does one that calls sys.exit(3); one that
+# calls sys.exit(0) only ends itself.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,9 +27,13 @@ check "the copy differs from bin/lib by that file alone" "$(diff -rq -x __pycach
   "Only in ${dir}/plugin/bin/lib: flow_zz_test.py"
 
 printf 'raise RuntimeError("boom")\n' > "${dir}/plugin/bin/lib/flow_aa_boom.py"
+printf 'import sys\nsys.exit(3)\n' > "${dir}/plugin/bin/lib/flow_ab_exit.py"
+printf 'import sys\nprint("done early")\nsys.exit(0)\nprint("never")\n' > "${dir}/plugin/bin/lib/flow_ac_done.py"
 out="$(cd "${dir}/repo" && env -u HERDR_ENV -u SWARM_PROJECT bash "${dir}/plugin/bin/swarm.sh" flow 2>/dev/null)" && code=0 || code=$?
 check "a section that raises prints its error under its heading" "$(sed -n 1,2p <<< "${out}")" "$(printf '%s\n' "## aa_boom" "error: aa_boom: boom")"
-check "the sections after it still run" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## ci_health ## cost ## features ## reviewers ## throughput ## zz_test "
+check "the sections after it still run" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## ab_exit ## ac_done ## ci_health ## cost ## features ## reviewers ## throughput ## zz_test "
+check "a section's sys.exit(3) is its error, under its heading" "$(sed -n '/^## ab_exit$/,/^## /p' <<< "${out}")" "$(printf '%s\n' "## ab_exit" "error: ab_exit: exit 3" "" "## ac_done")"
+check "a section's sys.exit(0) ends it with no error" "$(sed -n '/^## ac_done$/,/^## /p' <<< "${out}")" "$(printf '%s\n' "## ac_done" "done early" "" "## ci_health")"
 check "flow exits 1 when a section raised" "${code}" 1
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }

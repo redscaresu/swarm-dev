@@ -6,7 +6,8 @@
 # calling pane's session, or "") and own (the lead's own Claude Code directory); rows, outcomes' rows
 # as dicts by column name, unfiltered; deps, each windowed slug's depends_on. A section that needs gh
 # calls it itself. So a new section is a new file, and this one never changes. A section that raises
-# prints `error: <name>: <message>` under its heading, the others still run, and flow exits 1.
+# prints `error: <name>: <message>` under its heading, the others still run, and flow exits 1; so does
+# one that calls sys.exit with a failing code (sys.exit() or sys.exit(0) only ends that section).
 import glob, os, runpy, sys, traceback
 KEYS = "since until epic agents events findings features roles projects archive lead own".split()
 ctx = dict(zip(KEYS, sys.argv[1:len(KEYS) + 1]))
@@ -21,6 +22,10 @@ for i, name in enumerate(n for n in names if n != "report"):
     print(("\n" if i else "") + f"## {name}", flush=True)
     try:
         runpy.run_path(os.path.join(here, f"flow_{name}.py"), init_globals=dict(ctx), run_name="__main__")
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            print(f"error: {name}: exit {e.code}")
+            failed = True
     except Exception as e:
         print(f"error: {name}: {e}")
         traceback.print_exc()

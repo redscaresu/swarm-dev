@@ -27,11 +27,13 @@ if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/
   echo "FAIL docs, commands, templates or skills mention something removed:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   docs, commands, templates and skills mention nothing removed"; fi
 
-for moved in cost:cost features:features review-yield:reviewers; do
-  out="$(env -u HERDR_ENV bash "${REPO}/bin/swarm.sh" "${moved%%:*}" --since 2026-01-01 2>&1)" && code=0 || code=$?
-  want="swarm.sh ${moved%%:*} is now flow's ${moved#*:} section: swarm.sh flow [--since YYYY-MM-DD] [--epic <slug>]"
-  if [[ ${code} -eq 0 && "${out}" == "${want}" ]]; then echo "ok   ${moved%%:*} names flow's ${moved#*:} section and exits 0"
-  else echo "FAIL ${moved%%:*} exited ${code}, printing: ${out}"; fails=$((fails + 1)); fi
+W="[--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+for moved in "cost:cost:${W}" "features:features:${W}" "review-yield:reviewers:${W} [--epic <slug>]"; do
+  cmd="${moved%%:*}"; rest="${moved#*:}"; section="${rest%%:*}"
+  out="$(env -u HERDR_ENV bash "${REPO}/bin/swarm.sh" "${cmd}" --since 2026-01-01 2>&1)" && code=0 || code=$?
+  want="swarm.sh ${cmd} is now flow's ${section} section: swarm.sh flow ${rest#*:}"
+  if [[ ${code} -eq 0 && "${out}" == "${want}" ]]; then echo "ok   ${cmd} names flow's ${section} section and the flags it reads, and exits 0"
+  else echo "FAIL ${cmd} exited ${code}, printing: ${out}"; fails=$((fails + 1)); fi
 done
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
