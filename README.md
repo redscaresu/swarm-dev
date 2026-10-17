@@ -24,7 +24,8 @@ the run stops whenever a decision is yours.
 3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
    and the builder fixes what it finds.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
-   `merge = agent`. Anything marked `costs: money` always waits for you.
+   `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
+   plugin hook stops every Claude session from merging any way but `swarm.sh merge`.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
