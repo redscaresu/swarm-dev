@@ -19,6 +19,8 @@ hasnt() { # <name> <pattern> [text]
 }
 
 step3=$(awk '/^\*\*3\. /{on=1} /^\*\*4\. |^\*\*Then report/{on=0} on' "$F")
+step2=$(awk '/^\*\*2\. /{on=1} /^\*\*3\. /{on=0} on' "$F" | tr '\n' ' ' | tr -s ' ')
+approval=$(printf '%s' "$(tr '\n' ' ' < "$F" | tr -s ' ')" | grep -oE 'On approval write one.*open a PR with' || true)
 # The file with line breaks folded to spaces, so a phrase wrapped over two lines still matches.
 flat=$(tr '\n' ' ' < "$F" | tr -s ' ')
 risk=$(printf '%s' "$flat" | grep -oE 'risk: high` only[^;]*;' || true)
@@ -40,10 +42,10 @@ has declined-reasons '`out-of-scope`, `nit` or `wrong`' "$flat"
 has folded 'folded into'
 has log-skeptic 'log-finding --reviewer skeptic[|]codex[|]critic <kind> <board PR URL>' "$flat"
 has log-declined 'log-finding --declined <reason>'
-has cap-step-2 'capped at one new command or one changed behaviour and about 300 lines' "$flat"
+has cap-step-2 'capped at one new command or one changed behaviour and about 300 lines' "$step2"
 has cap-step-3 'over the cap of one new command or one changed behaviour and about 300 lines' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
 has output-shape 'depends_on, estimate_lines, easy\}\]' "$flat"
-has front-matter 'front matter .*`estimate_lines`, `easy`' "$flat"
+has front-matter 'front matter .*`estimate_lines`, `easy`' "$approval"
 has report-estimate 'with `kind`, `estimate_lines`, `touches`' "$flat"
 has readme-keys 'estimate_lines.*easy: true' "$(tr '\n' ' ' < "$ROOT/templates/docs/stories/README.md")"
 hasnt no-blocked-by 'blocked_by'
