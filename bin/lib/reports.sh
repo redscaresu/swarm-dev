@@ -167,9 +167,10 @@ outcomes_report() {
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
 # per bin/lib/flow_<name>.py in name order, each under `## <name>` (flow_report.py runs them):
-#   ci_health: one TSV row over the PRs of the outcomes rows dated in the window (with --epic, its
-#     own): the median minutes per head SHA from its first run created to its last updated, red runs
-#     per PR and flakes (a red run, then a green one of the same workflow on that head), from gh's
+#   ci_health: one TSV row over the github.com PRs of the outcomes rows dated in the window (with
+#     --epic, its own): the median minutes per head SHA from its first run created to its last
+#     updated, red runs (failure or timed_out) per PR and flakes (a red run, then a green one of the
+#     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
 #     runs of each PR's branch whose head is one of its commits. A gh failure prints `ci health: gh
 #     failed` and no numbers.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the

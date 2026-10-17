@@ -601,13 +601,14 @@ the others. `flow` writes nothing. For one release, the old `cost`, `features` a
 commands still run, and each prints which section now holds its numbers.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
-the PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's). For each PR, `gh`
-gives its commits and its branch's completed workflow runs, and a run counts when its head is one of
-those commits. `ci_min_median` is the median, over head SHAs, of the minutes from a head's first run
-created to its last run updated. `red_runs_per_pr` is the red runs (failure, timed out or startup
-failure) over the PRs. `flakes` counts each red run followed by a green one of the same workflow on
-the same head. `gh run list` shows only a rerun's last attempt, so each earlier attempt counts as a
-red run. When `gh` fails it prints `ci health: gh failed` and no numbers.
+the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
+elsewhere, such as GitHub Enterprise, is left out. For each PR, `gh` gives its commits and its
+branch's completed workflow runs, and a run counts when its head is one of those commits. `ci_min_median` is the median, over head SHAs, of the minutes from a head's first run
+created to its last run updated. `red_runs_per_pr` is the red runs (a failure or a timeout; a cancelled or
+skipped run is not red) over the PRs. `flakes` counts each red run followed by a green one of the
+same workflow and event on the same head, so a workflow red on push and green on pull_request is no
+flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
+conclusion from `gh api`. A run whose times do not parse adds no minutes. When `gh` fails it prints `ci health: gh failed` and no numbers.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
