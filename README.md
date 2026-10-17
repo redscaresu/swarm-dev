@@ -84,8 +84,9 @@ The other commands are tools the lead runs; they are listed in
 
 Every agent is a full Claude Code session on your own logins. On infrafactory, from 2026-10-09 to
 2026-10-16, a story's build averaged $5.75, and the whole swarm cost $1211.60 for 137 merged PRs
-(about $9 each, planning and review included), at list prices from `swarm.sh cost` and `outcomes`.
-`swarm.sh cost` shows where your own tokens went.
+(about $9 each, planning and review included), at list prices from `swarm.sh flow` and `outcomes`.
+The `cost` section of `swarm.sh flow` shows where your own tokens went. Its `lead_queue` section shows how long
+stories waited on you, as a median and a maximum per day.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the
