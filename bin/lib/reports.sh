@@ -40,7 +40,7 @@ finding_flags() {
 # reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
 # text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
 # have four fields and were all fixed, and rows from before the reviewer column have five. An
-# escaped defect's outcome is escaped, so outcomes and review-yield, which count what review raised,
+# escaped defect's outcome is escaped, so outcomes and flow's reviewers, which count what review raised,
 # leave it out; lessons and dash count fixed and escaped rows, never declined ones.
 record_finding() {
   local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
@@ -105,20 +105,9 @@ lessons_report() {
     "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}"
 }
 
-# cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started,
-# and as "lead" the calling session when run inside herdr plus every session in the project's own
-# Claude Code directory that agents.tsv does not name (with --since, those that started on or after it).
-# Usage comes from Claude Code's own session logs (or close's copy, once Claude Code deleted one),
-# deduplicated by session and message id; codex agents are listed but not priced (not logged here).
+# cost_report <YYYY-MM-DD> — flow's cost section alone, since that day, for dash's cost of the day.
 cost_report() {
-  local lead="" since="" own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
-  # A bare date is the older form, still what dash passes.
-  if [[ $# -eq 1 ]]; then since="$1"; elif [[ $# -eq 2 && "$1" == --since ]]; then since="$2"; fi
-  [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
-  [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  [[ -f "${AGENTS_LOG}" || -n "${lead}" || -d "${own}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  python3 "${SWARM_HOME}/bin/lib/cost_report.py" "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
-    "${SESSIONS_DIR}" "${own}"
+  flow_sections "$1" 9999-12-30 "" "" cost
 }
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
@@ -176,93 +165,89 @@ outcomes_report() {
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
 }
 
-# flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] — throughput: one TSV row per epic, then `all` for
-# the project, over the outcomes rows dated in the window and the ok events.tsv lines whose local day
-# is in it. builds; builders_mean and builders_max, how many builds ran at once, time-weighted over
-# the span from the first build's start to the last one's end: a build runs from its outcomes started
-# (without one, 00:00 local on its agents.tsv day, or when its slug's previous build ended if later)
-# to its first close after that which no earlier build of its slug took, before its slug's next
-# build with a known start, else its session log's last entry, and never past --until's local midnight; stories (its builds' slugs), the longest
-# depends_on chain among them (read with story_text, so merged stories count) and stories_per_chain;
-# review_wait_min, the mean minutes from each PR's createdAt (gh) to the first review-agent event for
-# its slug (before the slug's next PR, if a retry opened one); for a PR with none,
-# proxy_review_wait_min, the same to its first tell:findings or review, which marks a review's end,
-# so the two are never averaged together; and stacked, the stacked events for its slugs (all of them
-# on the `all` row). A PR gh cannot read counts in neither wait. It writes nothing.
+# flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
+# per bin/lib/flow_<name>.py in name order, each under `## <name>` (flow_report.py runs them):
+#   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
+#     window, and as "lead" the calling session when run inside herdr plus every session in the
+#     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
+#     local day). Usage comes from Claude Code's own session logs (or close's copy, once Claude Code
+#     deleted one), deduplicated by session and message id; codex agents are listed but not priced.
+#   features: the project's own docs/features.tsv (or SWARM_FEATURES; with neither, one line saying
+#     there is no feature list) joined with this project's logs: per feature, its uses from --since
+#     (default the 30 days up to --until, or up to today) to --until, its metric and its baseline, and `delete?` for a feature with no
+#     metric, or with logged uses and none in the last 30 days. A feature still settling in is never
+#     stale: one that landed within the last 30 days, or whose landed is an epic still on the board.
+#     Both are read in the features file's own repo (the parent of its directory), where its PRs and
+#     epics are: a #PR landed on the day of the oldest commit whose subject ends `(#N)`, and an epic is
+#     on the board while <board_dir>/epics/<name>.md is there (board_dir from that repo's
+#     .claude/swarm/config), and landed the day git log shows it deleted. An epic with neither, or a
+#     landed that cannot be read (a warning on stderr), is judged by its uses. A use is an ok
+#     events.tsv line (by its local day) of an `event:<command>` (or <command>:<anything>), an
+#     agents.tsv line of a `role:<role>` or `agent:<name>`, or a findings.tsv row of a
+#     `reviewer:<who>`. An `unlogged: <why>` feature (a read-only command leaves no events line)
+#     shows `-` and is judged on its metric alone.
+#   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
+#     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
+#     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
+#     all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
+#     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
+#     rounds are not split by one. --epic keeps only the PRs of that epic (outcomes epic column) in
+#     both blocks, and a third block lists every PR either block counted.
+#   throughput: one TSV row per epic, then `all` for the project, over the outcomes rows dated in the
+#     window and the ok events.tsv lines whose local day is in it; with --epic, that epic's row alone.
+#     builds; builders_mean and builders_max, how many builds ran at once, time-weighted over the span
+#     from the first build's start to the last one's end: a build runs from its outcomes started
+#     (without one, 00:00 local on its agents.tsv day, or when its slug's previous build ended if
+#     later) to its first close after that which no earlier build of its slug took, before its slug's
+#     next build with a known start, else its session log's last entry, and never past --until's local
+#     midnight; stories (its builds' slugs), the longest depends_on chain among them (read with
+#     story_text, so merged stories count) and stories_per_chain; review_wait_min, the mean minutes
+#     from each PR's createdAt (gh) to the first review-agent event for its slug (before the slug's
+#     next PR, if a retry opened one); for a PR with none, proxy_review_wait_min, the same to its first
+#     tell:findings or review, which marks a review's end, so the two are never averaged together; and
+#     stacked, the stacked events for its slugs (all of them on the `all` row). A PR gh cannot read
+#     counts in neither wait.
+# A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
+FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
-  local since="" until="" rows="" deps="" created="" slug url got usage="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]"
+  local since="" until="" epic="" rows=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
-      --until) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; until="$2"; shift 2 ;;
-      *) die "${usage}" ;;
+      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${FLOW_USAGE}"; since="$2"; shift 2 ;;
+      --until) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${FLOW_USAGE}"; until="$2"; shift 2 ;;
+      --epic) [[ "${2:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "${FLOW_USAGE}"; epic="$2"; shift 2 ;;
+      *) die "${FLOW_USAGE}" ;;
     esac
   done
   # Real dates, with a day after them: 2026-02-30 or 9999-12-31 would end in a traceback.
   python3 -c 'import datetime as d, sys; [d.date.fromisoformat(x) + d.timedelta(days=1) for x in sys.argv[1:]]' \
-    "${since:-2000-01-01}" "${until:-2000-01-01}" 2>/dev/null || die "${usage}"
-  since="${since:-0000-00-00}"; until="${until:-9999-12-30}"
-  # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
+    "${since:-2000-01-01}" "${until:-2000-01-01}" 2>/dev/null || die "${FLOW_USAGE}"
+  # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines, and an epic
+  # PR built before since still keeps its later findings.
   # shellcheck disable=SC2119 # takes no argument here
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}"
+}
+
+# flow_sections <since> <until> <epic> <outcomes rows> [section...] — run flow_report.py over the
+# window, with each windowed slug's depends_on (read with story_text, so merged stories count).
+flow_sections() {
+  local since="$1" until="$2" epic="$3" rows="$4" deps="" lead="" slug own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
+  shift 4
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
     deps+="${slug}"$'\t'"$(story_text "${slug}" | sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  while IFS= read -r url; do
-    [[ "${url}" == https://* ]] || continue
-    got="$(gh pr view "${url}" --json createdAt --jq .createdAt 2>/dev/null)" || got=""
-    created+="${url}"$'\t'"${got}"$'\n'
-  done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $15 }' <<< "${rows}" | sort -u)"
-  SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_CREATED="${created}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
-    "${AGENTS_LOG}" "${EVENTS_LOG}" "${since}" "${until}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}"
+  [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+    "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
+    "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
 
-# features [--since YYYY-MM-DD] — FEATURES_FILE joined with this project's logs: per feature, its uses
-# since --since (default the last 30 days), its metric and its baseline, and `delete?` for a feature
-# with no metric, or with logged uses and none in the last 30 days. A feature still settling in is never
-# stale: one that landed within the last 30 days, or whose landed is an epic still on the board.
-# Both are read in the features file's own repo (the parent of its directory), where its PRs and
-# epics are: a #PR landed on the day of the oldest commit whose subject ends `(#N)`, and an epic is
-# on the board while <board_dir>/epics/<name>.md is there (board_dir from that repo's
-# .claude/swarm/config), and landed the day git log shows it deleted. An epic with neither, or a
-# landed that cannot be read (a warning on stderr), is judged by its uses. A use is an ok events.tsv
-# line (by its local day) of an
-# `event:<command>` (or <command>:<anything>), an agents.tsv line of a `role:<role>` or
-# `agent:<name>`, or a findings.tsv row of a `reviewer:<who>`. An `unlogged: <why>` feature (a
-# read-only command leaves no events line) shows `-` and is judged on its metric alone. It writes nothing.
-FEATURES_FILE="${SWARM_FEATURES:-${SWARM_HOME}/docs/features.tsv}"
-features_report() {
-  [[ $# -eq 0 || ( $# -eq 2 && "$1" == --since && "$2" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
-    || die "usage: swarm.sh features [--since YYYY-MM-DD]"
-  [[ -f "${FEATURES_FILE}" ]] || die "no feature list at ${FEATURES_FILE}"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/features_report.py" "${FEATURES_FILE}" "${AGENTS_LOG}" \
-    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}"
-}
-
-# review-yield [--since YYYY-MM-DD] [--epic <slug>] — what review yields, for tuning the reviewers.
-# Block 1 (TSV reviewer kind raised fixed declined decline_rate): findings.tsv rows dated on or after
-# since, per reviewer (its `all` row, then its kinds by declined, most first), per kind across reviewers
-# (`all <kind>`), and last `all all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr
-# max_rounds): the tells_findings of every outcomes row with a PR dated on or after since, summed per
-# PR. So since keeps findings dated on or after it and the rounds of builds started on or after it. A
-# tell names no reviewer, so rounds are not split by one. --epic keeps only the PRs of that epic
-# (outcomes epic column) in both blocks, and a third block lists every PR either block counted. It
-# writes nothing.
-review_yield_report() {
-  local since="" epic="" rows="" usage="usage: swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${usage}"; since="$2"; shift 2 ;;
-      --epic) [[ "${2:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "${usage}"; epic="$2"; shift 2 ;;
-      *) die "${usage}" ;;
-    esac
-  done
-  # Every row, unfiltered, so an epic PR built before since still keeps its later findings.
-  # shellcheck disable=SC2119 # takes no argument here
-  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/review_yield_report.py" \
-    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${epic}"
+# moved <command> <section> <flags> — a report folded into flow: say where its numbers went, and the
+# flags that section reads, for one release.
+moved() {
+  echo "swarm.sh $1 is now flow's $2 section: swarm.sh flow $3"
 }
 
 # findings <repo> <pr> — what a green check can hide: the notes (annotations) on every check run of
