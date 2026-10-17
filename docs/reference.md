@@ -623,7 +623,10 @@ dated in the window. With `--epic` it prints that epic's row alone. Each row sum
 `pr_to_merge_min` is summed per PR, `merged_prs` is the merged PRs whose `main_merges` `gh` could
 read, `main_merged` is how many of those had main merged in, and `main_merged_share` is that
 percentage. An open or abandoned PR is left out of the share, as it was from leaner-faster-swarm's
-baseline of 55%, which a line after the table gives to compare against.
+baseline of 55%, which a line after the table gives to compare against. A sum that could not read
+every value says how many it missed, as `cost` does: `4.25 (1 not in the logs)` for a build with no
+cost (no session log, or a codex agent) or no start-to-PR minutes, or a merged PR with no
+`pr_to_merge_min`.
 
 The `throughput` section prints one TSV
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and

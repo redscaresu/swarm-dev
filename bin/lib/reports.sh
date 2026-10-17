@@ -176,6 +176,7 @@ outcomes_report() {
 #     --epic, that epic's row alone. builds, cost_usd and start_to_pr_min summed over its builds, and
 #     per PR (counted once): pr_to_merge_min summed, merged_prs (merged, with main_merges gh read), main_merged
 #     (main_merges above 0) and main_merged_share, then a line with leaner-faster-swarm's 55% baseline.
+#     A sum with values it could not read ends `(N not in the logs)`, as cost's agents do.
 #   features: the project's own docs/features.tsv (or SWARM_FEATURES; with neither, one line saying
 #     there is no feature list) joined with this project's logs: per feature, its uses from --since
 #     (default the 30 days up to --until, or up to today) to --until, its metric and its baseline, and `delete?` for a feature with no
