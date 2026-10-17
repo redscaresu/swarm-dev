@@ -129,7 +129,14 @@ find_project() {
   main_checkout "$(pwd -P)" || die "not in a swarm project: no .claude/swarm/config above here and not in a git repo"
 }
 
-PROJECT_DIR="$(find_project)"
+# dash --project draws only the projects it names, so it runs anywhere: with no project here, the
+# cwd stands in (no config there, so every setting keeps its default). Without SWARM_PROJECT the
+# lookup's only failure is "not in a swarm project"; a bad SWARM_PROJECT still stops it.
+if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]]; then
+  PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
+else
+  PROJECT_DIR="$(find_project)"
+fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
