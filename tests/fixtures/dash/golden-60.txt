@@ -1,0 +1,78 @@
+alpha  next conduct alpha-core                      12:00:00
+0.6 merged/day over 7 days · ! 3 waiting on you or the lead…
+1 epics active · 2 agents working · 1 PRs green, waiting · …
+on call: fable·xhigh · 0 escalations today
+╭─ needs you ──────────────────────────────────────────────╮
+│ ! run lead story a-key: create the deploy key  waits     │
+│   for: you: create the deploy key in the vault           │
+╰──────────────────────────────────────────────────────────╯
+╭─ lead's queue ───────────────────────────────────────────╮
+│ ! merge alpha#11 (✓ green)  a-review                     │
+│ ! run lead story a-tag: tag the first release  waits     │
+│   for: the lead                                          │
+╰──────────────────────────────────────────────────────────╯
+╭─ epics ──────────────────────────────────────────────────╮
+│ ! alpha-core  ██░░░░  2/7   1 review · 3 ready · 1 bloc… │
+│   ● conduct-alpha-core  working 2m                       │
+│   ● a-building          working 6m                       │
+│   ✓ alpha#11            green  a-review                  │
+╰──────────────────────────────────────────────────────────╯
+⏸ 1 blocked · 1 later  (swarm.sh status --all lists them)
+╭─ running now ────────────────────────────────────────────╮
+│ ● conduct-alpha-core  up 3h00m  Bash 2m ago              │
+│ ● a-building          up 1h00m  Edit 6m ago  no PR yet   │
+╰──────────────────────────────────────────────────────────╯
+╭─ recent ─────────────────────────────────────────────────╮
+│    1h ago  ▶ story a-building                            │
+│    1h ago  · finish a-done-2                             │
+│    1h ago  ⇡ merged #10 story/a-done-2                   │
+│    2h ago  · review a-review                             │
+│    3h ago  ▶ conduct alpha-core                          │
+│ yesterday  ✎ parser accepted an empty file (#10)         │
+│ yesterday  · finish a-x                                  │
+│    2d ago  · finish a-done-1                             │
+╰──────────────────────────────────────────────────────────╯
+bravo  next conduct bravo-ui                        12:00:00
+0.9 merged/day over 7 days · ! 5 waiting on you or the lead…
+3 epics active · 0 agents working · 0 PRs green, waiting · …
+on call: fable·xhigh · 0 escalations today
+╭─ needs you ──────────────────────────────────────────────╮
+│ ! run lead story b-cert: renew the cert  waits for: you: │
+│   approve the renewal email  +1 more                     │
+╰──────────────────────────────────────────────────────────╯
+╭─ lead's queue ───────────────────────────────────────────╮
+│ ! merge bravo#21 (✗ failing · behind)  b-fix             │
+│ ! answer b-fix (waiting on input): herdr agent read      │
+│   b-fix                                                  │
+│ ! look at b-page: working 45 min with no commit, edit,   │
+│   session-log write or PR update                         │
+╰──────────────────────────────────────────────────────────╯
+╭─ epics ──────────────────────────────────────────────────╮
+│ ! bravo-api  ██░░░░  1/4   1 review · 2 ready            │
+│   ! b-fix   waiting on input                             │
+│   ✗ bravo…  failing · behind  b-fix                      │
+│ ! bravo-ui   ██░░░░  1/3   1 ready · 1 blocked           │
+│   ! b-page  stalled 45m                                  │
+│ ✓ 1 active epic with no open story: bravo-docs           │
+│ +1 idle  (--tree lists them)                             │
+╰──────────────────────────────────────────────────────────╯
+⏸ 1 blocked · 0 later  (swarm.sh status --all lists them)
+╭─ running now ────────────────────────────────────────────╮
+│ ✓ conduct-bravo-api  up 1d      Read 5h ago              │
+│ ! b-fix              up 12h00m  Bash 12m ago  #21 faili… │
+│ ! b-page             up 3h20m   Grep 45m ago  no PR yet  │
+╰──────────────────────────────────────────────────────────╯
+╭─ recent ─────────────────────────────────────────────────╮
+│     today  ✎ retry never backed off (#21)                │
+│   15m ago  · tell:findings b-fix                         │
+│   25m ago  · finish b-done-2                             │
+│   30m ago  ⇡ merged #22 story/b-done-2                   │
+│   50m ago  · review b-fix                                │
+│    3h ago  ▶ story b-page                                │
+│    3h ago  · finish b-done-1                             │
+│    4h ago  ⇡ merged #20 story/b-done-1                   │
+╰──────────────────────────────────────────────────────────╯
+● working   ○ ready   ◐ review / CI running   ✓ done / green
+✗ failing   ⏸ blocked
+! needs you or the lead (session gone or unknown)
+? unknown
