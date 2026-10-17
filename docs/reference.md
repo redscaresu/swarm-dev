@@ -634,14 +634,16 @@ come when a review ends, so the two columns are never averaged together. `stacke
 counts the `stacked` events for the epic's slugs, or all of them on the `all` row. The project
 row comes last, so an epic named `all` still gets its own row above it.
 
-The `features` section asks whether each feature is worth keeping.
-`docs/features.tsv` lists every feature with when it landed (a date, a `#PR` or an epic), the metric it
+The `features` section asks whether each feature is worth keeping. It reads the project's own
+`docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying
+there is no feature list, so a project never sees swarm-dev's own features judged against its logs.
+The file lists every feature with when it landed (a date, a `#PR` or an epic), the metric it
 should move (as a `flow` section or `outcomes` reports it), that metric's baseline
 from before it landed (a value naming the command and window it came from, or `unavailable: <why>`),
 and its uses. A use is an `ok` `event:<command>` line in events.tsv, by its local day (a `tell` also matches
 `tell:findings`), a `role:<role>` or `agent:<name>` line in agents.tsv, or a `reviewer:<who>` row in
 findings.tsv. A read-only command leaves no events line, so its uses say `unlogged: <why>`. The
-report prints each feature's uses in the last 30 days (or since `--since`), its metric and its
+report prints each feature's uses in the window, its metric and its
 baseline, and marks `delete?` a feature with no metric, or one whose logged uses have none in the
 last 30 days. A feature still settling in is never marked `delete?` for having no uses: one that
 landed in the last 30 days, or whose `landed` names an epic still on the board. Both are read in the
@@ -651,7 +653,8 @@ the board while `<board_dir>/epics/<name>.md` exists there, and landed on the da
 file deleted. The installed plugin carries its board but is not a git checkout, so
 `docs/features.tsv` itself gives dates. An epic with neither is judged by its uses, and so is a
 `landed` that can't be read, with a warning on stderr. An unlogged feature is judged on its metric alone.
-The section ignores `--until` and `--epic`.
+Without `--since`, the window is the 30 days up to `--until` (or up to today). The section ignores
+`--epic`.
 
 The `reviewers` section shows what review yields, so the
 reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate`,
