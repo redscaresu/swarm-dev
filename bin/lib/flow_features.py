@@ -1,10 +1,12 @@
 # Features, a flow section (flow_report.py gives its globals): each feature's uses from --since (by
-# default the last 30 days) to --until, its metric and baseline, and delete? when unused or unmeasured
-# (that verdict reads the last 30 days, whatever the window).
+# default the 30 days up to --until, or up to today) to --until, its metric and baseline, and delete?
+# when unused or unmeasured (that verdict reads the last 30 days, whatever the window).
 import datetime, os, re, subprocess, sys
 from report import *
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
-since = recent if since == "0000-00-00" else since
+if since == "0000-00-00":
+    end = datetime.date.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
+    since = (end - datetime.timedelta(days=30)).isoformat()
 
 def rows(path):
     return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []

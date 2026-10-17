@@ -176,8 +176,9 @@ outcomes_report() {
 #     --epic, that epic's row alone. builds, cost_usd and start_to_pr_min summed over its builds, and
 #     per PR (counted once): pr_to_merge_min summed, merged_prs (merged, with main_merges gh read), main_merged
 #     (main_merges above 0) and main_merged_share, then a line with leaner-faster-swarm's 55% baseline.
-#   features: FEATURES_FILE joined with this project's logs: per feature, its uses since --since
-#     (default the last 30 days), its metric and its baseline, and `delete?` for a feature with no
+#   features: the project's own docs/features.tsv (or SWARM_FEATURES; with neither, one line saying
+#     there is no feature list) joined with this project's logs: per feature, its uses from --since
+#     (default the 30 days up to --until, or up to today) to --until, its metric and its baseline, and `delete?` for a feature with no
 #     metric, or with logged uses and none in the last 30 days. A feature still settling in is never
 #     stale: one that landed within the last 30 days, or whose landed is an epic still on the board.
 #     Both are read in the features file's own repo (the parent of its directory), where its PRs and
@@ -244,13 +245,13 @@ flow_sections() {
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
-    "${FEATURES_FILE}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
+    "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
-FEATURES_FILE="${SWARM_FEATURES:-${SWARM_HOME}/docs/features.tsv}"
 
-# moved <command> <section> — a report folded into flow: say where its numbers went, for one release.
+# moved <command> <section> <flags> — a report folded into flow: say where its numbers went, and the
+# flags that section reads, for one release.
 moved() {
-  echo "swarm.sh $1 is now flow's $2 section: swarm.sh flow [--since YYYY-MM-DD] [--epic <slug>]"
+  echo "swarm.sh $1 is now flow's $2 section: swarm.sh flow $3"
 }
 
 # findings <repo> <pr> — what a green check can hide: the notes (annotations) on every check run of

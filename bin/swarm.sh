@@ -339,14 +339,14 @@ dispatch() {
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
-    cost)   moved cost cost ;;
+    cost)   moved cost cost "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     outcomes) outcomes_report "$@" ;;
     flow)   flow_report "$@" ;;
-    review-yield) moved review-yield reviewers ;;
+    review-yield) moved review-yield reviewers "[--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
-    features) moved features features ;;
+    features) moved features features "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
     reset)  reset_story "${1:-}" "${*:2}" ;;
