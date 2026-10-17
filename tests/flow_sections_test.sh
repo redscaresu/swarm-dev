@@ -28,7 +28,7 @@ check "the copy differs from bin/lib by that file alone" "$(diff -rq -x __pycach
 printf 'raise RuntimeError("boom")\n' > "${dir}/plugin/bin/lib/flow_aa_boom.py"
 out="$(cd "${dir}/repo" && env -u HERDR_ENV -u SWARM_PROJECT bash "${dir}/plugin/bin/swarm.sh" flow 2>/dev/null)" && code=0 || code=$?
 check "a section that raises prints its error under its heading" "$(sed -n 1,2p <<< "${out}")" "$(printf '%s\n' "## aa_boom" "error: aa_boom: boom")"
-check "the sections after it still run" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## cost ## features ## reviewers ## throughput ## zz_test "
+check "the sections after it still run" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## cost ## features ## lead_queue ## reviewers ## throughput ## zz_test "
 check "flow exits 1 when a section raised" "${code}" 1
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
