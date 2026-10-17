@@ -65,13 +65,18 @@ check "the legend is under bravo's frame" has "● working" "${fb}"
 
 # From a dir in no project and no git repo, --project still draws every frame; plain dash fails.
 N="${ROOT}/nowhere"; mkdir -p "${N}"
-check "the temp dir is in no git repo" bash -c "! git -C '${N}' rev-parse 2>/dev/null"
-out="$(cd "${N}" && env -u HERDR_ENV "${SWARM}" dash --project "${A}" --project "${B}")" || true
+# A precondition, not a check: TMPDIR inside a git repo would make this case prove nothing.
+if git -C "${N}" rev-parse 2>/dev/null; then echo "setup: ${N} is in a git repo" >&2; exit 1; fi
+rc=0; out="$(cd "${N}" && env -u HERDR_ENV "${SWARM}" dash --project "${A}" --project "${B}")" || rc=$?
+check "outside any project, dash --project exits 0" test "${rc}" -eq 0
 check "outside any project, alpha's frame is drawn" grep -q '^alpha  swarm-dev ' <<< "${out}"
 check "outside any project, bravo's frame is drawn" grep -q '^bravo  swarm-dev ' <<< "${out}"
 rc=0; (cd "${N}" && env -u HERDR_ENV "${SWARM}" dash) 2> "${ROOT}/err" || rc=$?
 check "outside any project, plain dash fails: not in a swarm project" \
   bash -c "[ ${rc} -ne 0 ] && grep -qF 'not in a swarm project' '${ROOT}/err'"
+rc=0; (cd "${N}" && env -u HERDR_ENV SWARM_PROJECT=/nonexistent "${SWARM}" dash --project "${A}") 2> "${ROOT}/err" || rc=$?
+check "a bad SWARM_PROJECT with --project still fails, naming it" \
+  bash -c "[ ${rc} -ne 0 ] && grep -qF 'SWARM_PROJECT /nonexistent is not a directory' '${ROOT}/err'"
 
 # A bad project stops dash before it draws anything, naming the project.
 rc=0; out="$(dash --project "${A}" --project /nonexistent 2> "${ROOT}/err")" || rc=$?

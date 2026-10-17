@@ -132,8 +132,9 @@ find_project() {
 }
 
 # dash --project draws only the projects it names, so it runs anywhere: with no project here, the
-# cwd stands in (no config there, so every setting keeps its default).
-if [[ "${1:-}" == dash && " $* " == *" --project "* ]]; then
+# cwd stands in (no config there, so every setting keeps its default). Without SWARM_PROJECT the
+# lookup's only failure is "not in a swarm project"; a bad SWARM_PROJECT still stops it.
+if [[ "${1:-}" == dash && " $* " == *" --project "* && -z "${SWARM_PROJECT:-}" ]]; then
   PROJECT_DIR="$(find_project 2>/dev/null)" || PROJECT_DIR="$(pwd -P)"
 else
   PROJECT_DIR="$(find_project)"
