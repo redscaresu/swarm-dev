@@ -531,7 +531,8 @@ with `--board`, or before it knows the item): a refusal is one `merge` line sayi
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
-the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
+the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
+(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
 `reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
@@ -567,6 +568,18 @@ with no log left gets the story's PR only when it has exactly one. A story that 
 left the board is read from git history. If `gh` fails, the PR columns stay empty. Each finding counts
 for one build: the latest build on its PR that started on or before the day it was logged, so a
 retry that reuses a PR doesn't count the first build's findings again. It writes nothing.
+
+After the rows and a blank line, `outcomes` lists the finding kinds that keep coming back: every kind
+fixed (or escaped) on 3 or more distinct PRs in the last 30 days, today included, most PRs first, as
+TSV with the columns `recurring prs_30d check check_merged before_30d since_30d`. A declined finding
+does not count, and neither does a row whose date is impossible or in the future. Once a story that
+names the kind in its front matter (`checks: <kind>`) has merged, which means it was deleted on the
+default branch (`origin/HEAD`, or `HEAD` when there is none) and git still has it, `check` is its
+slug and `check_merged` is the day of the commit on that branch that deleted it (the merge commit,
+for a merged branch). `before_30d` is how many PRs the kind was fixed on in the 30 days before that
+day, and `since_30d` the same for the 30 days from it, so you can see whether the check helped. Until
+30 days have passed, `since_30d` reads `<n>/<days>d`, the days it covers so far: `1/3d` three days
+after the merge is too soon to judge. With nothing recurring, the block is left out. `flow` and `review-yield` skip these lines.
 
 Each `events.tsv` line counts for one build, so a retried story's tells and closes are split among
 its builds. A line whose time does not parse counts for none. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
@@ -701,7 +714,7 @@ logs it, `log-finding --reviewer ci`.
 ## Merging
 
 With `merge = human` (the default) no agent merges: each agent starts unable to run
-`gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead
+`gh pr merge`, its brief forbids every other route, and the plugin's merge guard (below) refuses the common ones. When a PR is green and reviewed, the lead
 runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
 `prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
@@ -776,6 +789,23 @@ missed poll, and three in a row end the wait as an error. Without
 exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
+
+The plugin also ships a merge guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
+`hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm
+project (a `.claude/swarm/` folder at or above the session's folder, or above its main checkout when
+the session is in a git worktree) it refuses a call that does one of four things: runs gh's merge
+subcommand, `gh pr merge`, however its words are quoted; makes the REST or GraphQL merge call, `gh api`
+on `pulls/<n>/merge` or a `mergePullRequest` or `enablePullRequestAutoMerge` mutation; holds either
+of those in text handed to a shell or an interpreter (`bash -c`, `eval`, `python3 -c`, `node -e`, or a
+heredoc, here-string or pipe into one, with a code flag or without) or written to a file; or chains
+`swarm.sh merge` to another command with `;`, `&`, `&&`, `||`, `|`, a newline, `$( )` or backticks.
+It guards against careless commands, not deliberate evasion: a merge reached any other way, such as
+through a variable, a script run by `source` or process substitution, `awk`'s `system()` or an
+alias, passes. A command that only mentions a merge passes too: `echo`, `printf` and `grep`, a commit message, and a PR
+body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
+sees its reason, and `.swarm/events.tsv` gets an incident line. Once a call says merge the guard fails closed: if
+it cannot run its check (no `python3`, input it cannot read, an error of its own), it refuses the
+call. Outside a swarm project the guard allows everything else.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
