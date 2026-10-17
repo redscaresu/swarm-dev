@@ -1,8 +1,10 @@
-import collections, datetime, os, sys
+import collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
 NO_PR = ("", "", "", "", "")
+RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct PRs recurs
+RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
     # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
@@ -61,3 +63,53 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
                      str(fixed), pr, state, attempts] + f[13:]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[13], created), minutes(created, merged), main_merges]))
+
+def check_story(kind):
+    # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
+    # finds a merged story), as (slug, day it was deleted); None when git has none. Read on the
+    # default branch, where merges land, so a story branch deleting its own file is no merge. Each
+    # commit prints as "\x01<day>\0" and then its deleted paths (from the repo root, any characters),
+    # each ending "\0". Without --pickaxe-all, -G lists only the files whose removed lines name the
+    # kind, so a story deleted beside it is never taken for it.
+    got = subprocess.run(["git", "-C", sys.argv[2], "log", "origin/HEAD", "--diff-filter=D", "-z", "--name-only",
+                          "--format=%x01%cs", "-G", f"^checks: *{kind} *$", "--", "stories/"], capture_output=True, text=True)
+    commits = got.stdout.split("\x01")[1:] if got.returncode == 0 else []
+    if not commits:
+        return None
+    deleted, path = commits[0].split("\0")[:2]
+    return os.path.splitext(os.path.basename(path.lstrip("\n")))[0], datetime.date.fromisoformat(deleted)
+
+TODAY, DAY = datetime.date.today(), datetime.timedelta(days=1)
+WINDOW = datetime.timedelta(days=RECURRING_DAYS)
+
+def finding_day(s):
+    # A finding's local day, or None when it is malformed, impossible (2026-02-30) or in the future.
+    try:
+        d = datetime.date.fromisoformat(s) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else None
+    except ValueError:
+        return None
+    return d if d and d <= TODAY else None
+
+# After a blank line, every kind fixed (or escaped) on RECURRING_MIN_PRS or more PRs in the last
+# RECURRING_DAYS days (today among them), most PRs first; once its check story merged, its PRs in the
+# RECURRING_DAYS before that day and in the RECURRING_DAYS from it, the second as <n>/<days>d while
+# fewer days than that have passed. flow and review-yield skip these lines: they are not a row's width.
+dated_fixes = [(finding_day(f[0]), f[1], pr_key(f[2])) for f in fixed_rows(sys.argv[1])]
+dated_fixes = [f for f in dated_fixes if f[0]]
+
+def prs_between(kind, start, end):
+    # The distinct PRs the kind was fixed on from day start up to, not including, day end.
+    return len({pr for d, k, pr in dated_fixes if k == kind and start <= d < end})
+
+recent = {k: prs_between(k, TODAY + DAY - WINDOW, TODAY + DAY) for _, k, _ in dated_fixes}
+flagged = sorted((k for k, n in recent.items() if n >= RECURRING_MIN_PRS), key=lambda k: (-recent[k], k))
+if flagged:
+    print("\nrecurring\tprs_30d\tcheck\tcheck_merged\tbefore_30d\tsince_30d")
+for flagged_kind in flagged:
+    check_slug, check_day = (re.fullmatch(r"[a-z0-9-]+", flagged_kind) and check_story(flagged_kind)) or ("", None)
+    counts = ["", ""]
+    if check_day:
+        since, covered = str(prs_between(flagged_kind, check_day, check_day + WINDOW)), max(0, (TODAY - check_day).days + 1)
+        counts = [str(prs_between(flagged_kind, check_day - WINDOW, check_day)),
+                  since if covered >= RECURRING_DAYS else f"{since}/{covered}d"]
+    print("\t".join([flagged_kind, str(recent[flagged_kind]), check_slug, check_day.isoformat() if check_day else ""] + counts))
