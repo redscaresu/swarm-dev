@@ -303,7 +303,8 @@ CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or 
 # the story's attempts: by one, and when that build was escalate, the story becomes the lead's
 # (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
 # the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
-# hold it for the lead (held_story) when the close ends a build.
+# hold it for the lead (held_story) when the close ends a build. A close that ends a build with no
+# open or merged PR on story/<name> logs an idle-no-pr incident.
 close_agent() {
   local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
   # The message never repeats the word: main logs a die's first line.
@@ -316,7 +317,11 @@ close_agent() {
     die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
   fi
   archive_session "$1"
-  if prs="$(failed_build "$1")"; then counted=1; fi
+  if prs="$(failed_build "$1")"; then
+    counted=1
+    [[ "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" == True ]] \
+      || record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no PR on story/$1"
+  fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.

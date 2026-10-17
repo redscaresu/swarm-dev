@@ -49,3 +49,4 @@ wait --lead	leaner-faster-swarm	outcomes: PR-to-merge time	unavailable: outcomes
 planning during review	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	role:lead
 short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:skeptic
 releases	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic (infrafactory, flow --until 2026-10-16)	unlogged: merge --release logs as merge, so a release is not told apart
+flow incidents	safer-faster-swarm	flow incidents: incidents per day by kind	unavailable: incident lines are new in this epic; its first week of flow incidents gives the baseline	unlogged: a read-only section, and the incident lines it counts are not ok events

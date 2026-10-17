@@ -51,7 +51,7 @@ is one column, top to bottom:
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
   by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
-  pane, nudges and failed tells excepted), `agree` a draft HLD. A `lead` story's row ends with
+  pane, nudges, incidents and failed tells excepted), `agree` a draft HLD. A `lead` story's row ends with
   who it waits for: `waits for: you: create the read-only user`, with the text of its first
   **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
   the first ready `lead` story that has one, with `+N more` when other stories have one too. When
