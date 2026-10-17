@@ -39,7 +39,7 @@ is one column, top to bottom:
   from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
   (`--reviewer escaped` in `findings.tsv`). Then one summary line: epics active, agents working, PRs green and
-  waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today). After
+  waiting for you, stalled builders, and today's estimated cost (the `cost` section of `swarm.sh flow --since <today>`). After
   it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
   call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
   today` too), on the same line when they fit there and on the next line when they don't. Then a

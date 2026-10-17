@@ -5,8 +5,9 @@
 # builder roles), projects (Claude's projects dir), archive (close's session copies), lead (the
 # calling pane's session, or "") and own (the lead's own Claude Code directory); rows, outcomes' rows
 # as dicts by column name, unfiltered; deps, each windowed slug's depends_on. A section that needs gh
-# calls it itself. So a new section is a new file, and this one never changes.
-import glob, os, runpy, sys
+# calls it itself. So a new section is a new file, and this one never changes. A section that raises
+# prints `error: <name>: <message>` under its heading, the others still run, and flow exits 1.
+import glob, os, runpy, sys, traceback
 KEYS = "since until epic agents events findings features roles projects archive lead own".split()
 ctx = dict(zip(KEYS, sys.argv[1:len(KEYS) + 1]))
 table = [l.split("\t") for l in os.environ.get("SWARM_ROWS", "").splitlines()]
@@ -15,7 +16,14 @@ ctx["deps"] = {s: d.split() for s, _, d in (l.partition("\t") for l in os.enviro
 here = os.path.dirname(os.path.abspath(__file__))
 names = sys.argv[len(KEYS) + 1:] or [os.path.basename(p)[len("flow_"):-len(".py")]
                                      for p in sorted(glob.glob(os.path.join(glob.escape(here), "flow_*.py")))]
+failed = False
 for i, name in enumerate(n for n in names if n != "report"):
     print(("\n" if i else "") + f"## {name}", flush=True)
-    runpy.run_path(os.path.join(here, f"flow_{name}.py"), init_globals=dict(ctx), run_name="__main__")
+    try:
+        runpy.run_path(os.path.join(here, f"flow_{name}.py"), init_globals=dict(ctx), run_name="__main__")
+    except Exception as e:
+        print(f"error: {name}: {e}")
+        traceback.print_exc()
+        failed = True
     sys.stdout.flush()
+sys.exit(1 if failed else 0)

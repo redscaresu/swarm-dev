@@ -1,5 +1,6 @@
-# Features, a flow section (flow_report.py gives its globals): each feature's uses since --since (by
-# default the last 30 days), its metric and baseline, and delete? when unused or unmeasured.
+# Features, a flow section (flow_report.py gives its globals): each feature's uses from --since (by
+# default the last 30 days) to --until, its metric and baseline, and delete? when unused or unmeasured
+# (that verdict reads the last 30 days, whatever the window).
 import datetime, os, re, subprocess, sys
 from report import *
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
@@ -19,11 +20,11 @@ uses = [("event", f[1], local_day(f[0])) for f in rows(events) if len(f) == 5 an
 uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
 uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
 
-def count(sources, after):
+def count(sources, after, upto="9999-12-30"):
     n = 0
     for s in sources.split():
         kind, _, want = s.partition(":")
-        n += sum(1 for k, name, day in uses if k == kind and day >= after
+        n += sum(1 for k, name, day in uses if k == kind and after <= day <= upto
                  and (name == want or kind == "event" and name.startswith(want + ":")))
     return n
 
@@ -72,5 +73,5 @@ for f in rows(features)[1:]:
         continue
     unlogged = sources.startswith("unlogged:")
     stale = settled(feature, landed) and not unlogged and count(sources, recent) == 0
-    print("\t".join([feature, "-" if unlogged else str(count(sources, since)), metric, baseline,
+    print("\t".join([feature, "-" if unlogged else str(count(sources, since, until)), metric, baseline,
                      "delete?" if not metric.strip() or stale else ""]))

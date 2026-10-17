@@ -79,6 +79,8 @@ check "an impossible landed date is warned about, once, on stderr" "$(run 2>&1 >
   "swarm.sh flow: features: bad-date: landed '2026-02-30' is not a date, a #PR git log knows, or an epic; judged by its uses"
 check "--since counts the older use, and the verdict still reads the last 30 days" \
   "$(run --since "${old}" 2>/dev/null | grep '^stale')" $'stale\t1\tflow: stacked\t0 (flow)\tdelete?'
+check "--until leaves out the uses after it: used's are today's, stale's is on --until's day" \
+  "$(run --since "${old}" --until "${old}" 2>/dev/null | grep -E '^(used|stale)')" "$(printf '%s\n' $'used\t0\tflow: stacked\t0 (flow)\t' $'stale\t1\tflow: stacked\t0 (flow)\tdelete?')"
 # In UTC-7, an event at 03:00Z on the first day of the 30 is the day before locally, so outside them.
 edge="$(TZ=America/Los_Angeles python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=30))')"
 printf '%s\n' "${edge}T03:00:00Z"$'\tedgecmd\t-\tw:1\tok' >> "${P}/.swarm/events.tsv"
