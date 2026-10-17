@@ -569,6 +569,18 @@ left the board is read from git history. If `gh` fails, the PR columns stay empt
 for one build: the latest build on its PR that started on or before the day it was logged, so a
 retry that reuses a PR doesn't count the first build's findings again. It writes nothing.
 
+After the rows and a blank line, `outcomes` lists the finding kinds that keep coming back: every kind
+fixed (or escaped) on 3 or more distinct PRs in the last 30 days, today included, most PRs first, as
+TSV with the columns `recurring prs_30d check check_merged before_30d since_30d`. A declined finding
+does not count, and neither does a row whose date is impossible or in the future. Once a story that
+names the kind in its front matter (`checks: <kind>`) has merged, which means it was deleted on the
+default branch (`origin/HEAD`, or `HEAD` when there is none) and git still has it, `check` is its
+slug and `check_merged` is the day of the commit on that branch that deleted it (the merge commit,
+for a merged branch). `before_30d` is how many PRs the kind was fixed on in the 30 days before that
+day, and `since_30d` the same for the 30 days from it, so you can see whether the check helped. Until
+30 days have passed, `since_30d` reads `<n>/<days>d`, the days it covers so far: `1/3d` three days
+after the merge is too soon to judge. With nothing recurring, the block is left out. `flow` and `review-yield` skip these lines.
+
 Each `events.tsv` line counts for one build, so a retried story's tells and closes are split among
 its builds. A line whose time does not parse counts for none. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
 story's next escalate build in agents.tsv that has none yet. A later escalate build takes the cycle
