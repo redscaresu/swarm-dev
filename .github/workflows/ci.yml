@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
       - name: Run shellcheck
         # shellcheck is preinstalled on GitHub's ubuntu runners.
-        run: shellcheck bin/swarm.sh scripts/pre-commit scripts/demo-dash.sh tests/*.sh
+        run: shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh tests/*.sh
 
   test:
     runs-on: ubuntu-latest

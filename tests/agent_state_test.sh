@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agent_state_test.sh — structural: herdr's agent_status is read only where the agent-state epic
-# allows, so a Claude agent's state always comes from its session. An awk walk over swarm.sh and
-# bin/lib/*.py tracks the enclosing bash function (a .py file is named for the one it runs for) and,
+# allows, so a Claude agent's state always comes from its session. An awk walk over swarm.sh,
+# bin/lib/*.sh and bin/lib/*.py tracks the enclosing bash function (a .py file is named for the one it runs for) and,
 # inside panes.py, the python def; every non-comment line naming
 # agent_status must sit in an allowlisted place. Also: agent_state is called without a session only
 # from tidy_panes, and no `herdr agent read ... |` pipeline scrapes a pane. Run on another file with
@@ -74,7 +74,7 @@ walk() {
     }
     one { fn = ""; one = 0 }
     sh && /^\}/ { fn = "" }
-  ' "${SWARM}" "${LIB}"/*.py
+  ' "${SWARM}" "${LIB}"/*.sh "${LIB}"/*.py
 }
 
 out="$(walk)"
@@ -86,7 +86,7 @@ check "herdr_wait is called only from ${HERDR_WAIT_CALLER}" none ': calls herdr_
 check "no herdr agent read output is piped" none ': pipes herdr agent read$'
 # The walk is only as good as its anchors: each allowlisted place must exist, or a rename would pass.
 for fn in $(awk 'NF {print $1}' <<< "${ALLOWED}") "${NO_SESSION_CALLER}" "${HERDR_WAIT_CALLER}"; do
-  check "allowlisted ${fn} is defined" grep -Eq "^${fn}\(\) *\{" "${SWARM}"
+  check "allowlisted ${fn} is defined" grep -Eq "^${fn}\(\) *\{" "${SWARM}" "${LIB}"/*.sh
 done
 check "panes.py's agent_state has its session branch" grep -q '^    if s is not None:$' "${LIB}/panes.py"
 

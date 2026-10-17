@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # roles_test.sh — every role in ROLE_GROUPS is started by something: a `swarm.sh agent` line in
 # commands/*.md that passes it literally, a role `x` in a command file whose agent line takes
-# <role>, a start_agent call in bin/swarm.sh that passes it literally, or `swarm.sh _role` for a
-# fixture story. A role policy() knows that nothing starts is dead weight, or a missing caller.
+# <role>, a start_agent call in bin/swarm.sh or bin/lib/*.sh that passes it literally, or
+# `swarm.sh _role` for a fixture story. A role policy() knows that nothing starts is dead weight, or a missing caller.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,7 +25,7 @@ for f in "${REPO}"/commands/*.md; do
     reached+=$'\n'"$(grep -o 'role `[a-z-]*`' <<< "${md}" | sed 's/role `\(.*\)`/\1/' || true)"
   fi
 done
-reached+=$'\n'"$(grep -v '^[[:space:]]*#' "${SWARM}" \
+reached+=$'\n'"$(cat "${SWARM}" "${REPO}"/bin/lib/*.sh | grep -v '^[[:space:]]*#' \
   | sed -n 's/.*start_agent \([^ ]*\) \([^ ]*\) \([^ ]*\) \([a-z-]*\)\( .*\)\{0,1\}$/\4/p')"
 
 # _role for one fixture story per arm of story_role. With sonnet_share = 4, slug e4-f lands in the

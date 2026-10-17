@@ -6,6 +6,7 @@
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+SH=("${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh)   # swarm.sh and the bin/lib/*.sh it sources
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
@@ -132,7 +133,7 @@ goal_path() {
   ref="${ref%% (this worktree is *}"
   if [[ -n "${ref}" ]] && grep -qF -- "in ${ref} (your brief's story" "$2"; then echo "${ref}"; else echo "brief: '${ref}', goal: $(cat "$2")"; fi
 }
-GOAL_SEND_MAX="$(sed -n 's/^GOAL_SEND_MAX=\([0-9]*\).*/\1/p' "${SWARM}")"
+GOAL_SEND_MAX="$(sed -n 's/^GOAL_SEND_MAX=\([0-9]*\).*/\1/p' "${SH[@]}")"
 # The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
 MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
@@ -1008,7 +1009,7 @@ rm -f "${b}"/stories/r[04]-*.md "${b}"/stories/s4-*.md "${b}/stories/sub1.md" "$
 # --- Every codex run goes through codex-review: the arm is the one place that runs codex's review.
 REPO="$(dirname "${SWARM}")/.."
 check "only codex-review runs codex exec review, and no command tells anyone to" "1|" \
-  "$(grep -c 'codex exec review' "${SWARM}")|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
+  "$(cat "${SH[@]}" | grep -c 'codex exec review')|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
 # notreviewed <file> — how many of <file>'s log-finding lines lack --reviewer, or none when it has none.
 notreviewed() { if ! grep -q 'log-finding' "$1"; then echo none; else grep 'log-finding' "$1" | grep -vc -- '--reviewer' || true; fi; }
 check "every log-finding line of method.md names --reviewer" "none" "$(notreviewed "${REPO}/docs/method.md")"
@@ -1016,13 +1017,13 @@ check "every log-finding line of reference.md names --reviewer" "0" "$(notreview
 # bare_declined — each --declined in finding_rule's text or reference.md's outer-loop section that is
 # not followed by a reason (out-of-scope, nit, wrong or the <reason> placeholder), or none.
 bare_declined() {
-  { sed -n '/^finding_rule() {/,/^}/p' "${SWARM}"; sed -n '/^## The outer loop/,/^## /p' "${REPO}/docs/reference.md"; } \
+  { sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}"; sed -n '/^## The outer loop/,/^## /p' "${REPO}/docs/reference.md"; } \
     | grep -oE -- '--declined( +[^ `]+)?' | grep -vE -- '--declined +(out-of-scope|nit|wrong|<reason>)$' || echo none
 }
 check "every --declined in finding_rule and the outer-loop paragraph is followed by a reason" "none" "$(bare_declined)"
 check "finding_rule names out-of-scope, nit, wrong and --reviewer escaped" "yes|yes|yes|yes" \
-  "$(f="$(sed -n '/^finding_rule() {/,/^}/p' "${SWARM}")"; for w in out-of-scope nit wrong '--reviewer escaped'; do has "${w}" "${f}"; done | paste -sd'|' -)"
-check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(grep -c "<who> is the reviewer that first raised it, whoever passed it on" "${SWARM}")"
+  "$(f="$(sed -n '/^finding_rule() {/,/^}/p' "${SH[@]}")"; for w in out-of-scope nit wrong '--reviewer escaped'; do has "${w}" "${f}"; done | paste -sd'|' -)"
+check "the conductors' reviewer mapping is written once, in finding_rule" "1" "$(cat "${SH[@]}" | grep -c "<who> is the reviewer that first raised it, whoever passed it on")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
