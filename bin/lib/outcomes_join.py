@@ -66,31 +66,50 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
-    # finds a merged story), as (slug, day it was deleted); None when git has none.
-    got = subprocess.run(["git", "-C", sys.argv[2], "log", "--diff-filter=D", "--format=%cs", "--name-only",
-                          "-G", f"^checks: *{kind} *$", "--", "stories/"], capture_output=True, text=True)
-    lines = got.stdout.split() if got.returncode == 0 else []
-    return (os.path.splitext(os.path.basename(lines[1]))[0], lines[0]) if len(lines) > 1 else None
+    # finds a merged story), as (slug, day it was deleted); None when git has none. Read on the
+    # default branch, where merges land, so a story branch deleting its own file is no merge. Each
+    # commit prints as "\x01<day>\0" and then its deleted paths (from the repo root, any characters),
+    # each ending "\0". Without --pickaxe-all, -G lists only the files whose removed lines name the
+    # kind, so a story deleted beside it is never taken for it.
+    got = subprocess.run(["git", "-C", sys.argv[2], "log", "origin/HEAD", "--diff-filter=D", "-z", "--name-only",
+                          "--format=%x01%cs", "-G", f"^checks: *{kind} *$", "--", "stories/"], capture_output=True, text=True)
+    commits = got.stdout.split("\x01")[1:] if got.returncode == 0 else []
+    if not commits:
+        return None
+    deleted, path = commits[0].split("\0")[:2]
+    return os.path.splitext(os.path.basename(path.lstrip("\n")))[0], datetime.date.fromisoformat(deleted)
 
-def day(d, days=0):
-    return (d + datetime.timedelta(days=days)).isoformat()
+TODAY, DAY = datetime.date.today(), datetime.timedelta(days=1)
+WINDOW = datetime.timedelta(days=RECURRING_DAYS)
+
+def finding_day(s):
+    # A finding's local day, or None when it is malformed, impossible (2026-02-30) or in the future.
+    try:
+        d = datetime.date.fromisoformat(s) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else None
+    except ValueError:
+        return None
+    return d if d and d <= TODAY else None
 
 # After a blank line, every kind fixed (or escaped) on RECURRING_MIN_PRS or more PRs in the last
-# RECURRING_DAYS days, most PRs first; once its check story merged, its PRs in the RECURRING_DAYS
-# before that day and in the RECURRING_DAYS from it. flow and review-yield skip these lines: they
-# are not a row's width.
-fixed = [f for f in fixed_rows(sys.argv[1]) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f[0])]
-def prs(kind, start, end):
-    return len({pr_key(pr) for d, k, pr, _ in fixed if k == kind and start <= d < end})
-today = datetime.date.today()
-recent = {k: prs(k, day(today, -RECURRING_DAYS), day(today, 1)) for k in {f[1] for f in fixed}}
+# RECURRING_DAYS days (today among them), most PRs first; once its check story merged, its PRs in the
+# RECURRING_DAYS before that day and in the RECURRING_DAYS from it, the second as <n>/<days>d while
+# fewer days than that have passed. flow and review-yield skip these lines: they are not a row's width.
+dated_fixes = [(finding_day(f[0]), f[1], pr_key(f[2])) for f in fixed_rows(sys.argv[1])]
+dated_fixes = [f for f in dated_fixes if f[0]]
+
+def prs_between(kind, start, end):
+    # The distinct PRs the kind was fixed on from day start up to, not including, day end.
+    return len({pr for d, k, pr in dated_fixes if k == kind and start <= d < end})
+
+recent = {k: prs_between(k, TODAY + DAY - WINDOW, TODAY + DAY) for _, k, _ in dated_fixes}
 flagged = sorted((k for k, n in recent.items() if n >= RECURRING_MIN_PRS), key=lambda k: (-recent[k], k))
 if flagged:
     print("\nrecurring\tprs_30d\tcheck\tcheck_merged\tbefore_30d\tsince_30d")
-for kind in flagged:
-    check, merged = (re.fullmatch(r"[a-z0-9-]+", kind) and check_story(kind)) or ("", "")
+for flagged_kind in flagged:
+    check_slug, check_day = (re.fullmatch(r"[a-z0-9-]+", flagged_kind) and check_story(flagged_kind)) or ("", None)
     counts = ["", ""]
-    if merged:
-        m = datetime.date.fromisoformat(merged)
-        counts = [str(prs(kind, day(m, -RECURRING_DAYS), merged)), str(prs(kind, merged, day(m, RECURRING_DAYS)))]
-    print("\t".join([kind, str(recent[kind]), check, merged] + counts))
+    if check_day:
+        since, covered = str(prs_between(flagged_kind, check_day, check_day + WINDOW)), max(0, (TODAY - check_day).days + 1)
+        counts = [str(prs_between(flagged_kind, check_day - WINDOW, check_day)),
+                  since if covered >= RECURRING_DAYS else f"{since}/{covered}d"]
+    print("\t".join([flagged_kind, str(recent[flagged_kind]), check_slug, check_day.isoformat() if check_day else ""] + counts))
