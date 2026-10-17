@@ -1,7 +1,8 @@
 ---
 kind: lead
-status: blocked
+status: ready
 epic: leaner-faster-swarm
+after: leaner-faster-swarm
 depends_on: [merge-holds-costs-money, release-this-epic]
 touches: [infrafactory: .claude/swarm/config, infrafactory: docs/stories/*.md (costs: money only)]
 ---

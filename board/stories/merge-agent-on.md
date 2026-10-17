@@ -1,8 +1,8 @@
 ---
 kind: lead
-status: blocked
-blocked_by: [flow-speedups-release]
+status: ready
 epic: flow-speedups
+after: flow-speedups
 depends_on: [flow-speedups-release]
 touches: [.claude/swarm/config]
 risk: high
