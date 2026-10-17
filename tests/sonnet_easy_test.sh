@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # sonnet_easy_test.sh — sonnet_share picks only code stories marked easy: true. For sonnet_share 1 to
-# 5, a slug that lands in the cksum sample is built as code-sonnet with easy: true and as code without.
+# 5, a slug that lands in the cksum sample is built as code-sonnet with easy: true (trailing spaces or
+# a CRLF's \r included) and as code without.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -32,6 +33,9 @@ for n in 1 2 3 4 5; do
   check "sonnet_share = ${n}: sampled ${s} is code-sonnet with easy: true, code with easy: false or none" \
     "code-sonnet|code|code" \
     "$(role "${s}" "kind: code" "easy: true")|$(role "${s}" "kind: code" "easy: false")|$(role "${s}" "kind: code")"
+  check "sonnet_share = ${n}: sampled ${s} is code-sonnet with a trailing space or a CRLF after easy: true" \
+    "code-sonnet|code-sonnet" \
+    "$(role "${s}" "kind: code" "easy: true ")|$(role "${s}" "kind: code" $'easy: true\r')"
 done
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
