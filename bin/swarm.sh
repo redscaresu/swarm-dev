@@ -306,8 +306,8 @@ agent_name() {
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
 
-# PANES_PY: the one reader of this project's panes, shared by status, tidy and dash (each python
-# exec's it from $SWARM_PANES_PY), so the three views agree.
+# bin/lib/panes.py: the one reader of this project's panes, shared by status, tidy and dash (each python
+# imports it), so the three views agree.
 #   pane_records(state, keep) yields (tab label, pane, recorded name) for each pane in keep (own_panes
 #     and still live), from the tab records in STATE_DIR, skipping *.tmp; a pane's first record wins.
 #   agent_state(a, name, s=None) -> (state, needs_a_look), where a is herdr's agent in the pane (None
@@ -333,94 +333,9 @@ json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; p
 #   shown_state(a, name, s, log, projects) -> agent_state, except that an idle Claude agent whose
 #     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle.
 #     For the views (status, dash); wait reads login_expired itself.
-PANES_PY='
-import glob, json, os, re
-WHY_MAX = 60
-def pane_records(state, keep):
-    seen = set()
-    for path in sorted(glob.glob(os.path.join(state, "*"))):
-        if not os.path.isfile(path) or path.endswith(".tmp"):
-            continue
-        for line in open(path, errors="replace"):
-            f = line.split()
-            if not f or f[0] not in keep or f[0] in seen:
-                continue
-            seen.add(f[0])
-            yield os.path.basename(path), f[0], (f[1] if len(f) > 1 else "-")
-def agent_state(a, name, s=None):
-    if a is None:
-        return "EMPTY", True
-    if s is not None:
-        st = {"busy": "working", "waiting": "WAITING"}.get(s[0], s[0])
-        return st, st not in ("working", "idle")
-    st = a.get("agent_status") or "unknown"
-    if st == "blocked":
-        return "WAITING", True
-    if st == "working":
-        return "working", False
-    if re.search(r"-done\d*$", name):
-        return "retired", False
-    return st, False
-def session_id(log, name):
-    line = None
-    try:
-        for l in open(log, encoding="utf-8", errors="replace"):
-            f = l.rstrip("\n").split("\t")
-            if len(f) == 7 and f[2] == name:
-                line = f
-    except OSError:
-        pass
-    return line[6] if line and line[3] == "claude" and line[6] not in ("", "-") else None
-AUTOMATED_PROMPTS = ("<task-notification>", "[Request interrupted", "<command-name>", "<local-command")
-def is_prompt(d):
-    c = (d.get("message") or {}).get("content")
-    if isinstance(c, list):
-        c = next((x.get("text") for x in c if isinstance(x, dict) and x.get("type") == "text"), "")
-    return not d.get("isMeta") and not str(c or "").startswith(AUTOMATED_PROMPTS)
-def login_expired(log, name, projects):
-    sid, last = session_id(log, name), None
-    for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
-        try:
-            for l in open(path, encoding="utf-8", errors="replace"):
-                if "\"type\":\"assistant\"" not in l and "\"type\":\"user\"" not in l:
-                    continue
-                try:
-                    d = json.loads(l)
-                except ValueError:
-                    continue
-                if not isinstance(d, dict) or d.get("isSidechain"):
-                    continue
-                if d.get("type") == "assistant" or (d.get("type") == "user" and is_prompt(d)):
-                    last = d
-        except OSError:
-            return False
-        break
-    return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
-def shown_state(a, name, s, log, projects):
-    st, look = agent_state(a, name, s)
-    return ("auth", True) if st == "idle" and s is not None and login_expired(log, name, projects) else (st, look)
-def session_state(log, name, listing):
-    sid = session_id(log, name)
-    if sid is None:
-        return None
-    try:
-        entries = json.loads(listing) if listing is not None else None
-    except ValueError:
-        entries = None
-    if not isinstance(entries, list):
-        return "unknown", ""
-    e = next((x for x in entries if isinstance(x, dict) and x.get("sessionId") == sid), None)
-    st = e.get("status") if e is not None else None
-    if st is None:
-        return "gone", ""
-    if st == "waiting":
-        why = " ".join(str(e.get("waitingFor") or "").split())
-        return st, why if len(why) <= WHY_MAX else why[:WHY_MAX - 1] + "…"
-    return (st, "") if st in ("busy", "idle") else ("unknown", "")
-'
 
-# STALL_PY: the one stall rule and agent-to-story mapping, shared by dash and `wait --stall` (each
-# python exec's it from $SWARM_STALL_PY). herdr gives no time an agent entered its state, so a
+# bin/lib/stall.py: the one stall rule and agent-to-story mapping, shared by dash and `wait --stall` (each
+# python imports it). herdr gives no time an agent entered its state, so a
 # builder's last sign of life stands in for it.
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
@@ -435,41 +350,6 @@ def session_state(log, name, listing):
 #     worktree's last commit or edit, an agent's session log write, the time a wait began) or ISO
 #     times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
-STALL_PY='
-import datetime, re, time
-def story_for(name, stories):
-    base = re.sub(r"-done\d*$", "", name)
-    hits = [s for s in stories if s[1] == base]
-    hits.sort(key=lambda s: s[2] == "done")
-    return hits[0][0] if hits else None
-def epoch(x):
-    try:
-        return float(x)
-    except (TypeError, ValueError):
-        try:
-            return datetime.datetime.fromisoformat(str(x).replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            return None
-def sign_time(f):
-    t = epoch(f[0]) if len(f) == 5 else None
-    if t is None or f[1] in ("nudge", "tell:nudge", "tell:note") or f[1].split(":")[0] == "board-pr" or (f[1].split(":")[0] == "tell" and f[4] != "ok"):
-        return None
-    return t
-def last_seen(events):
-    seen = {}
-    try:
-        for l in open(events, encoding="utf-8", errors="replace"):
-            f = l.rstrip("\n").split("\t")
-            t = sign_time(f)
-            if t is not None and t > seen.get(f[2], 0):
-                seen[f[2]] = t
-    except OSError:
-        pass
-    return seen
-def stall_age(seen, slug, name, signs, now=None):
-    ts = [t for t in [seen.get(slug), seen.get(name)] + [epoch(x) for x in signs if x] if t is not None]
-    return max(int(((now or time.time()) - max(ts)) // 60), 0) if ts else None
-'
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
@@ -504,19 +384,8 @@ require_trusted() {
   else
     root="$(cd "${cwd}" && pwd -P)"
   fi
-  python3 - "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${in_git}" <<'PY' \
+  python3 "${SWARM_HOME}/bin/lib/require_trusted.py" "${root}" "${CLAUDE_CONFIG_DIR:-${HOME}}/.claude.json" "${in_git}" \
     || die "Claude Code does not trust ${root} yet, so the agent would stall on its trust prompt. Run claude in ${root} once, accept the prompt, then try again."
-import json, os, sys
-root, config, in_git = sys.argv[1], sys.argv[2], sys.argv[3] == "git"
-try:
-    projects = json.load(open(config)).get("projects", {})
-except (OSError, ValueError):
-    sys.exit(0)
-paths = [root]
-while not in_git and os.path.dirname(paths[-1]) != paths[-1]:
-    paths.append(os.path.dirname(paths[-1]))
-sys.exit(0 if any(projects.get(p, {}).get("hasTrustDialogAccepted") is True for p in paths) else 1)
-PY
 }
 
 # MIN_CLAUDE: the oldest Claude Code with both `--session-id` and `claude agents --json`, which every
@@ -703,16 +572,16 @@ session_for_pane() {
 # read. Its errors go to <err-file>, else nowhere.
 claude_agents() { claude agents --json 2>"${1:-/dev/null}"; }
 
-# session_state <name> — the state Claude Code reports for <name>'s session (PANES_PY's
+# session_state <name> — the state Claude Code reports for <name>'s session (panes.py's
 # session_state over one claude_agents call, its listing on stdin): busy, idle, waiting[:
 # <waitingFor>], unknown or gone; `herdr` when herdr answers for the agent instead (codex, or no
 # session recorded). A reader that fails, or prints nothing, is unknown, never herdr.
 session_state() {
   local list ok=1 out
   list="$(claude_agents)" || ok=""
-  out="$(printf '%s' "${list}" | SWARM_PANES_PY="${PANES_PY}" SWARM_LIST_OK="${ok}" python3 -c '
+  out="$(printf '%s' "${list}" | SWARM_LIST_OK="${ok}" PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
 import os, sys
-exec(os.environ["SWARM_PANES_PY"])
+from panes import *
 s = session_state(sys.argv[1], sys.argv[2], sys.stdin.read() if os.environ["SWARM_LIST_OK"] else None)
 print("herdr" if s is None else s[0] + (": " + s[1] if s[1] else ""))' "${AGENTS_LOG}" "$1")" || out=""
   echo "${out:-unknown}"
@@ -732,12 +601,12 @@ read_state() {
 # "a prompt" when its state does not say.
 waiting_for() { local w="${1#waiting: }"; [[ "${w}" != "$1" ]] || w="a prompt"; echo "${w}"; }
 
-# login_expired <name> — succeed when <name>'s Claude session stopped on an expired login (PANES_PY's
+# login_expired <name> — succeed when <name>'s Claude session stopped on an expired login (panes.py's
 # login_expired): only the user's /login clears it, so nudging or waiting on it is wasted.
 login_expired() {
-  SWARM_PANES_PY="${PANES_PY}" python3 -c '
+  PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
 import os, sys
-exec(os.environ["SWARM_PANES_PY"])
+from panes import *
 sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
@@ -829,7 +698,7 @@ record_finding() {
   echo "recorded ${kind} (${outcome})"
 }
 
-# REPORT_PY: what the reports share (each python exec's it from $SWARM_REPORT_PY), so they agree.
+# bin/lib/report.py: what the reports share (each python imports it), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
 #   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,
 #   or "". With archive (a project's .swarm/sessions), a session whose log Claude Code deleted falls
@@ -845,64 +714,6 @@ record_finding() {
 #   escaped ones: both are a mistake someone fixed, so both are lessons.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
-REPORT_PY='
-import glob, gzip, json, os, re, zlib
-# ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
-# cache writes assume the 1-hour cache at 2x input. Update when prices change.
-PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
-
-def pr_key(pr):
-    m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
-    return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
-
-def session_log(projects, session, archive=""):
-    if session in ("", "-"):
-        return ""
-    # Escaped, so a project or config dir named with [, ], * or ? is a path, not a pattern.
-    paths = glob.glob(os.path.join(glob.escape(projects), "*", glob.escape(session) + ".jsonl"))
-    if not paths and archive:
-        paths = glob.glob(os.path.join(glob.escape(archive), f"*-{glob.escape(session)}.jsonl.gz"))
-    return paths[0] if paths else ""
-
-def log_lines(path):
-    try:
-        with gzip.open(path, "rt", errors="ignore") if path.endswith(".gz") else open(path, errors="ignore") as f:
-            yield from f
-    except (OSError, EOFError, zlib.error):   # truncated, not gzip, or gone since the glob
-        return
-
-def finding_rows(path, outcomes=("fixed", "declined")):
-    # Read first, so a report that does not pass SWARM_FINDING_REVIEWERS fails rather than drops every row.
-    reviewers = os.environ["SWARM_FINDING_REVIEWERS"].split() + ["unknown"]
-    if not os.path.exists(path):
-        return []
-    rows = (l.rstrip("\n").split("\t")[:6] for l in open(path, encoding="utf-8", errors="replace", newline="\n"))
-    rows = (f + ["fixed", "unknown"][len(f) - 4:] for f in rows if len(f) >= 4)
-    return [f for f in rows if f[4] in outcomes and f[5] in reviewers]
-
-def fixed_rows(path):
-    return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
-
-def session_usage(path, seen):
-    tok, usd, models = [0, 0, 0, 0], 0.0, set()
-    for line in log_lines(path):
-        try:
-            m = json.loads(line).get("message") or {}
-        except (ValueError, AttributeError):
-            continue
-        u, mid = m.get("usage"), m.get("id")
-        if not u or not mid or mid in seen:
-            continue
-        seen.add(mid)
-        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
-        model = m.get("model", "?")
-        models.add(model)
-        tok = [x + y for x, y in zip(tok, t)]
-        price = next((v for k, v in PRICES.items() if k in model), None)
-        if price:
-            usd += sum(x * p for x, p in zip(t, price)) / 1e6
-    return tok, usd, models
-'
 
 # lessons [--all] — the "brief" below is lessons_file (default the brief itself).
 # Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
@@ -919,93 +730,8 @@ lessons_report() {
   local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS}/${key//[^A-Za-z0-9]/-}/memory}"
   # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
   # is long by design and loaded by the agents themselves.
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
-    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}" <<'PY'
-import collections, datetime, glob, os, re, subprocess, sys
-exec(os.environ["SWARM_REPORT_PY"])
-project, log, brief, min_prs, recent_days, max_bytes, flag, memory, swarm_brief = sys.argv[1:10]
-min_prs, recent_days, max_bytes = int(min_prs), int(recent_days), int(max_bytes)
-cutoff = (datetime.date.today() - datetime.timedelta(days=recent_days)).isoformat()
-
-def adopted(kind):
-    # The day the kind's current rule landed on the default branch, from git; "" when it cannot be told.
-    # The tag is searched as written in the brief, and the newest commit that changed its count is taken:
-    # the rule is present now, so that commit is its latest addition (a rule pruned and re-added is new).
-    tag, path = tags.get(kind, ("", ""))
-    if not tag or not path:
-        return ""
-    got = subprocess.run(["git", "-C", project, "log", "--format=%cs", "-S", tag, "origin/HEAD", "--",
-                          f":(top){path}"], capture_output=True, text=True)
-    return got.stdout.split()[0] if got.returncode == 0 and got.stdout.strip() else ""
-
-def read_brief(brief=brief):
-    # The brief on the default branch, where adopted rules land. git paths are from the repo root,
-    # so the project's own prefix is added for a project in a subdirectory of its repo.
-    prefix = subprocess.run(["git", "-C", project, "rev-parse", "--show-prefix"], capture_output=True, text=True)
-    path = prefix.stdout.strip() + os.path.relpath(brief, project)
-    got = subprocess.run(["git", "-C", project, "show", f"origin/HEAD:{path}"], capture_output=True)
-    if got.returncode == 0:
-        return got.stdout.decode("utf-8", errors="replace"), "", path
-    if not os.path.exists(brief):
-        return "", "", ""
-    note = f"note: no {os.path.relpath(brief, project)} on origin/HEAD, so it was read from the working tree (any branch)"
-    return open(brief, encoding="utf-8", errors="replace").read(), note, ""
-
-prs, recent, dated = collections.defaultdict(set), collections.defaultdict(set), collections.defaultdict(list)
-last, example = {}, {}
-for parts in fixed_rows(log):  # a declined finding is no lesson
-    try:
-        when = datetime.date.fromisoformat(parts[0]) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) else None
-    except ValueError:
-        when = None
-    if when is None or when > datetime.date.today():
-        continue  # a malformed, impossible or future row must not count, least of all as recent
-    _, kind, pr, finding = parts
-    day = when.isoformat()
-    prs[kind].add(pr_key(pr)); last[kind] = max(last.get(kind, ""), day); example[kind] = finding
-    dated[kind].append((day, pr_key(pr)))
-    if day >= cutoff:
-        recent[kind].add(pr_key(pr))  # only PRs inside the window count toward a candidate
-brief_text, note, brief_path = read_brief()
-# The brief is pasted into every prompt, so a rule it still tags rules its kind too. Each kind keeps
-# its tag as written and the file it is in, for its adoption date.
-cap_text, cap_note, cap_path = (brief_text, "", brief_path) if swarm_brief == brief else read_brief(swarm_brief)
-tags = {}
-for text, path in ((cap_text, cap_path), (brief_text, brief_path)):  # lessons_file wins a kind in both
-    tags.update({m.group(1): (m.group(0), path) for m in re.finditer(r"<!--\s*lesson:\s*([a-z0-9-]+)\s*-->", text)})
-ruled = set(tags)
-out = []
-for kind in sorted(prs, key=lambda k: -len(prs[k])):
-    n_recent = len(recent[kind])
-    if flag == "--all":
-        out.append(f"{kind}\t{len(prs[kind])} PR(s)\t{n_recent} in the last {recent_days} days\t{'ruled' if kind in ruled else ''}")
-    elif n_recent >= min_prs and kind not in ruled:
-        out.append(f"candidate {kind}: fixed in {n_recent} PRs in the last {recent_days} days, last {last[kind]}; e.g. {example[kind]}")
-    elif kind in ruled:
-        since = adopted(kind)
-        after = {pr for day, pr in dated[kind] if since and day > since}
-        if len(after) >= min_prs:
-            out.append(f"recurring {kind}: fixed in {len(after)} PRs since its brief rule landed on {since}; "
-                       "the rule is not working: turn it into a step agents must do, or drop it")
-for path in sorted(glob.glob(os.path.join(memory, "*.md"))):
-    # Only the frontmatter is read, and only a tagged memory is named: the rest of memory stays private.
-    try:
-        head = re.match(r"---\n(.*?)\n---", open(path, encoding="utf-8", errors="replace").read(), re.S)
-    except OSError:
-        continue  # an unreadable entry must not cost the rest of the report
-    tag = head and re.search(r"^\s*lesson:\s*([a-z0-9]+(?:-[a-z0-9]+)*)\s*$", head.group(1), re.M)
-    if tag and tag.group(1) not in ruled and flag != "--all" and not any(l.startswith(f"candidate {tag.group(1)}:") for l in out):
-        out.append(f"candidate {tag.group(1)}: from the lead's memory {path}; draft the rule from it")
-# The cap measures what every prompt carries: the brief, plus lessons_file's tagged lines when it is
-# another file (project_rules pastes those too).
-pasted = "" if swarm_brief == brief else "\n".join(re.findall(r"^.*<!--\s*lesson:\s*[a-z0-9-]+\s*-->.*$", brief_text, re.M))
-size = len((cap_text + pasted).encode("utf-8", errors="surrogateescape"))
-if size > max_bytes:
-    where = (f"origin/HEAD:{cap_path}" if cap_path else swarm_brief) + (" plus lessons_file's rules" if pasted else "")
-    out.append(f"long brief: {where} is {size} bytes, over {max_bytes}; merge or retire rules")
-notes = list(dict.fromkeys(n for n in (note, cap_note) if n))
-print("\n".join((out or ["no lessons: nothing has recurred in enough PRs yet"]) + notes))
-PY
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/lessons_report.py" "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
+    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}"
 }
 
 # cost [--since YYYY-MM-DD] — tokens and estimated cost per role, for every agent this project's swarm started,
@@ -1020,62 +746,8 @@ cost_report() {
   [[ $# -eq 0 || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "usage: swarm.sh cost [--since YYYY-MM-DD]"
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   [[ -f "${AGENTS_LOG}" || -n "${lead}" || -d "${own}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
-    "${SESSIONS_DIR}" "${own}" <<'PY'
-import datetime, os, sys
-exec(os.environ["SWARM_REPORT_PY"])
-log, since, lead, projects, archive, own = sys.argv[1:7]
-agents, named = [], set()
-if os.path.exists(log):
-    for line in open(log):
-        f = line.rstrip("\n").split("\t")
-        if len(f) == 7:
-            named.add(f[6])
-            if f[0] >= since:
-                agents.append({"role": f[1], "kind": f[3], "session": f[6]})
-if lead and lead not in named:  # a conductor's own pane is already its agents.tsv row
-    agents.append({"role": "lead", "kind": "claude", "session": lead})
-    named.add(lead)
-
-def started(path):
-    # The first timestamp's local day, as since and agents.tsv's dates are, or "".
-    for line in log_lines(path):
-        try:
-            ts = json.loads(line).get("timestamp")
-            return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date().isoformat()
-        except (ValueError, AttributeError, TypeError):
-            continue
-    return ""
-
-# The lead's own sessions: Claude Code keeps them under the project's path, all but letters and digits turned into -.
-for path in sorted(glob.glob(os.path.join(glob.escape(own), "*.jsonl"))):
-    session = os.path.basename(path)[:-len(".jsonl")]
-    if session not in named and (since == "0000-00-00" or started(path) >= since):
-        agents.append({"role": "lead", "kind": "claude", "session": session, "path": path})
-rows, seen = {}, set()
-for a in agents:
-    r = rows.setdefault(a["role"], {"agents": 0, "models": set(), "tok": [0, 0, 0, 0], "usd": 0.0, "unpriced": 0})
-    r["agents"] += 1
-    path = a.get("path") or session_log(projects, a["session"], archive)
-    if a["kind"] != "claude" or not path:
-        r["unpriced"] += 1
-        continue
-    tok, usd, models = session_usage(path, seen)
-    r["models"] |= models
-    r["tok"] = [x + y for x, y in zip(r["tok"], tok)]
-    r["usd"] += usd
-def n(x):
-    return f"{x/1e6:.1f}M" if x >= 1e6 else f"{x/1e3:.0f}k"
-print("| role | agents | model | input | cache write | cache read | output | est. $ |")
-print("|---|---|---|---|---|---|---|---|")
-tot = [0, 0, 0, 0]; usd = 0.0
-for role, r in sorted(rows.items(), key=lambda kv: -kv[1]["usd"]):
-    tot = [x + y for x, y in zip(tot, r["tok"])]; usd += r["usd"]
-    note = f" ({r['unpriced']} not in the logs)" if r["unpriced"] else ""
-    print(f"| {role} | {r['agents']}{note} | {', '.join(sorted(r['models'])) or '-'} | " + " | ".join(n(x) for x in r["tok"]) + f" | {r['usd']:.2f} |")
-print(f"| **total** | {sum(r['agents'] for r in rows.values())} | | " + " | ".join(n(x) for x in tot) + f" | {usd:.2f} |")
-print("\nList prices; on a subscription this is plan usage, not a bill. Codex agents are not priced.")
-PY
+  python3 "${SWARM_HOME}/bin/lib/cost_report.py" "${AGENTS_LOG}" "${since:-0000-00-00}" "${lead}" "${CLAUDE_PROJECTS}" \
+    "${SESSIONS_DIR}" "${own}"
 }
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
@@ -1101,150 +773,9 @@ outcomes_report() {
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts,
   # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
-  # columns the report prints after attempts as they are: started to drop_at. No apostrophe in the
-  # python below: bash 3.2 matches quotes inside a heredoc in $(...), so an odd count breaks the script.
-  rows="$(SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
-    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}" <<'PY'
-import collections, datetime, json, os, sys
-exec(os.environ["SWARM_REPORT_PY"])
-log, events, since, projects, roles, archive = sys.argv[1:7]
-
-def slug_of(path, name):
-    # A builder runs in <repo>-wt/<slug>; any other cwd (or none logged) leaves the agents.tsv name.
-    for line in log_lines(path) if path else ():
-        try:
-            cwd = json.loads(line).get("cwd")
-        except (ValueError, AttributeError):
-            continue
-        if cwd:
-            return os.path.basename(cwd.rstrip("/")) if os.path.dirname(cwd.rstrip("/")).endswith("-wt") else name
-    return name
-
-PULL = re.compile(r"https://github\.com/[^/\s\"\\]+/[^/\s\"\\]+/pull/\d+")
-def pulls(path):
-    # Each URL once, in the order of its last mention (pr_of wants only the last of the PRs of the slug), so
-    # a log that names hundreds keeps the row small enough for SWARM_ROWS. A log that reads as nothing
-    # (gone, or damaged from its start) is no log: "-".
-    named, read = {}, False
-    for line in log_lines(path) if path else ():
-        read = True
-        for u in PULL.findall(line):
-            named.pop(u, None)
-            named[u] = None
-    return " ".join(named) if read else "-"
-
-def started_of(path):
-    # The first timestamp in the session log, to the second as events.tsv writes times (both UTC), or "".
-    for line in log_lines(path) if path else ():
-        try:
-            ts = json.loads(line).get("timestamp")
-        except (ValueError, AttributeError):
-            continue
-        if isinstance(ts, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", ts):
-            return ts[:19] + "Z"
-    return ""
-
-def midnight(day):
-    # 00:00 local time on an agents.tsv day (a local date), in epoch seconds: where a build with no
-    # session log starts. None for a day that does not parse.
-    try:
-        return datetime.datetime.strptime(day, "%Y-%m-%d").timestamp()
-    except ValueError:
-        return None
-
-def secs(t):
-    # A UTC time as events.tsv and started write it, in epoch seconds; None when it does not parse.
-    try:
-        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-def agent_name(n):
-    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
-    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
-    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
-
-builds, tries = [], collections.Counter()
-for line in open(log, errors="ignore"):
-    f = line.rstrip("\n").split("\t")
-    if len(f) != 7 or f[1] not in roles.split():
-        continue
-    path = session_log(projects, f[6], archive)
-    slug = slug_of(path, f[2])
-    tries[slug] += 1
-    started = started_of(path)
-    builds.append({"f": f, "path": path, "slug": slug, "n": tries[slug], "started": started,
-                   "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}})
-
-def of(target):
-    # The builds an events.tsv target names: by slug or agents.tsv name, and a build whose slug is
-    # unknown (no log, so it is the name) by the name agents.tsv keeps for the target, which cuts a slug
-    # over 32 characters. A build whose log names another slug with the same 32 is not this one.
-    cut = agent_name(target)
-    return [b for b in builds if b["t"] is not None
-            and (target in (b["slug"], b["f"][2]) or b["slug"] == b["f"][2] == cut)]
-
-STEPS = ("escalate", "dialog", "escalated", "reset", "drop")
-oks, escalates = [], collections.defaultdict(list)
-for line in open(events, errors="ignore") if os.path.exists(events) else ():
-    f = line.rstrip("\n").split("\t")
-    # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
-    # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
-    # line whose time does not parse goes to no build.
-    t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
-    if t is not None:
-        oks.append((t, f))
-        if f[1] == "escalate":
-            escalates[f[2]].append(t)
-cycle, seen = {}, collections.Counter()
-for t, f in oks:
-    # A tell is logged as tell:<kind>; a bare tell, from logs before kinds, sent findings.
-    when, c, target = f[0], {"tell": "tell:findings"}.get(f[1], f[1]), f[2]
-    if c in STEPS:
-        # An escalate opens a cycle for the next escalate build of its target with none, in agents.tsv
-        # order, and each step until the next reset, drop or escalate belongs to that build (by event
-        # order, the last of a kind kept). build_story logs the escalate as its build starts, so a later
-        # build with a session log takes the cycle instead when this is the escalate of its target
-        # nearest its start (a tie to the earlier), and it started nearer than the first: a build whose
-        # brief was never taken up logged no escalate, and must not take the cycle of its retry.
-        if c == "escalate":
-            mine, seen[target] = seen[target], seen[target] + 1
-            near = lambda b: min(range(len(escalates[target])), key=lambda i: abs(b["t"] - escalates[target][i]))
-            free = [b for b in of(target) if b["f"][1] == "escalate" and "escalate" not in b["at"]]
-            own = [b for b in free[1:] if b["started"] and near(b) == mine]
-            cycle[target] = min(free[:1] + own, key=lambda b: abs(b["t"] - t), default=None)
-        b = cycle.pop(target, None) if c in ("reset", "drop") else cycle.get(target)
-        if b:
-            b["at"][c] = when
-            if c == "dialog":
-                m = re.fullmatch(r"ok \((accepted|dismissed)\)", f[4])
-                b["at"]["answer"] = m.group(1) if m else ""
-        continue
-    if c.split(":")[0] not in ("tell", "close"):
-        continue
-    # A tell or close goes to the build of its target that started last at or before it.
-    b = max((b for b in reversed(of(target)) if b["t"] <= t), key=lambda b: b["t"], default=None)
-    if b and c.split(":")[0] == "close":
-        # Counted whatever its cause (close:<cause>); close_cause is the cause of the last close (none: empty).
-        b["steer"]["close"] += 1
-        b["cause"] = c.partition(":")[2]
-    elif b:
-        b["steer"][c] += 1
-for b in builds:
-    day, role, _, _, model, effort, _ = b["f"]
-    if day < since:
-        continue
-    cost = tokens = ""
-    tok = ["", "", "", ""]
-    if b["path"]:
-        t, usd, _ = session_usage(b["path"], set())
-        cost, tokens, tok = f"{usd:.2f}", str(sum(t)), [str(x) for x in t]
-    counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
-    steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
-    print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
-                    + tok + [b.get("cause", "")] + steps))
-PY
-)"
+  # columns the report prints after attempts as they are: started to drop_at.
+  rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
+    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
   # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
@@ -1270,71 +801,7 @@ PY
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 - "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" <<'PY'
-import collections, datetime, os, sys
-exec(os.environ["SWARM_REPORT_PY"])
-meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
-
-NO_PR = ("", "", "", "", "")
-
-def parsed(prs):
-    # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
-    # leave out the last three.
-    return [tuple((p.split(" ") + [""] * 4)[:5]) for p in prs.split(",") if " " in p]
-
-def pr_of(prs, pulls):
-    # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
-    # for no log.
-    prs = parsed(prs)
-    if pulls == "-":
-        return prs[0] if len(prs) == 1 else NO_PR
-    keyed = {pr_key(p[0]): p for p in prs}
-    return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), NO_PR)
-
-def minutes(start, end):
-    # Whole minutes from one UTC time to a later one; empty when either is empty or does not parse, or
-    # end comes first (a retry started after the PR it took over was created).
-    try:
-        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-        d = t(end) - t(start)
-    except ValueError:
-        return ""
-    return str(round(d / 60)) if d >= 0 else ""
-
-rows = []
-for line in os.environ["SWARM_ROWS"].splitlines():
-    f = line.split("\t")
-    kind, risk, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", ""))
-    rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(prs, f[12])))
-# Each finding goes to the latest build on its PR that started on or before the finding (both are
-# local dates), so a PR two builds share counts each finding once.
-found = [collections.Counter() for _ in rows]
-for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
-    on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
-    if on:
-        found[on[-1]][(outcome, reviewer)] += 1
-
-def by(c, outcome):
-    return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
-
-# Columns are only ever appended, never inserted or reordered: review-yield and flow read them by name,
-# and a saved report or a script that cuts by position still lines up with a new one.
-print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts"
-      "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
-      "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
-      "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
-      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges")
-for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c in zip(rows, found):
-    day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
-    # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
-    story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
-    fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
-    merged = merged if asked and state == "MERGED" else ""
-    print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
-                     str(fixed), pr, state, attempts] + f[13:]
-                     + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
-                        created, minutes(f[13], created), minutes(created, merged), main_merges]))
-PY
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] — throughput: one TSV row per epic, then `all` for
@@ -1374,120 +841,8 @@ flow_report() {
     got="$(gh pr view "${url}" --json createdAt --jq .createdAt 2>/dev/null)" || got=""
     created+="${url}"$'\t'"${got}"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $15 }' <<< "${rows}" | sort -u)"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_CREATED="${created}" python3 - \
-    "${AGENTS_LOG}" "${EVENTS_LOG}" "${since}" "${until}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" <<'PY'
-import collections, datetime, json, os, sys
-exec(os.environ["SWARM_REPORT_PY"])
-log, events, since, until, roles, projects, archive = sys.argv[1:8]
-
-def secs(t):
-    # A time in epoch seconds (local when it names no zone); None when it does not parse.
-    try:
-        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-def last_entry(path):
-    t = None
-    for line in log_lines(path) if path else ():
-        try:
-            ts = json.loads(line).get("timestamp")
-        except (ValueError, AttributeError):
-            continue
-        t = (secs(ts) if isinstance(ts, str) else None) or t
-    return t
-
-oks = []
-for line in open(events, errors="ignore") if os.path.exists(events) else ():
-    f = line.rstrip("\n").split("\t")
-    t = secs(f[0]) if len(f) == 5 and f[4].startswith("ok") else None
-    if t is not None:
-        oks.append((t, f[1], f[2], datetime.date.fromtimestamp(t).isoformat()))
-# A close after --until still ends its build (at the cutoff); every other event counts in the window
-# only, by its local day, as builds are.
-closes = [(t, x) for t, c, x, _ in oks if c.split(":")[0] == "close"]
-evs = [(t, c, x) for t, c, x, day in oks if since <= day <= until]
-table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
-rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
-agents = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
-agents = [f for f in agents if len(f) == 7 and f[1] in roles.split()]
-# Local midnight after --until, as agents.tsv dates and a log-less build's start are local.
-stop = (datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp()
-# A build whose start does not parse (a damaged agents.tsv date and no session log) is left out.
-built = [(r, a, t) for r, a in zip(rows, agents) for t in [secs(r["started"] or r["date"] + "T00:00:00")] if t is not None]
-project, groups = [], collections.defaultdict(list)   # apart, so an epic named all is still an epic
-ended, taken = {}, set()   # slug -> when its last build so far (agents.tsv order) ended; closes taken
-for i, (r, a, start) in enumerate(built):
-    # A log-less build starts at 00:00, so a retry could seem to start before the build it retries:
-    # it starts no earlier than that one ended.
-    if not r["started"] and ended.get(r["slug"]):
-        start = max(start, ended[r["slug"]])
-    # Its first close after its start that no earlier build of the slug took, and before the slug's
-    # next build with a known start: a build never closed must not take its retry's. A log-less
-    # retry bounds nothing, as its start is only known once this build's end is.
-    upto = next((t for o, _, t in built[i + 1:] if o["slug"] == r["slug"] and o["started"]), float("inf"))
-    names = (r["slug"], a[2])
-    got = min(((t, k) for k, (t, x) in enumerate(closes) if x in names and start <= t < upto and k not in taken),
-              default=None)
-    if got:
-        taken.add(got[1])
-    end = got[0] if got else last_entry(session_log(projects, a[6], archive))
-    ended[r["slug"]] = end or ended.get(r["slug"])
-    if not since <= r["date"] <= until:
-        continue
-    b = {"slug": r["slug"], "pr": r["pr"], "start": start, "end": min(end, stop) if end else None}
-    project.append(b)
-    if r["epic"]:
-        groups[r["epic"]].append(b)
-
-def running(bs):
-    spans = [(b["start"], b["end"]) for b in bs if b["end"] and b["end"] > b["start"]]
-    if not spans:
-        return "", ""
-    now = top = 0
-    for _, d in sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans]):   # an end before a start at one time
-        now += d
-        top = max(top, now)
-    span = max(e for _, e in spans) - min(s for s, _ in spans)
-    return f"{sum(e - s for s, e in spans) / span:.2f}", str(top)
-
-deps = {s: d.split() for s, _, d in (l.partition("\t") for l in os.environ["SWARM_DEPS"].splitlines())}
-def chain(slugs):
-    memo = {}
-    def depth(s, seen):
-        if s not in memo:
-            memo[s] = 1 + max((depth(d, seen | {s}) for d in deps.get(s, []) if d in slugs and d not in seen), default=0)
-        return memo[s]
-    return max((depth(s, frozenset()) for s in slugs), default=0)
-
-created = dict(l.split("\t", 1) for l in os.environ["SWARM_CREATED"].splitlines() if "\t" in l)
-def waits(bs):
-    wait, proxy = [], []
-    prs = list({pr_key(b["pr"]): b for b in bs if b["pr"]}.values())
-    for b in prs:
-        t0 = secs(created.get(b["pr"], ""))
-        # A retry's PR takes the slug's events from its own createdAt on, so an older PR keeps only its own.
-        t1 = min((t for t in (secs(created.get(o["pr"], "")) for o in prs if o["slug"] == b["slug"])
-                  if t is not None and t0 is not None and t > t0), default=float("inf"))
-        first = lambda cmds: min((t for t, c, x in evs if c in cmds and x == b["slug"] and t0 <= t < t1), default=None)
-        t = first(("review-agent",)) if t0 is not None else None
-        p = first(("tell:findings", "tell", "review")) if t0 is not None and t is None else None
-        if t is not None:
-            wait.append(t - t0)
-        elif p is not None:
-            proxy.append(p - t0)
-    mean = lambda xs: str(round(sum(xs) / len(xs) / 60)) if xs else ""
-    return mean(wait), mean(proxy)
-
-print("epic\tbuilds\tbuilders_mean\tbuilders_max\tstories\tlongest_chain\tstories_per_chain"
-      "\treview_wait_min\tproxy_review_wait_min\tstacked")
-for g, bs in sorted(groups.items()) + [(None, project)]:
-    slugs = {b["slug"] for b in bs}
-    n = chain(slugs)
-    stacked = sum(1 for _, c, x in evs if c == "stacked" and (g is None or x in slugs))
-    print("\t".join([g or "all", str(len(bs)), *running(bs), str(len(slugs)), str(n), f"{len(slugs) / n:.1f}" if n else "",
-                     *waits(bs), str(stacked)]))
-PY
+  SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_CREATED="${created}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+    "${AGENTS_LOG}" "${EVENTS_LOG}" "${since}" "${until}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}"
 }
 
 # features [--since YYYY-MM-DD] — FEATURES_FILE joined with this project's logs: per feature, its uses
@@ -1508,83 +863,8 @@ features_report() {
   [[ $# -eq 0 || ( $# -eq 2 && "$1" == --since && "$2" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh features [--since YYYY-MM-DD]"
   [[ -f "${FEATURES_FILE}" ]] || die "no feature list at ${FEATURES_FILE}"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - "${FEATURES_FILE}" "${AGENTS_LOG}" \
-    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}" <<'PY'
-import datetime, os, re, subprocess, sys
-exec(os.environ["SWARM_REPORT_PY"])
-features, agents, events, findings, since = sys.argv[1:6]
-recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
-
-def rows(path):
-    return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []
-
-# (source, name, day) for every use the logs hold.
-def local_day(t):
-    try:
-        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone().date().isoformat()
-    except ValueError:
-        return None
-
-uses = [("event", f[1], local_day(f[0])) for f in rows(events) if len(f) == 5 and f[4].startswith("ok") and local_day(f[0])]
-uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
-uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
-
-def count(sources, after):
-    n = 0
-    for s in sources.split():
-        kind, _, want = s.partition(":")
-        n += sum(1 for k, name, day in uses if k == kind and day >= after
-                 and (name == want or kind == "event" and name.startswith(want + ":")))
-    return n
-
-root = os.path.dirname(os.path.dirname(os.path.abspath(features)))   # the features file's repo
-def git(*args):
-    got = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
-    return got.stdout if got.returncode == 0 else ""
-
-# The oldest commit day of each #N in a subject's last `(#N)`.
-merged = {}
-for line in git("log", "--format=%cs %s", "HEAD").splitlines():
-    m = re.fullmatch(r"(\S+) .*\(#(\d+)\)", line)
-    if m:
-        merged["#" + m.group(2)] = m.group(1)
-try:
-    board_dir = re.search(r"^\s*board_dir\s*=\s*(\S+)", open(os.path.join(root, ".claude/swarm/config")).read(), re.M).group(1)
-except (OSError, AttributeError):
-    board_dir = "docs"
-
-def landed_day(landed):
-    # The day a date or #PR landed, or None when it cannot be read.
-    try:
-        return datetime.date.fromisoformat(merged.get(landed, landed)).isoformat()
-    except ValueError:
-        return None
-
-def settled(feature, landed):
-    # Whether its uses can judge it: landed 30 days ago or more, or an epic that has left the board.
-    day = landed_day(landed)
-    if not day and re.fullmatch(r"[a-z][a-z0-9_-]*", landed):
-        epic = os.path.join(board_dir, "epics", landed + ".md")
-        if os.path.exists(os.path.join(root, epic)):
-            return False
-        day = git("log", "-1", "--diff-filter=D", "--format=%cs", "HEAD", "--", epic).strip()
-        return day < recent if day else True
-    if day:
-        return day < recent
-    print(f"swarm.sh features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
-          file=sys.stderr)
-    return True
-
-print("feature\tuses\tmetric\tbaseline\tverdict")
-for f in rows(features)[1:]:
-    feature, landed, metric, baseline, sources = (f + [""] * 5)[:5]
-    if not feature:
-        continue
-    unlogged = sources.startswith("unlogged:")
-    stale = settled(feature, landed) and not unlogged and count(sources, recent) == 0
-    print("\t".join([feature, "-" if unlogged else str(count(sources, since or recent)), metric, baseline,
-                     "delete?" if not metric.strip() or stale else ""]))
-PY
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/features_report.py" "${FEATURES_FILE}" "${AGENTS_LOG}" \
+    "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${2:-}"
 }
 
 # review-yield [--since YYYY-MM-DD] [--epic <slug>] — what review yields, for tuning the reviewers.
@@ -1607,47 +887,8 @@ review_yield_report() {
   done
   # Every row, unfiltered, so an epic PR built before since still keeps its later findings.
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
-  SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 - \
-    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${epic}" <<'PY'
-import collections, os, sys
-exec(os.environ["SWARM_REPORT_PY"])
-findings, since, epic = sys.argv[1:4]
-# Read by column name, as flow does.
-table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
-rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
-rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
-urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
-# None is the all of a reviewer or kind, apart from a finding whose kind is the word all.
-c, counted = collections.defaultdict(collections.Counter), set()
-for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
-    if day >= since and (not epic or pr_key(pr) in urls):
-        counted.add(pr_key(pr))
-        for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
-            c[key][outcome] += 1
-
-def line(who, kind):
-    fixed, declined = c[(who, kind)]["fixed"], c[(who, kind)]["declined"]
-    raised = fixed + declined
-    rate = f"{int(100 * declined / raised + 0.5)}%" if raised else "-"
-    return "\t".join(["all" if x is None else x for x in (who, kind)] + [str(raised), str(fixed), str(declined), rate])
-
-def kinds(who):
-    return sorted((k for w, k in list(c) if w == who and k is not None), key=lambda k: (-c[(who, k)]["declined"], k))
-
-print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate")
-for who in sorted({w for w, _ in c if w is not None}):
-    print("\n".join(line(who, k) for k in [None] + kinds(who)))
-print("\n".join(line(None, k) for k in kinds(None) + [None]))
-rounds = collections.Counter()
-for r in rows:
-    if r["date"] >= since:
-        rounds[pr_key(r["pr"])] += int(r["tells_findings"])
-total = sum(rounds.values())
-per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
-print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
-if epic:
-    print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
-PY
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/review_yield_report.py" \
+    "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${epic}"
 }
 
 # story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
@@ -1741,7 +982,7 @@ while i < len(es) and cap > 0:
 print(int(max(best)) if best else "")' "${wt}" "${STALL_PATHS}" "${ct}" || echo "${ct}"
 }
 
-# story_rows — one "slug<TAB>agent name<TAB>status<TAB>prs" line per story, for STALL_PY's story_for.
+# story_rows — one "slug<TAB>agent name<TAB>status<TAB>prs" line per story, for stall.py's story_for.
 story_rows() {
   local f r
   while IFS= read -r f; do
@@ -1750,42 +991,23 @@ story_rows() {
   done < <(board stories)
 }
 
-# stall_py <mode> <args...> — run STALL_PY: `story <name>` prints the agent's story (story_for, over
+# stall_py <mode> <args...> — run stall.py: `story <name>` prints the agent's story (story_for, over
 # story_rows); `age <slug> <name> <sign>...` prints stall_age, or nothing.
 stall_py() {
   local rows=""
   [[ "$1" != story ]] || rows="$(story_rows)"
-  SWARM_STALL_PY="${STALL_PY}" SWARM_STORY_ROWS="${rows}" python3 - "${EVENTS_LOG}" "$@" <<'PY'
-import os, sys
-exec(os.environ["SWARM_STALL_PY"])
-events, mode, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-if mode == "story":
-    rows = [l.split("\t") for l in os.environ["SWARM_STORY_ROWS"].splitlines() if l.count("\t") >= 2]
-    print(story_for(args[0], rows) or "")
-else:
-    a = stall_age(last_seen(events), args[0], args[1], args[2:])
-    print("" if a is None else a)
-PY
+  SWARM_STORY_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/stall_py.py" "${EVENTS_LOG}" "$@"
 }
 
 # session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
-# REPORT_PY's session_log), which the session writes on every turn and tool call; empty when it has none.
+# report.py's session_log), which the session writes on every turn and tool call; empty when it has none.
 # Never close's copy (SESSIONS_DIR): an archive says nothing about a live agent.
 session_mtime() {
-  SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" <<'PY' || true
-import os, sys
-exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
-sid = session_id(sys.argv[1], sys.argv[2])
-path = session_log(sys.argv[3], sid) if sid else ""
-try:
-    print(int(os.path.getmtime(path)) if path else "")
-except OSError:   # removed since the glob: no sign
-    print("")
-PY
+  python3 "${SWARM_HOME}/bin/lib/session_mtime.py" "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" || true
 }
 
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
-# stall_minutes (STALL_PY), counting <since> (epoch: when the wait began), its worktree's last commit
+# stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last commit
 # or edit (story_work_time) and its session log's mtime (session_mtime) as signs, print how many
 # minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
 # stalled, so gh is rarely called.
@@ -2254,7 +1476,7 @@ goal_message() { local c; c="$(tr -s '[:space:]' ' ' <<< "$1")"; c="${c# }"; pri
 GOAL_SEND_MAX=700   # Claude Code 2.1.301, measured in a herdr pane: 800 ran, 801 pasted
 
 # goal_entry <name> <since-epoch> [<goal-file>] — the kind of the newest goal entry written at or
-# after <since> in <name>'s session log (its agents.tsv session id, REPORT_PY's session_log under
+# after <since> in <name>'s session log (its agents.tsv session id, report.py's session_log under
 # CLAUDE_PROJECTS), or nothing. Never the pane. The kinds, as the goal spike (Claude Code 2.1.299)
 # found them: set (goal_status with sentinel:true), continuing (the judge's met:false), met (the
 # judge's met:true, which is also how a turn bound and an IMPOSSIBLE escape are written), and
@@ -2265,43 +1487,7 @@ GOAL_SEND_MAX=700   # Claude Code 2.1.301, measured in a herdr pane: 800 ran, 80
 # attachment's prompt, its <pasted_content> tags aside, starts with that /goal: Claude Code collapsed
 # the paste and queued it as a prompt, as it did on 2026-10-16.
 goal_entry() {
-  SWARM_PANES_PY="${PANES_PY}" SWARM_REPORT_PY="${REPORT_PY}" python3 - "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "${3:-}" <<'PY'
-import datetime, json, os, re, sys
-exec(os.environ["SWARM_PANES_PY"]); exec(os.environ["SWARM_REPORT_PY"])
-log, name, projects, since, cond = sys.argv[1:6]
-want = " ".join(open(cond, encoding="utf-8").read().split()) if cond else None
-sid = session_id(log, name)
-path, kind, queued = session_log(projects, sid) if sid else "", "", False
-for l in open(path, encoding="utf-8", errors="replace") if path else []:
-    if "goal_status" not in l and "local_command" not in l and "queued_command" not in l:
-        continue
-    try:
-        d = json.loads(l)
-        t = datetime.datetime.fromisoformat(str(d.get("timestamp")).replace("Z", "+00:00")).timestamp()
-    except (AttributeError, ValueError):
-        continue
-    a = d.get("attachment")
-    if d.get("type") == "attachment" and isinstance(a, dict) and a.get("type") == "goal_status":
-        if want is not None and " ".join(str(a.get("condition") or "").split()) != want:
-            continue
-        k = "set" if a.get("sentinel") else "met" if a.get("met") else "continuing"
-    elif d.get("type") == "system" and d.get("subtype") == "local_command":
-        m = re.match(r"<local-command-stdout>(/goal [^<]*)", str(d.get("content") or ""))
-        if not m:
-            continue
-        k = "refused: " + " ".join(m.group(1).split())
-    elif want is not None and d.get("type") == "attachment" and isinstance(a, dict) and a.get("type") == "queued_command":
-        p = a.get("prompt")
-        p = "".join(b.get("text") or "" for b in p if isinstance(b, dict)) if isinstance(p, list) else str(p or "")
-        if t >= float(since) and " ".join(re.sub(r"</?pasted_content[^>]*>", " ", p).split()).startswith("/goal " + want):
-            queued = True
-        continue
-    else:
-        continue
-    if t >= float(since):
-        kind = k
-print(kind or ("pasted" if queued else ""))
-PY
+  python3 "${SWARM_HOME}/bin/lib/goal_entry.py" "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" "$2" "${3:-}"
 }
 
 # send_goal <slug> <goal-file> <brief|findings> [<since-epoch>] — send <slug>'s builder `/goal <condition>` once (deliver_prompt's
@@ -2674,70 +1860,7 @@ touches_overlap() {
 # overlaps the whole file. An empty status prints as -. Its own function, not inside a <(...):
 # bash 3.2 misreads the parentheses in a heredoc there.
 touches_rows() {
-  python3 - "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" <<'PY'
-import glob, os, re, sys
-stories, me, project_dir, repos_dir = sys.argv[1:]
-project = os.path.basename(project_dir)
-
-def front(path):
-    lines, out = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}
-    if lines[0] != "---":
-        return out
-    for line in lines[1:]:
-        if line == "---":
-            break
-        k, sep, v = line.partition(":")
-        if sep and k not in out:
-            out[k] = v.strip()
-    return out
-
-def entries(fm):
-    repo = fm.get("repo", "")
-    raw, parts, cur, depth = fm.get("touches", "").strip().strip("[]"), [], "", 0
-    for c in raw:
-        if c == "(":
-            depth += 1
-        elif c == ")":
-            depth = max(depth - 1, 0)
-        elif depth == 0 and c == ",":
-            parts.append(cur); cur = ""
-        elif depth == 0:
-            cur += c
-    parts.append(cur)
-    out = []
-    for p in (p.strip() for p in parts):
-        m = re.match(r"([A-Za-z0-9._-]+): (.*)", p)
-        r, p = (m.group(1), m.group(2).strip()) if m else (None, p)
-        if not p:
-            continue
-        head, fr = p.split(":", 1)[0].strip(), repo if r is None else r   # a file's repo: its prefix, else the story's
-        if out and "/" not in head and "." not in head \
-                and not os.path.isfile(os.path.join(project_dir if fr in ("", project) else os.path.join(repos_dir, fr), head)):
-            r = out[-1][0] if r is None else r
-            out.append(("" if r == project else r, out[-1][1], p))
-            continue
-        r = fr
-        f, _, fn = p.partition(":")
-        out.append(("" if r == project else r, f.strip(), fn.strip()))
-    return out
-
-def overlap(a, b):
-    return a[:2] == b[:2] and (not a[2] or not b[2] or a[2] == b[2])
-
-fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
-mine = entries(fms[me])
-def deps(fm):
-    return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
-
-for slug, fm in sorted(fms.items()):
-    # A stacked story starts on its parents' branches: neither holds the other back.
-    if slug == me or slug in deps(fms[me]) or me in deps(fm) or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
-        continue
-    hit = [e for e in entries(fm) if any(overlap(e, m) for m in mine)]
-    if hit:
-        print("\t".join([slug, fm.get("epic") or "none", "held" if fm.get("held_by") else fm.get("status") or "-",
-                         ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))
-PY
+  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}"
 }
 
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
@@ -3728,255 +2851,7 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them.
 ci_gate() {
-  python3 - "$@" <<'PY'
-import json, re, subprocess, sys, time
-OK = ("success", "skipped", "neutral")
-READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
-
-class Err(Exception):
-    """gh failed, or answered something unreadable: main_ci reads again."""
-
-class Unread(Exception):
-    """A workflow written in YAML this does not read: never retried, never skipped."""
-
-def gh(*args):
-    p = subprocess.run(("gh",) + args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    if p.returncode:
-        raise Err("gh %s: %s" % (" ".join(args), (p.stderr.strip().splitlines() or ["exit %d" % p.returncode])[-1]))
-    return p.stdout
-
-def docs(path):
-    """Each JSON document gh prints for path, one per page; none is an error."""
-    s, dec, i, out = gh("api", "--paginate", path), json.JSONDecoder(), 0, []
-    while True:
-        while i < len(s) and s[i].isspace():
-            i += 1
-        if i == len(s):
-            break
-        try:
-            d, i = dec.raw_decode(s, i)
-        except ValueError:
-            raise Err("unreadable answer for " + path)
-        out.append(d)
-    if not out:
-        raise Err("no answer for " + path)
-    return out
-
-def pages(path, key):
-    items, total = [], None
-    for d in docs(path):
-        if not (isinstance(d, dict) and isinstance(d.get(key), list) and isinstance(d.get("total_count"), int)):
-            raise Err("unreadable answer for " + path)
-        items += d[key]
-        total = d["total_count"] if total is None else total
-    if len(items) < total:
-        raise Err("%s: read %d of %d" % (path, len(items), total))
-    return items
-
-def judge(runs, red, wait):
-    for r in runs:
-        if r.get("status") != "completed":
-            wait.append("%s (%s)" % (r.get("name"), r.get("status")))
-        elif r.get("conclusion") not in OK:
-            red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
-
-def checks(repo, sha, need_run=True):
-    runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
-    sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
-    red, wait = [], ([] if runs or not need_run else ["no check runs"])
-    judge(runs, red, wait)
-    for s in sts:
-        if s.get("state") == "pending":
-            wait.append("%s (pending)" % s.get("context"))
-        elif s.get("state") != "success":
-            red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
-    return red, wait
-
-def unq(s):
-    """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
-    match nothing and skip the workflow."""
-    s = s.strip()
-    if s and s[0] in "&*":
-        raise Unread("%s: YAML anchors and aliases are not read" % s)
-    return s.strip("'\"")
-
-def flow(v):
-    v = v.strip()
-    if v.startswith("{") or v.startswith("[") != v.endswith("]"):
-        raise Unread("%s: a {flow mapping} or a [list] over several lines is not read" % v)
-    if any("," in q for q in re.findall(r"'[^']*'|\"[^\"]*\"", v)):
-        raise Unread("%s: a quoted entry holding a comma is not read" % v)
-    return [unq(x) for x in v.strip("[]").split(",") if unq(x)]
-
-def push_filters(text):
-    """on: push's filters ({} for none), or None when there is no push trigger. Reads the forms
-    workflows use: on: push, on: [push, ...], and a block of events with block or [flow] lists."""
-    lines = [re.sub(r"(^|\s)#.*", "", l).rstrip() for l in text.splitlines()]
-    top = [i for i, l in enumerate(lines) if re.match(r"""^(on|"on"|'on'|true)\s*:""", l)]
-    if not top:
-        raise Unread("no on: key")
-    v = lines[top[0]].split(":", 1)[1]
-    if v.strip():
-        return {} if "push" in flow(v) else None
-    block = []
-    for l in lines[top[0] + 1:]:
-        if l and not l[0].isspace() and not l.startswith("-"):
-            break
-        if l.strip():
-            block.append(l)
-    ind = lambda l: len(l) - len(l.lstrip())
-    for j, l in enumerate(block):
-        k = l.strip()
-        if ind(l) != ind(block[0]):
-            continue
-        if k.startswith("-"):
-            if unq(k[1:]) == "push":
-                return {}
-            continue
-        key, _, rest = k.partition(":")
-        if unq(key) != "push":
-            continue
-        if rest.strip() not in ("", "{}", "null", "~"):
-            raise Unread("push: %s is not read" % rest.strip())
-        f, key = {}, None
-        for c in block[j + 1:]:
-            if ind(c) <= ind(l):
-                break
-            c = c.strip()
-            if c.startswith("-") and key:
-                f[key].append(unq(c[1:]))
-            elif ":" in c:
-                key, _, rest = c.partition(":")
-                key = unq(key)
-                f[key] = flow(rest)
-            else:
-                raise Unread("push: %s is not read" % c)
-        return f
-    return None
-
-def glob(p):
-    """A GitHub filter pattern as a regex: * stops at /, ** does not, **/ is zero or more directories,
-    ? and + repeat what precedes."""
-    out = ""
-    for t in re.findall(r"\*\*/|\*\*|\*|\[[^\]]*\]|[?+]|[^*?+\[]+", p):
-        out += {"**/": "(?:.*/)?", "**": ".*", "*": "[^/]*"}.get(t, t if t[0] in "?+[" else re.escape(t))
-    return re.compile(out + r"\Z")
-
-def match(s, pats):
-    """Whether s matches a filter list: the last pattern it matches decides, ! negating."""
-    hit = False
-    for p in pats:
-        neg = p.startswith("!")
-        if glob(p[1:] if neg else p).match(s):
-            hit = not neg
-    return hit
-
-def covers(f, base, files):
-    """Whether pushing files (None: not all known) to base runs a workflow whose push filters are f.
-    An unknown file list covers any path filter, so the wait fails closed."""
-    if f is None:
-        return False
-    if "branches" in f and not match(base, f["branches"]):
-        return False
-    if "branches-ignore" in f and match(base, f["branches-ignore"]):
-        return False
-    if not ("branches" in f or "branches-ignore" in f) and ("tags" in f or "tags-ignore" in f):
-        return False
-    if files is not None:
-        if "paths" in f and not any(match(x, f["paths"]) for x in files):
-            return False
-        if "paths-ignore" in f and all(match(x, f["paths-ignore"]) for x in files):
-            return False
-    return True
-
-def pr_files(repo, n, changed):
-    """Every path PR n changes, a renamed file's old one too, or None when fewer than its changed
-    count come back (the API lists 3000 at most)."""
-    got = []
-    for d in docs("repos/%s/pulls/%s/files?per_page=100" % (repo, n)):
-        if not isinstance(d, list):
-            raise Err("unreadable files for #" + n)
-        got += d
-    if len(got) != changed:
-        return None
-    try:
-        return [p for f in got for p in (f["filename"], f.get("previous_filename")) if p]
-    except (KeyError, TypeError, AttributeError) as e:
-        raise Err("unreadable files for #%s: %r" % (n, e))
-
-def expected(repo, sha, base, n, changed):
-    try:
-        out = gh("api", "repos/%s/contents/.github/workflows?ref=%s" % (repo, sha))
-    except Err as e:
-        if "HTTP 404" in str(e):
-            return []
-        raise
-    # A truncated or odd answer is a failed read, retried like any other; only YAML is Unread.
-    try:
-        paths = [w["path"] for w in json.loads(out) if w["type"] == "file" and w["name"].endswith((".yml", ".yaml"))]
-    except (ValueError, KeyError, TypeError, AttributeError) as e:
-        raise Err("unreadable .github/workflows listing at %s: %r" % (sha[:7], e))
-    want, files = [], pr_files(repo, n, changed)
-    for path in paths:
-        text = gh("api", "-H", "Accept: application/vnd.github.raw", "repos/%s/contents/%s?ref=%s" % (repo, path, sha))
-        try:
-            if covers(push_filters(text), base, files):
-                want.append(path)
-        except Unread as e:
-            raise Unread("%s: %s" % (path, e))
-    return want
-
-def main_ci(repo, sha, base, n, changed, secs, poll, grace):
-    """The merge commit needs no check run of its own: the expected workflows are what must run.
-    With none expected, ok waits out grace seconds, so an app's checks or a status that appear just
-    after the push are seen and judged. A gh error is a missed read, READ_TRIES in a row an error."""
-    want, start, missed = None, time.time(), 0
-    end, settled = start + secs, start + min(grace, secs)
-    while True:
-        try:
-            if want is None:
-                want = expected(repo, sha, base, n, changed)
-            runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
-                    if r.get("head_sha") == sha]
-            red, wait = checks(repo, sha, need_run=False)
-        except Err as e:
-            missed += 1
-            if missed == READ_TRIES:
-                raise Err("%s (%d reads in a row failed)" % (e, missed))
-            wait = ["a read failed: %s" % e]
-        else:
-            missed = 0
-            judge(runs, red, wait)
-            have = {(r.get("path") or "").split("@")[0] for r in runs}
-            wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
-            if red:
-                return 1, "red " + "; ".join(red)
-            if not wait and (want or time.time() >= settled):
-                return 0, "ok"
-        if time.time() >= end:
-            return 2, "timeout (%s)" % "; ".join(wait)
-        time.sleep(poll)
-
-try:
-    mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    if mode == "head":
-        red, wait = checks(repo, args[0])
-        if red or wait:
-            print("; ".join(red + wait))
-            sys.exit(1 if red else 2)
-    elif mode == "files":
-        files = pr_files(repo, args[0], int(args[1]))
-        if not files:
-            raise Err("gh listed no files, or fewer than the PR changes")
-        print("\n".join(files))
-    else:
-        rc, msg = main_ci(repo, args[0], args[1], args[2], int(args[3]), float(args[4]), float(args[5]), float(args[6]))
-        print(msg)
-        sys.exit(rc)
-except Exception as e:
-    print("error %s" % (e or type(e).__name__))
-    sys.exit(3)
-PY
+  python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"
 }
 
 # merge_caller — why the pane running this may not merge, or nothing when it may. Outside herdr it
@@ -4582,14 +3457,14 @@ watch_prs() {
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local agents sessions now e news="" tmp
       # Only agents in panes this project opened: herdr lists every project's. Each one's state is
-      # PANES_PY's agent_state: its session's, else herdr's (codex, or no session recorded). One line
+      # panes.py's agent_state: its session's, else herdr's (codex, or no session recorded). One line
       # per agent waiting, "<name> (<what it waits for>)". A read that fails (herdr's list, Claude
       # Code's, or the reader) changes nothing: a failed Claude list would read every session unknown.
       if agents="$(herdr agent list 2>/dev/null)" && sessions="$(claude_agents)" \
-        && now="$(printf '%s' "${agents}" | SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
-        python3 -c '
+        && now="$(printf '%s' "${agents}" | SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+        PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
 import json, os, sys
-exec(os.environ["SWARM_PANES_PY"])
+from panes import *
 own = set(os.environ["SWARM_OWN"].split())
 for a in json.load(sys.stdin)["result"]["agents"]:
     name = a.get("name")
@@ -4722,42 +3597,8 @@ status_report() {
   local all="${1:-}" agents panes waiting sessions
   if [[ "${HERDR_ENV:-}" == 1 ]] && agents=$(herdr agent list 2>/dev/null) && panes=$(herdr pane list 2>/dev/null); then
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
-    SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
-      python3 - "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}" <<'PY'
-import json, os, sys
-exec(os.environ["SWARM_PANES_PY"])
-state, agents_json, panes_json, show_all, log, projects = sys.argv[1:7]
-try:
-    agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
-    live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
-except (ValueError, KeyError):
-    print("Agents\n  (herdr gave no agent list)"); sys.exit(0)
-rows = []
-for tab, pane, name in pane_records(state, set(os.environ["SWARM_OWN"].split()) & live):
-        a = agents.get(pane)
-        if a is not None:
-            name = a.get("name") or name
-        s = session_state(log, name, os.environ["SWARM_SESSIONS"])
-        st, _ = shown_state(a, name, s, log, projects)
-        what = {"EMPTY": "EMPTY: no agent started in this pane; close it",
-                "auth": "auth: its login expired; run /login, then /swarm-dev:swarm tells it to resume",
-                "WAITING": f"WAITING on {(s or ('', ''))[1] or 'a question'}: herdr agent read {name}",
-                "retired": "done (retired)",
-                "unknown": "unknown: no session state" if s else "unknown",
-                "gone": "gone: session ended",
-                "idle": "idle: finished, or waiting for its next step",
-                "done": "idle: finished, or waiting for its next step"}.get(st, st)
-        rows.append((name, what, f"{tab} {pane}"))
-quiet = [r for r in rows if r[1].startswith(("idle", "done"))]
-shown = rows if show_all == "--all" else [r for r in rows if r not in quiet]
-counts = [f"{len(rows) - len(quiet)} need a look or are working", f"{len(quiet)} idle or done"]
-print("Agents: " + ", ".join(counts) if rows else "Agents: none open")
-width = max((len(r[0]) for r in shown), default=0)
-for name, what, where in shown:
-    print(f"  {name:<{width}}  {what}  [{where}]")
-if quiet and show_all != "--all":
-    print("  (swarm.sh status --all lists them all)")
-PY
+    SWARM_OWN="$(own_panes)" SWARM_SESSIONS="${sessions}" \
+      python3 "${SWARM_HOME}/bin/lib/status_report.py" "${STATE_DIR}" "${agents}" "${panes}" "${all}" "${AGENTS_LOG}" "${CLAUDE_PROJECTS}"
   else
     echo "Agents: not inside herdr, so their states are not available"
   fi
@@ -4853,29 +3694,16 @@ dash_size() {
   DASH_W="${c}"; DASH_H="${r}"
 }
 
-# DASH_LEGEND_PY — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
+# bin/lib/dash_legend.py — legend_lines(w, keys, wide, lead): the legend under dash's frame, packed onto as
 # few lines as w columns allow, with a watch's keys at the end under 140 columns (wide puts them in
 # the status bar). With lead = session most ! rows are the lead's queue, so the legend says so.
-DASH_LEGEND_PY='
-LEGEND = ["● working", "○ ready", "◐ review / CI running", "✓ done / green", "✗ failing", "⏸ blocked", "! needs you (session gone or unknown)", "? unknown"]
-KEYWORDS = "q quit · t tree · l ladder · r redraw"
-def legend_lines(w, keys, wide, lead):
-    rows, cur = [], ""
-    for item in [l.replace("! needs you", "! needs you or the lead") if lead else l for l in LEGEND] + ([KEYWORDS] if keys and not wide else []):
-        if cur and len(cur) + 3 + len(item) > w:
-            rows.append(cur); cur = item
-        else:
-            cur = f"{cur}   {item}" if cur else item
-    rows.append(cur)
-    return rows
-'
 
 # dash_legend — the legend dash_frame draws once under several projects: legend_lines, then from 140
 # columns the keys on a line of their own; dim when DASH_COLOR is 1.
 dash_legend() {
-  SWARM_LEGEND_PY="${DASH_LEGEND_PY}" python3 -c '
+  PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
 import os, sys
-exec(os.environ["SWARM_LEGEND_PY"])
+from dash_legend import *
 w, keys, lead, color = max(int(sys.argv[1]), 40), sys.argv[2] == "1", sys.argv[3] == "session", sys.argv[4] == "1"
 rows = legend_lines(w, keys, w >= 140, lead) + (["   " + KEYWORDS + ("" if keys else " (with --watch)")] if w >= 140 else [])
 rows = [r if len(r) <= w else r[:w - 1] + "…" for r in rows]
@@ -4949,43 +3777,7 @@ dash_slow() {
       printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
-      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 - ${urls} <<'PY'
-import json, os, signal, subprocess, sys
-FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
-def gh(args):
-    p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
-    try:
-        out, _ = p.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        os.killpg(p.pid, signal.SIGKILL); p.communicate()
-        return None
-    return out if p.returncode == 0 else None
-for url in sys.argv[1:]:
-    out = gh(["pr", "view", url, "--json", FIELDS])
-    if out is not None:
-        print(url + "\t" + out.replace("\n", "").replace("\t", ""))
-slugs = {}
-for l in os.environ["SWARM_PAIRS"].splitlines():
-    repo, _, slug = l.partition("\t")
-    slugs.setdefault(repo, set()).add(slug)
-for repo, mine in slugs.items():
-    # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
-    origin = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
-    # ponytail: only the newest 200 open PRs per repo are read, so a builder's older PR in a repo with
-    # more shows as no PR yet; query each unmatched story/<slug> head if a repo ever has that many.
-    try:
-        prs = json.loads(gh(["pr", "list", "-R", origin, "--state", "open", "--limit", "200", "--json", "url,headRefName"]) or "[]") if origin else []
-    except ValueError:
-        continue
-    for pr in prs if isinstance(prs, list) else []:
-        head = str(pr.get("headRefName")) if isinstance(pr, dict) else ""
-        if head.startswith("story/") and head[len("story/"):] in mine:
-            print("head\t" + head[len("story/"):] + "\t" + pr["url"])
-            # A PR a board item lists was viewed above.
-            out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
-            if out is not None:
-                print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
-PY
+      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
   fi
@@ -5012,70 +3804,7 @@ PY
 dash_finished() {
   local prefix
   prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
-  python3 - "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" <<'PY' 2>/dev/null || true
-import collections, os, re, subprocess, sys
-board, prefix, ref, events = sys.argv[1:5]
-def git(args, data=None):
-    return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
-                          capture_output=True, check=True).stdout
-KEY = re.compile(r"([A-Za-z_]+): *(.*)$")
-def front(text):
-    # The front matter's keys, as dash_fields reads them: only after a leading ---, up to the next;
-    # a key's first line wins, an empty value too; CRLF tolerated.
-    keys, lines = {}, [l.rstrip("\r") for l in text.split("\n")]
-    if lines[0] != "---":
-        return keys
-    for l in lines[1:]:
-        if l == "---":
-            break
-        m = KEY.match(l)
-        if m and m.group(1) not in keys:
-            keys[m.group(1)] = m.group(2)
-    return keys
-finished_here = set()
-try:
-    for l in open(events, encoding="utf-8", errors="replace"):
-        f = l.rstrip("\n").split("\t")
-        if len(f) == 5 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and "finished" in f[4])):
-            finished_here.add(f[2])
-except OSError:
-    pass
-stories = prefix + "stories/"
-BOOKKEEPING = re.compile(r"(^|[\s/])(board|close|epic)/")   # a board, close or epic branch, never a story's own work
-BOARD_OWN = tuple(prefix + f for f in ("stories/", "epics/", "Board.base", "README.md"))   # the board's own files
-tips = [ref] + (["HEAD"] if ref != "HEAD" else [])
-log = git(["log", "--first-parent", "--diff-merges=first-parent", "--no-color", "--no-renames", "--name-status", "--format=%x00%H%x09%s"] + tips + ["--"])
-todo = []   # (slug, cat-file spec, closed by its commit), newest first
-for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
-    head, _, changes = chunk.partition("\n")
-    commit, _, subject = head.partition("\t")
-    paths = [c.partition("\t")[2] for c in changes.splitlines() if "\t" in c]
-    work = not BOOKKEEPING.search(subject) and any(
-        not p.startswith(BOARD_OWN) and ("/" in p or not p.endswith(".md")) for p in paths)
-    for c in changes.splitlines():
-        st, _, path = c.partition("\t")
-        if st != "D" or not path.startswith(stories) or not path.endswith(".md") or "/" in path[len(stories):]:
-            continue
-        slug = path[len(stories):-3]
-        if slug != "README" and not os.path.exists(os.path.join(board, "stories", slug + ".md")):
-            own = re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or work or slug in finished_here
-            todo.append((slug, f"{commit}^1:{path}", bool(own)))
-out = git(["cat-file", "--batch"], "".join(t[1] + "\n" for t in todo).encode()) if todo else b""
-count, done, pos = collections.Counter(), set(), 0
-for slug, _, own in todo:
-    nl = out.index(b"\n", pos)
-    head, pos = out[pos:nl], nl + 1
-    if head.endswith(b" missing"):
-        continue
-    size = int(head.rsplit(b" ", 1)[1])
-    fm = front(out[pos:pos + size].decode("utf-8", "replace"))
-    pos += size + 1
-    if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
-        done.add(slug)
-        count[fm["epic"]] += 1
-for epic, n in sorted(count.items()):
-    print(f"finished\t{epic}\t{n}")
-PY
+  python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
@@ -5142,25 +3871,8 @@ dash_watch() {
 # same version share an installPath, so this project's own install wins, then one with no project.
 # Prints nothing when the file is missing or unreadable or has no such entry.
 dash_installed() {
-  python3 - "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/installed_plugins.json" "${PLUGIN}" \
-    "${SWARM_HOME}" "${PROJECT_DIR}" "${1:-}" <<'PY' 2>/dev/null || true
-import json, os, sys
-path, plugin, home, project, inst = sys.argv[1:]
-real = os.path.realpath
-try:
-    entries = [(f"{e['scope']}:{e.get('projectPath', '')}", e) for e in json.load(open(path))["plugins"][plugin]]
-    if inst:
-        found = [(k, e) for k, e in entries if k == inst]
-    else:
-        def rank(ke):
-            where = ke[1].get("projectPath")
-            return 1 if not where else 0 if real(where) == real(project) else 2
-        found = sorted(((k, e) for k, e in entries if real(e["installPath"]) == real(home)), key=rank)
-    if found:
-        print(found[0][0], found[0][1]["installPath"], found[0][1]["version"], sep="\t")
-except Exception:
-    pass
-PY
+  python3 "${SWARM_HOME}/bin/lib/dash_installed.py" "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/plugins/installed_plugins.json" "${PLUGIN}" \
+    "${SWARM_HOME}" "${PROJECT_DIR}" "${1:-}" 2>/dev/null || true
 }
 
 # dash_reexec <script> <seconds> <tty> — exec the newly installed <script> as `dash --watch <seconds>`
@@ -5220,15 +3932,15 @@ dash_render() {
       board+="${d}"$'\t'"${r}"$'\t'"${x%%$'\t'*}"$'\t'"$(cut -f2 <<< "${x}")"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\t'"$(cut -f3- <<< "${x}")"$'\n'
     done < <(board "${d}")
   done
-  # The last worktree commit or edit of each working builder's story (STALL_PY's story_for), for the stall rule.
+  # The last worktree commit or edit of each working builder's story (stall.py's story_for), for the stall rule.
   while IFS= read -r r; do
     [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_work_time "${r}")"$'\n'
   done < <(awk -F'\t' '$1 == "stories" { print $2 "\t" $5 "\t" $3 }' <<< "${board}" \
-    | SWARM_STALL_PY="${STALL_PY}" SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
-      DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" python3 -c '
+    | SWARM_OWN="$(own_panes)" DASH_AGENTS="${agents}" \
+      DASH_SESSIONS="${sessions}" DASH_AGENTS_LOG="${AGENTS_LOG}" PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c '
 import json, os, sys
-exec(os.environ["SWARM_STALL_PY"])
-exec(os.environ["SWARM_PANES_PY"])
+from stall import *
+from panes import *
 E = os.environ
 rows = [l.rstrip("\n").split("\t") for l in sys.stdin]
 own = set(E["SWARM_OWN"].split())
@@ -5261,827 +3973,12 @@ for a in agents:
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
-  SWARM_OWN="$(own_panes)" SWARM_PANES_PY="${PANES_PY}" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
-  DASH_COLOR="${DASH_COLOR:-0}" SWARM_LEGEND_PY="${DASH_LEGEND_PY}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
+  SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
+  DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
-  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" SWARM_STALL_PY="${STALL_PY}" DASH_SESSIONS="${sessions}" \
+  DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \
-  DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_REPORT_PY="${REPORT_PY}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 - <<'PY'
-import collections, datetime, glob, itertools, json, os, re, subprocess, time
-E = os.environ
-exec(E["SWARM_REPORT_PY"])
-exec(E["SWARM_PANES_PY"])
-exec(E["SWARM_STALL_PY"])
-W = max(int(E.get("DASH_COLS") or 100), 40)
-H = int(E.get("DASH_LINES") or 0)
-# Now, and so today: DASH_NOW (epoch seconds) fixes them, so a test's "today" holds across midnight.
-NOW = float(E.get("DASH_NOW") or time.time())
-TODAY = datetime.date.fromtimestamp(NOW)
-NARROW = W < 100   # stacked: the role and model columns and the recent actor column go
-WIDE = W >= 140   # two columns: needs you and the epics on the left, recent as a log on the right
-RW = W * 2 // 5 if WIDE else 0
-LW = W - RW - 1 if WIDE else W
-COLOR = E.get("DASH_COLOR") == "1"
-KEYS = E.get("DASH_KEYS") == "1"
-FIT = KEYS or E.get("DASH_FIT") == "1"   # cut to H: a watched frame, or a height given to dash (a share of --project's)
-STYLE = {"h": "1;36", "ok": "32", "warn": "33", "bad": "1;31", "dim": "2", "b": "1", "grey": "90"}
-# One status vocabulary: the symbol carries the meaning in plain text, the colour on a terminal.
-SYM = {"working": ("●", "ok"), "ready": ("○", "h"), "review": ("◐", "warn"), "done": ("✓", "ok"), "failed": ("✗", "bad"),
-       "blocked": ("⏸", "grey"), "look": ("!", "bad"), "unknown": ("?", "")}
-# A colour per model (256-colour ANSI), the same wherever it shows: its name in that colour, and from
-# 140 columns a label on that colour.
-MODEL_COLOR = {"fable": 213, "opus": 208, "sonnet": 75, "haiku": 114, "codex": 250}
-for m, c in MODEL_COLOR.items():
-    STYLE[m], STYLE[m + "-label"] = f"38;5;{c}", f"38;5;16;48;5;{c}"
-
-def model_style(model, label=False):
-    k = next((m for m in MODEL_COLOR if m in model.lower()), None)
-    return (k + "-label" if label else k) if k else "dim"
-
-exec(E["SWARM_LEGEND_PY"])
-out = []
-
-def paint(t, s):
-    return f"\033[{STYLE[s]}m{t}\033[0m" if COLOR and s and t else t
-
-def sym(k):
-    return SYM[k][0] + " ", SYM[k][1]
-
-def cut(t, n):
-    return t if len(t) <= n else t[:max(n - 1, 0)] + "…"
-
-def fit(segs, n):
-    # Truncate, never wrap: plain lengths are measured before any colour is added.
-    res, left = [], n
-    for t, s in segs:
-        if left <= 0:
-            break
-        t = cut(t, left)
-        res.append(paint(t, s)); left -= len(t)
-    return "".join(res) + " " * left
-
-def wrap(segs, n, indent=2):
-    # Word-wrap styled segments into lines of at most n, the later lines indented; only a single
-    # word longer than a line is cut (by fit).
-    lines, cur, used = [], [], 0
-    for t, s in segs:
-        for w in re.findall(r"\s*\S+\s*|\s+", t):
-            if cur and used + len(w.rstrip()) > n:
-                lines.append(cur[:-1] + [(cur[-1][0].rstrip(), cur[-1][1])])
-                cur, used, w = [(" " * indent, "")], indent, w.lstrip()
-            cur.append((w, s)); used += len(w)
-    return lines + [cur] if cur else lines
-
-def box(title, rows, w, style="h"):
-    res = ["╭─ " + paint(title, style) + " " + "─" * max(w - len(title) - 5, 0) + "╮"]
-    for r in rows or [[("(none)", "dim")]]:
-        res.append("│ " + fit([(r, "")] if isinstance(r, str) else r, w - 4) + " │")
-    return res + ["╰" + "─" * (w - 2) + "╯"]
-
-def read_tsv(path, n):
-    try:
-        return [f for f in (l.rstrip("\n").split("\t") for l in open(path, encoding="utf-8", errors="replace")) if len(f) == n]
-    except OSError:
-        return []
-
-def lines(key):
-    return [l for l in E.get(key, "").splitlines() if l.strip()]
-
-# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text (dash_fields').
-board = [(l.split("\t") + [""] * 11)[:11] for l in lines("DASH_BOARD")]
-stories = [b for b in board if b[0] == "stories"]
-story_rows = [(b[1], b[4], b[2]) for b in stories]
-story_by_slug = {b[1]: b for b in stories}
-epics = collections.OrderedDict((b[1], b) for b in board if b[0] == "epics")
-epic_of = {b[5]: b[1] for b in epics.values()}
-finished = collections.Counter()
-for l in lines("DASH_FINISHED"):
-    e, _, n = l.partition("\t")
-    finished[e] += int(n) if n.isdigit() else 0
-
-PRS = {}
-for l in lines("DASH_PRSTATE"):
-    url, _, j = l.partition("\t")
-    try:
-        PRS[url] = json.loads(j)
-    except ValueError:
-        pass
-URL = re.compile(r"https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)")
-# A builder's open PR on story/<slug> (dash_slow's), for a story whose file lists none yet.
-HEADS = dict(l.split("\t", 1) for l in lines("DASH_HEADS") if "\t" in l)
-FAILED = ("FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE")
-
-def pr_state(url):
-    # (vocabulary key, words) for a PR's checks and merge state; None when gh gave nothing.
-    s = PRS.get(url)
-    if not isinstance(s, dict):
-        return None
-    roll = s.get("statusCheckRollup") or []
-    bad = any((c.get("conclusion") or c.get("state") or "").upper() in FAILED for c in roll)
-    running = any((c.get("status") or "COMPLETED").upper() != "COMPLETED" or (c.get("state") or "").upper() in ("PENDING", "EXPECTED") for c in roll)
-    k, words = ("failed", "failing") if bad else ("review", "CI running") if running else ("done", "green") if roll else ("review", "no checks")
-    behind = {"BEHIND": " · behind", "DIRTY": " · conflicts"}.get((s.get("mergeStateStatus") or "").upper(), "")
-    return k, words + behind
-
-def is_open(url):
-    # A PR gh did not say is merged or closed counts as open.
-    return (PRS.get(url) or {}).get("state", "OPEN").upper() not in ("MERGED", "CLOSED")
-
-def builder_prs(slug):
-    # A story's PRs, and its builder's open story/<slug> PR (HEADS) while none it lists is open: a
-    # retry's PR beside the closed one an earlier attempt left on the story.
-    listed = (story_by_slug.get(slug) or [""] * 4)[3]
-    if any(is_open(m.group(0)) for m in URL.finditer(listed)) or not HEADS.get(slug or ""):
-        return listed
-    return f"{listed} {HEADS[slug]}".strip()
-
-def pr_ref(m):
-    return f"{m.group(2)}#{m.group(3)}"
-
-# Agents: this project's panes (its tab records). A working agent shows how long since its last sign
-# of life (STALL_PY's stall_age); past stall_minutes it is stalled, and needs you. A story's builder
-# counts its worktree's commits and PR updates; an agent with no story (a conductor or planner)
-# its own events.tsv lines: by target, and once it has a start line, by the pane that ran them.
-commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
-seen = last_seen(E["DASH_EVENTS"])
-STARTS = ("agent", "conduct", "story")
-started = {}   # target -> when its newest start (agent, conduct or story) in events.tsv ran
-ran = {}       # pane -> when the newest sign of life it ran (STALL_PY's sign_time) was written
-for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = sign_time(f)
-    if t is not None and t > ran.get(f[3], 0):
-        ran[f[3]] = t
-    t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
-    if t is not None and t > started.get(f[2], 0):
-        started[f[2]] = t
-# Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
-ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
-escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
-for f in read_tsv(E["DASH_EVENTS"], 5):
-    if f[1] == "reset" and f[4].startswith("ok"):
-        was_reset.add(f[2])
-    t = epoch(f[0]) if f[1] == "escalate" else None
-    m = re.match(r"ok \(attempt (\d+)\)", f[4])
-    if t is None or not f[4].startswith("ok"):
-        continue
-    escalations += datetime.date.fromtimestamp(t) == TODAY
-    if m and t > escalated_at.get(f[2], (0,))[0]:
-        escalated_at[f[2]] = (t, m.group(1))
-recs, stalled = [], []
-try:
-    agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
-    live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
-    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
-except (ValueError, KeyError, TypeError):
-    agents = None
-
-def reported(base):
-    # A conductor that wrote its report, which the lead has not collected yet.
-    epic = epic_of.get(base) or (base[len("conduct-"):] if base.startswith("conduct-") else "")
-    return bool(epic) and os.path.exists(os.path.join(E["DASH_PROJECT"], ".swarm", f"conduct-{epic}.report.md"))
-
-def epic_for(base, slug, tab):
-    if base in epic_of:
-        return epic_of[base]
-    if slug:
-        return story_by_slug[slug][6] or None
-    if tab in epics:
-        return tab
-    return (story_by_slug.get(tab) or [""] * 10)[6] or None
-
-def scan_tail(entries):
-    # Newest first: (the newest entry's timestamp, the newest tool it ran, the newest reply's text).
-    t = tool = reply = None
-    for l in reversed(entries):
-        try:
-            d = json.loads(l)
-        except ValueError:
-            continue
-        if not isinstance(d, dict):
-            continue
-        t = t or d.get("timestamp")
-        msg = d.get("message") if d.get("type") == "assistant" else None
-        content = msg.get("content") if isinstance(msg, dict) else None
-        for c in reversed(content) if isinstance(content, list) else []:
-            if isinstance(c, dict) and c.get("type") == "tool_use" and tool is None:
-                tool = str(c.get("name") or "")
-            if isinstance(c, dict) and c.get("type") == "text" and reply is None:
-                reply = str(c.get("text") or "")
-        if t and tool is not None and reply is not None:
-            break
-    return t, tool, reply
-
-def tail_of(rec, reply_wanted):
-    # An agent's last activity from its session log (agents.tsv's session), read from its last 64 KB
-    # so every frame can afford it, and from 4 times as much while that misses the newest timestamp,
-    # tool or (when reply_wanted: only an idle one-off builder's IMPOSSIBLE check needs it) reply, as a
-    # big Write entry cut there does: (the newest entry's timestamp, the newest tool it ran, whether
-    # its newest reply starts IMPOSSIBLE:). (None, "", False) with no log.
-    # ponytail: at most the last 4 MB per frame; a tool or reply older than that is not found.
-    path = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
-    size = 65536
-    try:
-        with open(path, "rb") as f:
-            end = f.seek(0, 2)
-            while True:
-                f.seek(max(end - size, 0))
-                t, tool, reply = scan_tail(f.read().decode("utf-8", "replace").splitlines())
-                if (t and tool is not None and (reply is not None or not reply_wanted)) or size >= min(end, 1 << 22):
-                    break
-                size *= 4
-    except OSError:
-        return None, "", False
-    return t, tool or "", (reply or "").lstrip().startswith("IMPOSSIBLE:")
-
-if agents is not None:
-    by_session, by_name = {}, {}
-    for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
-        by_name[f[2]] = by_session[f[6]] = f
-    for label, pane, recorded in pane_records(E["DASH_STATE"], set(E.get("SWARM_OWN", "").split()) & live):
-        r = {"ws": ws_label.get(pane.split(":")[0], pane.split(":")[0]), "tab": label, "name": recorded, "role": "?",
-             "model": "?", "look": True, "slug": None, "epic": epic_for("", None, label)}
-        try:
-            a = agents.get(pane)
-            name = (a or {}).get("name") or recorded
-            base = re.sub(r"-done\d*$", "", name)
-            rec = by_session.get(((a or {}).get("agent_session") or {}).get("value", "")) or by_name.get(base)
-            s = session_state(E["DASH_AGENTS_LOG"], name, E["DASH_SESSIONS"])
-            st, look = shown_state(a, name, s, E["DASH_AGENTS_LOG"], E["DASH_PROJECTS"])
-            if st in ("idle", "done") and reported(base):
-                st = "reported"
-            slug = story_for(name, story_rows)
-            why = s[1] if s and st == "WAITING" else ""
-            words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle", "auth": "auth: login expired",
-                     "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
-            since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
-            if st == "working":
-                # Any agent with a Claude session: its session log, written on every turn and tool call.
-                log = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
-                try:
-                    logged = os.path.getmtime(log) if log else None
-                except OSError:   # removed since the glob: no sign
-                    logged = None
-                if slug:
-                    signs = [commit_of.get(slug, ""), logged] + [(PRS.get(m.group(0)) or {}).get("updatedAt") for m in URL.finditer(story_by_slug[slug][3])]
-                    age, lack = stall_age(seen, slug, base, signs, NOW), "no commit, edit, session-log write or PR update"
-                else:
-                    age, lack = stall_age(seen, epic_of.get(base), base, ([since, ran.get(pane)] if since else []) + [logged], NOW), "no swarm action"
-                if age is not None and age >= int(E["DASH_STALL_MIN"]):
-                    st, look, words = "stalled", True, f"stalled {age}m"
-                    stalled.append((name, age, lack))
-                elif age is not None:
-                    words = f"working {age}m"
-            r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
-                     look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=builder_prs(slug),
-                     open=bool(slug) and story_by_slug[slug][2] != "done",
-                     since=since, day=rec[0] if rec else "", tail=tail_of(rec, bool(slug) and st in ("idle", "done") and epic_for(base, slug, label) not in epics),
-                     escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
-        except Exception as err:  # one odd agent record must not cost the whole panel
-            r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
-        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
-        recs.append(r)
-
-# Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
-shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
-idle = len(recs) - len(shown)
-
-# Running codex reviews (codex-review's markers): one row each, under the epic of its worktree's story
-# (or of its epic-<epic> worktree), never in needs you or the lead's queue. A marker whose pid is dead
-# or that is older than codex_minutes plus 1 shows nothing; dash only reads, so it leaves both.
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
-    try:
-        pid = int(path.rsplit(".", 1)[1])
-        t, base, cwd = open(path).read().rstrip("\n").split("\t", 2)
-        age = max(int(NOW - float(t)) // 60, 0)
-    except (OSError, ValueError):
-        continue
-    if pid <= 0 or not alive(pid) or NOW - float(t) > (int(E["DASH_CODEX_MIN"]) + 1) * 60:
-        continue
-    wt = os.path.basename(cwd.rstrip("/"))
-    # The name column is cut at name_w, so the base goes with the age, in the words.
-    shown.append({"name": f"codex review {wt}", "role": "codex", "model": "codex", "words": f"running {age}m vs {base}",
-                  "state": "codex", "sym": "working", "look": False, "open": False, "prs": "",
-                  "epic": epic_for("", None, re.sub(r"^epic-", "", wt))})
-
-# Needs you: only what you act on, each as a short action. With lead = session a lead session acts
-# for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft HLD) and
-# the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
-# **You:** step only the first is listed, with +N more for the rest (more).
-need, blocked, later, green, need_slugs, held_seen = [], 0, 0, 0, set(), set()
-LEAD = E.get("DASH_LEAD") == "session"
-queue = []
-lq = queue if LEAD else need
-bang = [sym("look")]
-waiting = []   # (dir, slug) of the board item each row waits on, where it names one: the first light's age
-yours, more = None, 0
-
-def add(rows, row, item=None):
-    rows.append(row)
-    if item:
-        waiting.append(item)
-
-def story_title(slug):
-    title = (story_by_slug.get(slug) or [""] * 10)[8]
-    return f": {title[:1].lower()}{title[1:]}" if title and title != slug else ""
-
-for l in lines("DASH_WAITING"):
-    l = l.strip()
-    if l.startswith("blocked:"):
-        blocked += 1
-        continue
-    if l.startswith("later "):
-        later += 1
-        continue
-    m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
-    if m:
-        # With merge = agent, swarm.sh merge holds a costs: money story for the user, so no lead
-        # session can merge it; with merge = human the lead may, when the user asks.
-        rows = need if m.group(1) and E["DASH_MERGE"] == "agent" else lq
-        what = ("epic " if m.group(2) else "") + m.group(3) + (" (costs money)" if m.group(1) else "")
-        item = ("epics" if m.group(2) else "stories", m.group(3))
-        urls = list(URL.finditer(m.group(4)))
-        if m.group(1):
-            # A held PR is listed once, under the first item naming it (a story and its epic both may).
-            urls = [u for u in urls if u.group(0) not in held_seen]
-            if not urls:
-                continue
-            held_seen.update(u.group(0) for u in urls)
-        if not urls:
-            add(rows, bang + [(f"merge {what}: no PR on its file", "")], item)
-        for u in urls:
-            st = pr_state(u.group(0))
-            if st is None:
-                add(rows, bang + [(f"merge {what}: ", ""), (u.group(0), "dim")], item)
-                continue
-            green += st[0] == "done"
-            add(rows, bang + [(f"merge {pr_ref(u)} (", ""), (SYM[st[0]][0] + " " + st[1], SYM[st[0]][1]), (")  ", ""), (what, "dim")], item)
-        continue
-    m = re.match(r"(\S+): (\S+)$", l)
-    if m:
-        slug = m.group(2)
-        need_slugs.add(slug)
-        b = story_by_slug.get(slug) or [""] * 11
-        row = bang + [(f"run {m.group(1)} story {slug}{story_title(slug)}", ""), ("  waits for: ", "dim")]
-        if b[9] != "you":
-            add(lq, row + [("the lead", "")], ("stories", slug))
-        elif yours is None:
-            yours = row + [("you" + (f": {b[10]}" if b[10] else ""), "")]
-            add(need, yours, ("stories", slug))
-        else:
-            more += 1
-            waiting.append(("stories", slug))
-    else:
-        lq.append(bang + [(l, "")])
-if more:
-    yours.append((f"  +{more} more", "dim"))
-# An escalated lead story, impossible or failed on Fable, is the lead's (next's escalated step): waiting_on_user
-# leaves it out, so only the lead's queue shows it. Once reset, drop is all that is left, except for a
-# held story, whose hold reset always lifts (as next says).
-if LEAD:
-    for b in stories:
-        if b[2] == "ready" and b[7] == "lead" and b[9] in ("escalated", "held"):
-            add(queue, bang + [(f"decide escalated story {b[1]}{story_title(b[1])}: ", ""),
-                               (("" if b[1] in was_reset and b[9] != "held" else f"swarm.sh reset {b[1]} or ") + f"swarm.sh drop {b[1]}", "dim")],
-                ("stories", b[1]))
-for r in recs:
-    item = ("stories", r["slug"]) if r.get("slug") else None
-    if r["state"] == "WAITING":
-        why = f" (waiting on {r['why']})" if r.get("why") else ""
-        add(lq, bang + [(f"answer {r['name']}{why}: ", ""), (f"herdr agent read {r['name']}", "dim")], item)
-    elif r["state"] == "auth":
-        add(need, bang + [(f"auth: run /login ({r['name']}'s login expired), then /swarm-dev:swarm tells it to resume", "")], item)
-    elif r["state"] == "EMPTY":
-        add(lq, bang + [(f"close the empty pane {r['name']}: ", ""), ("swarm.sh tidy", "dim")], item)
-    elif r["state"] in ("gone", "unknown") and r["look"]:
-        add(lq, bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")], item)
-lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
-for b in board:
-    if b[0] == "hld" and b[2] == "draft":
-        add(need, bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")], ("hld", b[1]))
-
-# Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
-# its live agents and open PRs beneath it.
-def one_off(r):
-    # An idle one-off builder (its story on no epic) says what it waits on, never a bare idle.
-    if r.get("epic") in epics or not r.get("slug") or r["state"] not in ("idle", "done"):
-        return r
-    pr = next((m for m in URL.finditer(r["prs"]) if is_open(m.group(0))), None)
-    ref = f"#{pr.group(3)} " if pr else ""
-    wait = ("IMPOSSIBLE" if (r.get("tail") or (0, 0, False))[2] else "waits for the lead's merge" if story_by_slug[r["slug"]][2] == "review"
-            else "waits for review" if pr else "no PR yet")
-    return dict(r, words=ref + wait)
-
-shown = [one_off(r) for r in shown]   # before any width is measured
-groups = collections.OrderedDict((s, []) for s, b in epics.items() if b[2] == "active")
-for r in shown:
-    groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
-name_w = min(max((len(r["name"]) for r in shown), default=0), 30 if not NARROW else max(12, (W - 20) // 2))
-
-def agent_cols(r):
-    # Role and model, then the state (a working agent's with its age); from 140 columns the model is
-    # a label in its colour, and a working agent shows how long since it started.
-    row = []
-    if WIDE:
-        label = f" {r['model']} "
-        row = [(f"{r['role']:<10} ", "dim"), (label, model_style(r["model"], True)), (" " * max(16 - len(label), 1), "")]
-    elif not NARROW:
-        row = [(f"{r['role']:<10} ", "dim"), (f"{r['model']:<12} ", model_style(r["model"]))]
-    row.append((r["words"], SYM[r["sym"]][1] if r["sym"] != "done" else "dim"))
-    if WIDE and r.get("state") == "working" and r.get("since"):
-        m = max(int(NOW - r["since"]) // 60, 0)
-        row.append((f"  {m}m" if m < 60 else f"  {m // 60}h{m % 60:02d}m", "dim"))
-    if r.get("escalated"):
-        t, n = r["escalated"]
-        row.append((f"  attempt {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
-    return row
-
-def agent_row(r):
-    return [("  ", ""), sym(r["sym"]), (f"{cut(r['name'], name_w):<{name_w}}  ", "")] + agent_cols(r)
-
-if WIDE:
-    # The left column takes what its widest agent card needs from recent's, down to a third of the
-    # screen, so a card's state age never cuts the escalation time after it.
-    grow = min(max((sum(len(t) for t, _ in agent_row(r)) + 4 for r in shown), default=0) - LW, RW - W // 3)
-    if grow > 0:
-        LW, RW = LW + grow, RW - grow
-
-def epic_label(slug):
-    return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
-
-def epic_rows(slug, members):
-    if not slug:
-        return [[("  ", ""), ("no epic", "dim")]] + [agent_row(r) for r in members]
-    mine = [b for b in stories if b[6] == slug]
-    done = finished[slug] + sum(b[2] == "done" for b in mine)
-    left = collections.Counter(b[2] or "?" for b in mine if b[2] != "done")
-    total = done + sum(left.values())
-    prs = [(m, b[1]) for b in mine + [epics[slug]] if b[2] != "done" for m in URL.finditer(b[3])]
-    states = [pr_state(m.group(0)) for m, _ in prs]
-    k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or any(b[1] in need_slugs for b in mine)
-         else "working" if any(r["state"] == "working" for r in members)
-         else "review" if prs or left["review"] else "done" if not left else "ready" if left["ready"]
-         else "blocked" if set(left) <= {"blocked", "later"} else "unknown")
-    bar_w = 6 if NARROW else 12
-    fill = round(bar_w * done / total) if total else 0
-    order = ["review", "ready", "blocked", "later"]
-    counts = " · ".join(f"{left[s]} {s}" for s in order + sorted(s for s in left if s not in order) if left[s])
-    rows = [[sym(k), (f"{cut(epic_label(slug), epic_w):<{epic_w}}  ", "b"), ("█" * fill, "ok"), ("░" * (bar_w - fill), "dim"),
-             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or ("" if total else "no stories on the board or in git"), "dim")]]
-    rows += [agent_row(r) for r in members]
-    for (m, owner), st in zip(prs, states):
-        k = st[0] if st else "review"
-        rows.append([("  ", ""), sym(k), (f"{cut(pr_ref(m), name_w):<{name_w}}  ", ""), (st[1] if st else "checks unknown", SYM[k][1]),
-                     (f"  {owner}", "dim")])
-    return rows
-
-def rank(item):
-    # Epics that need you, then working ones, then the rest; agents with no epic last.
-    slug, members = item
-    if not slug:
-        return 3
-    if any(r["look"] for r in members) or any(b[6] == slug and b[1] in need_slugs for b in stories):
-        return 0
-    return 1 if any(r["state"] == "working" for r in members) else 2
-
-# An active epic with no open story and no agent shown is one line for them all.
-quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
-groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
-epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
-epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
-if quiet:
-    epic_view.append([sym("done"), (f"{len(quiet)} active epic{'' if len(quiet) == 1 else 's'} with no open story: {', '.join(quiet)}", "dim")])
-if agents is None:
-    epic_view.append([("agents unavailable: herdr is not on PATH, or gave no list", "dim")])
-if idle:
-    epic_view.append([(f"+{idle} idle", "dim"), ("  (t shows the tree)" if KEYS else "  (--tree lists them)", "dim")])
-
-# The tree (t, or --tree): every agent of this project's panes, by herdr workspace, then tab.
-def tree_view():
-    if agents is None:
-        return [[("agents unavailable: herdr is not on PATH, or gave no list", "dim")]]
-    tree = collections.OrderedDict()
-    for r in recs:
-        tree.setdefault(r["ws"], collections.OrderedDict()).setdefault(r["tab"], []).append(r)
-    width = min(max((len(r["name"]) for r in recs), default=0), 30)
-    rows = []
-    for ws, tabs in tree.items():
-        rows.append([(ws, "b")])
-        for i, (tab, items) in enumerate(tabs.items()):
-            last_tab = i == len(tabs) - 1
-            rows.append([(" └─ " if last_tab else " ├─ ", "dim"), (tab, "h")])
-            for j, r in enumerate(items):
-                stem = ("    " if last_tab else " │  ") + ("└─ " if j == len(items) - 1 else "├─ ")
-                row = [(stem, "dim"), sym(r["sym"]), (f"{cut(r['name'], width):<{width}}  ", "")] + agent_cols(one_off(r))
-                rows.append(row + [(f"  {r['prs']}" if r["prs"] else "", "dim")])
-    return rows or [[("no agents open in this project's panes", "dim")]]
-
-# Recent: swarm actions (events.tsv), merges on the base branch and fixed findings, newest first.
-# Findings are one row per PR and day, and at most a third of the rows, so they never crowd out the rest.
-def when(s):
-    # (sort time, relative time). A date alone (findings.tsv) sorts as the end of that local day,
-    # after the day's timed events, and reads in calendar days: today, yesterday, Nd ago.
-    try:
-        if len(s) == 10:
-            days = (TODAY - datetime.date.fromisoformat(s)).days
-            return (datetime.datetime.fromisoformat(s + "T23:59:59").astimezone(),
-                    "today" if days <= 0 else "yesterday" if days == 1 else f"{days}d ago")
-        t = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if t.tzinfo is None:
-            t = t.astimezone()
-        secs = max(int(NOW - t.timestamp()), 0)
-        if secs < 86400:
-            return t, "now" if secs < 60 else f"{secs // 60}m ago" if secs < 3600 else f"{secs // 3600}h ago"
-        days = (TODAY - t.astimezone().date()).days   # a day or more: calendar days, as for a date
-        return t, "yesterday" if days <= 1 else f"{days}d ago"
-    except ValueError:
-        return None, s
-
-events = []   # (time, actor, text, icon key)
-for l in lines("DASH_MERGES"):
-    f = l.split("\t", 2)
-    if len(f) == 3:
-        m = re.match(r"Merge pull request #(\d+) from [^/\s]+/(\S+)", f[2])
-        events.append((f[0], f[1], f"merged #{m.group(1)} {m.group(2)}" if m else f[2], "merge"))
-found = collections.OrderedDict()
-for f in fixed_rows(E["DASH_FINDINGS"]):
-    m = re.search(r"(\d+)\D*$", f[2])
-    found.setdefault((f[0], m.group(1) if m else f[2]), []).append(f)
-for (day, pr), fs in found.items():
-    text = fs[0][3] if len(fs) == 1 else f"{len(fs)} findings: " + "; ".join(x[3] for x in fs)
-    events.append((day, fs[0][1] if len(fs) == 1 else "findings", f"{text} (#{pr})", "finding"))
-# A fixed finding's log-finding line is left out: its findings.tsv row above shows it. A run of ok
-# declined lines on one PR, with nothing but fixed ones between, is one row at the newest's time, and
-# so is a run of lines with the same action, target and outcome, with ×N.
-run = None   # [index in events, PR, count] of the declined run still open
-same = None   # [index in events, line, count] of the run of the same line still open
-for f in read_tsv(E["DASH_EVENTS"], 5):
-    ok = f[4].startswith("ok")
-    if f[1] == "log-finding" and ok:
-        continue
-    pr = pr_key((f[2].split() or [""])[-1])
-    if f[1] == "log-finding:declined" and ok and run and run[1] == pr:
-        run[2] += 1
-        events[run[0]] = (f[0], f[3], f"{run[2]} findings declined on #{pr.rsplit('#', 1)[-1]}", "action")
-        continue
-    run = [len(events), pr, 1] if f[1] == "log-finding:declined" and ok else None
-    text = f"{f[1]} {f[2]}" + ("" if f[4] == "ok" else f": {f[4]}")
-    kind = "failed" if not ok else "start" if f[1] in STARTS else "escalation" if f[1] in ESCALATION else "action"
-    if same and same[1] == f[1:3] + f[4:]:
-        same[2] += 1
-        events[same[0]] = (f[0], f[3], f"{text} ×{same[2]}", kind)
-        continue
-    same = [len(events), f[1:3] + f[4:], 1]
-    events.append((f[0], f[3], text, kind))
-ICON = {"merge": ("⇡", "ok"), "finding": ("✎", "warn"), "start": ("▶", "ok"), "action": ("·", "dim"), "failed": ("✗", "bad"),
-        "escalation": ("▲", "fable")}
-dated = sorted(((when(e[0]), e) for e in events if when(e[0])[0]), key=lambda x: x[0][0], reverse=True)
-
-def stamp(raw, t):
-    # The log's time column: HH:MM today, the date before; a dated finding of today is "today".
-    t = t.astimezone()
-    return t.strftime("%m-%d") if t.date() != TODAY else "today" if len(raw) == 10 else t.strftime("%H:%M")
-
-def recent_box(w, n, clock=False):
-    rec, findings = [], 0
-    actor_w = 0 if w < 100 else 14
-    tw = 5 if clock else 9
-    for (t, ago), (raw, actor, text, kind) in dated:
-        if len(rec) >= n:
-            break
-        if kind == "finding":
-            findings += 1
-            if findings > max(1, n // 3):
-                continue
-        room = max(w - 4 - tw - 2 - 2 - (actor_w + 2 if actor_w else 0), 0)
-        # A finding's (#PR) is kept whole, its text cut instead, while the column has room for more than it.
-        pr = re.search(r" \(#\d+\)$", text) if kind == "finding" else None
-        text = cut(text[:pr.start()], room - len(pr.group(0))) + pr.group(0) if pr and room > len(pr.group(0)) and len(text) > room else cut(text, room)
-        row = [(f"{stamp(raw, t) if clock else ago:>{tw}}  ", "dim"), (ICON[kind][0] + " ", ICON[kind][1]), (text.ljust(room), "")]
-        if actor_w:
-            row.append((f"  {cut(actor, actor_w):>{actor_w}}", "dim"))
-        rec.append(row)
-    return box("recent", rec, w)
-
-def line_model(l):
-    # A log line's model, or "" for none, a non-string, or "<synthetic>" (a failed turn's entry).
-    try:
-        m = (json.loads(l).get("message") or {}).get("model")
-    except (ValueError, AttributeError):
-        return ""
-    return m if isinstance(m, str) and not m.startswith("<") else ""
-
-def first_model(path):
-    # The first real model in a session's log; reading stops there, so a --watch redraw stays
-    # cheap. An unreadable log names none, as a missing one does.
-    try:
-        with open(path, errors="ignore") as f:
-            m = next((m for m in map(line_model, f) if m), "")
-    except OSError:
-        return ""
-    return next((k for k in MODEL_COLOR if k in m.lower()), m)
-
-def ladder_box(w):
-    # Per role: its policy model, then how many agents agents.tsv recorded and the models their
-    # sessions ran on (a session with no log or no model counts but names none). The cell is the
-    # longest row plus a gap, so no row runs into the next.
-    ran = collections.defaultdict(lambda: [0, set()])
-    for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
-        path = session_log(E["DASH_PROJECTS"], f[6])
-        ran[f[1]][0] += 1
-        ran[f[1]][1].add(first_model(path) if path else "")
-    rows = []
-    for p in (l.split() for l in lines("DASH_POLICY")):
-        n, models = ran[p[0]]
-        m = f"{p[2] if p[1] == 'claude' else p[1]} · {p[3]}"
-        rows.append([(f"{p[0]:<11}→ ", ""), (m, model_style(m)), (f"  {n}", "dim")] + [(" " + x, model_style(x)) for x in sorted(models - {""})])
-    cell = max((sum(len(t) for t, _ in r) for r in rows), default=0) + 2
-    rows = [r + [(" " * (cell - sum(len(t) for t, _ in r)), "")] for r in rows]
-    per = max(1, (w - 4) // cell)
-    return box("ladder", [sum(rows[i:i + per], []) for i in range(0, len(rows), per)], w)
-
-# Running now: each open agent with how long it has run (its events.tsv start, else its agents.tsv
-# day from midnight), its last activity (its session log's newest entry and tool) and, for a builder,
-# its PR and CI state; then each held story with its cause. Empty when nothing is open or held.
-def held_cause(slug):
-    try:
-        text = open(os.path.join(E["DASH_BOARD_DIR"], "stories", slug + ".md"), encoding="utf-8", errors="replace").read()
-    except OSError:
-        return ""
-    m = re.search(r"^held_for: *(.*?)\r?$", text.split("\n---", 1)[0], re.M)
-    return m.group(1) if m else ""
-
-def dur(s):
-    m = max(int(s) // 60, 0)
-    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m" if m < 1440 else f"{m // 1440}d"
-
-def running_view():
-    cells = []
-    for r in recs:
-        if r["state"] in ("EMPTY", "retired"):
-            continue
-        try:
-            up = r.get("since") or datetime.datetime.strptime(r.get("day", ""), "%Y-%m-%d").timestamp()
-        except ValueError:
-            up = None
-        t, tool, _ = r.get("tail") or (None, "", False)
-        ago = when(t)[1] if isinstance(t, str) else ""
-        act = f"{tool} {ago}" if tool and ago else ago or "no session log"
-        pr = []
-        for m in URL.finditer(r.get("prs") or "") if r.get("slug") else []:
-            if not is_open(m.group(0)):
-                continue
-            st = pr_state(m.group(0))
-            pr.append((f"#{m.group(3)} {st[1] if st else 'checks unknown'}  ", SYM[st[0] if st else "review"][1]))
-        if r.get("slug") and not pr:
-            pr = [("no PR yet", "dim")]
-        cells.append([sym(r["sym"]), (cut(r["name"], 30), ""), (f"up {dur(NOW - up)}" if up else "up ?", "dim"), (act, "dim")] + pr)
-    width = [max((len(c[i][0]) for c in cells if len(c) > i), default=0) for i in range(4)]
-    rows = [[c[0]] + [(t.ljust(width[i] + 2) if i < 4 else t, s) for i, (t, s) in enumerate(c) if i] for c in cells]
-    return rows + [[sym("blocked"), (f"held {b[1]}: {held_cause(b[1]) or '?'}", "")] for b in stories if b[9] == "held"]
-
-# The speedometer: stories merged per day over 7 days, the distinct slugs events.tsv says were
-# finished in the last 7 days (finish, or reconcile's "finished" once a PR merged; a drop or a
-# rescope writes neither), and two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
-# needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
-# waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
-# review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
-def waited_from(item):
-    d, slug = item
-    if slug in moved:
-        return moved[slug]
-    got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
-    return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
-
-moved, merged = {}, set()
-for f in read_tsv(E["DASH_EVENTS"], 5):
-    t = epoch(f[0])
-    # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
-    if t is not None and NOW - t <= 7 * 86400 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
-        merged.add(f[2])
-    t = t if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
-    if t is not None and t > moved.get(f[2], 0):
-        moved[f[2]] = t
-
-def days_ago(day):
-    try:
-        return (TODAY - datetime.date.fromisoformat(day)).days
-    except ValueError:
-        return None
-
-n_waiting = len(need) + len(queue) + more
-since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
-escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
-speed = [(f"{len(merged) / 7:.1f}", "b"), (" merged/day over 7 days", "")]
-for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
-                 (escaped, "escaped in 7 days")):
-    speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
-
-# Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
-# (from 140 columns, the status bar at the bottom carries it, with the merge mode).
-right = E.get("DASH_CLOCK") or datetime.datetime.now().strftime("%H:%M:%S")
-head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
-        ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
-if WIDE:
-    head = head[:2] + head[4:]
-if sum(len(t) for t, _ in head) > W - len(right) - 1:
-    head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
-out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
-out.append(fit(speed, W))
-n_active = sum(b[2] == "active" for b in epics.values())
-n_working = sum(r["state"] == "working" for r in recs)
-summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
-           (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
-if E.get("DASH_COST"):
-    summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
-# Who is on call (the escalate role's model, off when escalate_after is 0) and today's escalations, a
-# zero count too. It goes on the summary's line when it fits there, else on a line of its own.
-esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "escalate" and len(p) > 3), None)
-on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
-on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
-           (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
-SEP = (" · ", "dim")
-
-def pack(groups, n):
-    # Groups of styled segments onto as few lines of n as they fit, never splitting a group; each
-    # group carries the separator it takes after another on the same line.
-    rows = [[]]
-    for sep, g in groups:
-        if rows[-1] and sum(len(t) for t, _ in rows[-1] + [sep] + g) > n:
-            rows.append([])
-        rows[-1] += ([sep] if rows[-1] else []) + g
-    return [fit(r, n) for r in rows]
-
-if not WIDE:
-    out += pack([(SEP, summary), (SEP, on_call)], W)
-drift = lines("DASH_DRIFT")
-if drift:
-    out.append(fit([(f"board: {len(drift)} uncommitted edit{'' if len(drift) == 1 else 's'} in the main checkout: {', '.join(drift)}", "warn")], W))
-
-# The main column: needs you, the epics (or the tree), the blocked count. From 140 columns it is the
-# left column, LW wide.
-left = box("needs you", [l for r in need for l in wrap(r, LW - 4)], LW, "bad") if need else [fit([sym("done"), ("nothing needs you", "dim")], LW)]
-if queue:
-    left += box("lead's queue", [l for r in queue for l in wrap(r, LW - 4)], LW, "warn")
-if E.get("DASH_TREE") == "1":
-    left += box("agents by workspace and tab", tree_view(), LW)
-elif epic_view:
-    left += box("epics", epic_view, LW)
-# Running now: from 140 columns under the epics; narrower, under the ladder and above recent, which
-# gives up the height it takes, so a watched frame keeps the ladder.
-running = running_view()
-if WIDE and running:
-    left += box("running now", running, LW)
-if blocked or later:
-    left.append(fit([sym("blocked"), (f"{blocked} blocked · {later} later  (swarm.sh status --all lists them)", "dim")], LW))
-
-# The legend; from 140 columns the keys go to the status bar. DASH_LEGEND=0 (a --project frame,
-# whose legend dash_frame draws once under them all) leaves the legend and the keys out.
-LEGEND_ON = E.get("DASH_LEGEND") != "0"
-foot = [fit([(cut(l, W), "dim")], W) for l in legend_lines(W, KEYS, WIDE, LEAD)] if LEGEND_ON else []
-if WIDE:
-    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
-                 + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
-
-# Recent fills the height left. Under 140 columns it, a shown ladder and running now are stacked
-# under the main column; from 140 recent and the ladder are the right column, the ladder on top.
-# A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
-ladder = E.get("DASH_LADDER") == "1"
-if WIDE:
-    side = ladder_box(RW) if ladder else []
-    room = H - len(out) - len(foot) - len(side) - 2 if H else max(8, len(left) - len(side) - 2)
-    if not KEYS:
-        room = max(5, room)
-    if room > 0:
-        side += recent_box(RW, room, clock=True)
-    out += [(a if a is not None else " " * LW) + " " + (b or "") for a, b in itertools.zip_longest(left, side)]
-else:
-    out += left
-    if ladder:
-        out += ladder_box(W)
-    if running:
-        out += box("running now", running, W)
-    room = H - len(out) - 2 - len(foot) if H else 8
-    if not KEYS:
-        room = max(5, room)
-    if room > 0:
-        out += recent_box(W, room)
-if FIT and H:
-    # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
-    out = out[:max(H - len(foot), 1)]
-out += foot
-if FIT and H:
-    out = out[:H]
-print("\n".join(l.rstrip() for l in out))
-PY
+  DASH_ESCALATE_AFTER="${CFG_escalate_after}" DASH_CODEX_MIN="${CFG_codex_minutes}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/dash_render.py"
 }
 
 # tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters
@@ -6110,7 +4007,7 @@ archive_session() {
   [[ -n "${session}" && "${session}" != - ]] || return 0
   dir="${SESSIONS_DIR}"
   for f in "${dir}"/*-"${session}".jsonl.gz; do [[ ! -e "${f}" ]] || return 0; done
-  src="$(SWARM_REPORT_PY="${REPORT_PY}" python3 -c 'import os, sys; exec(os.environ["SWARM_REPORT_PY"]); print(session_log(*sys.argv[1:3]))' \
+  src="$(PYTHONPATH="${SWARM_HOME}/bin/lib" python3 -c 'import os, sys; from report import *; print(session_log(*sys.argv[1:3]))' \
     "${CLAUDE_PROJECTS}" "${session}" 2>/dev/null || true)"
   [[ -n "${src}" ]] || return 0
   # Readable by this user only: the copy may hold secrets.
@@ -6429,20 +4326,7 @@ tidy_panes() {
   [[ "${yes}" != --yes || -n "${HERDR_PANE_ID:-}" ]] || die "tidy --yes: HERDR_PANE_ID is not set, so this pane could not be kept open"
   agents=$(herdr agent list 2>/dev/null) || die "tidy: herdr gave no agent list"
   panes=$(herdr pane list 2>/dev/null) || die "tidy: herdr gave no pane list"
-  closable=$(SWARM_PANES_PY="${PANES_PY}" SWARM_OWN="$(own_panes)" python3 - "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}" <<'PY'
-import json, os, sys
-exec(os.environ["SWARM_PANES_PY"])
-state, agents_json, panes_json, me = sys.argv[1:5]
-agents = {a.get("pane_id"): a for a in json.loads(agents_json)["result"]["agents"]}
-live = {p["pane_id"] for p in json.loads(panes_json)["result"]["panes"]}
-for tab, pane, recorded in pane_records(state, (set(os.environ["SWARM_OWN"].split()) & live) - {me}):
-    a = agents.get(pane)
-    name = (a or {}).get("name") or recorded
-    reason = {"EMPTY": "empty: no agent started", "retired": "retired"}.get(agent_state(a, name)[0])
-    if reason:
-        print("\t".join((pane, name, reason, tab)))
-PY
-) || die "tidy: could not read herdr's lists"
+  closable=$(SWARM_OWN="$(own_panes)" python3 "${SWARM_HOME}/bin/lib/tidy_panes.py" "${STATE_DIR}" "${agents}" "${panes}" "${HERDR_PANE_ID:-}") || die "tidy: could not read herdr's lists"
   if [[ -z "${closable}" ]]; then echo "nothing to tidy"; return 0; fi
   while IFS=$'\t' read -r pane name reason file; do echo "  ${name}  ${reason}  [${file} ${pane}]"; done <<< "${closable}"
   if [[ "${yes}" != --yes ]]; then echo "(swarm.sh tidy --yes closes them)"; return 0; fi

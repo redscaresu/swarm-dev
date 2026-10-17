@@ -29,6 +29,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Compile bin/lib/*.py
+        run: python3 -m py_compile bin/lib/*.py
       - name: Run every tests/*_test.sh
         run: for t in tests/*_test.sh; do echo "== ${t}"; bash "${t}" || exit 1; done
 
