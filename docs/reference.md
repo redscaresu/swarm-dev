@@ -597,8 +597,8 @@ numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under 
 `cost`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
-the others. `flow` writes nothing. For one release, `swarm.sh cost`, `features` and `review-yield`
-still run, and each prints which section now holds its numbers.
+the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
+commands still run, and each prints which section now holds its numbers.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
@@ -806,7 +806,6 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
 | `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
-| `swarm.sh cost`, `features`, `review-yield` | Folded into `flow`. For one release each prints which `flow` section holds its numbers. |
 
 ## Cleanup, escalation and session logs
 
