@@ -299,11 +299,8 @@ costs_tag() {
   done
 }
 
-# impossible_block <story-file> — true when the story's lead block is impossible_story's.
-impossible_block() {
-  awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } $0 == c { s = 0 }
-    s && index($0, "**Impossible.**") == 1 { y = 1 } END { exit !y }' "$1"
-}
+# impossible_block <story-file> — true when the story's lead block (escalated_file) is impossible_story's.
+impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basename "$1" .md)")" 2>/dev/null; }
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
 # one, which is the lead's), blocked and later items, and PRs awaiting the user's merge. Shared by
@@ -445,12 +442,11 @@ reset_at() { awk -F'\t' -v s="$1" '$2 == "reset" && $3 == s && index($5, "ok") =
 
 # reset <slug> <reason> — put a story the lead re-scoped back in the build queue: drop attempts:,
 # put kind back from escalated_from: (no kind: line for NO_KIND_LINE) while the story still says
-# kind: lead, so a kind the lead re-scoped stays, drop escalated_from:, and remove escalate_story's
-# block. A held story (held_for:, held_story) keeps attempts: and loses held_for:, and its reset is not
+# kind: lead, so a kind the lead re-scoped stays, drop escalated_from:, and delete escalate_story's
+# block (escalated_file). A held story (held_for:, held_story) keeps attempts: and loses held_for:, and its reset is not
 # counted as the one. A story with
 # neither attempts: nor escalated_from: is refused, and so is a second reset (an ok reset line for the
-# slug in events.tsv): at most one per story. So is a block whose close marker is gone, which would
-# take the rest of the file with it. main logs the reason as the outcome.
+# slug in events.tsv): at most one per story. main logs the reason as the outcome.
 reset_story() {
   local slug="$1" f from when put kind held
   [[ -n "${slug}" ]] || die "reset: <slug> is missing: swarm.sh reset <slug> <reason>"
@@ -463,14 +459,12 @@ reset_story() {
   held="$(get_fm "${f}" held_for)"
   when="$(reset_at "${slug}")"
   [[ -n "${held}" || -z "${when}" ]] || die "reset: ${slug} was reset already, at ${when} (events.tsv); a story is reset at most once, so drop it: swarm.sh drop ${slug} <reason>"
-  awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } $0 == c { s = 0 } END { exit s }' "${f}" \
-    || die "reset: ${f} has the line '${ESCALATED_OPEN}' and no '${ESCALATED_CLOSE}' after it, so the block's end is unknown; put that line back where the block ends, then reset again"
   put="${from}"; [[ "${from}" != "${NO_KIND_LINE}" ]] || put=""
   [[ -z "${from}" || "$(get_fm "${f}" kind)" != lead ]] || set_fm "${f}" kind "${put}"
   set_fm "${f}" escalated_from
   set_fm "${f}" held_for
   [[ -n "${held}" ]] || set_fm "${f}" attempts
-  awk -v o="${ESCALATED_OPEN}" -v c="${ESCALATED_CLOSE}" '$0 == o { s = 1 } !s { print } $0 == c { s = 0 }' "${f}" > "${f}.tmp" && mv "${f}.tmp" "${f}"
+  rm -f "$(escalated_file "${slug}")"
   kind="$(get_fm "${f}" kind)"
   if [[ -n "${held}" ]]; then echo "reset: ${slug} (kind: ${kind:-none, so code}; the ${held} hold is lifted, attempts: as it was)"; return; fi
   echo "reset: ${slug} (kind: ${kind:-none, so code}; no attempts:)"

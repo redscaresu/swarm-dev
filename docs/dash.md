@@ -39,7 +39,7 @@ is one column, top to bottom:
   from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
   (`--reviewer escaped` in `findings.tsv`). Then one summary line: epics active, agents working, PRs green and
-  waiting for you, stalled builders, and today's estimated cost (`swarm.sh cost` for today). After
+  waiting for you, stalled builders, and today's estimated cost (the `cost` section of `swarm.sh flow --since <today>`). After
   it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
   call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
   today` too), on the same line when they fit there and on the next line when they don't. Then a
@@ -183,3 +183,9 @@ error that stopped it, or `failed (exit N)`). Every command writes it except the
 (`dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, `wait`, `watch`,
 `base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
 holds names and paths, never the contents of a brief or a message.
+
+`tests/dash_golden_test.sh` draws a fixed two-project board (`tests/fixtures/dash/two_projects.sh`)
+at 60, 100 and 200 columns and compares each frame with `tests/fixtures/dash/golden-<cols>.txt`.
+The fixture sets `SWARM_DASH_NOW`, which fixes dash's clock, so the frames come out the same on
+every run. If you change what dash draws, run `UPDATE_GOLDEN=1 bash tests/dash_golden_test.sh` and
+commit the regenerated frames in the same PR, so the review shows the new look as a diff.

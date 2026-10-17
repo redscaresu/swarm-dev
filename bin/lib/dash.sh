@@ -147,7 +147,10 @@ dash_base_ref() {
 # view per PR that matches, each with the same limit; and how many stories of each epic finished
 # (dash_finished).
 dash_slow() {
-  local cache f r urls pairs
+  local cache f r urls pairs day
+  # Today, or SWARM_DASH_NOW's day (dash_render's fixed clock).
+  day="$(date +%F)"
+  [[ -z "${SWARM_DASH_NOW:-}" ]] || day="$(python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(float(sys.argv[1])))' "${SWARM_DASH_NOW}")"
   # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
   cache="${TMPDIR:-/tmp}/swarm-dash-3-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
   if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
@@ -158,7 +161,7 @@ dash_slow() {
         [[ "$(get_fm "${f}" status)" == "done" ]] || { r="$(repo_dir "$(get_fm "${f}" repo)")" && printf '%s\t%s\n' "${r}" "$(basename "${f}" .md)"; }
       done || true)"
     {
-      printf 'cost\t%s\n' "$( (cost_report "$(date +%F)") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
+      printf 'cost\t%s\n' "$( (cost_report "${day}") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
       if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}

@@ -1,0 +1,16 @@
+{
+  "description": "In a swarm project, refuse careless raw PR merges so they go through swarm.sh merge",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/merge-guard.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
