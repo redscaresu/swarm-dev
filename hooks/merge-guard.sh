@@ -4,13 +4,17 @@
 # way to merge a PR. It reads the tool call's JSON on stdin and exits 2, naming the form, on gh pr
 # merge, gh api .../pulls/<n>/merge, a graphql mergePullRequest, any of them in code handed to a shell
 # or an interpreter (-c, eval, a heredoc, a pipe) or written to a file, and on swarm.sh merge joined
-# to another command. A mention in echo, printf or grep passes. Each block appends an incident line,
-# `merge-blocked: <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
+# to another command. A mention in echo, printf or grep passes. It also exits 2 on commands that lose
+# work: a cd followed by ;, git checkout over a file with uncommitted changes and, in a swarm agent's
+# session (SWARM_AGENT set), git checkout, switch, restore, reset --hard, stash or clean run in the
+# project's main checkout (the call's cwd, a cd or a -C). Each block appends an incident line,
+# `merge-blocked: <form>` or `guard-blocked: <form>`, to the project's .swarm/events.tsv. Outside a
+# swarm project it allows all.
 set -uo pipefail
 
 input="$(cat)"
-# Fast path: a call that never says merge cannot merge.
-case "${input}" in *[Mm][Ee][Rr][Gg][Ee]*) ;; *) exit 0 ;; esac
+# Fast path: a call that never says merge, git or cd has nothing to block.
+case "${input}" in *[Mm][Ee][Rr][Gg][Ee]*|*git*|*cd*) ;; *) exit 0 ;; esac
 
 HOOK_INPUT="${input}" exec python3 -I - <<'PY'
 import itertools, json, os, re, subprocess, sys, time
@@ -25,6 +29,9 @@ MENTIONS = {"echo", "printf", "grep", "egrep", "fgrep", "rg"}
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 REDIRECT = re.compile(r"<<<|<<-?|&>>?|>>|>[|&]?|<[&>]?")
 QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
+OPENERS = {"do", "then", "else", "{"}  # words that can start a line before its command
+MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
+UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}  # git status codes of a conflict, which --ours/--theirs resolves
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
 merges a PR (docs/reference.md § Merging). Text that only mentions a merge, such as a PR body, can go
@@ -32,7 +39,19 @@ through the Write tool or --body "$(cat <<'EOF' ... EOF)"."""
 
 
 class Blocked(Exception):
-    pass
+    """A merge any way but a lone swarm.sh merge; its argument names the form."""
+    kind = "merge-blocked"
+
+    def message(self):
+        return MESSAGE.format(self.args[0])
+
+
+class Unsafe(Blocked):
+    """A command that can lose work; its arguments name the form and the fix."""
+    kind = "guard-blocked"
+
+    def message(self):
+        return "merge-guard: blocked ({}). {}.".format(*self.args)
 
 
 class Shell:
@@ -219,6 +238,74 @@ def check_code(b, rest, fed):
         raise Blocked("a merge fed to %s" % b)
 
 
+def guard(code, cwd):
+    """Raise Unsafe on a command that can lose work: a cd before ;, git checkout over a file with
+    uncommitted changes and, in a swarm agent's session, git moving or resetting the main checkout."""
+    home = cwd if os.environ.get("SWARM_AGENT") else None
+    sh = Shell(code.strip())
+    sh.parse()
+    d = cwd  # where the next command runs; None once a cd goes where this cannot tell
+    for cmd in sh.cmds:
+        args = list(itertools.dropwhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
+        name = os.path.basename(args[0]) if args else ""
+        if name == "cd" and cmd["end"] == ";":
+            raise Unsafe("cd before ;", "If the cd fails, the rest runs where you were: use `cd <dir> || exit 1 &&`")
+        if name == "cd" and not cmd["nested"]:
+            # ponytail: no subshell scoping, so a cd inside ( ) still moves d for the commands after it.
+            t = next((w for w in args[1:] if w == "-" or not w.startswith("-")), "~")
+            d = None if t == "-" else at(d, t)
+        elif name == "git":
+            check_git(d, args[1:], home)
+
+
+def check_git(d, words, home):
+    """One git command run from d; home is the call's cwd in a swarm agent's session, else None."""
+    while words[:1] and words[0].startswith("-"):  # git's own options, before the subcommand
+        if words[0] in ("-C", "-c") and len(words) > 1:
+            d = at(d, words[1]) if words[0] == "-C" else d
+            words = words[1:]
+        words = words[1:]
+    if d is None or not words:
+        return
+    sub, rest = words[0], words[1:]
+    if home and (sub in MOVES or (sub == "reset" and "--hard" in rest)):
+        here, ours = git_dirs(d), git_dirs(home)
+        if here and ours and here[0] == ours[1]:
+            raise Unsafe("git %s in the main checkout" % sub,
+                         "A swarm agent never moves or resets the project's main checkout: run it in a worktree")
+    if sub == "checkout":
+        paths = rest[rest.index("--") + 1:] if "--" in rest else [w for w in rest if not w.startswith("-")]
+        status = (git(d, "status", "--porcelain", "--untracked-files=no", "--", *paths) or "").splitlines() if paths else []
+        if any(line[:2] not in UNMERGED for line in status):
+            raise Unsafe("git checkout over uncommitted changes",
+                         "git checkout drops them: back up with cp, then restore from the copy")
+
+
+def at(d, path):
+    """path from directory d, with ~ and $VARs expanded; None when that cannot be told."""
+    p = os.path.expandvars(os.path.expanduser(path))
+    if "$" in p or "`" in p or (d is None and not os.path.isabs(p)):
+        return None
+    return os.path.normpath(os.path.join(d or "/", p))
+
+
+def git(d, *args):
+    """git's output, run in d, or None when it fails."""
+    try:
+        return subprocess.run(["git", "-C", d, *args], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def git_dirs(d):
+    """The checkout d is in and its repository's main checkout, or None outside a git repository."""
+    out = git(d, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir")
+    if not out:
+        return None
+    top, common = out.split("\n")[:2]
+    return os.path.realpath(top), os.path.realpath(os.path.dirname(common))
+
+
 def project(cwd):
     """The directory holding .claude/swarm/config at or above cwd, or None."""
     d = os.path.realpath(cwd)
@@ -229,19 +316,15 @@ def project(cwd):
     return d
 
 
-def record(d, form):
+def record(d, outcome):
     """Append the incident to events.tsv in record_event's five fields: time, command, target, the
     actor's pane, outcome. A worktree logs to its main checkout, as swarm.sh does; a log that cannot
     be written never changes the verdict."""
-    try:
-        git = lambda *a: subprocess.run(["git", "-C", d, "rev-parse", *a], capture_output=True, text=True,
-                                        check=True).stdout.strip()
-        top, common = git("--show-toplevel"), git("--path-format=absolute", "--git-common-dir")
-        d = os.path.dirname(common) + d[len(top):]
-    except (OSError, subprocess.CalledProcessError):
-        pass
+    dirs = git_dirs(d)
+    if dirs:
+        d = dirs[1] + d[len(dirs[0]):]
     fields = [time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "incident", "-",
-              os.environ.get("HERDR_PANE_ID") or "-", "merge-blocked: " + form]
+              os.environ.get("HERDR_PANE_ID") or "-", outcome]
     try:
         os.makedirs(os.path.join(d, ".swarm"), exist_ok=True)
         with open(os.path.join(d, ".swarm", "events.tsv"), "a") as f:
@@ -253,14 +336,16 @@ def record(d, form):
 def main():
     call = json.loads(os.environ["HOOK_INPUT"])
     code = (call.get("tool_input") or {}).get("command")
-    d = project(call.get("cwd") or os.getcwd())
+    cwd = os.path.realpath(call.get("cwd") or os.getcwd())
+    d = project(cwd)
     if not d or not isinstance(code, str):
         return 0
     try:
         check(code)
+        guard(code, cwd)
     except Blocked as b:
-        record(d, str(b))
-        print(MESSAGE.format(b), file=sys.stderr)
+        record(d, "%s: %s" % (b.kind, b.args[0]))
+        print(b.message(), file=sys.stderr)
         return 2
     return 0
 

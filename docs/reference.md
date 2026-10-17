@@ -532,7 +532,7 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
-(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
+(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
 `reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
@@ -764,6 +764,15 @@ merge` joined to another command by `;`, `&`, `&&`, `||`, `|`, a newline, `$( )`
 command that only mentions a merge passes: `echo`, `printf` and `grep`, a commit message, and a PR
 body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
 sees its reason, and `.swarm/events.tsv` gets an incident line. Outside a swarm project the guard allows everything.
+
+The hook also refuses commands that can lose work. In every session in a swarm project, yours
+included, it refuses a `cd <dir>` followed by `;`: when the `cd` fails, the rest runs in the folder
+the session was in, so write `cd <dir> || exit 1 &&`. It refuses a `git checkout` over a file with
+uncommitted changes; back the file up with `cp` and restore from the copy instead. swarm.sh starts
+every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook also refuses
+`git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the project's main
+checkout, whether the command runs there from the session's folder, after a `cd`, or through
+`git -C`. Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
