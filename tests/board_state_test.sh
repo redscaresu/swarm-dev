@@ -74,7 +74,7 @@ sw() {
 lead() { sw HERDR_ENV=1 HERDR_PANE_ID=w:me "$@"; }
 clean() { git -C "${P}" status --porcelain; }
 # bs <function> <arg>... — a board.sh function on ${P}'s board, with the stubs on PATH, as swarm.sh runs it.
-# shellcheck source=/dev/null disable=SC2329
+# shellcheck source=/dev/null disable=SC2317,SC2329   # die is board.sh's, called from there
 bs() { (export PATH="${ROOT}/bin:${PATH}" BOARD="${P}/board" PROJECT_DIR="${P}"; die() { echo "swarm: $*" >&2; exit 1; }
   . "${SWARM%/*}/lib/board.sh"; "$@"); }
 v() { bs get_fm "${P}/board/stories/$1.md" "$2"; }   # <slug> <key>: as swarm.sh reads it
