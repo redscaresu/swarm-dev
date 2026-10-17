@@ -107,7 +107,12 @@ def prs_between(kind, start, end):
     # The distinct PRs the kind was fixed on from day start up to, not including, day end.
     return len({pr for d, k, pr in dated_fixes if k == kind and start <= d < end})
 
-recent = {k: prs_between(k, TODAY + DAY - WINDOW, TODAY + DAY) for _, k, _ in dated_fixes}
+# One pass over the log for every kind's recent PRs; prs_between is only for the few flagged kinds.
+recent_prs = collections.defaultdict(set)
+for fix_day, fix_kind, fix_pr in dated_fixes:
+    if TODAY + DAY - WINDOW <= fix_day < TODAY + DAY:
+        recent_prs[fix_kind].add(fix_pr)
+recent = {k: len(v) for k, v in recent_prs.items()}
 flagged = sorted((k for k, n in recent.items() if n >= RECURRING_MIN_PRS), key=lambda k: (-recent[k], k))
 if flagged:
     print("\nrecurring\tprs_30d\tcheck\tcheck_merged\tbefore_30d\tsince_30d")
