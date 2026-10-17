@@ -23,12 +23,21 @@ check() { # <name> <want> <got>
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 
-item() { # <board> <path> <front-matter line>...
-  local path="$1/$2" title; shift 2
+item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
+  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/board-state/${2%.md}"; shift 2
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
+# val <item file> <key> — <key> as swarm.sh reads it: the item's state file (.swarm/board-state/ beside
+# its board) first, its file second.
+val() {
+  local d="${1%/*}" s
+  s="${d%/*/*}/.swarm/board-state/${d##*/}/$(basename "$1" .md)"
+  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "$1"; fi
+}
+# legacy_review <story file> <url> — what an older swarm.sh's review wrote, in the file itself.
+legacy_review() { perl -pi -e 's|^status: .*$|status: review\nprs: '"$2"'|' "$1"; }
 
 # Stubs. gh answers from fixture files; herdr accepts everything and logs its arguments.
 mkdir -p "${ROOT}/bin" "${ROOT}/gh"
@@ -88,10 +97,9 @@ item "${b}" stories/a.md "status: ready" "kind: code" "epic: e1"
 item "${b}" stories/n.md "status: blocked" "kind: code" "epic: e1" "depends_on: [a]"
 item "${b}" epics/e1.md "status: active"
 run review a "${U}/1" >/dev/null
-check "review sets the status and the PRs" "review|${U}/1" \
-  "$(sed -n 's/^status: //p' "${b}/stories/a.md")|$(sed -n 's/^prs: //p' "${b}/stories/a.md")"
+check "review sets the status and the PRs" "review|${U}/1" "$(val "${b}/stories/a.md" status)|$(val "${b}/stories/a.md" prs)"
 check "review refuses what is not a PR URL, and leaves the item alone" "yes|review|${U}/1" \
-  "$(has 'not a PR URL' "$(run review a "https://example.com/x" || true)")|$(sed -n 's/^status: //p' "${b}/stories/a.md")|$(sed -n 's/^prs: //p' "${b}/stories/a.md")"
+  "$(has 'not a PR URL' "$(run review a "https://example.com/x" || true)")|$(val "${b}/stories/a.md" status)|$(val "${b}/stories/a.md" prs)"
 
 # --- next: a PR waiting on a human is a gate, and never restarts a conductor.
 out="$(run next)"
@@ -107,11 +115,12 @@ item "${b}" epics/e2.md "status: review" "prs: ${U}/1 ${U}/3"
 item "${b}" epics/e3.md "status: review" "prs: ${U}/1 ${U}/4"
 out="$(run reconcile)"
 check "a merged story is finished" "gone" "$([[ -e "${b}/stories/a.md" ]] && echo there || echo gone)"
-check "a closed PR sends its story back to ready" "ready" "$(sed -n 's/^status: //p' "${b}/stories/c.md")"
-check "and writes no attempts: line: a PR closed unmerged is not a failed build" "" "$(grep '^attempts:' "${b}/stories/c.md" || true)"
+check "a closed PR sends its story back to ready" "ready" "$(val "${b}/stories/c.md" status)"
+check "and writes no attempts: line: a PR closed unmerged is not a failed build" "" "$(val "${b}/stories/c.md" attempts)"
 check "a story sent back to ready keeps its attempts: as it was" "ready|1" \
-  "$(sed -n 's/^status: //p' "${b}/stories/c2.md")|$(sed -n 's/^attempts: //p' "${b}/stories/c2.md")"
-check "its prs: line goes, and a body line like it stays" "prs: a line in the body" "$(grep '^prs:' "${b}/stories/c.md")"
+  "$(val "${b}/stories/c2.md" status)|$(val "${b}/stories/c2.md" attempts)"
+check "its prs: goes, and a body line like it stays" "|prs: a line in the body" \
+  "$(val "${b}/stories/c.md" prs | head -1)|$(grep -x 'prs: a line in the body' "${b}/stories/c.md")"
 check "reconcile says which PR closed" "yes" "$(has "back to ready: c (closed without merging: ${U}/2)" "${out}")"
 check "an epic with one of two PRs merged stays in review" "review" "$(sed -n 's/^status: //p' "${b}/epics/e2.md")"
 check "an epic with both PRs merged is finished" "gone" "$([[ -e "${b}/epics/e3.md" ]] && echo there || echo gone)"
@@ -137,7 +146,7 @@ inrepo review s "${U}/4" >/dev/null
 "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
 inrepo reconcile >/dev/null || true
 check "a pull that fails keeps merged items in review, with their PRs" "review ${U}/1|review ${U}/4" \
-  "$(sed -n 's/^status: //p;s/^prs: //p' "${ROOT}/app/docs/stories/r.md" | paste -sd' ' -)|$(sed -n 's/^status: //p;s/^prs: //p' "${ROOT}/app/docs/stories/s.md" | paste -sd' ' -)"
+  "$(val "${ROOT}/app/docs/stories/r.md" status) $(val "${ROOT}/app/docs/stories/r.md" prs)|$(val "${ROOT}/app/docs/stories/s.md" status) $(val "${ROOT}/app/docs/stories/s.md" prs)"
 check "and keeps a merged retry's attempts:" "1" "$(sed -n 's/^attempts: //p' "${ROOT}/app/docs/stories/r.md")"
 "${GIT[@]}" -C "${ROOT}/app" reset -q --keep HEAD~1
 inrepo reconcile >/dev/null || true
@@ -212,10 +221,10 @@ out="$(at pf reconcile || true)"
 check "a failed pull is reported" "yes" "$(has "the pull failed, and every board edit is as it was" "${out}")"
 check "a failed pull restores the put-back edit from its backup" " M docs/stories/m.md|same" \
   "$(git -C "${ROOT}/pf" status --porcelain -- docs/stories/m.md)|$(same_as_base pf)"
-check "the merged item stays in review" "review" "$(sed -n 's/^status: //p' "${ROOT}/pf/docs/stories/k.md")"
+check "the merged item stays in review" "review" "$(val "${ROOT}/pf/docs/stories/k.md" status)"
 
-# --- reconcile carries the board's own uncommitted front-matter edits over a pull that changes the
-# file. setup_flip <name>: a bare origin whose board has k, z, and x and y blocked on t (not on the
+# --- reconcile carries an older swarm.sh's uncommitted front-matter edits, in the files themselves,
+# over a pull that changes the file. setup_flip <name>: a bare origin whose board has k, z, and x and y blocked on t (not on the
 # board; x also depends on it); its main checkout <name>, with k in review (its PR merged), z in review (its PR open), and
 # x and y flipped to ready by unblock, all uncommitted (x keeps a legacy blocked_by line, which nothing reads); and a clone <name>-up for the base's changes.
 setup_flip() {
@@ -228,7 +237,8 @@ setup_flip() {
   item "${d}/docs" stories/y.md "status: blocked" "kind: code" "depends_on: [t]"
   "${GIT[@]}" -C "${d}" add docs && "${GIT[@]}" -C "${d}" commit -q -m board && "${GIT[@]}" -C "${d}" push -q origin main
   "${GIT[@]}" clone -q "${d}.git" "${d}-up"
-  at "$1" review k "${U}/1" >/dev/null; at "$1" review z "${U}/3" >/dev/null; at "$1" unblock >/dev/null
+  legacy_review "${d}/docs/stories/k.md" "${U}/1"; legacy_review "${d}/docs/stories/z.md" "${U}/3"
+  perl -pi -e 's/^status: blocked$/status: ready/' "${d}/docs/stories/x.md" "${d}/docs/stories/y.md"
 }
 push_up() { "${GIT[@]}" -C "${ROOT}/$1-up" add -A && "${GIT[@]}" -C "${ROOT}/$1-up" commit -q -m "the base's" && "${GIT[@]}" -C "${ROOT}/$1-up" push -q origin main; }
 flipped() { sed -e 's/^status: blocked$/status: ready/' "$1"; }

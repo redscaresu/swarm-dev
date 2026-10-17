@@ -25,8 +25,8 @@ check() { # <name> <want> <got>
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 hasnt() { if grep -qF -- "$1" <<< "$2"; then echo "has '$1'"; else echo no; fi; }
-item() { # <board> <path> <front-matter line>...
-  local path="$1/$2" title; shift 2
+item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
+  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/board-state/${2%.md}"; shift 2
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
@@ -99,8 +99,12 @@ parent() {
   [[ -z "${4:-}" ]] || echo "${URL}/$1" > "${ROOT}/open/story-$1"
 }
 head_of() { git -C "${ROOT}/svc" rev-parse "story/$1"; }
-st() { sed -n 's/^status: //p' "${b}/stories/$1.md"; }
-fm() { sed -n "s/^$2: //p" "${b}/stories/$1.md"; }
+# fm <slug> <key> — <key> as swarm.sh reads it: the story's state file first, its file second.
+fm() {
+  local s="${p}/.swarm/board-state/stories/$1"
+  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; else sed -n "s/^$2: //p" "${b}/stories/$1.md"; fi
+}
+st() { fm "$1" status; }
 # held_ready <brief> — the held-child rule, as has prints its parts: the ready line, never story, the
 # Stacked line for the same child as the one instruction (at most one builder), and the backlog
 # brief's started-story rule deferring to it; a could-not-check line as no answer, and a not stacked

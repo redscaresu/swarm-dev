@@ -103,7 +103,9 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
   [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
   ```
 
-- [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status.
+- [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
+  file's committed status: what swarm.sh sets later (a review, an unblock) is kept in
+  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` reads both.
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.

@@ -219,8 +219,8 @@ A story's **Done when** names what the builder's session can show (a test run, a
 stops and reports; the session it was started from stays free. Its last act is writing that report
 to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how
 `/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
-background work. When it starts, an epic still `later` is set `active` (an uncommitted board edit
-that `conduct` reports in one line), so `status` and `next` stop listing it as waiting on you. It
+background work. When it starts, an epic still `later` is set `active` (in `.swarm/state`, which
+`conduct` reports in one line), so `status` and `next` stop listing it as waiting on you. It
 runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
 it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
@@ -248,6 +248,21 @@ Otherwise clear the stop by discarding the build from its repo
 deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic, such as a code PR
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
+
+**Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
+`escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
+`close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to
+`.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
+the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
+reads a key from that file first and from the item's front matter second, so a key with no line
+there, as on an existing board, reads from the file; `dash` still draws its board rows from the
+files alone. A line with no value clears the key, and swarm.sh writes no line that would only repeat
+the file's value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
+Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
+read, and the next write to the item drops the old line. `finish` deletes an item's state file along
+with the item. The escalated block that
+`close` appends for the lead is still in the story file, and where an older swarm.sh left these keys
+uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
