@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2034,SC2119,SC2120
+# shellcheck shell=bash
 
 # The outer loop: every review finding someone fixed is logged by kind, so a kind that keeps coming
 # back across PRs can become a standing rule in the project's brief. Rules are proposed, never written.
@@ -26,6 +26,7 @@ finding_flags() {
   FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER; FINDING_SKIP=0
   while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
     n=1
+    # shellcheck disable=SC2034 # read in another file
     if [[ "$1" == --declined ]]; then
       FINDING_OUTCOME=declined
       [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
@@ -135,6 +136,7 @@ cost_report() {
 # with no log, the slug's PR when it has exactly one.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
 # read from close's copy of the session log once Claude Code deleted it.
+# shellcheck disable=SC2120 # another file's callers pass it
 outcomes_report() {
   local since="" rows meta="" slug text kind from src prs story_epic got asked
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
@@ -201,6 +203,7 @@ flow_report() {
     "${since:-2000-01-01}" "${until:-2000-01-01}" 2>/dev/null || die "${usage}"
   since="${since:-0000-00-00}"; until="${until:-9999-12-30}"
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines.
+  # shellcheck disable=SC2119 # takes no argument here
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
@@ -256,6 +259,7 @@ review_yield_report() {
     esac
   done
   # Every row, unfiltered, so an epic PR built before since still keeps its later findings.
+  # shellcheck disable=SC2119 # takes no argument here
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/review_yield_report.py" \
     "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${since:-0000-00-00}" "${epic}"

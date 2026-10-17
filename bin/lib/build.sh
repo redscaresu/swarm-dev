@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2154
+# shellcheck shell=bash
 
 # findings_goal <slug> <since> <goal-file> — send the builder a fresh /goal mid-turn, once its findings
 # are taken up, so the goal drives the fix (sent after the turn, the judge would find it met at once): the
@@ -6,6 +6,7 @@
 # once and costs one extra short turn, as build_story's does. send_goal confirms it from entries newer
 # than the tell, so the build-time goal never counts; a refusal or no entry fails naming the story.
 findings_goal() {
+  # shellcheck disable=SC2154 # assigned in another file
   printf '%s %s %s\n' "The goal: the conductor's review findings, sent to you just before this goal, are addressed (each fixed, or declined with a reason in your reply) and you have replied." \
     "$(reply_sentence)" "It is met once both hold, or stop after ${CFG_goal} more turns." > "$3"
   send_goal "$1" "$3" findings "$2"
@@ -13,6 +14,7 @@ findings_goal() {
 
 # The merge and review rules, shared by the briefs.
 merge_rule() {
+  # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
@@ -75,6 +77,7 @@ codex_review_cmd() {
 # conductor and the lead alike. In the background, because a foreground Bash call ends sooner (Claude
 # Code stops one at 2 minutes by default, 10 at most) and the tool's kill would preempt the timeout.
 codex_rule() {
+  # shellcheck disable=SC2154 # assigned in another file
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
@@ -393,10 +396,12 @@ story_role() {
   # Checked before any arithmetic, which would evaluate it.
   [[ "${attempts}" =~ ^(0|[1-9][0-9]*)$ ]] \
     || { echo "${story}: attempts must be a non-negative whole number, not '${attempts}'"; return 1; }
+  # shellcheck disable=SC2154 # assigned in another file
   if agent_kind "${kind}" && (( CFG_escalate_after > 0 && attempts >= CFG_escalate_after )); then echo escalate; return; fi
   if [[ "${kind}" != code ]]; then echo "${kind}"; return; fi
   if [[ "${risk}" == high ]]; then echo code-risky; return; fi
   sum="$(printf '%s' "${slug}" | cksum)"; sum="${sum%% *}"
+  # shellcheck disable=SC2154 # assigned in another file
   if [[ ${CFG_sonnet_share} -gt 0 && $((sum % CFG_sonnet_share)) -eq 0 ]] \
      && ! awk -F'\t' -v n="$(agent_name "${slug}")" '$3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
     echo code-sonnet

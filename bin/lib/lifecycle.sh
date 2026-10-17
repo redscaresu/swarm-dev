@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2034,SC2154
+# shellcheck shell=bash
 
 # brief_trailers — the commit trailers the project's brief names, wherever a line has one (quoted or
 # backticked in a sentence too): a <Word>-by: token, a name with a letter in it and no colon or
@@ -188,6 +188,7 @@ pull_board_repo() {
   # Fast-forward to the upstream fetched above, which every check here read: a pull would fetch again.
   if ! git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}'; then
     for path in "${put[@]+"${put[@]}"}" "${keep[@]+"${keep[@]}"}"; do cp -p "${bak}/${path}" "${PROJECT_DIR}/${path}"; done
+    # shellcheck disable=SC2034 # read in another file
     PULL_WHY="the pull failed, and every board edit is as it was$(board_edits_named)"
     return 1
   fi
@@ -308,6 +309,7 @@ close_agent() {
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
+  # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${cause}" || "${CFG_goal}" == off || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] \
     || die "close: with goal on, $1's story is still ready, so say why its builder stopped: swarm.sh close $1 <cause>, the cause one of ${CLOSE_CAUSES}"
   if [[ "${cause}" == impossible ]] && why="$(impossible_refused "$1")"; then
@@ -515,76 +517,6 @@ close_panes() {
   close_tabs "$1"
 }
 
-# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken), so a second run
-# reusing a name still held (a second epic's `lead`) would fail and leave an empty pane. herdr's holder decides first: with none, the name is free,
-# whatever an old session says. A holder this project started is retired only when it has finished
-# (read_state: idle, its session gone, or herdr's idle or done) and refused in any other state,
-# naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
-# refused, never retired: it is that project's agent. Runs before any pane opens.
-free_agent_name() {
-  local state
-  if [[ -z "$(agent_field "$1" pane_id)" ]]; then
-    [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
-    die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane"
-  fi
-  state="$(read_state "$1")"
-  case "${state}" in
-    idle|gone|herdr:idle|herdr:done) ;;   # finished: the only states retired
-    busy|herdr:working) die "$1: an agent with this name is still working; wait for it, or use another name" ;;
-    waiting*|herdr:blocked) die "$1: an agent with this name is waiting on $(waiting_for "${state}"); answer it (herdr agent read $1), or use another name" ;;
-    unknown) die "$1: Claude Code gives no state for the session holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
-    herdr:unknown) die "$1: herdr gives no state for the agent holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
-    *) die "$1: the agent holding this name is '${state#herdr:}', not finished, so it is not retired; look at it (herdr agent read $1), or use another name" ;;
-  esac
-  retire_agent "$1" >/dev/null
-  [[ -z "$(agent_field "$1" pane_id)" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
-}
-
-# agent_field <name> <field> [any] — <field> (agent_status, pane_id) of this project's agent called
-# <name> (its pane is one own_panes recorded), or nothing. With "any", of whichever project's agent
-# holds the name: herdr names are unique across all workspaces.
-agent_field() {
-  herdr agent list 2>/dev/null | SWARM_NAME="$1" SWARM_FIELD="$2" SWARM_ANY="${3:-}" SWARM_PANES="$(own_panes)" json "next((a.get(e['SWARM_FIELD']) or ('unknown' if e['SWARM_FIELD']=='agent_status' else '') for a in d['result']['agents'] if a.get('name')==e['SWARM_NAME'] and (e['SWARM_ANY'] or a.get('pane_id') in e['SWARM_PANES'].split())),'')" 2>/dev/null || true
-}
-
-# agent_status <name> — herdr's status for this project's agent called <name>, or nothing if there is none.
-agent_status() { agent_field "$1" agent_status; }
-
-# own_target <name> — the pane of this project's agent called <name>, to address herdr by: a name
-# alone could reach another project's agent, since herdr names span workspaces.
-own_target() {
-  local pane
-  pane="$(agent_field "$1" pane_id)"
-  [[ -n "${pane}" ]] || die "$1: no agent this project started holds this name now: it has exited or its pane was closed, or another project holds the name, which is never addressed"
-  echo "${pane}"
-}
-
-# retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
-# retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
-# its slot in the tab's state under that name, so no later agent is split into it.
-retire_agent() {
-  local name state new i pane
-  name="$(agent_name "$1")"
-  # A name reused more than once already has a <name>-done; take the first free suffix (free in any
-  # project: names are unique across workspaces).
-  new="${name:0:27}-done"
-  for i in 2 3 4 5 6 7 8 9; do
-    [[ -z "$(agent_field "${new}" agent_status any)" ]] && break
-    new="${name:0:26}-done${i}"
-  done
-  # By pane, and only this project's: renaming by name would rename another project's agent.
-  pane="$(agent_field "${name}" pane_id)"
-  if [[ -z "${pane}" ]]; then echo "no agent this project started is called $1; nothing to retire"; return 0; fi
-  herdr agent rename "${pane}" "${new}" >/dev/null 2>&1 \
-    || die "$1: herdr could not rename it to ${new}, so its name is not free; close its pane (herdr agent list)"
-  for state in "${STATE_DIR}"/*; do
-    [[ -f "${state}" ]] || continue
-    # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
-    awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
-  done
-  echo "retired $1 as ${new}"
-}
-
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
 # (a start that failed) or a retired agent (<name>-done, left open by retire_agent). Lists them; with
 # --yes, closes them and drops them from the tab records. Working, waiting and idle agents are never
@@ -715,6 +647,7 @@ lead_queue() {
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
     # With merge = agent only a costs: money item waits on the user: merge holds it for them.
+    # shellcheck disable=SC2154 # assigned in another file
     [[ "${CFG_merge}" == human || "${line}" == "  awaiting your merge (costs money): "* ]] || continue
     tag=""; [[ "${line}" != "  awaiting your merge (costs money): "* ]] || tag=1
     line="${line/#  awaiting your merge (costs money): /  awaiting your merge: }"

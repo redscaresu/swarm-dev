@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2034,SC2119,SC2120,SC2154
+# shellcheck shell=bash
 
 # bin/lib/panes.py: the one reader of this project's panes, shared by status, tidy and dash (each python
 # imports it), so the three views agree.
@@ -85,6 +85,7 @@ require_trusted() {
 # MIN_CLAUDE: the oldest Claude Code with both `--session-id` and `claude agents --json`, which every
 # Claude agent's state is read through (pinned by experiment; README's Requirements names it too).
 MIN_CLAUDE=2.1.145
+# shellcheck disable=SC2034 # read in another file
 GOAL_MIN_CLAUDE=2.1.269   # the oldest with /goal, which goal = N needs (the epic's floor; the spike ran 2.1.299)
 CLAUDE_CHECKED=""   # set once require_claude passes, so a run checks once
 
@@ -94,6 +95,7 @@ CLAUDE_CHECKED=""   # set once require_claude passes, so a run checks once
 # find no agent there. From a plain shell with no session, only the version is checked. Once a
 # check passes, later calls in the same run return at once: `story` checks before its worktree (with
 # goal on, for GOAL_MIN_CLAUDE), then start_agent asks again.
+# shellcheck disable=SC2120 # another file's callers pass it
 require_claude() {
   local min="${1:-${MIN_CLAUDE}}" have session
   [[ -z "${CLAUDE_CHECKED:-}" ]] || return 0
@@ -185,6 +187,7 @@ start_agent() {
   local session=-
   if [[ "${kind}" == claude ]]; then
     require_trusted "${cwd}"
+    # shellcheck disable=SC2119 # takes no argument here
     require_claude
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
   fi
@@ -255,6 +258,7 @@ AGENTS_LOG="${PROJECT_DIR}/.swarm/agents.tsv"
 
 # SESSIONS_DIR: archive_session's gzip copies of closed agents' session logs, which cost and outcomes
 # read once Claude Code has deleted the original.
+# shellcheck disable=SC2034 # read in another file
 SESSIONS_DIR="${PROJECT_DIR}/.swarm/sessions"
 
 # session_for_pane <pane> — the Claude session id herdr reports for the agent in <pane>, or nothing.
@@ -450,6 +454,7 @@ agent_stalled() {
   [[ -n "${slug}" ]] || return 1
   ct="$(story_work_time "${slug}")"; sl="$(session_mtime "$1")"
   age="$(stall_py age "${slug}" "$1" "$2" "${ct}" "${sl}")"
+  # shellcheck disable=SC2154 # assigned in another file
   [[ -n "${age}" && "${age}" -ge "${CFG_stall_minutes}" ]] || return 1
   for url in $(fm "${BOARD}/stories/${slug}.md" prs | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*'); do
     prs+=("$(gh pr view "${url}" --json updatedAt -q .updatedAt 2>/dev/null || true)")
@@ -560,6 +565,7 @@ wait_agent() {
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
     [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
     # With goal on, the conductor reads why the builder stopped from its reply and session log.
+    # shellcheck disable=SC2154 # assigned in another file
     [[ "${CFG_goal}" == off ]] || break
     reason="$(nudge_reason "${name}")" || break
     if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
@@ -652,4 +658,74 @@ tell_agent() {
   trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
   findings_goal "$1" "${since}" "${msg}.goal"
   echo "told ${name}"
+}
+
+# free_agent_name <name> — herdr refuses a name already in use (agent_name_taken), so a second run
+# reusing a name still held (a second epic's `lead`) would fail and leave an empty pane. herdr's holder decides first: with none, the name is free,
+# whatever an old session says. A holder this project started is retired only when it has finished
+# (read_state: idle, its session gone, or herdr's idle or done) and refused in any other state,
+# naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
+# refused, never retired: it is that project's agent. Runs before any pane opens.
+free_agent_name() {
+  local state
+  if [[ -z "$(agent_field "$1" pane_id)" ]]; then
+    [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
+    die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane"
+  fi
+  state="$(read_state "$1")"
+  case "${state}" in
+    idle|gone|herdr:idle|herdr:done) ;;   # finished: the only states retired
+    busy|herdr:working) die "$1: an agent with this name is still working; wait for it, or use another name" ;;
+    waiting*|herdr:blocked) die "$1: an agent with this name is waiting on $(waiting_for "${state}"); answer it (herdr agent read $1), or use another name" ;;
+    unknown) die "$1: Claude Code gives no state for the session holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
+    herdr:unknown) die "$1: herdr gives no state for the agent holding this name (unknown); look at it (herdr agent read $1), or use another name" ;;
+    *) die "$1: the agent holding this name is '${state#herdr:}', not finished, so it is not retired; look at it (herdr agent read $1), or use another name" ;;
+  esac
+  retire_agent "$1" >/dev/null
+  [[ -z "$(agent_field "$1" pane_id)" ]] || die "$1: the name is still taken after retiring it; close its pane (herdr agent list), or use another name"
+}
+
+# agent_field <name> <field> [any] — <field> (agent_status, pane_id) of this project's agent called
+# <name> (its pane is one own_panes recorded), or nothing. With "any", of whichever project's agent
+# holds the name: herdr names are unique across all workspaces.
+agent_field() {
+  herdr agent list 2>/dev/null | SWARM_NAME="$1" SWARM_FIELD="$2" SWARM_ANY="${3:-}" SWARM_PANES="$(own_panes)" json "next((a.get(e['SWARM_FIELD']) or ('unknown' if e['SWARM_FIELD']=='agent_status' else '') for a in d['result']['agents'] if a.get('name')==e['SWARM_NAME'] and (e['SWARM_ANY'] or a.get('pane_id') in e['SWARM_PANES'].split())),'')" 2>/dev/null || true
+}
+
+# agent_status <name> — herdr's status for this project's agent called <name>, or nothing if there is none.
+agent_status() { agent_field "$1" agent_status; }
+
+# own_target <name> — the pane of this project's agent called <name>, to address herdr by: a name
+# alone could reach another project's agent, since herdr names span workspaces.
+own_target() {
+  local pane
+  pane="$(agent_field "$1" pane_id)"
+  [[ -n "${pane}" ]] || die "$1: no agent this project started holds this name now: it has exited or its pane was closed, or another project holds the name, which is never addressed"
+  echo "${pane}"
+}
+
+# retire_agent <name> — leave <name>'s pane open, but free its name for the next agent (a story
+# retried, a new conductor for the epic): herdr renames the agent <name>-done, and the pane keeps
+# its slot in the tab's state under that name, so no later agent is split into it.
+retire_agent() {
+  local name state new i pane
+  name="$(agent_name "$1")"
+  # A name reused more than once already has a <name>-done; take the first free suffix (free in any
+  # project: names are unique across workspaces).
+  new="${name:0:27}-done"
+  for i in 2 3 4 5 6 7 8 9; do
+    [[ -z "$(agent_field "${new}" agent_status any)" ]] && break
+    new="${name:0:26}-done${i}"
+  done
+  # By pane, and only this project's: renaming by name would rename another project's agent.
+  pane="$(agent_field "${name}" pane_id)"
+  if [[ -z "${pane}" ]]; then echo "no agent this project started is called $1; nothing to retire"; return 0; fi
+  herdr agent rename "${pane}" "${new}" >/dev/null 2>&1 \
+    || die "$1: herdr could not rename it to ${new}, so its name is not free; close its pane (herdr agent list)"
+  for state in "${STATE_DIR}"/*; do
+    [[ -f "${state}" ]] || continue
+    # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
+    awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
+  done
+  echo "retired $1 as ${new}"
 }

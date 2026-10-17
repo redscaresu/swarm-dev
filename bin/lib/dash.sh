@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2153,SC2154
+# shellcheck shell=bash
 
 # dash [--watch [seconds]] [--ladder] [--tree] — a read-only dashboard: a header and a summary
 # line, what needs you, what runs now, each active epic's progress with its live agents and open PRs, and the recent
@@ -27,6 +27,7 @@ dash() {
   done
   # init's marker; checked after the arguments and before any drawing, so --watch never draws an empty board either.
   if [[ ${#DASH_DIRS[@]} -eq 0 ]]; then
+    # shellcheck disable=SC2153 # assigned in another file
     [[ -f "${BOARD}/stories/README.md" ]] || die "dash: no board at ${BOARD}; run swarm.sh init from the project's root"
   fi
   for ((i = 0; i < ${#DASH_DIRS[@]}; i++)); do
@@ -351,6 +352,7 @@ for a in agents:
   fi
   # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
   # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
+  # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \

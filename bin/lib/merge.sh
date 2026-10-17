@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2034,SC2154
+# shellcheck shell=bash
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
 MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL)
@@ -43,6 +43,7 @@ merge_caller() {
   # would then read a match as none.
   panes="$(own_panes)"
   grep -qxF -- "${HERDR_PANE_ID}" <<< "${panes}" || return 0
+  # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge}" == agent ]] && [[ "$(SWARM_PANE="${HERDR_PANE_ID}" json "any(a.get('pane_id') == e['SWARM_PANE'] and a.get('name', '').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') for a in d['result']['agents'])" <<< "${agents}" 2>/dev/null)" == True ]]; then
     return 0
   fi
@@ -172,6 +173,7 @@ merge_pr() {
   echo "main-ci: ${why}"
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
+    # shellcheck disable=SC2034 # read in another file
     ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
     wait $! || {
       rrc=$?; why="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
