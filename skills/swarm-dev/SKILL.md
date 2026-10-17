@@ -44,7 +44,7 @@ user why. The full table of stops and what to do is in README § When `/swarm-de
 | `swarm.sh status` | agents that need a look, and what waits on the user |
 | `swarm.sh dash --watch` | live dashboard: board, agents, recent events |
 | `swarm.sh conduct <epic>` | start a conductor that builds one epic |
-| `swarm.sh flow` | the project's numbers: cost per role, feature use, review yield, throughput |
+| `swarm.sh flow` | the project's numbers: cost per role, cost and merged-in-main share per epic, feature use, review yield, throughput |
 | `swarm.sh reset <slug> <reason>` | put an escalated story back in the queue, with its kind and no attempts |
 | `swarm.sh version` | the installed version, and whether a newer one is out |
 | `swarm.sh update` | fetch the newest version (restart Claude Code after) |
