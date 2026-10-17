@@ -45,5 +45,9 @@ A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the f
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
 worktree of `../<name>`, and the lead deletes the story file once that PR merges.
 
+`estimate_lines: <n>` is the planner's guess at the PR's size in lines; a story is capped at one new
+command or one changed behaviour and about 300 lines. `easy: true` marks a story under about 100 lines
+that adds no new command and no shared helper in `bin/swarm.sh`.
+
 Running several at once: swarm-dev `docs/reference.md` § Building. In Obsidian, `docs/` is
 the vault and `docs/Board.base` is the board.
