@@ -21,7 +21,7 @@ each step is in [`reference.md`](reference.md).
 step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD, a
 `lead` story, or a `later` epic. On an empty board it explains the flow instead. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
-first (a conductor still working, then an active epic's ready stories, then one-offs), then
+first (a conductor still working, then an already-started one-off with `resume <slug>`, then an active epic's ready stories with `conduct <epic>`, then new one-offs), then
 planning (an active epic with no stories, then an agreed HLD with no epics). An epic is planned
 only once every epic it `depends_on` is done or has only stories in `review` left, so its stories
 are scoped against code that exists. That can happen while a conductor is still working: `next`
@@ -111,5 +111,6 @@ the lead runs `swarm.sh finish <slug>` once the PR merges.
 
 ## Where the rest is
 
-[`reference.md`](reference.md) holds model and effort, writing the HLD, scoping an epic, building,
-merging, costs, the outer loop, releases, and flow and features.
+[`reference.md`](reference.md) holds the lead's board PRs and wake, writing the HLD, model and effort,
+settings, scoping an epic, building, logs and outcomes, flow and features, the outer loop, merging
+and releases.
