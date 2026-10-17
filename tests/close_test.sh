@@ -300,6 +300,8 @@ for c in paused cleared-on-error; do
   touch "${ROOT}/ghfail"; out="$(cs "hg-${c}" "${c}")"; rm "${ROOT}/ghfail"
   is "close hg-${c} ${c} with gh failing (a merging PR cannot be ruled out) leaves the story file and its build alone, and says it is not held" \
     "same|worktree branch origin|1" "$(cmp -s "${ROOT}/h.md" "${P}/docs/stories/hg-${c}.md" && echo same)|$(left "hg-${c}")|$(grep -c "^not held: hg-${c} " <<< "${out}")"
+  is "the close that held c-${c} logs held (flow's lead_queue reads it); the ones that held nothing log none" "1|0|0" \
+    "$(grep -c $'\theld\tc-'"${c}"$'\t.*\tok ('"${c}"')$' "${P}/.swarm/events.tsv")|$(grep -c $'\theld\th-'"${c}"$'\t' "${P}/.swarm/events.tsv")|$(grep -c $'\theld\thg-'"${c}"$'\t' "${P}/.swarm/events.tsv")"
   started "conduct-h${c}" w:p79; out="$(cs "conduct-h${c}" "${c}")"
   is "close conduct-h${c} ${c}, a name with no story file and its pane open: no read error, no held or not held line" "0" \
     "$(grep -c "No such file\|can't read\|held" <<< "${out}")"

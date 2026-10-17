@@ -421,6 +421,8 @@ held_story() {
   [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
   lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for "$2"
+  # Its own line, as close:<cause> logs ok whether or not the close held the story.
+  record_event held "$1" "ok (${2})"
   echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
 }
 
