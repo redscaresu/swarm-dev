@@ -49,3 +49,4 @@ wait --lead	leaner-faster-swarm	outcomes: PR-to-merge time	unavailable: outcomes
 planning during review	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	role:lead
 short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:skeptic
 releases	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic (infrafactory, flow --until 2026-10-16)	unlogged: merge --release logs as merge, so a release is not told apart
+flow lead_queue	safer-faster-swarm	flow lead_queue: median_min and max_min per day	unavailable: before reconcile logged each story (2026-10-15) events.tsv shows no end to a hand merge; 33 items on 2026-10-16, median 0, max 2531 (swarm-dev, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line

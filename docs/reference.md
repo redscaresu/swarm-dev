@@ -594,7 +594,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`cost`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`cost`, `features`, `lead_queue`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, `swarm.sh cost`, `features` and `review-yield`
@@ -603,6 +603,15 @@ still run, and each prints which section now holds its numbers.
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
 day). With `--epic` it still counts every agent in the window, and says so.
+
+The `lead_queue` section shows how long items waited on you. It prints TSV `day items median_min
+max_min open`, one row for each local day on which items entered your queue (the one `wait --lead`
+watches), read from `events.tsv`. A story enters it held on `close:paused` or
+`close:cleared-on-error`, escalated on `escalated` or `close:impossible`, and awaiting your merge on
+`review`. It leaves on its next `reset`, `reset:held`, `drop`, `merge`, `reconcile` or `finish`. An
+item still waiting counts up to now, and `open` lists it as `<kind>: <slug>`. Every `review` counts,
+even with `merge = agent`, because `events.tsv` doesn't record who the merge waited on. The section
+ignores `--epic`.
 
 The `throughput` section prints one TSV
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and

@@ -20,7 +20,7 @@ check() { # <name> <output> <exact expected output>
 }
 check "the dropped-in section prints its line, with the window, under its name, last" "$(tail -2 <<< "${out}")" \
   "$(printf '%s\n' "## zz_test" "zz_test saw since 2026-10-01, until 9999-12-30, epic 'e1', 0 rows")"
-check "each section in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## cost ## features ## reviewers ## throughput ## zz_test "
+check "each section in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## cost ## features ## lead_queue ## reviewers ## throughput ## zz_test "
 check "the copy differs from bin/lib by that file alone" "$(diff -rq -x __pycache__ "${REPO}/bin" "${dir}/plugin/bin" || true)" \
   "Only in ${dir}/plugin/bin/lib: flow_zz_test.py"
 
