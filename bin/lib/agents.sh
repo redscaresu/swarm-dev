@@ -551,31 +551,31 @@ settle() {
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
-# Each of these logs an incident event: a timeout (wait-timeout, unless WAIT_SLICE is set: the caller
-# waits again), an expired login (login), and an idle return while nudge_reason still holds (idle-no-pr).
+# A wait that ran out logs a wait-timeout incident, unless WAIT_SLICE is set (the caller waits again);
+# one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
+# (login_incident).
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake="" reason
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake="" reason t0
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
-    rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
+    t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
     if [[ ${rc} -ne 0 ]]; then
-      [[ -n "${WAIT_SLICE:-}" ]] || record_event incident "${name}" "wait-timeout: ${status}"
+      [[ -n "${WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
     if [[ "${status}" == idle ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
-      record_event incident "${name}" "login: Login expired"
+      login_incident "${name}"
       echo auth; return 0
     fi
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
-    reason=""
-    if [[ "${status}" == idle && "$(session_state "${name}")" == idle ]]; then reason="$(nudge_reason "${name}")" || true; fi
-    [[ -n "${reason}" ]] || break
+    [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
     # With goal on, the conductor reads why the builder stopped from its reply and session log.
     # shellcheck disable=SC2154 # assigned in another file
-    [[ ${nudges} -lt ${IDLE_NUDGES} && "${CFG_goal}" == off ]] || break
+    [[ "${CFG_goal}" == off ]] || break
+    reason="$(nudge_reason "${name}")" || break
     if ! herdr agent prompt "${target}" "From swarm: ${reason}. Carry on from where you stopped and finish the story, or say what blocks you." \
       >/dev/null 2>&1; then
       echo "swarm: ${name}: ${reason}, but the nudge could not be delivered; returning ${status}" >&2; break
@@ -584,8 +584,16 @@ wait_agent() {
     record_event nudge "${name}"
     echo "swarm: ${name}: ${reason}; told it to carry on (${nudges}/${IDLE_NUDGES})" >&2
   done
-  [[ -z "${reason}" ]] || record_event incident "${name}" "idle-no-pr: ${reason}"
   echo "${status}"
+}
+
+# login_incident <name> — log a login incident for <name>, once per expired login: not when its last
+# incident or tell line in events.tsv is one already, so re-waits add none and a resume (a tell)
+# starts a new one.
+login_incident() {
+  awk -F'\t' -v n="$1" '$3 == n && ($2 == "incident" || $2 ~ /^tell(:|$)/) { last = $2 "\t" $5 }
+    END { exit last ~ /^incident\tlogin:/ ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
+    || record_event incident "$1" "login: Login expired"
 }
 
 # wait_conductor <agent> <timeout-ms> [report] — a conductor is idle whenever it waits on its own

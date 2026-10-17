@@ -178,7 +178,7 @@ check "an unwritable .swarm: the command did its work" test ! -f "${P}/docs/stor
 check "an unwritable .swarm: nothing logged" test "$(lines)" -eq "${was}"
 
 # wait is read-only, but a nudge is logged: s1's builder sits idle and story/s1 has no PR, so wait
-# nudges it IDLE_NUDGES times and appends one `nudge s1` line each, then one idle-no-pr incident.
+# nudges it IDLE_NUDGES times and appends one `nudge s1` line each, and nothing else.
 item stories/s1.md 'status: ready' 'kind: code'
 echo "w:1 s1" > "${P}/.swarm/state/t1"
 printf '2026-10-13\tcode\ts1\tclaude\topus\thigh\tsess-s1\n' >> "${P}/.swarm/agents.tsv"
@@ -189,9 +189,8 @@ was="$(lines)"
 (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=200 CLAUDE_STUB_AGENTS="${ROOT}/claude.json" \
   PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait s1 >/dev/null 2>&1) || true
 new="$(tail -n +"$((was + 1))" "${LOG}")"
-check "a nudging wait appends a line per nudge, and an incident" test "$(grep -c . <<< "${new}")" -eq 4
-check "a nudging wait appends only nudge lines, then the incident" test "$(head -3 <<< "${new}" | grep -cv $'^[^\t]*\tnudge\ts1\tw:me\tok$')$(tail -1 <<< "${new}" | cut -f2,3,5)" \
-  = "0"$'incident\ts1\tidle-no-pr: you are idle and story/s1 has no PR'
+check "a nudging wait appends a line per nudge" test "$(grep -c . <<< "${new}")" -eq 3
+check "a nudging wait appends only nudge lines" test "$(grep -cv $'^[^\t]*\tnudge\ts1\tw:me\tok$' <<< "${new}")" -eq 0
 
 # --- Each escalation step writes its own line with its UTC time, for the training data: escalate
 # when build_story starts an escalate build, escalated when that build's close makes the story the
