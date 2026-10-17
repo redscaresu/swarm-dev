@@ -40,6 +40,12 @@ has declined-reasons '`out-of-scope`, `nit` or `wrong`' "$flat"
 has folded 'folded into'
 has log-skeptic 'log-finding --reviewer skeptic[|]codex[|]critic <kind> <board PR URL>' "$flat"
 has log-declined 'log-finding --declined <reason>'
+has cap-step-2 'capped at one new command or one changed behaviour and about 300 lines' "$flat"
+has cap-step-3 'over the cap of one new command or one changed behaviour and about 300 lines' "$(printf '%s' "$step3" | tr '\n' ' ' | tr -s ' ')"
+has output-shape 'depends_on, estimate_lines, easy\}\]' "$flat"
+has front-matter 'front matter .*`estimate_lines`, `easy`' "$flat"
+has report-estimate 'with `kind`, `estimate_lines`, `touches`' "$flat"
+has readme-keys 'estimate_lines.*easy: true' "$(tr '\n' ' ' < "$ROOT/templates/docs/stories/README.md")"
 hasnt no-blocked-by 'blocked_by'
 hasnt no-verify 'verify'
 hasnt no-version-bump 'needs no version bump'
