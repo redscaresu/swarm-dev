@@ -1,7 +1,12 @@
+# Features, a flow section (flow_report.py gives its globals): each feature's uses from --since (by
+# default the 30 days up to --until, or up to today) to --until, its metric and baseline, and delete?
+# when unused or unmeasured (that verdict reads the last 30 days, whatever the window).
 import datetime, os, re, subprocess, sys
 from report import *
-features, agents, events, findings, since = sys.argv[1:6]
 recent = (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+if since == "0000-00-00":
+    end = datetime.date.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
+    since = (end - datetime.timedelta(days=30)).isoformat()
 
 def rows(path):
     return [l.rstrip("\n").split("\t") for l in open(path, errors="ignore")] if os.path.exists(path) else []
@@ -17,11 +22,11 @@ uses = [("event", f[1], local_day(f[0])) for f in rows(events) if len(f) == 5 an
 uses += [(k, f[i], f[0]) for f in rows(agents) if len(f) == 7 for k, i in (("role", 1), ("agent", 2))]
 uses += [("reviewer", f[5], f[0]) for f in finding_rows(findings)]
 
-def count(sources, after):
+def count(sources, after, upto="9999-12-30"):
     n = 0
     for s in sources.split():
         kind, _, want = s.partition(":")
-        n += sum(1 for k, name, day in uses if k == kind and day >= after
+        n += sum(1 for k, name, day in uses if k == kind and after <= day <= upto
                  and (name == want or kind == "event" and name.startswith(want + ":")))
     return n
 
@@ -59,16 +64,16 @@ def settled(feature, landed):
         return day < recent if day else True
     if day:
         return day < recent
-    print(f"swarm.sh features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
+    print(f"swarm.sh flow: features: {feature}: landed {landed!r} is not a date, a #PR git log knows, or an epic; judged by its uses",
           file=sys.stderr)
     return True
 
-print("feature\tuses\tmetric\tbaseline\tverdict")
+print("feature\tuses\tmetric\tbaseline\tverdict" if os.path.exists(features) else f"no feature list at {features}")
 for f in rows(features)[1:]:
     feature, landed, metric, baseline, sources = (f + [""] * 5)[:5]
     if not feature:
         continue
     unlogged = sources.startswith("unlogged:")
     stale = settled(feature, landed) and not unlogged and count(sources, recent) == 0
-    print("\t".join([feature, "-" if unlogged else str(count(sources, since or recent)), metric, baseline,
+    print("\t".join([feature, "-" if unlogged else str(count(sources, since, until)), metric, baseline,
                      "delete?" if not metric.strip() or stale else ""]))

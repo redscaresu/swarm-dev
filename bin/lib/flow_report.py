@@ -1,111 +1,34 @@
-import collections, datetime, json, os, sys
-from report import *
-log, events, since, until, roles, projects, archive = sys.argv[1:8]
-
-def secs(t):
-    # A time in epoch seconds (local when it names no zone); None when it does not parse.
+# flow's sections: every flow_<name>.py beside this file, in name order (or only the names given after
+# the context), each under a `## <name>` line and after a blank line. A section is a script run with
+# the context as its globals: since and until (0000-00-00 and 9999-12-30 when not given), epic ("" when
+# not given), the log paths agents, events and findings, features (docs/features.tsv), roles (the
+# builder roles), projects (Claude's projects dir), archive (close's session copies), lead (the
+# calling pane's session, or "") and own (the lead's own Claude Code directory); rows, outcomes' rows
+# as dicts by column name, unfiltered; deps, each windowed slug's depends_on. A section that needs gh
+# calls it itself. So a new section is a new file, and this one never changes. A section that raises
+# prints `error: <name>: <message>` under its heading, the others still run, and flow exits 1; so does
+# one that calls sys.exit with a failing code (sys.exit() or sys.exit(0) only ends that section).
+import glob, os, runpy, sys, traceback
+KEYS = "since until epic agents events findings features roles projects archive lead own".split()
+ctx = dict(zip(KEYS, sys.argv[1:len(KEYS) + 1]))
+table = [l.split("\t") for l in os.environ.get("SWARM_ROWS", "").splitlines()]
+ctx["rows"] = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
+ctx["deps"] = {s: d.split() for s, _, d in (l.partition("\t") for l in os.environ.get("SWARM_DEPS", "").splitlines())}
+here = os.path.dirname(os.path.abspath(__file__))
+names = sys.argv[len(KEYS) + 1:] or [os.path.basename(p)[len("flow_"):-len(".py")]
+                                     for p in sorted(glob.glob(os.path.join(glob.escape(here), "flow_*.py")))]
+failed = False
+for i, name in enumerate(n for n in names if n != "report"):
+    print(("\n" if i else "") + f"## {name}", flush=True)
     try:
-        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-def last_entry(path):
-    t = None
-    for line in log_lines(path) if path else ():
-        try:
-            ts = json.loads(line).get("timestamp")
-        except (ValueError, AttributeError):
-            continue
-        t = (secs(ts) if isinstance(ts, str) else None) or t
-    return t
-
-oks = []
-for line in open(events, errors="ignore") if os.path.exists(events) else ():
-    f = line.rstrip("\n").split("\t")
-    t = secs(f[0]) if len(f) == 5 and f[4].startswith("ok") else None
-    if t is not None:
-        oks.append((t, f[1], f[2], datetime.date.fromtimestamp(t).isoformat()))
-# A close after --until still ends its build (at the cutoff); every other event counts in the window
-# only, by its local day, as builds are.
-closes = [(t, x) for t, c, x, _ in oks if c.split(":")[0] == "close"]
-evs = [(t, c, x) for t, c, x, day in oks if since <= day <= until]
-table = [l.split("\t") for l in os.environ["SWARM_ROWS"].splitlines()]
-rows = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
-agents = [l.rstrip("\n").split("\t") for l in open(log, errors="ignore")] if os.path.exists(log) else []
-agents = [f for f in agents if len(f) == 7 and f[1] in roles.split()]
-# Local midnight after --until, as agents.tsv dates and a log-less build's start are local.
-stop = (datetime.datetime.fromisoformat(until) + datetime.timedelta(days=1)).timestamp()
-# A build whose start does not parse (a damaged agents.tsv date and no session log) is left out.
-built = [(r, a, t) for r, a in zip(rows, agents) for t in [secs(r["started"] or r["date"] + "T00:00:00")] if t is not None]
-project, groups = [], collections.defaultdict(list)   # apart, so an epic named all is still an epic
-ended, taken = {}, set()   # slug -> when its last build so far (agents.tsv order) ended; closes taken
-for i, (r, a, start) in enumerate(built):
-    # A log-less build starts at 00:00, so a retry could seem to start before the build it retries:
-    # it starts no earlier than that one ended.
-    if not r["started"] and ended.get(r["slug"]):
-        start = max(start, ended[r["slug"]])
-    # Its first close after its start that no earlier build of the slug took, and before the slug's
-    # next build with a known start: a build never closed must not take its retry's. A log-less
-    # retry bounds nothing, as its start is only known once this build's end is.
-    upto = next((t for o, _, t in built[i + 1:] if o["slug"] == r["slug"] and o["started"]), float("inf"))
-    names = (r["slug"], a[2])
-    got = min(((t, k) for k, (t, x) in enumerate(closes) if x in names and start <= t < upto and k not in taken),
-              default=None)
-    if got:
-        taken.add(got[1])
-    end = got[0] if got else last_entry(session_log(projects, a[6], archive))
-    ended[r["slug"]] = end or ended.get(r["slug"])
-    if not since <= r["date"] <= until:
-        continue
-    b = {"slug": r["slug"], "pr": r["pr"], "start": start, "end": min(end, stop) if end else None}
-    project.append(b)
-    if r["epic"]:
-        groups[r["epic"]].append(b)
-
-def running(bs):
-    spans = [(b["start"], b["end"]) for b in bs if b["end"] and b["end"] > b["start"]]
-    if not spans:
-        return "", ""
-    now = top = 0
-    for _, d in sorted([(s, 1) for s, _ in spans] + [(e, -1) for _, e in spans]):   # an end before a start at one time
-        now += d
-        top = max(top, now)
-    span = max(e for _, e in spans) - min(s for s, _ in spans)
-    return f"{sum(e - s for s, e in spans) / span:.2f}", str(top)
-
-deps = {s: d.split() for s, _, d in (l.partition("\t") for l in os.environ["SWARM_DEPS"].splitlines())}
-def chain(slugs):
-    memo = {}
-    def depth(s, seen):
-        if s not in memo:
-            memo[s] = 1 + max((depth(d, seen | {s}) for d in deps.get(s, []) if d in slugs and d not in seen), default=0)
-        return memo[s]
-    return max((depth(s, frozenset()) for s in slugs), default=0)
-
-created = dict(l.split("\t", 1) for l in os.environ["SWARM_CREATED"].splitlines() if "\t" in l)
-def waits(bs):
-    wait, proxy = [], []
-    prs = list({pr_key(b["pr"]): b for b in bs if b["pr"]}.values())
-    for b in prs:
-        t0 = secs(created.get(b["pr"], ""))
-        # A retry's PR takes the slug's events from its own createdAt on, so an older PR keeps only its own.
-        t1 = min((t for t in (secs(created.get(o["pr"], "")) for o in prs if o["slug"] == b["slug"])
-                  if t is not None and t0 is not None and t > t0), default=float("inf"))
-        first = lambda cmds: min((t for t, c, x in evs if c in cmds and x == b["slug"] and t0 <= t < t1), default=None)
-        t = first(("review-agent",)) if t0 is not None else None
-        p = first(("tell:findings", "tell", "review")) if t0 is not None and t is None else None
-        if t is not None:
-            wait.append(t - t0)
-        elif p is not None:
-            proxy.append(p - t0)
-    mean = lambda xs: str(round(sum(xs) / len(xs) / 60)) if xs else ""
-    return mean(wait), mean(proxy)
-
-print("epic\tbuilds\tbuilders_mean\tbuilders_max\tstories\tlongest_chain\tstories_per_chain"
-      "\treview_wait_min\tproxy_review_wait_min\tstacked")
-for g, bs in sorted(groups.items()) + [(None, project)]:
-    slugs = {b["slug"] for b in bs}
-    n = chain(slugs)
-    stacked = sum(1 for _, c, x in evs if c == "stacked" and (g is None or x in slugs))
-    print("\t".join([g or "all", str(len(bs)), *running(bs), str(len(slugs)), str(n), f"{len(slugs) / n:.1f}" if n else "",
-                     *waits(bs), str(stacked)]))
+        runpy.run_path(os.path.join(here, f"flow_{name}.py"), init_globals=dict(ctx), run_name="__main__")
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            print(f"error: {name}: exit {e.code}")
+            failed = True
+    except Exception as e:
+        print(f"error: {name}: {e}")
+        traceback.print_exc()
+        failed = True
+    sys.stdout.flush()
+sys.exit(1 if failed else 0)

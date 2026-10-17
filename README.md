@@ -24,7 +24,9 @@ the run stops whenever a decision is yours.
 3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
    and the builder fixes what it finds.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
-   `merge = agent`. Anything marked `costs: money` always waits for you.
+   `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
+   plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
+   session, so merges go through `swarm.sh merge`.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
@@ -84,8 +86,8 @@ The other commands are tools the lead runs; they are listed in
 
 Every agent is a full Claude Code session on your own logins. On infrafactory, from 2026-10-09 to
 2026-10-16, a story's build averaged $5.75, and the whole swarm cost $1211.60 for 137 merged PRs
-(about $9 each, planning and review included), at list prices from `swarm.sh cost` and `outcomes`.
-`swarm.sh cost` shows where your own tokens went.
+(about $9 each, planning and review included), at list prices from `swarm.sh flow` and `outcomes`.
+The `cost` section of `swarm.sh flow` shows where your own tokens went.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the

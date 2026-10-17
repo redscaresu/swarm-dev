@@ -324,17 +324,20 @@ close_agent() {
   if [[ "${cause}" == impossible ]]; then
     # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
-    clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs:-[]}"
+    # Handed on first, for the same reason as a hold below.
     impossible_story "$1" "${prs}" "${counted}"
+    clear_build "$1" "the build of $1 stopped (impossible), which is not an attempt" "${prs:-[]}"
     return 0
   fi
   case "${cause}" in paused|cleared-on-error)
     # Held, its build cleared so it builds again once the hold is lifted, when the close ends a build
     # (counted). A story whose PR merged or is merging, or whose PRs gh could not list, is left as it was, and for a story
     # an agent builds the close says so (not held:).
+    # The hold first: a block that cannot be written dies with the build still there, so the story is
+    # not left ready with its build cleared for the next conductor to start again.
     if [[ ${counted} == 1 ]]; then
-      clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
       held_story "$1" "${cause}" "${prs:-[]}"
+      clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
     elif ! impossible_refused "$1" >/dev/null; then
       echo "not held: $1 (${cause}) ended no build here (no builder open, a PR merged or merging, or gh could not list its PRs), so its story is as it was: list it for the lead and do not start it again"
     fi
@@ -364,10 +367,9 @@ impossible_refused() {
   return 1
 }
 
-# ESCALATED_OPEN, ESCALATED_CLOSE: the markers around the lead's block, which escalate_story appends
-# to a story and reset_story removes.
-ESCALATED_OPEN="<!-- swarm.sh escalated: swarm.sh reset removes this block -->"
-ESCALATED_CLOSE="<!-- /swarm.sh escalated -->"
+# escalated_file <slug> — where lead_block writes the lead's block: .swarm/escalated/<slug>, never the
+# tracked story file, and not STATE_DIR, whose top-level names are tab labels. reset_story deletes it.
+escalated_file() { echo "${PROJECT_DIR}/.swarm/escalated/$1"; }
 # NO_KIND_LINE: escalated_from:'s value for a story that had no kind: line (built as code), so reset
 # takes the line out again and the file is its committed text.
 NO_KIND_LINE="code (default)"
@@ -423,23 +425,26 @@ held_story() {
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
-# kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
+# kind (NO_KIND_LINE when it has no kind: line), still ready, and a block in its escalated_file with <text>
 # and every PR in <prs> (failed_build's gh list), or [none] when <prs> has none (by default, that no
 # PR was found). Prints how many PRs it named.
 lead_block() {
-  local f="${BOARD}/stories/$1.md" from urls k=0
+  local f="${BOARD}/stories/$1.md" e d tmp from urls k=0
+  e="$(escalated_file "$1")"; d="$(dirname "${e}")"
   from="$(get_fm "${f}" kind)"
   urls="$(json "'\n'.join('- ' + p['url'] for p in d)" <<< "${3:-[]}")"
   [[ -z "${urls}" ]] || k="$(grep -c . <<< "${urls}")"
+  # The block first: a story escalated with no block would leave the lead nothing to decide from.
+  # Written whole to a temp file beside it, then moved into place, so a failure leaves no partial block.
+  mkdir -p "${d}" 2>/dev/null || die "$1: could not create ${d} for its block, so the story is left as it was"
+  tmp="$(mktemp "${d}/.$1.XXXXXX" 2>/dev/null)" || die "$1: could not write its block in ${d}, so the story is left as it was"
+  if ! { printf '%s\n\n' "$2" \
+           && if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "${4:-No PR was found on story/$1.}"; fi
+       } 2>/dev/null > "${tmp}" || ! mv -f "${tmp}" "${e}"; then
+    rm -f "${tmp}"; die "$1: could not write its block to ${e}, so the story is left as it was"
+  fi
   set_fm "${f}" kind lead
   set_fm "${f}" escalated_from "${from:-${NO_KIND_LINE}}"
-  [[ -z "$(tail -c1 "${f}")" ]] || echo >> "${f}"
-  { echo "${ESCALATED_OPEN}"
-    echo
-    printf '%s\n' "$2"
-    echo
-    if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "${4:-No PR was found on story/$1.}"; fi
-    echo "${ESCALATED_CLOSE}"; } >> "${f}"
   echo "${k}"
 }
 
