@@ -103,10 +103,18 @@ out="$(TZ=UTC cost --since 2026-09-21)"
 check "in UTC the same session started the day before" "| **total** | 3 | | 0k | 0k | 0k | 1.0M | 20.00 |"
 # Run in a herdr pane whose session agents.tsv names (a conductor's, here s-code): counted once, under its role.
 mkdir -p "${dir}/bin"
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"pane_id\":\"w:1\",\"agent_session\":{\"value\":\"s-code\"}}]}}'" > "${dir}/bin/herdr"
+printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"pane_id\":\"w:1\",\"agent_session\":{\"value\":\"s-code\"}},{\"pane_id\":\"w:2\",\"agent_session\":{\"value\":\"s-lead\"}}]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
-out="$(cd "${R}" && TZ=UTC PATH="${dir}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w:1 CLAUDE_PROJECTS_DIR="${C}" bash "${SWARM}" flow --since 2026-09-15 | section)"
+pane() { (cd "${R}" && TZ=UTC PATH="${dir}/bin:${PATH}" HERDR_ENV=1 HERDR_PANE_ID="$1" CLAUDE_PROJECTS_DIR="${C}" bash "${SWARM}" flow "${@:2}" | section); } # <pane> [flow args]
+out="$(pane w:1 --since 2026-09-15)"
 check "a pane's session agents.tsv names is not a lead too" "| **total** | 5 | | 0k | 0k | 0k | 3.0M | 60.00 |"
+# The calling pane's own session (s-lead, first stamped 2026-09-20) is windowed like the others.
+same "the calling pane's lead session before --until is left out" "$(pane w:2 --until 2026-09-01 | grep -c '^| lead |' || true)" 0
+same "the calling pane's lead session in the window counts once" "$(pane w:2 --since 2026-09-15 | grep '^| lead |')" "| lead | 2 | claude-opus-5-5 | 0k | 0k | 0k | 2.0M | 40.00 |"
+# A lead session with no timestamp counts only when --since is not given: --until alone keeps it.
+usage m8 claude-opus-5-5 0 0 0 1000000 > "${E}/s-nostamp.jsonl"
+same "with --until alone, a lead session with no timestamp counts" "$(cost --until 2026-12-31 | grep '^| lead |')" "| lead | 3 | claude-opus-5-5 | 0k | 0k | 0k | 3.0M | 60.00 |"
+same "with --since, a lead session with no timestamp is left out" "$(cost --since 2026-09-15 | grep '^| lead |')" "| lead | 2 | claude-opus-5-5 | 0k | 0k | 0k | 2.0M | 40.00 |"
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"
