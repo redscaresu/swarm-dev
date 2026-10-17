@@ -1,18 +1,30 @@
 ---
 kind: lead
-status: blocked
-blocked_by: [goal-for-builders-release]
+status: ready
 epic: goal-for-builders
 depends_on: [goal-for-builders-release]
 touches: []
 ---
 
-# Turn goal on for one infrafactory epic, set its nudges and causes beside the goal-off baseline, and you decide whether it stays on
+# Measure goal on infrafactory against the goal-off baseline, and the lead decides whether it stays on
 
-After the release merges. **You:** run `claude plugin update swarm-dev@swarm-dev`, restart Claude Code and say go. The lead adds `goal = <the bound the spike named>` to infrafactory's .claude/swarm/config (no agent edits it) and checks `swarm.sh config goal` there. **You:** run /swarm on infrafactory for one epic. The lead then posts on this story, for that epic's window of infrafactory's .swarm/events.tsv and agents.tsv: the `nudge` and `tell:nudge` counts, the tell:findings and tell:resume counts, each builder close with its cause, any builder that stopped short with no cause, and `swarm.sh cost` for the window with the judge's tokens or a note that they are missing (per the spike). It sets these beside the goal-off baseline that infrafactory-epic-on-agent-state posted (its last version in git). **You:** decide whether goal stays on; the lead keeps or removes the line to match.
+infrafactory has run `goal = 5` since 2026-10-16. The user handed the keep-or-remove call to the lead on 2026-10-17. For one infrafactory epic's window of .swarm/events.tsv and agents.tsv, the lead posts on this story:
+- the `nudge` and `tell:nudge` counts;
+- the tell:findings and tell:resume counts;
+- each builder close with its cause, and any builder that stopped short with no cause;
+- `swarm.sh cost` for the window, with the judge's tokens or a note that they are missing.
+
+It sets these beside the goal-off baseline that infrafactory-epic-on-agent-state posted (its last version in git).
+
+**Decision rule.** Goal stays on when all of these hold:
+- the window has fewer nudges than the baseline;
+- no builder stopped short with no cause;
+- the judge's cost is under 5% of the window's build cost.
+
+Otherwise the lead removes the `goal` line. Either way it tells the user the result and why.
 
 **Done when:**
 - The window's counts are posted on this story beside the baseline's.
-- The window has zero `nudge` and zero `tell:nudge` lines, and every close of a ready story's builder is close:<cause>; otherwise each exception is listed by slug and a story is filed for it.
+- Every close of a ready story's builder is close:<cause>. Any exception is listed by slug, and a story is filed for it.
 - `swarm.sh cost` for the window is posted, with the judge's tokens or the line that they are missing.
-- The user's decision is recorded on the story, and infrafactory's `swarm.sh config goal` matches it.
+- The lead's decision is recorded on the story with the rule's numbers, and infrafactory's `swarm.sh config goal` matches it.
