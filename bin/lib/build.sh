@@ -385,9 +385,9 @@ agent_kind() {
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
 # attempts: reaches escalate_after (> 0), else its kind, code-risky for code with risk: high, and with
-# sonnet_share = N, code-sonnet for the other code stories whose slug's cksum mod N is 0, so a slug
-# always lands in the same arm. Only a first attempt is sampled: a slug with an agents.tsv line
-# already goes back to code. A missing story or a bad attempts: prints the reason and returns 1.
+# sonnet_share = N, code-sonnet for the other code stories marked easy: true whose slug's cksum mod N
+# is 0, so a slug always lands in the same arm. Only a first attempt is sampled: a slug with an
+# agents.tsv line already goes back to code. A missing story or a bad attempts: prints the reason and returns 1.
 story_role() {
   local slug="$1" story="${BOARD}/stories/$1.md" kind risk attempts sum
   [[ -f "${story}" ]] || { echo "no story ${story}"; return 1; }
@@ -402,7 +402,7 @@ story_role() {
   if [[ "${risk}" == high ]]; then echo code-risky; return; fi
   sum="$(printf '%s' "${slug}" | cksum)"; sum="${sum%% *}"
   # shellcheck disable=SC2154 # assigned in another file
-  if [[ ${CFG_sonnet_share} -gt 0 && $((sum % CFG_sonnet_share)) -eq 0 ]] \
+  if [[ ${CFG_sonnet_share} -gt 0 && $((sum % CFG_sonnet_share)) -eq 0 && "$(get_fm "${story}" easy)" == true ]] \
      && ! awk -F'\t' -v n="$(agent_name "${slug}")" '$3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" 2>/dev/null; then
     echo code-sonnet
   else
