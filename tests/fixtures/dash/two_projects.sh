@@ -12,6 +12,8 @@ FX_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 # C collation, so the board globs sort the same on every machine.
 unset LC_ALL
 export SWARM_DASH_NOW=1791633600 TZ=UTC LC_COLLATE=C
+# No global or system git config (hooksPath, templateDir, commit.template): the same git here and in CI.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 FIXTURE_A="${FX_ROOT}/alpha"; FIXTURE_B="${FX_ROOT}/bravo"
 FIXTURE_SWARM="${FX_ROOT}/home/bin/swarm.sh"
 
@@ -64,7 +66,7 @@ ln -s "${FX_REPO}/bin" "${FX_ROOT}/home/bin"
 echo '{"name": "swarm-dev", "version": "0.0.0"}' > "${FX_ROOT}/home/.claude-plugin/plugin.json"
 
 # alpha: merge = agent; a conductor and a builder working; a green PR and a lead story with no
-# **You:** step in the lead's queue; one **You:** step; 3 finished in 7 days, one merge today.
+# **You:** step in the lead's queue; one **You:** step; 4 finished in 7 days, one merge today.
 A="${FIXTURE_A}"
 project "${A}" "merge = agent" "lead = session"
 item "${A}" epics/alpha-core.md "Alpha core" "status: active"
