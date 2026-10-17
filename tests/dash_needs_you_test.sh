@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# dash_needs_you_test.sh — session states, and lead = session: needs you keeps the user's steps and
+# the lead's queue the rest.
+# `swarm.sh dash` against a throwaway board, a fake agents.tsv, findings.tsv and events.tsv, a stub
+# herdr on PATH printing a fixed agent list, and a stub gh. stty and tput are stubbed to fail, so the
+# width comes from COLUMNS (or the default 100), except in the pty tests.
+set -euo pipefail
+
+SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+ROOT="$(cd "${tmp}" && pwd -P)"
+trap 'rm -rf "${ROOT}"' EXIT
+fails=0
+P="${ROOT}/proj"
+# The claude stub goes first on PATH, so no run here reaches the real claude.
+STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
+export PATH="${STUB_BIN}:${PATH}" CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
+
+check() { # <name> <test...>
+  local name="$1"; shift
+  if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
+}
+has() { grep -qF -- "$1" <<< "$2"; }
+lacks() { ! grep -qF -- "$1" <<< "$2"; }
+
+item() { # <path under docs> <front-matter line>...
+  local path="${P}/docs/$1" title; shift
+  title="$(basename "${path}" .md)"
+  mkdir -p "$(dirname "${path}")"
+  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
+}
+
+mkdir -p "${P}/.swarm/state" "${ROOT}/bin" "${ROOT}/nobin" "${ROOT}/size" "${ROOT}/projects/p"
+unset COLUMNS LINES
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/stty"
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/tput"
+chmod +x "${ROOT}/size/stty" "${ROOT}/size/tput"
+REALPATH="${PATH}"
+export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
+mkdir -p "${TMPDIR}"
+# fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
+fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }
+
+ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
+
+# herdr: this project's conductor (working) and builder (blocked), an empty pane (w1:p3), and
+# another project's agent (w9:p1), which must not be shown. s-three's herdr status is done while its
+# session is busy: the session's word is the one dash shows.
+cat > "${ROOT}/bin/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"},{"name":"plan-e9","agent_status":"working","pane_id":"w2:p9"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"},{"pane_id":"w2:p9"}]}}' ;;
+  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
+    [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
+    [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
+    if [ -n "${WAIT_SWAP:-}" ] && [ -e "${WAIT_SWAP}.new" ]; then mv "${WAIT_SWAP}.new" "${WAIT_SWAP}"; fi   # the session changes while herdr waits
+    echo "herdr: a notice on stderr" >&2
+    case "${WAIT_MODE:-done}" in
+      timeout) echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
+      error) echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
+      *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
+    esac ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
+  *) exit 1 ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/herdr"
+# gh: PR 7's checks are green and its branch is behind the base.
+# PR 8 was updated at the time in pr8.updated.
+cat > "${ROOT}/bin/gh" <<STUB
+#!/bin/sh
+U8="${ROOT}/pr8.updated"
+STUB
+cat >> "${ROOT}/bin/gh" <<'STUB'
+echo "$*" >> "${U8%/*}/gh.log"
+case "$1 $2 $3" in
+  "pr view https://github.com/o/r/pull/7") echo '{"mergeStateStatus":"BEHIND","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/r/pull/8") if [ "$6" = -q ]; then cat "$U8"; else echo "{\"updatedAt\":\"$(cat "$U8")\"}"; fi ;;
+  *) exit 1 ;;
+esac
+STUB
+printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/gh"
+chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nobin/gh"
+
+# --- Session states, in a project of its own (S) whose panes are w2's: a session with no entry
+# (s-lost) and one in a state not known (s-odd) need a look; a reused name (s-re: the older agent
+# retired to s-re-done, the newer running) shows its newer session; a codex agent (cx) and one with
+# no session recorded (s-dash) show herdr's word. herdr says s-re is RE_HERDR, the opposite of its
+# newer session each time. s-auth is idle, and its transcript ends on an expired login: auth, not idle.
+S="${ROOT}/s"; mkdir -p "${S}/.swarm/state" "${S}/docs/stories"; git -C "${S}" init -q; touch "${S}/docs/stories/README.md"
+printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\nw2:p7 s-auth\n' > "${S}/.swarm/state/t"
+cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/auth.jsonl"
+printf '2026-10-13\tcode\t%s\t%s\t%s\thigh\t%s\n' s-re claude opus re-old s-re claude opus re-new s-lost claude sonnet lost \
+  s-odd claude haiku odd cx codex gpt - s-dash claude fable - s-auth claude opus auth > "${S}/.swarm/agents.tsv"
+sdash() { # <re-old status> <re-new status> <herdr's s-re status> — dash --tree in S
+  printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"},{"sessionId":"auth","status":"idle"}]' "$1" "$2" > "${ROOT}/s.json"
+  fresh; (cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR="$3" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)
+}
+out="$(sdash busy idle working)"
+check "a recorded session with no entry is ! gone" grep -qE '! s-lost .* gone: session ended' <<< "${out}"
+check "a session in a state dash does not know is ! unknown" grep -qE '! s-odd .* unknown: no session state' <<< "${out}"
+needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
+check "needs you lists an agent whose session is gone" has "! look at s-lost: session ended" "${needs}"
+check "needs you lists an agent whose session state is unknown" has "! look at s-odd: no session state" "${needs}"
+check "an idle agent whose login expired is ! auth, not idle" grep -qE '! s-auth .* auth: login expired' <<< "${out}"
+check "needs you lists an agent whose login expired, with /login" has "! auth: run /login (s-auth's login expired), then /swarm-dev:swarm tells it to resume" "${needs}"
+check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
+check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
+check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"
+check "a codex agent waiting is in needs you" has "! answer cx: herdr agent read cx" "${out}"
+check "an agent with no session recorded shows herdr's word" grep -qE '● s-dash .* working' <<< "${out}"
+# Each model's label carries its own colour, on a terminal (a pty, 160 columns); NO_COLOR prints none.
+cat > "${ROOT}/ptyonce.py" <<'PY'
+import fcntl, os, pty, struct, sys, termios
+pid, fd = pty.fork()
+if pid == 0:
+    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 40, int(sys.argv[1]), 0, 0))
+    os.execvp("bash", ["bash"] + sys.argv[2:])
+out = b""
+while True:
+    try:
+        b = os.read(fd, 65536)
+    except OSError:
+        break
+    if not b:
+        break
+    out += b
+os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+PY
+ptyonce() { (fresh; cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" PATH="${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptyonce.py" 160 "${SWARM}" dash --tree --ladder); }
+w="$(ptyonce)"
+for m in "opus:208" "sonnet:75" "haiku:114" "fable:213" "codex:250"; do
+  check "on a terminal the ${m%:*} label is colour ${m#*:}" has $'\033[38;5;16;48;5;'"${m#*:}m ${m%:*}·high "$'\033[0m' "${w}"
+done
+check "on a terminal the ladder names a model in its colour" has $'\033[38;5;208mopus · xhigh\033[0m' "${w}"
+check "NO_COLOR on a terminal prints no escape codes" lacks $'\033[' "$(NO_COLOR=1 ptyonce)"
+out="$(sdash idle busy idle)"
+check "a reused name shows the newer session (older idle, newer busy)" grep -qE '● s-re +code .* working' <<< "${out}"
+check "a retired pane stays retired when its name's newest session is busy" grep -qE '✓ s-re-done .* retired' <<< "${out}"
+out="$(fresh; cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/no-such-file" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)"
+check "with a claude that cannot list, a recorded session is ! unknown" grep -qE '! s-lost .* unknown: no session state' <<< "${out}"
+check "with a claude that cannot list, an agent with no session keeps herdr's word" grep -qE '● s-dash .* working' <<< "${out}"
+
+# --- lead = session, in a project of its own (L) whose panes are w4's: needs you keeps the user's
+# steps (a story's **You:** line, an expired login, a draft HLD) and the rest goes to the lead's queue.
+L="${ROOT}/lead"; mkdir -p "${L}/.swarm/state" "${L}/.claude/swarm" "${ROOT}/lbin"; git -C "${L}" init -q
+litem() { # <path under docs> <body> <front-matter line>...
+  local path="${L}/docs/$1" body="$2" title; shift 2
+  title="$(basename "${path}" .md)"
+  mkdir -p "$(dirname "${path}")"
+  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; echo; printf '%s\n' "${body}"; } > "${path}"
+}
+mkdir -p "${L}/docs/stories"; touch "${L}/docs/stories/README.md"
+litem stories/you-ask.md 'After the release merges. **You:** create the read-only user' 'status: ready' 'kind: lead'
+# A second story with a **You:** step: needs you shows only the first one's, with +1 more.
+litem stories/you-two.md '**You:** rotate the key' 'status: ready' 'kind: lead'
+litem stories/no-you.md 'The lead runs the migration.' 'status: ready' 'kind: lead'
+# Prose that names the convention is no step: this story is the lead's.
+litem stories/talks.md 'The lead does it all, so there is no **You:** step.' 'status: ready' 'kind: lead'
+# A kind waiting_on_user lists that dash's rows do not parse: a verbatim line.
+litem stories/v-odd.md '' 'status: ready' 'kind: by hand'
+litem stories/esc.md "$(printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' 'Failed on Fable: re-scope or drop.' '<!-- /swarm.sh escalated -->')" \
+  'status: ready' 'kind: lead' 'escalated_from: code'
+# An impossible story (#144's block) is the lead's too, even with a **You:** line in its body.
+litem stories/esc-imp.md "$(printf '%s\n' '**You:** a step from before it escalated' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**Impossible.** the judge called it impossible' '<!-- /swarm.sh escalated -->')" \
+  'status: ready' 'kind: lead' 'escalated_from: code'
+litem stories/m-green.md '' 'status: review' 'prs: https://github.com/o/l/pull/1'
+litem stories/m-fail.md '' 'status: review' 'prs: https://github.com/o/l/pull/2'
+litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
+litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
+# A costs: money merge: with merge = human the lead's, as any merge; with merge = agent the user's (below).
+litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/5'
+litem stories/l-stall.md '' 'status: ready' 'kind: code'
+litem hld/2026-10-01-d.md '' 'status: draft'
+printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
+printf '2026-10-13\tcode\t%s\tclaude\topus\thigh\t%s\n' l-auth lauth l-wait lwait l-gone lgone l-stall lstall > "${L}/.swarm/agents.tsv"
+cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/lauth.jsonl"
+printf '%s\tstory\tl-stall\tw4:p5\tok\n' "$(ago 120)" > "${L}/.swarm/events.tsv"
+printf '[{"sessionId":"lauth","status":"idle"},{"sessionId":"lwait","status":"waiting","waitingFor":"input"},{"sessionId":"lstall","status":"busy"}]' > "${ROOT}/l.json"
+cat > "${ROOT}/lbin/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"l-auth","agent_status":"idle","pane_id":"w4:p1"},{"name":"l-wait","agent_status":"blocked","pane_id":"w4:p2"},{"name":"l-gone","agent_status":"idle","pane_id":"w4:p4"},{"name":"l-stall","agent_status":"working","pane_id":"w4:p5"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w4:p1"},{"pane_id":"w4:p2"},{"pane_id":"w4:p3"},{"pane_id":"w4:p4"},{"pane_id":"w4:p5"}]}}' ;;
+  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w4","label":"lead"}]}}' ;;
+  *) exit 1 ;;
+esac
+STUB
+# gh: PR 1 is green, PR 2 failing, PR 3 gh cannot read (unknown), and PR 4's CI is running.
+cat > "${ROOT}/lbin/gh" <<'STUB'
+#!/bin/sh
+case "$1 $2 $3" in
+  "pr view https://github.com/o/l/pull/1") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  "pr view https://github.com/o/l/pull/2") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
+  "pr view https://github.com/o/l/pull/4") echo '{"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
+  "pr view https://github.com/o/l/pull/5") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "${ROOT}/lbin/herdr" "${ROOT}/lbin/gh"
+ldash() { # <columns> — dash in L
+  fresh; (cd "${L}" || exit 1; env -u HERDR_ENV COLUMNS="$1" CLAUDE_STUB_AGENTS="${ROOT}/l.json" PATH="${ROOT}/lbin:${PATH}" bash "${SWARM}" dash 2>&1 || true)
+}
+lbox() { # <title> <frame> — that box of the left column, the right column cut off
+  python3 -c '
+import sys
+t, out = sys.argv[1], []
+for l in sys.stdin.read().splitlines():
+    if l.startswith("╭─ " + t + " ") or out:
+        out.append(l.split("╮ ")[0].split("╯ ")[0].split("│ │")[0])
+        if l.startswith("╰"):
+            break
+print("\n".join(out))' "$1" <<< "$2"
+}
+joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
+YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft HLD 2026-10-01-d: /hld 2026-10-01-d")
+LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+  "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
+  "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
+  "! look at l-gone: session ended" "! look at l-stall: working 1")
+echo "lead = session" > "${L}/.claude/swarm/config"
+for cols in 100 160; do
+  out="$(ldash "${cols}")"
+  needs="$(lbox "needs you" "${out}")"; queue="$(lbox "lead's queue" "${out}")"
+  check "lead = session at ${cols} columns: the lead's queue is drawn right after needs you" \
+    grep -qE "^╭─ lead's queue ─" <<< "$(sed -n '/^╰/{n;p;q;}' <<< "${out}")"
+  check "lead = session at ${cols} columns: needs you has only the user's ${#YOURS[@]} steps" test "$(grep -c '^│ ! ' <<< "${needs}")" -eq ${#YOURS[@]}
+  check "lead = session at ${cols} columns: the lead's queue has only its ${#LEADS[@]} rows" test "$(grep -c '^│ ! ' <<< "${queue}")" -eq ${#LEADS[@]}
+  for want in "${YOURS[@]}"; do
+    check "lead = session at ${cols} columns: needs you holds '${want}'" has "${want}" "$(joined "${needs}")"
+    check "lead = session at ${cols} columns: the lead's queue lacks '${want}'" lacks "${want}" "$(joined "${queue}")"
+  done
+  for want in "${LEADS[@]}"; do
+    check "lead = session at ${cols} columns: the lead's queue holds '${want}'" has "${want}" "$(joined "${queue}")"
+    check "lead = session at ${cols} columns: needs you lacks '${want}'" lacks "${want}" "$(joined "${needs}")"
+  done
+  check "lead = session at ${cols} columns: the legend says ! is needs you or the lead" has "! needs you or the lead (session gone or unknown)" "${out}"
+  check "lead = session at ${cols} columns: needs you shows the first **You:** step's text, with +1 more" \
+    has "! run lead story you-ask waits for: you: create the read-only user +1 more" "$(joined "${needs}")"
+  check "lead = session at ${cols} columns: the other **You:** step is not listed" lacks "rotate the key" "${out}"
+  check "lead = session at ${cols} columns: a ready lead story with no **You:** line waits for the lead" \
+    has "! run lead story no-you waits for: the lead" "$(joined "${queue}")"
+done
+# With merge = agent swarm.sh merge holds a costs: money story for the user: no lead session can merge it.
+printf 'lead = session\nmerge = agent\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
+check "lead = session, merge = agent: a costs: money merge is under needs you" \
+  has "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead = session, merge = agent: a costs: money merge is not in the lead's queue" \
+  lacks "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "lead's queue" "${out}")")"
+# An epic in review listing the same held PR: one row for it.
+litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5'; out="$(ldash 100)"
+check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \
+  test "$(grep -c 'l#5' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
+rm -f "${L}/docs/epics/ep-paid.md"
+echo "lead = session" > "${L}/.claude/swarm/config"
+# Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
+printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
+check "lead = session: an escalated story reset once offers only drop" \
+  has "! decide escalated story esc: swarm.sh drop esc" "$(joined "$(lbox "lead's queue" "$(ldash 100)")")"
+# A held story (held_for:) can always lift its hold with reset, as next says, even after a reset.
+litem stories/esc-held.md "$(printf '%s\n' '<!-- swarm.sh escalated: swarm.sh reset removes this block -->' '**Held (paused).** lift or drop' '<!-- /swarm.sh escalated -->')" \
+  'status: ready' 'kind: lead' 'escalated_from: code' 'held_for: paused'
+printf '2026-10-14T10:00:00Z\treset\tesc-held\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
+check "lead = session: a held story offers reset (lift the hold) or drop, though reset before" \
+  has "! decide escalated story esc-held: swarm.sh reset esc-held or swarm.sh drop esc-held" "$(joined "$(lbox "lead's queue" "$(ldash 100)")")"
+rm "${L}/docs/stories/esc-held.md"
+rm "${L}/.claude/swarm/config"
+out="$(ldash 100)"
+check "lead off: no lead's queue" lacks "lead's queue" "${out}"
+check "lead off: the legend says ! is needs you" has "! needs you (session gone or unknown)" "${out}"
+check "lead off: needs you still lists merges, agents to look at and lead stories" has "! merge l#2 (✗ failing) m-fail" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead off: an escalated lead story with no **You:** step is not listed" lacks "decide escalated story esc" "${out}"
+
+
+[[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
+echo "all passed"
