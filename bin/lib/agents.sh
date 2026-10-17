@@ -551,7 +551,7 @@ settle() {
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
 # WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
-# A wait that ran out logs a wait-timeout incident, unless WAIT_SLICE is set (the caller waits again);
+# A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
 wait_agent() {
@@ -562,7 +562,7 @@ wait_agent() {
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
     if [[ ${rc} -ne 0 ]]; then
-      [[ -n "${WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
+      [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
     if [[ "${status}" == idle ]] && login_expired "${name}"; then
@@ -588,11 +588,16 @@ wait_agent() {
 }
 
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
-# incident or tell line in events.tsv is one already, so re-waits add none and a resume (a tell)
-# starts a new one.
+# incident in events.tsv is one already and no ok tell that sends a prompt (findings, nudge, resume,
+# or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
+# after it. Targets are matched through agent_name (an), as a tell logs the raw slug.
 login_incident() {
-  awk -F'\t' -v n="$1" '$3 == n && ($2 == "incident" || $2 ~ /^tell(:|$)/) { last = $2 "\t" $5 }
-    END { exit last ~ /^incident\tlogin:/ ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
+  awk -F'\t' -v n="$1" '
+    function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
+    $2 == "incident" && $3 == n { login = $5 ~ /^login:/ }
+    $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
+    $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && an(($2 == "conduct" ? "conduct-" : "review-") $3) == n { login = 0 }
+    END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
     || record_event incident "$1" "login: Login expired"
 }
 
@@ -611,7 +616,7 @@ wait_conductor() {
   while :; do
     ms=$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))
     [[ -z "${forever}" ]] || ms="${SWARM_CONDUCTOR_SLICE_MS:-3600000}"
-    t0="$(now_ms)"; rc=0; status="$(WAIT_SLICE="${forever}" wait_agent "${name}" "${ms}")" || rc=$?
+    t0="$(now_ms)"; rc=0; status="$(SWARM_WAIT_SLICE="${forever}" wait_agent "${name}" "${ms}")" || rc=$?
     [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
     [[ "${status}" =~ ^(idle|done)$ && ! -f "${report:-$(conductor_report "${name}")}" ]] || break
     [[ -n "${forever}" || ${SECONDS} -lt ${deadline} ]] || break

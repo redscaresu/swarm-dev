@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # incidents_test.sh — the incident events, their helpers stubbed: wait_agent's timeout writes one
 # wait-timeout line (not for a conductor's hour slice, nor for herdr's wait failing early); an expired
-# login one login line however often it is waited on, and one more after a resume; a close that ends
-# a stuck builder's build with no PR one idle-no-pr line (its waits none), and none for a stalled,
-# paused or cleared-on-error close or a build with an open PR. Then flow's incidents section over a
+# login one login line however often it is waited on, and one more after a resume (matched through
+# agent_name, so a long slug's counts) or a new start, but not after a note or a failed tell; a close
+# that ends a stuck builder's build with no open or merged PR one idle-no-pr line (its waits none), and
+# none for a stalled, paused, cleared-on-error or impossible close or a build with an open PR. Then flow's incidents section over a
 # fixture events.tsv holding six kinds on two days prints the per-day count of each.
 set -euo pipefail
 
@@ -25,6 +26,9 @@ sites() (
   source "${REPO}/bin/lib/agents.sh"
   # shellcheck source=bin/lib/lifecycle.sh
   source "${REPO}/bin/lib/lifecycle.sh"
+  agent_name() { local n; n=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-'); [[ "${n}" =~ ^[a-z] ]] || n="s${n}"; printf '%s' "${n:0:32}"; }
+  impossible_refused() { return 1; }
+  impossible_story() { :; }
   json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
   own_target() { echo w:1; }
   session_state() { echo idle; }
@@ -43,26 +47,37 @@ sites() (
   slow_timeout() { sleep 1; echo busy; return 1; }
   case "$1" in
     timeout) settle() { slow_timeout; }; wait_agent a 1000 ;;
-    slice) settle() { slow_timeout; }; WAIT_SLICE=1 wait_agent conduct-e 1000 ;;
+    slice) settle() { slow_timeout; }; SWARM_WAIT_SLICE=1 wait_agent conduct-e 1000 ;;
     herdr-fails) settle() { echo busy; return 1; }; wait_agent a 60000 ;;
     login) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; wait_agent a 1000; record_event tell:resume a; wait_agent a 1000 ;;
     stuck) settle() { echo idle; }; wait_agent a 1000; wait_agent a 1000; close_agent a met ;;
-    stalled|paused|cleared-on-error) close_agent a "$1" ;;
+    login-long) settle() { echo idle; }; login_expired() { return 0; }; slug=Story-With-A-Name-Longer-Than-32-Chars
+      wait_agent "$(agent_name "${slug}")" 1000; record_event tell:resume "${slug}"; wait_agent "$(agent_name "${slug}")" 1000 ;;
+    login-no-prompt) settle() { echo idle; }; login_expired() { return 0; }
+      wait_agent a 1000; record_event tell:note a; record_event tell:resume a "tell: a is busy"; wait_agent a 1000 ;;
+    login-restart) settle() { echo idle; }; login_expired() { return 0; }
+      wait_agent a 1000; record_event story a; wait_agent a 1000 ;;
+    stalled|paused|cleared-on-error|impossible) close_agent a "$1" ;;
     open-pr) stub_prs='[{"state":"OPEN"}]'; close_agent a ;;
   esac >/dev/null 2>&1 || true
   cut -f2,3,5 "${EVENTS_LOG}" 2>/dev/null | grep '^incident' || true
 )
 
 check "wait_agent's timeout writes one wait-timeout line" "$(sites timeout)" $'incident\ta\twait-timeout: busy'
-check "a conductor's hour slice running out (WAIT_SLICE) writes none" "$(sites slice)" ""
+check "a conductor's hour slice running out (SWARM_WAIT_SLICE) writes none" "$(sites slice)" ""
 check "herdr's wait failing before the timeout writes none" "$(sites herdr-fails)" ""
 check "an expired login waited on twice writes one login line, and a resume then another" "$(sites login)" \
   "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tlogin: Login expired')"
 check "a stuck builder, waited on twice (nudged) and closed, writes one idle-no-pr line, the close's" "$(sites stuck)" \
-  $'incident\ta\tidle-no-pr: closed (met) with no PR on story/a'
-for cause in stalled paused cleared-on-error; do
-  check "a ${cause} close with no PR writes none" "$(sites "${cause}")" ""
+  $'incident\ta\tidle-no-pr: closed (met) with no open or merged PR on story/a'
+login2="$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tlogin: Login expired')"
+check "a resume for a slug over 32 characters ends its agent's login episode" "$(sites login-long)" \
+  "$(printf '%s\n' $'incident\tstory-with-a-name-longer-than-32\tlogin: Login expired' $'incident\tstory-with-a-name-longer-than-32\tlogin: Login expired')"
+check "a note or a failed tell does not end a login episode" "$(sites login-no-prompt)" $'incident\ta\tlogin: Login expired'
+check "the agent's start line ends a login episode" "$(sites login-restart)" "${login2}"
+for cause in stalled paused cleared-on-error impossible; do
+  check "a close with cause ${cause} and no PR writes none" "$(sites "${cause}")" ""
 done
 check "a close that ends a build with an open PR writes none" "$(sites open-pr)" ""
 

@@ -525,7 +525,7 @@ its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait
 `wait --until-report` hour that it waits again), and `login` when it returns `auth`, once per
 expired login: a second wait adds none, and a `tell` (the resume after the `/login`) starts a new
 one. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
-unless its cause is `stalled`, `paused` or `cleared-on-error`; the waits on that builder write
+unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write
 none, so one stuck builder is one incident. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never

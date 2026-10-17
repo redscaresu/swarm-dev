@@ -305,7 +305,7 @@ CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or 
 # the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
 # hold it for the lead (held_story) when the close ends a build. A close that ends a build with no
 # open or merged PR on story/<name> logs an idle-no-pr incident, the one place it is logged, unless
-# the builder did not stop of itself: stalled, paused or cleared-on-error.
+# the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible).
 close_agent() {
   local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
   # The message never repeats the word: main logs a die's first line.
@@ -320,8 +320,8 @@ close_agent() {
   archive_session "$1"
   if prs="$(failed_build "$1")"; then
     counted=1
-    [[ "${cause}" =~ ^(stalled|paused|cleared-on-error)$ || "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" == True ]] \
-      || record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no PR on story/$1"
+    [[ "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ || "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" == True ]] \
+      || record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
   fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
