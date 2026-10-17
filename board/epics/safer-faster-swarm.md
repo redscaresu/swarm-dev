@@ -38,6 +38,11 @@ The throughput numbers come from `swarm.sh outcomes` and git:
   - swarm-dev's frame read "0 agents working" while `swarm.sh status` listed the conductor and a builder working.
   - Both frames showed the same "$80.60 today", so the cost is not per project.
   - "active epics with no open story" listed two epics that are unplanned and waiting on their dependencies, which reads as finished. dash names them as waiting on the epics they depend on.
+- **A visual speedometer.** Under the speedometer line, dash draws a sparkline of merges per day for the last 14 days (`▁▂▃▅▇`), with today's count and the 7-day average marked. When the window is wide enough (100 columns or more), it also draws a gauge that sets the 7-day rate against the best 7-day rate in the log. Both read only events.tsv, like the speedometer line, and fall back to the text line under 60 columns.
+- **Tests for dash showing wrong data.** The existing tests check layout (width, wrapping) and that strings appear. These tests check that each number dash shows is right:
+  - **Agreement tests.** A fixture holds two projects whose agents, costs, queues, epics and merges all differ. For each figure dash shows, the test runs the command that owns it (`status`, `cost --project`, `next`, `flow`, the lead's queue) on the same fixture and asserts that the frame shows the same value in the right project's frame. That test would have caught each of the three defects above. A new dash field ships with its agreement assertion.
+  - **Golden frames.** The two-project fixture rendered at 60, 100 and 200 columns, with a fixed clock, is committed as text under tests/fixtures/dash/. The test fails on any difference, and `UPDATE_GOLDEN=1` rewrites the files, so every change to the dashboard's look shows up as a reviewable diff in the PR.
+  - **A live check.** `swarm.sh dash --check` runs the same agreement assertions against the real project and prints each mismatch. The lead runs it after each release.
 - **init sets up a new project like infrafactory.** `swarm.sh init` writes a CI board-only fast path, a pre-commit hook that runs the project's `check`, and an optional `commit_trailers` config line that builders add to every commit. A test runs init on an empty repo and checks each one.
 
 **Out of scope:** remote or cloud-hosted agents, and a web UI beyond `dash`.
