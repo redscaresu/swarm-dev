@@ -1,5 +1,5 @@
 {
-  "description": "In a swarm project, a lone swarm.sh merge is the only command that merges a PR",
+  "description": "In a swarm project, refuse careless raw PR merges so they go through swarm.sh merge",
   "hooks": {
     "PreToolUse": [
       {

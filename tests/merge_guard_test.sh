@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 # merge_guard_test.sh — hooks/merge-guard.sh, the plugin's PreToolUse hook on Bash: inside a swarm
-# project it exits 2 on every raw merge (gh pr merge, gh api, graphql, through a shell, eval, an
-# interpreter, a pipe or a file) and on swarm.sh merge joined to another command, and lets a lone
-# swarm.sh merge and plain mentions through; outside one it allows everything. A call that says merge
-# is refused when the check cannot run. A block writes one incident line to the project's
-# .swarm/events.tsv, and hooks.json runs the script on Bash calls.
+# project it exits 2 on the raw merges it knows (gh pr merge, gh api, graphql, through a shell, eval,
+# an interpreter, a pipe or a file, spelled through quotes or not) and on swarm.sh merge joined to
+# another command, and lets a lone swarm.sh merge and plain mentions through; outside one it allows
+# everything. A call that says merge is refused when the check cannot run. A block writes one
+# incident line to the project's .swarm/events.tsv, and hooks.json runs the script on Bash calls.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${REPO}/hooks/merge-guard.sh"
-tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+# Under /tmp, not ${TMPDIR}: the fast path skips a call that never says merge, so no path in a call
+# may say it, or every case would reach the parser whatever its command.
+tmp="$(mktemp -d /tmp/guard.XXXXXX)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
+case "${ROOT}" in *[Mm][Ee][Rr][Gg][Ee]*) echo "the test dir ${ROOT} says merge" >&2; rm -rf "${ROOT}"; exit 1 ;; esac
 trap 'rm -rf "${ROOT}"' EXIT
 P="${ROOT}/proj"; OUT="${ROOT}/elsewhere"; LOG="${P}/.swarm/events.tsv"
 mkdir -p "${P}/.claude/swarm" "${OUT}"
@@ -80,6 +83,10 @@ blocks "gh -Ro/r pr merge" "gh -Ro/r pr merge 7"
 blocks "gh -R=o/r pr merge" "gh -R=o/r pr merge 7"
 blocks "gh pr -Ro/r merge" "gh pr -Ro/r merge 7"
 passes "a python3 script's argument" "python3 tools/notes.py 'gh pr merge'"
+blocks 'gh pr "mer"ge' 'gh pr "mer"ge 7'
+blocks "gh pr me''rge" "gh pr me''rge 7"
+blocks 'gh pr mer\ge' 'gh pr mer\ge 7'
+blocks "a quoted spelling piped into a shell" "echo 'gh pr mer\"\"ge 1' | sh"
 
 was="$(lines)"
 call "${P}" "gh pr merge 7" >/dev/null
@@ -103,7 +110,7 @@ check "  ... and logs to the main checkout" test "$(wc -l < "${Q}/.swarm/events.
 # Once a call says merge the guard fails closed: no python3, input it cannot read, a call too big
 # for an environment variable.
 feed() { local rc=0; PATH="${2:-${PATH}}" "${BASH}" "${HOOK}" < "$1" >/dev/null 2>&1 || rc=$?; echo "${rc}"; } # <file> [PATH]
-mkdir -p "${ROOT}/nopy" && ln -s "$(command -v cat)" "${ROOT}/nopy/cat"
+mkdir -p "${ROOT}/nopy" && for b in cat tr grep; do ln -s "$(command -v "${b}")" "${ROOT}/nopy/${b}"; done
 printf '{"cwd": "%s", "tool_input": {"command": "git merge x"}}' "${OUT}" > "${ROOT}/says-merge.json"
 printf '{"tool_input": {"command": "ls"}}' > "${ROOT}/ls.json"
 printf '{"tool_input": {"command": "merge' > "${ROOT}/bad.json"

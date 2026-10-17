@@ -25,7 +25,8 @@ the run stops whenever a decision is yours.
    and the builder fixes what it finds.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
    `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
-   plugin hook stops every Claude session from merging any way but `swarm.sh merge`.
+   plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
+   session, so merges go through `swarm.sh merge`.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those

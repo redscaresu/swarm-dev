@@ -678,7 +678,7 @@ logs it, `log-finding --reviewer ci`.
 ## Merging
 
 With `merge = human` (the default) no agent merges: each agent starts unable to run
-`gh pr merge`, its brief forbids every other route, and the plugin's merge guard (below) refuses them. When a PR is green and reviewed, the lead
+`gh pr merge`, its brief forbids every other route, and the plugin's merge guard (below) refuses the common ones. When a PR is green and reviewed, the lead
 runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
 `prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
@@ -754,15 +754,18 @@ exits non-zero, naming the check, when main is red or the wait runs out. Inside 
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
 
-The plugin also ships a guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
-`hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm project (a
-`.claude/swarm/` folder at or above the session's folder, or above its main checkout when the session
-is in a git worktree) it refuses a call that merges any way but a lone `swarm.sh merge <PR URL>`: `gh pr merge`, `gh api` on `pulls/<n>/merge`, a graphql `mergePullRequest`
-or `enablePullRequestAutoMerge`, any of these in code handed to a shell or an interpreter (`bash -c`,
-`eval`, `python3 -c`, `node -e`, or a heredoc, here-string or pipe into one, with a code flag or
-without) or written to a file, and `swarm.sh
-merge` joined to another command by `;`, `&`, `&&`, `||`, `|`, a newline, `$( )` or backticks. A
-command that only mentions a merge passes: `echo`, `printf` and `grep`, a commit message, and a PR
+The plugin also ships a merge guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
+`hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. Inside a swarm
+project (a `.claude/swarm/` folder at or above the session's folder, or above its main checkout when
+the session is in a git worktree) it refuses a call that does one of four things: runs gh's merge
+subcommand, `gh pr merge`, however its words are quoted; makes the REST or GraphQL merge call, `gh api`
+on `pulls/<n>/merge` or a `mergePullRequest` or `enablePullRequestAutoMerge` mutation; holds either
+of those in text handed to a shell or an interpreter (`bash -c`, `eval`, `python3 -c`, `node -e`, or a
+heredoc, here-string or pipe into one, with a code flag or without) or written to a file; or chains
+`swarm.sh merge` to another command with `;`, `&`, `&&`, `||`, `|`, a newline, `$( )` or backticks.
+It guards against careless commands, not deliberate evasion: a merge reached any other way, such as
+through a variable, a script run by `source` or process substitution, `awk`'s `system()` or an
+alias, passes. A command that only mentions a merge passes too: `echo`, `printf` and `grep`, a commit message, and a PR
 body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
 sees its reason, and `.swarm/events.tsv` gets an incident line. Once a call says merge the guard fails closed: if
 it cannot run its check (no `python3`, input it cannot read, an error of its own), it refuses the

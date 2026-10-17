@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # merge-guard.sh — the plugin's PreToolUse hook on Bash (hooks/hooks.json). Inside a swarm project
 # (a .claude/swarm/ at or above the call's cwd, or above its main checkout when the cwd is a git
-# worktree) a lone `swarm.sh merge <PR URL>` is the only way to merge a PR. It reads the tool call's
-# JSON on stdin and exits 2, naming the form, on gh pr merge, gh api .../pulls/<n>/merge, a graphql
-# mergePullRequest, any of them in code handed to a shell or an interpreter (-c, eval, a heredoc, a
-# here-string, a pipe) or written to a file, and on swarm.sh merge joined to another command. A
-# mention in echo, printf or grep passes. Each block appends an incident line, `merge-blocked:
-# <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
+# worktree) it stops careless merges, so a PR merges through a lone `swarm.sh merge <PR URL>`; it is
+# no defence against deliberate evasion. It reads the tool call's JSON on stdin and exits 2, naming
+# the form, on gh pr merge, gh api .../pulls/<n>/merge, a graphql mergePullRequest, any of them in
+# code handed to a shell or an interpreter (-c, eval, a heredoc, a here-string, a pipe) or written
+# to a file, and on swarm.sh merge joined to another command. A mention in echo, printf or grep
+# passes. Each block appends an incident line, `merge-blocked: <form>`, to the project's
+# .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
 
 input="$(cat)"
-# Fast path: a call that never says merge cannot merge.
-case "${input}" in *[Mm][Ee][Rr][Gg][Ee]*) ;; *) exit 0 ;; esac
+# Fast path: a call that never says merge, not even through quotes and backslashes (mer"ge,
+# me''rge, mer\ge), cannot merge. grep reads all its input, so pipefail never sees tr's SIGPIPE.
+printf '%s' "${input}" | tr -d "\"'\\\\" | grep -i merge >/dev/null || exit 0
 # Past here the call says merge, so the guard fails closed: anything but its own verdict refuses it.
 command -v python3 >/dev/null || { echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
@@ -28,6 +30,7 @@ MENTIONS = {"echo", "printf", "grep", "egrep", "fgrep", "rg"}
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 REDIRECT = re.compile(r"<<<|<<-?|&>>?|>>|>[|&]?|<[&>]?")
 QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
+QUOTING = re.compile(r"[\"'\\]")
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
 merges a PR (docs/reference.md § Merging). Text that only mentions a merge, such as a PR body, can go
@@ -177,6 +180,11 @@ class Shell:
         self.heredocs = []
 
 
+def raw(s):
+    """RAW in s seen through quotes and backslashes (mer\"ge, me''rge, mer\\ge), as a shell would run it."""
+    return RAW.search(QUOTING.sub("", s))
+
+
 def text(cmd):
     return " ".join(cmd["words"] + cmd["bodies"])
 
@@ -194,7 +202,7 @@ def check(code, via=""):
 def check_cmd(cmd, fed, via, joined):
     """One simple command; fed is the text piped or heredoc'd into it."""
     args = list(itertools.dropwhile(ASSIGNMENT.match, cmd["words"]))
-    if cmd["file"] and RAW.search(" ".join([text(cmd)] + fed)):
+    if cmd["file"] and raw(" ".join([text(cmd)] + fed)):
         raise Blocked("a merge written to a file")
     if not args or os.path.basename(args[0]) in MENTIONS:
         return
@@ -204,7 +212,7 @@ def check_cmd(cmd, fed, via, joined):
             check_gh(rest, fed, via)
         elif b == "swarm.sh" and rest[:1] == ["merge"] and joined:
             raise Blocked("swarm.sh merge joined to another command" + via)
-        elif b == "tee" and RAW.search(" ".join(fed)):
+        elif b == "tee" and raw(" ".join(fed)):
             raise Blocked("a merge written to a file")
         elif b in SHELLS or b == "eval" or INTERPRETER.fullmatch(b):
             check_code(b, rest, fed)
@@ -219,7 +227,7 @@ def check_gh(rest, fed, via):
         value = not value and w in ("-R", "--repo")
     if args[:2] == ["pr", "merge"]:
         raise Blocked("gh pr merge" + via)
-    if args[:1] == ["api"] and RAW.search(" ".join(rest + fed)):
+    if args[:1] == ["api"] and raw(" ".join(rest + fed)):
         raise Blocked("gh api merge" + via)
 
 
@@ -232,9 +240,9 @@ def check_code(b, rest, fed):
     k = next((k for k, w in enumerate(rest[:-1]) if flag.fullmatch(w)), None)
     if k is not None and b in SHELLS:
         check(rest[k + 1], " via %s %s" % (b, rest[k]))
-    elif k is not None and RAW.search(rest[k + 1]):
+    elif k is not None and raw(rest[k + 1]):
         raise Blocked("a merge in %s code" % b)
-    if RAW.search(" ".join(fed)):
+    if raw(" ".join(fed)):
         raise Blocked("a merge fed to %s" % b)
 
 
