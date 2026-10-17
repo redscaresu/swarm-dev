@@ -110,7 +110,8 @@ workflows() { # <name>... — .github/workflows on the merge commit: each <name>
   done
   echo "[${list}]" > "${FX}/workflows"
 }
-item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/docs/stories/$1.md"; }
+# item <slug> <front-matter line>... — a fresh story: its file, and no state file.
+item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/docs/stories/$1.md"; rm -f "${P}/.swarm/state/board/stories/$1"; }
 
 # fresh [config line]... — story s in review with prs: ${URL}; head ${H1} with one green check run
 # and no status; squash allowed; on the merge commit a green check run and a green run of the one

@@ -1,17 +1,25 @@
 import glob, os, re, sys
-stories, me, project_dir, repos_dir = sys.argv[1:]
+stories, me, project_dir, repos_dir, state = sys.argv[1:]
 project = os.path.basename(project_dir)
 
-def front(path):
-    lines, out = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}
-    if lines[0] != "---":
-        return out
-    for line in lines[1:]:
-        if line == "---":
+def pairs(lines, out, stop=None):
+    seen = set()
+    for line in lines:
+        if line == stop:
             break
         k, sep, v = line.partition(":")
-        if sep and k not in out:
-            out[k] = v.strip()
+        if sep and k not in seen:
+            seen.add(k); out[k] = v.strip()
+
+# front(path) — the story's front matter, under what swarm.sh wrote to its state file (set_fm).
+def front(path):
+    lines, out = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}
+    if lines[0] == "---":
+        pairs(lines[1:], out, "---")
+    try:
+        pairs(open(os.path.join(state, os.path.basename(path)[:-3]), encoding="utf-8", errors="replace").read().split("\n"), out)
+    except FileNotFoundError:
+        pass
     return out
 
 def entries(fm):

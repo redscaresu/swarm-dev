@@ -75,7 +75,16 @@ GIT=(git -c user.name=t -c user.email=t@t)
 "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
 git -C "${P}" remote add origin "${ROOT}/origin.git"
 "${GIT[@]}" -C "${P}" commit -q --allow-empty -m init && git -C "${P}" push -q origin HEAD:refs/heads/main
-item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/docs/stories/$1.md"; }
+# item <slug> <front-matter line>... — a fresh story: its file, and no state file.
+item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "${P}/docs/stories/$1.md"; rm -f "${P}/.swarm/state/board/stories/$1"; }
+# fmv <slug> <key> — <key> as swarm.sh reads it: the story's state file first, its front matter second.
+fmv() {
+  local s="${P}/.swarm/state/board/stories/$1"
+  if [[ -f "${s}" ]] && grep -q "^$2:" "${s}"; then sed -n "s/^$2: *//p" "${s}" | head -1; return; fi
+  awk -v k="$2" '/^---$/ && ++n == 2 { exit } n == 1 && index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "${P}/docs/stories/$1.md"
+}
+# put <slug> <key: value>... — lines in the story's state file, as swarm.sh writes them.
+put() { mkdir -p "${P}/.swarm/state/board/stories"; printf '%s\n' "${@:2}" >> "${P}/.swarm/state/board/stories/$1"; }
 started() { # <slug> [pane] — its worktree on story/<slug>, pushed, and an untracked file; with a pane, its builder open there
   local wt="${ROOT}/proj-wt/$1"
   "${GIT[@]}" -C "${P}" worktree add -q -b "story/$1" "${wt}"
@@ -90,7 +99,7 @@ left() { # <slug> — which of its worktree, local story/<slug> and origin's are
   ! git -C "${ROOT}/origin.git" show-ref -q --verify "refs/heads/story/$1" || o+=" origin"
   echo "${o# }"
 }
-attempts() { awk '/^---$/ && ++n == 2 { exit } n == 1 && sub(/^attempts: */, "")' "${P}/docs/stories/$1.md" 2>/dev/null || true; }   # front matter only
+attempts() { fmv "$1" attempts 2>/dev/null || true; }   # front matter only, under the state file
 U="https://github.com/o/proj/pull"
 echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
 item s1 "status: ready" "kind: code"; started s1 w:p1
@@ -165,7 +174,6 @@ is "no PR is closed but s1's" "1" "$(grep -c '^pr close' "${ROOT}/gh.log")"
 # block naming the lead's choices and the attempts' PRs. reset puts the story back as it was.
 sw() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 built() { printf '2026-10-15\t%s\t%s\tclaude\topus\thigh\tsess-%s\n' "$2" "$1" "$1" >> "${P}/.swarm/agents.tsv"; }   # <slug> <role>
-fmv() { awk -v k="$2" '/^---$/ && ++n == 2 { exit } n == 1 && index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "${P}/docs/stories/$1.md"; }
 state() { echo "$(fmv "$1" kind)|$(fmv "$1" escalated_from)|$(fmv "$1" attempts)|$(fmv "$1" status)"; }
 block() { sed -n '/^<!-- swarm.sh escalated/,/^<!-- \/swarm.sh escalated -->$/p' "${P}/docs/stories/$1.md"; }
 echo "[{\"number\":7,\"state\":\"CLOSED\",\"url\":\"${U}/7\"},{\"number\":8,\"state\":\"OPEN\",\"url\":\"${U}/8\"}]" > "${ROOT}/prs.json"
@@ -205,18 +213,19 @@ item c2 "status: ready" "kind: code" "attempts: 2"; built c2 escalate; built c2 
 is "a code build closed at attempts: 2 writes attempts: 3 and no kind: lead or block" "code||3|ready|" "$(state c2)|$(block c2)"
 # A chore round-trips, and so does a story with no kind: line (escalated_from: code (default)).
 item ch "status: ready" "kind: chore"; cp "${P}/docs/stories/ch.md" "${ROOT}/ch.orig"
-item ch "status: ready" "kind: chore" "attempts: 2"; built ch escalate; started ch w:p35; close ch
+put ch "attempts: 2"; built ch escalate; started ch w:p35; close ch
 is "a chore escalates from chore" "lead|chore|3|ready" "$(state ch)"
 sw reset ch why >/dev/null
 is "and reset returns it as it was" "" "$(diff "${ROOT}/ch.orig" "${P}/docs/stories/ch.md")"
 item nk "status: ready"; cp "${P}/docs/stories/nk.md" "${ROOT}/nk.orig"
-item nk "status: ready" "attempts: 2"; built nk escalate; started nk w:p36; close nk
+put nk "attempts: 2"; built nk escalate; started nk w:p36; close nk
 is "a story with no kind: line escalates from code (default)" "lead|code (default)|3|ready" "$(state nk)"
 sw reset nk why >/dev/null
 is "and reset returns it byte for byte, with no kind: line" "" "$(diff "${ROOT}/nk.orig" "${P}/docs/stories/nk.md")"
-# The lead re-scoped the kind in the file itself (the board outside the repo): reset keeps it.
+# The lead re-scoped the kind in the file itself (the board outside the repo), which still says
+# code (kind: lead is in the state file): reset keeps it.
 item rk "status: ready" "kind: code" "attempts: 2"; built rk escalate; started rk w:p40; close rk
-awk '{ sub(/^kind: lead$/, "kind: docs") } 1' "${P}/docs/stories/rk.md" > "${ROOT}/rk.tmp" && mv "${ROOT}/rk.tmp" "${P}/docs/stories/rk.md"
+awk '{ sub(/^kind: code$/, "kind: docs") } 1' "${P}/docs/stories/rk.md" > "${ROOT}/rk.tmp" && mv "${ROOT}/rk.tmp" "${P}/docs/stories/rk.md"
 sw reset rk why >/dev/null
 is "a kind the lead set itself survives reset; escalated_from: and attempts: go" "docs|||ready" "$(state rk)"
 item vf "status: ready" "kind: lead" "escalated_from: verify" "attempts: 3"; sw reset vf why >/dev/null
