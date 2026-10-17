@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # dash_projects_test.sh — `swarm.sh dash --project <dir> --project <dir>` against two throwaway
-# projects, alpha and bravo, each with an active epic of its own, run from a git repo with no board.
+# projects, alpha and bravo, each with an active epic of its own, run from a git repo with no board
+# and from a dir in no git repo at all.
 # Stub claude, herdr and gh on PATH; stty and tput fail, so nothing here is a terminal.
 set -euo pipefail
 
@@ -61,6 +62,16 @@ check "bravo's frame lists bravo's epic" has epic-of-bravo "${fb}"
 check "bravo's frame does not list alpha's" lacks epic-of-alpha "${fb}"
 check "the legend is drawn once, under the last project" test "$(grep -c '● working' <<< "${out}")" -eq 1
 check "the legend is under bravo's frame" has "● working" "${fb}"
+
+# From a dir in no project and no git repo, --project still draws every frame; plain dash fails.
+N="${ROOT}/nowhere"; mkdir -p "${N}"
+check "the temp dir is in no git repo" bash -c "! git -C '${N}' rev-parse 2>/dev/null"
+out="$(cd "${N}" && env -u HERDR_ENV "${SWARM}" dash --project "${A}" --project "${B}")" || true
+check "outside any project, alpha's frame is drawn" grep -q '^alpha  swarm-dev ' <<< "${out}"
+check "outside any project, bravo's frame is drawn" grep -q '^bravo  swarm-dev ' <<< "${out}"
+rc=0; (cd "${N}" && env -u HERDR_ENV "${SWARM}" dash) 2> "${ROOT}/err" || rc=$?
+check "outside any project, plain dash fails: not in a swarm project" \
+  bash -c "[ ${rc} -ne 0 ] && grep -qF 'not in a swarm project' '${ROOT}/err'"
 
 # A bad project stops dash before it draws anything, naming the project.
 rc=0; out="$(dash --project "${A}" --project /nonexistent 2> "${ROOT}/err")" || rc=$?
