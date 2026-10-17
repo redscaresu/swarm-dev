@@ -73,7 +73,9 @@ Useful while it runs:
 ## Working on this repository
 
 ```
-bin/swarm.sh          the only script: panes, story builds, conductors, the model policy
+bin/swarm.sh          the entry point: usage, settings, the model policy, the command dispatch
+bin/lib/*.sh          the commands by group (agents, board, build, dash, lifecycle, merge, reports)
+bin/lib/*.py          the Python helpers the commands run
 commands/             /hld, /plan-hld, /plan-epic, /swarm (Markdown the plugin loads)
 tests/                *_test.sh: next against throwaway boards, cost against a log fixture
 docs/method.md        the method; change it when behaviour changes
@@ -85,7 +87,8 @@ Before you open a PR:
 
 ```bash
 make hooks                                  # once: the gitleaks pre-commit hook
-shellcheck bin/swarm.sh scripts/pre-commit tests/*.sh
+shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh tests/*.sh
+python3 -m py_compile bin/lib/*.py
 for t in tests/*_test.sh; do bash "$t"; done
 claude plugin validate .
 ```
@@ -99,7 +102,7 @@ Secrets are stopped at three layers: the pre-commit hook, the CI gitleaks job ov
 history (required on `main`), and GitHub push protection. Keep template links as markdown links,
 never `[[wikilinks]]`.
 
-`bin/swarm.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
+`bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
 the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`.
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag), the lead cuts a
