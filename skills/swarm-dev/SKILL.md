@@ -52,4 +52,5 @@ user why. The full table of stops and what to do is in README § When `/swarm-de
 ## More detail
 
 - `${CLAUDE_PLUGIN_ROOT}/README.md`: § Getting started and § When `/swarm-dev:swarm` stops for you.
-- `${CLAUDE_PLUGIN_ROOT}/docs/method.md`: the method, who does what, and every setting.
+- `${CLAUDE_PLUGIN_ROOT}/docs/method.md`: the method and who does what.
+- `${CLAUDE_PLUGIN_ROOT}/docs/reference.md`: every setting, and how each step works.

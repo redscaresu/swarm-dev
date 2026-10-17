@@ -8,7 +8,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO}"
 # A /swarm not part of a path (.claude/swarm, bin/swarm.sh) or a longer name (/swarm-dev:swarm).
 bare="$(grep -rnE '(^|[^A-Za-z0-9_./-])/swarm([^A-Za-z0-9_./:-]|$)' \
-  commands skills README.md docs/method.md docs/dash.md docs/assets bin/swarm.sh || true)"
+  commands skills README.md docs/method.md docs/reference.md docs/dash.md docs/assets bin/swarm.sh || true)"
 if [[ -n "${bare}" ]]; then
   echo "FAIL a bare /swarm, which runs /swarm-dev:hld; write /swarm-dev:swarm:"; echo "${bare}"; exit 1
 fi
