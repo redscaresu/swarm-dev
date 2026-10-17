@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# features_test.sh — `swarm.sh features` against a fixture features.tsv (SWARM_FEATURES) and logs:
+# features_test.sh — `swarm.sh flow`'s features section against a fixture features.tsv (SWARM_FEATURES) and logs:
 # an event: feature used within 30 days shows its count; one whose only use is older, and one with
 # no metric, show delete?; an unlogged: one with a metric does not, and role:, agent: and reviewer:
 # uses count from agents.tsv and findings.tsv; an interrupted events line is no use, and an event
@@ -14,7 +14,9 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
-P="${dir}/repo"; mkdir -p "${P}/.swarm" "${P}/docs"; git -C "${P}" init -q
+P="${dir}/repo"; mkdir -p "${P}/.swarm" "${P}/docs" "${dir}/bin"; git -C "${P}" init -q
+# gh answers nothing, as for a repo with no GitHub remote.
+printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/gh"; chmod +x "${dir}/bin/gh"
 now="$(date -u +%Y-%m-%d)"; old=2020-01-01
 fresh="$(python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=5))')"
 # The features file's repo, where its PRs and epics are (its board is board/): #2 merged in 2020, a
@@ -50,7 +52,9 @@ printf '%s\n' "${now}T10:00:00Z"$'\tstory\ta\tw:1\tok' "${now}T11:00:00Z"$'\tsto
 printf '%s\n' "${now}"$'\tcode\ta\tclaude\topus\thigh\t-' "${now}"$'\tconduct\tconduct-e\tclaude\topus\thigh\t-' > "${P}/.swarm/agents.tsv"
 printf '%s\n' "${now}"$'\tnit\to/r#1\tt\tdeclined\tcodex' > "${P}/.swarm/findings.tsv"
 
-run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FEATURES="${F}/docs/features.tsv" bash "${SWARM}" features "$@"); }
+# flow's features section, without its `## features` line; flow's stderr as it is.
+run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FEATURES="${SWARM_FEATURES:-${F}/docs/features.tsv}" PATH="${dir}/bin:${PATH}" \
+  bash "${SWARM}" flow "$@") | sed -n '/^## features$/,/^## /p' | sed -e 1d -e '/^## /d' -e '/^$/d'; }
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
@@ -72,16 +76,18 @@ check "uses in 30 days, delete? for a stale or unmeasured feature, unlogged judg
   $'never\t0\tflow: stacked\t0 (flow)\tdelete?' \
   $'bad-date\t0\tflow: stacked\t0 (flow)\tdelete?')"
 check "an impossible landed date is warned about, once, on stderr" "$(run 2>&1 >/dev/null)" \
-  "swarm.sh features: bad-date: landed '2026-02-30' is not a date, a #PR git log knows, or an epic; judged by its uses"
+  "swarm.sh flow: features: bad-date: landed '2026-02-30' is not a date, a #PR git log knows, or an epic; judged by its uses"
 check "--since counts the older use, and the verdict still reads the last 30 days" \
   "$(run --since "${old}" 2>/dev/null | grep '^stale')" $'stale\t1\tflow: stacked\t0 (flow)\tdelete?'
+check "--until leaves out the uses after it: used's are today's, stale's is on --until's day" \
+  "$(run --since "${old}" --until "${old}" 2>/dev/null | grep -E '^(used|stale)')" "$(printf '%s\n' $'used\t0\tflow: stacked\t0 (flow)\t' $'stale\t1\tflow: stacked\t0 (flow)\tdelete?')"
 # In UTC-7, an event at 03:00Z on the first day of the 30 is the day before locally, so outside them.
 edge="$(TZ=America/Los_Angeles python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=30))')"
 printf '%s\n' "${edge}T03:00:00Z"$'\tedgecmd\t-\tw:1\tok' >> "${P}/.swarm/events.tsv"
 printf '%s\n' "edge"$'\t'"${old}"$'\tflow: stacked\t0 (flow)\tevent:edgecmd' >> "${F}/docs/features.tsv"
 check "an event counts by its local day: 03:00Z in UTC-7 falls before the last 30 days" \
   "$(TZ=America/Los_Angeles run 2>/dev/null | grep '^edge')" $'edge\t0\tflow: stacked\t0 (flow)\tdelete?'
-check "a bad flag prints the usage" "$(run --since 2>&1 || true)" "swarm: usage: swarm.sh features [--since YYYY-MM-DD]"
+check "with no feature list, the section says so" "$(SWARM_FEATURES="${dir}/none.tsv" run 2>/dev/null)" "no feature list at ${dir}/none.tsv"
 
 # docs/features.tsv: a metric, a uses entry and a baseline on every row; each role: one policy knows.
 bad=""
