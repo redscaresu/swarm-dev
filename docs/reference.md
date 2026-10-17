@@ -531,7 +531,8 @@ with `--board`, or before it knows the item): a refusal is one `merge` line sayi
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
-the lead, each write one more line of their own (§ Model and effort). The log is local to the machine and append-only,
+the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
+(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
 `reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
@@ -677,7 +678,7 @@ logs it, `log-finding --reviewer ci`.
 ## Merging
 
 With `merge = human` (the default) no agent merges: each agent starts unable to run
-`gh pr merge`, and its brief forbids every other route. When a PR is green and reviewed, the lead
+`gh pr merge`, its brief forbids every other route, and the plugin's merge guard (below) refuses them. When a PR is green and reviewed, the lead
 runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
 `prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
@@ -752,6 +753,26 @@ missed poll, and three in a row end the wait as an error. Without
 exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
+
+The plugin also ships a guard, a PreToolUse hook on Bash (`hooks/hooks.json`, running
+`hooks/merge-guard.sh`), for every Claude session it is installed in, yours included. In a project with a
+`.claude/swarm/config` at or above the session's folder, it refuses a call that merges any way but a lone
+`swarm.sh merge <PR URL>`: `gh pr merge`, `gh api` on `pulls/<n>/merge`, a graphql `mergePullRequest`
+or `enablePullRequestAutoMerge`, any of these in code handed to a shell or an interpreter (`bash -c`,
+`eval`, `python3 -c`, `node -e`, a heredoc or a pipe into one) or written to a file, and `swarm.sh
+merge` joined to another command by `;`, `&`, `&&`, `||`, `|`, a newline, `$( )` or backticks. A
+command that only mentions a merge passes: `echo`, `printf` and `grep`, a commit message, and a PR
+body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
+sees its reason, and `.swarm/events.tsv` gets an incident line. Outside a swarm project the guard allows everything.
+
+The hook also refuses commands that can lose work. In every session in a swarm project, yours
+included, it refuses a `cd <dir>` followed by `;`: when the `cd` fails, the rest runs in the folder
+the session was in, so write `cd <dir> || exit 1 &&`. It refuses a `git checkout` over a file with
+uncommitted changes; back the file up with `cp` and restore from the copy instead. swarm.sh starts
+every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook also refuses
+`git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the project's main
+checkout, whether the command runs there from the session's folder, after a `cd`, or through
+`git -C`. Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.

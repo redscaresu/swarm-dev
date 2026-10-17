@@ -211,13 +211,15 @@ start_agent() {
     else
       # No agent can run `gh pr merge`, a conductor with merge = agent included: it merges through
       # swarm.sh merge, whose gh the guard never reaches. `gh api` could still merge, so the briefs say it too.
-      local guard=(--disallowedTools "Bash(gh pr merge:*)")
-      # builder_subagent_model: the session's env, through --settings since herdr passes no env. Without
-      # _FORCE the model setting leaves an Explore subagent on the parent's model (opusplan-spike).
-      [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && guard+=(--settings \
-        "{\"env\":{\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\"}}")
+      # The session's env goes through --settings, since herdr passes no env. SWARM_AGENT tells the
+      # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
+      # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
+      # parent's model (opusplan-spike).
+      local env="\"SWARM_AGENT\":\"${name}\""
+      [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
-        --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto ${guard[@]+"${guard[@]}"} 2>&1) && break
+        --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto \
+        --disallowedTools "Bash(gh pr merge:*)" --settings "{\"env\":{${env}}}" 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then
       # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
