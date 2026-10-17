@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2034,SC2154
+# shellcheck shell=bash disable=SC2034,SC2119,SC2120,SC2154
 
 # bin/lib/panes.py: the one reader of this project's panes, shared by status, tidy and dash (each python
 # imports it), so the three views agree.
