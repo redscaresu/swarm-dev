@@ -81,6 +81,8 @@ check "--since counts the older use, and the verdict still reads the last 30 day
   "$(run --since "${old}" 2>/dev/null | grep '^stale')" $'stale\t1\tflow: stacked\t0 (flow)\tdelete?'
 check "--until leaves out the uses after it: used's are today's, stale's is on --until's day" \
   "$(run --since "${old}" --until "${old}" 2>/dev/null | grep -E '^(used|stale)')" "$(printf '%s\n' $'used\t0\tflow: stacked\t0 (flow)\t' $'stale\t1\tflow: stacked\t0 (flow)\tdelete?')"
+check "--until alone counts the 30 days up to it: stale's use on --until's day" \
+  "$(run --until "${old}" 2>/dev/null | grep '^stale')" $'stale\t1\tflow: stacked\t0 (flow)\tdelete?'
 # In UTC-7, an event at 03:00Z on the first day of the 30 is the day before locally, so outside them.
 edge="$(TZ=America/Los_Angeles python3 -c 'import datetime; print(datetime.date.today() - datetime.timedelta(days=30))')"
 printf '%s\n' "${edge}T03:00:00Z"$'\tedgecmd\t-\tw:1\tok' >> "${P}/.swarm/events.tsv"
@@ -88,6 +90,15 @@ printf '%s\n' "edge"$'\t'"${old}"$'\tflow: stacked\t0 (flow)\tevent:edgecmd' >> 
 check "an event counts by its local day: 03:00Z in UTC-7 falls before the last 30 days" \
   "$(TZ=America/Los_Angeles run 2>/dev/null | grep '^edge')" $'edge\t0\tflow: stacked\t0 (flow)\tdelete?'
 check "with no feature list, the section says so" "$(SWARM_FEATURES="${dir}/none.tsv" run 2>/dev/null)" "no feature list at ${dir}/none.tsv"
+# Without SWARM_FEATURES, the project's own docs/features.tsv, never the plugin's.
+own() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT -u SWARM_FEATURES PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow 2>/dev/null) \
+  | sed -n '/^## features$/,/^## /p' | sed -e 1d -e '/^## /d' -e '/^$/d'; }
+check "without SWARM_FEATURES or a project docs/features.tsv, one line and no plugin feature" \
+  "$(own | sed 's|at .*/docs/features.tsv$|at <project>/docs/features.tsv|')" "no feature list at <project>/docs/features.tsv"
+cp "${F}/docs/features.tsv" "${P}/docs/features.tsv"
+check "without SWARM_FEATURES, the project's docs/features.tsv is read" "$(own | head -2)" \
+  "$(printf '%s\n' $'feature\tuses\tmetric\tbaseline\tverdict' $'used\t2\tflow: stacked\t0 (flow)\t')"
+rm "${P}/docs/features.tsv"
 
 # docs/features.tsv: a metric, a uses entry and a baseline on every row; each role: one policy knows.
 bad=""
