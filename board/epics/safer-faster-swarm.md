@@ -1,5 +1,5 @@
 ---
-status: later
+status: active
 ---
 
 # Merges that need no hand cleanup, agents that cannot leak secrets, and builds that wait less
