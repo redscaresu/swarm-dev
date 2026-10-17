@@ -53,6 +53,8 @@ case "$1 $2" in
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
+  "pr diff") case "$*" in *"--color never"*) cat "${FX}/diff" ;; *) sed "s/^/$(printf '\033')[1m/" "${FX}/diff" ;; esac ;;
   api*)
     for a in "$@"; do path="${a}"; done
     sha="${path#*/commits/}"; sha="${sha%%/*}"
@@ -117,7 +119,7 @@ fresh() {
   rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
-  echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+  echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
   echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
@@ -373,6 +375,116 @@ chmod 644 "${P}/.swarm/state/e"
 fresh; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:b --board "${URL}"; refused "--board from a builder's pane" "pane w:b"
 fresh "merge = agent"; rm "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"
 is "--board from a conductor's pane with merge = agent: exits 0" 0 "${rc}"
+
+# --- A story marked costs: money is the user's to merge: with merge = agent, merge holds it whoever
+# calls, status lists it for the user, and the conductor's and plan-epic's briefs say so.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: money with merge = agent" "held: s costs money"
+check "costs: money: s stays in review" grep -qx 'status: review' "${S}"
+# The value in any case, quoted, or with a comment holds it; another value whose comment names money does not.
+for v in "Money" "'money'" "money  # a CI job on real cloud" "[money]"; do
+  fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: ${v}"
+  merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: ${v} with merge = agent" "held: s costs money"
+done
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: none # no money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; is "costs: none # no money merges" 0 "${rc}"
+# A block list, as Obsidian's Properties saves one, is read as its items.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs:" "  - money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: as a block list (  - money) with merge = agent" "held: s costs money"
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs:" "# why it costs" "" "  - money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: as a block list with a comment and a blank line in it" "held: s costs money"
+# prs: entries glued by a comma with no space are two entries.
+fresh "merge = agent"; item s "status: review" "prs: [https://github.com/o/r/pull/8,${URL}]" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "a costs: money story whose prs: glues its URLs with a comma" "held: s costs money"
+# A story it cannot read fails closed: whether it costs money is unknown.
+fresh "merge = agent"; item a "status: ready"; chmod 000 "${P}/docs/stories/a.md"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "a story on the board that cannot be read" "cannot be read, so whether it costs money is unknown"
+chmod 644 "${P}/docs/stories/a.md"; rm -f "${P}/docs/stories/a.md"
+# A value it does not know fails closed, naming it.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: maybe"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "costs: maybe with merge = agent" "held: s has costs: maybe, not money or none"
+fresh "merge = agent"; printf 'costs: money\n' >> "${S}"; merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"
+is "the same story without costs: (only its body says costs: money) merges" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+# Any story listing the PR holds it, whichever item is in review; an epic's costs: is ignored.
+fresh "merge = agent"; rm "${S}"; item a "status: done" "prs: ${URL}" "costs: money"; mkdir -p "${P}/docs/epics"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "an epic in review listing a costs: money story's PR" "held: a costs money"
+fresh "merge = agent"; rm "${S}" "${P}/docs/stories/a.md"
+printf -- '---\nstatus: review\ncosts: money\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"
+is "an epic's costs: money is ignored: it merges" "merge e ok|main-ci e ok|reconcile e ok (finished)" "$(events | paste -sd'|' -)"
+# A stacked child's PR carries its open parent's commits: a costs: money parent holds it.
+fresh "merge = agent"; item s "status: blocked" "depends_on: [p]" "prs: ${URL}"
+item p "status: review" "costs: money" "prs: https://github.com/o/r/pull/8"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "a child stacked on a costs: money parent" "held: p costs money"
+# status tags any review line whose PR is held, an epic's too.
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
+check "status tags an epic in review whose PR is held: awaiting your merge (costs money): epic e" said "awaiting your merge (costs money): epic e ${URL}"
+rm -rf "${P}/docs/epics" "${P}/docs/stories/p.md"
+# --board (or --release) is no way round it, nor another spelling of the URL.
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board for a costs: money story's PR" "held: s costs money"
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board https://github.com/O/R/pull/07; refused "--board for a costs: money story's PR spelt /O/R/pull/07" "held: s costs money"
+# Nor a board PR that lifts a hold: one changing a costs: line, or a block-list line under one.
+fresh "merge = agent"; rm "${S}"
+printf 'diff --git a/docs/stories/t.md b/docs/stories/t.md\n--- a/docs/stories/t.md\n+++ b/docs/stories/t.md\n@@ -2,3 +2,3 @@\n status: review\n-costs: money\n+costs: none\n' > "${FX}/diff"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose diff changes a costs: line" "changes a costs: line in docs/stories/t.md"
+fresh "merge = agent"; rm "${S}"
+printf 'diff --git a/docs/stories/t.md b/docs/stories/t.md\n--- a/docs/stories/t.md\n+++ b/docs/stories/t.md\n@@ -2,4 +2,4 @@\n status: review\n costs:\n-  - money\n+  - none\n' > "${FX}/diff"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose diff changes a costs: block-list line" "changes a costs: line in docs/stories/t.md"
+fresh "merge = agent"; rm "${S}"
+printf 'diff --git a/docs/stories/t.md b/docs/stories/t.md\n--- a/docs/stories/t.md\n+++ b/docs/stories/t.md\n@@ -5,6 +5,6 @@ costs:\n   # two\n   # three\n   # four\n-  - money\n+  - none\n status: review\n' > "${FX}/diff"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose diff changes a block-list line past the context, named by the hunk header" "changes a costs: line in docs/stories/t.md"
+fresh "merge = agent"; rm "${S}"
+printf 'diff --git a/docs/stories/t.md b/docs/stories/t.md\n--- a/docs/stories/t.md\n+++ b/docs/stories/t.md\n@@ -2,6 +2,6 @@\n status: review\n costs:\n # why it costs\n \n-  - money\n+  - none\n' > "${FX}/diff"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"; refused "--board whose diff changes a block-list line below a comment and a blank line" "changes a costs: line in docs/stories/t.md"
+# review's held line names a parent that costs money.
+fresh "merge = agent"; item s "status: blocked" "depends_on: [p]"; item p "status: ready" "costs: money"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review s "${URL}" > "${ROOT}/out" 2>&1) || true
+check "review's held line says (costs money) when a parent costs money" said "held: s waits for p (costs money) to merge"
+fresh "merge = agent"; item s "status: blocked" "depends_on: [p]"; item p "status: ready"; chmod 000 "${P}/docs/stories/p.md"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review s "${URL}" > "${ROOT}/out" 2>&1) || true
+check "review's held line says (costs money) when a parent cannot be read" said "held: s waits for p (costs money) to merge"
+chmod 644 "${P}/docs/stories/p.md"; rm -f "${P}/docs/stories/p.md"
+# With merge = human the user's PRs are all theirs: the lead merges one when asked, as before.
+fresh; item s "status: review" "prs: ${URL}" "costs: money"; merge "${URL}"
+is "with merge = human, the lead's swarm.sh merge of a costs: money story goes ahead" 0 "${rc}"
+fresh "merge = agent"; item s "status: review" "prs: ${URL}" "costs: money"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > "${ROOT}/out" 2>&1) || true
+check "status lists it as awaiting your merge (costs money) under merge = agent" said "awaiting your merge (costs money): s ${URL}"
+# conduct writes the brief before it opens a workspace, which a failing herdr then refuses.
+cp "${REPO}/tests/claude_stub.sh" "${ROOT}/bin/claude"; touch "${ROOT}/agents.fail"
+mkdir -p "${P}/docs/epics"; printf -- '---\nstatus: active\n---\n\n# e\n' > "${P}/docs/epics/e.md"
+for c in e --backlog; do
+  b="${P}/.swarm/briefs/conduct-${c#--}.md"; rm -f "${b}"
+  (cd "${P}" && env -u SWARM_PROJECT -u HERDR_PANE_ID HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" conduct "${c}" >/dev/null 2>&1) || true
+  check "the ${c#--} conductor's brief (merge = agent) names costs: money" grep -qF 'costs: money' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) leaves such a PR for the user" grep -qF 'Leave the PR for the user' "${b}"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  check "the ${c#--} conductor's brief (merge = agent) hands such a PR over and closes its builder, as merge = human does" \
+    grep -qF 'run `swarm.sh review <slug> <PR URL>` and `swarm.sh close <slug>`, never `swarm.sh merge`' "${b}"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  check "the ${c#--} conductor's brief (merge = agent) reports, not waits, on a strict refusal ending (costs money)" \
+    grep -qF 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) closes a held child's builder when its held line says (costs money)" \
+    grep -qF 'leave its builder open, unless that line' "${b}"
+  check "the ${c#--} conductor's brief (merge = agent) treats any held: refusal from merge as the user's" \
+    grep -qF 'refuses any other PR with' "${b}"
+done
+check "the epic conductor's brief (merge = agent) never finishes the epic under a story still in review" \
+  grep -qF 'while a story of it is still in review' "${P}/.swarm/briefs/conduct-e.md"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the epic conductor's brief (merge = agent) puts such an epic in review, so reconcile finishes it after the user's merge" \
+  grep -qF 'run `swarm.sh review <epic> <every PR URL still waiting>`' "${P}/.swarm/briefs/conduct-e.md"
+rm -rf "${P}/docs/epics" "${ROOT}/agents.fail"
+# step <from> <to> — plan-epic.md from the line holding <from> up to the one holding <to>.
+step() { awk -v from="$1" -v to="$2" 'index($0, to) { on = 0 } index($0, from) { on = 1 } on' "${REPO}/commands/plan-epic.md"; }
+check "plan-epic's small path names costs: money" grep -qF 'costs: money' <<< "$(step '**0. Size**' '**1. Survey**')"
+check "plan-epic's decompose brief names costs: money" grep -qF 'costs: money' <<< "$(step '**2. Decompose**' '**3. Verify**')"
+# shellcheck disable=SC2016 # the backticks are plan-epic's
+check "plan-epic's skeptic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'skeptic-<slug>' 'one `codex`')"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

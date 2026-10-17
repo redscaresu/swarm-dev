@@ -333,6 +333,9 @@ check "story --strict refuses naming the open story; no agent, branch or worktre
   awk -F'\t' '$2 == "story" { print $3 }' "${p}/.swarm/events.tsv")"
 check "story warns naming the open story and the function, and still starts it" \
   "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xa after it merges|started" "$(warns xa)|$(started_x xa)"
+other "status: review" "epic: e2" "costs: money" "touches: [bin/swarm.sh:tell_agent (kinds)]"; subject xm "[bin/swarm.sh:tell_agent]"
+check "story names an open story whose merge is the user's (costs money)" \
+  "warning: xb (epic e2) is open and touches bin/swarm.sh:tell_agent; start xm after it merges (costs money)" "$(warns xm)"
 for s in xc1 xc2 xc3; do subject "${s}" "[bin/swarm.sh:tell_agent]"; done
 check "no warning for a ready story with no builder, a story of the same epic, or another function" "none|none|none" \
   "$(other "status: ready" "epic: e2" "touches: [bin/swarm.sh:tell_agent]"; warns xc1)|$(
@@ -558,7 +561,7 @@ check "it runs one swarm.sh merge at a time, the next only once the last has exi
 check "a red base stops its merging: it finds the PR pair, opens the fix or lists it, and reports it" "yes" \
   "$(has "A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing more, find the PR pair that broke it" "${brief}")"
 after="${brief#*swarm.sh merge --head}"; after="${after%%Stay inside this epic*}"
-check "after the merge it closes a builder only when reconcile printed build cleared, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "1|yes|yes|yes" \
+check "after the merge it closes a builder only when reconcile printed build cleared or a held child's parent costs money, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "2|yes|yes|yes" \
   "$(grep -oF 'swarm.sh close <slug>' <<< "${after}" | wc -l | tr -d ' ')|$(has "Reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${after}")|$(has "start each story of this epic it prints as \`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
 check "it reports, and stops, only once no story of the epic is ready or running, never just because nothing is ready" "yes|yes|no" \
   "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"

@@ -196,12 +196,43 @@ check "two review items turning green at once wake it" returned 25
 check "it prints both, so gh never reads the board's lines" test "$(out)" == "merge: r ${URL}"$'\n'"merge: r2 ${URL}"
 stop
 
+fresh "merge = human"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL}" "costs: money"
+check "with merge = human, a green costs: money review story wakes it too" returned 25
+check "it prints merge: <slug> <PR URL> for it" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+stop
+
 fresh "merge = agent"
 start 4000
 item r "kind: code" "status: review" "prs: ${URL}"
 check "with merge = agent, a green review story does not wake it, and it times out" returned 40
 check "with merge = agent it times out non-zero with nothing printed" test "$(out)|$(rc)" == "|1"
 check "with merge = agent nothing is logged" test -z "$(events)"
+
+fresh "merge = agent"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL}" "costs: money"
+check "with merge = agent, a green costs: money review story wakes it: the user merges it" returned 25
+check "it prints merge: <slug> <PR URL> for it under merge = agent" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+stop
+
+fresh "merge = agent"; mkdir -p "${P}/docs/epics"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL}" "costs: money"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+check "a held PR that a story and its epic both list wakes it" returned 25
+check "it prints the held PR once, under the story" test "$(out)|$(rc)" == "merge: r ${URL}|0"
+stop; rm -rf "${P}/docs/epics"
+
+# The first item listing a held PR is not green (its other PR is red): a later one listing only it still wakes it.
+fresh "merge = agent"; mkdir -p "${P}/docs/epics"; echo "${H2}" > "${FX}/head.8"; checks failure "${H2}"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL} ${URL%/*}/8" "costs: money"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+check "a held PR whose first item is not green still wakes it through a later green one" returned 25
+check "it prints the later item" test "$(out)|$(rc)" == "merge: e ${URL}|0"
+stop; rm -rf "${P}/docs/epics"
 
 # --- no change: a short timeout.
 fresh

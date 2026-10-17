@@ -823,6 +823,8 @@ litem stories/m-green.md '' 'status: review' 'prs: https://github.com/o/l/pull/1
 litem stories/m-fail.md '' 'status: review' 'prs: https://github.com/o/l/pull/2'
 litem stories/m-unk.md '' 'status: review' 'prs: https://github.com/o/l/pull/3'
 litem stories/m-run.md '' 'status: review' 'prs: https://github.com/o/l/pull/4'
+# A costs: money merge: with merge = human the lead's, as any merge; with merge = agent the user's (below).
+litem stories/m-paid.md '' 'status: review' 'costs: money' 'prs: https://github.com/o/l/pull/5'
 litem stories/l-stall.md '' 'status: ready' 'kind: code'
 litem hld/2026-10-01-d.md '' 'status: draft'
 printf 'w4:p1 l-auth\nw4:p2 l-wait\nw4:p3 l-empty\nw4:p4 l-gone\nw4:p5 l-stall\n' > "${L}/.swarm/state/l"
@@ -846,6 +848,7 @@ case "$1 $2 $3" in
   "pr view https://github.com/o/l/pull/1") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   "pr view https://github.com/o/l/pull/2") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}' ;;
   "pr view https://github.com/o/l/pull/4") echo '{"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":""}]}' ;;
+  "pr view https://github.com/o/l/pull/5") echo '{"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}' ;;
   *) exit 1 ;;
 esac
 STUB
@@ -866,7 +869,7 @@ print("\n".join(out))' "$1" <<< "$2"
 }
 joined() { sed -e 's/^│ //' -e 's/ *│$//' <<< "$1" | paste -sd' ' - | tr -s ' '; }
 YOURS=("! run lead story you-ask" "! auth: run /login (l-auth's login expired)" "! agree draft HLD 2026-10-01-d: /hld 2026-10-01-d")
-LEADS=("! merge l#1 (✓ green) m-green" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
+LEADS=("! merge l#1 (✓ green) m-green" "! merge l#5 (✓ green) m-paid (costs money)" "! merge l#2 (✗ failing) m-fail" "! merge m-unk: https://github.com/o/l/pull/3" "! merge l#4 (◐ CI running) m-run"
   "! run lead story no-you" "! run lead story talks" "! by hand: v-odd"
   "! decide escalated story esc: swarm.sh reset esc or swarm.sh drop esc" "! decide escalated story esc-imp: swarm.sh reset esc-imp or swarm.sh drop esc-imp" "! answer l-wait (waiting on input)" "! close the empty pane l-empty"
   "! look at l-gone: session ended" "! look at l-stall: working 1")
@@ -893,6 +896,18 @@ for cols in 100 160; do
   check "lead = session at ${cols} columns: a ready lead story with no **You:** line waits for the lead" \
     has "! run lead story no-you waits for: the lead" "$(joined "${queue}")"
 done
+# With merge = agent swarm.sh merge holds a costs: money story for the user: no lead session can merge it.
+printf 'lead = session\nmerge = agent\n' > "${L}/.claude/swarm/config"; out="$(ldash 100)"
+check "lead = session, merge = agent: a costs: money merge is under needs you" \
+  has "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "needs you" "${out}")")"
+check "lead = session, merge = agent: a costs: money merge is not in the lead's queue" \
+  lacks "! merge l#5 (✓ green) m-paid (costs money)" "$(joined "$(lbox "lead's queue" "${out}")")"
+# An epic in review listing the same held PR: one row for it.
+litem epics/ep-paid.md '' 'status: review' 'prs: https://github.com/o/l/pull/5'; out="$(ldash 100)"
+check "lead = session, merge = agent: a held PR a story and its epic both list is one row" \
+  test "$(grep -c 'l#5' <<< "$(lbox "needs you" "${out}")$(lbox "lead's queue" "${out}")")" -eq 1
+rm -f "${L}/docs/epics/ep-paid.md"
+echo "lead = session" > "${L}/.claude/swarm/config"
 # Once reset (an ok reset line in events.tsv), an escalated story offers only drop, as next does.
 printf '2026-10-14T10:00:00Z\treset\tesc\tw4:p5\tok\n' >> "${L}/.swarm/events.tsv"
 check "lead = session: an escalated story reset once offers only drop" \

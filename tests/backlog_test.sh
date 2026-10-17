@@ -118,7 +118,9 @@ run close conduct-e >/dev/null
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null
 bl="$(cat "${brief}")"
-check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does" "no" "$(hasnt "waits on <other>'s merge" "${bl}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does, unless it costs money" "yes" \
+  "$(has 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it, and report yours as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
 check "with merge = agent, the backlog conductor also stops when CI on the base is red or timed out" "yes" \
   "$(has 'that you may start is left and none is running, or when CI on the base is red or timed out.' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
