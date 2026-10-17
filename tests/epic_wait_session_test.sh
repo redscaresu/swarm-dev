@@ -25,7 +25,6 @@ GIT=(git -c user.name=t -c user.email=t@t -c init.defaultBranch=main)
 check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
-has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 
 item() { # <board> <path> <front-matter line>...
   local path="$1/$2" title; shift 2
@@ -135,7 +134,6 @@ session() { # <file> <session>=<status>... — a `claude agents --json` fixture
   echo "[${out}]" > "${f}"
 }
 nudges() { grep -c '^agent prompt' "${ROOT}/herdr.log" || true; }
-nudged() { grep -c $'\tnudge\ta\t' "${p}/.swarm/events.tsv" || true; }
 waitrc() { # <stderr file> <wait args...> — "<stdout>|exit <rc>|<seconds taken>"
   local e="$1" t0=${SECONDS} out rc=0; shift
   out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" wait "$@" 2>"${e}")" || rc=$?

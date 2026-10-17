@@ -79,7 +79,7 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
 # A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
-# escalation block's fixed now (DASH_NOW, 2026-10-10 noon).
+# escalation block's fixed now (SWARM_DASH_NOW, 2026-10-10 noon).
 touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.

@@ -24,13 +24,6 @@ check() { # <name> <test...>
 has() { grep -qF -- "$1" <<< "$2"; }
 lacks() { ! grep -qF -- "$1" <<< "$2"; }
 
-item() { # <path under docs> <front-matter line>...
-  local path="${P}/docs/$1" title; shift
-  title="$(basename "${path}" .md)"
-  mkdir -p "$(dirname "${path}")"
-  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
-}
-
 mkdir -p "${P}/.swarm/state" "${ROOT}/bin" "${ROOT}/nobin" "${ROOT}/size" "${ROOT}/projects/p"
 unset COLUMNS LINES
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/stty"

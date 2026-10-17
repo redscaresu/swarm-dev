@@ -80,12 +80,11 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
 # A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
-# escalation block's fixed now (DASH_NOW, 2026-10-10 noon).
+# escalation block's fixed now (SWARM_DASH_NOW, 2026-10-10 noon).
 touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
 for i in 1 2 3 4 5; do printf '2026-10-04\tkind%s\thttps://github.com/o/r/pull/8\tfinding %s\n' "${i}" "${i}" >> "${P}/.swarm/findings.tsv"; done
-ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\treview\ts-one\tw1:p1\tok\n' > "${P}/.swarm/events.tsv"
 # Older actions, so that from 140 columns the recent log is taller than the needs-you box beside it.
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf '2026-09-%02dT10:00:00Z\ttell\told-%s\tw1:p1\tok\n' "${i}" "${i}" >> "${P}/.swarm/events.tsv"; done
@@ -145,6 +144,8 @@ touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 echo "more" >> "${P}/docs/stories/s-three.md"; echo "more" >> "${P}/docs/stories/s-two.md"
 
 widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().splitlines()))'; }
+snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
+before="$(snapshot)"
 
 fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"
 check "COLUMNS sets the width when stty and tput cannot" test "$(widest <<< "${out}")" -eq 160
@@ -182,6 +183,8 @@ for cols in 79 60 45; do
   check "at ${cols} columns a long line is cut with …" has "…" "${out}"
 done
 
+
+check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${before}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

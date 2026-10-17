@@ -81,12 +81,11 @@ printf '%s\n' '{"type":"user","message":{"role":"user","content":"go"}}' '{"mess
 printf '2026-10-02\tchore\tx-chore\tclaude\thaiku\tmedium\tsess-locked\n' >> "${P}/.swarm/agents.tsv"
 echo '{}' > "${ROOT}/projects/p/sess-locked.jsonl"; chmod 000 "${ROOT}/projects/p/sess-locked.jsonl"
 # A session log's mtime is a sign of life (the stall rule): x-esc's was written before the
-# escalation block's fixed now (DASH_NOW, 2026-10-10 noon).
+# escalation block's fixed now (SWARM_DASH_NOW, 2026-10-10 noon).
 touch -t 202610101100 "${ROOT}/projects/p/sess-esc.jsonl"
 printf '2026-10-03\tvacuous-test\thttps://github.com/o/r/pull/7\ta test that could not fail\n' > "${P}/.swarm/findings.tsv"
 # Five findings on another PR the same day: one recent row, not five.
 for i in 1 2 3 4 5; do printf '2026-10-04\tkind%s\thttps://github.com/o/r/pull/8\tfinding %s\n' "${i}" "${i}" >> "${P}/.swarm/findings.tsv"; done
-ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 printf '2026-10-03T10:00:00Z\tfinish\ts-zero\tw1:p1\tok\n2026-10-04T10:00:00Z\treview\ts-one\tw1:p1\tok\n' > "${P}/.swarm/events.tsv"
 # Older actions, so that from 140 columns the recent log is taller than the needs-you box beside it.
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do printf '2026-09-%02dT10:00:00Z\ttell\told-%s\tw1:p1\tok\n' "${i}" "${i}" >> "${P}/.swarm/events.tsv"; done
@@ -146,13 +145,16 @@ touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 echo "more" >> "${P}/docs/stories/s-three.md"; echo "more" >> "${P}/docs/stories/s-two.md"
 
 widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().splitlines()))'; }
-# dash's one-minute gh cache, as the frame checks before --watch left it: filled by a failing gh, so
-# the --watch runs below with no stub gh first on PATH ask no gh.
-fresh; (cd "${P}" && env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" dash >/dev/null 2>&1) || true
+snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
+before="$(snapshot)"
 
 # --watch off a terminal prints a frame only when it changed, plain, until stopped.
-(cd "${P}" && exec env -u HERDR_ENV bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
-pid=$!; sleep 3; kill -TERM "${pid}" || true; wait "${pid}" || true
+# The stubs go first on PATH, so no watch here reaches the real herdr or gh. It waits up to 30 s for
+# the first frame, then 2 s more, in which an unchanged frame must not print again.
+(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/watch.out" 2>&1) &
+pid=$!
+for _ in $(seq 150); do grep -q -- '─ needs you' "${ROOT}/watch.out" && break; sleep 0.2; done
+sleep 2; kill -TERM "${pid}" || true; wait "${pid}" || true
 w="$(cat "${ROOT}/watch.out")"
 check "--watch off a terminal draws the frame" has "─ needs you" "${w}"
 check "--watch off a terminal does not repeat an unchanged frame" test "$(grep -c -- '─ needs you' <<< "${w}")" -eq 1
@@ -161,10 +163,13 @@ check "--watch off a terminal has no ANSI escapes" lacks $'\033' "${w}"
 # --watch on a terminal: a pty, 30x120, its size read with the real stty. ptywatch.py runs
 # `dash --watch <seconds>`, resizes the pty to 30x150 and sends SIGWINCH at <resize-at> seconds (0:
 # never), types each <key>@<seconds> given after <q-at>, types q at <q-at>, and kills the watch if
-# it is still running 5 seconds later.
+# it is still running 5 seconds later. A <q-at> of H<n> types q once the watch has homed the cursor n
+# times, or at 15 seconds, so a slow render only makes the run longer.
 cat > "${ROOT}/ptywatch.py" <<'PY'
 import fcntl, os, pty, select, signal, struct, sys, termios, time
-swarm, out_path, every, resize_at, q_at = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), float(sys.argv[5])
+swarm, out_path, every, resize_at, q_at = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5]
+homes = int(q_at[1:]) if q_at.startswith("H") else 0
+q_at = 15.0 if homes else float(q_at)
 keys = [(k.split("@")[0].encode(), float(k.split("@")[1])) for k in sys.argv[6:]]
 def size(fd, rows, cols):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -179,8 +184,8 @@ while status is None:
         size(fd, 30, 150); os.kill(pid, signal.SIGWINCH); resized = True
     while keys and now > keys[0][1]:
         os.write(fd, keys.pop(0)[0])
-    if not typed and now > q_at:
-        os.write(fd, b"q"); typed = True
+    if not typed and (now > q_at or (homes and out.count(b"\x1b[H") >= homes)):
+        os.write(fd, b"q"); typed = True; q_at = min(q_at, now)
     if now > q_at + 5:
         os.kill(pid, signal.SIGKILL)
     r, _, _ = select.select([fd], [], [], 0.2)
@@ -201,8 +206,9 @@ ptywatch() { # <out> <seconds> <resize-at> <q-at> [<key>@<seconds>...]; PTY_BIN 
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '╭─ needs you' | wc -l | tr -d ' '; }
 
-# Nothing changes for 3.5 seconds at --watch 1: one full frame, the header line rewritten each second.
-if ptywatch "${ROOT}/pty.out" 1 0 3.5; then rc=0; else rc=$?; fi
+# Nothing changes at --watch 1 while the watch homes the cursor 3 times: one full frame, the header
+# line rewritten each second.
+if ptywatch "${ROOT}/pty.out" 1 0 H3; then rc=0; else rc=$?; fi
 w="$(cat "${ROOT}/pty.out")"; text="$(plain "${ROOT}/pty.out")"
 check "--watch on a terminal quits on q" test "${rc}" -eq 0
 check "--watch enters the alternate screen and hides the cursor" test "${w:0:14}" == $'\033[?1049h\033[?25l'
@@ -243,7 +249,7 @@ mkdir -p "${ROOT}/badpy"
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then echo "render boom" >&2; exit 1; fi\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/badpy/python3"
 chmod +x "${ROOT}/badpy/python3"
-(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/badpy:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/badwatch.out" 2>&1) &
+(cd "${P}" && exec env -u HERDR_ENV PATH="${ROOT}/badpy:${ROOT}/bin:${PATH}" bash "${SWARM}" dash --watch 1 > "${ROOT}/badwatch.out" 2>&1) &
 pid=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q "render boom" "${ROOT}/badwatch.out" && break; sleep 1; done
 sleep 2; alive=no
@@ -253,6 +259,8 @@ w="$(cat "${ROOT}/badwatch.out")"
 check "--watch shows a failed render's error" has "render boom" "${w}"
 check "--watch keeps going after a failed render" test "${alive}" == yes
 check "--watch refuses a bad interval" bash -c "cd '${P}' && ! bash '${SWARM}' dash --watch 0 2>/dev/null"
+
+check "dash changes nothing under the board or .swarm" test "$(snapshot)" == "${before}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

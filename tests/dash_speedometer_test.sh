@@ -12,7 +12,6 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
 fails=0
-P="${ROOT}/proj"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="${ROOT}/stub-bin"; mkdir -p "${STUB_BIN}"; cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}" CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
@@ -22,16 +21,8 @@ check() { # <name> <test...>
   if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
 }
 has() { grep -qF -- "$1" <<< "$2"; }
-lacks() { ! grep -qF -- "$1" <<< "$2"; }
 
-item() { # <path under docs> <front-matter line>...
-  local path="${P}/docs/$1" title; shift
-  title="$(basename "${path}" .md)"
-  mkdir -p "$(dirname "${path}")"
-  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
-}
-
-mkdir -p "${P}/.swarm/state" "${ROOT}/bin" "${ROOT}/nobin" "${ROOT}/size" "${ROOT}/projects/p"
+mkdir -p "${ROOT}/nobin" "${ROOT}/size"
 unset COLUMNS LINES
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/stty"
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/tput"
@@ -43,46 +34,10 @@ fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }
 
 ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%SZ"))' "$1"; }
 
-# herdr: this project's conductor (working) and builder (blocked), an empty pane (w1:p3), and
-# another project's agent (w9:p1), which must not be shown. s-three's herdr status is done while its
-# session is busy: the session's word is the one dash shows.
-cat > "${ROOT}/bin/herdr" <<'STUB'
-#!/bin/sh
-case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"},{"name":"plan-e9","agent_status":"working","pane_id":"w2:p9"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"},{"pane_id":"w2:p9"}]}}' ;;
-  "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
-    [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
-    [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
-    if [ -n "${WAIT_SWAP:-}" ] && [ -e "${WAIT_SWAP}.new" ]; then mv "${WAIT_SWAP}.new" "${WAIT_SWAP}"; fi   # the session changes while herdr waits
-    echo "herdr: a notice on stderr" >&2
-    case "${WAIT_MODE:-done}" in
-      timeout) echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
-      error) echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
-      *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
-    esac ;;
-  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
-  *) exit 1 ;;
-esac
-STUB
+# herdr and gh that always fail: no project here has a herdr, and gh is never reached.
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/herdr"
-# gh: PR 7's checks are green and its branch is behind the base.
-# PR 8 was updated at the time in pr8.updated.
-cat > "${ROOT}/bin/gh" <<STUB
-#!/bin/sh
-U8="${ROOT}/pr8.updated"
-STUB
-cat >> "${ROOT}/bin/gh" <<'STUB'
-echo "$*" >> "${U8%/*}/gh.log"
-case "$1 $2 $3" in
-  "pr view https://github.com/o/r/pull/7") echo '{"mergeStateStatus":"BEHIND","statusCheckRollup":[{"__typename":"CheckRun","status":"COMPLETED","conclusion":"SUCCESS"},{"__typename":"StatusContext","state":"SUCCESS"}]}' ;;
-  "pr view https://github.com/o/r/pull/8") if [ "$6" = -q ]; then cat "$U8"; else echo "{\"updatedAt\":\"$(cat "$U8")\"}"; fi ;;
-  *) exit 1 ;;
-esac
-STUB
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/nobin/gh"
-chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nobin/gh"
+chmod +x "${ROOT}/nobin/herdr" "${ROOT}/nobin/gh"
 
 # --- The speedometer, in a project of its own (SPD, lead = session): stories merged per day over 7
 # days, the slugs events.tsv says were finished, and two lights.
