@@ -377,16 +377,25 @@ unblock() {
   done < <(board stories)
 }
 
-# finish <slug> — take a merged story or epic off the board: delete its file.
+# delete_item <slug> — delete a story or epic's file where it is: reconcile's, after its pull.
+delete_item() { local f; f="$(item_file "$1")"; rm "${f}"; echo "deleted: ${f}"; }
+
+# finish <slug> — take a merged story or epic off the board: delete its file. A board outside the
+# repo is edited in place; one in it through the board PR finish-<slug> (board_pr), never the main
+# checkout. A second finish pushes to that PR. It prints the PR and the merge --board that lands it.
 finish_item() {
-  local slug="$1" f
-  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "bad slug '${slug}'"
-  for f in "${BOARD}/stories/${slug}.md" "${BOARD}/epics/${slug}.md"; do
-    [[ -f "${f}" ]] || continue
-    rm "${f}"; echo "deleted: ${f}"
-    return
-  done
-  die "no story or epic '${slug}' in ${BOARD}"
+  local slug="$1" f name wt body url
+  f="$(item_file "${slug}")"
+  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${slug}"; return; }
+  name="finish-${slug}"; wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
+  [[ -d "${wt}" ]] || wt="$(board_pr start "${name}")" || die "finish: cannot start the board PR ${name}"
+  rm -f "${wt}/${f#"${PROJECT_DIR}"/}"
+  body="$(mktemp "${TMPDIR:-/tmp}/swarm-finish.XXXXXX")" || die "finish: mktemp failed"
+  echo "Takes ${slug} off the board (\`swarm.sh finish ${slug}\`)." > "${body}"
+  url="$(board_pr open "${name}" "Finish ${slug}" "${body}")" || { rm -f "${body}"; die "finish: cannot open the board PR ${name}"; }
+  rm -f "${body}"
+  echo "deleted: ${f#"${PROJECT_DIR}"/} in the board PR ${url}"
+  echo "land it: swarm.sh merge --board ${url}"
 }
 
 # reset_at <slug> — when the slug was reset (its first ok reset line in events.tsv), or nothing. A story
@@ -427,9 +436,8 @@ reset_story() {
 }
 
 # drop <slug> <reason> — the lead drops an escalated story (is_escalated): take it off the board as
-# finish does (delete it), so next stops naming it, and the
-# lead commits the change in a board PR. Any other story is
-# refused. main logs the reason as the outcome.
+# finish does (in a board PR, on a board in the repo), so next stops naming it once that lands. Any
+# other story is refused. main logs the reason as the outcome.
 drop_story() {
   local f="${BOARD}/stories/$1.md"
   [[ -n "$1" ]] || die "drop: <slug> is missing: swarm.sh drop <slug> <reason>"
@@ -438,7 +446,7 @@ drop_story() {
   [[ -f "${f}" ]] || die "drop: no story ${f}"
   is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
   finish_item "$1"
-  echo "dropped: $1; commit the change to the board in a board PR"
+  echo "dropped: $1"
 }
 
 # dialog <slug> <accepted|dismissed> — a conductor answered an escalate builder's Fable usage-credits
@@ -609,7 +617,7 @@ reconcile() {
   for slug in "${merged[@]}"; do
     f="${BOARD}/stories/${slug}.md"; [[ -f "${f}" ]] || f="${BOARD}/epics/${slug}.md"
     [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]] || { record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"; continue; }
-    finish_item "${slug}"
+    delete_item "${slug}"
     record_event reconcile "${slug}" "ok (finished)"
   done
 }

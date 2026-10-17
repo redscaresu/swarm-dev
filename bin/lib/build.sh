@@ -308,14 +308,29 @@ send_goal() {
   esac
 }
 
+# last_of_epic <slug> <epic> — true when every other story of <epic> carries after: (it waits on the
+# epic, so the epic goes without it).
+last_of_epic() {
+  local s
+  while IFS= read -r s; do
+    [[ "$(basename "${s}" .md)" != "$1" && "$(fm "${s}" epic)" == "$2" && -z "$(get_fm "${s}" after)" ]] && return 1
+  done < <(board stories)
+  return 0
+}
+
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
   local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules
   story_ref="$(story_path "${slug}" "${src}")"
+  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
-    # The board is in this repo: the PR takes the story off it.
-    rel="${BOARD#"${PROJECT_DIR}/"}/stories"
-    cleanup="Delete ${rel}/${slug}.md in your PR, and nothing else under ${rel}/."
+    # The board is in this repo: the PR takes the story off it, and the epic with its last story.
+    rel="${BOARD#"${PROJECT_DIR}/"}"
+    if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && last_of_epic "${slug}" "${epic}"; then
+      cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/."
+    else
+      cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
+    fi
   else
     # The board is elsewhere: read the story there, and leave it for the lead.
     story_ref="${story_ref} (this worktree is $(basename "${src}"))"
@@ -334,7 +349,6 @@ CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides 
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
 in the PR body. $(reply_sentence)
 EOF
-  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
   rules="$(project_rules)"
@@ -673,6 +687,9 @@ EOF
 ${scope} A
 story whose \`kind\` is set and is not code, docs or chore (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
+
+When the board is in the project's repo, make a scope or body edit to a story in a board PR
+(\`swarm.sh board-pr\`), as the lead does, never in the main checkout.
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
 of another epic (in review, or with its builder open) touches the same function or file. On a refusal
