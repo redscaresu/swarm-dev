@@ -225,6 +225,15 @@ check "a held PR that a story and its epic both list wakes it" returned 25
 check "it prints the held PR once, under the story" test "$(out)|$(rc)" == "merge: r ${URL}|0"
 stop; rm -rf "${P}/docs/epics"
 
+# The first item listing a held PR is not green (its other PR is red): a later one listing only it still wakes it.
+fresh "merge = agent"; mkdir -p "${P}/docs/epics"; echo "${H2}" > "${FX}/head.8"; checks failure "${H2}"
+start 20000
+item r "kind: code" "status: review" "prs: ${URL} ${URL%/*}/8" "costs: money"
+printf -- '---\nstatus: review\nprs: %s\n---\n\n# e\n' "${URL}" > "${P}/docs/epics/e.md"
+check "a held PR whose first item is not green still wakes it through a later green one" returned 25
+check "it prints the later item" test "$(out)|$(rc)" == "merge: e ${URL}|0"
+stop; rm -rf "${P}/docs/epics"
+
 # --- no change: a short timeout.
 fresh
 start 3000

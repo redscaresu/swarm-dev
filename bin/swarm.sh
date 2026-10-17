@@ -3117,27 +3117,34 @@ costs_money() {
 }
 
 # costs_value <story-file> — its costs: from the front matter, with the indented or "- " lines of a
-# block list under it, lowercased, with each line's # comment, quotes, brackets, commas, dashes and
-# spaces gone (costs: [Money] and costs: then "  - money" are money): money, none, empty, or a value
-# nothing here knows, which costs_money holds (fails closed).
+# block list under it (blank and comment lines skipped), lowercased, with each line's # comment,
+# quotes, brackets, commas, dashes and spaces gone (costs: [Money] and costs: then "  - money" are
+# money): money, none, empty, or a value nothing here knows (unreadable for a file it cannot read),
+# which costs_money holds (fails closed).
 costs_value() {
   local v
   v="$(awk '/^---$/ && ++n == 2 { exit }
     n != 1 { next }
+    on && /^[[:space:]]*(#.*)?$/ { next }
     on && /^([[:space:]]|-)/ { sub(/#.*/, ""); v = v $0; next }
     { on = 0 }
     !seen && index($0, "costs:") == 1 { seen = on = 1; v = substr($0, 7); sub(/#.*/, "", v) }
-    END { print v }' "$1")"
+    END { print v }' "$1")" || { echo unreadable; return 0; }
   v="${v//[][[:space:]\"\',-]/}"
   tr '[:upper:]' '[:lower:]' <<< "${v}"
 }
 
 # pr_held <pr-url> — why the PR waits for the user's merge, or nothing: money_walk over the stories
-# whose prs: lists it (pr_stories).
-pr_held() { money_walk "$(pr_stories "$1")"; }
+# whose prs: lists it (pr_stories), or, when a story cannot be read, that (fails closed).
+pr_held() {
+  local s
+  s="$(pr_stories "$1")" || { echo "$1 (a story on the board cannot be read, so whether it costs money is unknown)"; return 0; }
+  money_walk "${s}"
+}
 
-# pr_stories <pr-url> — the slugs of the stories whose front matter's prs: lists the PR in any
-# spelling: owner and repo in any case, the number with leading zeros.
+# pr_stories <pr-url> — the slugs of the stories whose front matter's prs: (split on spaces and commas)
+# lists the PR in any spelling: owner and repo in any case, the number with leading zeros. Fails when
+# a story cannot be read.
 pr_stories() {
   local f files=()
   while IFS= read -r f; do files+=("${f}"); done < <(board stories)
@@ -3146,7 +3153,7 @@ pr_stories() {
     BEGIN { k = canon(k) }
     FNR == 1 { n = 0; d = 0 }
     /^---$/ { n++; next }
-    n == 1 && !d && index($0, "prs:") == 1 { d = 1; m = split(substr($0, 5), u)
+    n == 1 && !d && index($0, "prs:") == 1 { d = 1; m = split(substr($0, 5), u, /[ \t,]+/)
       for (i = 1; i <= m; i++) if (canon(u[i]) == k) { s = FILENAME; sub(/.*\//, "", s); sub(/\.md$/, "", s); print s; break } }' "${files[@]}"
 }
 
@@ -3962,7 +3969,7 @@ merge_pr() {
     done <<< "${info}"
     if [[ "${only}" == --board && "${CFG_merge}" == agent ]]; then
       # A board PR could lift a hold (costs: money to none, or a story deleted) before the agent merges it.
-      info="$(gh pr diff "${n}" --repo "${repo}")" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
+      info="$(gh pr diff "${n}" --repo "${repo}" --color never)" || merge_fail "--board: gh cannot read the diff of ${url}, so whether it changes a costs: line is unknown"
       p="$(costs_diff <<< "${info}")"
       [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; with merge = agent the user merges it"
     fi
@@ -4005,14 +4012,16 @@ merge_pr() {
 }
 
 # costs_diff — the path of the first file in a unified diff (stdin) whose added or removed lines include
-# a costs: line, or a block-list line under one: the key above it in the hunk, or, past the context,
-# the one git names after the hunk's @@ (the last line above it that starts with a letter).
+# a costs: line, or a block-list line under one: the key above it in the hunk (blank and comment lines
+# skipped), or, past the context, the one git names after the hunk's @@ (the last line above it that
+# starts with a letter).
 costs_diff() {
   awk '/^diff / { f = ""; key = ""; next }
     /^--- / { if ($2 != "/dev/null") { f = $2; sub(/^a\//, "", f) }; next }
     /^\+\+\+ / { if ($2 != "/dev/null") { f = $2; sub(/^b\//, "", f) }; next }
     /^@@/ { key = $0; if (!sub(/^@@[^@]*@@ ?/, "", key)) key = ""; key = tolower(key); next }
     /^[ +-]/ { l = substr($0, 2)
+      if (l ~ /^[[:space:]]*(#.*)?$/) next
       if (l ~ /^([[:space:]]|-)/) { c = 1 } else { c = 0; key = tolower(l) }
       if ($0 ~ /^[+-]/ && (tolower(l) ~ /^costs:/ || (c && key ~ /^costs:/))) { print f; exit } }'
 }
@@ -6435,7 +6444,7 @@ lead_queue() {
     slug="${line%% *}"; prs="${line#"${slug}"}"; line="merge: ${slug}${prs}"; rc=0; urls+="${prs}"
     if [[ -n "${tag}" ]]; then
       # A held PR is reported once, under the first item listing it (a story and its epic both may).
-      new=""; for u in ${prs}; do [[ "${seen}" == *" ${u} "* ]] || new=1; seen+="${u} "; done
+      new=""; for u in ${prs}; do [[ "${seen}" == *" ${u} "* ]] || new=1; done
       [[ -n "${new}" ]] || continue
     fi
     # shellcheck disable=SC2086 # prs: is a space-separated list of URLs
@@ -6445,7 +6454,10 @@ lead_queue() {
       # shellcheck disable=SC2086 # as above
       LEAD_FRESH=1 heads_green ${prs} || rc=$?
     fi
-    if [[ ${rc} -eq 0 ]] || { [[ ${rc} -eq 2 ]] && grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; }; then echo "${line}"; fi
+    if [[ ${rc} -eq 0 ]] || { [[ ${rc} -eq 2 ]] && grep -qxF "${line}" "${LEAD_SEEN}" 2>/dev/null; }; then
+      # Seen once reported: a later item listing the PR still wakes the lead when this one was not green.
+      echo "${line}"; [[ -z "${tag}" ]] || seen+="${prs# } "
+    fi
   done < <(waiting_on_user)
   # A green head this read did not reach (gh failed, or an earlier PR of its item was red) stays cached
   # while its PR is still in review.
