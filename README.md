@@ -3,9 +3,10 @@
 [![CI](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/redscaresu/swarm-dev/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/swarm-dev)
 
-swarm-dev runs a team of Claude Code agents that build software while you watch. You write a design
-with one agent. Others plan it, try to break the plan, and build it in parallel, each in its own
-terminal pane. The run stops whenever a decision is yours.
+swarm-dev runs a team of Claude Code agents that build software while you watch. You agree a design
+with one agent. Others split it into one-PR stories, try to break the plan, and build the stories in
+parallel, each in its own terminal pane and git worktree. Every PR is reviewed before it merges, and
+the run stops whenever a decision is yours.
 
 ![swarm.sh dash --watch on a demo project: what needs you and the epics on the left, recent work on the right](docs/assets/dash.gif)
 
@@ -16,50 +17,26 @@ terminal pane. The run stops whenever a decision is yours.
   <img alt="How the swarm builds a design: /hld, /swarm-dev:swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
-1. You write a high-level design (HLD) with a co-author agent.
-2. A planning swarm splits the design into epics, then each epic into stories of one PR
-   each. Skeptic agents and codex try to break every plan before you see it, and you approve it.
-3. A conductor agent takes an epic and starts one builder per story, each in its own git
-   worktree and pane. With `goal` on, each builder also gets a Claude Code `/goal` that points at
-   its story's **Done when** by path and keeps it working until that holds or a set number of turns pass.
-   Each PR is reviewed by codex and `/code-review`, and the builder fixes what they find
-   (with `goal` on, under a fresh goal that holds until the fixes are in). A codex review that
-   runs past 10 minutes (`codex_minutes`) is stopped, and the PR says codex was skipped.
-   A story need not wait for its parents' PRs to merge: it starts stacked on their open branches, and
-   its own PR is held out of review until they merge. Each green PR gets its own review agent, scoped
-   to its story's `touches` and **Done when**. Ready stories that belong to no epic go to a backlog
-   conductor (`swarm.sh conduct --backlog`).
-4. Green, reviewed PRs wait for you to merge. The next `/swarm-dev:swarm` starts the stories that were waiting on them.
-   With `merge = agent` the conductor merges each one itself, pinned to the head it reviewed, and
-   starts the stories it unblocked in the same run. A story marked `costs: money` is always held for you.
-5. While PRs are in review, the next epic is planned; a small epic (three stories or fewer, none
-   `risk: high`) is planned by the lead alone, without the full swarm. When `main` has changes since the
-   last `v<version>` tag, `swarm.sh next` prints `release` and the lead cuts the release.
+1. **Design.** You write a design with a co-author agent (`/hld`). A reviewer agent attacks it
+   before you agree it.
+2. **Plan.** Planning agents split it into epics, then into stories of one PR each, and skeptic
+   agents try to break the plan. You approve it.
+3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
+   and the builder fixes what it finds.
+4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
+   `merge = agent`. Anything marked `costs: money` always waits for you.
 
-Your own Claude session is the lead. It runs `/swarm-dev:swarm`, keeps an eye on the agents, cuts releases, and handles
-`kind: lead` stories: real cloud, credentials and anything hard to undo. Your steps in those
-stories are marked **You:**.
-
-When reviews keep finding the same kind of problem across PRs, `/swarm-dev:swarm`
-proposes a one-line rule for future builders, as a PR titled `lesson: <kind>`. You merge it
-or close it.
-Once a rule is in, each builder checks its diff against it before opening the PR and lists
-what it checked under `Rules checked:` in the PR body. If that list is missing, the conductor
-sends the PR back.
-
-Everything is plain Markdown in `docs/` (the board), so a run can stop anywhere and the next
-`/swarm-dev:swarm` picks up where it left off. The full method is in [`docs/method.md`](docs/method.md).
+Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
+the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
+are marked **You:**. Everything lives in plain Markdown files (the board), so a run can stop
+anywhere and the next `/swarm-dev:swarm` picks up where it left off.
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) 2.1.145 or later, or 2.1.269 or later with `goal` on
+- [Claude Code](https://claude.com/claude-code) 2.1.145 or later (2.1.269 or later with `goal` on)
 - [herdr](https://herdr.dev), the terminal multiplexer every agent runs in
 - the [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), both logged in
 - `git`, `python3` and `bash`
-
-[Obsidian](https://obsidian.md) is optional: it shows the board as a vault, grouped by status.
-
-![The board in Obsidian, grouped by status](docs/assets/board.png)
 
 ## Getting started
 
@@ -69,14 +46,14 @@ Everything is plain Markdown in `docs/` (the board), so a run can stop anywhere 
    claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
    ```
 
-2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents work in
-   worktrees of the repo and can't start until it is trusted.
-3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name: Claude Code
-   completes the short form to `/swarm-dev:hld`. The first time, it offers to set up the board and
-   asks once for your rules for builders (commit trailers, where credentials live, commands that must
-   never run). Commit the `.claude/swarm/brief.md` it writes.
-4. Run `/hld Add rate limiting to the API`, agree the design with the co-author, then run `/swarm-dev:swarm`
-   again. Run it each time it stops for you.
+2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
+   start in an untrusted folder.
+3. Inside herdr, run `claude`, then `/swarm-dev:swarm` (type the whole name; the short form
+   completes to `/swarm-dev:hld`). The first time, it sets up the board and asks once for your rules
+   for builders: commit trailers, where credentials live, commands that must never run. Commit the
+   `.claude/swarm/brief.md` it writes.
+4. Run `/hld Add rate limiting to the API`, agree the design, then run `/swarm-dev:swarm` again.
+   Run it each time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
 
@@ -84,30 +61,12 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `/hld <title>` | Write a design with a co-author agent. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
-| `swarm.sh dash --watch` | Open the live dashboard shown above: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights. `swarm.sh dash --project <dir>` (repeatable) draws several projects. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](docs/dash.md)). |
-| `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
-| `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
-| `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
-| `swarm.sh review-agent <slug> <PR URL>` | Start a read-only review agent for one story's PR, scoped to its `touches` and **Done when**. It writes `.swarm/reviews/<slug>.md` and returns at once; conductors run it for each green PR. |
-| `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](docs/method.md)). |
-| `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`. |
-| `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
-| `swarm.sh cost [--since YYYY-MM-DD]` | Show where the tokens went, all time or since a date, with a row for the lead's own sessions. |
-| `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
-| `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
-| `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]` | Throughput per epic and project: builders at once, stories per chain, review wait and stacked starts. |
-| `swarm.sh features [--since YYYY-MM-DD]` | Check each feature in `docs/features.tsv` against its metric and baseline, and flag the ones nobody uses or measures as candidates to delete. |
-| `swarm.sh review-yield [--since YYYY-MM-DD] [--epic <slug>]` | How many findings each reviewer raised per kind, how many were fixed or declined and the decline rate, then the review rounds per PR. `--epic` counts only that epic's PRs and lists them. |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day ([details](docs/dash.md)). |
+| `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
 
-Settings such as `merge = agent` go in `.claude/swarm/config`
-([all settings](docs/method.md#configuring-a-project)). On Foundry, Bedrock or Vertex, load your
-provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reach them:
-
-```bash
-[[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
-```
+The other commands are tools the lead runs; they are listed in
+[reference.md § Commands](docs/reference.md#commands). Settings go in `.claude/swarm/config`
+([all settings](docs/method.md#configuring-a-project)).
 
 ## When `/swarm-dev:swarm` stops for you
 
@@ -116,43 +75,37 @@ provider settings in `~/.zshrc` so herdr panes pick them up. An alias won't reac
 | a draft design | finish it with the co-author, then agree it |
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
-| a builder stopped `cleared-on-error` (its goal was refused or failed) | nothing: the wave stops, the story is held on the board (`held_for:`, unless the close printed `not held:`), and the lead decides whether to build it again and tells you why |
-| a PR waiting for you | merge it, or ask the lead to (it runs `swarm.sh merge`), or close it to send the story back |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (`swarm.sh conduct` sets a `later` epic `active` itself) |
+| a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 
 ## Cost and safety
 
-Every agent is a full Claude Code session, on a model chosen by its role, and planning one epic
-starts about ten agents. Agents use your own `claude`, `codex`, `gh` and `git` logins and never
-touch real cloud or credentials. By default no agent merges; with `merge = agent` only the conductor
-does.
+Every agent is a full Claude Code session on your own logins. On one project over a week, a story's
+build averaged about $6, and about $9 per merged story once planning and review are counted.
+`swarm.sh cost` shows where your tokens went.
 
-When `swarm.sh close` closes the builder of a code, docs or chore story that is still `ready`, it
-counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
-`story/<slug>` branch here and on origin, and any open PR, closed unmerged. `swarm.sh reconcile`
-removes the same worktree and branches once a story's PR merges, closing its builder first if it is
-open. When a PR closes unmerged, it removes them only if no builder is open. That leaves nothing to
-clean up by hand, unless reconcile prints `build kept: <slug>` or `build cleared: <slug>`, which say
-what is left. A story that has failed
-twice is rebuilt on Fable, the most expensive model. This ships on as `escalate_after = 2` in `.claude/swarm/config`;
-`escalate_after = 0` turns it off. If the Fable build fails as well, the story becomes a `lead`
-story and the lead decides: it re-scopes the story and runs `swarm.sh reset <slug> <reason>` to build
-it again (once per story), or drops it. Then it tells you what it chose and why. A Fable build
-can stop to ask your consent to spend usage credits. The conductor accepts it for you, so a third
-build can spend Fable usage credits. `swarm.sh dash` shows who is on call, how many builds
-escalated today, which attempt each Fable builder is on, and each escalation step in the recent panel.
+Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
+while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the
+most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
+details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
 
-`swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
-Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session
-saw. Only your user can read it, and `.swarm/` is git-ignored, so it never leaves your machine.
-`cost` and `outcomes` read the copy once the original is gone.
+## More
 
-`/swarm-dev:swarm` tells you when a new version is out. To update, run
-`! claude plugin marketplace update swarm-dev`, then `! claude plugin update swarm-dev@swarm-dev`,
-and restart. See [`SECURITY.md`](SECURITY.md) for security and [`AGENTS.md`](AGENTS.md) for working
-on swarm-dev itself.
+- [The method](docs/method.md): the short guide to how planning, building and merging work.
+- [Reference](docs/reference.md): every rule, setting, command and log.
+- On Foundry, Bedrock or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them
+  up (an alias won't reach them):
+
+  ```bash
+  [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
+  ```
+
+- [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status.
+- To update: `! claude plugin marketplace update swarm-dev`, then
+  `! claude plugin update swarm-dev@swarm-dev`, and restart.
+- [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
 
 ## License
 
