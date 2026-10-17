@@ -20,8 +20,8 @@ MARK="REEXEC-MARKER-0.2.0"
 T="${ROOT}/cache"
 for v in 0.1.0 0.2.0 dev; do mkdir -p "${T}/${v}" && cp -R "${SRC}/bin" "${SRC}/.claude-plugin" "${T}/${v}/"; done
 sed -i.bak "s/^dash_render() {\$/&\\
-  echo \"${MARK} project=\${SWARM_PROJECT:-}\"/" "${T}/0.2.0/bin/swarm.sh" && rm "${T}/0.2.0/bin/swarm.sh.bak"
-grep -qF "${MARK}" "${T}/0.2.0/bin/swarm.sh" || { echo "FAIL the marker went into 0.2.0's swarm.sh"; exit 1; }
+  echo \"${MARK} project=\${SWARM_PROJECT:-}\"/" "${T}/0.2.0/bin/lib/dash.sh" && rm "${T}/0.2.0/bin/lib/dash.sh.bak"
+grep -qF "${MARK}" "${T}/0.2.0/bin/lib/dash.sh" || { echo "FAIL the marker went into 0.2.0's bin/lib/dash.sh"; exit 1; }
 
 export CLAUDE_CONFIG_DIR="${ROOT}/config" TMPDIR="${ROOT}/tmp" CLAUDE_PROJECTS_DIR="${ROOT}/projects"
 mkdir -p "${CLAUDE_CONFIG_DIR}/plugins" "${TMPDIR}" "${CLAUDE_PROJECTS_DIR}"

@@ -182,7 +182,7 @@ check "a JS it or test call is matched, its escaped quotes as the test prints th
   "  rules-unchecked: another has no FAIL line in the PR body (log-finding --reviewer ci rules-unchecked ${URL} …)" \
   "$(unchecked)"
 
-rule="$(sed -n '/^mutation_rule() {/,/^}/p' "${SWARM}")"
+rule="$(sed -n '/^mutation_rule() {/,/^}/p' "${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh)"
 check "mutation_rule tells builders to paste each test's FAIL line into the PR body" "yes|yes" \
   "$(grep -qF "paste each test's FAIL line" <<< "${rule}" && echo yes || echo no)|$(grep -qF "into the PR body" <<< "${rule}" && echo yes || echo no)"
 

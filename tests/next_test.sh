@@ -623,7 +623,12 @@ for k in nudge resume; do told "tell takes the kind ${k}" idle "${k}" findings.m
 # and finds it set in sess-s1's log after the tell began; a nudge or resume tell, or goal off, sends one record.
 # The events log holds one ok tell:findings line, and when the goal step fails, its failure after it.
 records() { grep -c '^--$' "${dir}/sent" 2>/dev/null || true; }
-reply() { local f; f="$(awk '/^reply_sentence\(\)/,/^}$/' "${SWARM}")"; (eval "${f}"; reply_sentence); }
+# reply — reply_sentence's text, or a line no goal holds when it is not found (an empty want matches any goal).
+reply() {
+  local f; f="$(awk '/^reply_sentence\(\)/,/^}$/' "${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh)"
+  [[ -n "${f}" ]] || { echo "no reply_sentence() in bin/swarm.sh or bin/lib/*.sh"; return; }
+  (eval "${f}"; reply_sentence)
+}
 goalcase() { # <name> <0: told with a goal, 1: refused naming s1> <want in the /goal or the refusal> <tell args...>
   # A refusal leaves $NREC records (2: the /goal was sent) and says the findings must not be sent again.
   local name="$1" rc="$2" want="$3" out goal ev; shift 3

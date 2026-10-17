@@ -29,30 +29,32 @@ run _archive story-a
 check "_archive copies the session through bin/lib's report.py" 1 "$(find "${R}/.swarm/sessions" -name '*-s1.jsonl.gz' 2>/dev/null | wc -l | tr -d ' ')"
 check "no module in the project root was imported" "" "$(cat "${R}/shadowed" 2>/dev/null || true)"
 
-# sites — one line per python3 -c '...' site that imports from bin/lib without the guard, naming its
-# line and what it lacks; and any bin/lib import outside such a site.
+# sites — one line per python3 -c '...' site in swarm.sh or bin/lib/*.sh that imports from bin/lib
+# without the guard, naming its file, line and what it lacks; and any bin/lib import outside such a site.
 sites() {
-  python3 -I - "${SWARM}" <<'PY'
-import re, sys
-text = open(sys.argv[1]).read()
+  python3 -I - "${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh <<'PY'
+import os, re, sys
 LIB = re.compile(r"(?m)(^|; )from (panes|stall|report|dash_legend) import")
 GUARD = 'sys.path.insert(0, os.environ["SWARM_LIB"]); '
-seen = 0
-for m in re.finditer(r"(?m)^(.*?)python3((?: -[A-Za-z])*) -c '([^']*)'", text):
-    body = m.group(3)
-    first = LIB.search(body)
-    if not first:
-        continue
-    seen += len(LIB.findall(body))
-    line = text.count("\n", 0, m.start()) + 1
-    if "-I" not in m.group(2).split():
-        print(f"{line}: python3 -c without -I")
-    if 'SWARM_LIB="${SWARM_HOME}/bin/lib"' not in m.group(1):
-        print(f"{line}: no SWARM_LIB on the command")
-    if not body[:first.start() + len(first.group(1))].endswith(GUARD):
-        print(f"{line}: its first bin/lib import does not insert SWARM_LIB just before it")
-if seen != len(LIB.findall(text)):
-    print("a bin/lib import outside a python3 -c site")
+for path in sys.argv[1:]:
+    text = open(path).read()
+    name = os.path.basename(path)
+    seen = 0
+    for m in re.finditer(r"(?m)^(.*?)python3((?: -[A-Za-z])*) -c '([^']*)'", text):
+        body = m.group(3)
+        first = LIB.search(body)
+        if not first:
+            continue
+        seen += len(LIB.findall(body))
+        line = text.count("\n", 0, m.start()) + 1
+        if "-I" not in m.group(2).split():
+            print(f"{name}:{line}: python3 -c without -I")
+        if 'SWARM_LIB="${SWARM_HOME}/bin/lib"' not in m.group(1):
+            print(f"{name}:{line}: no SWARM_LIB on the command")
+        if not body[:first.start() + len(first.group(1))].endswith(GUARD):
+            print(f"{name}:{line}: its first bin/lib import does not insert SWARM_LIB just before it")
+    if seen != len(LIB.findall(text)):
+        print(f"{name}: a bin/lib import outside a python3 -c site")
 PY
 }
 check "each python3 -c site that imports bin/lib runs under -I with bin/lib first" "" "$(sites)"
