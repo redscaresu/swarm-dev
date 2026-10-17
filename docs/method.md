@@ -19,10 +19,13 @@ each step is in [`reference.md`](reference.md).
 
 `/swarm-dev:swarm` runs the chain after the HLD. `swarm.sh next` reads the board and names the next
 step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD, a
-`lead` story, or a `later` epic. The board is the only state, so a run can stop anywhere and the
-next `/swarm-dev:swarm` continues. Building comes first, then planning. An epic is planned only
-once every epic it `depends_on` is done or has only stories in `review` left, so its stories are
-scoped against code that exists.
+`lead` story, or a `later` epic. On an empty board it explains the flow instead. The board is the
+only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
+first (a conductor still working, then an active epic's ready stories, then one-offs), then
+planning (an active epic with no stories, then an agreed HLD with no epics). An epic is planned
+only once every epic it `depends_on` is done or has only stories in `review` left, so its stories
+are scoped against code that exists. That can happen while a conductor is still working: `next`
+then names the planning first, and the lead keeps waiting on the conductor in the background.
 
 A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
 yours is marked **You:** in it. An open question for you is a `lead` story too, so the board's
@@ -83,22 +86,22 @@ lines to `.gitignore`. The next `/swarm-dev:swarm` asks once for the brief
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
 runs it; an unknown key or a bad value stops `swarm.sh` with the file and line. `swarm.sh config`
-prints every setting and where it came from. Each key's full rules are in reference.md, in the
-section named in its row.
+prints every setting and where it came from. Each key's full rules are in reference.md
+§ Settings, or the section named in its row.
 
 | Key | Default | What it does |
 |---|---|---|
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
-| `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges (reference.md § Merging) |
-| `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live; the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`. Every brief carries the file's tagged rule lines, capped at 4 KB with the brief (reference.md § The outer loop) |
+| `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
+| `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live; the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`. Every brief carries the file's tagged rule lines; a brief over 4 KB with them is flagged, not cut (reference.md § The outer loop) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
-| `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice |
+| `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
-| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue |
+| `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The

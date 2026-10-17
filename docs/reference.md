@@ -45,8 +45,9 @@ of life for that story's builder.
 until the conductor reports; on 2026-10-16, three held stories waited two hours that way. So the
 lead also runs `swarm.sh wait --lead` beside the conductor's wait. Every 30 seconds
 (`SWARM_LEAD_POLL`) it reads the board, and it returns as soon as a new item appears: a held story
-(`held_for:`), an escalated one, or, with `merge = human`, a story or epic in review whose PR heads
-are all green. It prints one line per item and logs one `lead-woken` line for each in events.tsv.
+(`held_for:`), an escalated one, or a story or epic in review whose PR heads are all green and that
+waits on the lead's user: every one with `merge = human`, and with `merge = agent` only a `costs: money`
+story, which `swarm.sh merge` holds for them. It prints one line per item and logs one `lead-woken` line for each in events.tsv.
 The lead handles each line at once and starts it again. It keeps what it last saw in
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
@@ -173,6 +174,20 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **A review agent is Opus at `high`**, the model the conductor reviewed with before each PR got its
   own (role `review`, started by `swarm.sh review-agent`). One per green PR, so reviews run side by
   side and the conductor's own context holds only the findings files.
+
+## Settings
+
+The table in [the guide](method.md) lists every key. The rules the table leaves out:
+
+- `merge` (default `human`): `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges
+- `lessons_file` (default `.claude/swarm/brief.md`): where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped
+- `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
+- `sonnet_share` (default `0`): `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
+- `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
+- `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
+- `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
+- `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic)
+- `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row, an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged
 
 ## Scoping an epic
 
@@ -494,7 +509,7 @@ its reply, and the conductor then reads the diff itself in codex's place. The pl
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 
-## Costs
+## Logs and outcomes
 
 **The audit log.** Every `swarm.sh` command appends one line to `.swarm/events.tsv`: the time,
 the command, its target, the herdr pane that ran it, and how it ended: `ok`, `interrupted`, the first
@@ -658,6 +673,7 @@ test the diff adds (Go `func TestX`, Python `def test_x`, a `check` line in `tes
 `it(` or `test(`) needs a line in the body with FAIL and its name, which the builder pastes from the
 mutation run. findings prints each test without one as `rules-unchecked`, with the command that
 logs it, `log-finding --reviewer ci`.
+
 ## Merging
 
 With `merge = human` (the default) no agent merges: each agent starts unable to run
@@ -691,7 +707,7 @@ Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/`
 reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
 again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
 a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
-blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`,
+blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` (or any value but `none`) for you, on every route (`held: <slug> costs money`), and the conductor reviews it, closes its builder and leaves the PR for your merge,
 and no other agent can. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
@@ -750,7 +766,7 @@ removes its worktree and `story/<slug>`, here and on origin (§ Merging). By han
 
 ## Releases
 
-**Releases.** No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the last
+No story PR bumps `.claude-plugin/plugin.json`. Once main has changes since the last
 release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugin.json`, the tag
 `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
 outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR

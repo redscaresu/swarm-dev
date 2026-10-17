@@ -1011,6 +1011,7 @@ check "only codex-review runs codex exec review, and no command tells anyone to"
   "$(grep -c 'codex exec review' "${SWARM}")|$(grep -l 'codex exec review' "${REPO}"/commands/*.md || true)"
 # notreviewed <file> — how many of <file>'s log-finding lines lack --reviewer, or none when it has none.
 notreviewed() { if ! grep -q 'log-finding' "$1"; then echo none; else grep 'log-finding' "$1" | grep -vc -- '--reviewer' || true; fi; }
+check "every log-finding line of method.md names --reviewer" "0" "$(notreviewed "${REPO}/docs/method.md")"
 check "every log-finding line of reference.md names --reviewer" "0" "$(notreviewed "${REPO}/docs/reference.md")"
 # bare_declined — each --declined in finding_rule's text or reference.md's outer-loop section that is
 # not followed by a reason (out-of-scope, nit, wrong or the <reason> placeholder), or none.
