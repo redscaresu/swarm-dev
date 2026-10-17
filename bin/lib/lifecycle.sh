@@ -364,10 +364,9 @@ impossible_refused() {
   return 1
 }
 
-# ESCALATED_OPEN, ESCALATED_CLOSE: the markers around the lead's block, which escalate_story appends
-# to a story and reset_story removes.
-ESCALATED_OPEN="<!-- swarm.sh escalated: swarm.sh reset removes this block -->"
-ESCALATED_CLOSE="<!-- /swarm.sh escalated -->"
+# escalated_file <slug> — where lead_block writes the lead's block: in .swarm/state, never in the
+# tracked story file. reset_story deletes it.
+escalated_file() { echo "${STATE_DIR}/board/stories/$1.escalated"; }
 # NO_KIND_LINE: escalated_from:'s value for a story that had no kind: line (built as code), so reset
 # takes the line out again and the file is its committed text.
 NO_KIND_LINE="code (default)"
@@ -423,23 +422,23 @@ held_story() {
 }
 
 # lead_block <slug> <text> <prs> [none] — no agent builds the story now: kind: lead, escalated_from: its
-# kind (NO_KIND_LINE when it has no kind: line), still ready, and a marked block at its end with <text>
+# kind (NO_KIND_LINE when it has no kind: line), still ready, and a block in its escalated_file with <text>
 # and every PR in <prs> (failed_build's gh list), or [none] when <prs> has none (by default, that no
 # PR was found). Prints how many PRs it named.
 lead_block() {
-  local f="${BOARD}/stories/$1.md" from urls k=0
+  local f="${BOARD}/stories/$1.md" e from urls k=0
+  e="$(escalated_file "$1")"
   from="$(get_fm "${f}" kind)"
   urls="$(json "'\n'.join('- ' + p['url'] for p in d)" <<< "${3:-[]}")"
   [[ -z "${urls}" ]] || k="$(grep -c . <<< "${urls}")"
-  set_fm "${f}" kind lead
-  set_fm "${f}" escalated_from "${from:-${NO_KIND_LINE}}"
-  [[ -z "$(tail -c1 "${f}")" ]] || echo >> "${f}"
-  { echo "${ESCALATED_OPEN}"
-    echo
-    printf '%s\n' "$2"
+  # The block first: a story escalated with no block would leave the lead nothing to decide from.
+  mkdir -p "$(dirname "${e}")" 2>/dev/null || die "$1: could not create $(dirname "${e}") for its block, so the story is left as it was"
+  { printf '%s\n' "$2"
     echo
     if [[ -n "${urls}" ]]; then printf "The attempts' PRs:\n\n%s\n" "${urls}"; else echo "${4:-No PR was found on story/$1.}"; fi
-    echo "${ESCALATED_CLOSE}"; } >> "${f}"
+  } 2>/dev/null > "${e}" || die "$1: could not write its block to ${e}, so the story is left as it was"
+  set_fm "${f}" kind lead
+  set_fm "${f}" escalated_from "${from:-${NO_KIND_LINE}}"
   echo "${k}"
 }
 

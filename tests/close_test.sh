@@ -161,13 +161,13 @@ is "no story file is written for a name with none" "" "$(cd "${P}/docs/stories" 
 is "no PR is closed but s1's" "1" "$(grep -c '^pr close' "${ROOT}/gh.log")"
 
 # --- A counted close of an escalate build (the role on the newest agents.tsv line for the story's
-# agent) makes the story the lead's: kind: lead, escalated_from: its kind, still ready, and a marked
-# block naming the lead's choices and the attempts' PRs. reset puts the story back as it was.
+# agent) makes the story the lead's: kind: lead, escalated_from: its kind, still ready, and a
+# block in .swarm/state naming the lead's choices and the attempts' PRs. reset puts the story back as it was.
 sw() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 built() { printf '2026-10-15\t%s\t%s\tclaude\topus\thigh\tsess-%s\n' "$2" "$1" "$1" >> "${P}/.swarm/agents.tsv"; }   # <slug> <role>
 fmv() { awk -v k="$2" '/^---$/ && ++n == 2 { exit } n == 1 && index($0, k ": ") == 1 { print substr($0, length(k) + 3) }' "${P}/docs/stories/$1.md"; }
 state() { echo "$(fmv "$1" kind)|$(fmv "$1" escalated_from)|$(fmv "$1" attempts)|$(fmv "$1" status)"; }
-block() { sed -n '/^<!-- swarm.sh escalated/,/^<!-- \/swarm.sh escalated -->$/p' "${P}/docs/stories/$1.md"; }
+block() { cat "${P}/.swarm/state/board/stories/$1.escalated" 2>/dev/null || true; }
 echo "[{\"number\":7,\"state\":\"CLOSED\",\"url\":\"${U}/7\"},{\"number\":8,\"state\":\"OPEN\",\"url\":\"${U}/8\"}]" > "${ROOT}/prs.json"
 item e1 "status: ready" "kind: code"; cp "${P}/docs/stories/e1.md" "${ROOT}/e1.orig"
 for i in 1 2; do started e1 "w:p3${i}"; built e1 code; close e1; done
@@ -191,12 +191,6 @@ is "a second reset of e1 fails, naming the first, and leaves it kind: lead" "1|y
 item e1 "status: ready" "kind: code" "attempts: 2"; built e1 escalate; started e1 w:p39; close e1; b="$(block e1)"
 is "escalated again after its reset, e1's block offers only drop" "yes|0|yes" \
   "$(grep -qF 'It was reset once already' <<< "${b}" && echo yes)|$(grep -c 'swarm.sh reset e1' <<< "${b}")|$(grep -qF 'swarm.sh drop e1 <reason>' <<< "${b}" && echo yes)"
-# A block whose close marker was edited away: reset would take the rest of the file with it, so it refuses.
-item cm "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"
-printf '%s\n' "<!-- swarm.sh escalated: swarm.sh reset removes this block -->" "the lead's choices" "the lead's re-scope" >> "${P}/docs/stories/cm.md"
-cp "${P}/docs/stories/cm.md" "${ROOT}/cm.before"; rc=0; out="$(sw reset cm why)" || rc=$?
-is "reset of a block with no close marker fails, naming the marker, and changes nothing" "1|yes|" \
-  "${rc}|$(grep -qF "no '<!-- /swarm.sh escalated -->' after it" <<< "${out}" && echo yes)|$(diff "${ROOT}/cm.before" "${P}/docs/stories/cm.md")"
 item n2 "status: ready" "kind: code"; rc=0; out="$(sw reset n2 why)" || rc=$?
 is "reset of a story with neither attempts: nor escalated_from: fails, naming it" "1|yes" \
   "${rc}|$(grep -qF 'reset: n2 has neither attempts: nor escalated_from:' <<< "${out}" && echo yes)"
