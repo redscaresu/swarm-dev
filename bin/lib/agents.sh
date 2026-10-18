@@ -50,8 +50,8 @@
 # STATE_DIR). herdr lists every project's agents; a pane id says which are this project's.
 # Only lines shaped like a tab record ("<pane> [name]", a pane id like w1:p6K) count: STATE_DIR also
 # holds codex briefs, watch-seen and .tmp files, and a list of those to skip would fail open. Only
-# regular files are read, since it also holds reconcile-backup/, and it always succeeds: a cat that
-# failed on that directory used to fail it under pipefail, so a caller reading its status saw none.
+# regular files are read, since it may also hold a directory, and it always succeeds: a cat that
+# failed on a directory used to fail it under pipefail, so a caller reading its status saw none.
 own_panes() {
   local f
   for f in "${STATE_DIR}"/*; do
@@ -386,11 +386,10 @@ start_agent() {
 }
 
 # codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
-# scope-<epic>, .swarm/<hld> for plan-<hld>; empty for any other tab.
+# scope-<epic>; empty for any other tab.
 codex_out_dir() {
   case "$1" in
     scope-?*) echo "${PROJECT_DIR}/.swarm/${1#scope-}" ;;
-    plan-?*)  echo "${PROJECT_DIR}/.swarm/${1#plan-}" ;;
   esac
 }
 
