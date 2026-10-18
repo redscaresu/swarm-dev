@@ -40,7 +40,7 @@ check "every tests/*_test.sh exports HOME or CLAUDE_CONFIG_DIR under its own mkt
 # 0.01; print "<herdr calls>|<under a second?>". herdr fails its first call and takes the second.
 # Case nap prints 1 when nap 1 took at least 100 ms; case floor prints scaled 20 at a scale of 0.001.
 timed() (
-  PROJECT_DIR="${ROOT}/p"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; export SWARM_SLEEP_SCALE=0.01
+  PROJECT_DIR="${ROOT}/p"; BOARD="${PROJECT_DIR}/board"; export SWARM_SLEEP_SCALE=0.01
   mkdir -p "${PROJECT_DIR}"; : > "${ROOT}/calls"
   # shellcheck source=bin/lib/agents.sh
   source "${REPO}/bin/lib/agents.sh"
