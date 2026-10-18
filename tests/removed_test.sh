@@ -2,9 +2,10 @@
 # removed_test.sh — the switches, modes and reports that were removed stay gone: none of their names
 # is in bin/swarm.sh, bin/lib/*.sh, bin/lib/*.py or tests/*.sh (this file excepted), and they say
 # verify only as git's --verify, or in the one LEGACY_BUILDER_ROLES line that keeps past verify
-# builds counted. cost, features and review-yield, folded into flow, each print the flow section that
-# holds their numbers and exit 0. lessons, its rule PRs and its rules check stay gone from bin/ and
-# commands/, whose collect step files a checks: story instead.
+# builds counted; no plan-hld or hld-lead is in bin/, commands/, templates/ or skills/. cost, features
+# and review-yield, folded into flow, each print the flow section that holds their numbers and exit 0.
+# lessons, its rule PRs and its rules check stay gone from bin/ and commands/, whose collect step
+# files a checks: story instead.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,6 +29,13 @@ if found="$(grep -rnE "${DOCS_GONE}" "${REPO}/docs" "${REPO}/commands" "${REPO}/
   echo "FAIL docs, commands, templates or skills mention something removed:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   docs, commands, templates and skills mention nothing removed"; fi
 
+# /plan-hld, the HLD template and the hld-lead role were removed: an epic is planned straight from /epic.
+if found="$(grep -rnE 'plan-hld|hld-lead' "${REPO}/bin" "${REPO}/commands" "${REPO}/templates" "${REPO}/skills")"; then
+  echo "FAIL plan-hld or hld-lead is back in bin, commands, templates or skills:"; echo "${found}"; fails=$((fails + 1))
+else echo "ok   no plan-hld or hld-lead in bin, commands, templates or skills"; fi
+if [[ -e "${REPO}/commands/plan-hld.md" || -e "${REPO}/templates/docs/hld" ]]; then
+  echo "FAIL commands/plan-hld.md or templates/docs/hld is back"; fails=$((fails + 1))
+else echo "ok   commands/plan-hld.md and templates/docs/hld are gone"; fi
 LESSONS_GONE='LESSON_|lessons_report|rules_check_step|rules_review_rule|Rules checked|lesson: <kind>|lesson: prune'
 if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands")"; then
   echo "FAIL bin/ or commands/ still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))
