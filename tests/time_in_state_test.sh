@@ -14,8 +14,9 @@
 # 11:45 to 11:55 and 12:15 to 12:20 = 15, merge wait 5 + 10 = 15, 100 in all; PR #9's tell, before PR #1
 # was created, is not PR #1's. A retry build on PR #1 starts at 11:35 and splits its own 55 minutes;
 # flow counts the PR once, by the rebuild. The retry's agents.tsv day is 10-02, so --since 2026-10-02
-# leaves the earlier builds out of outcomes, but not their tells. Its epic's conductor started at
-# 06:00, so tis waited ready, held, for 180 minutes before its first build; its retries hold none.
+# leaves the earlier builds out of outcomes, but not their tells. tis was unblocked at 05:00 and its
+# epic's conductor started at 06:00, so it waited ready, held, for 180 minutes before its first build;
+# its retries hold none.
 set -euo pipefail
 export TZ=UTC
 
@@ -38,6 +39,7 @@ printf '%s\n' $'2026-10-01\tcode\ttis\tclaude\topus\txhigh\ts0' $'2026-10-01\tco
   $'2026-10-02\tcode\ttis\tclaude\topus\txhigh\ts2' > "${P}/.swarm/agents.tsv"
 # A refused tell never reached the builder, so it starts no fixing.
 printf '%s\n' \
+  "${D}05:00:00Z"$'\tunblock\ttis\tw:1\tok' \
   "${D}06:00:00Z"$'\tconduct\te1\tw:1\tok' \
   "${D}10:40:00Z"$'\ttell:findings\ttis\tw:1\tok' \
   "${D}11:30:00Z"$'\ttell:findings\ttis\tw:1\tok' \
@@ -110,23 +112,44 @@ held() { awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i;
 check "a story ready while its epic's conductor ran is held until its first build, and only that build" "$(held "${out}")" \
   "$(printf '%s\n' "${D}09:00:00Z"$'\t180' "${D}10:50:00Z"$'\t' "${D}11:35:00Z"$'\t')"
 add_events() { cp "${dir}/events.full" "${E}"; printf '%s\n' "$@" >> "${E}"; }
+first_held() { held "$(outcomes)" | head -1 | cut -f2; }
 add_events "${D}07:00:00Z"$'\tunblock\ttis\tw:1\tok'
-check "a story unblocked after its conductor started is held from the unblock" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t120'
+check "a story unblocked after its conductor started is held from the unblock" "$(first_held)" 120
+add_events "${D}08:30:00Z"$'\tconduct\te1\tw:1\tok'
+check "held counts from the start of the conductor run the build started under" "$(first_held)" 30
 add_events "${D}08:00:00Z"$'\tclose\tconduct-e1\tw:1\tok' "${D}08:30:00Z"$'\tconduct\te1\tw:1\tconduct-e1 is still working'
-check "a closed conductor holds nothing after its close, and a refused conduct starts none" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t120'
-# With no epic, tis is the backlog conductor's: started by conduct --backlog, closed by its per-project name.
+check "a build that starts after its conductor closed holds 0, and a refused conduct starts no run" "$(first_held)" 0
+cp "${dir}/events.full" "${E}"; touch -t 202610010800 "${P}/.swarm/conduct-e1.report.md"
+check "a conductor's report ends its run" "$(first_held)" 0
+rm "${P}/.swarm/conduct-e1.report.md"
+grep -v $'\tunblock\t' "${dir}/events.full" > "${E}"
+check "with no unblock or ready commit by its start, a story's held is unknown" "$(first_held)" ""
+# With no epic, tis is the backlog conductor's, whose name is this project's (conductor_name).
+crc="$(printf '%s' "$(cd "${P}" && pwd -P)" | cksum)"; BACKLOG="$(printf 'conduct-backlog-repo-%06x' $((${crc%% *} % 16777216)))"
 sed -i.bak '/^epic: /d' "${P}/docs/stories/tis.md"
-add_events "${D}07:00:00Z"$'\tconduct\t--backlog\tw:1\tok' "${D}08:00:00Z"$'\tclose\tconduct-backlog-repo-0a1b2c\tw:1\tok'
-check "a story with no epic is held while the backlog conductor ran" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t60'
+add_events "${D}07:00:00Z"$'\tconduct\t--backlog\tw:1\tok' "${D}08:00:00Z"$'\tclose\tconduct-backlog-cleanup\tw:1\tok'
+check "a story with no epic is held under the backlog conductor, which another epic's close does not end" "$(first_held)" 120
+add_events "${D}07:00:00Z"$'\tconduct\t--backlog\tw:1\tok' "${D}08:00:00Z"$'\tclose\t'"${BACKLOG}"$'\tw:1\tok'
+check "the backlog conductor's own close ends its run" "$(first_held)" 0
 mv "${P}/docs/stories/tis.md.bak" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 check "--since keeps the tells of builds before it in the retry's fixing" "$(out="$(outcomes --since 2026-10-02)" cols)" \
   "${D}11:35:00Z"$'\t0\t15\t5\t20\t15\t55'
 
-# The story reached the board at 07:30, after its conductor started.
-git -C "${P}" add docs/stories/tis.md
-GIT_COMMITTER_DATE="${D}07:30:00Z" git -C "${P}" -c user.name=t -c user.email=t@t commit -qm "add tis"
-check "a story added to the board after its conductor started is held from its add" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t90'
+# With no unblock, tis reached the board blocked at 06:30 and a commit readied it at 07:30.
+board_commit() { # <status> <HH:MM>
+  sed -i.bak "s/^status: .*/status: $1/" "${P}/docs/stories/tis.md" && rm "${P}/docs/stories/tis.md.bak"
+  git -C "${P}" add docs/stories/tis.md
+  GIT_COMMITTER_DATE="${D}$2:00Z" git -C "${P}" -c user.name=t -c user.email=t@t commit -qm "tis $1"
+}
+cp "${P}/docs/stories/tis.md" "${dir}/tis.md"
+grep -v $'\tunblock\t' "${dir}/events.full" > "${E}"
+board_commit blocked 06:30
+check "a story added blocked, with no unblock or ready commit since, has no known ready time" "$(first_held)" ""
+board_commit ready 07:30
+cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
+check "a story readied by a board commit is held from that commit, not from its add" "$(first_held)" 90
+cp "${dir}/events.full" "${E}"
 
 flow() { # [epic [since]] — the time_in_state section alone, as flow runs it, over the outcomes rows
   SWARM_ROWS="${out}" python3 "${ROOT}/bin/lib/flow_report.py" "${2:-0000-00-00}" 9999-12-30 "${1:-}" x x x x x x x "" x time_in_state
@@ -137,6 +160,9 @@ check "flow's epic line counts the PR once and the story's held time, in hours a
 # than counting the retry's 55 minutes for it.
 check "a PR counts by its first build, in the window only when that build is" "$(flow "" 2026-10-02 | tail -1)" \
   $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%'
+# Another story of e1 that waited 3 h too but whose PR never merged: its held is not the merged PRs'.
+other="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["slug"] = "other"; print }' <<< "${out}")"
+check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%'
 check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%'
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi

@@ -680,11 +680,16 @@ abandoned PR is not counted, as it came before this PR was created. `gh` gives o
 each check on the PR's last head, so other CI counts as whichever phase lies under it. A check cancelled while
 queued, which `gh` dates to the year 1, adds no CI. The four after `building_min` cover a PR's time
 in review, from `pr_created_at` to the merge, so they add up to `pr_to_merge_min`. The last column,
-`held_min`, is on a story's first build alone: the minutes it sat ready and unstarted while a
-conductor of its epic ran (the backlog conductor, `conduct --backlog`, for a story with no epic). It was ready from the later
-of two times: when its file reached the board's default branch, and its last `unblock` event before
-the build started. A conductor runs from its `ok` `conduct` event to its first `ok` close after that.
-`held_min` is empty when the build has no `started`, and on a retry, whose own wait is not counted. A story the lead holds after an escalation (`kind: lead` with
+`held_min`, is on a story's first build alone: the minutes it sat ready and unstarted under the
+conductor run the build started in, counted from the later of the run's start and the story's ready
+time. The conductor is its epic's, or the backlog conductor (`conduct --backlog`) for a story with no
+epic. The story became ready at an `ok` `unblock` event, or at a commit on the board's default branch
+that set its `status: ready` (a story added ready, or readied by hand). A run starts at an `ok`
+`conduct` event and ends at the next one, at an `ok` close of the conductor, or when it writes its
+report (`.swarm/conduct-<epic>.report.md`, or a numbered copy, by its time), whichever comes first. A
+build that started after its run ended, or with no run, held 0. `held_min` is empty when the build
+has no `started` or the story has no ready time by then, and on a retry, whose own wait is not
+counted. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
@@ -835,8 +840,8 @@ The `time_in_state` section prints TSV `epic prs hours largest_first`, one row p
 `all` row. With `--epic` it prints that epic's row alone. The five phases are summed over the
 `outcomes` rows dated in the window that have the phase columns (their PR merged). Each PR counts
 once, by its build that started first, since a retried PR repeats its phases on every build, and is
-in the window only when that build's date is. `held` is summed over each story's first build dated
-in the window, merged or not. `hours` is all six together, and `largest_first` gives each as
+in the window only when that build's date is. `held` is over the same PRs: the `held_min` of each of
+their stories, once. `hours` is all six together, and `largest_first` gives each as
 `<state>:<hours>h/<share>%`, the largest first, where the share is of `hours`. So
 `held:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%`
 says the epic's stories spent most of their time waiting to start.

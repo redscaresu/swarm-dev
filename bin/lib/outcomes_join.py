@@ -1,4 +1,4 @@
-import collections, datetime, os, re, subprocess, sys
+import collections, datetime, glob, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
@@ -118,32 +118,44 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     for u in urls:
         named_reviews[pr_key(u)].append(f"review={e[0]}")
 
-def board_commits(*args):
-    # The board's commits that add or delete a story file, newest first, as (the format's text, [the
-    # story paths]); [] when git fails. Read on the default branch, where merges land (HEAD when there
-    # is no origin/HEAD, as dash_base_ref), so a story branch deleting its own file is no merge.
+def board_log(*args):
+    # git log over the board's stories on its default branch, where merges land (HEAD when there is no
+    # origin/HEAD, as dash_base_ref), so a story branch's own commits are no merge; "" when git fails.
     # --first-parent dates a commit by the merge, and --no-renames keeps a story deleted beside a
-    # similar new one a deletion. Each commit prints as "\x01<format>\0" and then its paths (from the
-    # repo root, any characters), each ending "\0".
+    # similar new one a deletion.
     board = sys.argv[2]
     has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
     got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
-                          "--first-parent", "--diff-merges=first-parent", "--no-renames", "-z", "--name-only", *args,
-                          "--", "stories/"], capture_output=True, text=True)
-    commits = [c.split("\0") for c in got.stdout.split("\x01")[1:]] if got.returncode == 0 else []
+                          "--first-parent", "--diff-merges=first-parent", "--no-renames", *args, "--", "stories/"],
+                         capture_output=True, text=True)
+    return got.stdout if got.returncode == 0 else ""
+
+def board_commits(*args):
+    # The board's commits that add or delete a story file, newest first, as (the format's text, [the
+    # story paths]). Each commit prints as "\x01<format>\0" and then its paths (from the repo root, any
+    # characters), each ending "\0".
+    commits = [c.split("\0") for c in board_log("-z", "--name-only", *args).split("\x01")[1:]]
     return [(c[0], [p.lstrip("\n") for p in c[1:] if p.strip("\n")]) for c in commits]
 
-# held: a story's first build waited ready while a conductor of its epic ran (the backlog conductor,
-# `conduct --backlog`, for a story with no epic). It was ready from the latest of its file reaching the
-# board's default branch and its unblock events; a conductor runs from its ok `conduct` event to its
-# agent's first ok close after that (or for good, when none came). An epic's conductor is
-# conduct-<epic>; the backlog's is conduct-backlog-<project dir>-<hash> (conductor_name), and older
-# logs say conduct-backlog, so a close of any conduct-backlog* agent ends the backlog's run.
+# held: the minutes a story's first build waited ready under the conductor run it started in: from the
+# later of the run's start and the story's ready time to the build's start. The story was ready at an
+# ok unblock event or a board commit that set its `status: ready` (a story added ready, or readied by
+# hand); with neither by then, held is unknown (empty). A conductor of its epic (the backlog conductor,
+# `conduct --backlog`, for a story with no epic) runs from an ok `conduct` event until the next one, an
+# ok close of its agent, or its report (.swarm/conduct-<epic>.report.md and the numbered copies, by
+# mtime), whichever comes first; a build that started after its run ended, or with none, held 0.
+# Retiring a conductor is the next conduct's first step, and tidy closes only retired panes, so
+# neither ends a run sooner. An epic's conductor is conduct-<epic>; the backlog's is the
+# per-project SWARM_BACKLOG_CONDUCTOR (conductor_name), or conduct-backlog in older logs.
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
-ready_at, conducting, stops = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
-for when, paths in board_commits("--diff-filter=A", "--format=%x01%ct"):
-    for p in paths:
-        ready_at[os.path.splitext(os.path.basename(p))[0]].append(float(when))
+ready_at, conducting, closed = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
+for commit in board_log("-p", "-U0", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
+    lines, path = commit.split("\n"), ""
+    for l in lines[1:]:
+        if l.startswith("+++ "):
+            path = l[len("+++ b/"):] if l.startswith("+++ b/") else ""
+        elif path and re.fullmatch(r"\+status:\s*ready\s*", l):
+            ready_at[os.path.splitext(os.path.basename(path))[0]].append(float(lines[0]))
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
     t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
@@ -154,23 +166,25 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     elif e[1] == "conduct":
         conducting[e[2]].append(t)
     elif e[1].split(":")[0] == "close":
-        stops["--backlog" if e[2].startswith("conduct-backlog") else e[2]].append(t)
+        closed[e[2]].append(t)
+
+def run_ends(epic):
+    # The times a conductor run of the epic ("" for the backlog's) could have ended: its agent's ok
+    # closes and its reports' mtimes.
+    names = [agent_name("conduct-" + epic)] if epic else ["conduct-backlog", os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")]
+    reports = glob.glob(os.path.join(glob.escape(os.path.dirname(sys.argv[3])), f"conduct-{glob.escape(epic or 'backlog')}.report.md*"))
+    return [t for n in names if n for t in closed[n]] + [os.path.getmtime(r) for r in reports]
 
 def held(slug, epic, start):
-    # The minutes from the story's ready time before start to start that a conductor of its epic ran,
-    # each minute once however many conductors ran it; empty when start is.
+    # Whole minutes, as a string; empty when start or the story's ready time is unknown.
     s = secs(start)
-    if s is None:
+    ready = max((t for t in ready_at[slug] if t <= s), default=None) if s is not None else None
+    if ready is None:
         return ""
-    ready = max((t for t in ready_at[slug] if t <= s), default=0)
-    runs = sorted((a, min([c for c in stops[agent_name("conduct-" + epic) if epic else "--backlog"] if c > a], default=s))
-                  for a in conducting[epic or "--backlog"])
-    total, edge = 0, ready
-    for a, b in runs:
-        a, b = max(a, edge), min(b, s)
-        if b > a:
-            total, edge = total + b - a, b
-    return str(round(total / 60))
+    run = max((t for t in conducting[epic or "--backlog"] if t <= s), default=None)
+    if run is None or any(run < t <= s for t in run_ends(epic)):
+        return "0"
+    return str(round((s - max(ready, run)) / 60))
 
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
