@@ -32,10 +32,11 @@ def exists(path):
     return path.startswith("docs/") and bool(glob.glob(os.path.join(repo, "templates", path)))
 
 def check_code(code, out):
-    for c in re.findall(r"(?<![\w./-])swarm\.sh[ \t]+([a-z][\w-]*)", code):
+    # A word that is itself a path (shellcheck bin/swarm.sh bin/lib/*.sh) is not a command.
+    for c in re.findall(r"(?<![\w.-])swarm\.sh[ \t]+([a-z][\w-]*)(?![\w.*-]*/)", code):
         if c not in commands:
             out.append("swarm.sh " + c)
-    for k in re.findall(r"(?<![\w./-])swarm\.sh[ \t]+config[ \t]+([a-z][\w-]*)", code):
+    for k in re.findall(r"(?<![\w.-])swarm\.sh[ \t]+config[ \t]+([a-z][\w-]*)", code):
         if k not in keys | {"project"}:
             out.append("config key " + k)
     for m in re.finditer(r"(?<![\w.~/$-])(?:\./)?(" + ROOTS + r"[\w./*-]*)", code):
@@ -79,11 +80,10 @@ def check_md(rel, text, out):
             out.append("config key " + k.group(1))
     check_prose(rel, para, out)
 
-files = ["README.md"] + [os.path.relpath(f, root) for g in ("docs/*.md", "commands/*.md")
-                          for f in sorted(glob.glob(os.path.join(root, g)))]
-# Only tracked files: a local .DS_Store or Obsidian file is not what CI reads.
-files += sorted(subprocess.run(["git", "-C", root, "ls-files", "-z", "skills", "templates"],
-                               check=True, capture_output=True, text=True).stdout.split("\0")[:-1])
+# Only tracked files: a local notes file, .DS_Store or Obsidian file is not what CI reads.
+tracked = subprocess.run(["git", "-C", root, "ls-files", "-z", "README.md", "docs", "commands", "skills", "templates"],
+                         check=True, capture_output=True, text=True).stdout.split("\0")[:-1]
+files = [f for f in tracked if re.fullmatch(r"README\.md|(docs|commands)/[^/]+\.md|(skills|templates)/.+", f)]
 for rel in files:
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
@@ -149,11 +149,14 @@ nosuch <slug>` or `swarm.sh drop
 
 ```bash
 shellcheck bin/swarm.sh bin/lib/*.sh
+bin/swarm.sh nosuch1
+"${SWARM_HOME}/bin/swarm.sh" dash
 ```
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch'
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch\ndocs/wrap.md\tswarm.sh nosuch1'
 git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
 printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
+printf 'Run %sswarm.sh untracked%s.\n' '`' '`' > "${tmp}/fixture/docs/notes.md"   # untracked
 doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
 got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
