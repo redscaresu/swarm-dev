@@ -75,7 +75,8 @@ waits_on_epic() {
 after_story() { waits_on_epic "$(get_fm "$1" kind)" "$(get_fm "$1" after)" "$(fm "$1" epic)"; }
 
 # epic_stories <epic> — the story files that count in <epic>, any status: those naming it, but an
-# after_story. Every test of an epic's stories reads them here.
+# after_story. Every test of an epic's stories reads them here, taken whole first (a loop that returns
+# while reading it would close the pipe on it: a Broken pipe where SIGPIPE is ignored).
 epic_stories() {
   local s
   while IFS= read -r s; do
@@ -87,10 +88,11 @@ epic_stories() {
 # epic_has_stories <epic> [<slug>] — true when a story counts in <epic> (epic_stories). With <slug>,
 # one but <slug>: story_brief's test for the epic's last story.
 epic_has_stories() {
-  local s
+  local s list
+  list="$(epic_stories "$1")"
   while IFS= read -r s; do
-    [[ "$(basename "${s}" .md)" == "${2:-}" ]] || return 0
-  done < <(epic_stories "$1")
+    [[ -z "${s}" || "$(basename "${s}" .md)" == "${2:-}" ]] || return 0
+  done <<< "${list}"
   return 1
 }
 
@@ -107,12 +109,13 @@ epic_planned() {
 # (open_item), so what depends on it goes ahead, and it is not planned again. A draft or later epic,
 # or one whose only story ever was an after: one, never does.
 epic_after_only() {
-  local s slug
+  local s slug list
   [[ "$(fm "$1" status)" == active ]] || return 1
   slug="$(basename "$1" .md)"
+  list="$(epic_stories "${slug}")"
   while IFS= read -r s; do
-    [[ "$(fm "${s}" status)" == "done" ]] || return 1
-  done < <(epic_stories "${slug}")
+    [[ -z "${s}" || "$(fm "${s}" status)" == "done" ]] || return 1
+  done <<< "${list}"
   epic_after_open "${slug}" && epic_planned "${slug}"
 }
 
@@ -262,12 +265,14 @@ epic_holding_deps() {
 # open epic with no stories or with one not yet in review. Stories are scoped against the code the
 # dependency builds, and code in review is code that exists. Its stories are epic_stories.
 dep_holds() {
-  local f n=0
+  local f n=0 list
   open_item "${BOARD}/stories/$1.md" && return 0
   open_item "${BOARD}/epics/$1.md" || return 1
+  list="$(epic_stories "$1")"
   while IFS= read -r f; do
+    [[ -n "${f}" ]] || continue
     case "$(fm "${f}" status)" in review) n=1 ;; done) ;; *) return 0 ;; esac
-  done < <(epic_stories "$1")
+  done <<< "${list}"
   [[ ${n} -eq 0 ]]
 }
 
