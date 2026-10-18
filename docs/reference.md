@@ -512,7 +512,8 @@ The builder's brief is the story file plus the standing rules (never merge, no r
 codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from
 `.claude/swarm/brief.md`, plus the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
-`AGENTS.md`, since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
+`AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, since a builder in another repo's worktree reads
+that repo's files, not this project's. `herdr agent read <slug> --source recent-unwrapped` shows what an agent
 is doing.
 
 **Review before closing.** A PR that changes only board files (no code) gets one
