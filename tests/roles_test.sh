@@ -54,7 +54,7 @@ pol="$(sed -n '/^policy() {$/,/^}$/p' "${SWARM}")"
 if grep -qx epic-review <<< "${roles}" && grep -q '^ *epic-review)' <<< "${pol}"; then
   echo "ok   epic-review is in ROLE_GROUPS and policy"
 else echo "FAIL epic-review is missing from ROLE_GROUPS or policy"; fails=$((fails + 1)); fi
-for r in hld hld-review; do
+for r in hld hld-review hld-lead; do
   if grep -qx -- "${r}" <<< "${roles}" || grep -q "^ *${r})" <<< "${pol}"; then
     echo "FAIL ${r} is still in ROLE_GROUPS or policy"; fails=$((fails + 1))
   else echo "ok   ${r} is in neither ROLE_GROUPS nor policy"; fi

@@ -80,8 +80,8 @@ fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
-check "the five phases are the last columns of outcomes" "$(head -1 <<< "${out}" | awk -F'\t' -v OFS='\t' '{ print $(NF-4), $(NF-3), $(NF-2), $(NF-1), $NF }')" \
-  $'building_min\tci_min\treview_wait_min\tfixing_min\tmerge_wait_min'
+check "the five phases are the last columns of outcomes before rework" "$(head -1 <<< "${out}" | awk -F'\t' -v OFS='\t' '{ print $(NF-5), $(NF-4), $(NF-3), $(NF-2), $(NF-1), $NF }')" \
+  $'building_min\tci_min\treview_wait_min\tfixing_min\tmerge_wait_min\trework'
 # The abandoned build has no merge; the retry: fixing 11:35 to 11:40 and 11:55 to 12:10, review wait
 # 11:40 to 11:45, CI 11:45 to 11:55 and 12:15 to 12:20, merge wait 12:10 to 12:15 and 12:20 to 12:30.
 check "each build's minutes split by precedence, summing to its start-to-merge minutes" "$(cols)" "$(printf '%s\n' \

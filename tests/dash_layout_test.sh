@@ -218,7 +218,7 @@ check "--ladder counts a role's agents, with its sessions' models" has "code    
 check "--ladder names the model a session ran on, not the policy's" has "escalate   → fable · xhigh  1 opus " "${out}"
 check "--ladder shows 0 for a role with no agents" grep -qE "docs       → sonnet · medium  0( |$)" <<< "${out}"
 check "--ladder has no verify row" lacks "verify" "${out}"
-check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +escalate" <<< "${out}"
+check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +(│|[a-z-]+ *→)" <<< "${out}"
 check "--ladder cells are as wide as the longest row: two a row at 100 columns, every role aligned" python3 -c '
 import sys
 t = sys.stdin.read().splitlines()
