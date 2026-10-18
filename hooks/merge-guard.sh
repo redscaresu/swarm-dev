@@ -6,20 +6,30 @@
 # the form, on gh pr merge, gh api .../pulls/<n>/merge, a graphql mergePullRequest, any of them in
 # code handed to a shell or an interpreter (-c, eval, a heredoc, a here-string, a pipe) or written
 # to a file, and on swarm.sh merge joined to another command. A mention in echo, printf or grep
-# passes. It also exits 2 on commands that lose work: a cd followed by ;, git checkout over a file
-# with uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git checkout, switch,
-# restore, reset --hard, stash or clean run in the project's main checkout (the call's cwd, a cd or
-# a -C). Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked: <form>`, to
-# the project's .swarm/events.tsv. Outside a swarm project it allows all.
+# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( )), a git
+# checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
+# checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
+# call's cwd, a cd or a -C); stash list and show and clean -n pass. Those rules fail open on an error
+# of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
+# <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
 
 input="$(cat)"
-# Fast path: a call that never says merge, git or cd, not even through quotes and backslashes
-# (mer"ge, me''rge, mer\ge), has nothing to block.
-plain="$(printf '%s' "${input}" | tr -d "\"'\\\\")"
-case "${plain}" in *[Mm][Ee][Rr][Gg][Ee]*) says=merge ;; *git*|*cd*) says=other ;; *) exit 0 ;; esac
-# A call that says merge fails closed: anything but the guard's own verdict refuses it. One that only
-# says git or cd fails open, since those rules save work rather than enforce the merge route.
+# The rules read the command alone, never the call's cwd, transcript path or description. Input with
+# no command string to find is read whole, so it still fails closed if it says merge.
+command="${input}"
+re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+[[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"
+# Fast path: a command that never says merge, nor git or cd as a word, not even through quotes and
+# backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
+plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
+word='(^|[^[:alnum:]_])(git|cd)([^[:alnum:]_]|$)'
+if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
+elif [[ ${plain} =~ ${word} ]]; then says=other
+else exit 0
+fi
+# A command that says merge fails closed: anything but the guard's own verdict refuses it. One that
+# only says git or cd fails open, since those rules save work rather than enforce the merge route.
 command -v python3 >/dev/null || { [[ ${says} == merge ]] || exit 0; echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
 IFS= read -r -d '' prog <<'PY' || true
@@ -276,9 +286,9 @@ def guard(code, cwd):
     for cmd in sh.cmds:
         args = list(itertools.dropwhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
         name = os.path.basename(args[0]) if args else ""
-        if name == "cd" and cmd["end"] == ";":
-            raise Unsafe("cd before ;", "If the cd fails, the rest runs where you were: use `cd <dir> || exit 1 &&`")
-        if name == "cd" and not cmd["nested"]:
+        if name == "cd" and not cmd["nested"]:  # a cd in $( ) moves nothing outside it
+            if cmd["end"] == ";":
+                raise Unsafe("cd before ;", "If the cd fails, the rest runs where you were: use `cd <dir> || exit 1 &&`")
             # ponytail: no subshell scoping, so a cd inside ( ) still moves d for the commands after it.
             t = next((w for w in args[1:] if w == "-" or not w.startswith("-")), "~")
             d = None if t == "-" else at(d, t)
@@ -296,17 +306,33 @@ def check_git(d, words, home):
     if d is None or not words:
         return
     sub, rest = words[0], words[1:]
-    if home and (sub in MOVES or (sub == "reset" and "--hard" in rest)):
+    if home and not reads_only(sub, rest) and (sub in MOVES or (sub == "reset" and "--hard" in rest)):
         here, ours = git_dirs(d), git_dirs(home)
         if here and ours and here[0] == ours[1]:
             raise Unsafe("git %s in the main checkout" % sub,
                          "A swarm agent never moves or resets the project's main checkout: run it in a worktree")
-    if sub == "checkout":
-        paths = rest[rest.index("--") + 1:] if "--" in rest else [w for w in rest if not w.startswith("-")]
-        status = (git(d, "status", "--porcelain", "--untracked-files=no", "--", *paths) or "").splitlines() if paths else []
-        if any(line[:2] not in UNMERGED for line in status):
-            raise Unsafe("git checkout over uncommitted changes",
-                         "git checkout drops them: back up with cp, then restore from the copy")
+    if sub == "checkout" and drops_changes(d, rest):
+        raise Unsafe("git checkout over uncommitted changes",
+                     "git checkout drops them: back up with cp, then restore from the copy")
+
+
+def reads_only(sub, rest):
+    """git stash list or show, or git clean -n or --dry-run: they change nothing."""
+    if sub == "stash":
+        return rest[:1] in (["list"], ["show"])
+    return sub == "clean" and any(w == "--dry-run" or re.fullmatch(r"-[A-Za-z]*n[A-Za-z]*", w) for w in rest)
+
+
+def drops_changes(d, rest):
+    """Whether git checkout <rest>, run in d, overwrites a change: an unstaged one, or a staged one
+    too when it checks out from a commit (HEAD -- f, main f). A conflicted path is not counted."""
+    paths = rest[rest.index("--") + 1:] if "--" in rest else [w for w in rest if not w.startswith("-")]
+    if not paths:
+        return False
+    src = [w for w in (rest[:rest.index("--")] if "--" in rest else rest[:1]) if not w.startswith("-")]
+    commit = any(git(d, "rev-parse", "--verify", "--quiet", w + "^{tree}") for w in src)
+    status = (git(d, "status", "--porcelain", "--untracked-files=no", "--", *paths) or "").splitlines()
+    return any(line[:2] not in UNMERGED and (commit or line[1] != " ") for line in status)
 
 
 def at(d, path):
@@ -378,7 +404,12 @@ def main():
         if not d or not isinstance(code, str):
             return 0
         check(code)
-        guard(code, cwd)
+        try:
+            guard(code, cwd)
+        except Unsafe:
+            raise
+        except Exception:  # the lose-work rules fail open: an error of theirs never refuses a call
+            pass
     except Blocked as b:
         record(d, "%s: %s" % (b.kind, b.args[0]))
         print(b.message(), file=sys.stderr)
