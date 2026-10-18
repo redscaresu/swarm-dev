@@ -126,7 +126,7 @@ check "make test fails when xargs stops early, stops what the jobs left started 
 # A file whose path holds a space runs.
 printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/sp ace_test.sh"
 check "a test file whose path holds a space runs" "yes" \
-  "$(JOBS=2 bash "${REPO}/scripts/test.sh" "${ROOT}/sp ace_test.sh" | grep -qxF "ok   ${ROOT}/sp ace_test.sh 0s" && echo yes || echo no)"
+  "$(JOBS=2 bash "${REPO}/scripts/test.sh" "${ROOT}/sp ace_test.sh" | sed 's/ [0-9]*s$//' | grep -qxF "ok   ${ROOT}/sp ace_test.sh" && echo yes || echo no)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
