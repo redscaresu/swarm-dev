@@ -664,7 +664,7 @@ per item they move. `merge` writes all its own lines, under the story's or epic'
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
-or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its checks), then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
@@ -1031,8 +1031,9 @@ the next only once the last has exited. After each, it runs `swarm.sh unblock` a
 run, starts each story of the epic that unblock printed as `ready:` and that clashes with no
 running one (§ Building, Pick the wave). A build cleared on error or given up on stops that: it starts nothing more in
 the wave. It reports once no story of the epic that it may start is ready and none is running. If
-CI on the base goes red or times out, it merges nothing more and stops: it finds the pair of PRs
-that broke it, each green alone, opens the fix or lists it for you, and says so in its report. It stops only when what is left needs the lead: a story only
+CI on the base times out, it merges nothing more and stops, and says so in its report. If it goes
+red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
+its builder at once, ahead of every other story, and merges nothing else until that fix lands. It stops only when what is left needs the lead: a story only
 the lead can finish, or a merge that `swarm.sh merge` refused or could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
 `merge = human` too.
@@ -1061,7 +1062,13 @@ commit needs no check run of its own when no workflow is expected on it, but the
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
-exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
+exits non-zero, naming the check, when main is red or the wait runs out. On a red main it also
+logs `main-red <sha> <checks>` and prints `fix-main: <checks> on <short sha>` with the FAIL lines
+(at most 20) from the logs of the failed Actions runs, and writes the one-off story
+`fix-main-<short sha>` (`kind: code`, ready, no epic, those lines in its body) into the main
+checkout, untracked, so its builder reads it there and leaves it alone; reconcile takes it off once
+its PR merges. Until a later merge sees main green or that story leaves the board, `next` names
+`fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
 

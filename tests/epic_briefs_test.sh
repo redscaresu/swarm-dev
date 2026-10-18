@@ -188,13 +188,15 @@ check "it merges by the literal PR number, pinned with --match-head-commit, in t
   "$(has "by the literal PR number" "${brief}")|$(has "\`--match-head-commit <sha>\`" "${brief}")|$(has "(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`)" "${brief}")|$(has "never --auto" "${brief}")"
 check "it runs one swarm.sh merge at a time, the next only once the last has exited" "yes" "$(has "Run one \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and reconcile done." "${brief}")"
 check "with merge = agent, the same clash rule, merge-base-in rule and round-3 cap" "yes|yes|yes|yes|yes|yes|gone" "$(clash_brief "${brief}")"
-check "a red base stops its merging: it finds the PR pair, opens the fix or lists it, and reports it" "yes" \
-  "$(has "A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing more, find the PR pair that broke it" "${brief}")"
+check "a red base stops its merging until it is green, and is reported" "yes" \
+  "$(has "A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing more until it is green, and say so in your report." "${brief}")"
+check "on fix-main the conductor starts the fix-main story at once, ahead of every other story, and never waits on an unrelated PR" "yes|yes|yes" \
+  "$(has "On \`fix-main\`, start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`, ahead of every other story and whatever your scope" "${brief}")|$(has "it is the one merge allowed while the base is red" "${brief}")|$(has "Never wait on an unrelated PR to fix it." "${brief}")"
 after="${brief#*swarm.sh merge --head}"; after="${after%%Stay inside this epic*}"
 check "after the merge it closes a builder only when reconcile printed build cleared or a held child's parent costs money, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "2|yes|yes|yes" \
   "$(grep -oF 'swarm.sh close <slug>' <<< "${after}" | wc -l | tr -d ' ')|$(has "Reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${after}")|$(has "start each story of this epic it prints as \`ready:\` that clashes with no running one, with \`swarm.sh story --strict <slug>\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
 check "it reports, and stops, only once no story of the epic is ready or running, never just because nothing is ready" "yes|yes|no" \
-  "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
+  "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base timed out, or is red with no \`fix-main:\` line." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
 check "the brief makes no claim about the block-red-pr-merge hook, which never sees swarm.sh's own gh calls" "no" \
   "$(grep -qF "block-red-pr-merge" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "escalate_after = 0" > "${p}/.claude/swarm/config"

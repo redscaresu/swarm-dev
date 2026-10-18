@@ -81,6 +81,8 @@ epic_has_stories() {
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
+#   fix-main <slug>   merge found the base red on a commit it merged (main_red): build the one-off
+#                     fix-main-<sha> it wrote before anything else, a conductor's wait included
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
@@ -101,7 +103,14 @@ epic_has_stories() {
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic story_epic buildable="" waiting="" when held n tag base
+  local f slug epic story_epic buildable="" waiting="" when held n tag base sha
+  # A red main comes first: every merge waits on its fix.
+  read -r sha n <<< "$(main_red)"
+  if [[ -n "${sha}" ]]; then
+    echo "fix-main fix-main-${sha:0:7}"
+    echo "CI on the base is red at ${sha:0:7} (${n}): build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green"
+    return
+  fi
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.

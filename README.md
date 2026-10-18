@@ -25,7 +25,9 @@ the run stops whenever a decision is yours.
 3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
    and the builder fixes what it finds.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
-   `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
+   `merge = agent`. Anything marked `costs: money` always waits for you. If main goes red after a
+   merge, `swarm.sh merge` writes a `fix-main-<sha>` story holding the failed tests' FAIL lines,
+   and the swarm builds that fix before anything else merges. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
    session, so merges go through `swarm.sh merge`. It also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or

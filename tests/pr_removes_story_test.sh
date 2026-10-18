@@ -100,6 +100,13 @@ is "with board_dir = docs, an epic's last story may still change the rest of doc
   "Delete docs/stories/k1.md and docs/epics/k.md (its epic's last story) in your PR, and nothing else under docs/stories/ or docs/epics/." "$(cleanup "${D}" k1)"
 is "an external-board story's brief deletes nothing" "Do not touch the story file; the lead takes it off the board after your PR merges." \
   "$(cleanup "${X}" g1)"
+# fix_main writes its story into the main checkout, untracked, so the builder's worktree has no copy.
+item "${B}/stories/fix-main-aaaaaaa.md" "status: ready" "kind: code"
+is "an untracked story's brief deletes nothing" "Do not touch the story file; the lead takes it off the board after your PR merges." \
+  "$(cleanup "${P}" fix-main-aaaaaaa)"
+sw "${P}" _brief fix-main-aaaaaaa
+is "an untracked story's brief names it by its full path" yes "$(has "Implement ${B}/stories/fix-main-aaaaaaa.md (this worktree is" "${out}")"
+rm "${B}/stories/fix-main-aaaaaaa.md"
 
 # --- finish and drop on the in-repo board: a board PR each, the main checkout untouched.
 : > "${ROOT}/gh.log"

@@ -54,6 +54,8 @@ case "$1 $2" in
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
+  # A run's failed-job log: --log-failed's "<job>\t<step>\t<timestamp> <line>" lines.
+  "run view") serve "run.$3.log" ;;
   # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
   "pr diff") case "$*" in *"--color never"*) cat "${FX}/diff" ;; *) sed "s/^/$(printf '\033')[1m/" "${FX}/diff" ;; esac ;;
   api*)
@@ -119,7 +121,7 @@ item() { { echo ---; printf '%s\n' "${@:2}"; echo ---; echo; echo "# $1"; } > "$
 # and no status; squash allowed; on the merge commit a green check run and a green run of the one
 # workflow that runs on push to main.
 fresh() {
-  rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
+  rm -rf "${FX}" "${P}/.swarm/events.tsv" "${ROOT}/gh.log" "${P}"/docs/stories/fix-main-*; mkdir -p "${FX}"; : > "${ROOT}/gh.log"
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
   echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
@@ -210,6 +212,24 @@ check "red main: names the check and its URL" said "e2e (failure) https://github
 check "red main: main-ci s red, naming it" logged '^main-ci s red .*e2e (failure)'
 check "red main: reconcile still ran" logged '^reconcile s ok (finished)$'
 is "red main: one merge line" 1 "$(merge_lines)"
+FM="${P}/docs/stories/fix-main-${M:0:7}.md"
+check "red main: prints fix-main naming the check and the commit" said "fix-main: e2e (failure) on ${M:0:7}"
+check "red main: main-red <sha> <checks>" logged "^main-red ${M} .*e2e (failure)"
+check "red main: writes the fix-main story, kind code and ready" grep -qx 'kind: code' "${FM}"
+check "red main with no Actions run: the story says it found no FAIL line" grep -qF "no FAIL line" "${FM}"
+# A failed Actions job: its FAIL line goes into fix-main's output and the story's body.
+fresh; checks "${FX}/${M}.checks" '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/99/job/5"}'
+printf 'test\tRun tests\t2026-10-18T10:00:00.1234567Z ok   next names a plan\ntest\tRun tests\t2026-10-18T10:00:01.1234567Z FAIL a planted failure: want x\n' > "${FX}/run.99.log"
+merge "${URL}"
+check "red main from a failed job: fix-main prints its FAIL line" said "  FAIL a planted failure: want x"
+check "red main from a failed job: the story has the FAIL line, not the passing one" \
+  bash -c "grep -qxF 'FAIL a planted failure: want x' '${FM}' && ! grep -q 'next names a plan' '${FM}'"
+check "red main from a failed job: the log was read by its run id" grep -qF "run view 99 --repo o/r --log-failed" "${ROOT}/gh.log"
+echo "lead's edit" >> "${FM}"; echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; merge "${URL}"
+check "red main again: fix-main printed, the story already there kept" bash -c "grep -q '^fix-main:' '${ROOT}/out' && grep -qx \"lead's edit\" '${FM}'"
+fresh; merge "${URL}"
+check "green main: no fix-main line, no main-red, no story" \
+  bash -c "! grep -q fix-main '${ROOT}/out' && ! grep -q main-red '${P}/.swarm/events.tsv' && [ ! -e '${FM}' ]"
 fresh; checks "${FX}/${M}.checks" "$(run test in_progress)"; start=${SECONDS}
 merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
 is "pending main: exits non-zero" 1 "${rc}"

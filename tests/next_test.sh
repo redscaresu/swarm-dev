@@ -530,6 +530,20 @@ expect_release "the tag on a commit off origin/main: not release" "done" 0 "echo
   'git tag -f v1.2.0 "$(git -c user.name=t -c user.email=t@t commit-tree "HEAD^{tree}" -m side)" >/dev/null'
 expect_release "a working conductor's wait comes before release" "wait conduct-e1" 1 "echo x > bin/x" "${COMMIT}"
 
+# A red main that merge recorded (main-red, with its fix-main story on the board) comes before
+# everything, a working conductor's wait too; a later green main-ci, or the story gone, clears it.
+RED="mkdir -p .swarm && printf '2026-10-18T10:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\te2e (failure)\n' >> .swarm/events.tsv"
+FIXER="item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: code'"
+expect "a recorded red main comes first" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+  "item epics/e1.md 'status: active'" "item stories/s.md 'status: ready' 'epic: e1'"
+if [[ "${out}" == *"red at aaaaaaa (e2e (failure))"* ]]; then echo "ok   the red main's why names the commit and the check"
+else echo "FAIL the red main's why does not name the commit and the check: ${out}"; fails=$((fails + 1)); fi
+expect_release "a recorded red main comes before a working conductor's wait" "fix-main fix-main-aaaaaaa" 1 \
+  "mkdir -p docs/stories && printf -- '---\nstatus: ready\nkind: code\n---\n' > docs/stories/fix-main-aaaaaaa.md" "${RED}"
+expect "a green main-ci after the red one clears it" "story fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+  "printf '2026-10-18T11:00:00Z\tmain-ci\tfix-main-aaaaaaa\t-\tok\n' >> .swarm/events.tsv"
+expect "a red main whose fix-main story has left the board is not named" "done" "${RED}"
+
 # The stub lists this project's conductor (and its retired name) in panes the state records, as
 # next_pane does: wait addresses an agent by this project's pane, never by a bare name. herdr says
 # `done` for both and is never asked for a Claude conductor's state: that is its session's, recorded

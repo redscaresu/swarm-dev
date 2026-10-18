@@ -8,6 +8,7 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
+FIX_MAIN_LINES=20       # FAIL lines fix-main prints and puts in its story
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
 # named geofabrik or timeout does not make Bad credentials transient.
@@ -91,8 +92,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge_admin = on, --admin; never --auto. Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
-# merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
-# reconcile's own. Fails on anything but a green main.
+# merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
+# then fix_main's main-red), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
   local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin
   while [[ $# -gt 1 ]]; do
@@ -193,6 +194,7 @@ merge_pr() {
   fi
   record_event main-ci "${MERGE_TARGET}" "${why}"
   echo "main-ci: ${why}"
+  [[ ${rc} -ne 1 ]] || fix_main "${repo}" "${oid}" "${base}" "${why#red }"
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -204,6 +206,58 @@ merge_pr() {
     }
   fi
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
+}
+
+# fix_main <owner/repo> <sha> <base> <red checks> — CI on <base> is red at <sha>, a commit merge
+# merged: record main-red <sha> <checks>, print fix-main: <checks> on <sha> with the FAIL lines of
+# the failed Actions runs' logs (FIX_MAIN_LINES at most), and write the one-off story
+# fix-main-<short sha> with them in its body, unless it is on the board already.
+fix_main() {
+  local repo="$1" sha="$2" base="$3" checks id fails="" none="no FAIL line in the failed runs' logs" f="${BOARD}/stories/fix-main-${2:0:7}.md"
+  checks="$(sed -E 's# (https?://[^;]*|None)(;|$)#\2#g' <<< "$4")"
+  for id in $(grep -oE 'https://github\.com/[^ ;]+/actions/runs/[0-9]+' <<< "$4" | sed 's#.*/##' | sort -u || true); do
+    fails+="$(gh run view "${id}" --repo "${repo}" --log-failed 2>/dev/null | cut -f3- \
+      | sed -E 's/^[0-9]{4}-[0-9-]+T[0-9:.]+Z //' | grep -wF FAIL || true)"$'\n'
+  done
+  fails="$(grep -v '^$' <<< "${fails}" | sed -n "1,${FIX_MAIN_LINES}p" || true)"
+  record_event main-red "${sha}" "${checks}"
+  echo "fix-main: ${checks} on ${sha:0:7}"
+  fails="${fails:-${none}}"; echo "  ${fails//$'\n'/$'\n'  }"
+  [[ -d "${BOARD}/stories" && ! -e "${f}" ]] || return 0
+  # A write that fails must not stop merge before its reconcile: the PR has merged.
+  cat 2>/dev/null > "${f}" <<EOF || { echo "fix-main: cannot write ${f}"; return 0; }
+---
+kind: code
+status: ready
+depends_on: []
+touches: []
+---
+
+# Fix main, red at ${sha:0:7}
+
+\`swarm.sh merge\` merged ${MERGE_TARGET}, and CI on ${base} at ${sha} is red: ${checks}. Each PR
+was green alone, so this merge and one before it break each other. Fix ${base}: merges stay frozen
+until it is green.
+
+The FAIL lines of the failed runs (\`gh run view <run> --repo ${repo} --log-failed\` has the rest):
+
+\`\`\`
+${fails}
+\`\`\`
+
+**Done when:**
+- Every check above passes on this PR's head, with the test that failed kept, not skipped.
+EOF
+  echo "story: ${f}"
+}
+
+# main_red — "<sha> <checks>" while the last main-red in events.tsv has no main-ci ok after it and its
+# fix-main story is on the board; nothing once main is green or the fix has merged.
+main_red() {
+  local red
+  red="$(awk -F'\t' '$2 == "main-red" { r = $3 " " $5 } $2 == "main-ci" && $5 == "ok" { r = "" } END { print r }' "${EVENTS_LOG}" 2>/dev/null)" || return 0
+  [[ -n "${red}" && -f "${BOARD}/stories/fix-main-${red:0:7}.md" ]] || return 0
+  echo "${red}"
 }
 
 # within <seconds> <command>... — the command in its own process group, the group KILLed after
