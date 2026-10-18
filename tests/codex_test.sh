@@ -175,5 +175,26 @@ check "a codex whose child keeps its output open returns within the grace, its f
   "${rc}|$([[ ${took} -le $((GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "P2: y.sh:1 leaks" "${out}")"
 pkill -KILL -f "${BIN}/" || true
 
+# --- On the timeout too, tee is stopped: a grandchild of codex that left its tree (so stop_codex
+# misses it) and holds codex's output cannot keep codex-review's stdout open. Read through a pipe,
+# as a caller's $(...) would.
+# shellcheck disable=SC2016 # the stub's variable
+stub '( "${d}/stubsleep" 60 & ); "${d}/stubsleep" 60'
+t0=${SECONDS}
+(cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main 2>&1 \
+  < /dev/null | cat > "${ROOT}/out") &
+spid=$!; finish "${spid}"
+check "a timed-out codex whose grandchild holds its output still ends codex-review's stdout within the grace" "yes|yes" \
+  "$([[ $((SECONDS - t0)) -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(has "codex skipped: timed out" "$(cat "${ROOT}/out")")"
+pkill -KILL -f "${BIN}/" || true
+
+# --- A run that fails before codex starts (here mktemp, with no TMPDIR to write in) leaves no marker.
+stub 'exit 0'
+(cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY TMPDIR="${ROOT}/no-such-dir" bash "${SWARM}" codex-review main \
+  < /dev/null > "${ROOT}/out" 2>&1) &
+spid=$!; finish "${spid}"
+check "a codex-review whose temp file cannot be made fails and leaves no marker" "fails|" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(markers)"
+
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

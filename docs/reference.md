@@ -538,19 +538,22 @@ builder carries on, the conductor or the lead reviews the diff itself, and the P
 skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
 its reply, and the conductor then reads the diff itself in codex's place. codex-review sends codex's
 output, stderr merged into stdout, through a temp file as well as to the screen. Once codex exits,
-it waits a few seconds for the output to finish, so a child of codex left holding it cannot hang the
-run. If codex fails and its last lines hold its own limit message (`You’ve hit your usage limit`, with
+it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
+too) it stops the copy, so a child of codex left holding the output cannot hang the caller. If codex fails and its last lines hold its own limit message (`You’ve hit your usage limit`, with
 `ERROR:` or `■` before it; a review that only quotes the words does not count), codex-review logs a
-`codex-limit` incident in events.tsv. With `fallback_reviewer` empty it then exits as codex did. With
+`codex-limit` incident in events.tsv, with `codex-<story>` as its target (not the slug, which is the
+builder's own agent name). With `fallback_reviewer` empty it then exits as codex did. With
 it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
-runs with no Edit, Write or NotebookEdit tool and cannot commit or push, so it stays read-only as
-codex's sandbox did. It gets what is left of `codex_minutes`, so the whole run stays within it, to write its
+runs with no Edit, Write or NotebookEdit tool and cannot commit or push. It still has Bash, so
+unlike codex's read-only sandbox its brief is what keeps it from changing the worktree. It gets what is left of `codex_minutes`, its start included, so the whole run stays within it, to write its
 findings to `.swarm/reviews/fallback/<story>.md`. codex-review prints `reviewed by fallback <model>:
 codex usage limit` and then the findings, and closes the agent, findings or not; an interrupt closes
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
 start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
-nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. The planning `codex` panes of `/plan-hld` and
+nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. With
+under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
+(no time left for a fallback)`. The planning `codex` panes of `/plan-hld` and
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 

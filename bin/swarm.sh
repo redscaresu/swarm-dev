@@ -456,12 +456,12 @@ codex_story_prompt() {
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
-# child of codex left holding the pipe would keep it open. A failed codex whose last lines hold its own
+# child of codex left holding the pipe would keep it open, and codex_cleanup stops it on any exit. A failed codex whose last lines hold its own
 # limit message (CODEX_LIMIT_RE, not the transcript, which may quote a diff about limits) logs a
 # codex-limit incident, and with fallback_reviewer set, codex_fallback reviews in its place, in what
 # is left of codex_minutes.
 codex_review() {
-  local pid tpid left rc=0 m i args story prompt="" log
+  local pid tpid left rc=0 m i args story prompt="" log files
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   if [[ -n "${SWARM_STORY:-}" ]]; then
@@ -482,12 +482,20 @@ codex_review() {
     kill -0 "${m##*.}" 2>/dev/null || rm -f "${m}"
   done
   m="${STATE_DIR}/codex-review.$$"
+  # Each trap is this run's files and tee, fixed when set: the marker's before it is written.
+  files="$(printf %q "${m}")"
+  # shellcheck disable=SC2064
+  trap "codex_cleanup - ${files}" EXIT
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
-  log="$(mktemp "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"; mkfifo "${log}.fifo"
-  # shellcheck disable=SC2064 # this run's files, fixed now
-  trap "rm -f $(printf %q "${m}") $(printf %q "${log}") $(printf %q "${log}.fifo")" EXIT
+  log="$(mktemp "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"
+  files+=" $(printf %q "${log}") $(printf %q "${log}.fifo")"
+  # shellcheck disable=SC2064
+  trap "codex_cleanup - ${files}" EXIT
+  mkfifo "${log}.fifo"
   tee "${log}" < "${log}.fifo" &
   tpid=$!
+  # shellcheck disable=SC2064
+  trap "codex_cleanup ${tpid} ${files}" EXIT
   codex exec review "${args[@]}" < /dev/null > "${log}.fifo" 2>&1 &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
@@ -498,10 +506,12 @@ codex_review() {
     for ((i = CODEX_GRACE * 5; i > 0; i--)); do kill -0 "${tpid}" 2>/dev/null || break; sleep 0.2; done
     { kill "${tpid}"; wait "${tpid}"; } 2>/dev/null || true
     if [[ ${rc} -ne 0 ]] && tail -n 5 "${log}" | grep -Eq "${CODEX_LIMIT_RE}"; then
-      record_event incident "${SWARM_STORY:-$1}" "codex-limit: usage limit"
-      if [[ -n "${CFG_fallback_reviewer}" ]] && codex_fallback "$1" "${prompt}" $(( (left > 0 ? left : 1) * 1000 )) "${log}"; then
-        return 0
-      fi
+      # Not the slug alone, which is also its builder's agent name: login_incident would take this
+      # line for the end of that builder's login episode.
+      record_event incident "codex-${SWARM_STORY:-$1}" "codex-limit: usage limit"
+      # Last in its list, never a condition, so errexit stays on in codex_fallback; a fallback that
+      # does not review exits there, as codex did.
+      [[ -z "${CFG_fallback_reviewer}" ]] || { codex_fallback "$1" "${prompt}" "${left}" "${log}" "${rc}"; return 0; }
     fi
     return "${rc}"
   fi
@@ -509,45 +519,72 @@ codex_review() {
   die "codex skipped: timed out after ${CFG_codex_minutes} min"
 }
 
+# codex_cleanup <tee pid, or -> <file>... — codex-review's EXIT trap, so every way out (codex done, the
+# timeout, an interrupt, a failed step) runs it: stop tee, which a child of codex left holding its
+# pipe would keep running, and the caller's stdout open with it; then remove the run's files.
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
+codex_cleanup() {
+  [[ "$1" == - ]] || { kill "$1"; wait "$1"; } 2>/dev/null || true
+  shift; rm -f "$@"
+}
+
 # CODEX_LIMIT_RE: codex's own usage-limit line, as `codex exec` prints it (ERROR: or ■ before it,
 # and a curly apostrophe: "ERROR: You’ve hit your usage limit. Upgrade to Pro ...").
 CODEX_LIMIT_RE="^(ERROR: |■ )?You(’ve|'ve| have) hit your usage limit"
 
-# codex_fallback <base> <prompt> <wait-ms> <scratch file> — codex hit its usage limit and
-# fallback_reviewer names a model: start fallback-<story> (role review-fallback, on that model) in
-# the cwd with codex's prompt, wait up to <wait-ms> for its findings file
-# (.swarm/reviews/fallback/<story>.md) as `wait review-<slug>` does, print it in codex's place under
-# the line the PR body takes, and close the agent, findings or not; an interrupt closes it too. It
-# fails, printing `codex skipped: usage limit (<why>)`, when it cannot start the agent (outside herdr,
-# its 32-character name held by another story's fallback, start_agent refusing) or no file came.
+# FALLBACK_MIN_SECONDS: the least of codex_minutes that must be left for a fallback reviewer to be
+# worth starting (SWARM_FALLBACK_MIN_SECONDS overrides it, for tests).
+FALLBACK_MIN_SECONDS="${SWARM_FALLBACK_MIN_SECONDS:-120}"
+
+# fallback_skip <codex's exit> <why> — codex was skipped after all: say why, and exit as codex did.
+fallback_skip() { echo "codex skipped: usage limit ($2)" >&2; exit "$1"; }
+
+# codex_fallback <base> <prompt> <seconds left> <scratch file> <codex's exit> — codex hit its usage
+# limit and fallback_reviewer names a model: start fallback-<story> (role review-fallback, on that
+# model) in the cwd with codex's prompt, wait what is left of codex's time (<seconds left>, its start
+# bounded by it and counted against it) for its
+# findings file (.swarm/reviews/fallback/<story>.md) as `wait review-<slug>` does, print it in codex's
+# place under the line the PR body takes, and close the agent, findings or not; an interrupt closes
+# it too. Every other way out is fallback_skip: outside herdr, under FALLBACK_MIN_SECONDS left, its
+# 32-character name held by another story's fallback or by a fallback still reviewing, a brief it
+# could not write, a start that failed,
+# or no file in time. Called with errexit on (never in a condition), and start_agent runs in a
+# background subshell, which keeps errexit on, so a step that fails inside it stops the start.
 codex_fallback() {
-  local id full name out brief holder why wpid
+  local id full name out brief holder wpid deadline=$((SECONDS + $3)) left="$3" err="$4"
+  [[ "${HERDR_ENV:-}" == 1 ]] || fallback_skip "$5" "fallback did not start: not in a herdr pane (HERDR_ENV != 1)"
+  (( left >= FALLBACK_MIN_SECONDS )) || fallback_skip "$5" "no time left for a fallback"
   id="${SWARM_STORY:-$(agent_name "$(basename "${PWD}")")}"; full="fallback-${id}"; name="$(agent_name "${full}")"
   out="${PROJECT_DIR}/.swarm/reviews/fallback/${id}.md"; brief="${PROJECT_DIR}/.swarm/briefs/fallback/${id}.md"
-  if [[ "${HERDR_ENV:-}" != 1 ]]; then why="not in a herdr pane (HERDR_ENV != 1)"
-  elif holder="$(pane_name_of "${name}")" && [[ -n "${holder}" && "${holder}" != "${full}" ]]; then
-    why="${name} is held by ${holder}"
-  else
-    mkdir -p "${out%/*}" "${brief%/*}"; rm -f "${out}"
-    fallback_brief "$1" "$2" "${out}" > "${brief}"
-    # shellcheck disable=SC2064 # this agent, fixed now
-    trap "fallback_close ${full}; exit 143" TERM HUP
+  holder="$(pane_name_of "${name}")"
+  [[ -z "${holder}" || "${holder}" == "${full}" ]] || fallback_skip "$5" "fallback did not start: ${name} is held by ${holder}"
+  # Before any file is touched: a fallback still reviewing (another run's) is refused and kept, a
+  # finished one retired. The name is then free, so any pane holding it after a failed start is ours.
+  (free_agent_name "${name}") 2> "${err}" || { holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"; }
+  { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
+    || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
+  (start_agent fallback "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
+  # shellcheck disable=SC2064 # this start and agent, fixed now
+  trap "kill_tree ${wpid}; fallback_close ${full}; exit 143" TERM HUP
+  # start_agent can retry for minutes: past codex's time it is stopped, and what it opened closed.
+  while kill -0 "${wpid}" 2>/dev/null && ((SECONDS < deadline)); do sleep 1; done
+  if kill -0 "${wpid}" 2>/dev/null; then
+    kill_tree "${wpid}"; { wait "${wpid}" || true; } 2>/dev/null; fallback_close "${full}"
+    fallback_skip "$5" "fallback did not start: its start ran out of codex's time"
+  fi
+  if ! wait "${wpid}"; then
     # A start that fails after its pane opened (the brief not taken up) leaves that pane: closed.
-    if why="$( (start_agent fallback "${name}" "${PWD}" review-fallback "${brief}" "${full}" >/dev/null) 2>&1)"; then why=""
-    else why="$(tail -1 <<< "${why}")"; why="${why#swarm: }"; fallback_close "${full}"; fi
+    fallback_close "${full}"
+    holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"
   fi
-  if [[ -n "${why}" ]]; then
-    echo "codex skipped: usage limit (fallback did not start: ${why})" >&2; return 1
-  fi
+  left=$((deadline - SECONDS))
   # In the background, so an interrupt is handled at once, not after a poll.
-  wait_conductor "${name}" "$3" "${out}" > "$4" 2>&1 & wpid=$!
+  wait_conductor "${name}" $(( (left > 0 ? left : 1) * 1000 )) "${out}" > "${err}" 2>&1 & wpid=$!
   # shellcheck disable=SC2064 # this wait and agent, fixed now
   trap "kill_tree ${wpid}; fallback_close ${full}; exit 143" TERM HUP
   wait "${wpid}" || true
   fallback_close "${full}"
-  if [[ ! -f "${out}" ]]; then
-    echo "codex skipped: usage limit (${name} wrote no findings in time: $(tail -1 "$4"))" >&2; return 1
-  fi
+  [[ -f "${out}" ]] || fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
   echo "reviewed by fallback ${CFG_fallback_reviewer}: codex usage limit"
   cat "${out}"
 }
@@ -557,12 +594,12 @@ codex_fallback() {
 pane_name_of() {
   local pane
   pane="$(agent_field "$1" pane_id)"; [[ -n "${pane}" ]] || return 0
-  cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }'
+  cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' || true
 }
 
 # fallback_close <pane name> — close a fallback agent as `swarm.sh close` does a review agent: its
 # session log archived, its pane closed.
-fallback_close() { archive_session "$1"; close_panes "$1" >/dev/null || true; }
+fallback_close() { archive_session "$1" || true; close_panes "$1" > /dev/null || true; }
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
