@@ -611,11 +611,22 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`cost`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
+
+The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
+the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
+elsewhere, such as GitHub Enterprise, is left out. Each PR costs two or more `gh` calls, so without
+`--since` the window is the 30 days up to `--until` (or today), and a line above the row says so. For each PR, `gh` gives its commits and its
+branch's completed workflow runs, and a run counts when its head is one of those commits. `ci_min_median` is the median, over head SHAs, of the minutes from a head's first run
+created to its last run updated. `red_runs_per_pr` is the red runs (a failure, a timeout or a run that could not
+start; a cancelled or skipped run is not red) over the PRs. `flakes` counts each red run followed by a green one of the
+same workflow and event on the same head, so a workflow red on push and green on pull_request is no
+flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
+conclusion from `gh api`. A run whose times do not parse adds no minutes. When a `gh` call fails or takes over 10 seconds, it prints `ci health: gh failed` and no numbers.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
@@ -843,7 +854,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 
