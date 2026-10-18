@@ -455,7 +455,7 @@ step_up() {
   done
   [[ -n "${to}" ]] || die "step-up: ${slug}'s builder is on ${from}, at or above escalate_ladder's top rung, so there is no next model; nothing was closed"
   # What start_rung and start_agent would refuse on, before the builder is closed: a role policy no
-  # longer knows (a legacy verify build), an env: name not set here, an untrusted folder, a /goal.
+  # longer knows (one of LEGACY_BUILDER_ROLES), an env: name not set here, an untrusted folder, a /goal.
   role="$(step_role "${fromrole}" "${to}")"
   (policy "${role}") >/dev/null 2>&1 \
     || die "step-up: ${slug}'s build is ${fromrole}, which steps up as ${role}, a role nothing starts now; nothing was closed"
