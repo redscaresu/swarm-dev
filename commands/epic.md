@@ -16,7 +16,9 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
      stands (for example "`conduct policy-correctness`: a ready story in an active epic") and that
      `/swarm-dev:swarm` continues it. Offer to start a new epic if they give a title. Then stop.
 
-1. Make the slug from the title: lowercase it, turn every run of characters other than `a-z` and
+1. If `docs/epics/<argument>.md` exists, that file is the epic and its name is the slug (`next`
+   names a draft by its file name, which may not be a clean slug). Otherwise make the slug from
+   the title: lowercase it, turn every run of characters other than `a-z` and
    `0-9` into one `-`, and trim `-` from both ends (`Add rate-limiting (v2)!` is
    `add-rate-limiting-v2`). If the slug is empty or `backlog` (the name `conduct --backlog` uses),
    stop and ask the user for another title. If `docs/epics/<slug>.md` exists (or an epic with this
@@ -62,16 +64,20 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    > revise. When the user says they agree it, `touch D/agreed` and stop. Never create either file
    > unless the user said so.
 
-3. `mkdir -p D`, remove any old `D/ready`, `D/agreed` and `D/review.md` when starting a new epic,
-   then `swarm.sh agent epic epic-<slug> "$PWD" epic .swarm/briefs/epic-<slug>.md`, and tell the
-   user which pane to work in: they stay there throughout. This session supervises; it does not
-   co-write.
+3. `mkdir -p D` and remove any old `D/ready` and `D/agreed`, on a resume too: a leftover
+   `D/ready` would start a reviewer at once, and a leftover `D/agreed` would set the epic active
+   with no fresh agreement. Remove an old `D/review.md` when starting a new epic; on a resume, move
+   it to `D/review-stale.md` and tell the co-author it is the last review, written against an
+   earlier draft. Then `swarm.sh agent _epic epic-<slug> "$PWD" epic .swarm/briefs/epic-<slug>.md`
+   (the tab `_epic`: a leading underscore no epic, story or HLD slug can take, so closing it never
+   reaches another tab), and tell the user which pane to work in: they stay there throughout.
+   This session supervises; it does not co-write.
 4. In the background, without asking the user to come back: wait until `D/ready` exists. Then
    write a reviewer brief (attack the draft, do not rewrite it: a problem with no evidence, goals
    that cannot be checked or could not fail, an epic that contradicts an ADR or a safety rule,
    non-goals that leave its edge unclear, risks not named, open questions that block planning it
    into stories; cite file:line; write findings only to `D/review.md`) and start it:
-   `swarm.sh agent epic epic-review-<slug> "$PWD" epic-review <brief>`. Wait until `D/review.md`
+   `swarm.sh agent _epic epic-review-<slug> "$PWD" epic-review <brief>`. Wait until `D/review.md`
    is written, then `swarm.sh wait epic-<slug>` (tell refuses a busy co-author) and hand it over:
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
@@ -79,6 +85,5 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    `status: active`; nothing plans a draft epic. Open a PR for the epic with one
    `swarm.sh codex-review` pass, close the co-author and the reviewer by name
    (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
-   epic`, which would close every tab whose label starts `epic-`, a conductor's or a builder's
-   among them), and tell the user the epic is agreed and
+   epic`, which would close every tab whose label starts `epic-`), and tell the user the epic is agreed and
    that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`).

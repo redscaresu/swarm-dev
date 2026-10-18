@@ -121,9 +121,6 @@ Repeat until a step below says stop:
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.
-   - `epic <epic>`: the epic is a draft, and only the user can write and agree it. Follow `/epic` to
-     resume it (the title is in the file): the user works in the co-author's pane, and the review
-     and the agreement are picked up in the background. Go back to 1 once `/epic` reports it agreed.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
@@ -169,7 +166,9 @@ Repeat until a step below says stop:
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
-     story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a PR
+     story: what blocks it; a later story or epic: set it `ready` or `active` to start it; a draft epic:
+     only the user can write and agree it, so offer to follow `/epic <slug>` to resume it, which
+     opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. Stop.
    - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories

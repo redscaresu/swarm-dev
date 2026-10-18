@@ -45,9 +45,7 @@ epic_has_stories() {
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
 #                     file outside the board (release_due): the lead cuts a release
 #   gate              only the user can move the board: lead stories, blocked
-#                     stories, later stories and epics, and PRs awaiting the user's merge
-#   epic <epic>       an epic is still a draft: it waits on the user, who agrees it in /epic; last,
-#                     so a parked draft never hides an escalated story, a release or the gate
+#                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
   local f slug epic kind story_epic src buildable="" waiting="" when held n tag base
@@ -132,11 +130,6 @@ next_step() {
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
-  while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == draft ]] || continue
-    slug=$(basename "${f}" .md)
-    echo "epic ${slug}"; echo "the epic ${slug} is a draft and waits on you: agree it in /epic ${slug}"; return
-  done < <(board epics)
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
@@ -267,7 +260,7 @@ costs_tag() {
 impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basename "$1" .md)")" 2>/dev/null; }
 
 # waiting_on_user — one line per board item only the user can move: lead stories (not an escalated
-# one, which is the lead's), blocked and later items, and PRs awaiting the user's merge. Shared by
+# one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
 # next_step's gate, status and dash.
 waiting_on_user() {
   local f kind slug waiting=""
@@ -283,6 +276,7 @@ waiting_on_user() {
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
       later) waiting+="  later epic: $(basename "${f}" .md)"$'\n' ;;
+      draft) waiting+="  draft epic: $(basename "${f}" .md), run /epic $(basename "${f}" .md)"$'\n' ;;
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
   done < <(board epics)

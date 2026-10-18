@@ -333,6 +333,8 @@ for l in lines("DASH_WAITING"):
     if l.startswith("later "):
         later += 1
         continue
+    if l.startswith("draft epic: "):
+        continue  # the board's draft epics have their own needs-you row below
     m = re.match(r"awaiting your merge( \(costs money\))?: (epic )?(\S+) ?(.*)$", l)
     if m:
         # With merge = agent, swarm.sh merge holds a costs: money story for the user, so no lead

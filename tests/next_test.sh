@@ -42,18 +42,20 @@ expect() {
 expect "empty board" "done"
 if [[ "${out}" == *"/epic <title>"* ]]; then echo "ok   an empty board names the /epic step"
 else echo "FAIL an empty board does not name /epic <title>: ${out}"; fails=$((fails + 1)); fi
-expect "draft epic waits on the user, not planned" "epic e1" \
+expect "draft epic waits on the user, not planned" "gate" \
   "item epics/e1.md 'status: draft'"
-if [[ "${out}" == *"waits on you"* ]]; then echo "ok   a draft epic is named as waiting on the user"
+if [[ "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   a draft epic is named as waiting on the user"
 else echo "FAIL a draft epic is not named as waiting on the user: ${out}"; fails=$((fails + 1)); fi
 expect "draft epic once active is planned" "plan-epic e1" \
   "item epics/e1.md 'status: active'"
 expect "an escalated story comes before a draft epic" "escalated esc" \
   "item epics/e1.md 'status: draft'" \
   "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'"
-expect "the gate comes before a draft epic" "gate" \
+expect "a draft epic is in the gate beside a lead story" "gate" \
   "item epics/e1.md 'status: draft'" \
   "item stories/l.md 'status: ready' 'kind: lead'"
+if [[ "${out}" == *"lead: l"* && "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   the gate lists the lead story and the draft epic"
+else echo "FAIL the gate does not list both the lead story and the draft epic: ${out}"; fails=$((fails + 1)); fi
 expect "a draft HLD is no step" "done" \
   "item hld/2026-01-01-x.md 'status: draft'"
 expect "agreed HLD, no epics" "plan-hld 2026-01-01-x" \
