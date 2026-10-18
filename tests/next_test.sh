@@ -414,11 +414,11 @@ if [[ "${got}" == "exit 0" && ! -s "${dir}/err" ]]; then echo "ok   next into a 
 else echo "FAIL next into a closed pipe: ${got} $(cat "${dir}/err")"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 # A failure in next_step stops next: it runs in the main shell, where errexit is on. A basename that
-# fails on an HLD's path fails next_step's plain slug=$(basename ...) assignment.
+# fails on a ready story's path fails next_step's buildable+="... $(basename ...)" assignment.
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 # shellcheck disable=SC2016 # the stub's $1 and $@ are its own
-(cd "${dir}" && git init -q && mkdir -p bin && item hld/2026-01-01-x.md 'status: draft' \
-  && printf '#!/bin/sh\ncase "$1" in */hld/*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v basename)" > bin/basename && chmod +x bin/basename)
+(cd "${dir}" && git init -q && mkdir -p bin && mkdir -p docs/stories && item stories/x.md 'status: ready' 'kind: code' 'touches: [x.sh]' \
+  && printf '#!/bin/sh\ncase "$1" in */stories/x.md) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v basename)" > bin/basename && chmod +x bin/basename)
 got="$(cd "${dir}" && PATH="${dir}/bin:${PATH}" env -u HERDR_ENV bash "${SWARM}" next 2>/dev/null; echo "exit $?")"
 if [[ "${got}" != "exit 0" && "${got}" != *$'\n'"exit 0" ]]; then echo "ok   a failure in next_step makes next fail"
 else echo "FAIL a failure in next_step does not stop next: ${got}"; fails=$((fails + 1)); fi
