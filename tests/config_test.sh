@@ -67,7 +67,7 @@ project "${p}" "merge = maybe"
 check "bad value names its line" "yes" "$(fails_with 'config:1: merge must be' run "${p}" config)"
 # Switches that are gone: a line naming one is an unknown key. Each name is split with '' so
 # removed_test.sh, which greps tests/ for them, finds none here.
-for k in pr''_per base''_branches sign''_commits review''_bot keep''_panes merge''_admin finished; do
+for k in pr''_per base''_branches sign''_commits review''_bot keep''_panes finished; do
   project "${p}" "${k} = true"
   check "${k} is an unknown key" "yes" "$(fails_with "config:1: unknown key '${k}'" run "${p}" config)"
 done
@@ -111,11 +111,23 @@ check "lead = session is read" "session" "$(run "${p}" config lead)"
 project "${p}" "lead = on"
 check "lead = on is refused, naming file and line" "yes" \
   "$(fails_with "${p}/.claude/swarm/config:1: lead must be off or session, not 'on'" run "${p}" config)"
+check "merge_admin ships off" "off" "$(project "${p}"; run "${p}" config merge_admin)"
+project "${p}" "merge_admin = on"
+check "merge_admin = on is read" "on" "$(run "${p}" config merge_admin)"
+project "${p}" "merge_admin = yes"
+check "merge_admin = yes is refused, naming file and line" "yes" \
+  "$(fails_with "${p}/.claude/swarm/config:1: merge_admin must be off or on, not 'yes'" run "${p}" config)"
 project "${p}" 'builder_subagent_model = haiku"}'
 check "builder_subagent_model that is not a model name is refused, naming the key" "yes" \
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
 project "${p}" "builder_subagent_model = claude-haiku-5-5"
 check "builder_subagent_model is read" "claude-haiku-5-5" "$(run "${p}" config builder_subagent_model)"
+check "fallback_reviewer ships empty" "" "$(project "${p}"; run "${p}" config fallback_reviewer)"
+project "${p}" "fallback_reviewer = sonnet"
+check "fallback_reviewer is read" "sonnet" "$(run "${p}" config fallback_reviewer)"
+project "${p}" "fallback_reviewer = son net"
+check "fallback_reviewer that is not a model name is refused, naming the key" "yes" \
+  "$(fails_with "config:1: fallback_reviewer must be a model name such as haiku, not 'son net'" run "${p}" config)"
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 

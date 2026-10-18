@@ -357,11 +357,13 @@ start_agent() {
       # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
       # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
       # parent's model (opusplan-spike).
-      local env="\"SWARM_AGENT\":\"${name}\""
+      local env="\"SWARM_AGENT\":\"${name}\"" deny=("Bash(gh pr merge:*)")
+      # The fallback reviewer stands in for codex's read-only sandbox: no file tools, no commit or push.
+      [[ "${role}" != review-fallback ]] || deny+=(Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)")
       [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
         --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto \
-        --disallowedTools "Bash(gh pr merge:*)" --settings "{\"env\":{${env}}}" 2>&1) && break
+        --disallowedTools "${deny[@]}" --settings "{\"env\":{${env}}}" 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then
       # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
