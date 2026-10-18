@@ -296,7 +296,7 @@ clean_env() {
     for n in ${HERDR_PANE_ENV}; do line+=" ${n}=\"\$${n}\""; done
     line+=" /bin/bash $(printf '%q' "${base}.${try}")"
     if out="$(herdr pane run "${pane}" "${line}" 2>&1)"; then typed=1; break; fi
-    [[ ${try} -eq 2 ]] || sleep 3
+    [[ ${try} -eq 2 ]] || nap 3
   done
   if [[ -z "${typed}" ]] || ! out="$(herdr pane wait-output "${pane}" --match "${marker}" --timeout 30000 2>&1)"; then
     rm -f "${base}.1" "${base}.2"
@@ -370,7 +370,7 @@ start_agent() {
       herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
       die "${name}: herdr could not start the agent: ${out}"
     fi
-    sleep 3
+    nap 3
   done
   # Before the brief, so an agent whose brief is not taken up is still on record.
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session}"
@@ -507,7 +507,7 @@ deliver_prompt() {
     case "${status}" in
       working|blocked) return 0 ;;
     esac
-    sleep 5
+    nap 5
   done
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
 }
@@ -720,6 +720,21 @@ SETTLED='^(idle|waiting|gone)(:|$)'
 # long; nothing for zero or less.
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 1000)))"; }
+# scaled <seconds> — <seconds> times SWARM_SLEEP_SCALE (default 1; make test sets 0.01, and swarm.sh
+# checks it at startup), to the millisecond, but at least a tenth of a second, so no scaled poll (nap,
+# poll_while, merge's CI reads) comes near a busy one. nap <seconds> — sleep that long.
+scaled() { awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { t = s * k; printf "%.3f\n", (t < 0.1 ? 0.1 : t) }'; }
+nap() { sleep "$(scaled "$1")"; }
+# poll_while <seconds> <command...> — run <command> while it succeeds, every second scaled, for
+# <seconds> unscaled: the scale quickens the polling, never the wait, and each step is slept in full,
+# so it is never shorter than at scale 1.
+poll_while() {
+  local step n
+  step="$(scaled 1)"
+  n="$(awk -v s="$1" -v t="${step}" 'BEGIN { n = int(s / t); if (n < s / t) n++; print n }')"
+  shift
+  while ((n-- > 0)) && "$@"; do sleep "${step}"; done
+}
 
 # settle <target> <name> <timeout-ms> [<since>] [wake] — block until the agent settles and print its
 # state. A Claude agent has settled when its session says so (session_state: idle, waiting or gone);

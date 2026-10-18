@@ -25,6 +25,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 mkdir -p "${dir}/bin"
 U=https://github.com/o/r/pull
 row() { # <date> <slug> <kind> <model> <effort> <cost> <attempts> <fixed> <pr> <merged_at> <story_merged> <started> <subagent_cost> <pr_state> <rework>

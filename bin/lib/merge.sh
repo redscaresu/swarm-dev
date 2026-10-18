@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 
 MERGE_CI_SECONDS=1800   # how long merge waits for CI on the merge commit (SWARM_MERGE_CI_SECONDS, for tests)
-MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL)
+MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL; else scaled)
 MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear (SWARM_MERGE_CI_GRACE)
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
@@ -186,7 +186,7 @@ merge_pr() {
   record_event merge "${MERGE_TARGET}" ok
   echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
   if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
-      "${SWARM_MERGE_POLL:-${MERGE_POLL}}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
+      "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
     why=ok
   else
     rc=$?; why="${why:-error (exit ${rc})}"
@@ -409,7 +409,7 @@ for a in json.load(sys.stdin)["result"]["agents"]:
         if [[ -n "${news}" ]]; then echo "agent(s) waiting: ${now//$'\n'/, }"; return 0; fi
       fi
     fi
-    sleep 60
+    nap 60
   done
 }
 

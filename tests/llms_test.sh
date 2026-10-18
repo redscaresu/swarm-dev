@@ -4,6 +4,10 @@
 # release PR bumps it on purpose).
 set -euo pipefail
 
+iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "${iso}"' EXIT
+export CLAUDE_CONFIG_DIR="${iso}/claude-config"   # under its own root, so parallel runs share no ~/.claude
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fails=0
 
