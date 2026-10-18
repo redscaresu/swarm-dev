@@ -79,7 +79,8 @@ codex_review_cmd() {
 codex_rule() {
   # shellcheck disable=SC2154 # assigned in another file
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
-  printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
+  printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage limit or on "codex skipped: ...", do not run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
+  printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit", a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" in place of codex skipped.'
 }
 # finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
 # logged too, with their reason, and never count as lessons.
@@ -95,7 +96,7 @@ Log each finding that was fixed, and each one declined (rebutted with a reason),
 <reason> is out-of-scope when the finding is outside the story's touches and **Done when**, nit when
 it is real but not worth the change, and wrong when it is mistaken.
 <who> is the reviewer that first raised it, whoever passed it on: codex for a finding from
-\`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a
+\`swarm.sh codex-review\` (fallback when it printed "reviewed by fallback"), code-review for /code-review's, ci for the PR review bot's or a
 \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for
 one from the lead's own reading.
 When a fix finds a defect in work that already merged, log it as \`--reviewer escaped\` against the
@@ -552,9 +553,12 @@ $(story_items "${story}" 'Done when')
 Judge the PR against these touches and items alone: work outside them is not a finding.
 $(review_stack_note "$1" "$3")
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
-finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last. If
-codex reports a usage limit, or codex-review prints "codex skipped: timed out", do not wait or run
-it again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When the PR
+finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
+Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
+a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
+again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When it prints
+\`reviewed by fallback <model>: codex usage limit\`, a fallback agent reviewed in codex's place: report
+its findings as codex's, under that line. When the PR
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
 above, then run \`/code-review $2\`.
 
