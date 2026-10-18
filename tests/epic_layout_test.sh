@@ -108,7 +108,7 @@ item() { # <board> <path> <front-matter line>... — a fresh item: its file, and
 # shellcheck source=/dev/null
 val() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
 # The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
-MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
+MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\` (fallback when it printed \"reviewed by fallback\"), code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
 # and text and run as written: the outcome and reviewer of the row each logs, then has for MAPPING.
 logs_findings() {
