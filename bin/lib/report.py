@@ -11,10 +11,14 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
-def fable_escalate(result):
-    # An escalate line that started a Fable build: build_story's ok (attempt N), or a step-up to fable
-    # (ok (<trigger>: <from> -> fable)). A step-up to a lower rung started none.
-    return re.fullmatch(r"ok \((attempt \d+|[a-z0-9-]+: \S+ -> fable)\)", result) is not None
+# A step-up's escalate line: ok (<trigger>: <from> -> <to>).
+STEP_UP = re.compile(r"ok \(([a-z0-9-]+): (\S+) -> (\S+)\)")
+
+def escalate_build(result, model):
+    # An escalate line that started an escalate build, on <model> (the escalate role's): build_story's
+    # ok (attempt N), or a step-up to <model>. A step-up to a lower rung started none.
+    m = STEP_UP.fullmatch(result)
+    return re.fullmatch(r"ok \(attempt \d+\)", result) is not None or (m is not None and m.group(3) == model)
 
 def session_log(projects, session, archive=""):
     if session in ("", "-"):

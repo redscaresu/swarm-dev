@@ -347,8 +347,18 @@ CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
 is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
-# close_agent <name> [cause] — close what was opened for <name> (close_panes), its session log
-# archived first.
+# shut_agent <name> — archive <name>'s session log, close what was opened for it (close_panes) and
+# remove its ZDOTDIR (clean_env's). close_agent and step_up both end a builder this way.
+shut_agent() {
+  archive_session "$1"
+  # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
+  # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
+  # matches. Passing close_panes the cut name would leave a long slug's pane open.
+  close_panes "$1"
+  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
+}
+
+# close_agent <name> [cause] — close what was opened for <name> (shut_agent).
 # An unknown cause is refused before anything closes, and so, with goal on, is a missing one while
 # <name>'s story is still ready (its builder is giving up), and so is impossible for a story that
 # cannot be handed on (impossible_refused). A close that ends a failed build (failed_build, decided
@@ -372,7 +382,6 @@ close_agent() {
   if [[ "${cause}" == impossible ]] && why="$(impossible_refused "$1")"; then
     die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
   fi
-  archive_session "$1"
   if prs="$(failed_build "$1")"; then
     counted=1
     if [[ ! "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ && "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" != True ]]; then
@@ -385,11 +394,7 @@ close_agent() {
       [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
     fi
   fi
-  # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
-  # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
-  # matches. Passing close_panes the cut name would leave a long slug's pane open.
-  close_panes "$1"
-  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"   # its ZDOTDIR (clean_env's), with the agent gone
+  shut_agent "$1"
   if [[ "${cause}" == impossible ]]; then
     # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
@@ -445,55 +450,106 @@ HANDOVER_DIFF_LINES=400
 
 # step_up <slug> <trigger> [findings] — hand a story's build to escalate_ladder's next model: close its builder
 # (its session archived, no attempt counted, its worktree, branch and PR kept) and start the next rung
-# (ladder_role) in the same worktree with handover_brief, logged as escalate `ok (<trigger>: <from> ->
-# <to>)`. The rung it is on is the model of the newest agents.tsv line for its agent. Refused, with
-# nothing closed, with escalate_ladder empty, at its top rung or off it, and for a story that is not
-# ready, not an agent's kind, or has no worktree. [findings] is a file the brief pastes too (tell_agent's).
+# (start_rung) in the same worktree with handover_brief. The build is the newest agents.tsv line for
+# its agent: a building role on one of LADDER_MODELS. The next rung is the ladder's first model above
+# it, run as step_role picks. Refused, with nothing closed, with escalate_ladder empty, at or above its
+# top rung, and for a story that is not ready, not an agent's kind, or has no worktree. [findings] is a file the brief pastes
+# too (tell_agent's).
 step_up() {
-  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" from to role src wt base prompt names epic goal="" ladder=",${CFG_escalate_ladder},"
-  [[ -n "${trigger}" && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
+  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to rank role names src wt base prompt
+  [[ "${trigger}" =~ ^[a-z0-9-]+$ && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
     || die "step-up: the trigger must be one of ${STEP_UP_TRIGGERS// /, } (swarm.sh step-up <slug> <trigger>)"
   [[ -n "${CFG_escalate_ladder}" ]] || die "step-up: escalate_ladder is empty (off), so there is no next model; nothing was closed"
-  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "step-up: no story ${f}"
-  [[ "$(fm "${f}" status)" == ready ]] || die "step-up: ${slug} is not status: ready; nothing was closed"
-  agent_kind "$(fm "${f}" kind)" || die "step-up: ${slug} is kind: $(fm "${f}" kind), which no agent builds; nothing was closed"
-  src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
-  wt="$(worktree_for "${src}" "${slug}")"
-  [[ -d "${wt}" ]] || die "step-up: ${slug} has no worktree at ${wt}, so there is no build to hand on; nothing was closed"
-  from="$(builder_model "${slug}")"
-  [[ -n "${from}" && "${ladder}" == *",${from},"* ]] \
-    || die "step-up: ${slug}'s builder runs on ${from:-no model agents.tsv names}, which is not on escalate_ladder (${CFG_escalate_ladder}); nothing was closed"
-  to="${ladder#*,"${from}",}"; to="${to%%,*}"
-  [[ -n "${to}" ]] || die "step-up: ${slug}'s builder is on ${from}, escalate_ladder's top rung, so there is no next model; nothing was closed"
-  role="$(ladder_role "${to}")"
+  step_up_story "${slug}"; src="${STEP_SRC}"; wt="$(worktree_for "${src}" "${slug}")"
+  last="$(awk -F'\t' -v n="$(agent_name "${slug}")" '$3 == n { l = $2 " " $5 } END { print l }' "${AGENTS_LOG}" 2>/dev/null || true)"
+  read -r fromrole from <<< "${last}"
+  { [[ -n "${fromrole}" && " ${BUILDER_ROLES} " == *" ${fromrole} "* ]] && rank="$(model_rank "${from}")"; } \
+    || die "step-up: ${slug}'s newest agents.tsv line is not a build on one of ${LADDER_MODELS} (${last:-none}); nothing was closed"
+  to="$(ladder_next "${from}")" || die "step-up: ${slug}'s builder is on ${from}, at or above escalate_ladder's top rung, so there is no next model; nothing was closed"
+  # What start_rung and start_agent would refuse on, before the builder is closed: a role policy no
+  # longer knows (one of LEGACY_BUILDER_ROLES), an env: name not set here, an untrusted folder, a /goal.
+  role="$(step_role "${fromrole}" "${to}")"
+  (policy "${role}") >/dev/null 2>&1 \
+    || die "step-up: ${slug}'s build is ${fromrole}, which steps up as ${role}, a role nothing starts now; nothing was closed"
   names="$(story_env "${f}")" || die "${names}"
-  # What start_agent would refuse on, before the builder is closed.
-  require_trusted "${wt}"; goal_preflight "${slug}" "${src}"; goal="${PREFLIGHT_GOAL}"
+  require_trusted "${wt}"; goal_preflight "${slug}" "${src}"
   base="$(base_for "${src}")"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "${prompt%/*}"
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" "${3:-}" > "${prompt}"
-  # From here a failure is not a refusal: the builder is closed (step_up_failed).
-  # shellcheck disable=SC2064 # expand now: the slug and models are local
-  trap "step_up_failed '${slug}' '${trigger}: ${from} -> ${to}'" EXIT
-  archive_session "${slug}"
-  close_panes "${slug}"
-  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "${slug}")"
+  printf '%s %s %s %s\n' "${trigger}" "${from}" "${to}" "${role}" > "${prompt%.md}.step-up"
+  # From here a failure is not a refusal: the old builder is closed. ladder_step's _step-up
+  # (STEP_UP_AUTO) says so and exits STEP_UP_PARTWAY (step_up_failed).
+  # shellcheck disable=SC2064 # expand now: the slug is local
+  [[ -z "${STEP_UP_AUTO:-}" ]] || trap "step_up_failed '${slug}'" EXIT
+  # The old builder goes first: the new one takes its name.
+  shut_agent "${slug}"
+  start_rung "${slug}"
+}
+
+# step_up_story <slug> — die, naming why, unless <slug>'s story can be stepped up: on the board, ready,
+# of a kind an agent builds (agent_kind), with a worktree. STEP_SRC is its repo dir. Run in the
+# caller's shell, so a die is the command's own.
+step_up_story() {
+  local f="${BOARD}/stories/$1.md"
+  [[ "$1" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "step-up: no story ${f}"
+  [[ "$(fm "${f}" status)" == ready ]] || die "step-up: $1 is not status: ready; nothing was closed"
+  agent_kind "$(fm "${f}" kind)" || die "step-up: $1 is kind: $(fm "${f}" kind), which no agent builds; nothing was closed"
+  STEP_SRC="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: $1: ${STEP_SRC}"
+  [[ -d "$(worktree_for "${STEP_SRC}" "$1")" ]] \
+    || die "step-up: $1 has no worktree at $(worktree_for "${STEP_SRC}" "$1"), so there is no build to hand on; nothing was closed"
+}
+
+# step_up_resume <slug> — `step-up --resume`: start the rung a step-up closed the old builder for but
+# could not start, from the brief and .step-up marker it wrote, once the story still passes
+# step_up_story (a story made kind: lead since gets no agent).
+step_up_resume() {
+  local slug="$1"
+  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up" ]] \
+    || die "step-up --resume: no step-up of '${slug}' waits to start (no .swarm/briefs/${slug}.step-up)"
+  step_up_story "${slug}"
+  require_trusted "$(worktree_for "${STEP_SRC}" "${slug}")"; goal_preflight "${slug}" "${STEP_SRC}"
+  start_rung "${slug}"
+}
+
+# start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>):
+# <role> on <to> in its worktree with the brief beside the marker, then log escalate `ok (<trigger>:
+# <from> -> <to>)`, drop the marker and send the /goal its caller's goal_preflight made. start_agent
+# runs with errexit on, so a step that fails stops it with that step's own message; then the marker
+# stays, the message says to run step-up --resume, and an agents.tsv line start_agent wrote before it
+# failed (a brief not taken up) goes, so the rung is on record once, when it starts.
+start_rung() {
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc goal="${PREFLIGHT_GOAL}"
+  read -r trigger from to role < "${prompt%.md}.step-up"
+  src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
+  names="$(story_env "${f}")" || die "${names}"
   epic="$(fm "${f}" epic)"
-  start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
+  n="$(wc -l < "${AGENTS_LOG}")"; n=$((n))
+  set +e
+  (set -e; start_agent "${epic:-${slug}}" "${slug}" "$(worktree_for "${src}" "${slug}")" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
+  rc=$?
+  set -e
+  if [[ ${rc} -ne 0 ]]; then
+    # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
+    # an append-only "start failed" event outcomes reads would avoid that.
+    awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+      && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
+  fi
+  [[ ${rc} -eq 0 ]] \
+    || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
+  rm -f "${prompt%.md}.step-up"
   record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})"
-  echo "stepped up: ${slug} from ${from} to ${to} (${role}), in ${wt}"
+  echo "stepped up: ${slug} from ${from} to ${to} (${role}), in $(worktree_for "${src}" "${slug}")"
   [[ -z "${goal}" ]] || { printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"; send_goal "${slug}" "${prompt%.md}.goal.md" brief; }
   trap - EXIT
 }
 
-# step_up_failed <slug> <step> — step_up's exit trap once the builder is closed: on a failure, log
-# escalate `failed partway (<step>)` (which keeps ladder_step from trying this build again), say so,
-# and exit STEP_UP_PARTWAY.
+# step_up_failed <slug> — step_up's exit trap once the old builder is closed: on a failure (start_rung
+# said why, and kept the .step-up marker for step-up --resume, which also keeps step_due from trying
+# this build again), say so and exit STEP_UP_PARTWAY.
 step_up_failed() {
   local rc=$?
   [[ ${rc} != 0 ]] || return 0
-  record_event escalate "$1" "failed partway ($2)"
-  echo "step-up failed: $1 stopped partway ($2), after its builder was closed: list it for the lead; do not close, retry or tell it"
+  echo "step-up failed: $1 stopped after its builder was closed: list it for the lead (swarm.sh step-up --resume $1 starts the rung once the cause is fixed); do not close, retry or tell it"
   exit "${STEP_UP_PARTWAY}"
 }
 
@@ -530,15 +586,23 @@ ladder_step() {
 }
 
 # step_due <slug> <since> — a step-up of <slug> is due: its build is still the one that started at
-# <since>, its builder's model has a rung above it (none has with the ladder empty), and no step-up of
-# this build failed partway.
+# <since>, its builder's model has a rung above it (ladder_next; none has with the ladder empty), and
+# no step-up of it waits on --resume (a .step-up marker: one that failed after closing the builder).
 step_due() {
-  local from ladder=",${CFG_escalate_ladder:-},"
   [[ "$(build_started "$1")" == "$2" ]] || return 1
-  from="$(builder_model "$1")"
-  [[ -n "${from}" && "${ladder}" == *",${from},"?* ]] || return 1
-  ! awk -F'\t' -v s="$1" -v t="$2" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^failed partway/ { f = 1 } END { exit !f }' \
-    "${EVENTS_LOG}" 2>/dev/null
+  ladder_next "$(builder_model "$1")" >/dev/null || return 1
+  [[ ! -e "${PROJECT_DIR}/.swarm/briefs/$1.step-up" ]]
+}
+
+# ladder_next <model> — the first escalate_ladder model ranked above <model> (model_rank); fails when
+# none is, or <model> is not one of LADDER_MODELS.
+ladder_next() {
+  local m rank
+  rank="$(model_rank "$1")" || return 1
+  for m in ${CFG_escalate_ladder//,/ }; do
+    if (( $(model_rank "${m}") > rank )); then echo "${m}"; return 0; fi
+  done
+  return 1
 }
 
 # step_lock <dir> — take a lock: make <dir> with this shell's pid in it. Held by a live pid, or by
@@ -560,22 +624,39 @@ stepped_up_since() {
 }
 
 # handover_brief <slug> <src> <base> <trigger> <from> <to> [findings] — the next rung's brief: the builder's
-# brief (story_brief), then why the build was handed on, the PR body's Models: line, the story as the
-# board holds it (the last builder may have deleted it from the worktree already), the diff against
-# origin/<base> (committed or not; its first HANDOVER_DIFF_LINES lines), the review agent's open
-# findings (and [findings], the tell the step-up took the place of) and the story PR's failing checks.
+# brief (story_brief), then why the build was handed on, the PR body's Models: line, for a story
+# stacked on parents with open PRs build_story's Merge after note, the story as the board holds it
+# (the last builder may have deleted it from the worktree already), the diff from handover_from
+# (committed, uncommitted and untracked; its first HANDOVER_DIFF_LINES lines, in a fence longer than
+# any run of backticks in it), the review agent's findings when they are of this HEAD (and
+# [findings], the tell the step-up took the place of), and the story PR's failing checks.
 handover_brief() {
-  local wt models diff pr checks findings="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  local wt models from parents open="" p prs="" stack="" diff fence='```' pr checks head findings="${PROJECT_DIR}/.swarm/reviews/$1.md" reviewed found
   wt="$(worktree_for "$2" "$1")"
+  parents="$(stacked_parents "$1")"
+  for p in ${parents//,/ }; do if pr="$(open_pr "$2" "${p}")"; then prs+="${prs:+ }${pr}"; open+="${open:+ }${p}"; fi; done
+  [[ -z "${prs}" ]] || stack=$'\n\n'"This story is stacked on ${open}: open your PR against \`$3\` all the same, with \`Merge after ${prs}\` in its body. The diff below starts at their branches, so their commits are not in it."
+  from="$(handover_from "${wt}" "$2" "$3" "${open}")" || from="origin/$3"
   # Every model agents.tsv has building this story, in order, then this one.
   models="$({ awk -F'\t' -v n="$(agent_name "$1")" '$3 == n { print $5 }' "${AGENTS_LOG}" 2>/dev/null; echo "$6"; } | awk '!seen[$0]++' | paste -sd, - | sed 's/,/, /g')"
-  # awk reads the whole diff: head would close the pipe early, and git's SIGPIPE fails the pipeline.
-  diff="$(git -C "${wt}" diff "origin/$3" 2>&1 | awk -v n="${HANDOVER_DIFF_LINES}" 'NR <= n')"
-  pr="$(gh pr list -R "$(git -C "$2" remote get-url origin)" --head "story/$1" --state open --json url --jq '.[0].url // ""' 2>/dev/null)" || pr=""
-  if [[ -z "${pr}" ]]; then
+  # head stops reading at the cap, so git stops too: a writer it cut off dies of SIGPIPE (128 + 13),
+  # which ends the untracked loop; git diff --no-index exits 1 for every file that differs. With
+  # pipefail that SIGPIPE fails the pipeline, so || true. git's warnings stay out of the diff.
+  diff="$( { git -C "${wt}" diff "${from}"
+             git -C "${wt}" ls-files -z --others --exclude-standard | while IFS= read -r -d '' p; do
+               git -C "${wt}" diff --no-index -- /dev/null "${p}" || (( $? < 128 )) || break
+             done
+           } 2>/dev/null | head -n "${HANDOVER_DIFF_LINES}" || true)"
+  while [[ "${diff}" == *"${fence}"* ]]; do fence+='`'; done
+  head="$(git -C "${wt}" rev-parse HEAD)"
+  reviewed="$(sed -n 's/^head: *//p' "${findings}" 2>/dev/null | head -n 1 || true)"   # no findings file: none
+  if [[ ! -f "${findings}" ]]; then found="No review findings on file."
+  elif [[ "${reviewed}" == "${head}" ]]; then found="$(cat "${findings}")"
+  else found="The last review (${findings}) was of ${reviewed:-an unnamed head}, not this branch's HEAD ${head}, so its findings are not pasted here: they may be fixed already. Read it, and check each one before you act on it."; fi
+  if ! pr="$(open_pr "$2" "$1")"; then
     checks="No open PR on story/$1."
   else
-    checks="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' 2>/dev/null)" \
+    checks="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' </dev/null 2>/dev/null)" \
       || checks="gh could not list ${pr}'s checks: run \`gh pr checks ${pr}\`."
     [[ -n "${checks}" ]] || checks="None failing on ${pr}."
   fi
@@ -587,27 +668,42 @@ handover_brief() {
 You take this story over from a builder on $5, stepped up to you on $6 because $(step_trigger "$4").
 This worktree and its branch story/$1 are as that builder left them: carry on from them, and never
 start again from origin/$3. The PR body lists every model that worked on this story on one line, the
-models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).
+models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).${stack}
 
 ### The story, as the board holds it
 
 $(story_text "$1")
 
-### The diff against origin/$3, committed or not (its first ${HANDOVER_DIFF_LINES} lines; \`git diff origin/$3\` has it all)
+### The diff since ${from}, committed or not, untracked files too (its first ${HANDOVER_DIFF_LINES} lines; \`git diff ${from}\` has the tracked files' all)
 
-\`\`\`diff
+${fence}diff
 ${diff:-(no change yet)}
-\`\`\`
+${fence}
 
 ### Open findings
 
-$(if [[ -f "${findings}" ]]; then cat "${findings}"; else echo "No review findings on file."; fi)
+${found}
 $(if [[ -n "${7:-}" ]]; then printf '\nThe conductor was sending the last builder these when it was stepped up:\n\n'; cat "$7"; fi)
 
 ### Failing checks
 
 ${checks}
 EOF
+}
+
+# handover_from <wt> <src> <base> <parents> — where a handover diff starts: the merge-base of HEAD
+# and origin/<base>, or for a story stacked on <parents> (those with open PRs; fetched first) of HEAD
+# and their branches, so neither the base's newer commits nor the parents' are in it.
+# ponytail: with several parents git picks one merge-base, so the others' commits show; diff against
+# a merge of their branches if that matters.
+handover_from() {
+  local refs="" p
+  for p in $4; do
+    git -C "$2" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null || true
+    if git -C "$1" rev-parse -q --verify "origin/story/${p}" >/dev/null; then refs+=" origin/story/${p}"; fi
+  done
+  # shellcheck disable=SC2086 # one ref per word
+  git -C "$1" merge-base HEAD ${refs:-"origin/$3"}
 }
 
 # impossible_refused <name> — print why `close <name> impossible` cannot hand <name>'s story on, and

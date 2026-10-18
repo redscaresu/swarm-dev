@@ -173,14 +173,14 @@ for ladder in sonnet,opus,fable ""; do
     check "a head pending at its checks' finish counts once its status goes red" "|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
 
     # A step-up whose start fails, after the builder was closed, stops the close: no attempt counted,
-    # nothing cleared, and the escalate line says it failed partway.
+    # nothing cleared, no escalation logged, and its .step-up marker kept for step-up --resume.
     fresh "${ladder}" idle; touch "${ROOT}/startfail"; out="$(run close s1)" && rc=0 || rc=$?
-    check "a step-up whose start fails stops the close, counting and clearing nothing" "1|yes|yes||yes" \
-      "${rc}|$(grep -q '^step-up failed: s1' <<< "${out}" && echo yes)|$(escalates | grep -q '^failed partway (no-pr: sonnet -> opus)$' && echo yes)|$(attempts)|$([[ -d "${WT}" ]] && echo yes)"
+    check "a step-up whose start fails stops the close, counting and clearing nothing" "1|yes|yes||yes|" \
+      "${rc}|$(grep -q '^step-up failed: s1' <<< "${out}" && echo yes)|$([[ -f "${P}/.swarm/briefs/s1.step-up" ]] && echo yes)|$(attempts)|$([[ -d "${WT}" ]] && echo yes)|$(escalates)"
     rm -f "${ROOT}/startfail"
     # That build is not tried again: with its builder back, its third findings are sent as usual.
     echo "s1 w:1" > "${ROOT}/agents"; echo "w:1 s1" > "${P}/.swarm/state/s1"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
-    check "a build whose step-up failed partway is not stepped up again" "failed partway (no-pr: sonnet -> opus)|yes" \
+    check "a build whose step-up failed partway is not stepped up again" "|yes" \
       "$(escalates)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
     # A step-up that fails before it closes anything, with a status of its own (here handover_brief's
     # git diff exits 128 under pipefail: the worktree is no longer a git checkout), is a refusal: the

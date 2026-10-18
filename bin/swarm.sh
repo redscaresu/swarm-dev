@@ -10,6 +10,7 @@
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
 #   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-3, ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
+#   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
@@ -198,7 +199,7 @@ load_config() {
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
       escalate_ladder)
-        # Its models are checked against the policy once policy is defined (ladder_role).
+        # Its models are checked once LADDER_MODELS is defined (model_rank).
         [[ "${value}" =~ ^([a-z0-9.-]+(,[a-z0-9.-]+)*)?$ ]] || die "${where}: escalate_ladder must be models separated by commas, such as sonnet,opus,fable, not '${value}'" ;;
       builder_subagent_model|fallback_reviewer)
         [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: ${key} must be a model name such as haiku, not '${value}'" ;;
@@ -317,19 +318,40 @@ policy() {
   esac
 }
 
-# ladder_role <model> — the building role a rung on <model> starts as: the first of LADDER_ROLES whose
-# policy model it is (sonnet code-sonnet, opus code, fable escalate). Fails for any other model.
-LADDER_ROLES="code-sonnet code escalate"
-ladder_role() {
-  local r m
-  for r in ${LADDER_ROLES}; do read -r _ m _ <<< "$(policy "${r}")"; [[ "${m}" != "$1" ]] || { echo "${r}"; return 0; }; done
-  return 1
+# LADDER_MODELS: the models a building role runs on, low to high (the policy's). escalate_ladder names
+# some of them, each once and rising, so a step-up never steps down or back; a build on a model below
+# the ladder's first rung (a chore on haiku) steps to it.
+LADDER_MODELS="haiku sonnet opus fable"
+# model_rank <model> — how many of LADDER_MODELS come before <model>; fails for any other model.
+model_rank() {
+  local p=" ${LADDER_MODELS} " w
+  [[ "${p}" == *" $1 "* ]] || return 1
+  read -r -a w <<< "${p%%" $1 "*}"
+  echo "${#w[@]}"
 }
+_rank=-1
 for _m in ${CFG_escalate_ladder//,/ }; do
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
-  ladder_role "${_m}" >/dev/null \
-    || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' is not the model of any of ${LADDER_ROLES} (swarm.sh policy <role>)"
+  _r="$(model_rank "${_m}")" \
+    || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' is not one of the models building roles run on (${LADDER_MODELS})"
+  (( _r > _rank )) \
+    || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' comes after a model as high or higher; name each model once, from low to high, such as sonnet,opus,fable"
+  _rank=${_r}
 done
+
+# step_role <role> <model> — the role a step-up from a build of <role> starts on <model>: escalate on
+# escalate's model (the ladder's Fable rung); a code build (code-sonnet, code, code-risky) code-sonnet
+# on code-sonnet's model and code on any other; any other (docs, chore) its own role, which start_agent
+# runs on <model>.
+step_role() {
+  local m
+  read -r _ m _ <<< "$(policy escalate)"
+  if [[ "$2" == "${m}" ]]; then echo escalate; return; fi
+  case "$1" in
+    code|code-sonnet|code-risky) read -r _ m _ <<< "$(policy code-sonnet)"; if [[ "$2" == "${m}" ]]; then echo code-sonnet; else echo code; fi ;;
+    *) echo "$1" ;;
+  esac
+}
 
 # agent_name <name> — the herdr agent name for anything started or waited on. start_agent and
 # `wait` both map through here, so every caller agrees: lowercase, [a-z0-9_-], starting with a letter, at most 32 characters.
@@ -371,7 +393,9 @@ dispatch() {
             else [[ -z "${2:-}" ]] || die "story: unknown argument '$2'"; build_story "${1:?slug}"; fi ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
-    step-up|_step-up) require_herdr; step_up "${1:-}" "${2:-}" "${3:-}" ;;   # _step-up: ladder_step's, not logged
+    # _step-up: ladder_step's, not logged, and a failure after the old builder closed exits STEP_UP_PARTWAY
+    step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
+            if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
     next)   next_report ;;
@@ -733,6 +757,7 @@ main() {
     review) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
+    step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
