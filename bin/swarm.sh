@@ -272,7 +272,7 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/reference.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
+ROLE_GROUPS="design:epic,epic-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
 # plus LEGACY_BUILDER_ROLES: roles nothing starts now, kept so agents.tsv's past builds still count.
@@ -281,8 +281,8 @@ LEGACY_BUILDER_ROLES="verify"
 BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } ${LEGACY_BUILDER_ROLES}"
 policy() {
   case "$1" in
-    hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
-    hld-review) echo "claude fable xhigh" ;;   # attacks the finished draft before it is agreed
+    epic)       echo "claude fable high" ;;    # co-writes a draft epic with the user, who waits on every turn
+    epic-review) echo "claude fable xhigh" ;;  # attacks the finished draft before it is agreed
     hld-lead)   echo "claude fable xhigh" ;;   # HLD into epics: one call that shapes everything below it
     survey)     echo "claude sonnet high" ;;   # reads and cites; feeds the lead, so not low
     lead)       echo "claude opus xhigh" ;;    # one decomposition decides the whole epic

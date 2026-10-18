@@ -1,8 +1,8 @@
 ---
 kind: code
-status: blocked
-blocked_by: [split-bash]
-depends_on: [split-bash]
+status: ready
+epic: safer-faster-swarm
+depends_on: []
 touches: [bin/lib/*.sh (the merge command and config defaults), docs/reference.md (config table), tests/merge_test.sh]
 easy: true
 estimate_lines: 60
@@ -27,3 +27,7 @@ merge-admin-on-for-infrafactory.
 - With `merge_admin = on`, a test shows `gh pr merge` called with `--admin`; with it off, without.
 - With it on, a red head, a `costs: money` PR and a moved head are each still refused before `gh pr merge` runs (one test each).
 - `swarm.sh config merge_admin` prints `off` in a project that does not set it.
+
+It ships in release-safety: that release also ships merge-guard-hook (#242), which blocks the lead's
+hand `gh pr merge --admin`, so without this story nothing could merge in a repo that requires an
+approving review.

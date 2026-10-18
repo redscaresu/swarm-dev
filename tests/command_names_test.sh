@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # command_names_test.sh — nothing a user reads tells them to type a bare /swarm. In a fresh install
-# Claude Code's slash menu completes /swarm to /swarm-dev:hld (it ranks the shorter name first), so
-# the name that works is /swarm-dev:swarm. /hld, /plan-hld and /plan-epic resolve as typed.
+# Claude Code's slash menu completes /swarm to /swarm-dev:epic (it ranks the shorter name first), so
+# the name that works is /swarm-dev:swarm. /epic, /plan-hld and /plan-epic resolve as typed, and
+# /epic replaced /hld.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -10,7 +11,11 @@ cd "${REPO}"
 bare="$(grep -rnE '(^|[^A-Za-z0-9_./-])/swarm([^A-Za-z0-9_./:-]|$)' \
   commands skills README.md docs/method.md docs/reference.md docs/dash.md docs/assets bin/swarm.sh bin/lib/*.sh || true)"
 if [[ -n "${bare}" ]]; then
-  echo "FAIL a bare /swarm, which runs /swarm-dev:hld; write /swarm-dev:swarm:"; echo "${bare}"; exit 1
+  echo "FAIL a bare /swarm, which runs /swarm-dev:epic; write /swarm-dev:swarm:"; echo "${bare}"; exit 1
 fi
 echo "ok   no bare /swarm"
+if [[ ! -f commands/epic.md || -e commands/hld.md ]]; then
+  echo "FAIL commands/epic.md must exist and commands/hld.md must not"; exit 1
+fi
+echo "ok   /epic is a command and /hld is not"
 echo "all passed"

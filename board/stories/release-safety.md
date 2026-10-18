@@ -2,7 +2,7 @@
 kind: lead
 status: blocked
 epic: safer-faster-swarm
-depends_on: [merge-guard-hook, main-checkout-guard, env-allowlist, board-state-out-of-git, escalated-block-out-of-git, reconcile-drops-backup, pr-removes-story]
+depends_on: [merge-guard-hook, main-checkout-guard, env-allowlist, board-state-out-of-git, escalated-block-out-of-git, reconcile-drops-backup, pr-removes-story, merge-admin, guard-pattern-kill]
 touches: [.claude-plugin/plugin.json]
 easy: false
 estimate_lines: 5
