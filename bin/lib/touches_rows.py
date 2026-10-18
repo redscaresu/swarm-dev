@@ -61,9 +61,23 @@ def overlap(a, b):
     return a[:2] == b[:2] and (not a[2] or not b[2] or a[2] == b[2])
 
 fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
-mine = entries(fms[me])
 def deps(fm):
     return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
+
+# --idle: a blocked story with no needs: line, whose open depends_on story has touches and shares no
+# file with it, waits for nothing it uses (idle_lines).
+if me == "--idle":
+    for slug, fm in sorted(fms.items()):
+        files = {e[:2] for e in entries(fm)}
+        if fm.get("status") != "blocked" or fm.get("needs") or not files:
+            continue
+        for d in sorted(deps(fm) & set(fms)):
+            theirs = {e[:2] for e in entries(fms[d])}
+            if fms[d].get("status") != "done" and theirs and not files & theirs:
+                print(f"idle: {slug} waits on {d} but shares no touches with it")
+    sys.exit()
+
+mine = entries(fms[me])
 
 for slug, fm in sorted(fms.items()):
     # A stacked story starts on its parents' branches: neither holds the other back.

@@ -45,7 +45,18 @@ Repeat until a step below says stop:
 1. Run `swarm.sh reconcile` (it takes off the board what you merged, and puts back to `ready`
    what was closed unmerged), then `swarm.sh unblock` (it readies stories whose blockers have
    merged), then `swarm.sh next`.
-   Its first line is the step, the rest is why. Tell the user both in one line.
+   Its first line is the step, the rest is why. Tell the user both in one line. Lines that
+   start `idle:` come after the step and name capacity no step uses; do the step, and handle each
+   one too:
+   - `idle: <story> waits on <dep> but shares no touches with it`: the dependency looks
+     over-broad. Drop it from the story's `depends_on` through a board PR (`swarm.sh board-pr`), so
+     the story builds beside its dependency; or keep it and add a `needs:` line to the story's
+     front matter naming what it uses from the dependency (the function, the flag, the file).
+   - `idle: <project>`: no open story is one an agent can build. The lines under it are up to five
+     candidates: `later story: <slug>` and `out-of-scope finding: <date> <PR>: <text>` (a finding
+     declined as out of scope in the last 30 days, newest first). File one as a one-off story, or
+     set a later story `ready`, through a board PR; or tell the user why none fits. Declined
+     out-of-scope findings are the swarm's list of follow-ups, so you need not keep them in memory.
 2. Do the step:
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the

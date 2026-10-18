@@ -268,6 +268,49 @@ expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
+# A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
+# A shared file (another function in it counts), or a needs: line, keeps it quiet.
+# idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]
+idle_case() {
+  local got=no
+  expect "idle dependency, $1" "story a" \
+    "item stories/a.md 'status: ready' 'kind: code' 'touches: [x.sh:f, y.sh]'" \
+    "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [$2]' ${4:+"'$4'"}"
+  grep -qxF "idle: b waits on a but shares no touches with it" <<< "${out}" && got=yes
+  if [[ "${got}" == "$3" ]]; then echo "ok   idle dependency, $1: named $3"
+  else echo "FAIL idle dependency, $1: want named $3: ${out}"; fails=$((fails + 1)); fi
+}
+idle_case disjoint c.sh yes
+idle_case "shared file" x.sh:g no
+idle_case "needs line" c.sh no "needs: a.sh"
+# A project with nothing an agent can build: next names it idle with its later stories and the
+# finding declined as out-of-scope (not an older one, nor one declined for another reason).
+# shellcheck disable=SC2016 # the setup is eval'd inside the fixture
+expect "an idle project is a gate" "gate" \
+  "item stories/l1.md 'status: later' 'kind: code'" \
+  "item stories/bl.md 'status: blocked' 'kind: code' 'depends_on: [l1]'" \
+  "item stories/ld.md 'status: ready' 'kind: lead'" \
+  'mkdir .swarm && printf "%s\tk\to/r#1\tcache the parse\tdeclined\tcodex\tout-of-scope\n%s\tk\to/r#2\ttoo small\tdeclined\tcodex\tnit\n2020-01-01\tk\to/r#3\tancient\tdeclined\tcodex\tout-of-scope\n" "$(date +%F)" "$(date +%F)" > .swarm/findings.tsv'
+idle="$(sed -n '/^idle: [^ ]*$/,$p' <<< "${out}")"
+if [[ "$(wc -l <<< "${idle}")" -eq 3 && "${idle}" == *"  later story: l1"* && "${idle}" == *"  out-of-scope finding: $(date +%F) o/r#1: cache the parse"* ]]; then
+  echo "ok   an idle project lists its later story and its out-of-scope finding"
+else echo "FAIL an idle project does not list its later story and out-of-scope finding: ${out}"; fails=$((fails + 1)); fi
+expect "a project with a buildable story is not idle" "story r" \
+  "item stories/l1.md 'status: later' 'kind: code'" \
+  "item stories/r.md 'status: ready' 'kind: code'"
+if ! grep -q '^idle: ' <<< "${out}"; then echo "ok   a project with a buildable story is not named idle"
+else echo "FAIL a project with a buildable story is named idle: ${out}"; fails=$((fails + 1)); fi
+# The lead's half: swarm.md says what to do with each idle: line, plan-epic's skeptic checks for it.
+cmds="$(dirname "${SWARM}")/../commands"
+got=""
+# shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
+{
+grep -qF '`idle: <story> waits on <dep> but shares no touches with it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
+grep -qF '`idle: <project>`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
+grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's skeptic has no disjoint-touches check"
+}
+if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's skeptic checks disjoint touches"
+else echo "FAIL${got}"; fails=$((fails + 1)); fi
 expect "stories before planning" "conduct e2" \
   "item epics/e0.md 'status: draft'" \
   "item epics/e1.md 'status: active'" \

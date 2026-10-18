@@ -181,6 +181,26 @@ next_step() {
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
+# idle_lines — what next prints after its step: capacity no step uses. An idle: line per blocked
+# story whose depends_on story shares no file in touches with it and that has no needs: line
+# (touches_rows.py --idle); and when no open story is one an agent can build (each is blocked, later
+# or of a kind no agent builds), idle: <project> with up to five candidates for a one-off: the later
+# stories, then the out-of-scope findings (out_of_scope_findings).
+idle_lines() {
+  local f later=""
+  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+  while IFS= read -r f; do
+    case "$(fm "${f}" status)" in
+      done|blocked) ;;
+      later) later+="  later story: $(basename "${f}" .md)"$'\n' ;;
+      *) agent_kind "$(fm "${f}" kind)" && return 0 ;;
+    esac
+  done < <(board stories)
+  echo "idle: $(basename "${PROJECT_DIR}")"
+  # sed, not head: head can exit before the writers finish, and the broken pipe fails under pipefail.
+  { printf '%s' "${later}"; out_of_scope_findings | sed 's/^/  out-of-scope finding: /'; } | sed -n 1,5p
+}
+
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
 # (epic_holding_deps), or nothing.
 plannable_epic() {

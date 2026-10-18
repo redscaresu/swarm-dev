@@ -69,6 +69,16 @@ record_finding() {
   echo "recorded ${kind} (${outcome})"
 }
 
+# out_of_scope_findings — the findings declined as out-of-scope in the last IDLE_FINDING_DAYS days,
+# newest first, as "<date> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers.
+IDLE_FINDING_DAYS=30
+out_of_scope_findings() {
+  local since
+  since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
+  awk -F'\t' -v s="${since}" '$5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[n++] = $1 " " $3 ": " $4 }
+    END { while (n) print r[--n] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true
+}
+
 # bin/lib/report.py: what the reports share (each python imports it), so they agree.
 #   pr_key(pr) is one PR however it was written: https://github.com/o/r/pull/12[/...], o/r#12, or as given.
 #   session_log(projects, session[, archive]) is a session's .jsonl under Claude Code's projects dir,

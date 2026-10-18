@@ -158,6 +158,13 @@ for p in "${A}" "${B}"; do
     grep -qE "running [^ ]+ ${n} of peak" <<< "$(frame "${p}" 100)"
 done
 
+# Idle capacity: alpha-core's ready stories have its conductor, so none; a ready one-off with no
+# backlog conductor is one buildable story not started.
+check "no idle capacity while the conductor has its epic's ready stories" lacks "buildable not started" "$(frame "${A}" 100)"
+item "${A}" stories/a-loose.md "Tidy the docs" "status: ready" "kind: docs"
+check "a ready one-off with no backlog conductor is idle capacity" has "idle: 1 buildable not started" "$(frame "${A}" 100)"
+rm "${A}/board/stories/a-loose.md"
+
 out="$(frame "${A}" 60)"
 check "at 60 columns the sparkline shows" has "14 days ▂▁▃▇▅" "${out}"
 check "at 60 columns the gauges do not" lacks "of best" "${out}"

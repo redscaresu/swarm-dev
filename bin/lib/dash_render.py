@@ -806,6 +806,17 @@ def gauges():
     return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
             + [(f" {now} of peak {peak} in 7 days", "")])
 
+def idle_gauge():
+    # Beside the running gauge: the ready stories an agent builds (agent_kind's kinds), one-offs or in
+    # an active epic, with no agent of their own and no conductor (the epic's, or conduct-backlog) in
+    # this project's panes. Nothing when there are none, or no agent list.
+    if agents is None:
+        return []
+    names = {r["name"] for r in recs}
+    idle = sum(b[2] == "ready" and b[7] in ("", "code", "docs", "chore") and (not b[6] or epics.get(b[6], [""] * 3)[2] == "active")
+               and not {b[4], epics[b[6]][5] if b[6] in epics else "conduct-backlog"} & names for b in stories)
+    return [(f"idle: {idle} buildable not started", "warn")] if idle else []
+
 SEP = (" · ", "dim")
 
 def pack(groups, n):
@@ -829,7 +840,7 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 out.append(fit(speed, W))
-under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
+under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else [], idle_gauge() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
