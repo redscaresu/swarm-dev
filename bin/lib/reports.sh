@@ -121,8 +121,9 @@ cost_report() {
 # drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
 # unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
 # its start to that and from that to the merge, the commits on the PR that merge the base into it, and
-# its subagents' cost, in all and per model (its own cost and tokens leave them out), and last rework (report.py's rework_of:
-# 1 when a later fix reworked its merged PR, on the latest build on it). A finding goes to the latest build on
+# its subagents' cost, in all and per model (its own cost and tokens leave them out), and last rework (report.py's rework_of over
+# every merged PR of the builds' repos, from one gh list: 1 when a later fix reworked its merged PR, on the
+# latest build on it, once 7 days have passed). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -144,10 +145,9 @@ outcomes_report() {
   rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
-  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges text` joined by commas, where
+  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
-  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and text is
-  # its title and body in base64, for rework_of), its epic: and
+  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -165,11 +165,10 @@ outcomes_report() {
     # shellcheck disable=SC2016 # $b is jq's
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
-        --json url,state,mergedAt,createdAt,baseRefName,commits,title,body --jq '.[] | [.url, .state, .mergedAt // "",
+        --json url,state,mergedAt,createdAt,baseRefName,commits --jq '.[] | [.url, .state, .mergedAt // "",
           .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
           | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
-          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length),
-          (.title + "\n" + (.body // "") | @base64)] | @tsv') 2>/dev/null)"; then
+          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length)] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
@@ -223,7 +222,7 @@ outcomes_report() {
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
-#     all`; rework is the PRs a line raised findings on that outcomes' rework marks, of builds in the window. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
+#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
 #     rounds are not split by one. --epic keeps only the PRs of that epic (outcomes epic column) in
 #     both blocks, and a third block lists every PR either block counted.

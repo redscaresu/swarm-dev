@@ -1,15 +1,15 @@
-import base64, binascii, collections, datetime, os, re, subprocess, sys
+import collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
-NO_PR = ("", "", "", "", "", "")
+NO_PR = ("", "", "", "", "")
 RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct PRs recurs
 RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
-    # The (url, state, mergedAt, createdAt, main_merges, text) of each PR in the meta column, text being
-    # its title and body in base64; a stub may leave out the last four.
-    return [tuple((p.split(" ") + [""] * 5)[:6]) for p in prs.split(",") if " " in p]
+    # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
+    # leave out the last three.
+    return [tuple((p.split(" ") + [""] * 4)[:5]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
     # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
@@ -52,16 +52,20 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
     if on:
         found[on[-1]][(outcome, reviewer)] += 1
 
-def pr_text(b64):
-    try:
-        return base64.b64decode(b64).decode("utf-8", "replace")
-    except (binascii.Error, ValueError):
-        return ""
-
-# A reworked PR (rework_of, over the merged PRs of these stories) counts once, on the latest build on it,
-# as findings do.
-reworked = rework_of({pr_key(p[0]): (p[2], pr_text(p[5]), None) for m in meta.values() for p in parsed(m[2]) if p[1] == "MERGED"},
-                     finding_rows(sys.argv[1], ("escaped",)))
+# Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
+# PRs of these builds, with every PR of their repos merged from the first one's day on as a possible fix,
+# whatever --since. When gh fails, only escaped findings mark rework. A reworked PR counts once, on the
+# latest build on it, as findings do, and only once its REWORK_DAYS have passed (UTC), as a fix may
+# still come.
+judged = {pr_key(r[6]): r[8] for r in rows if r[4] and r[6] and r[7] == "MERGED" and r[8]}
+merged_by = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], "merged:>=" + min(judged.values())[:10]) if judged else {}
+if merged_by is None:
+    print("rework: gh failed, so only escaped findings mark rework.", file=sys.stderr)
+merged_by = merged_by or {}
+for k, m in judged.items():
+    merged_by.setdefault(k, (m, "", None))
+reworked = rework_of(merged_by, finding_rows(sys.argv[1], ("escaped",)))
+settled = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=REWORK_DAYS)).isoformat()
 last = {pr_key(r[6]): i for i, r in enumerate(rows) if r[6]}
 
 def by(c, outcome):
@@ -74,14 +78,15 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
       "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens\trework")
-for i, ((f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges, _), c) in enumerate(zip(rows, found)):
+for i, ((f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c) in enumerate(zip(rows, found)):
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
     story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     merged = merged if asked and state == "MERGED" else ""
-    # 1 when a later fix reworked its merged PR, 0 when none did; empty on an unmerged PR or an earlier build on it.
-    rework = str(int(pr_key(pr) in reworked)) if merged and last[pr_key(pr)] == i else ""
+    # 1 when a later fix reworked its merged PR, 0 when none did; empty on an unmerged PR, an earlier build
+    # on it, or one merged too recently to tell.
+    rework = str(int(pr_key(pr) in reworked)) if merged and last[pr_key(pr)] == i and merged[:10] < settled else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),

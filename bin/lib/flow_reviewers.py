@@ -13,8 +13,8 @@ for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
         for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
             c[key][outcome] += 1
             on[key].add(pr_key(pr))
-# outcomes' rework, on the builds dated in the window: a PR a later fix reworked.
-reworked = {pr_key(r["pr"]) for r in rows if r.get("rework") == "1" and since <= r["date"] <= until}
+# outcomes' rework: a PR a later fix reworked. on[] already keeps the window's findings.
+reworked = {pr_key(r["pr"]) for r in rows if r.get("rework") == "1"}
 
 def line(who, kind):
     fixed, declined = c[(who, kind)]["fixed"], c[(who, kind)]["declined"]

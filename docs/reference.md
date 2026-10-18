@@ -649,10 +649,12 @@ come `subagent_cost_usd`, the estimated cost of the builder's subagents, `subage
 the same cost split by model as `<model>:<usd>` pairs joined by commas (`haiku:1.00,opus:2.00`, with
 `other` for a model that has no price), and
 `subagent_tokens`, their tokens of every type, and then `rework`. `rework` is 1 when a later fix
-reworked the build's merged PR and 0 when none did. Rework is the same as in `flow`'s `model_fit`
-section (below), except that the later PR must be the merged PR of a build in `outcomes`, so a fix
-made outside the swarm counts only when `log-finding --reviewer escaped` records it. It is empty on a PR
-that never merged and on an earlier build that shares the PR, so a reworked PR counts once. A
+reworked the build's merged PR and 0 when none did, as defined under `flow`'s `model_fit` section
+(below). Any PR merged in the repo can be the fix, whether or not a build made it, and whatever
+`--since` is: `outcomes` lists the repo's merged PRs once with `gh`, from the first merge day of its
+builds on. It is empty on a PR that never merged, on an earlier build that shares the PR (so a reworked
+PR counts once), and on a PR merged 7 days ago or less, since a fix can still come. `outcomes` alone
+computes rework; `flow`'s `model_fit` and `reviewers` sections read this column. A
 subagent turn is one with `parent_tool_use_id` or `isSidechain` set in the builder's session log, or any
 turn in the `subagents/*.jsonl` logs in the folder named after the session, next to its log. `cost_usd`
 and the tokens columns count the builder's own turns only, so `cost_usd` plus `subagent_cost_usd` is
@@ -767,8 +769,9 @@ from git history, so merged stories keep their class. The columns are:
 - `escaped`, the escaped findings on their PRs;
 - `start_to_merge_min`, the mean minutes from the first build's start to the merge.
 
-A PR is rework when a PR merged up to 7 days after it says it fixes it, or when a
-`log-finding --reviewer escaped` row dated up to 7 days after its merge's local day points at it. Saying so
+A PR is rework when a PR merged after it, on its merge day or up to 7 days later, says it fixes it,
+or when a `log-finding --reviewer escaped` row dated up to 7 days after its merge day points at it.
+Both count calendar days from the merge day in UTC. Saying so
 means a fix verb (`fix`, `fixes`, `fixed`, `fixing`, `hotfix`, `bugfix` or `quickfix`), `rework of`
 or `regression from` in the title or body, then the PR within 40 characters in the same clause
 (clauses end at a sentence end, a `;` or a line break): its URL, `owner/repo#N`, or `#N` from the
@@ -777,11 +780,11 @@ PR without fixing it. Each reference is judged by the nearest fix verb before it
 directly before that verb (`doesn't fix`, `not fixing`, `never fixed`) cancels it, so "Fixes #1 and
 doesn't fix #4" fixes #1 alone. A negation anywhere else, as in "Fixes #1, which was not a
 regression", leaves the fix standing. A release PR (one that changes only `.claude-plugin/plugin.json`)
-fixes nothing. The merged PRs come from `gh`, the last 1000 per repo, merged from 7 days before
-`--since` (without it, from the first counted build's day) to 7 days after `--until` or the last
-counted merge, whichever is later (without `--until`, to now). A line warns when a list comes back that long, since rework may then be
-undercounted. When `gh` fails, only escaped findings count, and a line says so. A
-`mergedAt` that does not parse leaves its PR out, counted in one line on stderr. A cell with fewer than 5 stories prints its count and `-` in the other columns,
+fixes nothing. The section reads `outcomes`' `rework` column, so a story merged 7 days ago or less
+is not rework yet. `outcomes` lists the merged PRs with `gh`, the last 1000 per repo. A line on stderr
+warns when a list comes back that long, since rework may then be undercounted. When `gh` fails, only
+escaped findings count, and a line on stderr says so. A `mergedAt` that does not parse leaves its PR
+out, counted in one line on stderr. A cell with fewer than 5 stories prints its count and `-` in the other columns,
 as too few to judge. After a blank line, a `subagents` block gives a row per model and effort of
 the builds whose subagents cost more than zero (`outcomes` writes `0.00` for a build that ran
 none): what their subagents cost, the build cost (theirs plus the
@@ -832,8 +835,8 @@ reviewers can be tuned. The first block is TSV `reviewer kind raised fixed decli
 counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all` row and then
 a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
 come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
-declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on and that
-`outcomes` shows as reworked, among builds dated in the window. After a blank line, the second block is TSV `prs rounds
+declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on in the window and that
+`outcomes` shows as reworked. After a blank line, the second block is TSV `prs rounds
 rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated in
 the window, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no

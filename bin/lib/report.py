@@ -1,4 +1,4 @@
-import datetime, glob, gzip, json, os, re, sys, zlib
+import datetime, glob, gzip, json, os, re, subprocess, sys, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -100,10 +100,11 @@ def merge_time(t):
     return d if d.tzinfo else None
 
 def rework_of(merged, findings):
-    # The pr_keys of the merged PRs a later PR fixed within REWORK_DAYS of their merge: a PR merged after
-    # it, in that time, that fixes_pr says fixes it (a release PR never does), or a log-finding --reviewer
-    # escaped row (fixed_rows' day, kind, pr, text, outcome order; outcome escaped) pointing at it, dated
-    # that many days after its merge's local day or fewer (findings are dated in local time). merged maps each merged PR's pr_key to (mergedAt as gh
+    # The pr_keys of the merged PRs a later PR fixed within REWORK_DAYS of their merge day (UTC, counted in
+    # days for both kinds of fix): a PR merged after it, on that day or up to that many days later, that
+    # fixes_pr says fixes it (a release PR never does), or a log-finding --reviewer escaped row (fixed_rows'
+    # day, kind, pr, text, outcome order; outcome escaped) pointing at it, dated that many days after its
+    # merge day or fewer. merged maps each merged PR's pr_key to (mergedAt as gh
     # gives it, title and body, and the paths it changed, or None when unknown). A mergedAt that does not
     # parse leaves its PR out, counted on stderr.
     when = {k: merge_time(v[0]) for k, v in merged.items() if v[0]}
@@ -111,17 +112,42 @@ def rework_of(merged, findings):
     if bad:
         print(f"rework: skipped {len(bad)} merged PRs whose mergedAt does not parse, as {bad[0]}", file=sys.stderr)
     when = {k: t for k, t in when.items() if t}
-    days = datetime.timedelta(days=REWORK_DAYS)
     fixers = [(j, u) for j, u in when.items() if merged[j][2] != RELEASE_FILES]
     out = {k for k, t in when.items()
-           if any(j != k and t < u <= t + days and fixes_pr(merged[j][1], k, j) for j, u in fixers)}
+           if any(j != k and t < u and (u.date() - t.date()).days <= REWORK_DAYS and fixes_pr(merged[j][1], k, j)
+                  for j, u in fixers)}
     for f in findings:
         k = pr_key(f[2])
         if len(f) > 4 and f[4] == "escaped" and k in when:
             try:
-                d = datetime.date.fromisoformat(f[0]) - when[k].astimezone().date()
+                d = (datetime.date.fromisoformat(f[0]) - when[k].date()).days
             except ValueError:
                 continue
-            if datetime.timedelta(0) <= d <= days:
+            if 0 <= d <= REWORK_DAYS:
                 out.add(k)
+    return out
+
+GH_SECONDS = 30
+GH_LIMIT = 1000
+GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
+
+def merged_prs(urls, search):
+    # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
+    # in that gh's search finds, or None when gh fails. A list that comes back GH_LIMIT long says on
+    # stderr that rework may be undercounted. files is read for rework_of's release PRs.
+    # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
+    out = {}
+    for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
+        try:
+            got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
+                                  "--json", "url,mergedAt,title,body,files", "--search", search], capture_output=True, text=True, timeout=GH_SECONDS)
+            prs = json.loads(got.stdout) if got.returncode == 0 else None
+        except (subprocess.TimeoutExpired, ValueError, OSError):   # OSError: no gh on PATH
+            prs = None
+        if not isinstance(prs, list):
+            return None
+        if len(prs) >= GH_LIMIT:
+            print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework may be undercounted.", file=sys.stderr)
+        out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
+                                       sorted(f.get("path", "") for f in p.get("files") or [])) for p in prs})
     return out

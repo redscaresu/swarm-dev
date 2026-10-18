@@ -4,18 +4,15 @@
 # effort of its first build, so an escalation to Fable stays under the model it started on; its cost,
 # attempts and findings are those of all its builds. size buckets its estimate_lines and area is the
 # top-level directory most of its touches name, both read through story_text (flow_sections), so a
-# merged story keeps its class. Rework is report.py's rework_of over every merged PR of the rows'
-# repos, from gh; when gh fails, only escaped findings mark rework, and a line says so. A cell under
+# merged story keeps its class. Rework is outcomes' rework column, which outcomes alone computes (report.py's
+# rework_of over every merged PR of the rows' repos), so every flow section counts the same. A cell under
 # MIN_STORIES stories prints its count alone. After a blank line, a subagent row per model and effort
 # of the builds whose subagents cost more than zero: their cost and its share of build cost (own and theirs).
-import collections, datetime, json, os, re, subprocess
+import collections, datetime, os
 from report import *
 from touches_rows import entries as touches_entries
 MIN_STORIES = 5
-GH_SECONDS = 30
-GH_LIMIT = 1000
 project_dir = os.path.dirname(os.path.dirname(findings))
-GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
 
 def num(x):
     try:
@@ -47,37 +44,6 @@ def minutes(start, end):
     except ValueError:
         return None
 
-def merged_range(first_day, last_merge):
-    # gh's merged: qualifier for the PRs that can be counted or fix one that is: from REWORK_DAYS before
-    # --since (without it, from first_day, the earliest counted build's) to REWORK_DAYS after --until or
-    # last_merge, the latest counted merge day, whichever is later, as a story built in the window can
-    # merge after it (without --until, open-ended).
-    days = datetime.timedelta(days=REWORK_DAYS)
-    lo = datetime.date.fromisoformat(since) - days if since != "0000-00-00" else datetime.date.fromisoformat(first_day)
-    hi = datetime.date.fromisoformat(max(until, last_merge)) + days if until != "9999-12-30" else None
-    return f"merged:{lo}..{hi}" if hi else f"merged:>={lo}"
-
-def merged_prs(urls, search):
-    # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
-    # in that gh's search (merged_range) finds, or None when gh fails. A list that comes back GH_LIMIT
-    # long prints that rework may be undercounted. files is read for rework_of's release PRs.
-    # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
-    out = {}
-    for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
-        try:
-            got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
-                                  "--json", "url,mergedAt,title,body,files", "--search", search], capture_output=True, text=True, timeout=GH_SECONDS)
-            prs = json.loads(got.stdout) if got.returncode == 0 else None
-        except (subprocess.TimeoutExpired, ValueError, OSError):   # OSError: no gh on PATH
-            prs = None
-        if not isinstance(prs, list):
-            return None
-        if len(prs) >= GH_LIMIT:
-            print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework may be undercounted.")
-        out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
-                                       sorted(f.get("path", "") for f in p.get("files") or [])) for p in prs})
-    return out
-
 by_slug = collections.defaultdict(list)
 for r in rows:
     by_slug[r["slug"]].append(r)
@@ -87,18 +53,8 @@ for slug, rs in by_slug.items():
     if since <= first["date"] <= until and (not epic or first["epic"] == epic):
         counted[slug] = (first, rs)
 
-prs = {r["pr"] for _, rs in counted.values() for r in rs if r["pr"]}
-last_merge = max((r["merged_at"][:10] for _, rs in counted.values() for r in rs if re.match(r"\d{4}-\d\d-\d\d", r["merged_at"])), default="")
-merged = merged_prs(prs, merged_range(min(f["date"] for f, _ in counted.values()), last_merge)) if prs else {}
-gh_failed = merged is None
-merged = merged or {}
-for _, rs in counted.values():
-    for r in rs:
-        if r["pr"] and r["merged_at"]:
-            merged.setdefault(pr_key(r["pr"]), (r["merged_at"], "", None))
-escapes = finding_rows(findings, ("escaped",))
-rework = rework_of(merged, escapes)
-escaped = collections.Counter(pr_key(f[2]) for f in escapes)
+rework = {pr_key(r["pr"]) for r in rows if r.get("rework") == "1"}
+escaped = collections.Counter(pr_key(f[2]) for f in finding_rows(findings, ("escaped",)))
 
 cells = collections.defaultdict(list)
 for slug, (first, rs) in counted.items():
@@ -145,5 +101,3 @@ print("\nsubagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share")
 for (model, effort), (sub, total) in sorted(subs.items()):
     print("\t".join([model, effort, f"{sub:.2f}", f"{total:.2f}", f"{100 * sub / total:.0f}%" if total else "-"]))
 print(f"\nA cell with fewer than {MIN_STORIES} stories prints its count alone: too few to judge.")
-if gh_failed:
-    print("rework: gh failed, so only escaped findings mark rework.")
