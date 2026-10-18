@@ -6,6 +6,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 fails=0
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="$(mktemp -d)"; trap 'rm -rf "${STUB_BIN}"' EXIT
+export CLAUDE_CONFIG_DIR="${STUB_BIN}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
 
@@ -267,6 +268,164 @@ expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
+# A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
+# A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
+# idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]
+idle_case() {
+  local got=no
+  expect "idle dependency, $1" "story a" \
+    "item stories/a.md 'status: ready' 'kind: code' 'touches: [x.sh:f, y.sh]'" \
+    "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [$2]' ${4:+"'$4'"}"
+  grep -qxF "idle: b waits on a but shares no touches with it" <<< "${out}" && got=yes
+  if [[ "${got}" == "$3" ]]; then echo "ok   idle dependency, $1: named $3"
+  else echo "FAIL idle dependency, $1: want named $3: ${out}"; fails=$((fails + 1)); fi
+}
+idle_case disjoint c.sh yes
+idle_case "shared file" x.sh:g no
+idle_case "needs line" c.sh no "needs: a.sh"
+idle_case "held by review" c.sh no "held_by: review"
+# A multi-word kind is no kind an agent builds: it stays with the lead.
+expect "a multi-word kind stays with the lead" "gate" \
+  "item stories/a.md 'status: ready' 'kind: code docs'"
+# A blocked lead story's dependency must stay, whatever its touches.
+expect "a blocked lead story is never named over-broad" "story a" \
+  "item stories/a.md 'status: ready' 'kind: code' 'touches: [x.sh]'" \
+  "item stories/b.md 'status: blocked' 'kind: lead' 'depends_on: [a]' 'touches: [c.sh]'"
+if ! grep -q '^idle: b ' <<< "${out}"; then echo "ok   a blocked lead story is not named over-broad"
+else echo "FAIL a blocked lead story is named over-broad: ${out}"; fails=$((fails + 1)); fi
+# A dependency in review: unblock stacks the story on its PR, so it is not idle.
+expect "a dependency in review is never named over-broad" "gate" \
+  "item stories/a.md 'status: review' 'kind: code' 'touches: [x.sh]'" \
+  "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [c.sh]'"
+if ! grep -q '^idle: b ' <<< "${out}"; then echo "ok   a dependency in review is not named over-broad"
+else echo "FAIL a dependency in review is named over-broad: ${out}"; fails=$((fails + 1)); fi
+# A lead story's step (credentials, a person) is no code to share: depending on it is never over-broad.
+expect "idle dependency on a lead story" "gate" \
+  "item stories/a.md 'status: ready' 'kind: lead' 'touches: [x.sh]'" \
+  "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [c.sh]'"
+if ! grep -q '^idle: b ' <<< "${out}"; then echo "ok   a dependency on a lead story is not named over-broad"
+else echo "FAIL a dependency on a lead story is named over-broad: ${out}"; fails=$((fails + 1)); fi
+
+# findings_fixture — a findings.tsv (run inside a fixture): "cache the parse" declined out-of-scope
+# twice (listed once, by its newest row), one declined as a nit, an old one, one fixed after its
+# decline, one a story carries (filed), one a story carried that merged and left the board, one an
+# open board PR's branch files, and one the lead logged with log-finding --filed (a paraphrased story).
+findings_fixture() {
+  local t; t="$(date +%F)"; mkdir -p .swarm
+  {
+    printf '%s\tk\to/r#1\tcache the parse\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#2\ttoo small\tdeclined\tcodex\tnit\n2020-01-01\tk\to/r#3\tancient\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#4\tcache the parse\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#5\tsplit the lexer\tdeclined\tcodex\tout-of-scope\n%s\tk\to/r#6\tsplit the lexer\tfixed\tcodex\n' "${t}" "${t}"
+    printf '%s\tk\to/r#7\tfiled already\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#8\tfiled and merged\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#9\tfiled in a board PR\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#10\tlogged as filed\tdeclined\tcodex\tout-of-scope\n' "${t}"
+  } > .swarm/findings.tsv
+  bash "${SWARM}" log-finding --filed --reviewer lead k o/r#10 'logged as filed' >/dev/null
+  echo "filed already" >> docs/stories/bl.md
+  item stories/gone.md 'status: ready' 'kind: code'; echo "filed and merged" >> docs/stories/gone.md
+  git add docs/stories/gone.md && git -c user.name=t -c user.email=t@t commit -qm file
+  git rm -q docs/stories/gone.md && git -c user.name=t -c user.email=t@t commit -qm merged
+  git checkout -q -b board/file-it && item stories/pr.md 'status: ready' 'kind: code' && echo "filed in a board PR" >> docs/stories/pr.md
+  git add docs/stories/pr.md && git -c user.name=t -c user.email=t@t commit -qm "board PR" && git checkout -q -
+}
+# idle_project <name> <want lines> — check that next named the project idle with exactly these lines.
+idle_project() {
+  local got; got="$(sed -n '/^idle: ".*"$/,$p' <<< "${out}")"
+  if [[ "${got}" == "$2" ]]; then echo "ok   $1"
+  else echo "FAIL $1: want '$2', got '${got}': ${out}"; fails=$((fails + 1)); fi
+}
+# A project with nothing an agent can build: next names it idle with the out-of-scope finding still
+# to file, never its later story (the user's to start, which the gate lists).
+expect "an idle project is a gate" "gate" \
+  "item stories/l1.md 'status: later' 'kind: code'" \
+  "item stories/bl.md 'status: blocked' 'kind: code' 'depends_on: [l1]'" \
+  "item stories/ld.md 'status: ready' 'kind: lead'" \
+  findings_fixture
+p="$(grep '^idle: ".*"$' <<< "${out}" || true)"
+idle_project "an idle project lists one out-of-scope finding, deduped, unfixed and unfiled, and no later story" \
+  "${p:-idle: ?}"$'\n'"  out-of-scope finding: $(date +%F) k o/r#4: cache the parse"
+# A ready story in a later epic: next does not build it, so nothing is buildable and the project is idle.
+expect "a ready story in a later epic leaves the project idle" "gate" \
+  "item epics/e1.md 'status: later'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: e1'" \
+  "item stories/bl.md 'status: blocked' 'kind: code'" \
+  findings_fixture
+if grep -q '^idle: ".*"$' <<< "${out}"; then echo "ok   a ready story in a later epic is no buildable story: the project is named idle"
+else echo "FAIL a ready story in a later epic keeps the project from being named idle: ${out}"; fails=$((fails + 1)); fi
+# With no finding to offer there is nothing for the lead to do: no idle project line.
+expect "an idle project with nothing to offer" "gate" \
+  "item stories/l1.md 'status: later' 'kind: code'"
+if ! grep -q '^idle: ".*"$' <<< "${out}"; then echo "ok   with no finding to offer the project is not named idle"
+else echo "FAIL with no finding to offer the project is named idle: ${out}"; fails=$((fails + 1)); fi
+# A board in no git repo: log-finding --filed writes a filed row, and that row alone drops the finding.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && mkdir -p .claude/swarm .swarm docs/stories && : > .claude/swarm/config && item stories/l1.md 'status: later' 'kind: code' \
+  && printf '%s\tk\to/r#1\tstill open\tdeclined\tcodex\tout-of-scope\n%s\tk\to/r#2\tlogged as filed\tdeclined\tcodex\tout-of-scope\n' "$(date +%F)" "$(date +%F)" > .swarm/findings.tsv \
+  && bash "${SWARM}" log-finding --filed --reviewer lead k o/r#2 "logged as filed" >/dev/null)
+out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"
+if tail -1 "${dir}/.swarm/findings.tsv" | grep -q $'\tlogged as filed\tfiled\tlead$'; then echo "ok   log-finding --filed writes a filed row"
+else echo "FAIL log-finding --filed wrote: $(tail -1 "${dir}/.swarm/findings.tsv")"; fails=$((fails + 1)); fi
+idle_project "with no git, a finding logged as filed is not offered" "idle: \"$(basename "${dir}")\""$'\n'"  out-of-scope finding: $(date +%F) k o/r#1: still open"
+rm -rf "${dir}"
+# A reader that has stopped reading (a closed stdout, as after head -1 or grep -q) leaves next
+# exiting 0 with no warning: it writes its step and idle lines in one go and ignores the broken pipe.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item stories/a.md 'status: ready' 'kind: code' 'touches: [x.sh]' \
+  && item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [c.sh]')
+got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2>"${dir}/err" | true; echo "exit ${PIPESTATUS[0]}")"
+if [[ "${got}" == "exit 0" && ! -s "${dir}/err" ]]; then echo "ok   next into a closed pipe exits 0 with no warning"
+else echo "FAIL next into a closed pipe: ${got} $(cat "${dir}/err")"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+# A failure in next_step stops next: it runs in the main shell, where errexit is on. A basename that
+# fails on a ready story's path fails next_step's buildable+="... $(basename ...)" assignment.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+# shellcheck disable=SC2016 # the stub's $1 and $@ are its own
+(cd "${dir}" && git init -q && mkdir -p bin && mkdir -p docs/stories && item stories/x.md 'status: ready' 'kind: code' 'touches: [x.sh]' \
+  && printf '#!/bin/sh\ncase "$1" in */stories/x.md) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v basename)" > bin/basename && chmod +x bin/basename)
+got="$(cd "${dir}" && PATH="${dir}/bin:${PATH}" env -u HERDR_ENV bash "${SWARM}" next 2>/dev/null; echo "exit $?")"
+if [[ "${got}" != "exit 0" && "${got}" != *$'\n'"exit 0" ]]; then echo "ok   a failure in next_step makes next fail"
+else echo "FAIL a failure in next_step does not stop next: ${got}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+# A planning step is about to give the builders stories: no idle project beside it.
+expect "a planning step is no idle project" "plan-epic e1" \
+  "item epics/e1.md 'status: active'" \
+  "item stories/bl.md 'status: blocked' 'kind: code'" \
+  findings_fixture
+if ! grep -q '^idle: ".*"$' <<< "${out}"; then echo "ok   beside plan-epic the project is not named idle"
+else echo "FAIL beside plan-epic the project is named idle: ${out}"; fails=$((fails + 1)); fi
+# The idle check is advisory: when touches_rows.py fails (a state file that is a directory), next
+# still prints its step, warns, and exits 0. A project name with a space stays one quoted name.
+dir="$(mktemp -d)/my proj" || { echo "mktemp -d failed" >&2; exit 1; }
+mkdir -p "${dir}" && (cd "${dir}" && git init -q && mkdir -p docs/stories .swarm/board-state/stories/a && item stories/a.md 'status: ready' 'kind: code')
+got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2>"${dir}.err"; echo "exit $?")"
+if [[ "${got}" == "story a"*"exit 0" ]] && grep -q '^warning: the idle-dependency check failed' "${dir}.err"; then echo "ok   a failed idle check warns and next still exits 0"
+else echo "FAIL a failed idle check: ${got} $(cat "${dir}.err")"; fails=$((fails + 1)); fi
+(cd "${dir}" && rm -rf .swarm && item stories/a.md 'status: later' 'kind: code' && mkdir .swarm \
+  && printf '%s\tk\to/r#1\tone to file\tdeclined\tcodex\tout-of-scope\n' "$(date +%F)" > .swarm/findings.tsv)
+got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"
+if grep -qx 'idle: "my proj"' <<< "${got}"; then echo "ok   a project name with a space is one quoted name on its idle line"
+else echo "FAIL a project name with a space: ${got}"; fails=$((fails + 1)); fi
+rm -rf "$(dirname "${dir}")"
+expect "a project with a buildable story is not idle" "story r" \
+  "item stories/l1.md 'status: later' 'kind: code'" \
+  "item stories/r.md 'status: ready' 'kind: code'"
+if ! grep -q '^idle: ' <<< "${out}"; then echo "ok   a project with a buildable story is not named idle"
+else echo "FAIL a project with a buildable story is named idle: ${out}"; fails=$((fails + 1)); fi
+# The lead's half: swarm.md says what to do with each idle: line, plan-epic's skeptic checks for it.
+cmds="$(dirname "${SWARM}")/../commands"
+got=""
+# shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
+{
+grep -qF '`idle: <story> waits on <dep> but shares no touches with it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
+grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
+grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
+grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
+grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's skeptic has no disjoint-touches check"
+}
+if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's skeptic checks disjoint touches"
+else echo "FAIL${got}"; fails=$((fails + 1)); fi
 expect "stories before planning" "conduct e2" \
   "item epics/e0.md 'status: draft'" \
   "item epics/e1.md 'status: active'" \
