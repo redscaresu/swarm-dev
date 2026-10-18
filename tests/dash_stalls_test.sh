@@ -156,7 +156,7 @@ check "at 160 columns a stalled builder keeps its !" grep -qE '! s-three +code +
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"
 check "a builder working 2 hours with no sign of life is stalled" grep -qE '! s-three .*stalled 1(19|20|21)m' <<< "${out}"
 check "a stalled builder needs you" grep -qE '! look at s-three: working 1(19|20|21) min with no commit, edit, session-log write or PR update' <<< "${out}"
-check "the summary counts the stall" has " · 1 stalled · " "$(sed -n 3p <<< "${out}")"
+check "the summary counts the stall" has " · 1 stalled · " "$(sed -n 5p <<< "${out}")"
 check "recent shows a start minutes ago, newest first" grep -qE '^│    4m ago  ▶ conduct e1 ' <<< "$(sed -n '/^╭─ recent/{n;p;}' <<< "${out}")"
 check "recent shows hours ago" grep -qE '^│    2h ago  ▶ story s-three ' <<< "${out}"
 mkdir -p "${P}/.claude/swarm"; echo "stall_minutes = 300" > "${P}/.claude/swarm/config"
