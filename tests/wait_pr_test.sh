@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # wait_pr_test.sh — swarm.sh wait-pr: it polls ci_gate head on a PR's head until nothing is pending,
 # exits 0 green (printing the head SHA and each check), 1 red, and 2 on a gh error, retrying only a
-# transient one, at most 3 in a row, and on a head whose checks never appear within the grace. gh is
+# transient one, at most 3 in a row, on a head whose checks never appear within the grace, and past
+# its deadline with a check still pending. gh is
 # a stub on PATH: it logs every call to gh.log, answers pr view with ${H} and the nth check-runs
 # read from ${FX}/checks.<n> (else ${FX}/checks); the nth read of either fails with ${FX}/head.<n>.err
-# or ${FX}/checks.<n>.err as its stderr.
+# or ${FX}/checks.<n>.err as its stderr. With ${FX}/notice, pr view also prints a notice on stderr;
+# commit statuses come from ${FX}/status, else none.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -27,11 +29,11 @@ fail() {
   if [ -e "${FX}/$1.${n}.err" ]; then cat "${FX}/$1.${n}.err" >&2; exit 1; fi
 }
 case "$*" in
-  "pr view"*) fail head; echo "${H}" ;;
+  "pr view"*) fail head; [ ! -e "${FX}/notice" ] || cat "${FX}/notice" >&2; echo "${H}" ;;
   *check-runs*)
     fail checks
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
-  */status*) echo '{"total_count":0,"statuses":[]}' ;;
+  */status*) cat "${FX}/status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
 STUB
@@ -49,12 +51,13 @@ run() { local c=null; [[ -z "${3:-}" ]] || c="\"$3\""; printf '{"name":"%s","sta
 checks() { local f="$1" IFS=,; shift; printf '{"total_count":%s,"check_runs":[%s]}\n' "$#" "$*" > "${f}"; }
 RATE="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
 fresh() { rm -rf "${FX}"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"; checks "${FX}/checks" "$(run test completed success)" "$(run lint completed success)"; }
-# wait_pr [VAR=value]... — swarm.sh wait-pr ${URL} with no pause unless VARs say otherwise; sets rc
-# and took (seconds), output in ${ROOT}/out.
+# wait_pr [VAR=value]... [arg]... — swarm.sh wait-pr [arg]... ${URL} with no pause unless VARs say
+# otherwise; sets rc and took (seconds), output in ${ROOT}/out.
 wait_pr() {
-  local t0=${SECONDS}; rc=0
+  local t0=${SECONDS} envs=(); rc=0
+  while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_WAIT_PR_RETRY=0 \
-    "$@" bash "${SWARM}" wait-pr "${URL}" > "${ROOT}/out" 2>&1) || rc=$?
+    ${envs[@]+"${envs[@]}"} bash "${SWARM}" wait-pr "$@" "${URL}" > "${ROOT}/out" 2>&1) || rc=$?
   took=$((SECONDS - t0))
 }
 
@@ -88,7 +91,7 @@ is "rate limit three times then green: exits 0" 0 "${rc}"
 fresh; for n in 1 2 3 4; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait_pr
 is "rate limit four times: exits 2" 2 "${rc}"
 is "rate limit four times: four reads" 4 "$(reads)"
-check "rate limit four times: says why" said "rate limit"
+check "rate limit four times: says why" grep -q "^swarm: wait-pr: .*rate limit" "${ROOT}/out"
 
 # --- The head read is retried the same way: a rate limit twice then a head goes on; any other error ends it.
 fresh; echo "${RATE}" > "${FX}/head.1.err"; cp "${FX}/head.1.err" "${FX}/head.2.err"; wait_pr
@@ -104,10 +107,50 @@ is "head read fails: no check read" 0 "$(reads)"
 fresh; checks "${FX}/checks"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr SWARM_WAIT_PR_GRACE=0
 is "no checks past the grace: exits 2" 2 "${rc}"
 is "no checks past the grace: one read" 1 "$(reads)"
-check "no checks past the grace: says so" said "no checks on ${H:0:7}"
+check "no checks past the grace: says so" said "no check runs on ${H:0:7}"
 fresh; checks "${FX}/checks.1"; checks "${FX}/checks.2" "$(run test queued)"; wait_pr SWARM_WAIT_PR_GRACE=60
 is "checks that appear within the grace: exits 0" 0 "${rc}"
 is "checks that appear within the grace: three reads" 3 "$(reads)"
+
+# --- No check runs beside a pending commit status is still no checks: the grace applies.
+fresh; checks "${FX}/checks"; checks "${FX}/checks.6" "$(run test completed failure)"
+echo '{"total_count":1,"statuses":[{"context":"external-ci","state":"pending"}]}' > "${FX}/status"
+wait_pr SWARM_WAIT_PR_GRACE=0
+is "no check runs beside a pending status past the grace: exits 2" 2 "${rc}"
+check "no check runs beside a pending status past the grace: says so" said "no check runs on ${H:0:7}"
+
+# --- The grace starts at the first read that finds no check runs: a head read retried for 2s first
+# leaves a 1s grace whole.
+fresh; echo "${RATE}" > "${FX}/head.1.err"; checks "${FX}/checks.1"; wait_pr SWARM_WAIT_PR_RETRY=2 SWARM_WAIT_PR_GRACE=1
+is "grace after a retried head read: exits 0" 0 "${rc}"
+is "grace after a retried head read: two check reads" 2 "$(reads)"
+
+# --- A check that stays pending ends at the deadline, naming it (red from the 6th read, so no
+# deadline shows as exit 1, not a hang); --timeout sets it, else SWARM_MERGE_CI_SECONDS.
+fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr --timeout 0
+is "stays pending past --timeout: exits 2" 2 "${rc}"
+check "stays pending past --timeout: names what is pending" said "still pending: test (queued)"
+is "stays pending past --timeout: one read" 1 "$(reads)"
+fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr SWARM_MERGE_CI_SECONDS=0
+is "stays pending past the default deadline: exits 2" 2 "${rc}"
+fresh; wait_pr --timeout soon
+is "a --timeout that is not seconds: exits 2" 2 "${rc}"
+check "a --timeout that is not seconds: prints usage" said "usage: swarm.sh wait-pr"
+
+# --- Only gh's own words count as transient, not a repo path or URL in the error.
+fresh; echo "gh: Bad credentials (HTTP 401)" > "${FX}/checks.1.err"
+URL=https://github.com/o/geofabrik/pull/7 wait_pr SWARM_WAIT_PR_RETRY=30
+is "Bad credentials on repo geofabrik: exits 2" 2 "${rc}"
+is "Bad credentials on repo geofabrik: one read" 1 "$(reads)"
+fresh; printf 'Get "https://api.github.com/repos/o/r/commits/%s/check-runs": read tcp 10.0.0.1:1->10.0.0.2:443: read: connection reset by peer\n' "${H}" > "${FX}/checks.1.err"
+wait_pr
+is "connection reset beside a URL: exits 0" 0 "${rc}"
+is "connection reset beside a URL: two reads" 2 "$(reads)"
+
+# --- A notice on stderr beside a good head read is not an error.
+fresh; echo "A new release of gh is available: 2.80.0 → 2.81.0" > "${FX}/notice"; wait_pr
+is "a gh notice beside the head: exits 0" 0 "${rc}"
+check "a gh notice beside the head: prints the head SHA" said "head ${H}"
 
 # --- Read-only: no events.tsv line.
 check "wait-pr logs nothing" test ! -s "${P}/.swarm/events.tsv"

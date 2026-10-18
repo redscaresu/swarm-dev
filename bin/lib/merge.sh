@@ -5,10 +5,12 @@ MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL
 MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear (SWARM_MERGE_CI_GRACE)
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
-WAIT_PR_GRACE=300       # how long wait-pr gives a head with no checks for them to appear (SWARM_WAIT_PR_GRACE)
+WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
-# A gh error worth retrying: a dropped connection, a timeout, a rate limit, a 5xx.
+# A gh error worth retrying: a dropped connection, a timeout, a rate limit, a 5xx. Matched as whole
+# words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
+# named geofabrik or timeout does not make Bad credentials transient.
 WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|HTTP (429|50[0234])'
 
 # ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
@@ -192,24 +194,32 @@ merge_pr() {
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
-# wait-pr <pr-url> — print the PR's head SHA, then read ci_gate head on it every MERGE_POLL seconds
-# (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever that changes. Exits
-# 0 when all are green, printing each check; 1 on red; 2 on anything else, since a gh error is never
-# pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY, WAIT_PR_TRIES in a row
-# at most, any other ends it at once. A new head has no checks for a few minutes; none by
-# WAIT_PR_GRACE ends it too. It reads the head once, with the same retries: a later push is not followed.
+# wait-pr [--timeout <seconds>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
+# MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
+# that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
+# gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
+# WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
+# minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
+# Past <seconds> (default MERGE_CI_SECONDS) it ends naming what is still pending: a check queued with
+# no runner never settles. It reads the head once, with the same retries: a later push is not followed.
 wait_pr() {
-  local url="${1:-}" repo n head="" why rc missed=0 last="" start=${SECONDS}
-  [[ $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
-    || wait_pr_fail "usage: swarm.sh wait-pr <pr-url>"
+  local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" repo n head="" why err rc missed=0 last="" empty="" start=${SECONDS} errf
+  if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; shift 2 || shift; fi
+  url="${1:-}"
+  [[ "${limit}" =~ ^[0-9]+$ && $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
+    || wait_pr_fail "usage: swarm.sh wait-pr [--timeout <seconds>] <pr-url>"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  errf="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
+  # shellcheck disable=SC2064 # this run's file, fixed now
+  trap "rm -f $(printf %q "${errf}")" EXIT
   while :; do
     rc=0
     if [[ -z "${head}" ]]; then
-      # The head read is retried like a check read: a transient error is as likely here.
-      why="$(gh pr view "${n}" --repo "${repo}" --json headRefOid -q .headRefOid 2>&1)" || rc=3
+      # The head read is retried like a check read: a transient error is as likely here. Its stderr
+      # is only the error: a notice beside a good answer (a gh update) is not one.
+      why="$(gh pr view "${n}" --repo "${repo}" --json headRefOid -q .headRefOid 2> "${errf}")" || rc=3
       if [[ ${rc} -eq 0 && "${why}" =~ ^[0-9a-f]{40}$ ]]; then head="${why}"; missed=0; echo "head ${head}"; continue; fi
-      rc=3; why="gh cannot read the head of ${url}: ${why##*$'\n'}"
+      rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${errf}")"
     else
       why="$(ci_gate head "${repo}" "${head}")" || rc=$?
     fi
@@ -217,11 +227,16 @@ wait_pr() {
       0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
       1) echo "red: ${why}"; return 1 ;;
       2) missed=0
-         [[ "${why}" != "no check runs" || $((SECONDS - start)) -lt "${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}" ]] \
-           || wait_pr_fail "no checks on ${head:0:7} after $((SECONDS - start))s"
+         if [[ "; ${why}; " == *"; no check runs; "* ]]; then
+           empty="${empty:-${SECONDS}}"
+           (( SECONDS - empty < ${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}} )) \
+             || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
+         fi
+         (( SECONDS - start < limit )) || wait_pr_fail "timed out after $((SECONDS - start))s on ${head:0:7}, still pending: ${why}"
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
          last="${why}"; sleep "${SWARM_MERGE_POLL:-${MERGE_POLL}}" ;;
-      *) if ! grep -qiE "${WAIT_PR_TRANSIENT}" <<< "${why}" || ((++missed > WAIT_PR_TRIES)); then
+      *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
+         if ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "${err}" || ((++missed > WAIT_PR_TRIES)); then
            wait_pr_fail "${why:-ci_gate failed (exit ${rc})}"
          fi
          echo "retrying after ${why}"

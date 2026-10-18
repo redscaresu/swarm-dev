@@ -158,8 +158,11 @@ Repeat until a step below says stop:
      `.claude-plugin/plugin.json`, to the next minor version (a patch when every change since the
      tag is a fix). Commit with the brief's trailers, push, and open the PR titled
      `Release v<new>`, listing the PRs merged since the tag. Run `swarm.sh wait-pr <PR URL>` in the
-     background and wait for it. If it exits 1, a check is red: fix it on the branch and wait again.
-     If it exits 2, gh failed or no checks appeared: tell the user what it printed and stop. If `swarm.sh config merge` is `agent`, run
+     background and wait for it. If it exits 1, a check is red. A release PR may change only the
+     version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
+     story or a lead PR, then close this PR and cut the release branch again from the base's latest
+     green commit. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
+     what it printed and stop. If `swarm.sh config merge` is `agent`, run
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
      Then check that the tag `v<new>` exists and that `gh release view v<new>` shows the release,
      remove the worktree and the branch, and go back to 1. If it is `human`, tell the user the PR
