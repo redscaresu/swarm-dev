@@ -37,7 +37,6 @@ user why. The full table of stops and what to do is in README § When `/swarm-de
 | Command | Use |
 |---|---|
 | `/epic <title>` | write a draft epic with a co-author; nothing plans it until the user agrees it |
-| `/plan-hld <hld-file-name>` | split an agreed design (its file name in the board's `hld/`) into epics |
 | `/plan-epic <epic>` | split an epic into stories |
 | `/swarm-dev:swarm` | do the next step and loop until the user must decide |
 | `swarm.sh next` | name the next step without doing it |
