@@ -32,19 +32,19 @@ both() { has "$1" "$3" && has "$2" "$3"; }
 sleepers=()
 trap 'kill ${sleepers[@]+"${sleepers[@]}"} 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
 
-out="$(cut 120 30 --ladder)"
-check "at 120x30 the ladder and the top of running now show: the lines under the speedometer gave way" has "│ ● conduct-alpha-core  up" "${out}"
-check "at 120x30 the sparkline does not show" lacks "14 days" "${out}"
-check "at 120x30 the gauges do not show" lacks "of peak" "${out}"
-out="$(cut 120 38 --ladder)"
-check "at 120x38 the sparkline's line goes first" lacks "14 days" "${out}"
-check "at 120x38 the gauges still show" has "of peak" "${out}"
+out="$(cut 120 31 --ladder)"
+check "at 120x31 the ladder and the top of running now show: the lines under the speedometer gave way" has "│ ● conduct-alpha-core  up" "${out}"
+check "at 120x31 the sparkline does not show" lacks "14 days" "${out}"
+check "at 120x31 the gauges do not show" lacks "of peak" "${out}"
 out="$(cut 120 39 --ladder)"
-check "at 120x39 the sparkline shows" has "14 days" "${out}"
-check "at 120x39 the gauges show" has "of peak" "${out}"
-check "at 120x39 the ladder is still whole" has "review-fallback→ " "${out}"
-check "at 120x39 running now is still whole" has "│ ● a-building          up" "${out}"
-check "at 120x39 recent keeps at least 3 rows" test "$(sed -n '/─ recent/,/╰/p' <<< "${out}" | grep -c ago)" -ge 3
+check "at 120x39 the sparkline's line goes first" lacks "14 days" "${out}"
+check "at 120x39 the gauges still show" has "of peak" "${out}"
+out="$(cut 120 40 --ladder)"
+check "at 120x40 the sparkline shows" has "14 days" "${out}"
+check "at 120x40 the gauges show" has "of peak" "${out}"
+check "at 120x40 the ladder is still whole" has "review-fallback→ " "${out}"
+check "at 120x40 running now is still whole" has "│ ● a-building          up" "${out}"
+check "at 120x40 recent keeps at least 3 rows" test "$(sed -n '/─ recent/,/╰/p' <<< "${out}" | grep -c ago)" -ge 3
 # From 140 columns the left column counts too: at 160x20 it is taller than the frame already, so the
 # lines under the speedometer go; at 24 they would push its last line out; at 25 both fit.
 check "at 160x20 the lines under the speedometer give way to the left column" lacks "14 days" "$(cut 160 20)"
@@ -69,8 +69,8 @@ printf '%s\tfinish\ts-7-late\tw1:p1\tok\n' "$(at $((7 * 1440 - 480)))" >> "${A}/
 out="$(frame "${A}" 100)"
 check "the speedometer counts the bars' 7 calendar days, not 168 hours: 9 is 1.3" has "1.3 merged/day over 7 days" "$(sed -n 2p <<< "${out}")"
 check "the sparkline draws the 14 days, oldest first, the busiest day highest, and averages its last 7 bars" \
-  has "14 days ▂▁▃▇▅▁▃▁▂▃▁▂▅▃  today 2  7-day avg 1.3" "$(sed -n 3p <<< "${out}")"
-check "the rate gauge is the last 7 bars' 9 of the best 12" has "rate █████████··· 1.3 of best 1.7/day" "$(sed -n 4p <<< "${out}")"
+  has "14 days ▂▁▃▇▅▁▃▁▂▃▁▂▅▃  today 2  7-day avg 1.3" "$(sed -n 4p <<< "${out}")"
+check "the rate gauge is the last 7 bars' 9 of the best 12" has "rate █████████··· 1.3 of best 1.7/day" "$(sed -n 5p <<< "${out}")"
 
 # Three review agents working beside the builder and the conductor (a herdr that lists them too): 5
 # of a peak of 5, the summary's 5, and the parts fill the gauge with no gap (1, 1 and 3 of 5 are 2.4,
@@ -115,7 +115,7 @@ for s in 1 2 3 4 5; do
 done
 out="$(frame "${A}" 100)"
 check "the running gauge: a builder and a conductor now, of the peak of 4 in 7 days" \
-  has "running ███▓▓▓······ 2 of peak 4 in 7 days" "$(sed -n 4p <<< "${out}")"
+  has "running ███▓▓▓······ 2 of peak 4 in 7 days" "$(sed -n 5p <<< "${out}")"
 # Five at once that ended 6 days 18 hours ago: inside 168 hours, but before the 7 calendar days began
 # (midnight 6 days ago), so the peak stays 4.
 for s in 1 2 3 4 5; do
@@ -138,7 +138,7 @@ for s in $(seq 5 24); do
   printf '2026-10-07\tcode\tpk-%s\tclaude\topus\thigh\tpk-%s\n' "${s}" "${s}" >> "${A}/.swarm/agents.tsv"
 done
 check "at a peak of 24 a builder and a conductor still show a cell each" \
-  has "running █▓·········· 2 of peak 24 in 7 days" "$(sed -n 4p <<< "$(frame "${A}" 100)")"
+  has "running █▓·········· 2 of peak 24 in 7 days" "$(sed -n 5p <<< "$(frame "${A}" 100)")"
 # A session whose last write (6 days ago) is before its first timestamp (an hour ago) is skipped: it never lowers the peak.
 session alpha pk-bad 60 claude-opus-5-5 1 1 Bash; touch_ago 9000 "${ROOT}/projects/alpha/pk-bad.jsonl"
 printf '2026-10-07\tcode\tpk-bad\tclaude\topus\thigh\tpk-bad\n' >> "${A}/.swarm/agents.tsv"
@@ -165,7 +165,8 @@ out="$(frame "${A}" 59)"
 check "at 59 columns only the text line: no sparkline" lacks "14 days" "${out}"
 check "at 59 columns only the text line: no gauges" lacks "of best" "${out}"
 check "at 59 columns the speedometer's text line is still there" has "1.3 merged/day" "$(sed -n 2p <<< "${out}")"
-check "at 59 columns the line under the speedometer is the summary, no blank line" has "epics active" "$(sed -n 3p <<< "${out}")"
+check "at 59 columns the lights that do not fit go to lines of their own" has "✓ 0 escaped in 7 days · ✓ 0 interventions in 7 days" "$(sed -n 4p <<< "${out}")"
+check "at 59 columns the line under the speedometer's is the summary, no blank line" has "epics active" "$(sed -n 5p <<< "${out}")"
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

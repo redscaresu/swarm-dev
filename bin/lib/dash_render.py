@@ -690,9 +690,11 @@ def running_view():
 
 # The speedometer: stories merged per day over 7 days, the distinct slugs events.tsv says were
 # finished on the last 7 calendar days, today's among them, each on the day of its newest finish (finish, or reconcile's "finished" once a PR merged; a drop or a
-# rescope writes neither), and two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
+# rescope writes neither), and three lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
 # needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
-# waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
+# waited, the escaped defects logged in the last 7 days, and the times a person stepped in on them
+# (`swarm.sh intervene`'s incident lines, of either kind it takes). A light that does not
+# fit on the line goes to the next. A board item waits from its newest
 # review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
     d, slug = item
@@ -701,9 +703,13 @@ def waited_from(item):
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
-moved, done_at = {}, {}   # done_at: slug -> its newest finish, so it counts once, on that day
+INTERVENE_KINDS = ("lead-hand", "user-caught")
+SEP = (" · ", "dim")
+moved, done_at, stepped_in = {}, {}, 0   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0])
+    if t is not None and f[1] == "incident" and f[4].partition(":")[0].strip() in INTERVENE_KINDS:
+        stepped_in += (TODAY - datetime.date.fromtimestamp(t)).days in range(7)
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
     if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
         done_at[f[2]] = max(t, done_at.get(f[2], t))
@@ -724,10 +730,10 @@ last7 = sum(per_day[d] for d in range(7))
 n_waiting = len(need) + len(queue) + more
 since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
 escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
-speed = [(f"{last7 / 7:.1f}", "b"), (" merged/day over 7 days", "")]
+speed = [(SEP, [(f"{last7 / 7:.1f}", "b"), (" merged/day over 7 days", "")])]
 for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
-                 (escaped, "escaped in 7 days")):
-    speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
+                 (escaped, "escaped in 7 days"), (stepped_in, f"intervention{'' if stepped_in == 1 else 's'} in 7 days")):
+    speed.append((SEP, [(f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]))
 
 # Under the speedometer from 60 columns: the stories finished per day over 14 days (done_at's days) as
 # a sparkline, oldest first, then today's count and the average of its last 7 days. From 100
@@ -806,8 +812,6 @@ def gauges():
     return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
             + [(f" {now} of peak {peak} in 7 days", "")])
 
-SEP = (" · ", "dim")
-
 def pack(groups, n):
     # Groups of styled segments onto as few lines of n as they fit, never splitting a group; each
     # group carries the separator it takes after another on the same line.
@@ -828,7 +832,8 @@ if WIDE:
 if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
-out.append(fit(speed, W))
+speed = pack(speed, W)
+out += speed
 under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
@@ -905,7 +910,7 @@ else:
         room = max(5, room)
     if room > 0:
         out += recent_box(W, room)
-out[2:2] = under
+out[1 + len(speed):1 + len(speed)] = under
 if FIT and H:
     # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
     out = out[:max(H - len(foot), 1)]

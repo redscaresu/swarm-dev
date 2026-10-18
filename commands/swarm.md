@@ -195,6 +195,14 @@ Repeat until a step below says stop:
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.
 
+Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
+count it:
+
+- `swarm.sh intervene lead-hand "<what you did>"` when you acted by hand where a command should
+  have (you typed into a stalled agent's pane, merged or edited something yourself).
+- `swarm.sh intervene user-caught "<what they found>"` when the user found a problem before the
+  swarm did (held stories or a slow CI run they found by asking).
+
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` unless the user asks you to merge a PR, and then only with `swarm.sh merge <PR URL>`
 (not `gh pr merge`, not `gh api`, not the web page), and never give a `lead` story to an agent.

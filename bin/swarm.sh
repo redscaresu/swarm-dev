@@ -14,6 +14,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
+#   swarm.sh intervene <kind> "<one line>"                  log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
@@ -337,6 +338,17 @@ source "${SWARM_HOME}/bin/lib/merge.sh"
 source "${SWARM_HOME}/bin/lib/lifecycle.sh"
 # shellcheck source=bin/lib/dash.sh
 source "${SWARM_HOME}/bin/lib/dash.sh"
+# intervene <kind> <line> — log one time a person had to step in: an incident line, target -, outcome
+# `<kind>: <line>`, which flow's incidents section counts per day and kind. The kinds are lead-hand and
+# user-caught, the two dash_render.py's speedometer counts. Its only line: main logs none for it
+# (target !), so an unknown kind or an empty line logs nothing.
+intervene() {
+  case "$1" in lead-hand|user-caught) ;; *) die "intervene: the kind must be lead-hand or user-caught, not '$1'" ;; esac
+  [[ -n "${2//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene $1 \"<one line>\""
+  record_event incident - "$1: $2"
+  echo "logged: $1: $2"
+}
+
 # Everything runs from main, called on the last line with `exit` beside it: bash reads a
 # script as it executes, so a `git pull` that rewrites this file during a long `wait` would
 # otherwise make it resume reading the new file mid-line.
@@ -365,6 +377,7 @@ dispatch() {
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
     lessons) lessons_report "${1:-}" ;;
+    intervene) intervene "${1:-}" "${*:2}" ;;
     features) moved features features "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
@@ -677,8 +690,8 @@ main_signal() {
 # outcome: ok, interrupted, the first line of a die at the command's own level, or failed (exit N).
 # A die inside a nested $(...) gives only failed (exit N): a caller may have tolerated it, so its
 # message could name the wrong failure; it was printed to stderr all the same. reconcile and unblock
-# log one line per item themselves, and merge (target !) every line it writes, so main logs none
-# for it but an interrupt. A tell's command is tell:<kind>, a close's close:<cause> and a
+# log one line per item themselves, and merge and intervene (target !) every line they write, so main logs none
+# for them but an interrupt. A tell's command is tell:<kind>, a close's close:<cause> and a
 # board-pr's board-pr:<step>, so the target stays the slug (a board-pr's name). A reset or drop
 # that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
 # epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held.
@@ -698,7 +711,7 @@ main() {
                  [[ "${FINDING_OUTCOME}" == fixed ]] || EV_CMD="log-finding:declined"
                  EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
-    merge) EV_TARGET='!' ;;
+    merge|intervene) EV_TARGET='!' ;;
     tidy) EV_TARGET=- ;;
     # The slug, which the stall rule reads; the kind goes with the command, and only a real one (the
     # old form, tell <slug> <file>, would put a path there).
