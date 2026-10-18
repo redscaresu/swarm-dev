@@ -185,15 +185,19 @@ outcomes_report() {
 # its trigger (attempt N, or step-up's trigger) with from and to. was_easy: merged on the first
 # attempt, at most one findings round, no rework and a diff under 100 lines, under was_easy_rule 1.
 # Nothing from the environment or a session log's text is written. Each run rewrites the file whole
-# through a temporary file, and a story gh could not read stops it before it writes. A story whose
+# through a temporary file. A story gh could not read, an outcomes step that fails, or no finished
+# story where the file has some stops it before it writes. A story whose
 # repo is not here is skipped and counted on stderr; a merged story whose builds name no merged PR (a
 # retry with no session log left) reads it from gh, or keeps its line from the last run.
 dataset_report() {
   local rows repos="" no_repo="" slug src
   [[ $# -eq 0 ]] || die "usage: swarm.sh dataset"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  # A command substitution turns set -e off, so it is turned back on inside: a step of outcomes that
+  # fails stops it here, before an empty set of rows can replace the file.
   # shellcheck disable=SC2119 # takes no argument here
-  rows="$(outcomes_report | sed '/^$/,$d')"
+  rows="$(set -e; outcomes_report)" || die "dataset: outcomes failed, so ${PROJECT_DIR}/.swarm/dataset.jsonl is left as it was"
+  rows="$(sed '/^$/,$d' <<< "${rows}")"
   # Each known story's repo (its repo:, as outcomes reads it), whose history holds the fixes that name
   # its PR; a story whose repo is not here goes in no_repo, since gh never ran for it.
   while IFS= read -r slug; do

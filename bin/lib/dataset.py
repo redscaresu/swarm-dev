@@ -174,6 +174,9 @@ for slug, bs in builds.items():
 
 if unread:
     sys.exit(f"gh could not read the PRs of {', '.join(unread)}; {out} is left as it was: check gh auth status and run it again")
+# Finished stories stay finished, so an empty set where the last run found some is a read that failed.
+if not stories and os.path.exists(out) and os.path.getsize(out) > 0:
+    sys.exit(f"found no finished story, so {out} (not empty) is left as it was")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 with open(out + ".tmp", "w") as f:
     for _, s in sorted(stories, key=lambda s: s[0]):

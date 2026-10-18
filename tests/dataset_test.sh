@@ -172,5 +172,21 @@ check "when gh gives no merged PR for it, the story keeps its line from the last
   "$(printf '%s\n' "skipped 1 story whose repo is not here: uncloned" "retried: merged, but gh gave no merged PR; kept its previous line" \
     "wrote 4 finished stories to ${F}" "exit 0" "${before}")"
 
+# --- A step of outcomes that fails (here its outcomes_rows.py, through a python3 that fails for it
+# alone), and a run that finds no finished story, each leave a file that has lines as it was.
+mkdir -p "${dir}/py"
+printf '#!/bin/sh\ncase "$*" in *outcomes_rows.py*) echo "outcomes_rows: boom" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "${dir}/py/python3"
+chmod +x "${dir}/py/python3"
+before="$(cksum < "${F}")"
+check "when a step of outcomes fails, it refuses, says so, and leaves the file as it was" \
+  "$(dataset PATH="${dir}/py:${dir}/bin:${PATH}" | grep -v boom; cksum < "${F}")" \
+  "$(printf 'swarm: dataset: outcomes failed, so %s is left as it was\nexit 1\n%s' "${F}" "${before}")"
+cp "${P}/.swarm/agents.tsv" "${dir}/agents.tsv.bak"
+grep $'\tlead\t' "${dir}/agents.tsv.bak" > "${P}/.swarm/agents.tsv"
+check "when it finds no finished story, it does not empty a file that has lines" \
+  "$(dataset; cksum < "${F}")" \
+  "$(printf 'found no finished story, so %s (not empty) is left as it was\nexit 1\n%s' "${F}" "${before}")"
+cp "${dir}/agents.tsv.bak" "${P}/.swarm/agents.tsv"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

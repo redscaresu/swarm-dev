@@ -627,7 +627,8 @@ session log is gone starts at 00:00 local time on its agents.tsv day, converted 
 merged), oldest merge first, for scoring the planner's guesses against what happened. Each run
 rewrites the whole file, through a temporary file. If `gh` could not read a story's PRs (an expired
 login, no network, a rate limit), it says which stories, exits non-zero and leaves the old file as
-it was. A story whose repo is not cloned here is skipped, and one stderr line counts them. A merged
+it was. It does the same when a step of `outcomes` fails, or when it finds no finished story and the
+file is not empty. A story whose repo is not cloned here is skipped, and one stderr line counts them. A merged
 story whose builds own no PR (a retry whose session logs are gone) gets its merged PR from `gh`; if
 `gh` gives none, it keeps its line from the last run. `inputs` is the story as it was planned: its file at the newest commit that
 added it, with `text`, `kind`, `risk`, `touches`, `depends_on`, `estimate_lines` and `easy`, and
