@@ -1,6 +1,6 @@
 ---
 name: swarm-dev
-description: What swarm-dev is and how to drive it. Use when asked how to use swarm-dev, how to set up a project for it, or why /swarm-dev:swarm stopped and what to do next.
+description: What swarm-dev is (a Claude Code plugin that plans epics, splits them into one-PR stories and builds them in parallel herdr panes) and how to drive it. Use when asked to plan or build an epic with a swarm, how to use swarm-dev, how to set up a project for it, or why /swarm-dev:swarm stopped and what to do next.
 ---
 
 swarm-dev turns an epic into merged PRs. The user writes a draft epic with a co-author agent and
