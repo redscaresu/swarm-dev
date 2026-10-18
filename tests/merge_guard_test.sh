@@ -215,6 +215,17 @@ for c in "gh pr checks 271 --watch" "until gh pr checks 271; do sleep 30; done" 
 done
 check "an agent's gh pr checks 271 passes" as agent "${W}" 0 "gh pr checks 271"
 check "the lead's gh pr checks 271 passes" as lead "${W}" 0 "gh pr checks 271"
+check "an agent's until gh pr checks inside a for loop blocks" as agent "${W}" 2 "for i in 1 2; do until gh pr checks 271; do sleep 30; done; done"
+check "an agent's gh pr checks after a for loop inside a while loop blocks" as agent "${W}" 2 "while true; do for i in 1; do :; done; gh pr checks 271; done"
+check "an agent's gh pr checks inside a while loop's body blocks" as agent "${W}" 2 "while true; do gh pr checks 271; sleep 30; done"
+# shellcheck disable=SC2016 # $l is the loop's own
+check "an agent's single gh pr checks piped into a while loop passes" as agent "${W}" 0 'gh pr checks 271 | while read -r l; do echo "$l"; done'
+check "an agent's gh pr checks after a finished while loop passes" as agent "${W}" 0 "while false; do :; done; gh pr checks 271"
+# The fast path sends pr checks to the parser, and a bare checks word past it.
+mkdir -p "${ROOT}/markpy" && printf '#!/bin/sh\n: > "%s/py-ran"\nexit 0\n' "${ROOT}" > "${ROOT}/markpy/python3" && chmod +x "${ROOT}/markpy/python3"
+ran() { rm -f "${ROOT}/py-ran"; call "${W}" "$1" "PATH='${ROOT}/markpy':\${PATH} bash '${HOOK}'" >/dev/null; if [[ -e "${ROOT}/py-ran" ]]; then echo parser; else echo fast; fi; }
+check "make checks takes the fast path" test "$(ran "make checks")" == fast
+check "gh pr checks 271 reaches the parser" test "$(ran "gh pr checks 271")" == parser
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

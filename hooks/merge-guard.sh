@@ -11,8 +11,8 @@
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
 # kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
-# process, or a group): either can hit another session's process. So is its gh pr checks --watch or a
-# while/until loop with gh pr checks in it: swarm.sh wait-pr exits on red, a conflict and a deadline.
+# process, or a group): either can hit another session's process. So is its gh pr checks --watch, or a
+# gh pr checks in a while/until loop's condition or body: swarm.sh wait-pr exits on red, a conflict and a deadline.
 # Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
 # <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
@@ -23,16 +23,17 @@ input="$(cat)"
 command="${input}"
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 [[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"
-# Fast path: a command that never says merge, nor git, cd, a kill or checks as a word, not even through quotes and
+# Fast path: a command that never says merge, nor git, cd, a kill or pr checks as words, not even through quotes and
 # backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
 plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
-word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall|checks)([^[:alnum:]_]|$)'
+word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall)([^[:alnum:]_]|$)'
+checks='(^|[^[:alnum:]_])pr[[:space:]]+checks([^[:alnum:]_]|$)'
 if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
-elif [[ ${plain} =~ ${word} ]]; then says=other
+elif [[ ${plain} =~ ${word} || ${plain} =~ ${checks} ]]; then says=other
 else exit 0
 fi
 # A command that says merge fails closed: anything but the guard's own verdict refuses it. One that
-# only says git, cd, a kill or checks fails open, since those rules save work rather than enforce the merge route.
+# only says git, cd, a kill or pr checks fails open, since those rules save work rather than enforce the merge route.
 command -v python3 >/dev/null || { [[ ${says} == merge ]] || exit 0; echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
 IFS= read -r -d '' prog <<'PY' || true
@@ -50,7 +51,7 @@ REDIRECT = re.compile(r"<<<|<<-?|&>>?|>>|>[|&]?|<[&>]?")
 QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 QUOTING = re.compile(r"[\"'\\]")
 OPENERS = {"do", "then", "else", "while", "until", "!"}  # words that can start a line before its command
-LOOPS = {"while", "until"}
+LOOPS = {"while", "until"}  # loops that poll their condition; for and select open a loop too, closed by done
 MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
 PATTERN_KILLS = {"pkill", "killall"}
 BY_NAME = re.compile(r"(\$\(|`)\s*(pgrep|pidof)\b")  # kill $(pgrep ...): PIDs found by a pattern
@@ -295,10 +296,14 @@ def guard(code, cwd):
     home = cwd if os.environ.get("SWARM_AGENT") else None
     sh = Shell(code.strip())
     sh.parse()
-    loop = any(c["words"][:1] and c["words"][0] in LOOPS for c in sh.cmds)
     d = cwd  # where the next command runs; None once a cd goes where this cannot tell
+    loops = []  # the loops open around the command, innermost last
     for cmd in sh.cmds:
-        args = list(itertools.dropwhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
+        lead = list(itertools.takewhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
+        args = cmd["words"][len(lead):]
+        loops += [w for w in lead if w in LOOPS] + args[:1] * (args[:1] in (["for"], ["select"]))
+        if args[:1] == ["done"]:
+            loops = loops[:-1]
         name = os.path.basename(args[0]) if args else ""
         if name == "cd" and not cmd["nested"]:  # a cd in $( ) moves nothing outside it
             if cmd["end"] == ";":
@@ -310,7 +315,7 @@ def guard(code, cwd):
             check_git(d, args[1:], home)
         elif home and (name in PATTERN_KILLS or (name == "kill" and kills_others(args[1:]))):
             raise Unsafe("pattern-kill", "A kill by name, of PID 0 or of a negative PID can hit another session's process: kill the PID you started ($!)")
-        elif home and name == "gh" and gh_words(args[1:])[:2] == ["pr", "checks"] and (loop or any(w.startswith("--watch") for w in args)):
+        elif home and name == "gh" and gh_words(args[1:])[:2] == ["pr", "checks"] and (LOOPS & set(loops) or any(w.startswith("--watch") for w in args)):
             raise Unsafe("gh pr checks loop", "Wait on CI with `swarm.sh wait-pr <PR URL>` in the background: it exits on red, on a conflict and at a deadline")
 
 

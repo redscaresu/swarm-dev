@@ -6,7 +6,8 @@
 # a stub on PATH: it logs every call to gh.log, answers pr view with ${H} and the nth check-runs
 # read from ${FX}/checks.<n> (else ${FX}/checks); the nth read of either fails with ${FX}/head.<n>.err
 # or ${FX}/checks.<n>.err as its stderr. With ${FX}/notice, pr view also prints a notice on stderr;
-# pr view's nth answer has the mergeable state in ${FX}/mergeable.<n>, else MERGEABLE;
+# pr view's nth answer has the mergeable state in ${FX}/mergeable.<n>, else MERGEABLE, and the PR's
+# state in ${FX}/state, else OPEN;
 # with ${FX}/head.hang or ${FX}/checks.hang, that read hangs 8s before it answers, ignoring SIGALRM
 # as gh (a Go program) does with ${FX}/ignore-alrm;
 # commit statuses come from ${FX}/status, else none.
@@ -34,7 +35,7 @@ fail() {
 case "$*" in
   "pr view"*) fail head; [ ! -e "${FX}/ignore-alrm" ] || trap '' ALRM; [ ! -e "${FX}/head.hang" ] || sleep 8
               [ ! -e "${FX}/notice" ] || cat "${FX}/notice" >&2
-              echo "${H} $(cat "${FX}/mergeable.${n}" 2>/dev/null || echo MERGEABLE) main" ;;
+              echo "${H} $(cat "${FX}/mergeable.${n}" 2>/dev/null || echo MERGEABLE) main $(cat "${FX}/state" 2>/dev/null || echo OPEN)" ;;
   *check-runs*)
     fail checks; [ ! -e "${FX}/checks.hang" ] || sleep 8
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
@@ -113,12 +114,16 @@ fresh; echo CONFLICTING > "${FX}/mergeable.1"; wait_pr SWARM_WAIT_PR_GRACE=300
 is "conflicting: exits 2" 2 "${rc}"
 is "conflicting: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 is "conflicting: no check read" 0 "$(reads)"
-check "conflicting: prints the conflict line" said "conflicts with main: merge main in, then push"
+check "conflicting: prints the conflict line" said "conflicts with main: merge origin/main in, then push"
 fresh; echo UNKNOWN > "${FX}/mergeable.1"; wait_pr
 is "unknown then mergeable: exits 0" 0 "${rc}"
 is "unknown then mergeable: two head reads" 2 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 is "unknown then mergeable: reads the checks" 1 "$(reads)"
 check "unknown then mergeable: prints the head SHA" said "head ${H}"
+# A merged or closed PR stays UNKNOWN: its checks are read at once, not polled to the deadline.
+fresh; echo UNKNOWN > "${FX}/mergeable.1"; echo UNKNOWN > "${FX}/mergeable.2"; echo MERGED > "${FX}/state"; wait_pr --timeout 5
+is "unknown on a merged PR: exits 0" 0 "${rc}"
+is "unknown on a merged PR: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 
 # --- No checks yet: past the grace exits 2; filled in within it, it goes on waiting.
 # Red from the 6th read, so a grace that never ends shows as exit 1, not a hang.
