@@ -10,6 +10,7 @@ set -euo pipefail
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 R="${dir}/repo"; C="${dir}/projects"
 mkdir -p "${R}/.swarm" "${C}/p"
 git -C "${R}" init -q
