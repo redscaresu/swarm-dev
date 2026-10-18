@@ -16,7 +16,7 @@ KNOWN="${REPO}/tests/doc_check_known.txt"
 # checked against ${REPO}'s bin/swarm.sh and tree.
 doc_check() {
   python3 - "${REPO}" "$1" <<'EOF'
-import glob, os, re, sys
+import glob, os, re, subprocess, sys
 repo, root = sys.argv[1], sys.argv[2]
 src = open(os.path.join(repo, "bin/swarm.sh")).read()
 body = src.split("\ndispatch() {", 1)[1].split("\n  esac", 1)[0]
@@ -64,7 +64,7 @@ def check_md(rel, text, out):
     for line in text.splitlines():
         if line.lstrip().startswith("```") or (not fence and not line.strip()):
             check_prose(rel, para, out)
-            para = []
+            para, in_table = [], False
             fence ^= line.lstrip().startswith("```")
             continue
         if fence:
@@ -81,9 +81,9 @@ def check_md(rel, text, out):
 
 files = ["README.md"] + [os.path.relpath(f, root) for g in ("docs/*.md", "commands/*.md")
                           for f in sorted(glob.glob(os.path.join(root, g)))]
-for d in ("skills", "templates"):
-    for dirpath, _, names in sorted(os.walk(os.path.join(root, d))):
-        files += sorted(os.path.relpath(os.path.join(dirpath, n), root) for n in names)
+# Only tracked files: a local .DS_Store or Obsidian file is not what CI reads.
+files += sorted(subprocess.run(["git", "-C", root, "ls-files", "-z", "skills", "templates"],
+                               check=True, capture_output=True, text=True).stdout.split("\0")[:-1])
 for rel in files:
     path = os.path.join(root, rel)
     if not os.path.isfile(path):
@@ -100,8 +100,8 @@ EOF
 
 # unknown <found> <known> — the findings <known> does not allow. gone <found> <known> — the entries of
 # <known> that are no longer found.
-unknown() { comm -23 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
-gone() { comm -13 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
+unknown() { LC_ALL=C comm -23 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
+gone() { LC_ALL=C comm -13 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
 
 fails=0
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
@@ -135,6 +135,10 @@ cat > "${tmp}/fixture/docs/method.md" <<'EOF'
 | `merge` | `human` | ok |
 | `nosuch_key` | `0` | stale |
 | plain_key | 0 | stale, no backticks |
+
+| Command | What it does |
+|---|---|
+| `dash` | another table after a blank line: not config keys |
 EOF
 # A span wrapped over two lines is still code, and prose between two wrapped spans is not; a path
 # ending in swarm.sh is not followed by a command.
@@ -148,6 +152,8 @@ shellcheck bin/swarm.sh bin/lib/*.sh
 ```
 EOF
 want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch'
+git -C "${tmp}/fixture" init -q && git -C "${tmp}/fixture" add -A
+printf '\0\x80\xff' > "${tmp}/fixture/templates/.DS_Store"   # untracked, and not text
 doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
 got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
@@ -156,11 +162,13 @@ else
   echo "FAIL fixture docs: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
 fi
 
-# A fixture known list, written as an entry is: one finding it allows and one the docs no longer say.
-printf 'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh stale\n' > "${tmp}/fixture.known"
+# A fixture known list, written as an entry is: two findings it allows (README.md sorts before docs/
+# only in the C locale, so a comm run in another locale misreads them) and one the docs no longer say.
+printf 'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh stale\ndocs/method.md\tconfig key nosuch_key\n' > "${tmp}/fixture.known"
 new="$(unknown "${tmp}/fixture.found" "${tmp}/fixture.known")"
-if [[ "${new}" != *$'README.md\tswarm.sh nosuch'* && "${new}" == *$'README.md\tswarm.sh dash2'* ]]; then
-  echo "ok   fixture known list: its entry is allowed and a finding not in it still fails"
+if [[ "${new}" != *$'README.md\tswarm.sh nosuch'* && "${new}" != *$'docs/method.md\tconfig key nosuch_key'* \
+      && "${new}" == *$'README.md\tswarm.sh dash2'* ]]; then
+  echo "ok   fixture known list: its entries are allowed and a finding not in it still fails"
 else
   echo "FAIL fixture known list: allowed wrongly, the findings left were:"; echo "${new}"; fails=$((fails + 1))
 fi
