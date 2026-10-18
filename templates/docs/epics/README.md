@@ -9,12 +9,15 @@ story's builder runs from its worktree, and makes pass, before opening its PR.
 evidence), Goals (its **Done when**), Non-goals and Constraints; a reviewer attacks the draft, and
 it becomes `active` only when you agree it. Nothing plans a draft epic.
 `depends_on` lists the epics this one builds on (`[]` when none); `swarm.sh next` plans an
-epic only once every epic it lists is done.
+epic only once every epic it lists is done. A large epic `/plan-epic` splits into child epics, each
+with `parent: <this-epic>` and its own **Done when**, and the parent becomes `status: split`: nothing
+plans it, and it counts as done once none of its children is left on the board.
 
 ```
 ---
-status: draft | active | later | review
+status: draft | active | later | review | split
 depends_on: [other-epic]
+parent: big-epic            # only on a child epic of a split one
 check: make test
 ---
 
