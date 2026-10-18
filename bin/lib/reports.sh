@@ -144,10 +144,10 @@ outcomes_report() {
   rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
-  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges names` joined by commas, where
+  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges text` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
-  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and names is
-  # the pull URLs and #N its title and body name, joined by +, for rework_of), its epic: and
+  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and text is
+  # its title and body in base64, for rework_of), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -169,8 +169,7 @@ outcomes_report() {
           .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
           | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
           | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length),
-          ([.title + " " + (.body // "") | scan("github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+|#[0-9]+")]
-          | unique | join("+"))] | @tsv') 2>/dev/null)"; then
+          (.title + "\n" + (.body // "") | @base64)] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
@@ -267,16 +266,19 @@ flow_report() {
 }
 
 # flow_sections <since> <until> <epic> <outcomes rows> <lead session> [section...] — run flow_report.py
-# over the window, with each windowed slug's depends_on (read with story_text, so merged stories
-# count); <lead session> (empty for none) is the calling session, counted as lead.
+# over the window, with each windowed slug's depends_on, and its estimate_lines and touches (read with
+# story_text, so merged stories count); <lead session> (empty for none) is the calling session, counted as lead.
 flow_sections() {
-  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" slug own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
+  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" stories="" slug text own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   shift 5
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    deps+="${slug}"$'\t'"$(story_text "${slug}" | sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
+    text="$(story_text "${slug}")"
+    deps+="${slug}"$'\t'"$(sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
+    stories+="${slug}"$'\t'"$(sed -n 's/^estimate_lines: *//p' <<< "${text}" | head -1)"
+    stories+=$'\t'"$(sed -n 's/^touches: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr '\t' ' ')"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }

@@ -1,4 +1,4 @@
-import collections, datetime, os, re, subprocess, sys
+import base64, binascii, collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
@@ -7,8 +7,8 @@ RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct 
 RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
-    # The (url, state, mergedAt, createdAt, main_merges, names) of each PR in the meta column, names
-    # being the PRs its title and body name, joined by "+"; a stub may leave out the last four.
+    # The (url, state, mergedAt, createdAt, main_merges, text) of each PR in the meta column, text being
+    # its title and body in base64; a stub may leave out the last four.
     return [tuple((p.split(" ") + [""] * 5)[:6]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
@@ -52,9 +52,16 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
     if on:
         found[on[-1]][(outcome, reviewer)] += 1
 
-# A reworked PR (rework_of) counts once, on the latest build on it, as findings do.
-reworked = rework_of({p[0]: (p[0], p[2], p[5]) for m in meta.values() for p in parsed(m[2])}.values(),
-                     [(f[0], f[2]) for f in finding_rows(sys.argv[1], ("escaped",))])
+def pr_text(b64):
+    try:
+        return base64.b64decode(b64).decode("utf-8", "replace")
+    except (binascii.Error, ValueError):
+        return ""
+
+# A reworked PR (rework_of, over the merged PRs of these stories) counts once, on the latest build on it,
+# as findings do.
+reworked = rework_of({pr_key(p[0]): (p[2], pr_text(p[5]), None) for m in meta.values() for p in parsed(m[2]) if p[1] == "MERGED"},
+                     finding_rows(sys.argv[1], ("escaped",)))
 last = {pr_key(r[6]): i for i, r in enumerate(rows) if r[6]}
 
 def by(c, outcome):
