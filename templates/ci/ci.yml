@@ -20,18 +20,15 @@ jobs:
         with:
           fetch-depth: 0 # the gate diffs against the base
           persist-credentials: false
-      # swarm-dev: a change to only the board's own files skips the checks. The gate is the base's
-      # copy when the base has one, so a PR's change to it applies only once it has merged.
+      # swarm-dev: a change to only the board's own files skips the checks.
       - name: Skip a board-only change
         id: gate
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          git show "${BASE_SHA}:.github/swarm-board-only.sh" > "${RUNNER_TEMP}/board-only.sh" 2>/dev/null || cp .github/swarm-board-only.sh "${RUNNER_TEMP}/board-only.sh"
-          bash "${RUNNER_TEMP}/board-only.sh"
+        run: bash .github/swarm-board-only.sh
       - name: make check
         if: steps.gate.outputs.board_only != 'true'
         run: |
-          if [ -f Makefile ] && grep -q '^check:' Makefile; then make check; else
-            echo "::warning::the Makefile has no check target, so CI checked nothing; add one"; fi
+          make -n check >/dev/null 2>&1 || { echo "::error::make has no check target; add one to the Makefile for CI to run"; exit 1; }
+          make check

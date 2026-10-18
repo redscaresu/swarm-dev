@@ -1,9 +1,10 @@
 #!/bin/sh
-# swarm-dev: run make check before each commit, while the Makefile has a check target, unless the
-# commit changes only the board's own files, as CI skips them then.
+# swarm-dev: run make check before each commit, unless the commit changes only the board's own files,
+# as CI skips them then. With no check target, the commit is refused.
 swarm_board="@BOARD@"
 if ! git diff --cached --name-only --no-renames | while IFS= read -r p; do
   case "${p}" in "${swarm_board}"stories/*|"${swarm_board}"epics/*|"${swarm_board}"hld/*|"${swarm_board}"Board.base|"${swarm_board}".obsidian/*) ;; *) exit 1 ;; esac
 done; then
-  if [ -f Makefile ] && grep -q '^check:' Makefile; then make check || exit 1; fi
+  make -n check >/dev/null 2>&1 || { echo "pre-commit: make has no check target; add one to the Makefile" >&2; exit 1; }
+  make check || exit 1
 fi

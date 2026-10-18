@@ -576,17 +576,40 @@ fill() { printf '%s' "${1%%"$2"*}$3${1#*"$2"}"; }
 
 # CI_MARK — the line that names a workflow init wrote.
 CI_MARK="# swarm-dev wrote this file with swarm.sh init"
+ORIGIN_ASK_SECONDS="${SWARM_ORIGIN_ASK_SECONDS:-15}"   # how long init waits on origin for its default branch
+
+# origin_head — origin's default branch, as origin/<branch>: the cached origin/HEAD, else the HEAD
+# origin advertises (ls-remote --symref, which needs nothing fetched), asked once with no prompt
+# (GIT_TERMINAL_PROMPT=0, stdin from /dev/null) and stopped after ORIGIN_ASK_SECONDS. Fails when
+# there is still no telling.
+origin_head() {
+  local pid out deadline=$((SECONDS + ORIGIN_ASK_SECONDS))
+  git symbolic-ref -q --short refs/remotes/origin/HEAD && return
+  out="$(mktemp)" || return 1
+  GIT_TERMINAL_PROMPT=0 git ls-remote --symref origin HEAD < /dev/null > "${out}" 2>/dev/null &
+  pid=$!
+  while kill -0 "${pid}" 2>/dev/null && (( SECONDS < deadline )); do sleep 0.2; done
+  kill "${pid}" 2>/dev/null || true
+  wait "${pid}" 2>/dev/null || true
+  awk '$1 == "ref:" && $3 == "HEAD" && sub("^refs/heads/", "", $2) { print "origin/" $2; f = 1 } END { exit !f }' "${out}"
+  local rc=$?; rm -f "${out}"; return "${rc}"
+}
 
 # init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there, which runs make check on
 # a PR and on a push to origin's default branch, and, for a board in the repo, the gate it runs:
 # templates/ci/board-only.sh as .github/swarm-board-only.sh, which skips the checks when every path
 # changed is one of the board's own files under <board> (the board's path from the root with a
 # trailing /, empty for the root). A board outside the repo (<board> is /) gets no gate. A workflow
-# init wrote is left as it is; with any other, init prints the gate step to add.
+# init wrote is left as it is, its gate written again if it is missing; with any other, init prints
+# the gate step to add.
 init_ci() {
   local t branch ci=.github/workflows/ci.yml gate=.github/swarm-board-only.sh ours
   ours="$(grep -lsF "${CI_MARK}" .github/workflows/* | head -1 || true)"
-  if [[ -n "${ours}" ]]; then echo "left   ${ours} (swarm-dev wrote it; delete it and run init again to rewrite it)"; return; fi
+  if [[ -n "${ours}" ]]; then
+    echo "left   ${ours} (swarm-dev wrote it; delete it and run init again to rewrite it)"
+    [[ "$1" == / ]] || init_gate "$1" "${gate}"
+    return
+  fi
   if [[ -d .github/workflows ]]; then
     if [[ "$1" == / ]]; then echo "left   .github/workflows (it exists)"; return; fi
     init_gate "$1" "${gate}"
@@ -594,13 +617,11 @@ init_ci() {
     sed -n '/- name: Skip a board-only change/,/- name: make check/p' "${SWARM_HOME}/templates/ci/ci.yml" | sed '$d'
     return
   fi
-  git remote set-head origin --auto >/dev/null 2>&1 || true   # a cached origin/HEAD may still do
-  branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD)" \
-    || { echo "wrote no CI: cannot tell origin's default branch; add origin and run init again"; return; }
+  branch="$(origin_head)" \
+    || { echo "wrote no CI: cannot tell origin's default branch; set origin, or make it reachable, and run init again"; return; }
   t="$(fill "$(cat "${SWARM_HOME}/templates/ci/ci.yml")" @BRANCH@ "${branch#origin/}")"
   # No gate: its comment to its last line, the if: it sets on make check, and the deep checkout.
-  # shellcheck disable=SC2016 # the workflow's own ${...}, matched literally
-  [[ "$1" != / ]] || t="$(sed '/# swarm-dev: a change to only/,/bash "${RUNNER_TEMP}/d; /if: steps.gate/d; /fetch-depth: 0/d' <<< "${t}")"
+  [[ "$1" != / ]] || t="$(sed '/# swarm-dev: a change to only/,/run: bash .github\/swarm-board-only.sh/d; /if: steps.gate/d; /fetch-depth: 0/d' <<< "${t}")"
   [[ "$1" == / ]] || init_gate "$1" "${gate}"
   mkdir -p .github/workflows && printf '%s\n' "${t}" > "${ci}"
   echo "wrote  ${ci} (it runs make check$([[ "$1" == / ]] || echo ", unless a change is board-only"))"
@@ -608,7 +629,7 @@ init_ci() {
 
 # init_gate <board> <path> — the board-only gate at <path>, unless a file is there.
 init_gate() {
-  if [[ -e "$2" ]]; then echo "left   $2 (it exists)"; return; fi
+  [[ ! -e "$2" ]] || return 0
   mkdir -p "$(dirname "$2")" && fill "$(cat "${SWARM_HOME}/templates/ci/board-only.sh")" @BOARD@ "$1" > "$2" && echo >> "$2"
   echo "wrote  $2 (CI's board-only gate)"
 }
@@ -616,7 +637,8 @@ init_gate() {
 # init_hook <board> — the git pre-commit hook from templates/pre-commit, with <board> as init_ci has it:
 # make check, unless the commit changes only the board's own files. A hook that exists is left as it
 # is, and none is written while core.hooksPath is set: a repo's own is tracked, so init prints the
-# lines to add, and a global one runs in every repo, so init says to add them nowhere there.
+# lines to add (to husky's own file, not the one it regenerates under .husky/_/), and a global one runs
+# in every repo, so init says to add them nowhere there.
 init_hook() {
   local hook t why="" hooks_path
   t="$(fill "$(cat "${SWARM_HOME}/templates/pre-commit")" @BOARD@ "$1")"
@@ -627,13 +649,25 @@ init_hook() {
   elif [[ -z "${hooks_path}" && -f "${hook}" && "$(cat "${hook}")" == "${t}" ]]; then echo "left   ${hook} (swarm-dev wrote it)"
   elif [[ -n "${hooks_path}" || -e "${hook}" ]]; then
     [[ -z "${hooks_path}" ]] || why="core.hooksPath is ${hooks_path}"
-    echo "left   ${hook} (${why:-it exists}); add these lines to it:"
+    [[ "${hook}" != *.husky/_/pre-commit ]] || hook="${hook%_/pre-commit}pre-commit"
+    echo "left   ${hook} (${why:-it exists}); add these lines to it, before any exec (a line after one never runs):"
     tail -n +2 <<< "${t}"
   else
     mkdir -p "$(dirname "${hook}")" && printf '%s\n' "${t}" > "${hook}" && chmod +x "${hook}"
     echo "wrote  ${hook} (it runs make check$([[ "$1" == / ]] || echo ", unless a commit is board-only"))"
   fi
-  grep -q '^check:' Makefile 2>/dev/null || echo "the Makefile has no check target: add one, for the hook and CI to run"
+  make -n check >/dev/null 2>&1 \
+    || echo "make has no check target: add one to the Makefile; until then CI fails every change that is not board-only, and the hook refuses those commits"
+}
+
+# init_commit_step <board> — the files init wrote that git does not track yet, with a line saying to
+# commit them: CI runs only once its workflow is committed.
+init_commit_step() {
+  local wrote untracked
+  wrote=(.gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh)
+  [[ "$1" == / ]] || wrote+=("${BOARD}")
+  untracked="$(git status --porcelain -- "${wrote[@]}" 2>/dev/null | cut -c4- | tr '\n' ' ')"
+  [[ -z "${untracked}" ]] || echo "Commit what init wrote, so CI runs and the config travels with the repo: ${untracked% }"
 }
 
 # init_config — a commented commit_trailers line in .claude/swarm/config, unless the file names the key.
@@ -675,6 +709,7 @@ init_project() {
   board="${rel}"; [[ "${BOARD}/" == "${PROJECT_DIR}/"* ]] || board=/
   init_ci "${board}"
   init_hook "${board}"
+  init_commit_step "${board}"
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 

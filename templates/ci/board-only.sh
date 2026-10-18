@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# swarm-dev's board-only gate, which .github/workflows/ci.yml runs from the base commit. It writes
+# swarm-dev's board-only gate, which .github/workflows/ci.yml runs before its checks. It writes
 # board_only=true to $GITHUB_OUTPUT when every path changed since BASE_SHA (a PR's base, or the commit
 # before a push) is one of the board's own files, else board_only=false: with no base, or a failed
 # diff (a new branch's all-zero base fails it) too.
