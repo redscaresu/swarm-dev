@@ -1,5 +1,5 @@
 import collections, os, re, subprocess, sys
-board, prefix, ref, events, state = sys.argv[1:6]
+board, prefix, ref, events = sys.argv[1:5]
 def git(args, data=None):
     return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
                           capture_output=True, check=True).stdout
@@ -17,19 +17,6 @@ def front(text):
         if m and m.group(1) not in keys:
             keys[m.group(1)] = m.group(2)
     return keys
-def overlay(keys, slug):
-    # What swarm.sh wrote to the story's state file (state_set) over its front matter, as
-    # state_value reads it: a key's first line wins, unless its <key>@base: line no longer matches.
-    st = {}
-    try:
-        for l in open(os.path.join(state, slug), encoding="utf-8", errors="replace"):
-            k, sep, v = l.rstrip("\r\n").partition(":")
-            if sep and k not in st:
-                st[k] = v.lstrip(" ")
-    except OSError:
-        return keys
-    return {**keys, **{k: v for k, v in st.items()
-                       if not k.endswith("@base") and st.get(k + "@base", keys.get(k, "")) == keys.get(k, "")}}
 finished_here = set()
 try:
     for l in open(events, encoding="utf-8", errors="replace"):
@@ -66,7 +53,7 @@ for slug, _, own in todo:
     if head.endswith(b" missing"):
         continue
     size = int(head.rsplit(b" ", 1)[1])
-    fm = overlay(front(out[pos:pos + size].decode("utf-8", "replace")), slug)
+    fm = front(out[pos:pos + size].decode("utf-8", "replace"))
     pos += size + 1
     if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
         done.add(slug)

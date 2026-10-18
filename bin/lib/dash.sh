@@ -178,8 +178,7 @@ dash_slow() {
 # board is not in git). A finished story's file is deleted, so these are the story files deleted on
 # the first-parent history of that repo's base branch and HEAD: one git log, names only, commits split
 # on NUL (no diff text, so diff.noprefix or color settings cannot change it), each deleted file read
-# from the parent's tree by one git cat-file --batch, its keys from the front matter only, under its
-# state file while one is left (reconcile and finish drop it). A slug is
+# from the parent's tree by one git cat-file --batch, its keys from the front matter only. A slug is
 # counted once, and not at all while its file is on the board here (an unpulled checkout, or a slug
 # added again): it is open. It counts when any of its deletions closed the story: the deleting commit
 # names story/<slug> (its own PR's merge), or is the story's own work (it also changes a file that is
@@ -192,7 +191,7 @@ dash_slow() {
 dash_finished() {
   local prefix
   prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
-  python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" "${BOARD_STATE_DIR}/stories" 2>/dev/null || true
+  python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
@@ -285,11 +284,12 @@ dash_reexec() {
 # names the convention, "has no **You:** step", is no step), else empty. The text is what follows the
 # first step's **You:**, tabs as spaces. The keys are read from the front matter only (a leading ---, up to the next; CRLF
 # tolerated), by fm's rule: a key's first line wins, an empty value too. Then, as state_value reads
-# them, the item's state file (state_path) wins for each key it has a line for, unless its <key>@base:
-# line no longer matches the file's value. dash_finished's front() reads them the same way.
+# them, the item's state file (state_path) wins for each of SET_FM_KEYS it has a line for, unless its
+# <key>@base: line no longer matches the file's value. dash_finished's front() reads the front matter
+# the same way; it reads deleted files only, so never a state file.
 dash_fields() {
   state_path "$1"
-  awk -v sf="${STATE_PATH}" 'function val(l, i) { l = substr(l, i + 1); sub(/^ +/, "", l); return l }
+  awk -v sf="${STATE_PATH}" -v keys=" ${SET_FM_KEYS} " 'function val(l, i) { l = substr(l, i + 1); sub(/^ +/, "", l); return l }
     { sub(/\r$/, "") }
     NR == 1 && $0 == "---" { n = 1; next }
     n == 1 && $0 == "---" { n = 2; next }
@@ -299,7 +299,7 @@ dash_fields() {
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
     END { while (sf != "" && (getline l < sf) > 0) { sub(/\r$/, "", l)
         if ((i = index(l, ":")) > 1 && !((k = substr(l, 1, i - 1)) in sv)) sv[k] = val(l, i) }
-      for (k in sv) if (k !~ /@base$/ && (!((k "@base") in sv) || sv[k "@base"] == fv[k])) fv[k] = sv[k]
+      for (k in sv) if (index(keys, " " k " ") && (!((k "@base") in sv) || sv[k "@base"] == fv[k])) fv[k] = sv[k]
       x = fv["escalated_from"]
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", fv["status"], fv["prs"], fv["epic"], fv["kind"], t,
         (x != "" ? (fv["held_for"] != "" ? "held" : "escalated") : (y ? "you" : "")), yt }' "$1"
