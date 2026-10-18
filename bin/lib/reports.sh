@@ -193,13 +193,14 @@ dataset_report() {
   # shellcheck disable=SC2119 # takes no argument here
   rows="$(outcomes_report | sed '/^$/,$d')"   # the rows, without the recurring kinds after them
   # Each finished slug's repo, where its PR's commit is (a story whose repo is gone gets no diff), and
-  # gh's merge commit and commit count for its merged PR, so a rebase merge is diffed over all its
+  # gh's merge commit and commit headlines for its merged PR, so a rebase merge is diffed over all its
   # commits; a gh that fails leaves both empty.
   while IFS=$'\t' read -r slug pr; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
     src="$(repo_dir "$(story_text "${slug}" | sed -n 's/^repo: *//p' | head -1)")" || src=""
     got=$'\t'
-    [[ -z "${src}" ]] || got="$( (cd "${src}" && gh pr view "${pr}" --json mergeCommit,commits --jq '[.mergeCommit.oid // "", (.commits | length)] | @tsv') 2>/dev/null)" \
+    [[ -z "${src}" ]] || got="$( (cd "${src}" && gh pr view "${pr}" --json mergeCommit,commits \
+      --jq '[.mergeCommit.oid // "", ([.commits[].messageHeadline | gsub("[\t\n]"; " ")] | join("\u0001"))] | @tsv') 2>/dev/null)" \
       || got=$'\t'
     repos+="${slug}"$'\t'"${src}"$'\t'"${got}"$'\n'
   done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "story_merged") c = i; if ($i == "merged_at") m = i; if ($i == "pr") p = i }; next }

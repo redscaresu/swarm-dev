@@ -36,10 +36,10 @@ def planner_model(epic):
                 model = f[4]
     return model
 
-def diff_of(repo, slug, pr, merge_sha, commits):
+def diff_of(repo, slug, pr, merge_sha, heads):
     # (lines, files, later commits as (ISO time, message)) of the PR on the default branch, from gh's
-    # merge commit: a merge's diff against its first parent, a squash's (subject `... (#N)`) against its
-    # parent, and a rebase's last commit against the commit before the PR's commits. Without gh's
+    # merge commit: a rebase (the subjects of its last commits are the PR's commit headlines, heads,
+    # in order) against the commit before them, a merge or a squash against its first parent. Without gh's
     # answer, the commit whose subject is a squash's or a `Merge pull request #N ...`. The story file it
     # deletes is not counted.
     n = pr_key(pr).rpartition("#")[2]
@@ -47,11 +47,12 @@ def diff_of(repo, slug, pr, merge_sha, commits):
     log = git(repo, "log", ref, "--first-parent", "--format=%H%x00%cI%x00%s%x00%P%x00%B%x01").split("\x01")
     for i, c in enumerate(log):
         sha, _, subject, parents = (c.lstrip("\n").split("\x00") + ["", "", ""])[:4]
-        squash = subject.endswith(f"(#{n})")
-        if merge_sha and sha != merge_sha or not merge_sha and not (squash or subject.startswith(f"Merge pull request #{n} ")):
+        named = subject.endswith(f"(#{n})") or subject.startswith(f"Merge pull request #{n} ")
+        if sha != merge_sha if merge_sha else not named:
             continue
-        rebased = merge_sha and len(parents.split()) == 1 and not squash and commits.isdigit() and int(commits) > 1
-        stat = [l.split("\t") for l in git(repo, "diff", "--numstat", f"{sha}~{commits}" if rebased else f"{sha}^", sha).splitlines()]
+        mine = git(repo, "log", "--first-parent", f"-{len(heads)}", "--format=%s", sha).splitlines()[::-1] if merge_sha else []
+        rebased = len(heads) > 1 and len(parents.split()) == 1 and [h.replace("\t", " ") for h in mine] == heads
+        stat = [l.split("\t") for l in git(repo, "diff", "--numstat", f"{sha}~{len(heads)}" if rebased else f"{sha}^", sha).splitlines()]
         stat = [s for s in stat if len(s) == 3 and not s[2].endswith(f"stories/{slug}.md")]
         lines = sum(int(a) + int(d) for a, d, _ in stat if a.isdigit() and d.isdigit())
         later = [tuple(c.lstrip("\n").split("\x00")[1:5:3]) for c in log[:i] if "\x00" in c]
@@ -86,8 +87,8 @@ def num(s):
 lines = os.environ["SWARM_ROWS"].splitlines()
 head = lines[0].split("\t") if lines else []
 rows = [dict(zip(head, l.split("\t"))) for l in lines[1:]]
-# slug, repo, gh's merge commit and the PR's commit count (both empty when gh did not answer).
-repos = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ.get("SWARM_REPOS", "").splitlines()) if len(f) == 4}
+# slug, repo, gh's merge commit and the PR's commit headlines joined by \x01 (both empty when gh did not answer).
+repos = {f[0]: f[1:3] + [f[3].split("\x01") if f[3] else []] for f in (l.split("\t") for l in os.environ.get("SWARM_REPOS", "").splitlines()) if len(f) == 4}
 escaped = finding_rows(findings, ("escaped",))
 stories = []
 for slug in dict.fromkeys(r["slug"] for r in rows if r.get("story_merged") == "true"):
@@ -98,8 +99,8 @@ for slug in dict.fromkeys(r["slug"] for r in rows if r.get("story_merged") == "t
     pr, merged_at = merged[-1]["pr"], merged[-1]["merged_at"]
     text = planned(slug)
     fm = front(text)
-    repo, merge_sha, commits = repos.get(slug, ("", "", ""))
-    lines_n, files_n, later = diff_of(repo, slug, pr, merge_sha, commits) if repo else (None, None, [])
+    repo, merge_sha, heads = repos.get(slug, ("", "", []))
+    lines_n, files_n, later = diff_of(repo, slug, pr, merge_sha, heads) if repo else (None, None, [])
     rounds = sum(int(r["tells_findings"] or 0) for r in builds)
     rework = rework_of(pr, merged_at, later, escaped)
     est = fm.get("estimate_lines", "")

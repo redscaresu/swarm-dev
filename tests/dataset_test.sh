@@ -5,8 +5,8 @@
 # to opus, then Fable, and an escaped finding). A later commit edits easy-hard's story, so its inputs
 # must come from the commit that added it. A commit 8 days after easy-easy's merge names its PR, too
 # late to be rework. rebased (easy, and was) merged by rebase as two commits with no PR number in
-# them, so only gh's merge commit and commit count find its diff; gh answers easy-easy's squash too,
-# and fails for the other two, which are found by their `(#N)` subjects. An env value and a transcript line planted in the session logs, and the env
+# them, so only gh's merge commit and commit headlines find its diff; gh answers easy-easy's squash of
+# two commits too (diffed against its parent alone), and fails for the other two, which are found by their `(#N)` subjects. An env value and a transcript line planted in the session logs, and the env
 # value exported to the run, must appear nowhere in the output. gh is a stub on PATH.
 set -euo pipefail
 export TZ=UTC
@@ -83,8 +83,8 @@ printf '#!/bin/sh\ncase "$1 $2 $3 $4" in
   "pr list --head story/easy-hard") printf "%s/3\\tMERGED\\t2026-10-03T12:00:00Z\\t2026-10-02T12:00:00Z\\t0\\n" ;;
   "pr list --head story/escalated") printf "%s/4\\tMERGED\\t2026-10-05T12:00:00Z\\t2026-10-03T12:00:00Z\\t0\\n" ;;
   "pr list --head story/rebased") printf "%s/7\\tMERGED\\t2026-10-11T10:00:00Z\\t2026-10-11T09:30:00Z\\t0\\n" ;;
-  "pr view %s/2 "*) printf "%s\\t1\\n" ;;
-  "pr view %s/7 "*) printf "%s\\t2\\n" ;;
+  "pr view %s/2 "*) printf "%s\\tsquashed a\\001squashed b\\n" ;;
+  "pr view %s/7 "*) printf "%s\\trebased: part one\\001rebased: part two\\n" ;;
   *) exit 1 ;;
 esac\n' "${U}" "${U}" "${U}" "${U}" "${U}" "${SQUASH}" "${U}" "${REBASED}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
@@ -121,7 +121,7 @@ shown="$(show "${OUT}")"
 check "easy-and-was-easy: inputs as planned, one build, one round, a 10-line diff, a fix 8 days later no rework" "$(sed -n 1,3p <<< "${shown}")" "${E1}"
 check "easy-but-was-hard: inputs from the commit that added it, two rounds, a 120-line diff, a fix 3 days later is rework" "$(sed -n 4,6p <<< "${shown}")" "${E2}"
 check "escalated: every model in build order, each escalation with its trigger, an escaped finding is rework" "$(sed -n 7,9p <<< "${shown}")" "${E3}"
-check "rebase-merged: gh's merge commit and commit count give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"
+check "rebase-merged: gh's merge commit and commit headlines give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"
 check "four lines, each with the story text the board PR added" \
   "$(python3 -c 'import json, sys; [print(json.loads(l)["inputs"]["text"].splitlines()[-1]) for l in open(sys.argv[1])]' "${OUT}")" \
   "$(printf '%s\n' '# Easy and was easy' '# Easy but was hard' '# Escalated' '# Rebased')"
