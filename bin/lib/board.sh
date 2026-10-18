@@ -349,10 +349,14 @@ open_item() {
   esac
 }
 
-# has_child_epics <epic> — true while an epic on the board names <epic> as its parent:.
+# has_child_epics <epic> — true while an epic on the board, not status: done, names <epic> as the
+# parent: in its front matter (a trailing # comment and trailing whitespace gone).
 has_child_epics() {
-  local f
-  while IFS= read -r f; do [[ "$(fm "${f}" parent)" != "$1" ]] || return 0; done < <(board epics)
+  local f v
+  while IFS= read -r f; do
+    v="$(get_fm "${f}" parent)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+    [[ "${v}" == "$1" && "$(fm "${f}" status)" != "done" ]] && return 0
+  done < <(board epics)
   return 1
 }
 
