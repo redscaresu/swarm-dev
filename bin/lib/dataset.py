@@ -1,4 +1,4 @@
-import collections, datetime, json, os, re, subprocess, sys
+import datetime, json, os, re, subprocess, sys
 from report import *
 from touches_rows import deps, entries, front_text
 board, agents, events, findings, projects, archive, out = sys.argv[1:8]
@@ -141,21 +141,6 @@ for f in (l.split("\t") for l in os.environ.get("SWARM_PRS", "").splitlines()):
     if len(f) == 6 and f[3]:
         heads = [h.replace("\\\\", "\\") for h in f[5].split("\x01")] if f[5] else []
         prs.setdefault(f[0], (f[1], []))[1].append((f[2], f[3], f[4], heads))
-# Rework is report.py's rework_of, as flow's model_fit counts it: a story is reworked when any of its
-# PRs is, over the PRs gh lists merged in the stories' repos from the first of their merges to
-# REWORK_DAYS after the last. When gh fails, or lists GH_LIMIT PRs of a repo (so some are missing),
-# only escaped findings can mark rework, and a story they do not mark has rework null (unknown).
-ends = {pr_key(p[0]): p[1] for _, ps in prs.values() for p in ps}
-days = sorted(t[:10] for t in ends.values())
-window = f"merged:{days[0]}..{datetime.date.fromisoformat(days[-1]) + datetime.timedelta(days=REWORK_DAYS)}" if days else ""
-merged = merged_prs({p[0] for _, ps in prs.values() for p in ps}, window) if ends else {}
-unknown = merged is None or max(collections.Counter(k.partition("#")[0] for k in merged).values(), default=0) >= GH_LIMIT
-if unknown:
-    print("dataset: gh could not list every merged PR, so only escaped findings mark rework; the rest is null", file=sys.stderr)
-merged = merged or {}
-for k, t in ends.items():
-    merged.setdefault(k, (t, "", None))
-reworked = rework_of(merged, finding_rows(findings, ("escaped",)))
 stories = {}
 for slug, (repo, ps) in prs.items():
     builds = [r for r in rows if r["slug"] == slug]
@@ -164,7 +149,11 @@ for slug, (repo, ps) in prs.items():
     fm = {k: v.strip() for k, v in front_text(text).items()}
     lines_n, files_n = diff_of(repo, slug, fm.get("epic", ""), pr, merge_sha, heads) if repo else (None, None)
     rounds = sum(int(r["tells_findings"] or 0) for r in builds)
-    rework = any(pr_key(u) in reworked for u in [p[0] for p in ps] + [r["pr"] for r in builds if r["pr"]]) or (None if unknown else False)
+    # outcomes' rework column, which model_fit reads too: true when any of its PRs was reworked, false
+    # when every merged PR of the story was judged and none was, else null (gh could not judge one, it
+    # merged within REWORK_DAYS of today, or outcomes gives no build its PR).
+    judged = {pr_key(r["pr"]): r["rework"] for r in builds if r.get("rework") in ("0", "1")}
+    rework = True if "1" in judged.values() else False if all(pr_key(p[0]) in judged for p in ps) else None
     est = fm.get("estimate_lines", "")
     stories[slug] = {
         "slug": slug,

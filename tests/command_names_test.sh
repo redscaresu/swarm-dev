@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # command_names_test.sh — nothing a user reads tells them to type a bare /swarm. In a fresh install
 # Claude Code's slash menu completes /swarm to /swarm-dev:epic (it ranks the shorter name first), so
-# the name that works is /swarm-dev:swarm. /epic, /plan-hld and /plan-epic resolve as typed, and
+# the name that works is /swarm-dev:swarm. /epic and /plan-epic resolve as typed, and
 # /epic replaced /hld.
 set -euo pipefail
 
