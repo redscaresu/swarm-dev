@@ -10,6 +10,8 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+# No real Claude config or session is read: claude's state lives under ROOT.
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
 mkdir -p "${ROOT}/bin"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${ROOT}/bin/claude"
 fails=0
