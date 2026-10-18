@@ -923,8 +923,9 @@ $(conduct_merge_rule backlog)
 EOF
 }
 
-# epic_workspace <label> — the herdr workspace labelled <label>, created if there is none. Every epic
-# of one parent: shares it; a new workspace's placeholder tab is closed once the caller has added its own.
+# epic_workspace <label> — the herdr workspace labelled <label>, created if there is none. A conductor's
+# label is its epic's parent: (so the child epics of a split one share a workspace), else the epic's own
+# slug. A new workspace's placeholder tab is closed once the caller has added its own.
 epic_workspace() {
   local label="$1" ws
   ws=$(herdr workspace list | json "next((w['workspace_id'] for w in d['result']['workspaces'] if w.get('label')=='${label}'),'')")
@@ -998,7 +999,7 @@ start_conductor() {
     [[ "${epic}" != backlog && "$(conductor_name "${epic}")" != "$(conductor_name backlog)" ]] \
       || die "conduct: ${epic} would take the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
-    label="$(fm "${epic_file}" parent)"; label="${label:-${epic}}"
+    label="$(fm_list "${epic_file}" parent)"; label="${label:-${epic}}"
     [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
