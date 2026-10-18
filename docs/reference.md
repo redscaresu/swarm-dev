@@ -259,9 +259,10 @@ that turns CI on the base green, does not clear the stop either: once the cause 
 `.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
 the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
 reads a key from that file first and from the item's front matter second, so a key with no line
-there, as on an existing board, reads from the file; `dash` still draws its board rows from the
-files alone. A line with no value clears the key, and swarm.sh writes no line that would only repeat
-the file's value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
+there, as on an existing board, reads from the file. `dash` reads its board rows the same way, and so
+does the count of an epic's finished stories while a deleted story's state file is still there. A
+line with no value clears the key, and swarm.sh writes no line that would only repeat the file's
+value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
 Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
 read, and the next write to the item drops the old line. A write holds the item's lock, a
 `<slug>.lock` directory beside its state file, so two commands writing one item at once keep both
