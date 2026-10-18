@@ -114,6 +114,11 @@ add_events "${D}07:00:00Z"$'\tunblock\ttis\tw:1\tok'
 check "a story unblocked after its conductor started is held from the unblock" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t120'
 add_events "${D}08:00:00Z"$'\tclose\tconduct-e1\tw:1\tok' "${D}08:30:00Z"$'\tconduct\te1\tw:1\tconduct-e1 is still working'
 check "a closed conductor holds nothing after its close, and a refused conduct starts none" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t120'
+# With no epic, tis is the backlog conductor's: started by conduct --backlog, closed by its per-project name.
+sed -i.bak '/^epic: /d' "${P}/docs/stories/tis.md"
+add_events "${D}07:00:00Z"$'\tconduct\t--backlog\tw:1\tok' "${D}08:00:00Z"$'\tclose\tconduct-backlog-repo-0a1b2c\tw:1\tok'
+check "a story with no epic is held while the backlog conductor ran" "$(held "$(outcomes)" | head -1)" "${D}09:00:00Z"$'\t60'
+mv "${P}/docs/stories/tis.md.bak" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 check "--since keeps the tells of builds before it in the retry's fixing" "$(out="$(outcomes --since 2026-10-02)" cols)" \
   "${D}11:35:00Z"$'\t0\t15\t5\t20\t15\t55'

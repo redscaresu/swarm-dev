@@ -196,7 +196,10 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 
 An epic (`docs/epics/<slug>.md`: goal, **Done when**, out of scope, constraints) becomes stories
 with `/plan-epic <slug>`. An epic of at most 3 stories with no `risk: high` is planned by the lead
-alone, with one codex pass over stories committed in a board-PR worktree. Any other epic gets one survey agent unless its text names another repo (three
+alone, with one codex pass over stories committed in a board-PR worktree. A large one (more than 8
+stories, or goals that can ship apart) is split by the lead alone into child epics, each with
+`parent: <epic>` and its own **Done when**, planned in turn; the parent becomes `status: split` and
+counts as done once none of its children is left. Any other epic gets one survey agent unless its text names another repo (three
 then), one lead decomposition into one-PR stories with `kind`, `touches` and `depends_on` (a
 chain at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`),
 and a skeptic per story (capped at five, the rest logged), a codex pass and a critic, all in
@@ -230,10 +233,14 @@ that tab, named for the story; a tab holds four panes, and the fifth opens `<epi
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
-**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog`, which builds the
-ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
+**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
+first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
 `story --strict`, the same review, and the same handover or merge. It runs in a workspace named
-`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. It watches only
+`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
+names span every project, so naming it for the project's path lets two projects each run one at once,
+even two directories with the same name. A name another project's agent holds is refused before the
+old report or brief is touched, and the refusal says where that agent runs. An epic whose
+conductor would take that name (`backlog-<dir>-<hash>` for this project) is refused too. It watches only
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
@@ -674,7 +681,7 @@ each check on the PR's last head, so other CI counts as whichever phase lies und
 queued, which `gh` dates to the year 1, adds no CI. The four after `building_min` cover a PR's time
 in review, from `pr_created_at` to the merge, so they add up to `pr_to_merge_min`. The last column,
 `held_min`, is on a story's first build alone: the minutes it sat ready and unstarted while a
-conductor of its epic ran (`conduct-backlog` for a story with no epic). It was ready from the later
+conductor of its epic ran (the backlog conductor, `conduct --backlog`, for a story with no epic). It was ready from the later
 of two times: when its file reached the board's default branch, and its last `unblock` event before
 the build started. A conductor runs from its `ok` `conduct` event to its first `ok` close after that.
 `held_min` is empty when the build has no `started`, and on a retry, whose own wait is not counted. A story the lead holds after an escalation (`kind: lead` with
@@ -1056,7 +1063,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
 
 ## Cleanup, escalation and session logs
 

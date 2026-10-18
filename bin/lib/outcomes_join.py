@@ -133,10 +133,12 @@ def board_commits(*args):
     commits = [c.split("\0") for c in got.stdout.split("\x01")[1:]] if got.returncode == 0 else []
     return [(c[0], [p.lstrip("\n") for p in c[1:] if p.strip("\n")]) for c in commits]
 
-# held: a story's first build waited ready while a conductor of its epic ran (conduct-backlog for a
-# story with no epic). It was ready from the latest of its file reaching the board's default branch
-# and its unblock events; a conductor runs from its ok `conduct` event to its agent's first ok close
-# after that (or for good, when none came).
+# held: a story's first build waited ready while a conductor of its epic ran (the backlog conductor,
+# `conduct --backlog`, for a story with no epic). It was ready from the latest of its file reaching the
+# board's default branch and its unblock events; a conductor runs from its ok `conduct` event to its
+# agent's first ok close after that (or for good, when none came). An epic's conductor is
+# conduct-<epic>; the backlog's is conduct-backlog-<project dir>-<hash> (conductor_name), and older
+# logs say conduct-backlog, so a close of any conduct-backlog* agent ends the backlog's run.
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
 ready_at, conducting, stops = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
 for when, paths in board_commits("--diff-filter=A", "--format=%x01%ct"):
@@ -150,9 +152,9 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     if e[1] == "unblock":
         ready_at[e[2]].append(t)
     elif e[1] == "conduct":
-        conducting[agent_name("conduct-" + ("backlog" if e[2] == "--backlog" else e[2]))].append(t)
+        conducting[e[2]].append(t)
     elif e[1].split(":")[0] == "close":
-        stops[e[2]].append(t)
+        stops["--backlog" if e[2].startswith("conduct-backlog") else e[2]].append(t)
 
 def held(slug, epic, start):
     # The minutes from the story's ready time before start to start that a conductor of its epic ran,
@@ -161,8 +163,8 @@ def held(slug, epic, start):
     if s is None:
         return ""
     ready = max((t for t in ready_at[slug] if t <= s), default=0)
-    name = agent_name("conduct-" + (epic or "backlog"))
-    runs = sorted((a, min([c for c in stops[name] if c > a], default=s)) for a in conducting[name])
+    runs = sorted((a, min([c for c in stops[agent_name("conduct-" + epic) if epic else "--backlog"] if c > a], default=s))
+                  for a in conducting[epic or "--backlog"])
     total, edge = 0, ready
     for a, b in runs:
         a, b = max(a, edge), min(b, s)
