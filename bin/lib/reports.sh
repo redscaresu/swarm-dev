@@ -106,8 +106,10 @@ lessons_report() {
 }
 
 # cost_report <YYYY-MM-DD> — flow's cost section alone, since that day, for dash's cost of the day.
+# Without the calling pane's session: dash runs every project's frame from one pane, and that
+# session is no project's own (a lead's is already in its project's Claude Code directory).
 cost_report() {
-  flow_sections "$1" 9999-12-30 "" "" cost
+  HERDR_ENV="" flow_sections "$1" 9999-12-30 "" "" cost
 }
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs

@@ -163,9 +163,12 @@ recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
-    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
 except (ValueError, KeyError, TypeError):
     agents = None
+try:   # labels only: without them the tree names each workspace by its id
+    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
+except (ValueError, KeyError, TypeError):
+    ws_label = {}
 
 def reported(base):
     # A conductor that wrote its report, which the lead has not collected yet.
@@ -484,11 +487,17 @@ def rank(item):
         return 0
     return 1 if any(r["state"] == "working" for r in members) else 2
 
-# An active epic with no open story and no agent shown is one line for them all.
+# An active epic with no open story and no agent shown is one line for them all, or, while its
+# depends_on holds it up (DASH_EPIC_WAITS), a line of its own naming what it waits on.
 quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
+waits = dict(l.split("\t", 1) for l in lines("DASH_EPIC_WAITS") if "\t" in l)
+held = [s for s in quiet if s in waits]
+quiet = [s for s in quiet if s not in waits]
 epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
+for s in held:
+    epic_view.append([sym("blocked"), (f"{s} waits on {', '.join(waits[s].split())}", "dim")])
 if quiet:
     epic_view.append([sym("done"), (f"{len(quiet)} active epic{'' if len(quiet) == 1 else 's'} with no open story: {', '.join(quiet)}", "dim")])
 if agents is None:
@@ -729,7 +738,7 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 out.append(fit(speed, W))
 n_active = sum(b[2] == "active" for b in epics.values())
-n_working = sum(r["state"] == "working" for r in recs)
+n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
            (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
 if E.get("DASH_COST"):
