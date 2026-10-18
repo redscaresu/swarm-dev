@@ -220,10 +220,15 @@ idle_lines() {
 
 # next_report — swarm.sh next: next_step's step, then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
-# the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning.
+# the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
+# this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 next_report() {
-  local step idle
-  step="$(next_step)"; idle="$(idle_lines "${step%%[ $'\n']*}")"
+  local tmp step idle
+  tmp="$(mktemp)" || die "next: cannot make a temp file"
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'" EXIT
+  next_step > "${tmp}"
+  step="$(< "${tmp}")"; idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
 }

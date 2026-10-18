@@ -52,7 +52,9 @@ Repeat until a step below says stop:
      over-broad. Both are stories an agent builds, and the dependency is not in review (a story a
      review holds is left out too). Drop it from the story's `depends_on`, so the story builds
      beside its dependency; or keep it and add a `needs:` line to the story's front matter naming
-     what it uses from the dependency (the function, the flag, the file). Make the edit as any board
+     what it uses from the dependency (the function, the flag, the file). When you drop it and no other
+     `depends_on` of the story is still open, set the story's `status: ready` in the same edit:
+     `unblock` never readies a blocked story with no dependency left. Make the edit as any board
      edit: through `swarm.sh board-pr` when the board is in the project's repo, where it is when it
      is outside.
    - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or

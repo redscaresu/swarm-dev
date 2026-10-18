@@ -378,6 +378,16 @@ got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2>"${dir}/err" | tru
 if [[ "${got}" == "exit 0" && ! -s "${dir}/err" ]]; then echo "ok   next into a closed pipe exits 0 with no warning"
 else echo "FAIL next into a closed pipe: ${got} $(cat "${dir}/err")"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+# A failure in next_step stops next: it runs in the main shell, where errexit is on. A basename that
+# fails on an HLD's path fails next_step's plain slug=$(basename ...) assignment.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+# shellcheck disable=SC2016 # the stub's $1 and $@ are its own
+(cd "${dir}" && git init -q && mkdir -p bin && item hld/2026-01-01-x.md 'status: draft' \
+  && printf '#!/bin/sh\ncase "$1" in */hld/*) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v basename)" > bin/basename && chmod +x bin/basename)
+got="$(cd "${dir}" && PATH="${dir}/bin:${PATH}" env -u HERDR_ENV bash "${SWARM}" next 2>/dev/null; echo "exit $?")"
+if [[ "${got}" != "exit 0" && "${got}" != *$'\n'"exit 0" ]]; then echo "ok   a failure in next_step makes next fail"
+else echo "FAIL a failure in next_step does not stop next: ${got}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
 # A planning step is about to give the builders stories: no idle project beside it.
 expect "a planning step is no idle project" "plan-epic e1" \
   "item epics/e1.md 'status: active'" \
@@ -411,6 +421,7 @@ got=""
 grep -qF '`idle: <story> waits on <dep> but shares no touches with it`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-dependency line"
 grep -qF '`idle: "<project>"`' "${cmds}/swarm.md" || got+=" swarm.md has no idle-project line"
 grep -qF 'swarm.sh log-finding --filed --reviewer lead <kind> <PR>' "${cmds}/swarm.md" || got+=" swarm.md does not log a filed finding"
+grep -qF 'set the story'"'"'s `status: ready` in the same edit' "${cmds}/swarm.md" || got+=" swarm.md does not ready a story whose dependency it drops"
 grep -qF 'a `depends_on` story that shares no file in `touches` with it' "${cmds}/plan-epic.md" || got+=" plan-epic.md's skeptic has no disjoint-touches check"
 }
 if [[ -z "${got}" ]]; then echo "ok   swarm.md handles both idle: lines and plan-epic's skeptic checks disjoint touches"
