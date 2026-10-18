@@ -119,6 +119,17 @@ check "builder_subagent_model is read" "claude-haiku-5-5" "$(run "${p}" config b
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
+check "commit_trailers ships empty" "" "$(project "${p}"; run "${p}" config commit_trailers)"
+project "${p}" "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>"
+check "commit_trailers is read" "Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>" "$(run "${p}" config commit_trailers)"
+check "swarm.sh config shows commit_trailers and its line" "yes" \
+  "$(grep -qxF "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>    (${p}/.claude/swarm/config:1)" <<< "$(run "${p}" config)" && echo yes || echo no)"
+for v in "Ann <a@x.io>" "Co-Authored-By: Ann <a@x.io> ;"; do
+  project "${p}" "commit_trailers = ${v}"
+  check "commit_trailers = ${v} is refused, naming file and line" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: commit_trailers must be trailers" run "${p}" config)"
+done
+
 # --- One set of keys: the method's config table, CONFIG_KEYS and load_config's case arms. A key
 # missing from any of the three is named.
 REPO="$(dirname "${SWARM}")/.."

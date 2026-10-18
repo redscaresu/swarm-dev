@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # init_test.sh — swarm.sh init in throwaway git repos: the board from the plugin's templates, never
-# over a file that exists, .claude/swarm/, the .gitignore lines, a second run that changes nothing,
+# over a file that exists, .claude/swarm/ with a commented commit_trailers line, the .gitignore
+# lines, a CI workflow with a board-only skip, a pre-commit hook, a second run that changes nothing,
 # board_dir, and the refusals outside a repo's root.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 TEMPLATES="$(dirname "${SWARM}")/../templates/docs"
+HOOK="$(dirname "${SWARM}")/../templates/pre-commit"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
@@ -34,6 +36,12 @@ check "init copies every template file" "same" "$(same "${TEMPLATES}" "${p}/docs
 check "init creates .claude/swarm/" "yes" "$([[ -d "${p}/.claude/swarm" ]] && echo yes || echo no)"
 check "init adds the three .gitignore lines after the existing one" \
   $'node_modules/\n.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json' "$(cat "${p}/.gitignore")"
+check "init adds a commented commit_trailers line" "# commit_trailers = Co-Authored-By: Your Name <you@example.com>" \
+  "$(cat "${p}/.claude/swarm/config")"
+check "init writes a CI that skips a board-only PR and otherwise runs make check" "yes|yes|yes" \
+  "$(grep -qF 'BOARD: "docs/"' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'if: steps.gate.outputs.board_only != '"'true'" "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qxF '        run: make check' "${p}/.github/workflows/ci.yml" && echo yes)"
+check "init writes an executable pre-commit hook that runs make check" "same|yes" \
+  "$(cmp -s "${HOOK}" "${p}/.git/hooks/pre-commit" && echo same)|$([[ -x "${p}/.git/hooks/pre-commit" ]] && echo yes)"
 check "init ends with the trust step" "yes" "$(grep -q 'run claude once in .* and accept the folder trust prompt' <<< "${out}" && echo yes || echo no)"
 before="$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
 out="$(run "${p}" init || true)"
@@ -41,6 +49,8 @@ check "a second run copies nothing and says so" "yes" "$(has "${out}" "copied no
 check "a second run adds no line and says so" "yes" "$(has "${out}" ".gitignore already has every line")"
 check "a second run changes no file" "${before}" \
   "$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
+check "a second run leaves the CI and the hook, naming them" "yes|yes" \
+  "$(has "${out}" "left   .github/workflows/ci.yml (it has the board-only skip)")|$(has "${out}" "left   .git/hooks/pre-commit (it runs make check)")"
 check "init is logged" "init" "$(cut -f2 "${p}/.swarm/events.tsv" | sort -u)"
 
 # --- A board file the user changed is left, and named.
@@ -57,6 +67,9 @@ mkdir -p "${p}/.claude/swarm" && echo "board_dir = board" > "${p}/.claude/swarm/
 run "${p}" init >/dev/null || true
 check "board_dir = board puts the files in board/" "same|no docs" \
   "$(same "${TEMPLATES}" "${p}/board")|$([[ -e "${p}/docs" ]] && echo docs || echo no docs)"
+check "the CI's skip names board/" "yes" "$(grep -qF 'BOARD: "board/"' "${p}/.github/workflows/ci.yml" && echo yes || echo no)"
+check "the commented commit_trailers line follows the config's own" $'board_dir = board\n# commit_trailers = Co-Authored-By: Your Name <you@example.com>' \
+  "$(cat "${p}/.claude/swarm/config")"
 check "the .gitignore lines name board/" $'.swarm/\nboard/.obsidian/*\n!board/.obsidian/app.json' "$(cat "${p}/.gitignore")"
 
 # --- board_dir = .: the board is the repo root, so the lines and the listing are relative to it.
@@ -65,6 +78,26 @@ mkdir -p "${q}/.claude/swarm" && echo "board_dir = ." > "${q}/.claude/swarm/conf
 out="$(run "${q}" init || true)"
 check "board_dir = . names the lines without a path" $'.swarm/\n.obsidian/*\n!.obsidian/app.json' "$(cat "${q}/.gitignore")"
 check "board_dir = . lists files relative to the root" "yes" "$(has "${out}" "copied stories/README.md")"
+check "board_dir = . writes no CI, since no PR is board-only" "yes|no" \
+  "$(has "${out}" "wrote no CI: the board is not a directory in the repo, so no PR is board-only")|$([[ -e "${q}/.github" ]] && echo yes || echo no)"
+
+# --- A repo with workflows: they are left, and the skip step is printed to add.
+q="${ROOT}/workflows"; "${GIT[@]}" init -q "${q}"
+mkdir -p "${q}/.github/workflows" && printf 'name: mine\n' > "${q}/.github/workflows/build.yml"
+out="$(run "${q}" init || true)"
+check "with workflows, init writes no ci.yml and leaves theirs" "no|name: mine" \
+  "$([[ -e "${q}/.github/workflows/ci.yml" ]] && echo yes || echo no)|$(cat "${q}/.github/workflows/build.yml")"
+check "and prints the board-only step to add" "yes|yes|yes" \
+  "$(grep -q 'left   .github/workflows (it exists); add this step' <<< "${out}" && echo yes)|$(has "${out}" "      - name: Skip a board-only PR")|$(has "${out}" '          BOARD: "docs/"')"
+
+# --- An existing pre-commit hook stays byte for byte, and init prints the line to add.
+q="${ROOT}/hook"; "${GIT[@]}" init -q "${q}"
+printf '#!/bin/sh\ngitleaks protect --staged\n' > "${q}/.git/hooks/pre-commit"
+hook="$(cksum < "${q}/.git/hooks/pre-commit")"
+out="$(run "${q}" init || true)"
+check "an existing pre-commit hook is left byte-identical" "${hook}" "$(cksum < "${q}/.git/hooks/pre-commit")"
+check "and init prints the line to add" "yes" \
+  "$(has "${out}" "left   .git/hooks/pre-commit (it exists); add this line to it: make check || exit 1")"
 
 # --- A CRLF .gitignore that has every line already gets none of them again.
 q="${ROOT}/crlf"; "${GIT[@]}" init -q "${q}"

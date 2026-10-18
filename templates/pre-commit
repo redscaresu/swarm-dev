@@ -1,0 +1,3 @@
+#!/bin/sh
+# swarm-dev: run the project's checks before each commit, while its Makefile has a check target.
+if [ -f Makefile ] && grep -q '^check:' Makefile; then exec make check; fi

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the gate diffs against the PR's base
+          persist-credentials: false
+      # swarm-dev: a pull request that changes only the board skips the checks.
+      - name: Skip a board-only PR
+        id: gate
+        env:
+          BOARD: "@BOARD@"
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          only=false
+          if [ -n "${BASE_SHA}" ] && paths="$(git diff --name-only --no-renames "${BASE_SHA}...HEAD")" && [ -n "${paths}" ]; then
+            only=true
+            while IFS= read -r p; do case "${p}" in "${BOARD}"*) ;; *) only=false ;; esac; done <<< "${paths}"
+          fi
+          echo "board_only=${only}" >> "${GITHUB_OUTPUT}"
+      - name: make check
+        if: steps.gate.outputs.board_only != 'true'
+        run: make check

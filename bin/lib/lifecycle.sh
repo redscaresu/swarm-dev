@@ -1,15 +1,22 @@
 # shellcheck shell=bash
 
-# brief_trailers — the commit trailers the project's brief names, wherever a line has one (quoted or
-# backticked in a sentence too): a <Word>-by: token, a name with a letter in it and no colon or
-# quote (so a match starts at the last token before the email, never in the prose ahead of it), and
-# <an email>. A placeholder such as Co-Authored-By: <who> <email> has no name, so it is not one. One
-# per line, in the brief's order.
+# config_trailers — commit_trailers from the config, one trailer per line.
+config_trailers() {
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${CFG_commit_trailers}" ]] || tr ';' '\n' <<< "${CFG_commit_trailers}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+# brief_trailers — the commit trailers: commit_trailers, then those the project's brief names, wherever
+# a line has one (quoted or backticked in a sentence too): a <Word>-by: token, a name with a letter in
+# it and no colon or quote (so a match starts at the last token before the email, never in the prose
+# ahead of it), and <an email>. A placeholder such as Co-Authored-By: <who> <email> has no name, so it
+# is not one. One per line, in that order, each once.
 brief_trailers() {
-  [[ -f "${PROJECT_BRIEF}" ]] || return 0
-  # shellcheck disable=SC2016 # the backticks are literal: a name holds none
-  grep -oE '[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>"`:]*[A-Za-z][^<>"`:]* <[^<>[:space:]]+@[^<>[:space:]]+>' "${PROJECT_BRIEF}" \
-    | awk '!seen[$0]++' || true
+  {
+    config_trailers
+    # shellcheck disable=SC2016 # the backticks are literal: a name holds none
+    [[ ! -f "${PROJECT_BRIEF}" ]] || grep -oE '[A-Z][A-Za-z]*(-[A-Za-z]+)*-[Bb]y: [^<>"`:]*[A-Za-z][^<>"`:]* <[^<>[:space:]]+@[^<>[:space:]]+>' "${PROJECT_BRIEF}" || true
+  } | awk '!seen[$0]++'
 }
 
 # origin_has <branch> — true when the project's origin has <branch>, false when it has not (ls-remote
@@ -564,8 +571,49 @@ init_check() {
   [[ "${PROJECT_DIR}" == "${top}" ]] || die "init: the project is ${PROJECT_DIR}; run init there"
 }
 
+# init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there with <board> (the board's
+# path from the root, with a trailing /) in its board-only skip; with workflows, leave them and print
+# the skip step to add. An empty <board> (the board is the root, or outside the repo) gets neither.
+init_ci() {
+  local t ci=.github/workflows/ci.yml
+  [[ -n "$1" ]] || { echo "wrote no CI: the board is not a directory in the repo, so no PR is board-only"; return; }
+  t="$(cat "${SWARM_HOME}/templates/ci/ci.yml")"; t="${t%%@BOARD@*}$1${t#*@BOARD@}"
+  if [[ -f "${ci}" && "$(cat "${ci}")" == "${t}" ]]; then echo "left   ${ci} (it has the board-only skip)"; return; fi
+  if [[ -d .github/workflows ]]; then
+    echo "left   .github/workflows (it exists); add this step before your checks (it needs fetch-depth: 0 on your checkout), and give each check if: steps.gate.outputs.board_only != 'true'"
+    sed -n '/- name: Skip a board-only PR/,/- name: make check/p' <<< "${t}" | sed '$d'
+    return
+  fi
+  mkdir -p .github/workflows && printf '%s\n' "${t}" > "${ci}"
+  echo "wrote  ${ci} (it runs make check, and skips a board-only PR)"
+}
+
+# init_hook — the git pre-commit hook from templates/pre-commit, which runs make check; a hook that
+# exists is left as it is, and the line to add is printed.
+init_hook() {
+  local hook src="${SWARM_HOME}/templates/pre-commit"
+  hook="$(git rev-parse --git-path hooks/pre-commit)"
+  if cmp -s "${src}" "${hook}"; then echo "left   ${hook} (it runs make check)"
+  elif [[ -e "${hook}" ]]; then echo "left   ${hook} (it exists); add this line to it: make check || exit 1"
+  else
+    mkdir -p "$(dirname "${hook}")" && cp "${src}" "${hook}" && chmod +x "${hook}"
+    echo "wrote  ${hook} (it runs make check)"
+  fi
+  grep -q '^check:' Makefile 2>/dev/null || echo "the Makefile has no check target: add one, for the hook and CI to run"
+}
+
+# init_config — a commented commit_trailers line in .claude/swarm/config, unless the file names the key.
+init_config() {
+  local f=.claude/swarm/config
+  grep -q commit_trailers "${f}" 2>/dev/null && return
+  [[ ! -s "${f}" || -z "$(tail -c1 "${f}")" ]] || echo >> "${f}"
+  echo "# commit_trailers = Co-Authored-By: Your Name <you@example.com>" >> "${f}"
+  echo "added a commented commit_trailers line to ${f}"
+}
+
 # init_project — set the project up from the installed plugin, from its git root: the board templates
-# (never over a file that exists), .claude/swarm/, and the .gitignore lines. A second run changes nothing.
+# (never over a file that exists), .claude/swarm/ with a commented commit_trailers line, the .gitignore
+# lines, a CI workflow and a pre-commit hook. A second run changes nothing.
 init_project() {
   local rel f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
@@ -578,6 +626,7 @@ init_project() {
   done < <(cd "${SWARM_HOME}/templates/docs" && find . -type f | sed 's|^\./||' | sort)
   [[ ${n} -gt 0 ]] || echo "copied nothing: the board has every template file"
   [[ -d .claude/swarm ]] || { mkdir -p .claude/swarm; echo "created .claude/swarm/"; }
+  init_config
   n=0
   for line in .swarm/ "${rel}.obsidian/*" "!${rel}.obsidian/app.json"; do
     # A board outside the repo is not the repo's to ignore.
@@ -588,6 +637,8 @@ init_project() {
     echo "${line}" >> .gitignore; echo "added ${line} to .gitignore"; n=$((n + 1))
   done
   [[ ${n} -gt 0 ]] || echo ".gitignore already has every line"
+  init_ci "$([[ -n "${rel}" && "${BOARD}/" == "${PROJECT_DIR}/"* ]] && echo "${rel}")"
+  init_hook
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 

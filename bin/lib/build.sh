@@ -313,7 +313,7 @@ send_goal() {
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules
+  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules trailers
   story_ref="$(story_path "${slug}" "${src}")"
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
@@ -344,6 +344,8 @@ in the PR body. $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
+  trailers="$(config_trailers)"
+  [[ -z "${trailers}" ]] || printf '%s\n%s\n' "End every commit message with these trailers, one per line:" "${trailers}"
   rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
   rules_check_step "open the PR" "${rules}"

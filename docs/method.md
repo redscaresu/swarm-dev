@@ -79,8 +79,12 @@ project). `templates/docs/` holds the READMEs that define each format and two Ob
 ## Configuring a project
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
-without overwriting a file, creates `.claude/swarm/`, and adds `.swarm/` and the board's Obsidian
-lines to `.gitignore`. The next `/swarm-dev:swarm` asks once for the brief
+without overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and
+adds `.swarm/` and the board's Obsidian lines to `.gitignore`. It also sets up checks: with no
+`.github/workflows`, it writes a `ci.yml` that runs `make check` and skips a PR that changes only the
+board; with workflows, it leaves them and prints the skip step to add. It writes a git pre-commit
+hook that runs `make check` while the Makefile has a `check` target, or, when a hook exists, leaves
+it and prints the line to add. The next `/swarm-dev:swarm` asks once for the brief
 (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
@@ -101,6 +105,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
+| `commit_trailers` | empty | trailers such as `Co-Authored-By: Name <email>`, `;` between several, that every builder's brief tells it to end each commit with (reference.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with
 `.claude/swarm/config`, else the git repo you are in. A worktree resolves to its main checkout. The

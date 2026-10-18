@@ -151,13 +151,14 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
+CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead commit_trailers"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
 # code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
 load_config() {
-  local n=0 line key value where
+  local n=0 line key value where trailer='[A-Za-z][A-Za-z0-9-]*: [^;]*[^;[:space:]]'
   [[ -f "${CONFIG_FILE}" ]] || return 0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     n=$((n + 1)); where="${CONFIG_FILE}:${n}"
@@ -191,6 +192,9 @@ load_config() {
         [[ "${value}" == off || "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: goal must be off or a positive whole number of turns, not '${value}'" ;;
       lead)
         [[ "${value}" == off || "${value}" == session ]] || die "${where}: lead must be off or session, not '${value}'" ;;
+      commit_trailers)
+        [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
+          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}'" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
