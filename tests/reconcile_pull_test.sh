@@ -173,7 +173,27 @@ perl -pi -e 's|^status: ready$|status: done|' "${ROOT}/kc-up/docs/stories/e.md"
 perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/3"'|' "${ROOT}/kc/docs/stories/e.md"
 rc=0; out="$(at kc reconcile)" || rc=$?
 check "a leftover status: review gives way to the PR's status: done, and the pull goes" "0|$(git -C "${ROOT}/kc.git" rev-parse main)||done||yes|no" \
-  "${rc}|$(git -C "${ROOT}/kc" rev-parse HEAD)|$(git -C "${ROOT}/kc" status --porcelain)|$(val "${ROOT}/kc/docs/stories/e.md" status)|$(val "${ROOT}/kc/docs/stories/e.md" prs)|$(has "merged: e" "${out}")|$(if grep -qs incident "${ROOT}/kc/.swarm/events.tsv"; then echo yes; else echo no; fi)"
+  "${rc}|$(git -C "${ROOT}/kc" rev-parse HEAD)|$(git -C "${ROOT}/kc" status --porcelain)|$(val "${ROOT}/kc/docs/stories/e.md" status)|$(val "${ROOT}/kc/docs/stories/e.md" prs)|$(has "merged: e" "${out}")|$(if grep -qs pull-failed "${ROOT}/kc/.swarm/events.tsv"; then echo yes; else echo no; fi)"
+
+# --- A hand-set status: later in e (uncommitted; e's state says review), and a board PR that blocks
+# e: the pull's status wins, and reconcile names both values, on stdout and in an incident.
+setup kh
+perl -pi -e 's|^status: ready$|status: blocked|' "${ROOT}/kh-up/docs/stories/e.md"
+"${GIT[@]}" -C "${ROOT}/kh-up" commit -q -am "block e" && "${GIT[@]}" -C "${ROOT}/kh-up" push -q origin main
+perl -pi -e 's|^status: ready$|status: later|' "${ROOT}/kh/docs/stories/e.md"
+rc=0; out="$(at kh reconcile)" || rc=$?
+check "a hand edit the pull's status replaces is named, with both values, on stdout and in an incident" "0|blocked|yes|key-dropped: docs/stories/e.md status: later -> blocked" \
+  "${rc}|$(val "${ROOT}/kh/docs/stories/e.md" status)|$(has "reconcile: docs/stories/e.md: the pull's status: blocked replaced your uncommitted status: later; set it again if you meant it" "${out}")|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/kh/.swarm/events.tsv")"
+
+# --- A leftover kind: lead in e (uncommitted, no state), and a board PR that commits the same kind:
+# lead: the same value on both sides goes through, and e reads lead.
+setup ki; rm "${ROOT}/ki/.swarm/board-state/stories/e"
+perl -pi -e 's|^kind: code$|kind: lead|' "${ROOT}/ki-up/docs/stories/e.md"
+"${GIT[@]}" -C "${ROOT}/ki-up" commit -q -am "e is lead" && "${GIT[@]}" -C "${ROOT}/ki-up" push -q origin main
+perl -pi -e 's|^kind: code$|kind: lead\nescalated_from: code|' "${ROOT}/ki/docs/stories/e.md"
+rc=0; at ki reconcile >/dev/null || rc=$?
+check "the same key value on both sides goes through: the pull goes, and e reads lead, from code" "0|$(git -C "${ROOT}/ki.git" rev-parse main)||lead|code|no" \
+  "${rc}|$(git -C "${ROOT}/ki" rev-parse HEAD)|$(git -C "${ROOT}/ki" status --porcelain)|$(val "${ROOT}/ki/docs/stories/e.md" kind)|$(val "${ROOT}/ki/docs/stories/e.md" escalated_from)|$(if grep -qs incident "${ROOT}/ki/.swarm/events.tsv"; then echo yes; else echo no; fi)"
 
 # --- e escalated by an older swarm.sh (kind: lead, uncommitted), and incoming commits that set e's
 # kind too: the pull stops, naming e, and e's edit stays, with no state.
@@ -220,6 +240,9 @@ check "and changes nothing: HEAD, e's edit, a in review, and no stash" "${before
   "$(git -C "${ROOT}/he" rev-parse HEAD)|$(git -C "${ROOT}/he" status --porcelain)|$(cmp -s "${ROOT}/he-e" "${ROOT}/he/docs/stories/e.md" && echo same)|$(state he a)|$(git -C "${ROOT}/he" stash list)"
 check "one incident line: pull-failed, naming e" "1|pull-failed: docs/stories/e.md" \
   "$(awk -F'\t' '$2 == "incident"' "${ROOT}/he/.swarm/events.tsv" | wc -l | tr -d ' ')|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/he/.swarm/events.tsv")"
+rc=0; at he reconcile >/dev/null || rc=$?
+check "the same stop on the next reconcile logs no second incident" "1|1" \
+  "${rc}|$(awk -F'\t' '$2 == "incident"' "${ROOT}/he/.swarm/events.tsv" | wc -l | tr -d ' ')"
 
 # --- Nothing to pull (the base pulled by hand), e in review with its PR merged, and a hand edit to a
 # tracked file: reconcile marks e done, leaves the edit, and logs no incident.

@@ -630,7 +630,8 @@ or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` bu
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
-its pull (§ Merging). The log is local to the machine and append-only,
+its pull (§ Merging), once while the same stop lasts, and one with outcome
+`key-dropped: <file> <key>: <yours> -> <theirs>` for each uncommitted `status` or `prs` its pull replaced. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
 `reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`),
@@ -934,12 +935,15 @@ wrote them, does not stop it: reconcile moves the values, as the item reads them
 checks the file out, so the item reads as it did. It stops instead, naming the file, when the incoming
 commits change that file's `depends_on` or the same keys, since the old values would read over the new
 ones (a status flipped to `ready` over a new dependency): check the file out, and once the pull is in,
-set its keys again through swarm.sh. A `status` and `prs` the incoming commits change are the exception:
-the old ones give way and are dropped, so a story whose merged PR set `status: done` reads as done.
+set its keys again through swarm.sh. The same value on both sides goes through. A `status` and `prs`
+the incoming commits change are the exception: the old ones give way and are dropped, so a story
+whose merged PR set `status: done` reads as done. reconcile names each uncommitted value it dropped
+that way, with the one that replaced it, so you can set it again if you meant it.
 An untracked board file whose bytes match the incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
 would overwrite) also stops reconcile, and reconcile puts back each of those changes first, so a
-failed pull changes nothing. On a stop for changed files, it names each of them and logs an `incident` line in
-events.tsv with the outcome `pull-failed: <files>`. For a board
+failed pull changes nothing. On a stop for changed files, it names each of them and logs an
+`incident` line in events.tsv with the outcome `pull-failed: <files>`, once while the same stop
+lasts. For a board
 file it says to land the edit through `swarm.sh board-pr` or check the file out to drop it; for any
 other file, to commit or move the change. Then run `swarm.sh reconcile` again. On a board in the
 repo, reconcile never deletes a tracked file in the main checkout. An item whose PR merged but left
