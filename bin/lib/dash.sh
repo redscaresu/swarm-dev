@@ -518,7 +518,7 @@ for a in agents:
   # sed, not head: head exits after a line, and where SIGPIPE is ignored (CI) next_step's second echo
   # prints "Broken pipe" into the frame, now and then, so --watch sees a changed frame.
   # shellcheck disable=SC2154 # assigned in another file
-  DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
+  DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
   DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
