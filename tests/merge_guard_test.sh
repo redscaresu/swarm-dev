@@ -168,6 +168,10 @@ check "an agent's cd <main checkout> && git stash blocks" as agent "${W}" 2 "cd 
 check "git checkout -- f on a dirty f blocks" as lead "${W}" 2 "git checkout -- f"
 check "git checkout f on a dirty f blocks" as lead "${W}" 2 "git checkout f"
 check "cd /nope; cp a b blocks" as lead "${W}" 2 "cd /nope; cp a b"
+# A cd that is a loop's condition runs no body when it fails, so the cd rule skips it.
+check "until cd /nope; do sleep 1; done passes" as lead "${W}" 0 "until cd /nope; do sleep 1; done"
+check "while ! cd /nope; do sleep 1; done passes" as lead "${W}" 0 "while ! cd /nope; do sleep 1; done"
+check "  ... but a cd before ; in its body still blocks" as lead "${W}" 2 "while true; do cd /nope; cp a b; done"
 check "  ... and logs guard-blocked to the main checkout" test "$(tail -1 "${LOG}" | cut -f5)" == "guard-blocked: cd before ;"
 check "an agent's git checkout main in a story worktree passes" as agent "${W}" 0 "git checkout main"
 check "an agent's git -C <story worktree> restore x passes" as agent "${P}" 0 "git -C ${W} restore x"

@@ -753,7 +753,7 @@ A PR is green only when every check on its head has passed and you have triaged 
 \`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
 conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert. $(wait_pr_rule "on exit 1 send the story's builder the red check with \`${SWARM_HOME}/bin/swarm.sh tell <slug> findings <file>\`; on a conflict send it a nudge to merge the base in, with \`tell <slug> nudge <file>\`.")
+never dismiss an alert. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in.")
 EOF
 }
 

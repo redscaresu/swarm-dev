@@ -306,7 +306,7 @@ def guard(code, cwd):
             loops = loops[:-1]
         name = os.path.basename(args[0]) if args else ""
         if name == "cd" and not cmd["nested"]:  # a cd in $( ) moves nothing outside it
-            if cmd["end"] == ";":
+            if cmd["end"] == ";" and not LOOPS & set(lead):  # a loop's condition cd: a failure runs no body
                 raise Unsafe("cd before ;", "If the cd fails, the rest runs where you were: use `cd <dir> || exit 1 &&`")
             # ponytail: no subshell scoping, so a cd inside ( ) still moves d for the commands after it.
             t = next((w for w in args[1:] if w == "-" or not w.startswith("-")), "~")
