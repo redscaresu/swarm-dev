@@ -22,7 +22,7 @@ expect() {
   # A next that never returns (a parent: cycle) is killed with its whole process group after 20 s,
   # so the case fails instead of hanging.
   # shellcheck disable=SC2016 # the $ are perl's
-  got="$(cd "${dir}" && env -u HERDR_ENV perl -e '$p = fork // die; if (!$p) { setpgrp; exec @ARGV }
+  got="$(cd "${dir}" || exit; env -u HERDR_ENV perl -e '$p = fork // die; if (!$p) { setpgrp; exec @ARGV }
     $SIG{ALRM} = sub { kill "KILL", -$p }; alarm 20; waitpid $p, 0; exit $? >> 8' bash "${SWARM}" next || true)"
   got="${got%%$'\n'*}"
   if [[ "${got}" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '${got}'"; fails=$((fails + 1)); fi
