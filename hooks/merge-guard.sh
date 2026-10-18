@@ -10,7 +10,8 @@
 # checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
-# kill $(pgrep ...) / $(pidof ...) is refused too: a match by name can hit another session's process.
+# kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
+# process, or a group): either can hit another session's process.
 # Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
 # <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
@@ -298,8 +299,19 @@ def guard(code, cwd):
             d = None if t == "-" else at(d, t)
         elif name == "git":
             check_git(d, args[1:], home)
-        elif home and (name in PATTERN_KILLS or (name == "kill" and any(BY_NAME.search(w) for w in args[1:]))):
-            raise Unsafe("pattern-kill", "A match by name can hit another session's process: kill the PID you started ($!)")
+        elif home and (name in PATTERN_KILLS or (name == "kill" and kills_others(args[1:]))):
+            raise Unsafe("pattern-kill", "A kill by name, of PID 0 or of a negative PID can hit another session's process: kill the PID you started ($!)")
+
+
+def kills_others(words):
+    """Whether kill <words> signals PIDs found by a pattern, or 0 or a negative PID: every process the
+    user owns, or a whole group."""
+    if words[:1] in (["-s"], ["-n"]):
+        words = words[2:]
+    elif words[:1] and words[0].startswith("-") and words[0] != "--":
+        words = words[1:]  # the signal: -9, -KILL, -s9
+    pids = words[1:] if words[:1] == ["--"] else words
+    return any(BY_NAME.search(w) or re.fullmatch(r"0|-\d+", w) for w in pids)
 
 
 def check_git(d, words, home):
