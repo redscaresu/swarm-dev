@@ -544,7 +544,9 @@ DECISIONS_MAX_BYTES=2000
 # paragraph) that holds the mark, from its first line, with its wrapped text and sub-bullets, up to the
 # next bullet or bold line at its indent or less, a blank line or a heading. Each is cut to
 # DECISION_MAX_BYTES and printed as its own bullet, a blank line apart, while they fit in
-# DECISIONS_MAX_BYTES. A mark in a fenced block, an inline code span or the first file's (the story's)
+# DECISIONS_MAX_BYTES. A bold-label decision (`**Scope (user, <date>):**`) keeps the lines under it,
+# its list too, up to a blank line, a heading or the next bold label; a heading's takes its section, up
+# to the next heading at its level or higher (kind: b, l or h). A mark in a fenced block, an inline code span or the first file's (the story's)
 # **Done when** section, which the brief already quotes, is not a decision; an epic's decisions sit in
 # its Done when. cur is the bullet or paragraph read so far, ci its first line's indent.
 user_decisions() {
@@ -556,24 +558,27 @@ user_decisions() {
         for (n = max; n > 0 && substr(d, n + 1, 1) >= "\200" && substr(d, n + 1, 1) < "\300"; n--) ;
         d = substr(d, 1, n) "…"
       }
-      sub(/^ */, "", d); if (d !~ /^([-*+]|[0-9]+\.) /) d = "- " d
+      sub(/^ */, "", d); if (kind == "h") sub(/^#+ */, "", d); if (kind != "b") gsub(/\n/, "\n  ", d); if (d !~ /^([-*+]|[0-9]+\.) /) d = "- " d
       b = (out == "" ? "" : "\n\n") d
       if (length(out) + length(b) <= all) out = out b
       else { left++; if (!(src in named)) { named[src]; where = where (where == "" ? "" : ", ") src } }
       d = ""
     }
     function indent(s) { match(s, /^ */); return RLENGTH }
+    function level(s) { match(s, /^#+/); return RLENGTH }
+    function marked(s) { gsub(/`[^`]*`/, "", s); return s ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ }
     FNR == 1 { flush(); cur = ""; fence = 0; dw = 0 }
     /^ *(```|~~~)/ { fence = !fence; cur = ""; if (d != "") d = d "\n" $0; next }
     fence { if (d != "") d = d "\n" $0; next }
-    d != "" && (/^[[:space:]]*$/ || /^#/ || (indent($0) <= ind && /^ *([-*+]|[0-9]+\.) |^ *\*\*/)) { flush() }
+    d != "" && (kind == "h" ? /^#/ && level($0) <= lvl : kind == "l" ? /^[[:space:]]*$/ || /^#/ || /^ *\*\*/ \
+      : /^[[:space:]]*$/ || /^#/ || (indent($0) <= ind && /^ *([-*+]|[0-9]+\.) |^ *\*\*/)) { flush() }
     d != "" { d = d "\n" $0; next }
     /^\*\*|^#/ { dw = FILENAME == story && index($0, "**Done when") == 1 }
-    /^[[:space:]]*$/ || /^#/ { cur = ""; next }
+    /^#/ { cur = ""; if (marked($0)) { d = $0; kind = "h"; lvl = level($0); src = FILENAME }; next }
+    /^[[:space:]]*$/ { cur = ""; next }
     { if (cur == "" || $0 ~ /^ *([-*+]|[0-9]+\.) |^ *\*\*/) { cur = $0; ci = indent($0) } else cur = cur "\n" $0 }
     dw { next }
-    { t = $0; gsub(/`[^`]*`/, "", t) }
-    t ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = cur; ind = ci; src = FILENAME }
+    marked($0) { d = cur; ind = ci; src = FILENAME; kind = cur ~ /^ *\*\*/ ? "l" : "b" }
     END {
       flush(); if (out != "") print out
       if (left) printf "\n%d more decision%s left out of this brief (past %d bytes): read %s.\n", left, (left > 1 ? "s are" : " is"), all, where

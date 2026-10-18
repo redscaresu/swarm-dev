@@ -408,7 +408,9 @@ item "${b}" epics/rv.md "status: active"
 printf '%s\n' "**Done when:**" "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
   "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" "- **Other.** RV-NOT-A-DECISION" \
   "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB" \
-  "- Quotes \`(user, 2026-10-17)\` only in code RV-CODE" "" '```' "- (user, 2026-10-17) RV-FENCE" '```' >> "${b}/epics/rv.md"
+  "- Quotes \`(user, 2026-10-17)\` only in code RV-CODE" "" '```' "- (user, 2026-10-17) RV-FENCE" '```' \
+  "" "**Scope RV-LABEL (user, 2026-10-17):**" "- RV-LABEL-A" "- RV-LABEL-B" "" \
+  "## Release plan RV-HEAD (user, 2026-10-17)" "" "RV-HEAD-BODY" "### RV-HEAD-SUB" "RV-HEAD-SUBBODY" "## RV-NEXT-SECTION" "RV-AFTER-HEAD" >> "${b}/epics/rv.md"
 start rv1 >/dev/null
 printf '%s\n' --- "status: review" "kind: code" "epic: rv" "repo: svc" "touches: [x.sh]" --- "" "# rv1" "" \
   "**Done when:**" "- one release, not three" "- it quotes (user, 2026-10-17) RV-DW-QUOTE" "" "## Notes" "" \
@@ -461,7 +463,13 @@ for l in "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which t
   "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  - RV-WRAP-SUB"; do
   check "both briefs carry the epic's decision line (from its Done when): ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
-for w in RV-NOT-A-DECISION RV-CODE RV-FENCE RV-FILLER; do
+for l in "- **Scope RV-LABEL (user, 2026-10-17):**" "  - RV-LABEL-A" "  - RV-LABEL-B"; do
+  check "a bold-label decision keeps the list under it: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
+done
+for l in "- Release plan RV-HEAD (user, 2026-10-17)" "  RV-HEAD-BODY" "  ### RV-HEAD-SUB" "  RV-HEAD-SUBBODY"; do
+  check "a marked heading is a decision, with its section: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
+done
+for w in RV-NOT-A-DECISION RV-CODE RV-FENCE RV-FILLER RV-NEXT-SECTION RV-AFTER-HEAD; do
   check "neither brief carries ${w}: not a decision (the next bullet, code, a fence) or past the 2000 bytes" "0|0" \
     "$(grep -c "${w}" <<< "${brief}" || true)|$(grep -c "${w}" <<< "${fbrief}" || true)"
 done
