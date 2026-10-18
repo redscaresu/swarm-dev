@@ -542,14 +542,14 @@ builder's own agent name). With `fallback_reviewer` empty it then exits as codex
 it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
 runs with no Edit, Write or NotebookEdit tool and cannot commit or push. It still has Bash, so
 unlike codex's read-only sandbox its brief is what keeps it from changing the worktree. It gets what is left of `codex_minutes`, its start included, so the whole run stays within it, to write its
-findings to `.swarm/reviews/fallback/<story>.md`. codex-review prints `reviewed by fallback <model>:
+findings to `.swarm/reviews/fallback/<story>.md`, in a tab of its own (`fallback-<story>`). codex-review prints `reviewed by fallback <model>:
 codex usage limit` and then the findings, and closes the agent, findings or not; an interrupt closes
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
 start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
-nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. A
-fallback that goes idle without writing its file ends the run at once, with `codex skipped: usage
-limit (fallback wrote no findings)`, instead of holding the builder until the time runs out. With
+nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. It
+waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
+call of its own runs has not finished. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
 (no time left for a fallback)`. The planning `codex` panes of `/plan-hld` and
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.

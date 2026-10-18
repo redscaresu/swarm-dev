@@ -131,6 +131,8 @@ check "the brief names the head it reviews, lists out-of-scope points apart, and
   "$(has "at its head ${HEAD_SHA}" "${brief}")|$(has '## Out of scope' "${brief}")|$(has "A PROJECT RULE every agent reads." "${brief}")"
 check "the brief has the agent write the file, starting with the head reviewed and any codex skip, and the reviews directory exists" "yes|yes|yes" \
   "$(has "Its first line is \`head: ${HEAD_SHA}\`; when codex was skipped, its second is \`codex skipped: <why>\`." "${brief}")|$(has "prints nothing" "${brief}")|$([[ -d "${p}/.swarm/reviews" ]] && echo yes || echo no)"
+check "the brief says to wait for codex-review to exit, never to stop early on a usage limit" "yes|no" \
+  "$(has "Wait for it to exit, and act on what it prints last" "$(tr -s '[:space:]' ' ' <<< "${brief}")")|$(grep -q "do not wait" <<< "${brief}" && echo yes || echo no)"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals')" "s1	ok" \
   "$(awk -F'\t' '$2 == "review-agent" { l = $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
 

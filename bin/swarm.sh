@@ -550,15 +550,15 @@ fallback_skip() { echo "codex skipped: usage limit ($2)" >&2; exit "$1"; }
 # limit and fallback_reviewer names a model: start fallback-<story> (role review-fallback, on that
 # model) in the cwd with codex's prompt, wait what is left of codex's time (<seconds left>, its start
 # bounded by it and counted against it) for its
-# findings file (.swarm/reviews/fallback/<story>.md) until it settles, print it in codex's
+# findings file (.swarm/reviews/fallback/<story>.md) as `wait review-<slug>` does, print it in codex's
 # place under the line the PR body takes, and close the agent, findings or not; an interrupt closes
 # it too. Every other way out is fallback_skip: outside herdr, under FALLBACK_MIN_SECONDS left, its
 # 32-character name held by another story's fallback or by a fallback still reviewing, a brief it
 # could not write, a start that failed,
-# or no file once it settled or the time ran out. Called with errexit on (never in a condition), and start_agent runs in a
+# or no file in time. Called with errexit on (never in a condition), and start_agent runs in a
 # background subshell, which keeps errexit on, so a step that fails inside it stops the start.
 codex_fallback() {
-  local id full name out brief holder wpid timed_out deadline=$((SECONDS + $3)) left="$3" err="$4"
+  local id full name out brief holder wpid deadline=$((SECONDS + $3)) left="$3" err="$4"
   [[ "${HERDR_ENV:-}" == 1 ]] || fallback_skip "$5" "fallback did not start: not in a herdr pane (HERDR_ENV != 1)"
   (( left >= FALLBACK_MIN_SECONDS )) || fallback_skip "$5" "no time left for a fallback"
   id="${SWARM_STORY:-$(agent_name "$(basename "${PWD}")")}"; full="fallback-${id}"; name="$(agent_name "${full}")"
@@ -570,7 +570,9 @@ codex_fallback() {
   (free_agent_name "${name}") 2> "${err}" || { holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"; }
   { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
     || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
-  (start_agent fallback "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
+  # A tab of its own, fallback-<story>: a usage limit hits every builder at once, and fallbacks
+  # sharing one tab record would race on it.
+  (start_agent "${full}" "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
   # shellcheck disable=SC2064 # this start and agent, fixed now
   trap "kill_tree ${wpid}; fallback_close ${full}; exit 143" TERM HUP
   # start_agent can retry for minutes: past codex's time it is stopped, and what it opened closed.
@@ -588,20 +590,17 @@ codex_fallback() {
   # shellcheck disable=SC2064 # this agent, fixed now
   trap "fallback_close ${full}; exit 143" TERM HUP
   left=$((deadline - SECONDS))
-  # Until the agent settles, not until the file exists: one review is one turn, so an agent idle (or
-  # gone) with no file wrote none, and waiting on would only hold the builder. In the background, so
-  # an interrupt is handled at once, not after a poll.
-  wait_agent "${name}" $(( (left > 0 ? left : 1) * 1000 )) > "${err}" 2>&1 & wpid=$!
+  # Until its findings file exists, within the time left: an agent idle while a subagent or a
+  # background Bash call of its own still runs has not finished. In the background, so an interrupt
+  # is handled at once, not after a poll.
+  wait_conductor "${name}" $(( (left > 0 ? left : 1) * 1000 )) "${out}" > "${err}" 2>&1 & wpid=$!
   # shellcheck disable=SC2064 # this wait and agent, fixed now
   trap "kill_tree ${wpid}; fallback_close ${full}; exit 143" TERM HUP
-  timed_out=0; wait "${wpid}" || timed_out=1
+  wait "${wpid}" || true
   # shellcheck disable=SC2064 # this agent, fixed now
   trap "fallback_close ${full}; exit 143" TERM HUP
   fallback_close "${full}"
-  if [[ ! -f "${out}" ]]; then
-    [[ ${timed_out} == 1 ]] || fallback_skip "$5" "fallback wrote no findings"
-    fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
-  fi
+  [[ -f "${out}" ]] || fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
   echo "reviewed by fallback ${CFG_fallback_reviewer}: codex usage limit"
   cat "${out}"
 }
@@ -614,28 +613,19 @@ pane_name_of() {
   cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' || true
 }
 
-# fallback_close <pane name> — close a fallback agent as `swarm.sh close` does a review agent: its
-# session log archived, its pane closed. Only that pane, or the exact tab it is the last pane of:
-# close_panes would close the fallback tab's overflow tabs (fallback-2, ...) with it, and the other
-# stories' fallbacks reviewing there.
+# fallback_close <name> — close a fallback agent as `swarm.sh close` does a review agent: its session
+# log archived, and its tab (fallback-<story>, its own) closed by that exact label, so no other
+# fallback's tab goes with it.
 fallback_close() {
-  local state pane t
+  local state="${STATE_DIR}/$1" pane t
   archive_session "$1" || true
-  for state in "${STATE_DIR}"/fallback "${STATE_DIR}"/fallback-*; do
-    [[ -f "${state}" ]] || continue
-    pane="$(awk -v n="$1" 'NF == 2 && $2 == n { print $1; exit }' "${state}")"
-    [[ -n "${pane}" ]] || continue
-    if [[ $(wc -l < "${state}") -gt 1 ]]; then
-      herdr pane close "${pane}" > /dev/null 2>&1 || true
-      awk -v p="${pane}" '$1 != p' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
-      return 0
-    fi
-    for t in $(herdr tab list --workspace "${pane%%:*}" 2>/dev/null \
-      | SWARM_LABEL="${state##*/}" json "' '.join(t['tab_id'] for t in d['result']['tabs'] if t.get('label') == e['SWARM_LABEL'])" 2>/dev/null); do
-      herdr tab close "${t}" > /dev/null 2>&1 || true
-    done
-    rm -f "${state}"; return 0
+  [[ -f "${state}" ]] || return 0
+  pane="$(awk 'NF == 2 { print $1; exit }' "${state}")"
+  for t in $(herdr tab list --workspace "${pane%%:*}" 2>/dev/null \
+    | SWARM_LABEL="$1" json "' '.join(t['tab_id'] for t in d['result']['tabs'] if t.get('label') == e['SWARM_LABEL'])" 2>/dev/null); do
+    herdr tab close "${t}" > /dev/null 2>&1 || true
   done
+  rm -f "${state}"
 }
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the

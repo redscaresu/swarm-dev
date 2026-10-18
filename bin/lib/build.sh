@@ -547,11 +547,10 @@ $(story_items "${story}" 'Done when')
 Judge the PR against these touches and items alone: work outside them is not a finding.
 $(review_stack_note "$1" "$3")
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
-finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last. If
-codex reports a usage limit, or codex-review prints "codex skipped: timed out", do not wait or run
-it again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. Wait for it to
-exit and act on what it prints last: a usage limit it prints early may be followed by a fallback's
-review. When it prints
+finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
+Wait for it to exit, and act on what it prints last: a usage limit it prints early may be followed by
+a fallback's review. If it ends on codex's usage limit or on "codex skipped: ...", do not run it
+again: you report \`codex skipped: usage limit\` or \`codex skipped: timed out\`. When it prints
 \`reviewed by fallback <model>: codex usage limit\`, a fallback agent reviewed in codex's place: report
 its findings as codex's, under that line. When the PR
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
