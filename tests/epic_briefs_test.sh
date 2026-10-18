@@ -269,7 +269,7 @@ rm -f "${b}/stories/e4-a.md" "${b}/stories/e4-f.md"
 
 # --- builder_subagent_model: a building role's start carries it, a planning or conducting role's does not.
 printf '%s\n' "builder_subagent_model = haiku" > "${p}/.claude/swarm/config"
-sub='--settings {"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
+sub='"CLAUDE_CODE_SUBAGENT_MODEL":"haiku","CLAUDE_CODE_SUBAGENT_MODEL_FORCE":"1"}}'
 started() { # <name> — with or without the setting, or "not started" when herdr never started <name>
   local l; l="$(grep "^agent start $1 " "${ROOT}/herdr.log")" || { echo "not started"; return; }
   if grep -qF -- "${sub}" <<< "${l}"; then echo with; else echo without; fi

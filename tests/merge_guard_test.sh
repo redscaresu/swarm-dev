@@ -3,9 +3,12 @@
 # project it exits 2 on the raw merges it knows (gh pr merge, gh api, graphql, through a shell, eval,
 # an interpreter, a pipe or a file, spelled through quotes or not) and on swarm.sh merge joined to
 # another command, and lets a lone swarm.sh merge and plain mentions through; outside one it allows
-# everything. A call that says merge is refused when the check cannot run. A block writes one
-# incident line to the project's .swarm/events.tsv, and hooks.json runs the script on Bash calls.
+# everything. A call that says merge is refused when the check cannot run. It also blocks a cd before
+# ;, git checkout over uncommitted changes and, for a swarm agent, git moving the main checkout. A
+# block writes one incident line to the project's .swarm/events.tsv, and hooks.json runs the script
+# on Bash calls.
 set -euo pipefail
+unset SWARM_AGENT  # the lead's session unless a case sets it
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${REPO}/hooks/merge-guard.sh"
@@ -19,9 +22,13 @@ trap 'rm -rf "${ROOT}"' EXIT
 P="${ROOT}/proj"; OUT="${ROOT}/elsewhere"; LOG="${P}/.swarm/events.tsv"
 mkdir -p "${P}/.claude/swarm" "${OUT}"
 echo "merge = agent" > "${P}/.claude/swarm/config"
+echo f > "${P}/f"; echo g > "${P}/g"; echo s > "${P}/s"
 git -C "${P}" init -q
-git -C "${P}" add .claude && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm init
-git -C "${P}" worktree add -q "${ROOT}/wt" -b story/x
+git -C "${P}" add .claude f g s && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm init
+W="${ROOT}/wt"
+git -C "${P}" worktree add -q "${W}" -b story/x
+echo changed >> "${W}/f"  # f has unstaged changes in the worktree, s staged ones; g has none
+echo changed >> "${W}/s" && git -C "${W}" add s
 fails=0
 U="https://github.com/o/r/pull/7"
 
@@ -95,8 +102,7 @@ check "a block writes one incident line" test "$(lines)" -eq $((was + 1))
 check "the line has record_event's five fields" awk -F'\t' 'END { exit !(NF == 5 && $1 ~ /^20..-..-..T..:..:..Z$/ && $2 == "incident" && $5 == "merge-blocked: gh pr merge") }' "${LOG}"
 call "${P}" "swarm.sh merge ${U}" >/dev/null
 check "a pass writes nothing" test "$(lines)" -eq $((was + 1))
-check "a worktree's block logs to its main checkout" exits "${ROOT}/wt" 2 "gh pr merge 7"
-check "  ... in the main checkout's events.tsv" test "$(lines)" -eq $((was + 2))
+check "a worktree's block logs to its main checkout" test "$(call "${W}" "gh pr merge 7")/$(lines)" == "2/$((was + 2))"
 
 # swarm.sh init makes a .claude/swarm/ and no config. Left untracked, a story worktree beside the
 # repo has no .claude at all, so the guard looks from its main checkout too.
@@ -110,9 +116,10 @@ check "  ... and logs to the main checkout" test "$(wc -l < "${Q}/.swarm/events.
 # Once a call says merge the guard fails closed: no python3, input it cannot read, a call too big
 # for an environment variable.
 feed() { local rc=0; PATH="${2:-${PATH}}" "${BASH}" "${HOOK}" < "$1" >/dev/null 2>&1 || rc=$?; echo "${rc}"; } # <file> [PATH]
-mkdir -p "${ROOT}/nopy" && for b in cat tr grep; do ln -s "$(command -v "${b}")" "${ROOT}/nopy/${b}"; done
+mkdir -p "${ROOT}/nopy" && for b in cat sed tr; do ln -s "$(command -v "${b}")" "${ROOT}/nopy/${b}"; done
 printf '{"cwd": "%s", "tool_input": {"command": "git merge x"}}' "${OUT}" > "${ROOT}/says-merge.json"
 printf '{"tool_input": {"command": "ls"}}' > "${ROOT}/ls.json"
+printf '{"cwd": "%s", "tool_input": {"command": "git checkout -- f"}}' "${W}" > "${ROOT}/says-git.json"
 printf '{"tool_input": {"command": "merge' > "${ROOT}/bad.json"
 python3 -c 'import json, sys
 for c in ("gh pr merge 7 # ", "echo \"gh pr merge 7\" # "):
@@ -120,9 +127,22 @@ for c in ("gh pr merge 7 # ", "echo \"gh pr merge 7\" # "):
 head -1 "${ROOT}/big.jsonl" > "${ROOT}/big-merge.json"; tail -1 "${ROOT}/big.jsonl" > "${ROOT}/big-echo.json"
 check "with no python3 a call that says merge is refused" test "$(feed "${ROOT}/says-merge.json" "${ROOT}/nopy")" == 2
 check "  ... and one that does not passes" test "$(feed "${ROOT}/ls.json" "${ROOT}/nopy")" == 0
+check "  ... and so does one that only says git, which fails open" test "$(feed "${ROOT}/says-git.json" "${ROOT}/nopy")" == 0
 check "input it cannot read that says merge is refused" test "$(feed "${ROOT}/bad.json")" == 2
 check "a 3 MB raw merge is refused" test "$(feed "${ROOT}/big-merge.json")" == 2
 check "a 3 MB mention reaches the check and passes" test "$(feed "${ROOT}/big-echo.json")" == 0
+
+# The rules read the command alone, never the cwd or description. A python3 that exits 1 refuses
+# any call that reaches it and says merge.
+mkdir -p "${ROOT}/badpy" && printf '#!/bin/sh\nexit 1\n' > "${ROOT}/badpy/python3" && chmod +x "${ROOT}/badpy/python3"
+printf '{"cwd": "%s/github.com/merge-cd", "tool_input": {"command": "ls github.com/abcd", "description": "merge, then cd and git"}}' "${ROOT}" > "${ROOT}/says-none.json"
+printf '{"cwd": "%s", "tool_input": {"command": "git status", "description": "before the merge"}}' "${W}" > "${ROOT}/desc-merge.json"
+check "a call that says merge, git and cd only in its cwd and description skips the check" test "$(feed "${ROOT}/says-none.json" "${ROOT}/badpy:${PATH}")" == 0
+check "a git call whose description says merge fails open" test "$(feed "${ROOT}/desc-merge.json" "${ROOT}/badpy:${PATH}")" == 0
+# An error in the lose-work rules lets the call through, even one that says merge: status output
+# that is not UTF-8 makes the dirty-file check raise.
+mkdir -p "${ROOT}/oddgit" && printf '#!/bin/sh\ncase " $* " in *" status "*) printf "\\377\\n"; exit 0 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "${ROOT}/oddgit/git" && chmod +x "${ROOT}/oddgit/git"
+check "an error in the lose-work rules fails open, even in a call that says merge" test "$(PATH="${ROOT}/oddgit:${PATH}" call "${W}" "git checkout -- f # before the merge")" == 0
 
 hook_cmd="$(python3 -c 'import json, sys
 h = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
@@ -130,6 +150,48 @@ print("\n".join(e["hooks"][0]["command"] for e in h if e["matcher"] == "Bash"))'
 # shellcheck disable=SC2016 # the literal hooks.json holds
 check "hooks.json runs the guard under CLAUDE_PLUGIN_ROOT on Bash" test "${hook_cmd}" == '"${CLAUDE_PLUGIN_ROOT}/hooks/merge-guard.sh"'
 check "hooks.json's command blocks a raw gh pr merge" test "$(call "${P}" "gh pr merge 7" "${hook_cmd}")" == 2
+
+# as <agent|lead> <cwd> <code> <command> — hooks.json's command exits <code>, in a swarm agent's
+# session (SWARM_AGENT set) or the lead's.
+as() {
+  local rc
+  if [[ "$1" == agent ]]; then rc="$(SWARM_AGENT=b1 call "$2" "$4" "${hook_cmd}")"; else rc="$(call "$2" "$4" "${hook_cmd}")"; fi
+  [[ "${rc}" == "$3" ]]
+}
+check "an agent's git checkout main in the main checkout blocks" as agent "${P}" 2 "git checkout main"
+for c in "switch main" "restore x" "reset --hard" "stash" "clean -fd"; do
+  check "an agent's git ${c} in the main checkout blocks" as agent "${P}" 2 "git ${c}"
+done
+check "an agent's git -C <main checkout> restore x blocks" as agent "${W}" 2 "git -C ${P} restore x"
+check "an agent's cd <main checkout> && git stash blocks" as agent "${W}" 2 "cd ${P} && git stash"
+check "git checkout -- f on a dirty f blocks" as lead "${W}" 2 "git checkout -- f"
+check "git checkout f on a dirty f blocks" as lead "${W}" 2 "git checkout f"
+check "cd /nope; cp a b blocks" as lead "${W}" 2 "cd /nope; cp a b"
+check "  ... and logs guard-blocked to the main checkout" test "$(tail -1 "${LOG}" | cut -f5)" == "guard-blocked: cd before ;"
+check "an agent's git checkout main in a story worktree passes" as agent "${W}" 0 "git checkout main"
+check "an agent's git -C <story worktree> restore x passes" as agent "${P}" 0 "git -C ${W} restore x"
+for c in "stash list" "stash show" "clean -n" "clean --dry-run" "clean -nd"; do
+  check "an agent's git ${c} in the main checkout passes" as agent "${P}" 0 "git ${c}"
+done
+check "the lead's git checkout main in the main checkout passes" as lead "${P}" 0 "git checkout main"
+check "git checkout -- g on a clean g passes" as lead "${W}" 0 "git checkout -- g"
+check "git checkout -- s on a staged-only s passes" as lead "${W}" 0 "git checkout -- s"
+check "git checkout HEAD -- s on a staged-only s blocks" as lead "${W}" 2 "git checkout HEAD -- s"
+check "git checkout -q HEAD s on a staged-only s blocks" as lead "${W}" 2 "git checkout -q HEAD s"
+# The hook's git status only reads: it leaves a stale index as it is, so it never takes index.lock.
+idx="$(git -C "${W}" rev-parse --path-format=absolute --git-path index)"
+touch -t 202001010000 "${W}/g"; was_idx="$(cksum < "${idx}")"
+check "the hook's git status leaves a stale index alone" test "$(call "${W}" "git checkout -- g")/$(cksum < "${idx}")" == "0/${was_idx}"
+# shellcheck disable=SC2016 # the substitution is the hook's to see
+check 'DIR=$(cd "$(dirname x)"; pwd) passes' as lead "${W}" 0 'DIR=$(cd "$(dirname x)"; pwd)'
+check "cd d || exit 1 && cp a b passes" as lead "${W}" 0 "cd d || exit 1 && cp a b"
+# A conflict in g: checking out a side resolves it and drops no work.
+C="${ROOT}/conflict"; G=(git -c user.name=t -c user.email=t@t -C "${C}")
+git -C "${P}" worktree add -q "${C}" -b story/c
+echo d > "${C}/g"; "${G[@]}" commit -qam d; "${G[@]}" branch -q story/d; "${G[@]}" reset -q --hard HEAD~1
+echo c > "${C}/g"; "${G[@]}" commit -qam c; "${G[@]}" merge -q story/d >/dev/null 2>&1 || true
+check "git checkout --theirs g on a conflicted g passes" as lead "${C}" 0 "git checkout --theirs g"
+check "outside a project, cd /nope; cp a b passes" as lead "${OUT}" 0 "cd /nope; cp a b"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

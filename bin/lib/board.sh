@@ -185,16 +185,24 @@ next_step() {
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
-# (dep_holds), or nothing.
+# (epic_holding_deps), or nothing.
 plannable_epic() {
-  local f epic b
+  local f held
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == active ]] || continue
-    epic=$(basename "${f}" .md)
-    epic_has_stories "${epic}" && continue
-    for b in $(story_deps "${f}"); do dep_holds "${b}" && continue 2; done
-    echo "${epic}"; return
+    held="$(epic_holding_deps "${f}")" || continue
+    [[ -z "${held}" ]] || continue
+    basename "${f}" .md; return
   done < <(board epics)
+}
+
+# epic_holding_deps <epic file> — fails unless it is an active epic with no stories (the epics
+# planning waits for); else prints its depends_on slugs that still hold its planning up (dep_holds),
+# space-separated, none when it can be planned. Its deps are read only once it has no stories.
+epic_holding_deps() {
+  local b held=""
+  [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" || return 1
+  for b in $(story_deps "$1"); do if dep_holds "${b}"; then held+=" ${b}"; fi; done
+  printf '%s' "${held# }"
 }
 
 # dep_holds <slug> — true while an epic's depends_on slug holds up its planning: an open story, or an

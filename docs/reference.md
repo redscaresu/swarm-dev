@@ -563,7 +563,7 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
-(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>`, for each call it blocks.
+(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
 its pull (§ Merging). The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
@@ -836,9 +836,23 @@ It guards against careless commands, not deliberate evasion: a merge reached any
 through a variable, a script run by `source` or process substitution, `awk`'s `system()` or an
 alias, passes. A command that only mentions a merge passes too: `echo`, `printf` and `grep`, a commit message, and a PR
 body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
-sees its reason, and `.swarm/events.tsv` gets an incident line. Once a call says merge the guard fails closed: if
+sees its reason, and `.swarm/events.tsv` gets an incident line. The guard reads only the command, never
+the session's folder or the call's description. Once the command says merge the guard fails closed: if
 it cannot run its check (no `python3`, input it cannot read, an error of its own), it refuses the
 call. Outside a swarm project the guard allows everything else.
+
+The hook also refuses commands that can lose work. In every session in a swarm project, yours
+included, it refuses a `cd <dir>` followed by `;` outside a `$( )`: when the `cd` fails, the rest
+runs in the folder the session was in, so write `cd <dir> || exit 1 &&`. It refuses a `git checkout`
+that would overwrite uncommitted changes: unstaged ones, and staged ones too when it checks out from
+a commit (`git checkout HEAD -- f`). Back the file up with `cp` and restore from the copy instead.
+swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook
+also refuses `git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the
+project's main checkout, whether the command runs there from the session's folder, after a `cd`, or
+through `git -C`. `git stash list`, `git stash show` and `git clean -n` change nothing, so they pass.
+Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it. These
+rules fail open: an error in them never refuses a call, even one whose command also says merge, and
+a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.

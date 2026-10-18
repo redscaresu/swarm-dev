@@ -86,6 +86,8 @@ story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
 epics = collections.OrderedDict((b[1], b) for b in board if b[0] == "epics")
 epic_of = {b[5]: b[1] for b in epics.values()}
+# An active epic with no stories -> the depends_on slugs that hold its planning up (dash_render's DASH_EPIC_WAITS).
+waits = dict(l.split("\t", 1) for l in lines("DASH_EPIC_WAITS") if "\t" in l)
 finished = collections.Counter()
 for l in lines("DASH_FINISHED"):
     e, _, n = l.partition("\t")
@@ -163,9 +165,12 @@ recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
     live = {p["pane_id"] for p in json.loads(E["DASH_PANES"])["result"]["panes"]}
-    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
 except (ValueError, KeyError, TypeError):
     agents = None
+try:   # labels only: without them the tree names each workspace by its id
+    ws_label = {w["workspace_id"]: w.get("label") or w["workspace_id"] for w in json.loads(E["DASH_WORKSPACES"])["result"]["workspaces"]}
+except (ValueError, KeyError, TypeError):
+    ws_label = {}
 
 def reported(base):
     # A conductor that wrote its report, which the lead has not collected yet.
@@ -460,14 +465,14 @@ def epic_rows(slug, members):
     states = [pr_state(m.group(0)) for m, _ in prs]
     k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or any(b[1] in need_slugs for b in mine)
          else "working" if any(r["state"] == "working" for r in members)
-         else "review" if prs or left["review"] else "done" if not left else "ready" if left["ready"]
+         else "review" if prs or left["review"] else "blocked" if slug in waits else "done" if not left else "ready" if left["ready"]
          else "blocked" if set(left) <= {"blocked", "later"} else "unknown")
     bar_w = 6 if NARROW else 12
     fill = round(bar_w * done / total) if total else 0
     order = ["review", "ready", "blocked", "later"]
     counts = " · ".join(f"{left[s]} {s}" for s in order + sorted(s for s in left if s not in order) if left[s])
     rows = [[sym(k), (f"{cut(epic_label(slug), epic_w):<{epic_w}}  ", "b"), ("█" * fill, "ok"), ("░" * (bar_w - fill), "dim"),
-             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or ("" if total else "no stories on the board or in git"), "dim")]]
+             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or (f"waits on {', '.join(waits[slug].split())}" if slug in waits else "" if total else "no stories on the board or in git"), "dim")]]
     rows += [agent_row(r) for r in members]
     for (m, owner), st in zip(prs, states):
         k = st[0] if st else "review"
@@ -484,8 +489,9 @@ def rank(item):
         return 0
     return 1 if any(r["state"] == "working" for r in members) else 2
 
-# An active epic with no open story and no agent shown is one line for them all.
-quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
+# An active epic with no open story and no agent shown is one line for them all, unless its
+# depends_on holds it up (DASH_EPIC_WAITS): it keeps its own row, which names what it waits on.
+quiet = [s for s, m in groups.items() if s and not m and s not in waits and not any(b[6] == s and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
 epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
@@ -729,7 +735,7 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 out.append(fit(speed, W))
 n_active = sum(b[2] == "active" for b in epics.values())
-n_working = sum(r["state"] == "working" for r in recs)
+n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
            (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
 if E.get("DASH_COST"):
