@@ -1,4 +1,4 @@
-import datetime, glob, gzip, json, os, re, subprocess, sys, zlib
+import datetime, functools, glob, gzip, json, os, re, subprocess, sys, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -78,14 +78,19 @@ NEGATED = re.compile(r"(?:\b(?:not|never|no longer)|n't)\s+(?:\w+\s+)?$", re.I) 
 FIX_REACH = 40   # characters from the end of a fix verb to the PR it fixes
 CLAUSE = re.compile(r"(?<=[.!?])\s+|;|\n")   # a sentence end before a space, a semicolon or a line break
 
+@functools.lru_cache(maxsize=None)
+def pr_ref(repo, n, bare):
+    # The pattern for PR n of repo in a PR's text, compiled once: its URL, owner/repo#N, and with bare a bare #N.
+    bare = r"|(?<![\w/#])#" if bare else ""
+    return re.compile(rf"(?:github\.com/{re.escape(repo)}/pull/|(?<![\w./-]){re.escape(repo)}#{bare}){n}(?!\d)", re.I)
+
 def fixes_pr(text, key, by):
     # Whether the title and body of the PR whose pr_key is by say it fixes the PR whose pr_key is key: in
     # a clause that is not NOT_A_FIX, its URL, owner/repo#N, or a bare #N when both are in one repo, whose
     # governing fix verb (the nearest FIX ending within FIX_REACH characters before it) has no negation
     # directly before it. "Fixes #1 and doesn't fix #4" fixes #1 and not #4.
     repo, _, n = key.partition("#")
-    bare = r"|(?<![\w/#])#" if by.partition("#")[0] == repo else ""
-    ref = re.compile(rf"(?:github\.com/{re.escape(repo)}/pull/|(?<![\w./-]){re.escape(repo)}#{bare}){n}(?!\d)", re.I)
+    ref = pr_ref(repo, n, by.partition("#")[0] == repo)
     for c in CLAUSE.split(text) if n else ():
         if NOT_A_FIX.search(c):
             continue
@@ -103,12 +108,20 @@ def merge_time(t):
         return None
     return d if d.tzinfo else None
 
-def rework_of(merged, findings):
-    # The pr_keys of the merged PRs a later PR fixed within REWORK_DAYS of their merge day (UTC, counted in
-    # days for both kinds of fix): a PR merged after it, on that day or up to that many days later, that
-    # fixes_pr says fixes it (a release PR never does), or a log-finding --reviewer escaped row (fixed_rows'
-    # day, kind, pr, text, outcome order; outcome escaped) pointing at it, dated that many days after its
-    # merge day or fewer. merged maps each merged PR's pr_key to (mergedAt as gh
+def local_day(t):
+    # An aware time's local calendar day: log-finding dates findings in local time, so rework counts days so.
+    return t.astimezone().date()
+
+def rework_settled():
+    # The local day before which a merge has had all its REWORK_DAYS for a fix to come, as YYYY-MM-DD.
+    return (datetime.date.today() - datetime.timedelta(days=REWORK_DAYS)).isoformat()
+
+def rework_of(merged, findings, judged=None):
+    # The pr_keys of the merged PRs (of judged alone, when given) a later PR fixed within REWORK_DAYS of
+    # their merge day (local days, for both kinds of fix): a PR merged after it, on that day or up to that
+    # many days later, that fixes_pr says fixes it (a release PR never does), or a log-finding --reviewer
+    # escaped row (fixed_rows' day, kind, pr, text, outcome order; outcome escaped) pointing at it, dated
+    # that many days after its merge day or fewer. merged maps each merged PR's pr_key to (mergedAt as gh
     # gives it, title and body, and the paths it changed, or None when unknown). A mergedAt that does not
     # parse leaves its PR out, counted on stderr.
     when = {k: merge_time(v[0]) for k, v in merged.items() if v[0]}
@@ -117,14 +130,15 @@ def rework_of(merged, findings):
         print(f"rework: skipped {len(bad)} merged PRs whose mergedAt does not parse, as {bad[0]}", file=sys.stderr)
     when = {k: t for k, t in when.items() if t}
     fixers = [(j, u) for j, u in when.items() if merged[j][2] != RELEASE_FILES]
-    out = {k for k, t in when.items()
-           if any(j != k and t < u and (u.date() - t.date()).days <= REWORK_DAYS and fixes_pr(merged[j][1], k, j)
+    judge = {k: t for k, t in when.items() if judged is None or k in judged}
+    out = {k for k, t in judge.items()
+           if any(j != k and t < u and (local_day(u) - local_day(t)).days <= REWORK_DAYS and fixes_pr(merged[j][1], k, j)
                   for j, u in fixers)}
     for f in findings:
         k = pr_key(f[2])
-        if len(f) > 4 and f[4] == "escaped" and k in when:
+        if len(f) > 4 and f[4] == "escaped" and k in judge:
             try:
-                d = (datetime.date.fromisoformat(f[0]) - when[k].date()).days
+                d = (datetime.date.fromisoformat(f[0]) - local_day(judge[k])).days
             except ValueError:
                 continue
             if 0 <= d <= REWORK_DAYS:
@@ -155,3 +169,10 @@ def merged_prs(urls, search):
         out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
                                        sorted(f.get("path", "") for f in p.get("files") or [])) for p in prs})
     return out
+
+def rework_unknown(rows):
+    # Whether outcomes could not judge rework (gh failed): the latest build on a PR merged before
+    # rework_settled() has an empty rework cell, which outcomes leaves only then.
+    last = {pr_key(r["pr"]): r for r in rows if r.get("pr")}
+    merged = [(merge_time(r.get("merged_at", "")), r) for r in last.values()]
+    return any(t and local_day(t).isoformat() < rework_settled() and r.get("rework") == "" for t, r in merged)

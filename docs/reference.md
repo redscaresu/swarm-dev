@@ -706,8 +706,10 @@ queued, which `gh` dates to the year 1, adds no CI. Last comes `rework` is 1 whe
 reworked the build's merged PR and 0 when none did, as defined under `flow`'s `model_fit` section
 (below). Any PR merged in the repo can be the fix, whether or not a build made it, and whatever
 `--since` is: `outcomes` lists the repo's merged PRs once with `gh`, from the first merge day of its
-builds on. It is empty on a PR that never merged, on an earlier build that shares the PR (so a reworked
-PR counts once), and on a PR merged 7 days ago or less, since a fix can still come. `outcomes` alone
+builds to 8 days after the last (`gh` dates in UTC, and a local 7th day can be the next day in UTC). It
+is empty on a PR that never merged, on an earlier build that shares the PR (so a reworked PR counts
+once), on a PR merged 7 days ago or less, since a fix can still come, and on every PR when `gh` failed,
+as rework is then unknown (a line on stderr says so). `outcomes` alone
 computes rework; `flow`'s `model_fit` and `reviewers` sections read this column. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
@@ -819,7 +821,7 @@ from git history, so merged stories keep their class. The columns are:
 
 A PR is rework when a PR merged after it, on its merge day or up to 7 days later, says it fixes it,
 or when a `log-finding --reviewer escaped` row dated up to 7 days after its merge day points at it.
-Both count calendar days from the merge day in UTC. Saying so
+Both count calendar days from the merge day in local time, as `log-finding` dates its rows. Saying so
 means a fix verb (`fix`, `fixes`, `fixed`, `fixing`, `hotfix`, `bugfix` or `quickfix`), `rework of`
 or `regression from` in the title or body, then the PR within 40 characters in the same clause
 (clauses end at a sentence end, a `;` or a line break): its URL, `owner/repo#N`, or `#N` from the
@@ -830,8 +832,8 @@ doesn't fix #4" fixes #1 alone. A negation anywhere else, as in "Fixes #1, which
 regression", leaves the fix standing. A release PR (one that changes only `.claude-plugin/plugin.json`)
 fixes nothing. The section reads `outcomes`' `rework` column, so a story merged 7 days ago or less
 is not rework yet. `outcomes` lists the merged PRs with `gh`, the last 1000 per repo. A line on stderr
-warns when a list comes back that long, since rework may then be undercounted. When `gh` fails, only
-escaped findings count, and a line on stderr says so. A `mergedAt` that does not parse leaves its PR
+warns when a list comes back that long, since rework may then be undercounted. When `gh` fails,
+rework is unknown: it counts as none, and a line under the table says so, as under `reviewers`. A `mergedAt` that does not parse leaves its PR
 out, counted in one line on stderr. A cell with fewer than 5 stories prints its count and `-` in the other columns,
 as too few to judge. After a blank line, a `subagents` block gives a row per model and effort of
 the builds whose subagents cost more than zero (`outcomes` writes `0.00` for a build that ran
@@ -892,7 +894,7 @@ counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all
 a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
 come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
 declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on in the window and that
-`outcomes` shows as reworked. After a blank line, the second block is TSV `prs rounds
+`outcomes` shows as reworked. When `gh` failed for `outcomes`, a last line says rework is unknown. After a blank line, the second block is TSV `prs rounds
 rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated in
 the window, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no

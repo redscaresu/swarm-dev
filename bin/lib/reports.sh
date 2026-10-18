@@ -126,7 +126,7 @@ cost_report() {
 # start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
 # time_in_state, from its PR's review and tell:findings events and its head's checks), and last rework
 # (report.py's rework_of over every merged PR of the builds' repos, from one gh list: 1 when a later fix
-# reworked its merged PR, on the latest build on it, once 7 days have passed). A finding goes to the latest build on
+# reworked its merged PR, on the latest build on it, once 7 days have passed; empty when gh failed). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.

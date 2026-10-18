@@ -119,19 +119,23 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
         named_reviews[pr_key(u)].append(f"review={e[0]}")
 
 # Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
-# PRs of these builds, with every PR of their repos merged from the first one's day on as a possible fix,
-# whatever --since. When gh fails, only escaped findings mark rework. A reworked PR counts once, on the
-# latest build on it, as findings do, and only once its REWORK_DAYS have passed (UTC), as a fix may
-# still come.
+# PRs of these builds, with every PR of their repos merged from the first one's day to REWORK_DAYS after
+# the last one's as a possible fix, whatever --since. gh's merged: dates are UTC, so the end has a day
+# more for a local 7th day that is the next day in UTC. A reworked PR counts once, on the latest build on
+# it, as findings do, and only once its REWORK_DAYS have passed, as a fix may still come. When gh fails,
+# rework is unknown and left empty.
 judged = {pr_key(r[6]): r[8] for r in rows if r[4] and r[6] and r[7] == "MERGED" and r[8]}
-merged_by = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], "merged:>=" + min(judged.values())[:10]) if judged else {}
-if merged_by is None:
-    print("rework: gh failed, so only escaped findings mark rework.", file=sys.stderr)
+days = sorted(m[:10] for m in judged.values())
+end = (datetime.date.fromisoformat(days[-1]) + datetime.timedelta(days=REWORK_DAYS + 1)).isoformat() if days else ""
+merged_by = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], f"merged:{days[0]}..{end}") if judged else {}
+gh_failed = merged_by is None
+if gh_failed:
+    print("rework: gh failed, so rework is left empty.", file=sys.stderr)
 merged_by = merged_by or {}
 for k, m in judged.items():
     merged_by.setdefault(k, (m, "", None))
-reworked = rework_of(merged_by, finding_rows(sys.argv[1], ("escaped",)))
-settled = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.timedelta(days=REWORK_DAYS)).isoformat()
+reworked = rework_of(merged_by, finding_rows(sys.argv[1], ("escaped",)), judged)
+settled = rework_settled()
 last = {pr_key(r[6]): i for i, r in enumerate(rows) if r[6]}
 
 def by(c, outcome):
@@ -153,8 +157,9 @@ for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(ro
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     merged = merged if asked and state == "MERGED" else ""
     # 1 when a later fix reworked its merged PR, 0 when none did; empty on an unmerged PR, an earlier build
-    # on it, or one merged too recently to tell.
-    rework = str(int(pr_key(pr) in reworked)) if merged and last[pr_key(pr)] == i and merged[:10] < settled else ""
+    # on it, one merged too recently to tell, or when gh failed.
+    merged_t = merge_time(merged)
+    rework = str(int(pr_key(pr) in reworked)) if merged_t and last[pr_key(pr)] == i and local_day(merged_t).isoformat() < settled and not gh_failed else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
