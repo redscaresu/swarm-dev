@@ -16,6 +16,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 check() { # <name> <test...>
   local name="$1"; shift
@@ -185,7 +186,7 @@ check "with no workspace list, --check names agents working" names "${A}" "agent
 check "mutant: dash's cost counts the calling pane's session" \
   mutant cost lib/reports.sh 's/flow_sections "$1" 9999-12-30 "" "" "" cost/flow_sections "$1" 9999-12-30 "" "" "$(session_for_pane "${HERDR_PANE_ID:-}")" cost/'
 check "from a priced pane, --check names the cost" names "${A}" cost priced env SWARM_PROJECT="${A}" "${M}" dash --check
-check "mutant: a waiting epic goes under no open story" mutant waits lib/dash_render.py 's/ and s not in waits and not any/ and not any/'
+check "mutant: a waiting epic goes under no open story" mutant waits lib/dash_render.py 's/ and s not in waits and not after_open(s)/ and not after_open(s)/'
 check "with the waiting epic quiet, --check names the epics waiting" names "${B}" "epics waiting on depends_on" \
   env SWARM_PROJECT="${B}" "${M}" dash --check
 # shellcheck disable=SC2016
