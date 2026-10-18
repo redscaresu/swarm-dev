@@ -55,13 +55,6 @@ Repeat until a step below says stop:
      nudges a conductor. When it returns, go back to 1. Never
      close a conductor that has not reported.
 
-     For each `also: lead <slug> blocks <slugs>` line after the why, run that lead story while the
-     wait runs: the stories it names stay blocked until it is done, and no conductor builds it.
-     Tell the user, as the gate does, that you will run it once they say go, with its **You:**
-     steps. Once it is done, run `swarm.sh finish <slug>` and land the board PR it opens as above
-     (`swarm.sh merge --board <url>`, or with `merge = human` hand it to the user), then
-     `swarm.sh unblock`.
-
      In the same response, also run `swarm.sh wait --lead` in the background. It returns when
      something new lands in your queue while the conductor works, one line per item. For a
      `held: <slug> (<cause>)` or `escalated: <slug>` line, do the `escalated <slug>` step for that slug at once, without waiting for `next`:
@@ -71,6 +64,14 @@ Repeat until a step below says stop:
      `wait --lead` times out (non-zero, nothing printed), start it again. Only one runs at a
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
+
+     Once both waits are running, take each `also: lead <slug> blocks <slugs>` line after the why
+     and run that lead story while the wait runs: the stories it names stay blocked until it is
+     done, and no conductor builds it. Tell the user, as the gate does, that you will run it once
+     they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land
+     the board PR it opens as above: `swarm.sh merge --board <url>`, or with `merge = human` hand
+     it to the user and wait until they merge it. Then run `swarm.sh reconcile` and
+     `swarm.sh unblock`, as step 1 does.
 
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
