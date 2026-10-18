@@ -83,6 +83,7 @@ record_finding() {
 #   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
 #   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
 #   escaped ones: both are a mistake someone fixed, so both are lessons.
+#   turns(path, seen) is each of one session's turns, once, as (record, model, tokens, est. USD).
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 
@@ -119,7 +120,8 @@ cost_report() {
 # cause, the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
 # drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
 # unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
-# its start to that and from that to the merge, and the commits on the PR that merge the base into it. A finding goes to the latest build on
+# its start to that and from that to the merge, the commits on the PR that merge the base into it, and
+# last its subagents' cost, in all and per model (its own cost and tokens leave them out). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -136,7 +138,8 @@ outcomes_report() {
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts,
   # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
-  # columns the report prints after attempts as they are: started to drop_at.
+  # columns the report prints after attempts as they are: started to drop_at, then subagent_cost_usd and
+  # subagent_cost_by_model, which it prints last.
   rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of

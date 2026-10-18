@@ -30,9 +30,18 @@ def minutes(start, end):
         return ""
     return str(round(d / 60)) if d >= 0 else ""
 
+# outcomes_rows' columns: up to pulls, then the ones printed as they are (started, the four tokens_*,
+# close_cause and the six escalation steps), then the subagent ones (cost, cost by model, tokens) printed last.
+AS_IS = 13                 # where started, the first printed as it is, sits
+AS_IS_N, SUBAGENT_N = 12, 3
+SUBAGENT = AS_IS + AS_IS_N
 rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():
     f = line.split("\t")
+    if len(f) != SUBAGENT + SUBAGENT_N:
+        # A damaged log (a tab in a cwd) or the two files out of step: skip the row, never the report.
+        print(f"outcomes: skipped a row of {len(f)} columns, not {SUBAGENT + SUBAGENT_N}: {line[:80]!r}", file=sys.stderr)
+        continue
     kind, risk, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", ""))
     rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(prs, f[12])))
 # Each finding goes to the latest build on its PR that started on or before the finding (both are
@@ -52,7 +61,7 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
-      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges")
+      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens")
 for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c in zip(rows, found):
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
@@ -60,9 +69,9 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     merged = merged if asked and state == "MERGED" else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
-                     str(fixed), pr, state, attempts] + f[13:]
+                     str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
-                        created, minutes(f[13], created), minutes(created, merged), main_merges]))
+                        created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:]))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text

@@ -1,0 +1,1 @@
+{"type":"assistant","isSidechain":true,"message":{"id":"m-side-h","model":"claude-haiku-4-5","usage":{"input_tokens":0,"output_tokens":200000}}}
