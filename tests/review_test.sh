@@ -401,16 +401,19 @@ check "a builder's brief says who merges: a human, or with merge = agent the con
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
 # --- The review agent's and the fallback reviewer's briefs: the lead's checklist, and the user's
-# decisions from the story and its epic, each whole (its sub-bullets too) and cut at 1500 bytes.
+# decisions from the story and its epic (whose decisions sit in its Done when, as on a real board):
+# each whole (its sub-bullets too), its own bullet, cut at 1500 bytes, all of them at 2000. A mark in
+# code, or in the story's Done when, is quoted, not a decision.
 item "${b}" epics/rv.md "status: active"
-printf '%s\n' "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
+printf '%s\n' "**Done when:**" "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
   "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" "- **Other.** RV-NOT-A-DECISION" \
-  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB" >> "${b}/epics/rv.md"
+  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB" \
+  "- Quotes \`(user, 2026-10-17)\` only in code RV-CODE" "" '```' "- (user, 2026-10-17) RV-FENCE" '```' >> "${b}/epics/rv.md"
 start rv1 >/dev/null
-LONG="$(printf 'x%.0s' $(seq 2000))"
 printf '%s\n' --- "status: review" "kind: code" "epic: rv" "repo: svc" "touches: [x.sh]" --- "" "# rv1" "" \
-  "**Done when:**" "- one release, not three" "" "## Notes" "" "Keep it short (user, 2026-10-17): ${LONG}" "" \
-  "Accents (user, 2026-10-17): x$(printf 'é%.0s' $(seq 1000))" > "${b}/stories/rv1.md"
+  "**Done when:**" "- one release, not three" "- it quotes (user, 2026-10-17) RV-DW-QUOTE" "" "## Notes" "" \
+  "Accents (user, 2026-10-17): x$(printf 'é%.0s' $(seq 1000))" "" \
+  "Filler (user, 2026-10-17): RV-FILLER $(printf 'y%.0s' $(seq 600))" > "${b}/stories/rv1.md"
 wt="$(git -C "${ROOT}/svc" worktree list --porcelain | sed -n 's/^worktree \(.*rv1\)$/\1/p')"
 git -C "${wt}" rev-parse HEAD > "${ROOT}/gh/head"
 (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review-agent rv1 "${U}/8" >/dev/null 2>&1) \
@@ -456,17 +459,28 @@ check "the review agent's brief has the checklist among what to check, before Wh
 for l in "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
   "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" \
   "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  - RV-WRAP-SUB"; do
-  check "both briefs carry the epic's decision line: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
+  check "both briefs carry the epic's decision line (from its Done when): ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
-check "a decision ends at the next bullet at its indent: the epic's next bullet is not in the brief" "0" "$(grep -c RV-NOT-A-DECISION <<< "${brief}" || true)"
-check "the story's 2000-byte decision is cut to 1500 bytes and an ellipsis" "yes|0" \
-  "$(has "Keep it short (user, 2026-10-17): xxx" "${brief}")|$(grep -c "$(printf 'x%.0s' $(seq 1500))" <<< "${brief}" || true)"
-check "and ends with the ellipsis" "1" "$(grep -c 'x…$' <<< "${brief}" || true)"
+for w in RV-NOT-A-DECISION RV-CODE RV-FENCE RV-FILLER; do
+  check "neither brief carries ${w}: not a decision (the next bullet, code, a fence) or past the 2000 bytes" "0|0" \
+    "$(grep -c "${w}" <<< "${brief}" || true)|$(grep -c "${w}" <<< "${fbrief}" || true)"
+done
+check "a mark in the story's Done when is not a decision: RV-DW-QUOTE is only in the Done when each brief quotes" "1|1" \
+  "$(grep -c RV-DW-QUOTE <<< "${brief}" || true)|$(grep -c RV-DW-QUOTE <<< "${fbrief}" || true)"
+NOTE="1 more decision is left out of this brief (past 2000 bytes): read ${b}/stories/rv1.md."
+check "both briefs say how many decisions were left out and where they are" "yes|yes" "$(has "${NOTE}" "${brief}")|$(has "${NOTE}" "${fbrief}")"
+check "each decision is its own bullet, a blank line apart: a paragraph gets its dash" "yes|yes|yes|yes" \
+  "$(has "- Accents (user, 2026-10-17): xé" "${brief}")|$(has "- Accents (user, 2026-10-17): xé" "${fbrief}")|$(
+  for x in "${brief}" "${fbrief}"; do awk 'f { print ($0 == "" ? "yes" : "no, got: " $0); exit } /RV-DECISION, which the PR reverses\.$/ { f = 1 }' <<< "${x}"; done | paste -sd'|' -)"
 utf8() { python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8"); print("yes")' 2>/dev/null || echo no; }
-check "a 2000-byte decision of two-byte characters is cut on a character boundary: both briefs stay valid UTF-8" "yes|yes|yes" \
-  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" | sed 's/^1$/yes/')"
-check "a fallback brief with no story has the five lines but neither the decision check nor any decision" "yes|0|0" \
-  "$(has "${CHECKLIST[0]}" "${fbare}")|$(grep -c '(user, ' <<< "${fbare}" || true)|$(grep -c RV-DECISION <<< "${fbare}" || true)"
+check "a 2000-byte decision of two-byte characters is cut at 1500 bytes on a character boundary, with an ellipsis: both briefs stay valid UTF-8" "yes|yes|1|0" \
+  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" || true)|$(
+  LC_ALL=C awk '/Accents/ && length($0) > 1505' <<< "${brief}" | wc -l | tr -d ' ')"
+for l in "${CHECKLIST[@]:0:5}"; do
+  check "a fallback brief with no story still carries: ${l:2:40}..." "yes" "$(has "${l}" "${fbare}")"
+done
+check "a fallback brief with no story has neither the decision check nor any decision" "0|0" \
+  "$(grep -c '(user, ' <<< "${fbare}" || true)|$(grep -c RV-DECISION <<< "${fbare}" || true)"
 rm -f "${p}/.swarm/state/rv" "${p}/.swarm/state/fallback" "${b}/epics/rv.md" "${b}/stories/rv1.md"
 
 # --- Starting an agent: a taken name, a failed start, codex's update check.

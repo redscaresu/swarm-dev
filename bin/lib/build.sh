@@ -534,32 +534,49 @@ review_stack_note() {
 SCOPE_RULE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
 
 # DECISION_MAX_BYTES: the most of one user's decision a review brief carries; a longer one is cut on a
-# character boundary, with "…".
+# character boundary, with "…". DECISIONS_MAX_BYTES: the most all of them take together; a decision
+# past it is left out, and the brief says how many were and in which files they are.
 DECISION_MAX_BYTES=1500
+DECISIONS_MAX_BYTES=2000
 
 # user_decisions <file>... — each decision the files mark `(user, <date>`: the whole bullet (or
 # paragraph) that holds the mark, from its first line, with its wrapped text and sub-bullets, up to the
-# next bullet or bold line at its indent or less, a blank line or a heading; each cut to
-# DECISION_MAX_BYTES. cur is the bullet or paragraph read so far, ci its first line's indent.
+# next bullet or bold line at its indent or less, a blank line or a heading. Each is cut to
+# DECISION_MAX_BYTES and printed as its own bullet, a blank line apart, while they fit in
+# DECISIONS_MAX_BYTES. A mark in a fenced block, an inline code span or the first file's (the story's)
+# **Done when** section, which the brief already quotes, is not a decision; an epic's decisions sit in
+# its Done when. cur is the bullet or paragraph read so far, ci its first line's indent.
 user_decisions() {
-  LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" '
-    function flush(  n) {
+  LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" -v all="${DECISIONS_MAX_BYTES}" -v story="$1" '
+    function flush(  n, b) {
       if (d == "") return
       if (length(d) > max) {
         # Back off while the byte after the cut is a UTF-8 continuation byte (10xxxxxx).
         for (n = max; n > 0 && substr(d, n + 1, 1) >= "\200" && substr(d, n + 1, 1) < "\300"; n--) ;
         d = substr(d, 1, n) "…"
       }
-      print d; d = ""
+      sub(/^ */, "", d); if (d !~ /^([-*+]|[0-9]+\.) /) d = "- " d
+      b = (out == "" ? "" : "\n\n") d
+      if (length(out) + length(b) <= all) out = out b
+      else { left++; if (!(src in named)) { named[src]; where = where (where == "" ? "" : ", ") src } }
+      d = ""
     }
     function indent(s) { match(s, /^ */); return RLENGTH }
-    FNR == 1 { flush(); cur = "" }
+    FNR == 1 { flush(); cur = ""; fence = 0; dw = 0 }
+    /^ *(```|~~~)/ { fence = !fence; cur = ""; if (d != "") d = d "\n" $0; next }
+    fence { if (d != "") d = d "\n" $0; next }
     d != "" && (/^[[:space:]]*$/ || /^#/ || (indent($0) <= ind && /^ *([-*+]|[0-9]+\.) |^ *\*\*/)) { flush() }
     d != "" { d = d "\n" $0; next }
+    /^\*\*|^#/ { dw = FILENAME == story && index($0, "**Done when") == 1 }
     /^[[:space:]]*$/ || /^#/ { cur = ""; next }
     { if (cur == "" || $0 ~ /^ *([-*+]|[0-9]+\.) |^ *\*\*/) { cur = $0; ci = indent($0) } else cur = cur "\n" $0 }
-    /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = cur; ind = ci }
-    END { flush() }' "$@"
+    dw { next }
+    { t = $0; gsub(/`[^`]*`/, "", t) }
+    t ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = cur; ind = ci; src = FILENAME }
+    END {
+      flush(); if (out != "") print out
+      if (left) printf "\n%d more decision%s left out of this brief (past %d bytes): read %s.\n", left, (left > 1 ? "s are" : " is"), all, where
+    }' "$@"
 }
 
 # review_checklist [story file] — the checks the lead learned by hand, one line each, for the review
