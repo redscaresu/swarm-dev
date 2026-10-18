@@ -1,4 +1,4 @@
-import json, re, subprocess, sys, time
+import json, re, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 
@@ -51,7 +51,7 @@ def judge(runs, red, wait, ok):
         else:
             ok.append("%s (%s)" % (r.get("name"), r.get("conclusion")))
 
-def checks(repo, sha, need_run=True):
+def checks(repo, sha, required=(), need_run=True):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
     red, wait, ok = [], ([] if runs or not need_run else ["no check runs"]), []
@@ -63,7 +63,71 @@ def checks(repo, sha, need_run=True):
             red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
         else:
             ok.append("%s (success)" % s.get("context"))
+    # A required check bound to an app (not None or -1, any source) needs a run from that app.
+    have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
+    names = {n for n, _ in have} | {s.get("context") for s in sts}
+    wait += ["%s (required, absent)" % c for c, app in required
+             if (c not in names if app in (None, -1) else (c, app) not in have)]
     return red, wait, ok
+
+# The ruleset rule types --admin may pass: the review it stands in for, the status checks admin
+# re-checks, and rules about pushes and branches that a PR's merge never meets.
+ADMIN_RULES = ("pull_request", "required_status_checks", "deletion", "non_fast_forward", "creation")
+# Classic protection's fields --admin may pass, on the same grounds; enforce_admins makes GitHub
+# refuse --admin itself. Any other field that is set (enabled, or a non-empty value) is refused.
+ADMIN_CLASSIC = ("url", "required_status_checks", "required_pull_request_reviews", "enforce_admins",
+                 "allow_force_pushes", "allow_deletions", "block_creations", "allow_fork_syncing")
+
+def base_rules(repo, base, method):
+    """What base's rulesets and classic branch protection require: the status checks, each as
+    (context, the app that must report it or None); whether the head must be up to date (strict);
+    and the rules besides those and the review, which --admin would skip, the review's own thread
+    resolution and merge methods (method is the one merge will use) among them. The branch is one
+    path segment, / encoded."""
+    req, strict, skip, b = [], False, [], urllib.parse.quote(base, safe="")
+    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, b)):
+        if not isinstance(d, list):
+            raise Err("unreadable rules for " + base)
+        for rule in d:
+            if rule["type"] == "required_status_checks":
+                p = rule["parameters"]
+                req += [(c["context"], c.get("integration_id")) for c in p["required_status_checks"]]
+                strict = strict or bool(p.get("strict_required_status_checks_policy"))
+            elif rule["type"] == "pull_request":
+                p = rule.get("parameters") or {}
+                if p.get("required_review_thread_resolution"):
+                    skip.append("ruleset rule pull_request's required_review_thread_resolution")
+                if "allowed_merge_methods" in p and method not in p["allowed_merge_methods"]:
+                    skip.append("ruleset rule pull_request's allowed_merge_methods (%s, not %s)"
+                                % (", ".join(p["allowed_merge_methods"]) or "none", method))
+            elif rule["type"] not in ADMIN_RULES:
+                skip.append("ruleset rule " + rule["type"])
+    try:
+        prot = json.loads(gh("api", "repos/%s/branches/%s/protection" % (repo, b)))
+    except Err as e:
+        # Only this 404 means unprotected: a token that cannot read protection gets Not Found.
+        if "Branch not protected (HTTP 404)" in str(e):
+            return req, strict, skip
+        raise
+    rsc = prot.get("required_status_checks") or {}
+    req += [(c, None) for c in rsc.get("contexts", [])] + [(c["context"], c.get("app_id")) for c in rsc.get("checks", [])]
+    for k, v in prot.items():
+        if k not in ADMIN_CLASSIC and (v.get("enabled") if isinstance(v, dict) and "enabled" in v else v):
+            skip.append("branch protection " + k)
+    return req, strict or bool(rsc.get("strict")), skip
+
+def admin(repo, base, sha, method):
+    """Why --admin may not merge sha into base with method, or nothing: it must stand in for the
+    review only."""
+    req, strict, skip = base_rules(repo, base, method)
+    why = ["%s, which --admin would skip" % r for r in skip]
+    red, wait, _ = checks(repo, sha, req)
+    why += red + wait
+    if strict:
+        behind = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha)))["behind_by"]
+        if behind:
+            why.append("%s requires the head up to date, and it is %d commit(s) behind %s" % (base, behind, base))
+    return why
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -237,6 +301,11 @@ try:
         print("; ".join(red + wait or ok))
         if red or wait:
             sys.exit(1 if red else 2)
+    elif mode == "admin":
+        why = admin(repo, args[0], args[1], args[2])
+        if why:
+            print("; ".join(why))
+            sys.exit(1)
     elif mode == "files":
         files = pr_files(repo, args[0], int(args[1]))
         if not files:
