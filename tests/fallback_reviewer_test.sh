@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # fallback_reviewer_test.sh — codex-review on a codex usage limit: it always logs a codex-limit
 # incident; with fallback_reviewer set it starts fallback-<story> (role review-fallback, on that
-# model), waits for its findings file and prints it in codex's place; with the key empty no agent
-# starts and the output is codex's own, as before. Also the builder brief's codex rule, which names the
+# model, with no file tools), waits what is left of codex's time for its findings file and prints
+# it in codex's place, then closes the agent; with the key empty no agent starts and the output is
+# codex's own, as before. A fallback that cannot start, writes nothing in time or is interrupted is
+# closed, and codex-review says codex was skipped. Also the builder brief's codex rule, which names the
 # PR body's "reviewed by fallback" line. codex, herdr and claude are stubs on PATH: herdr's agent
-# writes its findings file as its brief arrives, then goes idle.
+# writes its findings file as its brief arrives, then goes idle, unless ${ROOT}/silent exists.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -14,7 +16,7 @@ trap 'rm -rf "${ROOT}"' EXIT
 # No .claude.json here, so require_trusted lets the agent start. A wait checks the session often.
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config" CLAUDE_PROJECTS_DIR="${ROOT}/projects" SWARM_STALL_POLL_MS=200 \
   SWARM_CONDUCTOR_POLL=1 CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
-BIN="${ROOT}/stub-bin"; mkdir -p "${BIN}" "${ROOT}/done"; echo '[]' > "${ROOT}/claude.json"
+BIN="${ROOT}/stub-bin"; mkdir -p "${BIN}" "${ROOT}/done"; echo '[]' > "${ROOT}/claude.json"; : > "${ROOT}/agents"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${BIN}/claude"
 fails=0
 
@@ -22,31 +24,47 @@ check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
+logged() { if grep -q -- "$1" "${ROOT}/herdr.log" 2>/dev/null; then echo yes; else echo no; fi; }
 
-LIMIT_MSG="ERROR: You've hit your usage limit. Try again later."
-printf '#!/bin/sh\necho "%s" >&2\nexit 1\n' "${LIMIT_MSG}" > "${BIN}/codex"
-# herdr: logs every call; panes are w:<n>. agent start records "<name> <pane> <session>"; agent
-# prompt writes the findings file the brief names and marks the agent done; agent list and wait
-# report it idle once done.
+# codex's own line, curly apostrophe and all.
+LIMIT_MSG="ERROR: You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro) or try again at 7:53 AM."
+codex_says() { printf '#!/bin/sh\n'; printf 'echo "%s" >&2\n' "${@:2}"; printf 'exit %s\n' "$1"; } # <exit> <line>...
+codex_says 1 "${LIMIT_MSG}" > "${BIN}/codex"
+# herdr: logs every call. Tab t:<n> holds pane w:<n>. agent start records "<name> <pane> <session>"
+# (failing with startfail); agent prompt writes the findings file the brief names and marks the agent
+# done, unless silent, and with promptfail leaves the agent idle, so the brief is never taken up; a
+# pane or tab close drops its agent. agent list and wait report it idle once done.
 cat > "${BIN}/herdr" <<EOF
 #!/bin/sh
 H="${ROOT}"
 EOF
 cat >> "${BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
+drop() { awk -v p="$1" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents"; }
 case "$1 $2" in
-  "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
-  "agent start")  echo "$3 w:1 $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
+  "tab create")   n=$(($(cat "$H/n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/n"
+                  echo "t:$n $(echo "$*" | sed 's/.*--label \([^ ]*\).*/\1/')" >> "$H/tabs"
+                  echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
+  "tab list")     awk 'BEGIN { printf "{\"result\":{\"tabs\":[" }
+                    { printf "%s{\"tab_id\":\"%s\",\"label\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                    END { print "]}}" }' "$H/tabs" ;;
+  "tab close")    drop "w:${3#t:}" ;;
+  "pane close")   drop "$3" ;;
+  "agent start")  [ -e "$H/startfail" ] && { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
+                  echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
-  "agent prompt") f=$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)
-                  printf '%s\n' '- [P1] STUB FINDING — x.sh:3' '  drops the error' > "$f"
-                  touch "$H/done/$(awk '{ print $1 }' "$H/agents" | tail -1)"; "$H/sessions"
+  "agent prompt") [ -e "$H/promptfail" ] && { echo '{"result":{"agent":{"agent_status":"idle"}}}'; exit 0; }
+                  if [ ! -e "$H/silent" ]; then
+                    f=$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/fallback/[a-z0-9-]*\.md' | head -1)
+                    printf '%s\n' '- [P1] STUB FINDING — x.sh:3' '  drops the error' > "$f"
+                    touch "$H/done/$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")"; "$H/sessions"
+                  fi
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait")   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list")   awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { s = system("test -e " d "/" $1) == 0 ? "idle" : "working"
                       printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, s, $2 }
-                    END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
+                    END { print "]}}" }' "$H/agents" ;;
 esac
 EOF
 # sessions: Claude Code's list, one entry per agent started, busy until done/<name> exists.
@@ -59,44 +77,119 @@ awk -v d="${ROOT}/done" 'BEGIN { printf "[" }
 EOF
 chmod +x "${BIN}/codex" "${BIN}/herdr" "${ROOT}/sessions"
 
-# A git project with story s1.
-p="${ROOT}/proj"
+# A git project with stories s1 and two whose fallback names, cut at 32 characters, are one.
+p="${ROOT}/proj"; LONG=abcdefghijklmnopqrstuvw
 mkdir -p "${p}/.claude/swarm" "${p}/docs/stories"
 git -c init.defaultBranch=main init -q "${p}"
-printf '%s\n' --- "status: ready" "kind: code" "touches: [x.sh]" --- "" "# s1" "" "**Done when:**" "- it holds" > "${p}/docs/stories/s1.md"
-# review [config line] — codex-review main for s1 with that config: sets out and rc.
+for s in s1 "${LONG}-one" "${LONG}-two"; do
+  printf '%s\n' --- "status: ready" "kind: code" "touches: [x.sh]" --- "" "# ${s}" "" "**Done when:**" "- it holds" > "${p}/docs/stories/${s}.md"
+done
+# review [config line] — codex-review main for $STORY (s1) with that config, codex's time $SECS
+# (60 s) and HERDR_ENV=1 unless NOHERDR is set, in the background: sets out, rc and took. A run past
+# 30 s is KILLed, failing the checks instead of hanging the test.
 review() {
-  printf '%s\n' "$@" > "${p}/.claude/swarm/config"
-  rc=0; out="$(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWARM_STORY=s1 PATH="${BIN}:${PATH}" \
-    bash "${SWARM}" codex-review main 2>&1)" || rc=$?
+  local t0=${SECONDS} pid i herdr=(HERDR_ENV=1)
+  [[ -z "${NOHERDR:-}" ]] || herdr=(-u HERDR_ENV)
+  printf '%s\n' "$@" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
+  (cd "${p}" && exec env -u SWARM_PROJECT "${herdr[@]}" HERDR_WORKSPACE_ID=w \
+    SWARM_STORY="${STORY:-s1}" SWARM_CODEX_SECONDS="${SECS:-60}" PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
+  pid=$!
+  for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
+  kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"
+  rc=0; wait "${pid}" || rc=$?
+  took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
 }
 incidents() { awk -F'\t' '$2 == "incident" { print $3 "|" $5 }' "${p}/.swarm/events.tsv"; }
+closed() { if grep -qE '^(pane|tab) close' "${ROOT}/herdr.log"; then echo yes; else echo no; fi; }
+live() { awk '{ print $1 }' "${ROOT}/agents" | tr '\n' ' '; }
 
 # --- Key empty: no agent, codex's output and exit as before, and the incident.
 review
 check "with fallback_reviewer empty, codex-review exits as codex did, with codex's output alone" "1|${LIMIT_MSG}" "${rc}|${out}"
-check "with fallback_reviewer empty, no agent starts" "no" "$(grep -q '^agent start' "${ROOT}/herdr.log" 2>/dev/null && echo yes || echo no)"
+check "with fallback_reviewer empty, no agent starts" "no" "$(logged '^agent start')"
 check "with fallback_reviewer empty, the codex-limit incident is logged" "s1|codex-limit: usage limit" "$(incidents)"
 
-# --- fallback_reviewer = sonnet: the fallback agent starts on sonnet, and its findings are printed.
+# --- fallback_reviewer = sonnet: the fallback agent starts on sonnet, its findings are printed, and
+# it is closed.
 review "fallback_reviewer = sonnet"
 check "with fallback_reviewer = sonnet, codex-review exits 0" "0" "${rc}"
-check "the fallback agent starts as fallback-s1 on sonnet" "yes" \
-  "$(grep -q '^agent start fallback-s1 .*--model sonnet ' "${ROOT}/herdr.log" && echo yes || echo no)"
+check "the fallback agent starts as fallback-s1 on sonnet" "yes" "$(logged '^agent start fallback-s1 .*--model sonnet ')"
+check "the fallback agent has no Edit, Write or NotebookEdit tool, and cannot commit or push" "yes" \
+  "$(logged '^agent start fallback-s1 .*--disallowedTools Bash(gh pr merge:\*) Edit Write NotebookEdit Bash(git commit:\*) Bash(git push:\*) --settings')"
 check "agents.tsv records it with role review-fallback" "review-fallback" \
   "$(awk -F'\t' '$3 == "fallback-s1" { print $2 }' "${p}/.swarm/agents.tsv")"
-check "its brief holds codex's story prompt" "yes" "$(has "Its Done when:" "$(cat "${p}/.swarm/briefs/fallback-s1.md")")"
+check "its brief holds codex's story prompt" "yes" "$(has "Its Done when:" "$(cat "${p}/.swarm/briefs/fallback/s1.md")")"
+check "its findings go to .swarm/reviews/fallback/s1.md" "yes" "$([[ -f "${p}/.swarm/reviews/fallback/s1.md" ]] && echo yes || echo no)"
 check "the stub's findings appear in codex-review's stdout" "yes" "$(has "- [P1] STUB FINDING — x.sh:3" "${out}")"
 check "stdout names the fallback for the PR body" "yes" "$(has "reviewed by fallback sonnet: codex usage limit" "${out}")"
+check "the fallback agent is closed once its findings are read" "yes|" "$(closed)|$(live)"
 check "with fallback_reviewer set, the codex-limit incident is logged too" "s1|codex-limit: usage limit" "$(incidents | tail -1)"
 check "one incident per run" "2" "$(incidents | wc -l | tr -d ' ')"
-
-# --- A codex that fails without a usage limit logs no incident and starts no fallback.
-printf '#!/bin/sh\necho "boom" >&2\nexit 2\n' > "${BIN}/codex"
-: > "${ROOT}/herdr.log"
 review "fallback_reviewer = sonnet"
-check "another failure exits as codex did, with no incident and no agent" "2|2|no" \
-  "${rc}|$(incidents | wc -l | tr -d ' ')|$(grep -q '^agent start' "${ROOT}/herdr.log" && echo yes || echo no)"
+check "the next usage limit for the story starts its fallback again" "0|yes" "${rc}|$(logged '^agent start fallback-s1 ')"
+
+# --- A fallback that writes nothing has only what is left of codex's time, then is closed.
+touch "${ROOT}/silent"
+SECS=3 review "fallback_reviewer = sonnet"
+check "a silent fallback ends within codex's time, exiting as codex did and saying codex was skipped" "1|yes|yes" \
+  "${rc}|$([[ ${took} -le 10 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: usage limit (fallback-s1 wrote no findings in time" "${out}")"
+check "a fallback that timed out is closed" "yes|" "$(closed)|$(live)"
+
+# --- An interrupt while the fallback reviews closes it at once.
+printf '%s\n' "fallback_reviewer = sonnet" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
+(cd "${p}" && exec env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWARM_STORY=s1 SWARM_CODEX_SECONDS=60 \
+  PATH="${BIN}:${PATH}" bash "${SWARM}" codex-review main > "${ROOT}/out" 2>&1) &
+pid=$!
+for ((i = 0; i < 100; i++)); do [[ "$(logged '^agent prompt')" == yes ]] && break; sleep 0.1; done
+sleep 1; t0=${SECONDS}
+{ # stderr off, so the test prints no "Terminated" notice for the job
+  kill -TERM "${pid}"
+  for ((i = 0; i < 100; i++)); do kill -0 "${pid}" || break; sleep 0.1; done
+  kill -0 "${pid}" && kill -KILL "${pid}"
+  wait "${pid}" || true
+} 2>/dev/null
+check "an interrupted codex-review closes its fallback within 5 s" "yes|yes|" \
+  "$([[ $((SECONDS - t0)) -le 5 ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(closed)|$(live)"
+check "events.tsv's codex-review line says it was interrupted" "interrupted" \
+  "$(awk -F'\t' '$2 == "codex-review" { o = $5 } END { print o }' "${p}/.swarm/events.tsv")"
+rm "${ROOT}/silent"
+
+# --- A fallback that cannot start: codex was skipped, exiting as codex did, and no pane is left.
+touch "${ROOT}/startfail"
+review "fallback_reviewer = sonnet"
+check "a fallback whose start fails says codex was skipped and why, exiting as codex did" "1|yes" \
+  "${rc}|$(has "codex skipped: usage limit (fallback did not start: fallback-s1: herdr could not start the agent" "${out}")"
+rm "${ROOT}/startfail"
+touch "${ROOT}/promptfail"
+review "fallback_reviewer = sonnet"
+check "a fallback whose brief is never taken up says codex was skipped, and its pane is closed" "1|yes|yes|" \
+  "${rc}|$(has "fallback did not start: fallback-s1: the brief was not taken up" "${out}")|$(closed)|$(live)"
+rm "${ROOT}/promptfail"
+NOHERDR=1 review "fallback_reviewer = sonnet"
+check "outside herdr the fallback does not start, and codex was skipped" "1|yes|no" \
+  "${rc}|$(has "codex skipped: usage limit (fallback did not start: not in a herdr pane" "${out}")|$(logged '^agent start')"
+
+# --- Two stories whose fallback names are cut to one: the second is refused while the first holds
+# the name, and the first's findings are kept.
+mkdir -p "${p}/.swarm/state" "${p}/.swarm/reviews/fallback"
+echo "fallback-${LONG} w:99 sess-one" >> "${ROOT}/agents"; echo "w:99 fallback-${LONG}-one" > "${p}/.swarm/state/fallback"
+echo "the first's findings" > "${p}/.swarm/reviews/fallback/${LONG}-one.md"
+STORY="${LONG}-two" review "fallback_reviewer = sonnet"
+check "a fallback whose cut name another story's fallback holds is refused, and codex was skipped" "1|yes|no" \
+  "${rc}|$(has "fallback did not start: fallback-${LONG} is held by fallback-${LONG}-one" "${out}")|$(logged '^agent start')"
+# Once the name is free, the second's findings go to a file of its own, beside the first's.
+: > "${ROOT}/agents"; rm "${p}/.swarm/state/fallback"
+STORY="${LONG}-two" review "fallback_reviewer = sonnet"
+check "two stories whose names are cut to one keep their findings apart" "0|the first's findings|yes" \
+  "${rc}|$(cat "${p}/.swarm/reviews/fallback/${LONG}-one.md")|$(has "STUB FINDING" "$(cat "${p}/.swarm/reviews/fallback/${LONG}-two.md" 2>&1)")"
+
+# --- A codex that fails without its own limit message (a transcript that quotes one does not count)
+# logs no incident and starts no fallback.
+codex_says 1 "reviewing a diff about the usage limit" "+ERROR: You've hit your usage limit." "ERROR: stream disconnected" > "${BIN}/codex"
+n="$(incidents | wc -l | tr -d ' ')"
+review "fallback_reviewer = sonnet"
+check "another failure exits as codex did, with no incident and no agent" "1|${n}|no" \
+  "${rc}|$(incidents | wc -l | tr -d ' ')|$(logged '^agent start')"
 
 # --- Its findings are logged with --reviewer fallback.
 check "log-finding --reviewer fallback is accepted and recorded" "0|fallback" \

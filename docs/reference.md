@@ -531,14 +531,20 @@ usage limit, or codex-review prints `codex skipped: timed out`, no one waits or 
 builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
 its reply, and the conductor then reads the diff itself in codex's place. codex-review sends codex's
-output, stderr merged into stdout, through a temp file as well as to the screen. If codex fails and
-that output says `usage limit`, codex-review logs a `codex-limit` incident in events.tsv. With
-`fallback_reviewer` empty it then exits as codex did. With it set (and inside herdr), it starts
-`fallback-<story>` in the worktree on that model, with codex's prompt, and waits up to
-`codex_minutes` for the findings file it writes (`.swarm/reviews/fallback-<story>.md`). It prints
-`reviewed by fallback <model>: codex usage limit` and then the findings. The builder treats them as
-codex's, logs them with `--reviewer fallback`, and the PR body carries that line instead of `codex
-skipped`. Without a file by then, it fails with `codex skipped: usage limit`. The planning `codex` panes of `/plan-hld` and
+output, stderr merged into stdout, through a temp file as well as to the screen. Once codex exits,
+it waits a few seconds for the output to finish, so a child of codex left holding it cannot hang the
+run. If codex fails and its last lines hold its own limit message (`You’ve hit your usage limit`, with
+`ERROR:` or `■` before it; a review that only quotes the words does not count), codex-review logs a
+`codex-limit` incident in events.tsv. With `fallback_reviewer` empty it then exits as codex did. With
+it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
+runs with no Edit, Write or NotebookEdit tool and cannot commit or push, so it stays read-only as
+codex's sandbox did. It gets what is left of `codex_minutes`, so the whole run stays within it, to write its
+findings to `.swarm/reviews/fallback/<story>.md`. codex-review prints `reviewed by fallback <model>:
+codex usage limit` and then the findings, and closes the agent, findings or not; an interrupt closes
+it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
+body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
+start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
+nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. The planning `codex` panes of `/plan-hld` and
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 

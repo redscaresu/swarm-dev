@@ -166,5 +166,14 @@ check "a usage limit exits as codex did, and the log says failed, not skipped" "
   "${rc}|$(has "usage limit" "${out}")|$(last_event)"
 check "a codex that fails leaves no marker" "" "$(markers)"
 
+# --- A child of codex left holding its output does not hold codex-review: tee gets the grace after
+# codex exits, then is stopped, and what codex printed comes through.
+# shellcheck disable=SC2016 # the stub's variable
+stub '"${d}/stubsleep" 60 & echo "P2: y.sh:1 leaks"; exit 0'
+review
+check "a codex whose child keeps its output open returns within the grace, its findings through" "0|yes|yes" \
+  "${rc}|$([[ ${took} -le $((GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "P2: y.sh:1 leaks" "${out}")"
+pkill -KILL -f "${BIN}/" || true
+
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
