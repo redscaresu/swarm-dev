@@ -93,7 +93,8 @@ Every agent is a full Claude Code session on your own logins. On infrafactory, f
 The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
 section shows how long CI takes per push, how often it goes red and how often it flakes, and its
 `incidents` section counts, per day, the waits that timed out, the logins that expired and the
-builders that stopped with no PR.
+builders that stopped with no PR. Its `model_fit` section sets cost against results for each model
+and kind of story, so you can see where a cheaper model holds up before you move more work to it.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the

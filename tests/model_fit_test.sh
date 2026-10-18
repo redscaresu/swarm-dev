@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# model_fit_test.sh — flow's model_fit section. Cell opus/high code <=300 bin/ holds five stories:
+# s1 ($2.00 and $0.50 of subagents, PR #1, 120 min, 2 findings), s2 ($1.00, #2, 60 min), s3 (opus
+# $1.00, then escalated to fable $3.00 on #3, 1440 min, 1 finding; it stays under opus), s4 ($1.00,
+# #4 still open, 1 finding) and s5 ($0.50, #5, 60 min): $9.00 over 4 merged is 2.25, 3 of 5 on the
+# first attempt, 6 builds over 5, 4 findings over 5 PRs, 420 minutes on average. #10, merged 3 days
+# after #1 and naming it, makes s1 rework; #11 names #2 8 days after it merged, which is not. An
+# escaped finding 3 days after #3 merged is rework, one 8 days after #5 is not; both count as escaped.
+# Cell sonnet/medium docs none other holds two stories, so it prints its count alone. Then the same
+# through swarm.sh flow: a story deleted in a git commit keeps its class. Also: a bare #N names a PR
+# in its own repo only, a merged story with no merged_at adds no wait, and a build with no cost is named.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "${dir}"' EXIT
+mkdir -p "${dir}/bin"
+U=https://github.com/o/r/pull
+row() { # <date> <slug> <kind> <model> <effort> <cost> <attempts> <fixed> <pr> <merged_at> <story_merged> <started> <subagent_cost>
+  printf '%s\t%s\t%s\t\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\te1\n' "$@"
+}
+ROWS="$(printf 'date\tslug\tkind\trisk\tmodel\teffort\tcost_usd\tattempts\tfindings_fixed\tpr\tmerged_at\tstory_merged\tstarted\tsubagent_cost_usd\tepic\n'
+  row 2026-10-02 s1 code opus high 2.00 1 2 "${U}/1" 2026-10-02T12:00:00Z true 2026-10-02T10:00:00Z 0.50
+  row 2026-10-02 s2 code opus high 1.00 1 0 "${U}/2" 2026-10-02T11:00:00Z true 2026-10-02T10:00:00Z ""
+  row 2026-10-02 s3 code opus high 1.00 1 0 "${U}/3" 2026-10-03T10:00:00Z true 2026-10-02T10:00:00Z ""
+  row 2026-10-03 s3 code fable xhigh 3.00 2 1 "${U}/3" 2026-10-03T10:00:00Z true 2026-10-03T08:00:00Z ""
+  row 2026-10-02 s4 code opus high 1.00 1 1 "${U}/4" "" false 2026-10-02T10:00:00Z ""
+  row 2026-10-10 s5 code opus high 0.50 1 0 "${U}/5" 2026-10-10T10:00:00Z true 2026-10-10T09:00:00Z ""
+  row 2026-10-02 t1 docs sonnet medium 0.20 1 0 "${U}/6" 2026-10-02T12:00:00Z true 2026-10-02T10:00:00Z ""
+  row 2026-10-02 t2 docs sonnet medium 0.20 1 0 "" "" "" "" "")"
+STORIES="$(for s in s1 s2 s3 s4 s5; do printf '%s\t150\tbin/lib/x.py (new), bin/y.sh:f, docs/z.md\n' "${s}"; done
+  printf 't1\t\tREADME.md:commands\nt2\t\tREADME.md, docs/a.md\n')"
+printf '%s\n' $'2026-10-06\tmissed\thttps://github.com/o/r/pull/3\tx\tescaped\tescaped' \
+  $'2026-10-18\tmissed\thttps://github.com/o/r/pull/5\tx\tescaped\tescaped' \
+  $'2026-10-06\tnit\thttps://github.com/o/r/pull/1\tx\tdeclined\tcodex\tnit' > "${dir}/findings.tsv"
+# gh: the repo's merged PRs, #10 naming #1 and #11 naming #2.
+cat > "${dir}/merged.json" <<EOF
+[{"url":"${U}/1","mergedAt":"2026-10-02T12:00:00Z","title":"s1","body":""},
+ {"url":"${U}/10","mergedAt":"2026-10-05T12:00:00Z","title":"Fix the parser","body":"Fixes a bug from #1."},
+ {"url":"${U}/11","mergedAt":"2026-10-10T11:00:00Z","title":"Follow-up","body":"After ${U}/2"}]
+EOF
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\n[ "$1 $2 $3 $4 $5 $6" = "pr list -R o/r --state merged" ] && exec cat "%s/merged.json"\nexit 1\n' "${dir}" > "${dir}/bin/gh"
+chmod +x "${dir}/bin/gh"
+section() { # the model_fit section alone, as flow runs it
+  PATH="${dir}/bin:${PATH}" SWARM_FINDING_REVIEWERS="codex escaped" SWARM_ROWS="${ROWS}" SWARM_STORIES="${STORIES}" \
+    python3 "${REPO}/bin/lib/flow_report.py" 2026-10-01 9999-12-30 "" x x "${dir}/findings.tsv" x x x x "" x model_fit
+}
+fails=0
+check() { # <name> <output> <exact expected output>
+  if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
+}
+out="$(section)"
+check "the five-story cell: every column, the escalation to fable under opus, rework at 3 days and not 8" \
+  "$(grep $'^opus\thigh\tcode' <<< "${out}")" $'opus\thigh\tcode\t-\t<=300\tbin/\t5\t2.25\t60%\t1.2\t0.8\t2\t2\t420'
+check "no cell for the fable build" "$(grep -c '^fable' <<< "${out}" || true)" 0
+check "the two-story cell prints its count and no verdict" \
+  "$(grep $'^sonnet\tmedium' <<< "${out}")" $'sonnet\tmedium\tdocs\t-\tnone\tother\t2\t-\t-\t-\t-\t-\t-\t-'
+check "a subagent row: 0.50 of 2.50 is 20%" \
+  "$(sed -n '/^subagents/,/^$/p' <<< "${out}")" $'subagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share\nopus\thigh\t0.50\t2.50\t20%'
+check "a bare #N names a PR in its own repo alone; owner/repo#N names one in another" \
+  "$(cd "${REPO}/bin/lib" && python3 -c 'from report import rework_of as r; m = lambda t: {"a/one#1": ("2026-10-01T00:00:00Z", ""), "b/two#2": ("2026-10-02T00:00:00Z", t)}
+print(r(m("Fix #1"), []), r(m("Fix a/one#1"), []))')" "set() {'a/one#1'}"
+# A story merged on a PR no build of it named (story_merged true, no merged_at) adds no wait and no
+# crash; s4's build with no cost is named, not counted as free: $8.00 over 4.
+ROWS="${ROWS//$'\t2026-10-10T10:00:00Z\ttrue'/$'\t\ttrue'}"
+ROWS="${ROWS//$'\thigh\t1.00\t1\t1\t'/$'\thigh\t\t1\t1\t'}"
+check "a merged story with no merged_at adds no wait; a build with no cost is named" \
+  "$(section | grep $'^opus\thigh\tcode' | cut -f7,8,14)" $'5\t2.00 (1 not in the logs)\t540'
+
+# Through swarm.sh flow: gone was planned at 400 lines in commands/, then deleted by a commit.
+P="${dir}/repo"
+mkdir -p "${P}/.swarm" "${P}/docs/stories"
+git -C "${P}" init -q
+printf -- '---\nkind: code\nstatus: ready\nestimate_lines: 400\ntouches: [commands/swarm.md, bin/x.sh]\n---\n' > "${P}/docs/stories/gone.md"
+git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm add
+git -C "${P}" rm -q docs/stories/gone.md && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm merged
+mkdir -p "${P}/docs/stories"   # the board is still there, without the story
+printf '%s\n' $'2026-10-02\tcode\tgone\tclaude\topus\thigh\t-' > "${P}/.swarm/agents.tsv"
+out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+  bash "${REPO}/bin/swarm.sh" flow 2>/dev/null | awk '/^## / { f = $0 == "## model_fit"; next } f')" || true
+check "a story deleted in a git commit still lands in its class" \
+  "$(sed -n 2p <<< "${out}")" $'opus\thigh\tcode\t-\t>300\tcommands/\t1\t-\t-\t-\t-\t-\t-\t-'
+
+[[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
+echo "all passed"

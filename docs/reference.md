@@ -646,7 +646,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `model_fit`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -682,6 +682,32 @@ The `incidents` section prints TSV `day kind incidents`: the `incident` lines in
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
 so `--epic` does not narrow it.
+
+The `model_fit` section sets cost against results. It prints one TSV row per model and effort
+crossed with a story class, over the stories whose first build is dated in the window (with
+`--epic`, that epic's). A story counts under the model and effort of its first build, so a story
+escalated to Fable stays under the model it started on, while its cost, attempts and findings
+include every build. The class is the story's `kind`, `risk`, a size bucket from `estimate_lines`
+(`<=100`, `<=300`, `>300`, or `none`) and the area most of its `touches` name (`bin/`, `commands/`,
+`docs/`, `tests/` or `other`; on a tie, the first one named). Each story is read from the board or
+from git history, so merged stories keep their class. The columns are:
+
+- `stories`, the stories built;
+- `cost_per_merged_usd`, the cost of all their builds, subagents included, over the stories that merged, ending `(N not in the logs)` for builds with no cost, as in `epic_totals`;
+- `first_attempt_merge_rate`, the share that merged on their only build;
+- `mean_attempts`, builds per story;
+- `findings_per_pr`, findings fixed (declined ones left out) over their PRs;
+- `rework`, the stories with a merged PR that a later PR fixed within 7 days;
+- `escaped`, the escaped findings on their PRs;
+- `start_to_merge_min`, the mean minutes from the first build's start to the merge.
+
+A PR is rework when a PR merged up to 7 days after it names it in its title or body (by URL,
+`owner/repo#N` or `#N`), or when a `log-finding --reviewer escaped` row dated up to 7 days after its
+merge day points at it. The merged PRs come from `gh`; when `gh` fails, only escaped findings count,
+and a line says so. A cell with fewer than 5 stories prints its count and `-` in the other columns,
+as too few to judge. After a blank line, a `subagents` block gives a row per model and effort of
+the builds that logged subagent columns: what their subagents cost, the build cost (theirs plus the
+builder's own), and the subagents' share of it.
 
 The `throughput` section prints one TSV
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and
@@ -919,7 +945,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 
