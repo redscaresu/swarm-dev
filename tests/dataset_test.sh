@@ -73,7 +73,9 @@ printf '%s\n' \
   $'2026-10-04T15:00:00Z\tescalate\tescalated\tw:1\tok (findings-3: sonnet -> opus)' \
   $'2026-10-05T11:59:00Z\tescalate\tescalated\tw:1\tok (attempt 3)' \
   $'2026-10-05T12:30:00Z\tescalate\tescalated\tw:1\trefused '"${PLANT_ENV}" > "${P}/.swarm/events.tsv"
+# The first row's day is impossible: it is skipped, never a crash.
 printf '%s\n' \
+  $'2026-02-30\tmissing-check\to/r#5\tan impossible day\tescaped\tescaped' \
   $'2026-10-03\tvacuous-test\to/r#3\ta\tfixed\tcodex' \
   $'2026-10-03\tnaming\to/r#3\tb\tdeclined\tcodex\tnit' \
   $'2026-10-09\tmissing-check\to/r#5\tc\tescaped\tescaped' > "${P}/.swarm/findings.tsv"
@@ -93,6 +95,10 @@ cat > "${dir}/bin/gh" <<STUB
 [ -z "\${GH_FAIL:-}" ] || exit 1
 if [ "\$1 \$2" = "pr view" ]; then cat "${dir}/prs/\${3##*/}.json"; exit; fi
 [ "\$1 \$2" = "pr list" ] || exit 1
+case "\$4 \$6" in
+  "story/retried merged") [ -z "\${MERGED_FAIL:-}" ] || exit 1; printf '[{"url":"${U}/22","mergedAt":"2026-10-08T10:00:00Z"}]\n'; exit ;;
+  "story/retried all") printf '${U}/22\tMERGED\t2026-10-08T10:00:00Z\t2026-10-08T09:00:00Z\t0\n${U}/21\tCLOSED\t\t2026-10-07T09:00:00Z\t0\n'; exit ;;
+esac
 case "\$4" in
   story/easy-ok) n=2 c=2026-10-02T09:30:00Z m=2026-10-02T10:00:00Z ;;
   story/easy-hard) n=3 c=2026-10-03T08:30:00Z m=2026-10-03T10:00:00Z ;;
@@ -143,6 +149,28 @@ before="$(cksum < "${F}")"
 check "when gh cannot be read, it refuses, says so, and leaves the file as it was" \
   "$(dataset GH_FAIL=1; cksum < "${F}")" \
   "$(printf 'gh could not read the PRs of easy-hard, easy-ok, escalated; %s is left as it was: check gh auth status and run it again\nexit 1\n%s' "${F}" "${before}")"
+
+# --- A story retried on two PRs whose builds left no session log, so no build owns a PR, and a story
+# whose repo is not cloned here.
+printf -- '---\nkind: code\neasy: true\n---\n\n# Retried\n' > "${P}/docs/stories/retried.md"
+printf -- '---\nkind: code\nrepo: elsewhere\n---\n\n# Uncloned\n' > "${P}/docs/stories/uncloned.md"
+git -C "${P}" add -A && commit 2026-10-07T08:00:00Z "Plan retried and uncloned (#20)"
+lines 5 d; git -C "${P}" rm -q docs/stories/retried.md; git -C "${P}" add -A && commit 2026-10-08T10:00:00Z "Retried (#22)"
+view 22 "Retried (#22)" src/d:5:0 docs/stories/retried.md:0:6
+printf '%s\n' \
+  $'2026-10-07\tcode\tretried\tclaude\topus\thigh\tgone1' \
+  $'2026-10-08\tcode\tretried\tclaude\topus\thigh\tgone2' \
+  $'2026-10-07\tcode\tuncloned\tclaude\topus\thigh\tgone3' >> "${P}/.swarm/agents.tsv"
+retried() { grep '"slug": "retried"' "${F}" || true; }
+check "a retried story whose builds own no PR reads its merged PR from gh; a story whose repo is not here is skipped, counted on stderr" \
+  "$(dataset; summary "${F}" | grep '^"retried"')" \
+  "$(printf '%s\n' "skipped 1 story whose repo is not here: uncloned" "wrote 4 finished stories to ${F}" "exit 0" \
+    '"retried" | "https://github.com/o/r/pull/22" | ["code", null, [], [], null, true, null, "# Retried"] | [5, 1, 2, 0, 0, false, null, null, ["opus"]] | [] | [false, 1]')"
+before="$(retried)"
+check "when gh gives no merged PR for it, the story keeps its line from the last run" \
+  "$(dataset MERGED_FAIL=1; retried)" \
+  "$(printf '%s\n' "skipped 1 story whose repo is not here: uncloned" "retried: merged, but gh gave no merged PR; kept its previous line" \
+    "wrote 4 finished stories to ${F}" "exit 0" "${before}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

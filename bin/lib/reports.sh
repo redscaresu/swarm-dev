@@ -183,19 +183,23 @@ outcomes_report() {
 # its trigger (attempt N, or step-up's trigger) with from and to. was_easy: merged on the first
 # attempt, at most one findings round, no rework and a diff under 100 lines, under was_easy_rule 1.
 # Nothing from the environment or a session log's text is written. Each run rewrites the file whole
-# through a temporary file, and a story gh could not read stops it before it writes.
+# through a temporary file, and a story gh could not read stops it before it writes. A story whose
+# repo is not here is skipped and counted on stderr; a merged story whose builds name no merged PR (a
+# retry with no session log left) reads it from gh, or keeps its line from the last run.
 dataset_report() {
-  local rows repos="" slug src
+  local rows repos="" no_repo="" slug src
   [[ $# -eq 0 ]] || die "usage: swarm.sh dataset"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # shellcheck disable=SC2119 # takes no argument here
   rows="$(outcomes_report | sed '/^$/,$d')"
-  # Each merged story's repo (its repo:, as outcomes reads it), whose history holds the fixes that name its PR.
+  # Each known story's repo (its repo:, as outcomes reads it), whose history holds the fixes that name
+  # its PR; a story whose repo is not here goes in no_repo, since gh never ran for it.
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    src="$(repo_dir "$(story_text "${slug}" | sed -n 's/^repo: *//p' | head -1)")" && repos+="${slug}"$'\t'"${src}"$'\n'
-  done <<< "$(awk -F'\t' 'NR > 1 && $31 != "" { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_REPOS="${repos}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
+    if src="$(repo_dir "$(story_text "${slug}" | sed -n 's/^repo: *//p' | head -1)")"; then repos+="${slug}"$'\t'"${src}"$'\n'
+    else no_repo+="${slug} "; fi
+  done <<< "$(awk -F'\t' 'NR > 1 && $3 != "" { print $2 }' <<< "${rows}" | sort -u)"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_REPOS="${repos}" SWARM_NO_REPO="${no_repo}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
     "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" \
     "${PROJECT_DIR}/.swarm/dataset.jsonl"
 }

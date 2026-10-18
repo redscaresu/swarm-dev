@@ -626,7 +626,9 @@ session log is gone starts at 00:00 local time on its agents.tsv day, converted 
 merged), oldest merge first, for scoring the planner's guesses against what happened. Each run
 rewrites the whole file, through a temporary file. If `gh` could not read a story's PRs (an expired
 login, no network, a rate limit), it says which stories, exits non-zero and leaves the old file as
-it was. `inputs` is the story as it was planned: its file at the newest commit that
+it was. A story whose repo is not cloned here is skipped, and one stderr line counts them. A merged
+story whose builds own no PR (a retry whose session logs are gone) gets its merged PR from `gh`; if
+`gh` gives none, it keeps its line from the last run. `inputs` is the story as it was planned: its file at the newest commit that
 added it, with `text`, `kind`, `risk`, `touches`, `depends_on`, `estimate_lines` and `easy`, and
 `planner_model`, the model of the last plan-epic `lead` in agents.tsv started by that day whose
 session log names the story's epic (`null` when the lead planned a small epic alone, or the log is
@@ -636,7 +638,7 @@ epic's, which an epic's last story PR deletes); `attempts`;
 `findings_rounds` (the `tell:findings` it took); `findings_fixed`; `rework`; `cost_usd`; `minutes`
 from its first build's start to the merge; `models`, every model that built it; and `escalations`,
 one per `escalate` line with its `trigger` (`attempt N`, or a step-up's own trigger) and its `from`
-and `to` models. A `minutes` whose times do not parse is `null`. `rework` is true when a later PR
+and `to` models. `minutes` is `null` when a time does not parse or the merge comes before the start. `rework` is true when a later PR
 fixed it within 7 days: a commit on the default branch of the story's repo names its PR (`#N`,
 `owner/repo#N` or its URL) on a line that says it fixes it (fix, rework, revert or regression), or
 an escaped finding points at it. A stacked PR's `Merge after`, `Depends on` or `Stacked on` line
