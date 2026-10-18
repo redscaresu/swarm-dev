@@ -427,12 +427,12 @@ fallback() {
   local pid i id
   echo "fallback_reviewer = sonnet" > "${p}/.claude/swarm/config"
   (cd "${wt}" && exec env -u SWARM_PROJECT -u SWARM_STORY ${1:+SWARM_STORY="$1"} SWARM_PROJECT="${p}" HERDR_ENV=1 HERDR_WORKSPACE_ID=w \
-    SWARM_CODEX_SECONDS=2 SWARM_CONDUCTOR_POLL=1 PATH="${ROOT}/limit-bin:${ROOT}/bin:${PATH}" bash "${SWARM}" codex-review main >/dev/null 2>&1) &
+    SWARM_CODEX_SECONDS=5 SWARM_FALLBACK_MIN_SECONDS=1 SWARM_CONDUCTOR_POLL=1 PATH="${ROOT}/limit-bin:${ROOT}/bin:${PATH}" bash "${SWARM}" codex-review main >/dev/null 2>&1) &
   pid=$!
   for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
   kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"; wait "${pid}" || true
   : > "${p}/.claude/swarm/config"
-  id="${1:-${wt##*/}}"; cat "${p}/.swarm/briefs/fallback/${id:0:32}.md" 2>/dev/null
+  id="${1:-${wt##*/}}"; cat "${p}/.swarm/briefs/fallback/${id:0:32}.md" 2>/dev/null || echo "no fallback brief"
 }
 fbrief="$(fallback rv1)"; fbare="$(fallback)"
 CHECKLIST=(
