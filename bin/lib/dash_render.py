@@ -807,6 +807,22 @@ def gauges():
     return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
             + [(f" {now} of peak {peak} in 7 days", "")])
 
+def idle_gauge():
+    # Beside the running gauge: the stories next would start (DASH_BUILDABLE, dash_render's) with no
+    # agent of their own in this project's panes (story_for's slug, a retired <slug>-done too) and no
+    # conductor: the epic's, or for a one-off the backlog conductor (DASH_BACKLOG). Nothing when there are none, or
+    # no agent list.
+    if agents is None:
+        return []
+    mine = {r["slug"] for r in recs if r.get("slug")}
+    conducted = {r["epic"] for r in recs if r.get("role") == "conduct" and r.get("epic") and not re.search(r"-done\d*$", r["name"])}   # a retired conductor is done, as next_step reads it
+    backlog = any(r["name"] == E.get("DASH_BACKLOG") for r in recs)
+    idle = 0
+    for l in lines("DASH_BUILDABLE"):
+        slug, _, epic = l.partition("\t")
+        idle += not (slug in mine or (epic in conducted if epic else backlog))
+    return [(f"idle: {idle} buildable not started", "warn")] if idle else []
+
 SEP = (" · ", "dim")
 
 def pack(groups, n):
@@ -830,7 +846,7 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 out.append(fit(speed, W))
-under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
+under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else [], idle_gauge() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),

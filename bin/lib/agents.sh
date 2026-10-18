@@ -386,11 +386,10 @@ start_agent() {
 }
 
 # codex_out_dir <tab> — where a planning tab's agents write their answers: .swarm/<epic> for
-# scope-<epic>, .swarm/<hld> for plan-<hld>; empty for any other tab.
+# scope-<epic>; empty for any other tab.
 codex_out_dir() {
   case "$1" in
     scope-?*) echo "${PROJECT_DIR}/.swarm/${1#scope-}" ;;
-    plan-?*)  echo "${PROJECT_DIR}/.swarm/${1#plan-}" ;;
   esac
 }
 
