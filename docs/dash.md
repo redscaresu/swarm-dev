@@ -38,7 +38,16 @@ is one column, top to bottom:
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
   from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
-  (`--reviewer escaped` in `findings.tsv`). Then one summary line: epics active, agents working (as
+  (`--reviewer escaped` in `findings.tsv`). From 60 columns a sparkline follows: the stories
+  finished on each of the last 14 days, oldest first (`▁` for none, `▇` for the busiest day; a slug
+  counts once, on the day it last finished), then today's count and the 7-day average. From 100
+  columns two gauges follow, on the sparkline's line when both fit. `rate` is the 7-day average against the best 7 days in a row
+  in `events.tsv`. `running` is the agents working now, by the same count as the summary, against
+  the most agents that were busy at once in the last 7 days. dash works that peak out from each
+  `agents.tsv` session's log, taking the first timestamp as the start and the last write as the end,
+  so a session that sat idle for a while counts as busy. Each kind of agent has a cell and a colour
+  of its own: `█` builders (green), `▓` conductors (cyan), `▒` review agents (yellow), `░` anything
+  else. Then one summary line: epics active, agents working (as
   `swarm.sh status` counts them, stalled ones included), PRs green and waiting for you, stalled builders, and today's
   estimated cost of this project (the `cost` section of `swarm.sh flow --since <today>`, without the session of the
   pane dash runs in). After
@@ -145,6 +154,8 @@ still shows the board and says the agents are unavailable. At 100 columns, from 
 ```text
 infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:48:02
 1.6 merged/day over 7 days · ! 2 waiting on you, oldest 4h05m · ✓ 0 escaped in 7 days
+14 days ▂▁▃▇▅▁▂▂▃▂▂▃▃▃  today 2  7-day avg 1.6
+rate ████████████ 1.6 of best 1.6/day · running ███▓▓▓······ 2 of peak 4 in 7 days
 9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $427.69 today
 on call: fable·xhigh · 0 escalations today
 board: 2 uncommitted edits in the main checkout: stories/prod-read-seam-reader-user.md, stories/fak…

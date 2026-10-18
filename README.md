@@ -63,7 +63,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `/hld <title>` | Write a design with a co-author agent. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
 
 The other commands are tools the lead runs; they are listed in

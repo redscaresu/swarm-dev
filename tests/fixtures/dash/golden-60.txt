@@ -1,5 +1,6 @@
 alpha  next conduct alpha-core                      12:00:00
 0.6 merged/day over 7 days · ! 3 waiting on you or the lead…
+14 days ▁▁▁▁▁▁▁▁▇▁▁▇▇▇  today 1  7-day avg 0.6
 1 epics active · 2 agents working · 1 PRs green, waiting · …
 on call: fable·xhigh · 0 escalations today
 ╭─ needs you ──────────────────────────────────────────────╮
@@ -34,6 +35,7 @@ on call: fable·xhigh · 0 escalations today
 ╰──────────────────────────────────────────────────────────╯
 bravo  next conduct bravo-ui                        12:00:00
 0.9 merged/day over 7 days · ! 5 waiting on you or the lead…
+14 days ▁▁▁▁▁▁▁▁▁▁▃▇▃▇  today 2  7-day avg 0.9
 3 epics active · 1 agents working · 0 PRs green, waiting · …
 on call: fable·xhigh · 0 escalations today
 ╭─ needs you ──────────────────────────────────────────────╮

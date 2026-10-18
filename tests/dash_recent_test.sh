@@ -175,7 +175,7 @@ check "at 160 columns the status bar says who is on call" has "on call: fable·x
 check "at 160 columns the status bar counts today's ok escalate builds, not yesterday's or a failed one" has " · 2 escalations today" "$(tail -2 <<< "${out}")"
 check "at 160 columns an escalated builder's card shows its state age, attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m  attempt 3 · ${esc_at} +│" <<< "${out}"
 out="$(COLUMNS=100 escdash)"
-check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 4p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
+check "at 100 columns the line under the summary says who is on call and today's escalations" test "$(sed -n 6p <<< "${out}")" == "on call: fable·xhigh · 2 escalations today"
 check "at 100 columns an escalated builder's row shows its attempt and when" grep -qE "● x-esc +escalate +fable·xhigh +working 40m +attempt 3 · ${esc_at} +│" <<< "${out}"
 recent="$(sed -n '/^╭─ recent/,/^╰/p' <<< "${out}")"
 for k in "escalate y-esc" "dialog x-esc" "escalated w-esc" "reset w-esc" "drop v-esc"; do

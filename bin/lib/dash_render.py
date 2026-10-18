@@ -699,12 +699,12 @@ def waited_from(item):
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
-moved, merged = {}, set()
+moved, done_at = {}, {}   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0])
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
-    if t is not None and NOW - t <= 7 * 86400 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
-        merged.add(f[2])
+    if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
+        done_at[f[2]] = max(t, done_at.get(f[2], t))
     t = t if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
     if t is not None and t > moved.get(f[2], 0):
         moved[f[2]] = t
@@ -715,6 +715,7 @@ def days_ago(day):
     except ValueError:
         return None
 
+merged = {s for s, t in done_at.items() if NOW - t <= 7 * 86400}
 n_waiting = len(need) + len(queue) + more
 since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
 escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
@@ -723,29 +724,73 @@ for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}
                  (escaped, "escaped in 7 days")):
     speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
 
-# Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
-# (from 140 columns, the status bar at the bottom carries it, with the merge mode).
-right = E.get("DASH_CLOCK") or datetime.datetime.fromtimestamp(NOW).strftime("%H:%M:%S")
-head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
-        ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
-if WIDE:
-    head = head[:2] + head[4:]
-if sum(len(t) for t, _ in head) > W - len(right) - 1:
-    head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
-out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
-out.append(fit(speed, W))
-n_active = sum(b[2] == "active" for b in epics.values())
-n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
-summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
-           (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
-if E.get("DASH_COST"):
-    summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
-# Who is on call (the escalate role's model, off when escalate_after is 0) and today's escalations, a
-# zero count too. It goes on the summary's line when it fits there, else on a line of its own.
-esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "escalate" and len(p) > 3), None)
-on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
-on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
-           (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
+# Under the speedometer from 60 columns: the stories finished per day over 14 days (done_at's days) as
+# a sparkline, oldest first, then today's count and the speedometer's 7-day average. From 100
+# columns, two gauges (on the sparkline's line when both fit): the 7-day rate against the best 7 calendar days in events.tsv, and the agents
+# working now (status's count, as the summary's) by kind against the most at once in the last 7 days.
+SPARK = "▁▂▃▅▇"
+G = 12   # a gauge's cells, as an epic's bar
+per_day = collections.Counter((TODAY - datetime.date.fromtimestamp(t)).days for t in done_at.values())
+
+def sparkline():
+    days = [per_day[d] for d in range(13, -1, -1)]
+    top = max(days) or 1
+    bars = "".join(SPARK[-(-n * (len(SPARK) - 1) // top)] for n in days)   # 0 is the lowest, the busiest day the highest
+    return [("14 days ", "dim"), (bars, "ok"), ("  today ", "dim"), (str(days[-1]), "b"), ("  7-day avg ", "dim"), (f"{len(merged) / 7:.1f}", "b")]
+
+# Each working agent's kind: a cell character and a colour each, so plain text tells them apart too.
+KINDS = (("builder", "█", "ok"), ("conductor", "▓", "h"), ("review", "▒", "warn"), ("other", "░", "dim"))
+
+def kind_of(role):
+    return "conductor" if role == "conduct" else "review" if role == "review" else "builder" if role in E.get("DASH_BUILDERS", "").split() else "other"
+
+def json_or_none(l):
+    try:
+        return json.loads(l)
+    except ValueError:
+        return None
+
+def busy_peak():
+    # The most agents at once in the last 7 days: each agents.tsv session from its log's first
+    # timestamp to its last write, swept; never fewer than work now.
+    # ponytail: an idle stretch inside a session counts as busy, and only rows started in the last 14
+    # days are read; log working spans if the peak reads high.
+    spans = []
+    for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
+        if days_ago(f[0]) not in range(15):
+            continue
+        path = session_log(E["DASH_PROJECTS"], f[6])
+        try:
+            end = os.path.getmtime(path)
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                start = next((epoch(d.get("timestamp")) for d in map(json_or_none, itertools.islice(fh, 50)) if isinstance(d, dict) and d.get("timestamp")), None)
+        except OSError:
+            continue
+        if start is not None and end >= NOW - 7 * 86400:
+            spans += [(start, 1), (end, -1)]
+    peak = n = 0
+    for _, step in sorted(spans, key=lambda s: (s[0], -s[1])):
+        n += step; peak = max(peak, n)
+    return peak
+
+def bar(parts, of):
+    # parts: (cells' count, char, style); cut at cumulative rounded edges, so they add up to at most G.
+    segs, edge, total = [], 0, 0
+    for n, ch, s in parts:
+        total += n
+        nxt = min(round(total * G / of), G) if of else 0
+        segs.append((ch * (nxt - edge), s)); edge = nxt
+    return segs + [("·" * (G - edge), "dim")]
+
+def gauges():
+    best = max([sum(per_day[d] for d in range(k, k + 7)) for k in range(max(per_day, default=0) + 1)] + [len(merged)])
+    working = collections.Counter(kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled"))
+    now = sum(working.values())
+    peak = max(busy_peak(), now)
+    return ([("rate ", "dim")] + bar([(len(merged), "█", "ok")], best) + [(f" {len(merged) / 7:.1f} of best {best / 7:.1f}/day", "")]
+            + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
+            + [(f" {now} of peak {peak} in 7 days", "")])
+
 SEP = (" · ", "dim")
 
 def pack(groups, n):
@@ -758,6 +803,30 @@ def pack(groups, n):
         rows[-1] += ([sep] if rows[-1] else []) + g
     return [fit(r, n) for r in rows]
 
+# Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
+# (from 140 columns, the status bar at the bottom carries it, with the merge mode).
+right = E.get("DASH_CLOCK") or datetime.datetime.fromtimestamp(NOW).strftime("%H:%M:%S")
+head = [(os.path.basename(E["DASH_PROJECT"].rstrip("/")), "b"), (f"  swarm-dev {E['DASH_VERSION']}", "dim"),
+        ("  merge ", "dim"), (E["DASH_MERGE"], ""), ("  next ", "dim"), (E["DASH_NEXT"], "warn")]
+if WIDE:
+    head = head[:2] + head[4:]
+if sum(len(t) for t, _ in head) > W - len(right) - 1:
+    head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
+out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
+out.append(fit(speed, W))
+out += pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
+n_active = sum(b[2] == "active" for b in epics.values())
+n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
+summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
+           (f"{green} PRs green, waiting", "ok" if green else ""), (" · ", "dim"), (f"{len(stalled)} stalled", "bad" if stalled else "")]
+if E.get("DASH_COST"):
+    summary += [(" · ", "dim"), (f"${E['DASH_COST']} today", "")]
+# Who is on call (the escalate role's model, off when escalate_after is 0) and today's escalations, a
+# zero count too. It goes on the summary's line when it fits there, else on a line of its own.
+esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "escalate" and len(p) > 3), None)
+on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
+on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
+           (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
 if not WIDE:
     out += pack([(SEP, summary), (SEP, on_call)], W)
 drift = lines("DASH_DRIFT")
