@@ -158,6 +158,30 @@ for p in "${A}" "${B}"; do
     grep -qE "running [^ ]+ ${n} of peak" <<< "$(frame "${p}" 100)"
 done
 
+# Idle capacity: alpha-core's ready stories have its conductor, so none; a ready one-off with no
+# backlog conductor is one buildable story not started.
+check "no idle capacity while the conductor has its epic's ready stories" lacks "buildable not started" "$(frame "${A}" 100)"
+item "${A}" stories/a-loose.md "Tidy the docs" "status: ready" "kind: docs"
+check "a ready one-off with no backlog conductor is idle capacity" has "idle: 1 buildable not started" "$(frame "${A}" 100)"
+# Once its worktree exists next says resume, not a fresh start: no longer idle capacity.
+mkdir -p "${A}-wt/a-loose"
+check "a one-off whose worktree exists is not idle capacity" lacks "buildable not started" "$(frame "${A}" 100)"
+rmdir "${A}-wt/a-loose"
+rm "${A}/board/stories/a-loose.md"
+# A retired conductor (conduct-alpha-core-done, its pane open until tidy) conducts nothing, as
+# next_step reads it: alpha-core's ready stories are idle capacity.
+mkdir -p "${ROOT}/bin4"
+cat > "${ROOT}/bin4/herdr" <<STUB
+#!/bin/sh
+case "\$1 \$2" in
+  "agent list") "${ROOT}/bin/herdr" "\$@" | sed 's/"name":"conduct-alpha-core"/"name":"conduct-alpha-core-done"/' ;;
+  *) exec "${ROOT}/bin/herdr" "\$@" ;;
+esac
+STUB
+chmod +x "${ROOT}/bin4/herdr"
+out="$(PATH="${ROOT}/bin4:${PATH}" frame "${A}" 100)"
+check "a retired conductor leaves its epic's ready stories idle capacity" both "conduct-alpha-core-done" "buildable not started" "${out}"
+
 out="$(frame "${A}" 60)"
 check "at 60 columns the sparkline shows" has "14 days ▂▁▃▇▅" "${out}"
 check "at 60 columns the gauges do not" lacks "of best" "${out}"

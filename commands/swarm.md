@@ -46,7 +46,27 @@ Repeat until a step below says stop:
    what was closed unmerged; an item whose PR left its file on a board in the repo is marked done
    instead, so run the `swarm.sh finish <slug>` it prints), then `swarm.sh unblock` (it readies stories whose blockers have
    merged), then `swarm.sh next`.
-   Its first line is the step, the rest is why. Tell the user both in one line.
+   Its first line is the step, the rest is why. Tell the user both in one line. Lines that
+   start `idle:` come after the step and name capacity no step uses; do the step, and handle each
+   one too:
+   - `idle: <story> waits on <dep> but shares no touches with it`: the dependency looks
+     over-broad. Both are stories an agent builds, and the dependency is not in review (a story a
+     review holds is left out too). Drop it from the story's `depends_on`, so the story builds
+     beside its dependency; or keep it and add a `needs:` line to the story's front matter naming
+     what it uses from the dependency (the function, the flag, the file). When you drop it and no other
+     `depends_on` of the story is still open, set the story's `status: ready` in the same edit:
+     `unblock` never readies a blocked story with no dependency left. Make the edit as any board
+     edit: through `swarm.sh board-pr` when the board is in the project's repo, where it is when it
+     is outside.
+   - `idle: "<project>"`: the step leaves the builders idle (`gate`, `done`, `escalated` or
+     `release`), no story is one an agent can build, and there are findings to offer: up to five
+     `out-of-scope finding: <date> <kind> <PR>: <text>` lines (findings declined as out of scope in
+     the last 30 days and not yet filed, newest first). File one as a one-off story (through
+     `swarm.sh board-pr`, or where the board is when it is outside the repo), then run
+     `swarm.sh log-finding --filed --reviewer lead <kind> <PR> '<text>'` with the line's kind, PR
+     and text, so `next` stops offering it; or tell the user why none fits. Later stories stay the
+     user's to start, as the gate lists them. Declined out-of-scope findings are the swarm's list of
+     follow-ups, so you need not keep them in memory.
 2. Do the step:
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
