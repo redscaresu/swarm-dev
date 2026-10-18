@@ -56,7 +56,7 @@ gate() {
     GITHUB_OUTPUT="${tmp}/out" "$@" bash "${GATE}" > "${tmp}/log" 2>&1) || echo "exit $?" >> "${tmp}/out"
   cat "${tmp}/out"
 }
-# shellcheck disable=SC2329 # called through check
+# shellcheck disable=SC2317,SC2329 # called through check
 says() { [ "$(gate "${@:2}")" = "board_only=$1" ]; }
 green() { echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"'"$2"'"}]}' > "${FX}/$1.checks"; }
 
