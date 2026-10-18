@@ -1,6 +1,4 @@
 import glob, os, re, sys
-stories, me, project_dir, repos_dir, state = sys.argv[1:]
-project = os.path.basename(project_dir)
 
 # pairs(lines, out, stop) — each key's first value, as board.sh's awk reads it: leading spaces dropped.
 def pairs(lines, out, stop=None):
@@ -27,8 +25,9 @@ def front(path):
             out[k] = v
     return {k: v.strip() for k, v in out.items()}
 
-def entries(fm):
-    repo = fm.get("repo", "")
+def entries(fm, project_dir, repos_dir):
+    # A (repo, file, function) per entry of fm's touches; flow's model_fit imports it to read a story's files.
+    repo, project = fm.get("repo", ""), os.path.basename(project_dir)
     raw, parts, cur, depth = fm.get("touches", "").strip().strip("[]"), [], "", 0
     for c in raw:
         if c == "(":
@@ -60,30 +59,30 @@ def entries(fm):
 def overlap(a, b):
     return a[:2] == b[:2] and (not a[2] or not b[2] or a[2] == b[2])
 
-fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
 def deps(fm):
     return set(re.split(r"[\s,\[\]\"']+", fm.get("depends_on", "").split("#")[0]))
 
-# --idle: a blocked story with no needs: line, whose open depends_on story has touches and shares no
-# file with it, waits for nothing it uses (idle_lines).
-if me == "--idle":
+if __name__ == "__main__":
+    stories, me, project_dir, repos_dir, state = sys.argv[1:]
+    fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
+    # --idle: a blocked story with no needs: line, whose open depends_on story has touches and shares
+    # no file with it, waits for nothing it uses (idle_lines).
+    if me == "--idle":
+        for slug, fm in sorted(fms.items()):
+            files = {e[:2] for e in entries(fm, project_dir, repos_dir)}
+            if fm.get("status") != "blocked" or fm.get("needs") or not files:
+                continue
+            for d in sorted(deps(fm) & set(fms)):
+                theirs = {e[:2] for e in entries(fms[d], project_dir, repos_dir)}
+                if fms[d].get("status") != "done" and theirs and not files & theirs:
+                    print(f"idle: {slug} waits on {d} but shares no touches with it")
+        sys.exit()
+    mine = entries(fms[me], project_dir, repos_dir)
     for slug, fm in sorted(fms.items()):
-        files = {e[:2] for e in entries(fm)}
-        if fm.get("status") != "blocked" or fm.get("needs") or not files:
+        # A stacked story starts on its parents' branches: neither holds the other back.
+        if slug == me or slug in deps(fms[me]) or me in deps(fm) or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
             continue
-        for d in sorted(deps(fm) & set(fms)):
-            theirs = {e[:2] for e in entries(fms[d])}
-            if fms[d].get("status") != "done" and theirs and not files & theirs:
-                print(f"idle: {slug} waits on {d} but shares no touches with it")
-    sys.exit()
-
-mine = entries(fms[me])
-
-for slug, fm in sorted(fms.items()):
-    # A stacked story starts on its parents' branches: neither holds the other back.
-    if slug == me or slug in deps(fms[me]) or me in deps(fm) or fm.get("epic") and fm.get("epic") == fms[me].get("epic"):
-        continue
-    hit = [e for e in entries(fm) if any(overlap(e, m) for m in mine)]
-    if hit:
-        print("\t".join([slug, fm.get("epic") or "none", "held" if fm.get("held_by") else fm.get("status") or "-",
-                         ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))
+        hit = [e for e in entries(fm, project_dir, repos_dir) if any(overlap(e, m) for m in mine)]
+        if hit:
+            print("\t".join([slug, fm.get("epic") or "none", "held" if fm.get("held_by") else fm.get("status") or "-",
+                             ", ".join(dict.fromkeys(f + (":" + fn if fn else "") for _, f, fn in hit))]))

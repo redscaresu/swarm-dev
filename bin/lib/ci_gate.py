@@ -42,24 +42,28 @@ def pages(path, key):
         raise Err("%s: read %d of %d" % (path, len(items), total))
     return items
 
-def judge(runs, red, wait):
+def judge(runs, red, wait, ok):
     for r in runs:
         if r.get("status") != "completed":
             wait.append("%s (%s)" % (r.get("name"), r.get("status")))
         elif r.get("conclusion") not in OK:
             red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
+        else:
+            ok.append("%s (%s)" % (r.get("name"), r.get("conclusion")))
 
 def checks(repo, sha, need_run=True):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
-    red, wait = [], ([] if runs or not need_run else ["no check runs"])
-    judge(runs, red, wait)
+    red, wait, ok = [], ([] if runs or not need_run else ["no check runs"]), []
+    judge(runs, red, wait, ok)
     for s in sts:
         if s.get("state") == "pending":
             wait.append("%s (pending)" % s.get("context"))
         elif s.get("state") != "success":
             red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
-    return red, wait
+        else:
+            ok.append("%s (success)" % s.get("context"))
+    return red, wait, ok
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -207,7 +211,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
                 want = expected(repo, sha, base, n, changed)
             runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
                     if r.get("head_sha") == sha]
-            red, wait = checks(repo, sha, need_run=False)
+            red, wait, _ = checks(repo, sha, need_run=False)
         except Err as e:
             missed += 1
             if missed == READ_TRIES:
@@ -215,7 +219,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             wait = ["a read failed: %s" % e]
         else:
             missed = 0
-            judge(runs, red, wait)
+            judge(runs, red, wait, [])
             have = {(r.get("path") or "").split("@")[0] for r in runs}
             wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
             if red:
@@ -229,9 +233,9 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
-        red, wait = checks(repo, args[0])
+        red, wait, ok = checks(repo, args[0])
+        print("; ".join(red + wait or ok))
         if red or wait:
-            print("; ".join(red + wait))
             sys.exit(1 if red else 2)
     elif mode == "files":
         files = pr_files(repo, args[0], int(args[1]))
