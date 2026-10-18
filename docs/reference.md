@@ -153,8 +153,12 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   Then the lead runs `reset` and pulls the board in one go: `reset` puts the file back to its
   committed text, so the pull brings in the re-scope, and `story` reads its kind, repo, epic and
   risk from that. `swarm.sh drop <slug> <reason>` takes a dropped story off the board as `finish`
-  does (deleted), and the lead commits the change in a
-  board PR; it refuses any story that is not escalated. A story is reset at most once: `reset`
+  does, and it refuses any story that is not escalated. On a board in the repo, `finish` and `drop`
+  never touch the main checkout: each deletes the file in the board PR `finish-<slug>` or
+  `drop-<slug>` (titled `Drop <slug>: <reason>`) and prints the `swarm.sh merge --board <url>` that
+  lands it; a second run pushes to the same PR. A file that is not on origin's base yet (an unmerged
+  board PR adds it) is refused, and the worktree and branch the failed run started are removed. On a
+  board outside the repo they delete the file where it is. A story is reset at most once: `reset`
   refuses a slug that events.tsv already shows reset, and names when, and a story that escalates
   again after its reset is offered only drop, in its block and in `next`. An
   escalated story is the lead's, so it is not listed under waiting on you (`status`, `dash`,
@@ -607,11 +611,22 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`cost`, `epic_totals`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
+
+The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
+the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
+elsewhere, such as GitHub Enterprise, is left out. Each PR costs two or more `gh` calls, so without
+`--since` the window is the 30 days up to `--until` (or today), and a line above the row says so. For each PR, `gh` gives its commits and its
+branch's completed workflow runs, and a run counts when its head is one of those commits. `ci_min_median` is the median, over head SHAs, of the minutes from a head's first run
+created to its last run updated. `red_runs_per_pr` is the red runs (a failure, a timeout or a run that could not
+start; a cancelled or skipped run is not red) over the PRs. `flakes` counts each red run followed by a green one of the
+same workflow and event on the same head, so a workflow red on push and green on pull_request is no
+flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
+conclusion from `gh api`. A run whose times do not parse adds no minutes. When a `gh` call fails or takes over 10 seconds, it prints `ci health: gh failed` and no numbers.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
@@ -846,10 +861,11 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
 | `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
+| `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 
