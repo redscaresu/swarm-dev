@@ -148,7 +148,7 @@ check "with core.hooksPath set, init writes no hook and prints the lines to add"
   "$([[ -e "${q}/.githooks/pre-commit" ]] && echo yes || echo no)|$([[ -e "${q}/.git/hooks/pre-commit" ]] && echo yes || echo no)|$(has "${out}" "left   .githooks/pre-commit (core.hooksPath is .githooks); add these lines to it:")|$(has "${out}" 'swarm_board="docs/"')"
 # A global core.hooksPath runs in every repo: init says so, and prints no lines for it.
 q="${ROOT}/global-hooks"; "${GIT[@]}" init -q "${q}"; printf '[core]\n\thooksPath = %s\n' "${ROOT}/global-hooks-dir" > "${ROOT}/gitconfig"
-out="$(cd "${q}" && GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" init 2>&1 || true)"
+out="$(GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" run "${q}" init || true)"
 check "with a global core.hooksPath, init writes no hook and says its lines belong in none there" "no|yes|no" \
   "$([[ -e "${ROOT}/global-hooks-dir/pre-commit" ]] && echo yes || echo no)|$(grep -q "set outside this repo): wrote no hook, since one there runs in every repo" <<< "${out}" && echo yes || echo no)|$(has "${out}" 'swarm_board="docs/"')"
 
