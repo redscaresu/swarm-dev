@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # flow_totals_test.sh — flow's epic_totals section over a two-epic fixture of outcomes rows. e1 has a
-# ($1.50, 10 min to its PR #1, 30 to merge, 1 main merge), a's retry on the same PR #1 ($0.50, 5 min:
-# #1 counts once), b ($2.00, 20 min, PR #2 60 to merge, 0 main merges) and g, whose PR #6 is still open
-# with 0 main merges ($0.25, 8 min), and h, with no cost, PR or minutes (no session log): $4.25 and 43
-# with 1 not in the logs each, 90, and 1 of 2 merged PRs, 50%, as #6 is left out. e2 has c (#3, 2 main
+# ($1.50, 10 min to its PR #1, 30 to merge, 1 main merge), a's retry on the same PR #1 ($0.50; no
+# start_to_pr_min, as it started after #1 was created; #1 counts once), b ($2.00, 20 min, PR #2 60 to merge, 0 main merges) and g, whose PR #6 is still open
+# with 0 main merges ($0.25, 8 min), and h, with no cost, PR or minutes (no session log): $4.25 with 1
+# not in the logs, 38 (empty minutes are skipped with no note), 90, and 1 of 2 merged PRs, 50%, as #6 is left out. e2 has c (#3, 2 main
 # merges) and d (#4, minutes and main_merges empty: gh could not read it, so it is not in the share)
 # and e, dated before --since. The window: 2 of 3 merged, readable PRs, 67%. f has no epic.
 set -euo pipefail
@@ -16,7 +16,7 @@ row() { # <date> <slug> <epic> <cost> <pr> <pr_state> <merged_at> <start_to_pr> 
 }
 ROWS="$(printf 'date\tslug\tepic\tcost_usd\tpr\tpr_state\tmerged_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\n'
   row 2026-10-02 a e1 1.50 "${U}/1" MERGED "${M}" 10 30 1
-  row 2026-10-02 a e1 0.50 "${U}/1" MERGED "${M}" 5 30 1
+  row 2026-10-02 a e1 0.50 "${U}/1" MERGED "${M}" "" 30 1
   row 2026-10-02 b e1 2.00 "${U}/2" MERGED "${M}" 20 60 0
   row 2026-10-03 g e1 0.25 "${U}/6" OPEN "" 8 "" 0
   row 2026-10-03 h e1 "" "" "" "" "" "" ""
@@ -35,14 +35,14 @@ H=$'## epic_totals\nepic\tbuilds\tcost_usd\tstart_to_pr_min\tpr_to_merge_min\tme
 B=$'\nmain_merged_share against leaner-faster-swarm\'s baseline: 55% of story PRs needed main merged in.'
 check "each epic's cost and minutes, its merged PRs' merged-in-main share and the window's, beside the 55% baseline" \
   "$(flow 2026-10-01 "")" "${H}"$'
-e1\t5\t4.25 (1 not in the logs)\t43 (1 not in the logs)\t90\t2\t1\t50%
-e2\t2\t4.25\t40 (1 not in the logs)\t15 (1 not in the logs)\t1\t1\t100%
-all\t8\t9.25 (1 not in the logs)\t83 (3 not in the logs)\t105 (1 not in the logs)\t3\t2\t67%\n'"${B}"
-check "a sum says how many builds (or merged PRs, for pr_to_merge_min) it could not read" \
+e1\t5\t4.25 (1 not in the logs)\t38\t90\t2\t1\t50%
+e2\t2\t4.25\t40\t15\t1\t1\t100%
+all\t8\t9.25 (1 not in the logs)\t78\t105\t3\t2\t67%\n'"${B}"
+check "cost_usd says how many builds have no cost; the minutes skip empty cells with no note" \
   "$(flow 2026-10-01 "" | awk -F'\t' '$1 == "e1" || $1 == "all" { print $1, $3, $4, $5 }')" \
-  "$(printf '%s\n' "e1 4.25 (1 not in the logs) 43 (1 not in the logs) 90" \
-    "all 9.25 (1 not in the logs) 83 (3 not in the logs) 105 (1 not in the logs)")"
-check "--epic prints that epic's row alone" "$(flow 2026-10-01 e1)" "${H}"$'\ne1\t5\t4.25 (1 not in the logs)\t43 (1 not in the logs)\t90\t2\t1\t50%\n'"${B}"
+  "$(printf '%s\n' "e1 4.25 (1 not in the logs) 38 90" \
+    "all 9.25 (1 not in the logs) 78 105")"
+check "--epic prints that epic's row alone" "$(flow 2026-10-01 e1)" "${H}"$'\ne1\t5\t4.25 (1 not in the logs)\t38\t90\t2\t1\t50%\n'"${B}"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
