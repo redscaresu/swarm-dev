@@ -9,8 +9,9 @@
 # passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( )), a git
 # checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
-# call's cwd, a cd or a -C); stash list and show and clean -n pass. Those rules fail open on an error
-# of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
+# call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
+# kill $(pgrep ...) / $(pidof ...) is refused too: a match by name can hit another session's process.
+# Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
 # <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
 
@@ -20,16 +21,16 @@ input="$(cat)"
 command="${input}"
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 [[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"
-# Fast path: a command that never says merge, nor git or cd as a word, not even through quotes and
+# Fast path: a command that never says merge, nor git, cd or a kill as a word, not even through quotes and
 # backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
 plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
-word='(^|[^[:alnum:]_])(git|cd)([^[:alnum:]_]|$)'
+word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall)([^[:alnum:]_]|$)'
 if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
 elif [[ ${plain} =~ ${word} ]]; then says=other
 else exit 0
 fi
 # A command that says merge fails closed: anything but the guard's own verdict refuses it. One that
-# only says git or cd fails open, since those rules save work rather than enforce the merge route.
+# only says git, cd or a kill fails open, since those rules save work rather than enforce the merge route.
 command -v python3 >/dev/null || { [[ ${says} == merge ]] || exit 0; echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
 IFS= read -r -d '' prog <<'PY' || true
@@ -48,6 +49,8 @@ QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 QUOTING = re.compile(r"[\"'\\]")
 OPENERS = {"do", "then", "else"}  # words that can start a line before its command
 MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
+PATTERN_KILLS = {"pkill", "killall"}
+BY_NAME = re.compile(r"(\$\(|`)\s*(pgrep|pidof)\b")  # kill $(pgrep ...): PIDs found by a pattern
 UNMERGED = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}  # git status codes of a conflict, which --ours/--theirs resolves
 PIPES = itertools.count()
 MESSAGE = """merge-guard: blocked ({}). In a swarm project only `swarm.sh merge <PR URL>`, run alone,
@@ -278,7 +281,8 @@ def check_code(b, rest, fed):
 
 def guard(code, cwd):
     """Raise Unsafe on a command that can lose work: a cd before ;, git checkout over a file with
-    uncommitted changes and, in a swarm agent's session, git moving or resetting the main checkout."""
+    uncommitted changes and, in a swarm agent's session, git moving or resetting the main checkout
+    and a kill by pattern."""
     home = cwd if os.environ.get("SWARM_AGENT") else None
     sh = Shell(code.strip())
     sh.parse()
@@ -294,6 +298,8 @@ def guard(code, cwd):
             d = None if t == "-" else at(d, t)
         elif name == "git":
             check_git(d, args[1:], home)
+        elif home and (name in PATTERN_KILLS or (name == "kill" and any(BY_NAME.search(w) for w in args[1:]))):
+            raise Unsafe("pattern-kill", "A match by name can hit another session's process: kill the PID you started ($!)")
 
 
 def check_git(d, words, home):

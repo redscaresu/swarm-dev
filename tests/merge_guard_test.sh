@@ -4,7 +4,8 @@
 # an interpreter, a pipe or a file, spelled through quotes or not) and on swarm.sh merge joined to
 # another command, and lets a lone swarm.sh merge and plain mentions through; outside one it allows
 # everything. A call that says merge is refused when the check cannot run. It also blocks a cd before
-# ;, git checkout over uncommitted changes and, for a swarm agent, git moving the main checkout. A
+# ;, git checkout over uncommitted changes and, for a swarm agent, git moving the main checkout and a
+# kill by pattern. A
 # block writes one incident line to the project's .swarm/events.tsv, and hooks.json runs the script
 # on Bash calls.
 set -euo pipefail
@@ -192,6 +193,19 @@ echo d > "${C}/g"; "${G[@]}" commit -qam d; "${G[@]}" branch -q story/d; "${G[@]
 echo c > "${C}/g"; "${G[@]}" commit -qam c; "${G[@]}" merge -q story/d >/dev/null 2>&1 || true
 check "git checkout --theirs g on a conflicted g passes" as lead "${C}" 0 "git checkout --theirs g"
 check "outside a project, cd /nope; cp a b passes" as lead "${OUT}" 0 "cd /nope; cp a b"
+# A kill by name or pattern can hit another session's process; a kill of a PID the agent holds cannot.
+# shellcheck disable=SC2016 # the substitution is the hook's to see
+for c in "pkill -f sleep" "killall sleep" 'kill $(pgrep sleep)'; do
+  was="$(lines)"
+  check "an agent's ${c} blocks" as agent "${W}" 2 "${c}"
+  check "  ... and logs guard-blocked: pattern-kill" test "$(lines)/$(tail -1 "${LOG}" | cut -f5)" == "$((was + 1))/guard-blocked: pattern-kill"
+  check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
+done
+# shellcheck disable=SC2016 # $! is the hook's to see
+for c in 'kill $!' "kill 1234" "echo pkill"; do
+  check "an agent's ${c} passes" as agent "${W}" 0 "${c}"
+  check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
+done
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

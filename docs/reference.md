@@ -933,6 +933,8 @@ swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an age
 also refuses `git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the
 project's main checkout, whether the command runs there from the session's folder, after a `cd`, or
 through `git -C`. `git stash list`, `git stash show` and `git clean -n` change nothing, so they pass.
+It also refuses an agent's `pkill`, `killall`, and `kill $(pgrep ...)` or `kill $(pidof ...)`: a
+match by name can kill another session's process. `kill $!` and `kill <pid>` pass.
 Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it. These
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
