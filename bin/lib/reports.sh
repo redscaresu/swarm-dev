@@ -85,6 +85,8 @@ record_finding() {
 #   escaped ones: both are a mistake someone fixed, so both are lessons.
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
+#   rework_of(pr, merged_at, commits, escaped) is whether a later PR fixed a merged one within
+#   REWORK_DAYS: a later commit on the default branch names it, or an escaped finding points at it.
 
 # lessons [--all] — the "brief" below is lessons_file (default the brief itself).
 # Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
@@ -163,6 +165,31 @@ outcomes_report() {
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}"
+}
+
+# dataset — write .swarm/dataset.jsonl, one JSON line per finished story (one of its PRs merged), for
+# prediction-scores to score the planner against. inputs: the story as planned, read from git at the
+# newest commit that added it (text, kind, risk, touches, depends_on, estimate_lines, easy), and
+# planner_model, the model of the last agents.tsv lead started by then whose session log scopes its
+# epic. results: diff_lines and diff_files of its PR from gh (less its own story file), attempts, findings_rounds (tells:findings), findings_fixed, rework (rework_of), cost_usd,
+# minutes from its first build's start to the merge, every model that built it, and each escalate
+# event as its trigger (attempt N, or step-up's trigger) with from and to. was_easy: merged on the first
+# attempt, at most one findings round, no rework and a diff under 100 lines, under was_easy_rule 1.
+# Nothing from the environment or a session log's text is written. Each run rewrites the file whole.
+dataset_report() {
+  local rows repos="" slug src
+  [[ $# -eq 0 ]] || die "usage: swarm.sh dataset"
+  [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  # shellcheck disable=SC2119 # takes no argument here
+  rows="$(outcomes_report | sed '/^$/,$d')"
+  # Each merged story's repo (its repo:, as outcomes reads it), whose history holds the fixes that name its PR.
+  while IFS= read -r slug; do
+    [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+    src="$(repo_dir "$(story_text "${slug}" | sed -n 's/^repo: *//p' | head -1)")" && repos+="${slug}"$'\t'"${src}"$'\n'
+  done <<< "$(awk -F'\t' 'NR > 1 && $31 != "" { print $2 }' <<< "${rows}" | sort -u)"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_REPOS="${repos}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
+    "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" \
+    "${PROJECT_DIR}/.swarm/dataset.jsonl"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section

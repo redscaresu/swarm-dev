@@ -1,4 +1,4 @@
-import glob, gzip, json, os, re, zlib
+import datetime, glob, gzip, json, os, re, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -54,3 +54,27 @@ def session_usage(path, seen):
         if price:
             usd += sum(x * p for x, p in zip(t, price)) / 1e6
     return tok, usd, models
+
+REWORK_DAYS = 7   # a fix this soon after a merge is rework of it
+
+def rework_of(pr, merged_at, commits, escaped):
+    # True when a later PR fixed the merged pr within REWORK_DAYS of merged_at (UTC, as gh writes it):
+    # a commit after it (commits: (UTC time, message) on the default branch, the pr's own merge left
+    # out) names it as #N, owner/repo#N or its pull URL, or an escaped finding ((local day, pr) pairs) points at it.
+    try:
+        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        start = t(merged_at)
+    except ValueError:
+        return False
+    end, (repo, _, n) = start + datetime.timedelta(days=REWORK_DAYS), pr_key(pr).rpartition("#")
+    # A bare #N is the repo's own PR; a URL or owner/repo#N must name this repo.
+    r = re.escape(repo)
+    names = re.compile(rf"(?<![\w/])#{n}(?!\d)|(?<![\w.-])(github\.com/{r}/pull/|{r}#){n}(?!\d)", re.I)
+    for when, msg in commits:
+        try:
+            if start < t(when) <= end and names.search(msg):
+                return True
+        except ValueError:
+            continue
+    return any(pr_key(p) == pr_key(pr) and 0 <= (datetime.date.fromisoformat(d) - start.date()).days <= REWORK_DAYS
+               for d, p in escaped if re.fullmatch(r"\d{4}-\d\d-\d\d", d))

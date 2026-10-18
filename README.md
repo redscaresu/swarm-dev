@@ -65,6 +65,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh dataset` | One line per finished story in `.swarm/dataset.jsonl`: what was planned beside what it took. |
 
 The other commands are tools the lead runs; they are listed in
 [reference.md § Commands](docs/reference.md#commands). Settings go in `.claude/swarm/config`

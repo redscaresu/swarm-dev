@@ -12,6 +12,7 @@
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
+#   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its plan (text, kind, risk, touches, estimate, easy, planner model) beside its results (diff, attempts, findings, rework, cost, minutes, models, escalations) and was_easy
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
@@ -348,6 +349,7 @@ dispatch() {
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
     cost)   moved cost cost "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     outcomes) outcomes_report "$@" ;;
+    dataset) dataset_report "$@" ;;
     flow)   flow_report "$@" ;;
     review-yield) moved review-yield reviewers "[--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
@@ -389,7 +391,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait watch base _base _role _name _brief _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes dataset flow review-yield features lessons findings wait watch base _base _role _name _brief _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {

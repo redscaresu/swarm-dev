@@ -520,7 +520,7 @@ the command, its target, the herdr pane that ran it, and how it ended: `ok`, `in
 line of the error that stopped it, or `failed (exit N)` when the error came from a nested step, whose
 message a caller may have handled (it still reaches the terminal). Only the read-only commands are
 exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `config`, `policy`,
-`cost`, `outcomes`, `flow`, `review-yield`, `features`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
+`cost`, `outcomes`, `dataset`, `flow`, `review-yield`, `features`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
 lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
@@ -595,6 +595,24 @@ story's next `reset`, `drop` or `escalate`, and every step logged in between bel
 If a step repeats in one cycle, the last one counts. A tell or close goes to the story's build that started last at or before it. A build whose
 session log is gone starts at 00:00 local time on its agents.tsv day, converted to UTC.
 
+
+`swarm.sh dataset` writes `.swarm/dataset.jsonl`, one JSON line per finished story (one whose PR
+merged), oldest merge first, for scoring the planner's guesses against what happened. Each run
+rewrites the whole file. `inputs` is the story as it was planned: its file at the newest commit that
+added it, with `text`, `kind`, `risk`, `touches`, `depends_on`, `estimate_lines` and `easy`, and
+`planner_model`, the model of the last plan-epic `lead` in agents.tsv started by that day whose
+session log names the story's epic (`null` when the lead planned a small epic alone, or the log is
+gone). `results` comes from the `outcomes` rows, events.tsv, findings.tsv and git: `diff_lines` and
+`diff_files` of the PR from `gh` (any merge method), less the story's own file; `attempts`;
+`findings_rounds` (the `tell:findings` it took); `findings_fixed`; `rework`; `cost_usd`; `minutes`
+from its first build's start to the merge; `models`, every model that built it; and `escalations`,
+one per `escalate` line with its `trigger` (`attempt N`, or a step-up's own trigger) and its `from`
+and `to` models. `rework` is true when a later PR fixed it within 7 days: a commit on the default
+branch of the story's repo names its PR (`#N` or its URL), or an escaped finding points at it. `was_easy` is true when
+it merged on the first attempt with at most one findings round, no rework and a diff under 100
+lines, and `was_easy_rule` says which version of that rule applied (now `1`). It copies nothing
+from the environment or from a session log's text. The file stays in `.swarm/`, which is
+git-ignored.
 
 `swarm.sh close` keeps the Claude session log of each agent it closes (every agent in a tab it closes), because Claude Code deletes those after
 `cleanupPeriodDays` (30 by default) and they hold every tool call and the model of every turn. The log
@@ -843,6 +861,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
+| `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one line per finished story: what was planned (kind, risk, touches, size estimate, easy, the planner's model) beside what happened (diff size, attempts, findings rounds, rework, cost, minutes, models, escalations) and whether it was in fact easy. |
 | `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
