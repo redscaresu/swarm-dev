@@ -136,25 +136,29 @@ board_pr() {
 # when it cannot fetch, the pull cannot fast-forward (local commits), or a tracked file is changed,
 # staged or not: that stop names the files and logs an incident, pull-failed: <files>. A pull git
 # itself refuses (an untracked file it would overwrite) also changes nothing. On failure PULL_WHY says
-# why.
+# why and what to do before reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local changed out
-  git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch"; return 1; }
+  local changed board other out
+  git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
-    PULL_WHY="it has commits the base does not ($(git -C "${PROJECT_DIR}" log --format=%h '@{upstream}..HEAD' | paste -sd' ' -)), so it cannot fast-forward"
+    PULL_WHY="it has commits the base does not ($(git -C "${PROJECT_DIR}" log --format=%h '@{upstream}..HEAD' | paste -sd' ' -)), so it cannot fast-forward; pull it by hand"
     return 1
   fi
-  changed="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no | cut -c4- | paste -sd' ' -)"
+  changed="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no | cut -c4-)"
   if [[ -n "${changed}" ]]; then
-    record_event incident - "pull-failed: ${changed}"
-    PULL_WHY="tracked files are changed here: ${changed}; land each through a PR (a board edit through swarm.sh board-pr), or check it out to drop it"
+    record_event incident - "pull-failed: $(paste -sd' ' - <<< "${changed}")"
+    board="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) == 1' <<< "${changed}" | paste -sd' ' -)"
+    other="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) != 1' <<< "${changed}" | paste -sd' ' -)"
+    PULL_WHY=""
+    [[ -z "${board}" ]] || PULL_WHY="board files are changed here: ${board}; land each edit through swarm.sh board-pr, or check the file out to drop it"
+    [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"
     return 1
   fi
   # Fast-forward to the upstream fetched above, which every check here read: a pull would fetch again.
   # shellcheck disable=SC2034 # PULL_WHY is read in another file
   out="$(git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}' 2>&1)" \
-    || { PULL_WHY="the pull failed: $(tr '\t' ' ' <<< "${out}" | paste -sd' ' -)"; return 1; }
+    || { PULL_WHY="git refused the pull ($(tr '\t' ' ' <<< "${out}" | paste -sd' ' -)); fix what it names"; return 1; }
 }
 
 # tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters

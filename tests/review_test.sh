@@ -110,6 +110,7 @@ echo "prs: a line in the body" >> "${b}/stories/c.md"
 item "${b}" stories/c2.md "status: review" "kind: code" "attempts: 1" "prs: ${U}/2"
 item "${b}" epics/e2.md "status: review" "prs: ${U}/1 ${U}/3"
 item "${b}" epics/e3.md "status: review" "prs: ${U}/1 ${U}/4"
+item "${b}" stories/e3.md "status: blocked" "kind: code" "depends_on: [w]"   # a story with the epic's slug
 out="$(run reconcile)"
 check "a merged story is finished" "gone" "$([[ -e "${b}/stories/a.md" ]] && echo there || echo gone)"
 check "a closed PR sends its story back to ready" "ready" "$(val "${b}/stories/c.md" status)"
@@ -120,11 +121,14 @@ check "its prs: goes, and a body line like it stays" "|prs: a line in the body" 
   "$(val "${b}/stories/c.md" prs | head -1)|$(grep -x 'prs: a line in the body' "${b}/stories/c.md")"
 check "reconcile says which PR closed" "yes" "$(has "back to ready: c (closed without merging: ${U}/2)" "${out}")"
 check "an epic with one of two PRs merged stays in review" "review" "$(sed -n 's/^status: //p' "${b}/epics/e2.md")"
-check "an epic with both PRs merged is finished" "gone" "$([[ -e "${b}/epics/e3.md" ]] && echo there || echo gone)"
+check "an epic with both PRs merged is finished, and a story with its slug stays" "gone|there" \
+  "$([[ -e "${b}/epics/e3.md" ]] && echo there || echo gone)|$([[ -e "${b}/stories/e3.md" ]] && echo there || echo gone)"
+rm "${b}/stories/e3.md"
 check "its dependent unblocks once it is finished" "ready: n" "$(run unblock)"
 
-# --- A board in the project repo: the merged PR took its stories off the board. A pull that cannot
-# go keeps the items in review, with their PRs; once it can, it takes them off, and their state too.
+# --- A board in the project repo: the merged PR took r off the board and left s on it. A pull that
+# cannot go keeps the items in review, with their PRs; once it can, r goes with its state, and s is
+# marked done in its state, its file left, so the main checkout has no edit and the next pull goes.
 "${GIT[@]}" init -q --bare "${ROOT}/app.git"
 "${GIT[@]}" clone -q "${ROOT}/app.git" "${ROOT}/app" 2>/dev/null
 item "${ROOT}/app/docs" stories/r.md "status: ready" "kind: code"
@@ -132,7 +136,7 @@ item "${ROOT}/app/docs" stories/s.md "status: ready" "kind: code"
 "${GIT[@]}" -C "${ROOT}/app" add docs && "${GIT[@]}" -C "${ROOT}/app" commit -q -m board
 "${GIT[@]}" -C "${ROOT}/app" push -q origin main
 "${GIT[@]}" clone -q "${ROOT}/app.git" "${ROOT}/pr"
-"${GIT[@]}" -C "${ROOT}/pr" rm -q docs/stories/r.md docs/stories/s.md && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "the PR"
+"${GIT[@]}" -C "${ROOT}/pr" rm -q docs/stories/r.md && "${GIT[@]}" -C "${ROOT}/pr" commit -q -m "the PR"
 inrepo() { (cd "${ROOT}/app" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 inrepo review r "${U}/1" >/dev/null
 inrepo review s "${U}/4" >/dev/null
@@ -144,10 +148,15 @@ check "a pull that fails keeps merged items in review, with their PRs" "review $
 "${GIT[@]}" -C "${ROOT}/app" reset -q --keep HEAD~1
 inrepo reconcile >/dev/null || true
 gone() { if [[ -e "$1" ]]; then echo there; else echo gone; fi; }
-check "the PR's own deletes are pulled, and their state files go" "gone|gone|$(git -C "${ROOT}/app.git" rev-parse main)|gone|gone" \
-  "$(gone "${ROOT}/app/docs/stories/r.md")|$(gone "${ROOT}/app/docs/stories/s.md")|$(git -C "${ROOT}/app" rev-parse HEAD)|$(gone "${ROOT}/app/.swarm/board-state/stories/r")|$(gone "${ROOT}/app/.swarm/board-state/stories/s")"
+check "the PR's own delete is pulled, and r's state file goes" "gone|$(git -C "${ROOT}/app.git" rev-parse main)|gone" \
+  "$(gone "${ROOT}/app/docs/stories/r.md")|$(git -C "${ROOT}/app" rev-parse HEAD)|$(gone "${ROOT}/app/.swarm/board-state/stories/r")"
+check "s, which its PR left on the board, is marked done, and the main checkout has no edit" "there|done||" \
+  "$(gone "${ROOT}/app/docs/stories/s.md")|$(val "${ROOT}/app/docs/stories/s.md" status)|$(val "${ROOT}/app/docs/stories/s.md" prs)|$(git -C "${ROOT}/app" status --porcelain --untracked-files=no)"
+"${GIT[@]}" -C "${ROOT}/pr" commit -q --allow-empty -m "a later PR" && "${GIT[@]}" -C "${ROOT}/pr" push -q origin main
+rc=0; inrepo reconcile >/dev/null || rc=$?
+check "and the next reconcile pulls" "0|$(git -C "${ROOT}/app.git" rev-parse main)" "${rc}|$(git -C "${ROOT}/app" rev-parse HEAD)"
 # A new story r, with the front matter the old one had (written by hand: item would clear its state).
-mkdir -p "${ROOT}/app/docs/stories"; { echo ---; echo "status: ready"; echo "kind: code"; echo ---; echo; echo "# r"; } > "${ROOT}/app/docs/stories/r.md"
+{ echo ---; echo "status: ready"; echo "kind: code"; echo ---; echo; echo "# r"; } > "${ROOT}/app/docs/stories/r.md"
 check "a new story r, after r's PR deleted the old one: ready, with no prs and no state file" "ready||gone" \
   "$(val "${ROOT}/app/docs/stories/r.md" status)|$(val "${ROOT}/app/docs/stories/r.md" prs)|$(gone "${ROOT}/app/.swarm/board-state/stories/r")"
 rm "${ROOT}/app/docs/stories/r.md"
@@ -175,7 +184,7 @@ same_as_base() { if cmp -s "${ROOT}/$1-up/docs/stories/m.md" "${ROOT}/$1/docs/st
 setup_app id
 out="$(at id reconcile || true)"
 check "a board edit equal to the base's stops the pull, named, and stays unstaged" "yes| M docs/stories/m.md|same|review" \
-  "$(has "tracked files are changed here: docs/stories/m.md" "$(grep 'cannot pull' <<< "${out}")")|$(git -C "${ROOT}/id" status --porcelain -- docs/stories/m.md)|$(same_as_base id)|$(val "${ROOT}/id/docs/stories/k.md" status)"
+  "$(has "board files are changed here: docs/stories/m.md; land each edit through swarm.sh board-pr, or check the file out to drop it, then run reconcile again" "$(grep 'cannot pull' <<< "${out}")")|$(git -C "${ROOT}/id" status --porcelain -- docs/stories/m.md)|$(same_as_base id)|$(val "${ROOT}/id/docs/stories/k.md" status)"
 # A local commit: the pull cannot fast-forward, so nothing is touched and the edit stays.
 setup_app nf; "${GIT[@]}" -C "${ROOT}/nf" commit -q --allow-empty -m "local"
 out="$(at nf reconcile || true)"
@@ -185,13 +194,14 @@ check "no fast-forward: the board edit survives, unstaged" " M docs/stories/m.md
 # A changed tracked file outside the board: stop, name it, touch nothing.
 setup_app nb; echo changed >> "${ROOT}/nb/README"
 out="$(at nb reconcile || true)"
-check "a changed file outside the board stops reconcile, named" "yes" "$(has "tracked files are changed here: README docs/stories/m.md" "${out}")"
+check "a changed file outside the board stops reconcile, named, with no advice to check it out" "yes|no" \
+  "$(has "board files are changed here: docs/stories/m.md; land each edit through swarm.sh board-pr, or check the file out to drop it; files outside the board are changed here: README; commit or move each change, then run reconcile again" "${out}")|$(if grep -q "pull it by hand" <<< "${out}"; then echo yes; else echo no; fi)"
 check "and the board edit survives" " M docs/stories/m.md" "$(git -C "${ROOT}/nb" status --porcelain -- docs/stories/m.md)"
 # A staged edit, even one equal to the base's, stops the pull too, and keeps its content.
 setup_app st; "${GIT[@]}" -C "${ROOT}/st" add docs/stories/m.md
 out="$(at st reconcile || true)"
 check "a staged edit stops the pull, named, and stays staged" "yes|M  docs/stories/m.md|same" \
-  "$(has "tracked files are changed here: docs/stories/m.md" "${out}")|$(git -C "${ROOT}/st" status --porcelain -- docs/stories/m.md)|$(same_as_base st)"
+  "$(has "board files are changed here: docs/stories/m.md" "${out}")|$(git -C "${ROOT}/st" status --porcelain -- docs/stories/m.md)|$(same_as_base st)"
 # No tracked edit, but an untracked file the base adds: git refuses the pull, and nothing changes.
 setup_app pf; git -C "${ROOT}/pf" checkout -q -- docs/stories/m.md
 echo "theirs" > "${ROOT}/pf-up/notes.txt"
@@ -199,7 +209,7 @@ echo "theirs" > "${ROOT}/pf-up/notes.txt"
 echo "mine" > "${ROOT}/pf/notes.txt"
 out="$(at pf reconcile || true)"
 check "a pull git refuses is reported, naming the file" "yes|yes" \
-  "$(has "the pull failed: " "${out}")|$(has "notes.txt" "$(grep 'cannot pull' <<< "${out}")")"
+  "$(has "git refused the pull (" "${out}")|$(has "notes.txt" "$(grep 'cannot pull' <<< "${out}")")"
 check "and the untracked file, HEAD and the merged item are as they were" "mine|$(git -C "${ROOT}/pf.git" rev-parse main~2)|review" \
   "$(cat "${ROOT}/pf/notes.txt")|$(git -C "${ROOT}/pf" rev-parse HEAD)|$(val "${ROOT}/pf/docs/stories/k.md" status)"
 
@@ -229,7 +239,7 @@ check "no item merged, the base ahead: reconcile fast-forwards, g is gone, h kee
 setup_behind bo ahead; echo changed >> "${ROOT}/bo/README"; before="$(tree bo)"
 out="$(at bo reconcile || true)"
 check "no item merged, a changed file outside the board: reconcile cannot pull, and touches nothing" "yes|same" \
-  "$(has "reconcile: cannot pull ${ROOT}/bo: tracked files are changed here: README;" "${out}")|$([[ "$(tree bo)" == "${before}" ]] && echo same || echo differs)"
+  "$(has "reconcile: cannot pull ${ROOT}/bo: files outside the board are changed here: README; commit or move each change, then run reconcile again" "${out}")|$([[ "$(tree bo)" == "${before}" ]] && echo same || echo differs)"
 setup_behind bn; echo changed >> "${ROOT}/bn/README"; before="$(tree bn)"   # a pull, if tried, would stop on README
 out="$(at bn reconcile; echo "exit $?")"
 check "no item merged, the base not ahead: reconcile prints nothing, and HEAD is unchanged" "exit 0|same" \
@@ -242,8 +252,8 @@ check "no item merged, a PR unread: reconcile does not pull, and names the PR" "
 # The same with h in review, its PR merged: h is finished, but nothing is pulled while g's PR is unread.
 setup_behind bw ahead; at bw review g "${U}/99" >/dev/null; at bw review h "${U}/1" >/dev/null
 out="$(at bw reconcile; echo "exit $?")"
-check "an item merged, a PR unread: reconcile finishes it, does not pull, and names the PR" "yes|exit 0|$(git -C "${ROOT}/bw.git" rev-parse main~1)|there|gone" \
-  "$(has "reconcile: not pulling ${ROOT}/bw: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bw" rev-parse HEAD)|$(gone "${ROOT}/bw/docs/stories/g.md")|$(gone "${ROOT}/bw/docs/stories/h.md")"
+check "an item merged, a PR unread: reconcile marks it done, does not pull, and names the PR" "yes|exit 0|$(git -C "${ROOT}/bw.git" rev-parse main~1)|there|done|" \
+  "$(has "reconcile: not pulling ${ROOT}/bw: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bw" rev-parse HEAD)|$(gone "${ROOT}/bw/docs/stories/g.md")|$(val "${ROOT}/bw/docs/stories/h.md" status)|$(git -C "${ROOT}/bw" status --porcelain --untracked-files=no)"
 # Nothing behind: no pull was due, so an unread PR holds nothing back, and reconcile says nothing of it.
 setup_behind bv; at bv review g "${U}/99" >/dev/null
 check "no pull due, a PR unread: no not-pulling note" "no" "$(if at bv reconcile | grep -q "not pulling"; then echo yes; else echo no; fi)"

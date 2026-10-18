@@ -437,9 +437,9 @@ unblock() {
   done < <(board stories)
 }
 
-# delete_item <slug> — delete a story or epic's file where it is, and its state file (state_drop), so
-# a later item with the slug starts with none: reconcile's, after its pull.
-delete_item() { local f; f="$(item_file "$1")"; state_drop "${f}"; rm "${f}"; echo "deleted: ${f}"; }
+# delete_item <file> — delete a story or epic's file where it is, and its state file (state_drop), so
+# a later item with the slug starts with none: reconcile's, on a board outside the repo.
+delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
 # finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
 finish_item() { remove_item finish "$1"; }
@@ -452,7 +452,7 @@ finish_item() { remove_item finish "$1"; }
 remove_item() {
   local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
   f="$(item_file "${slug}")"
-  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${slug}"; return; }
+  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${f}"; return; }
   rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
   wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
   if [[ ! -d "${wt}" ]]; then
@@ -678,7 +678,9 @@ builder_state() {
 # its upstream (a PR merged with no review item), and dies as a failed pull below does; a failed fetch
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
 # cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
-# dies, naming why. Last, every item whose file is gone loses its state (drop_gone_state).
+# dies, naming why. A merged item whose tracked file is still on a board in the repo is marked done,
+# never deleted there, so the main checkout keeps no edit. After a pull, every item a commit took off the
+# board loses its state (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -728,25 +730,33 @@ reconcile() {
     echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
     due=0
   fi
-  [[ ${due} == 0 ]] || pull_board_repo \
-    || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
+  if [[ ${due} == 1 ]]; then
+    pull_board_repo || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}, then run reconcile again"
+  fi
   local i
   for ((i = 0; i < ${#merged[@]}; i++)); do
     slug="${merged[i]}"; f="${merged_files[i]}"
+    if [[ -f "${f}" && "$(fm "${f}" status)" != "done" && ${BOARD_IN_REPO} == 1 ]] \
+      && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
+      # Its PR left its tracked file on the board: done in its state, so the main checkout stays clean.
+      set_status "${f}" "done"; record_event reconcile "${slug}" "ok (finished)"
+      echo "merged: ${slug}, marked done; its file stays on the board until swarm.sh finish ${slug} takes it off"; continue
+    fi
     if [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]]; then
-      delete_item "${slug}"; record_event reconcile "${slug}" "ok (finished)"; continue
+      delete_item "${f}"; record_event reconcile "${slug}" "ok (finished)"; continue
     fi
     # Its PR took it off the board or marked it done: its state goes too, or a later item with the
     # slug would read it.
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
-  drop_gone_state
+  [[ ${due} == 0 ]] || drop_gone_state
 }
 
-# drop_gone_state — state_drop each story and epic whose file is gone from the board (a PR or a
-# board PR took it off), by its board-state or escalated file, so a later item with its slug starts
-# with none. A board directory that is not there drops nothing.
+# drop_gone_state — run only after a pull went through, so the main checkout has no tracked change and
+# a board file missing from it is missing from HEAD too: a commit (a PR or a board PR) took it off.
+# state_drop each such story and epic, by its board-state or escalated file, so a later item with its
+# slug starts with none. A board directory that is not there drops nothing.
 drop_gone_state() {
   local s n d
   for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do

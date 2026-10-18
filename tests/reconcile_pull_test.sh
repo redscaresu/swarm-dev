@@ -2,8 +2,8 @@
 # reconcile_pull_test.sh — reconcile pulls the main checkout with no backup, stash or restore. A story
 # in review whose merged PR deleted it pulls cleanly and loses its state files, and so does a story a
 # board PR took off the board (its state and escalated block), while a story still on the board keeps
-# its state. A hand edit to a tracked story stops the pull, names the file, changes nothing, and logs
-# one pull-failed incident. gh is a stub on PATH; origin is a local bare repo.
+# its state, even with its file removed by hand. A hand edit to a tracked story stops the pull, names
+# the file, changes nothing, and logs one pull-failed incident. gh is a stub on PATH; origin is a local bare repo.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -82,6 +82,12 @@ check "d, taken off by a board PR, loses its state file and its escalated block"
 check "e, still on the board and in review, keeps its state" "there|review ${U}/2" \
   "$(state ok e)|$(sed -n 's/^status: //p' "${ROOT}/ok/.swarm/board-state/stories/e") $(sed -n 's/^prs: //p' "${ROOT}/ok/.swarm/board-state/stories/e")"
 
+# --- Then e's file removed by hand, with no pull due: e keeps its state, since only a deletion a
+# pull brings drops it.
+rm "${ROOT}/ok/docs/stories/e.md"
+rc=0; at ok reconcile >/dev/null || rc=$?
+check "a story file removed by hand, no pull due: reconcile exits 0, and e keeps its state" "0|there" "${rc}|$(state ok e)"
+
 # --- A hand edit to e, a tracked story: the pull stops, names e, changes nothing, and logs one
 # pull-failed incident.
 setup he
@@ -89,7 +95,7 @@ echo "a local note" >> "${ROOT}/he/docs/stories/e.md"; cp "${ROOT}/he/docs/stori
 before="$(git -C "${ROOT}/he" rev-parse HEAD)"
 rc=0; out="$(at he reconcile)" || rc=$?
 check "a hand edit to a tracked story stops the pull, named" "1|yes" \
-  "${rc}|$(has "reconcile: cannot pull ${ROOT}/he: tracked files are changed here: docs/stories/e.md;" "${out}")"
+  "${rc}|$(has "reconcile: cannot pull ${ROOT}/he: board files are changed here: docs/stories/e.md; land each edit through swarm.sh board-pr, or check the file out to drop it, then run reconcile again" "${out}")"
 check "and changes nothing: HEAD, e's edit, a in review, and no stash" "${before}| M docs/stories/e.md|same|there|" \
   "$(git -C "${ROOT}/he" rev-parse HEAD)|$(git -C "${ROOT}/he" status --porcelain)|$(cmp -s "${ROOT}/he-e" "${ROOT}/he/docs/stories/e.md" && echo same)|$(state he a)|$(git -C "${ROOT}/he" stash list)"
 check "one incident line: pull-failed, naming e" "1|pull-failed: docs/stories/e.md" \
