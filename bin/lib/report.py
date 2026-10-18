@@ -1,4 +1,4 @@
-import datetime, glob, gzip, json, os, re, zlib
+import datetime, glob, gzip, json, os, re, sys, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -64,23 +64,44 @@ def session_usage(path, seen):
     return tok, usd, models
 
 REWORK_DAYS = 7
+RELEASE_FILES = [".claude-plugin/plugin.json"]   # a release PR changes these alone, and fixes nothing
+# A line that names an earlier PR without fixing it: a stacked child's parent, a main merge note.
+NOT_A_FIX = re.compile(r"^\W*(merge after|depends on|stacked on|merged origin/main)\b", re.I)
+FIX = r"\b(?:fix(?:es|ed)?|rework of|regression (?:from|in|of))\b[^\n]{0,40}?"
 
-def names_pr(text, key, by):
-    # Whether the title and body of the PR whose pr_key is by name the PR whose pr_key is key: by its URL
-    # or owner/repo#N, or by a bare #N when both are in one repo.
+def fixes_pr(text, key, by):
+    # Whether the title and body of the PR whose pr_key is by say it fixes the PR whose pr_key is key: a
+    # fix, fixes, fixed, rework of or regression from phrase, then on that line within 40 characters its
+    # URL, owner/repo#N, or a bare #N when both are in one repo; never on a NOT_A_FIX line.
     repo, _, n = key.partition("#")
     bare = r"|(?<![\w/#])#" if by.partition("#")[0] == repo else ""
-    return bool(n) and re.search(rf"(?:github\.com/{re.escape(repo)}/pull/|{re.escape(repo)}#{bare}){n}(?!\d)", text, re.I) is not None
+    ref = re.compile(rf"{FIX}(?:github\.com/{re.escape(repo)}/pull/|(?<![\w./-]){re.escape(repo)}#{bare}){n}(?!\d)", re.I)
+    return bool(n) and any(ref.search(l) for l in text.splitlines() if not NOT_A_FIX.match(l))
+
+def merge_time(t):
+    # gh's mergedAt as an aware time, or None when it is empty, malformed or has no offset.
+    try:
+        d = datetime.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    return d if d.tzinfo else None
 
 def rework_of(merged, findings):
     # The pr_keys of the merged PRs a later PR fixed within REWORK_DAYS of their merge: a PR merged after
-    # it, in that time, whose text names it, or a log-finding --reviewer escaped row (fixed_rows' day,
-    # kind, pr, text, outcome order; outcome escaped) pointing at it, dated that many days after its
-    # merge day or fewer. merged maps each merged PR's pr_key to (mergedAt as gh gives it, title and body).
-    when = {k: datetime.datetime.fromisoformat(t.replace("Z", "+00:00")) for k, (t, _) in merged.items() if t}
+    # it, in that time, that fixes_pr says fixes it (a release PR never does), or a log-finding --reviewer
+    # escaped row (fixed_rows' day, kind, pr, text, outcome order; outcome escaped) pointing at it, dated
+    # that many days after its merge day or fewer. merged maps each merged PR's pr_key to (mergedAt as gh
+    # gives it, title and body, and the paths it changed, or None when unknown). A mergedAt that does not
+    # parse leaves its PR out, counted on stderr.
+    when = {k: merge_time(v[0]) for k, v in merged.items() if v[0]}
+    bad = [k for k, t in when.items() if t is None]
+    if bad:
+        print(f"rework: skipped {len(bad)} merged PRs whose mergedAt does not parse, as {bad[0]}", file=sys.stderr)
+    when = {k: t for k, t in when.items() if t}
     days = datetime.timedelta(days=REWORK_DAYS)
+    fixers = [(j, u) for j, u in when.items() if merged[j][2] != RELEASE_FILES]
     out = {k for k, t in when.items()
-           if any(j != k and t < u <= t + days and names_pr(merged[j][1], k, j) for j, u in when.items())}
+           if any(j != k and t < u <= t + days and fixes_pr(merged[j][1], k, j) for j, u in fixers)}
     for f in findings:
         k = pr_key(f[2])
         if len(f) > 4 and f[4] == "escaped" and k in when:

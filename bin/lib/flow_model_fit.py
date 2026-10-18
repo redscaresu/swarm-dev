@@ -13,6 +13,7 @@ from report import *
 MIN_STORIES = 5
 AREAS = ("bin", "commands", "docs", "tests")
 GH_SECONDS = 30
+GH_LIMIT = 1000
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
 
 def num(x):
@@ -28,9 +29,28 @@ def size(lines):
         return "none"
     return "<=100" if n <= 100 else "<=300" if n <= 300 else ">300"
 
+def files(touches):
+    # The files touches names, split as touches_rows.py splits it: at commas outside parentheses, a
+    # `<repo>: ` prefix dropped, and a part with no / or . in its head (g in `bin/x.sh:f, g`) taken as
+    # a function of the file before it, not a file. ponytail: it does not check the disk for a bare
+    # file such as Makefile after the first entry, as touches_rows.py does.
+    parts, cur, depth = [], "", 0
+    for c in touches:
+        depth += (c == "(") - (c == ")" and depth > 0)
+        if depth == 0 and c == ",":
+            parts.append(cur); cur = ""
+        elif depth == 0 and c != ")":
+            cur += c
+    out = []
+    for p in (re.sub(r"^[A-Za-z0-9._-]+: ", "", p.strip()) for p in parts + [cur]):
+        head = re.split(r"[:\s]", p, maxsplit=1)[0]
+        if head and (not out or "/" in head or "." in head):
+            out.append(head)
+    return out
+
 def area(touches):
     # The most named top-level area, the first named on a tie; other for a file outside AREAS, none for no touches.
-    tops = [re.split(r"[:\s]", t.strip(), maxsplit=1)[0].split("/") for t in touches.split(",") if t.strip()]
+    tops = [f.split("/") for f in files(touches)]
     tops = [f"{p[0]}/" if len(p) > 1 and p[0] in AREAS else "other" for p in tops]
     return collections.Counter(tops).most_common(1)[0][0] if tops else "none"
 
@@ -42,19 +62,23 @@ def minutes(start, end):
         return None
 
 def merged_prs(urls):
-    # pr_key -> (mergedAt, title and body) for every merged PR of the repos the urls are in, or None when gh fails.
-    # ponytail: the last 1000 merged PRs per repo; page with gh api if a repo outgrows that within the window.
+    # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
+    # in, or None when gh fails. A list that comes back GH_LIMIT long prints that rework may be undercounted.
+    # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
     out = {}
     for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
         try:
-            got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", "1000",
-                                  "--json", "url,mergedAt,title,body"], capture_output=True, text=True, timeout=GH_SECONDS)
+            got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
+                                  "--json", "url,mergedAt,title,body,files"], capture_output=True, text=True, timeout=GH_SECONDS)
             prs = json.loads(got.stdout) if got.returncode == 0 else None
         except (subprocess.TimeoutExpired, ValueError):
             prs = None
         if not isinstance(prs, list):
             return None
-        out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}") for p in prs})
+        if len(prs) >= GH_LIMIT:
+            print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework may be undercounted.")
+        out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
+                                       sorted(f.get("path", "") for f in p.get("files") or [])) for p in prs})
     return out
 
 by_slug = collections.defaultdict(list)
@@ -73,7 +97,7 @@ merged = merged or {}
 for _, rs in counted.values():
     for r in rs:
         if r["pr"] and r["merged_at"]:
-            merged.setdefault(pr_key(r["pr"]), (r["merged_at"], ""))
+            merged.setdefault(pr_key(r["pr"]), (r["merged_at"], "", None))
 escapes = finding_rows(findings, ("escaped",))
 rework = rework_of(merged, escapes)
 escaped = collections.Counter(pr_key(f[2]) for f in escapes)

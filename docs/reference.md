@@ -688,8 +688,9 @@ crossed with a story class, over the stories whose first build is dated in the w
 `--epic`, that epic's). A story counts under the model and effort of its first build, so a story
 escalated to Fable stays under the model it started on, while its cost, attempts and findings
 include every build. The class is the story's `kind`, `risk`, a size bucket from `estimate_lines`
-(`<=100`, `<=300`, `>300`, or `none`) and the area most of its `touches` name (`bin/`, `commands/`,
-`docs/`, `tests/` or `other`; on a tie, the first one named). Each story is read from the board or
+(`<=100`, `<=300`, `>300`, or `none`) and the area most of its `touches` files are in (`bin/`,
+`commands/`, `docs/`, `tests/` or `other`; on a tie, the first one named). Touches split as the
+overlap check splits them, so `bin/lib/build.sh:f, g` names one file and a note in parentheses names none. Each story is read from the board or
 from git history, so merged stories keep their class. The columns are:
 
 - `stories`, the stories built;
@@ -701,10 +702,15 @@ from git history, so merged stories keep their class. The columns are:
 - `escaped`, the escaped findings on their PRs;
 - `start_to_merge_min`, the mean minutes from the first build's start to the merge.
 
-A PR is rework when a PR merged up to 7 days after it names it in its title or body (by URL,
-`owner/repo#N` or `#N`), or when a `log-finding --reviewer escaped` row dated up to 7 days after its
-merge day points at it. The merged PRs come from `gh`; when `gh` fails, only escaped findings count,
-and a line says so. A cell with fewer than 5 stories prints its count and `-` in the other columns,
+A PR is rework when a PR merged up to 7 days after it says it fixes it, or when a
+`log-finding --reviewer escaped` row dated up to 7 days after its merge day points at it. Saying so
+means a `fix`, `fixes`, `fixed`, `rework of` or `regression from` phrase in the title or body, then
+the PR within 40 characters on the same line: its URL, `owner/repo#N`, or `#N` from the same repo.
+A `Merge after`, `Depends on`, `Stacked on` or `Merged origin/main` line names a PR without fixing
+it, and a release PR (one that changes only `.claude-plugin/plugin.json`) fixes nothing. The merged
+PRs come from `gh`, the last 1000 per repo. A line warns when a list comes back that long, since
+rework may then be undercounted. When `gh` fails, only escaped findings count, and a line says so. A
+`mergedAt` that does not parse leaves its PR out, counted in one line on stderr. A cell with fewer than 5 stories prints its count and `-` in the other columns,
 as too few to judge. After a blank line, a `subagents` block gives a row per model and effort of
 the builds that logged subagent columns: what their subagents cost, the build cost (theirs plus the
 builder's own), and the subagents' share of it.

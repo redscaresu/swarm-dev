@@ -4,11 +4,15 @@
 # $1.00, then escalated to fable $3.00 on #3, 1440 min, 1 finding; it stays under opus), s4 ($1.00,
 # #4 still open, 1 finding) and s5 ($0.50, #5, 60 min): $9.00 over 4 merged is 2.25, 3 of 5 on the
 # first attempt, 6 builds over 5, 4 findings over 5 PRs, 420 minutes on average. #10, merged 3 days
-# after #1 and naming it, makes s1 rework; #11 names #2 8 days after it merged, which is not. An
+# after #1 and saying it fixes it, makes s1 rework; #11 fixes #2 8 days after it merged, which is not. An
 # escaped finding 3 days after #3 merged is rework, one 8 days after #5 is not; both count as escaped.
 # Cell sonnet/medium docs none other holds two stories, so it prints its count alone. Then the same
-# through swarm.sh flow: a story deleted in a git commit keeps its class. Also: a bare #N names a PR
-# in its own repo only, a merged story with no merged_at adds no wait, and a build with no cost is named.
+# through swarm.sh flow: a story deleted in a git commit keeps its class. The s stories' touches hold
+# a parenthesised note and functions after a file (`bin/y.sh:f, g, h, i`), which are no files. Also:
+# which PR texts fix a PR (a fix phrase; never a Merge after, Depends on, Stacked on or Merged
+# origin/main line or a release PR; a bare #N in its own repo only), a mergedAt that does not parse
+# is skipped, a gh list at its limit warns, a merged story with no merged_at adds no wait, and a build
+# with no cost is named.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,19 +33,19 @@ ROWS="$(printf 'date\tslug\tkind\trisk\tmodel\teffort\tcost_usd\tattempts\tfindi
   row 2026-10-10 s5 code opus high 0.50 1 0 "${U}/5" 2026-10-10T10:00:00Z true 2026-10-10T09:00:00Z ""
   row 2026-10-02 t1 docs sonnet medium 0.20 1 0 "${U}/6" 2026-10-02T12:00:00Z true 2026-10-02T10:00:00Z ""
   row 2026-10-02 t2 docs sonnet medium 0.20 1 0 "" "" "" "" "")"
-STORIES="$(for s in s1 s2 s3 s4 s5; do printf '%s\t150\tbin/lib/x.py (new), bin/y.sh:f, docs/z.md\n' "${s}"; done
+STORIES="$(for s in s1 s2 s3 s4 s5; do printf '%s\t150\tbin/lib/x.py (new, renamed), bin/y.sh:f, g, h, i, docs/z.md\n' "${s}"; done
   printf 't1\t\tREADME.md:commands\nt2\t\tREADME.md, docs/a.md\n')"
 printf '%s\n' $'2026-10-06\tmissed\thttps://github.com/o/r/pull/3\tx\tescaped\tescaped' \
   $'2026-10-18\tmissed\thttps://github.com/o/r/pull/5\tx\tescaped\tescaped' \
   $'2026-10-06\tnit\thttps://github.com/o/r/pull/1\tx\tdeclined\tcodex\tnit' > "${dir}/findings.tsv"
-# gh: the repo's merged PRs, #10 naming #1 and #11 naming #2.
+# gh: the repo's merged PRs (or GH_JSON's), #10 fixing #1 and #11 fixing #2.
 cat > "${dir}/merged.json" <<EOF
 [{"url":"${U}/1","mergedAt":"2026-10-02T12:00:00Z","title":"s1","body":""},
  {"url":"${U}/10","mergedAt":"2026-10-05T12:00:00Z","title":"Fix the parser","body":"Fixes a bug from #1."},
- {"url":"${U}/11","mergedAt":"2026-10-10T11:00:00Z","title":"Follow-up","body":"After ${U}/2"}]
+ {"url":"${U}/11","mergedAt":"2026-10-10T11:00:00Z","title":"Follow-up","body":"Fixes ${U}/2"}]
 EOF
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2 $3 $4 $5 $6" = "pr list -R o/r --state merged" ] && exec cat "%s/merged.json"\nexit 1\n' "${dir}" > "${dir}/bin/gh"
+printf '#!/bin/sh\n[ "$1 $2 $3 $4 $5 $6" = "pr list -R o/r --state merged" ] && exec cat "${GH_JSON:-%s/merged.json}"\nexit 1\n' "${dir}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
 section() { # the model_fit section alone, as flow runs it
   PATH="${dir}/bin:${PATH}" SWARM_FINDING_REVIEWERS="codex escaped" SWARM_ROWS="${ROWS}" SWARM_STORIES="${STORIES}" \
@@ -59,9 +63,26 @@ check "the two-story cell prints its count and no verdict" \
   "$(grep $'^sonnet\tmedium' <<< "${out}")" $'sonnet\tmedium\tdocs\t-\tnone\tother\t2\t-\t-\t-\t-\t-\t-\t-'
 check "a subagent row: 0.50 of 2.50 is 20%" \
   "$(sed -n '/^subagents/,/^$/p' <<< "${out}")" $'subagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share\nopus\thigh\t0.50\t2.50\t20%'
-check "a bare #N names a PR in its own repo alone; owner/repo#N names one in another" \
-  "$(cd "${REPO}/bin/lib" && python3 -c 'from report import rework_of as r; m = lambda t: {"a/one#1": ("2026-10-01T00:00:00Z", ""), "b/two#2": ("2026-10-02T00:00:00Z", t)}
-print(r(m("Fix #1"), []), r(m("Fix a/one#1"), []))')" "set() {'a/one#1'}"
+fixes() { # <later PR's key> <its text> [its files, JSON] — 1 when rework_of counts o/r#1 as fixed by it, else 0
+  (cd "${REPO}/bin/lib" && python3 -c 'import json, sys; from report import rework_of
+j, t, f = sys.argv[1:]
+print(int("o/r#1" in rework_of({"o/r#1": ("2026-10-01T00:00:00Z", "", None), j: ("2026-10-02T00:00:00Z", t, json.loads(f))}, [])))' "$1" "$2" "${3:-null}")
+}
+check "a fix, rework of or regression from phrase fixes a PR" \
+  "$(fixes o/r#2 'Fix #1')$(fixes o/r#2 $'Docs\nThis is a rework of #1.')$(fixes o/r#2 "Regression from ${U}/1")" 111
+check "a PR named on a Merge after, Depends on, Stacked on or Merged origin/main line, or with no fix phrase, is not fixed" \
+  "$(fixes o/r#2 "Merge after the fix in ${U}/1")$(fixes o/r#2 'Depends on the fix in #1')$(fixes o/r#2 $'Docs\n- Stacked on the fix in #1')$(fixes o/r#2 'Merged origin/main at abc, which fixed #1')$(fixes o/r#2 'Refactors #1')" 00000
+check "a release PR, which changes only plugin.json, fixes nothing" \
+  "$(fixes o/r#2 'Release: fixes #1' '[".claude-plugin/plugin.json"]')$(fixes o/r#2 'Fixes #1' '["bin/x.sh"]')" 01
+check "a bare #N fixes a PR in its own repo alone; owner/repo#N one in another, with a left boundary" \
+  "$(fixes b/two#2 'Fix #1')$(fixes b/two#2 'Fix o/r#1')$(fixes b/two#2 'Fix foo/r#1')" 010
+check "a mergedAt that does not parse, or has no offset, is skipped and counted on stderr" \
+  "$(cd "${REPO}/bin/lib" && python3 -c 'from report import rework_of
+print(rework_of({"o/r#1": ("garbage", "", None), "o/r#2": ("2026-10-02T00:00:00", "Fix #1", None), "o/r#3": ("2026-10-03T00:00:00Z", "Fix #2", None)}, []))' 2>&1)" \
+  $'rework: skipped 2 merged PRs whose mergedAt does not parse, as o/r#1\nset()'
+python3 -c 'import json; print(json.dumps([{"url": f"https://github.com/o/r/pull/{n}", "mergedAt": "2026-10-01T00:00:00Z"} for n in range(100, 1100)]))' > "${dir}/full.json"
+check "a gh list at its limit says rework may be undercounted" "$(GH_JSON="${dir}/full.json" section | grep '^rework:')" \
+  "rework: gh listed 1000 merged PRs of o/r, its limit, so rework may be undercounted."
 # A story merged on a PR no build of it named (story_merged true, no merged_at) adds no wait and no
 # crash; s4's build with no cost is named, not counted as free: $8.00 over 4.
 ROWS="${ROWS//$'\t2026-10-10T10:00:00Z\ttrue'/$'\t\ttrue'}"
