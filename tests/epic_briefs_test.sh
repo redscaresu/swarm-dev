@@ -190,6 +190,15 @@ check "a builder gets AGENTS.md's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 run close g1 >/dev/null; rm -f "${b}/stories/g1.md" "${p}/AGENTS.md"
+# A project that set lessons_file = CLAUDE.md (or .claude/CLAUDE.md) keeps those files' tagged rules.
+printf '%s\n' "lessons_file = CLAUDE.md" > "${p}/.claude/swarm/config"
+printf 'Untagged.\nKeep it. <!-- lesson: claude-kind -->\n' > "${p}/CLAUDE.md"
+printf 'Name it. <!-- lesson: dot-claude-kind -->\n' > "${p}/.claude/CLAUDE.md"
+item "${b}" stories/g2.md "status: ready" "kind: code" "repo: svc"
+run story g2 >/dev/null
+check "a builder gets CLAUDE.md's and .claude/CLAUDE.md's tagged rules, and only those" "yes|yes|no" \
+  "$(has "Keep it. <!-- lesson: claude-kind -->" "$(cat "${p}/.swarm/briefs/g2.md")")|$(has "Name it. <!-- lesson: dot-claude-kind -->" "$(cat "${p}/.swarm/briefs/g2.md")")|$(grep -q "^Untagged.$" "${p}/.swarm/briefs/g2.md" && echo yes || echo no)"
+run close g2 >/dev/null; rm -f "${b}/stories/g2.md" "${p}/CLAUDE.md" "${p}/.claude/CLAUDE.md"
 check "base prints a repo's base" "dev" "$(run base svc)"
 rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
 : > "${p}/.claude/swarm/config"

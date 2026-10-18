@@ -102,7 +102,8 @@ When a fix finds a defect in work that already merged, log it as \`--reviewer es
 PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`cut -f2 ${proj}/.swarm/findings.tsv | sort -u\` already lists when it fits.
+\`awk -F'\\t' '\$5 != "declined" { print \$2 }' ${proj}/.swarm/${FINDINGS_LOG_NAME} 2>/dev/null | sort -u\`
+already lists when it fits.
 EOF
 }
 # conduct_merge_rule [backlog] — how a conductor hands over or merges a reviewed PR: an epic's, or
@@ -349,10 +350,14 @@ EOF
 }
 
 # project_rules — the brief, then only the tagged rule lines (the grep below) of the project's
-# AGENTS.md, when it has one: a builder in another repo's worktree never reads that file.
+# AGENTS.md, CLAUDE.md and .claude/CLAUDE.md, those it has: a builder in another repo's worktree
+# never reads them. These are the files the removed lessons_file could name, so its rules still land.
 project_rules() {
+  local f
   [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
-  grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${PROJECT_DIR}/AGENTS.md" 2>/dev/null || true
+  for f in AGENTS.md CLAUDE.md .claude/CLAUDE.md; do
+    grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${PROJECT_DIR}/${f}" 2>/dev/null || true
+  done
 }
 
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,

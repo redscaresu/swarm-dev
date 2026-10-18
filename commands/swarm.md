@@ -75,8 +75,9 @@ Repeat until a step below says stop:
      `swarm.sh outcomes` and read its `recurring` block. For each kind there with an empty `check`
      column, and no story on the board that already has `checks: <kind>`, file one story (through
      `swarm.sh board-pr`, like any board edit) with `checks: <kind>` in its front matter that adds a test, lint rule, hook or
-     review-prompt line which catches that kind. For a kind whose check has merged and that still
-     recurs, say so to the user. Then read its report
+     review-prompt line which catches that kind. A kind whose check has merged (`check_merged` set)
+     stays in the block for up to 30 days on findings from before it, so it still recurs only when
+     `since_30d` (its `<n>` while it reads `<n>/<days>d`) is above 0: then tell the user, with `before_30d` and `since_30d`. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
