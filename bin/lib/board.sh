@@ -12,11 +12,17 @@ board() {
   return 0
 }
 
-# epic_has_stories <epic> — true when any story names <epic>.
+# epic_has_stories <epic> [<slug>] — true when any story names <epic>. With <slug>, true when any
+# story but <slug> does, not counting a kind: lead story with after: (it waits on the epic, so the
+# epic goes without it): story_brief's test for the epic's last story.
 epic_has_stories() {
   local s
   while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "$1" ]] && return 0
+    [[ "$(fm "${s}" epic)" == "$1" ]] || continue
+    [[ -n "${2:-}" ]] || return 0
+    [[ "$(basename "${s}" .md)" == "$2" ]] && continue
+    [[ "$(get_fm "${s}" kind)" == lead && -n "$(get_fm "${s}" after)" ]] && continue
+    return 0
   done < <(board stories)
   return 1
 }
@@ -374,16 +380,50 @@ unblock() {
   done < <(board stories)
 }
 
-# finish <slug> — take a merged story or epic off the board: delete its file.
-finish_item() {
-  local slug="$1" f
-  [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "bad slug '${slug}'"
-  for f in "${BOARD}/stories/${slug}.md" "${BOARD}/epics/${slug}.md"; do
-    [[ -f "${f}" ]] || continue
-    rm "${f}"; echo "deleted: ${f}"
-    return
-  done
-  die "no story or epic '${slug}' in ${BOARD}"
+# delete_item <slug> — delete a story or epic's file where it is: reconcile's, after its pull.
+delete_item() { local f; f="$(item_file "$1")"; rm "${f}"; echo "deleted: ${f}"; }
+
+# finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
+finish_item() { remove_item finish "$1"; }
+
+# remove_item <verb> <slug> [<reason>] — finish's and drop's delete. A board outside the repo is
+# edited in place; one in it through the board PR <verb>-<slug> (board_pr), never the main checkout,
+# and a second run pushes to that PR. It prints the PR and the merge --board that lands it. A file
+# that is not on origin's base (an unmerged board PR adds it) is refused, and a run that fails clears
+# away the worktree and branch it started (unstart), so the next run starts clean.
+remove_item() {
+  local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
+  f="$(item_file "${slug}")"
+  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${slug}"; return; }
+  rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
+  wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
+  if [[ ! -d "${wt}" ]]; then
+    wt="$(board_pr start "${name}")" || die "${verb}: cannot start the board PR ${name}"
+    new=1
+    [[ -f "${wt}/${rel}" ]] || { unstart "${name}"; die "${verb}: ${rel} is not on origin/$(base_for "${PROJECT_DIR}") (is it in a board PR that has not merged?), so no board PR can delete it; merge that first"; }
+  fi
+  # An earlier run's worktree has the file deleted already; its PR is open, so a failure leaves it.
+  [[ ! -e "${wt}/${rel}" ]] || git -C "${wt}" rm -q -- "${rel}" \
+    || { [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: git rm ${rel} failed in ${wt}"; }
+  case "${verb}" in finish) title="Finish ${slug}" ;; *) title="Drop ${slug}: ${why}" ;; esac
+  body="$(mktemp "${TMPDIR:-/tmp}/swarm-${verb}.XXXXXX")" || { [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: mktemp failed"; }
+  echo "Takes ${slug} off the board (\`swarm.sh ${verb} ${slug}${why:+ ${why}}\`)." > "${body}"
+  url="$(board_pr open "${name}" "${title}" "${body}")" \
+    || { rm -f "${body}"; [[ -z "${new}" ]] || unstart "${name}"; die "${verb}: cannot open the board PR ${name}"; }
+  rm -f "${body}"
+  echo "deleted: ${rel} in the board PR ${url}"
+  echo "land it: swarm.sh merge --board ${url}"
+}
+
+# unstart <name> — undo a board_pr start whose PR never opened: its worktree, board/<name> here, and
+# board/<name> on origin if open pushed it before gh failed. Best effort: it runs on the way to a die.
+unstart() {
+  local wt b="board/$1"; wt="$(worktree_for "${PROJECT_DIR}" "_board-$1")"
+  git -C "${PROJECT_DIR}" worktree remove --force "${wt}" >/dev/null 2>&1 || true
+  git -C "${PROJECT_DIR}" branch -q -D "${b}" >/dev/null 2>&1 || true
+  if git -C "${PROJECT_DIR}" ls-remote --exit-code origin "refs/heads/${b}" >/dev/null 2>&1; then
+    git -C "${PROJECT_DIR}" push -q origin --delete "${b}" >/dev/null 2>&1 || true
+  fi
 }
 
 # reset_at <slug> — when the slug was reset (its first ok reset line in events.tsv), or nothing. A story
@@ -421,9 +461,8 @@ reset_story() {
 }
 
 # drop <slug> <reason> — the lead drops an escalated story (is_escalated): take it off the board as
-# finish does (delete it), so next stops naming it, and the
-# lead commits the change in a board PR. Any other story is
-# refused. main logs the reason as the outcome.
+# finish does (in a board PR, on a board in the repo), so next stops naming it once that lands. Any
+# other story is refused. main logs the reason as the outcome.
 drop_story() {
   local f="${BOARD}/stories/$1.md"
   [[ -n "$1" ]] || die "drop: <slug> is missing: swarm.sh drop <slug> <reason>"
@@ -431,8 +470,8 @@ drop_story() {
   [[ "$1" =~ ^[a-z0-9-]+$ ]] || die "drop: bad slug '$1'"
   [[ -f "${f}" ]] || die "drop: no story ${f}"
   is_escalated "${f}" || die "drop: $1 is not an escalated story (ready, kind: lead, with escalated_from:), so it is not dropped"
-  finish_item "$1"
-  echo "dropped: $1; commit the change to the board in a board PR"
+  remove_item drop "$1" "$2"
+  echo "dropped: $1"
 }
 
 # dialog <slug> <accepted|dismissed> — a conductor answered an escalate builder's Fable usage-credits
@@ -603,7 +642,7 @@ reconcile() {
   for slug in "${merged[@]}"; do
     f="${BOARD}/stories/${slug}.md"; [[ -f "${f}" ]] || f="${BOARD}/epics/${slug}.md"
     [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]] || { record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"; continue; }
-    finish_item "${slug}"
+    delete_item "${slug}"
     record_event reconcile "${slug}" "ok (finished)"
   done
 }

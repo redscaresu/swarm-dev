@@ -125,11 +125,14 @@ to merge\`), the story is blocked again with its build kept: close its builder w
 $(held_ready_rule)${epic_end}
 EOF
   else
-    [[ -n "${backlog}" ]] || epic_end=" When the
-epic's **Done when** holds, take the epic off the board with \`swarm.sh finish <epic>\`, but never
-while a story of it is still in review (a \`costs: money\` one waits for the user's merge): once the
-Done when will hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\`
-instead, and the epic leaves the board once they all merge."
+    [[ -n "${backlog}" ]] || epic_end=" On a board in the project's repo,
+the epic leaves the board with its last story's PR, whose brief deletes the epic file. Run
+\`swarm.sh finish <epic>\` only on a board outside the repo, or when the epic file is still there after
+the last story merged and the epic's **Done when** holds; on a board in the repo it opens a board PR,
+which you land with the \`swarm.sh merge --board\` line it prints. Never finish the epic while a story
+of it is still in review (a \`costs: money\` one waits for the user's merge): once the Done when will
+hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\` instead, and the
+epic leaves the board once they all merge."
     cat <<EOF
 A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
 as with merge = human. When its PR is green and reviewed,
@@ -312,10 +315,15 @@ send_goal() {
 story_brief() {
   local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules
   story_ref="$(story_path "${slug}" "${src}")"
+  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
-    # The board is in this repo: the PR takes the story off it.
-    rel="${BOARD#"${PROJECT_DIR}/"}/stories"
-    cleanup="Delete ${rel}/${slug}.md in your PR, and nothing else under ${rel}/."
+    # The board is in this repo: the PR takes the story off it, and the epic with its last story.
+    rel="${BOARD#"${PROJECT_DIR}/"}"
+    if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && ! epic_has_stories "${epic}" "${slug}"; then
+      cleanup="Delete ${rel}/stories/${slug}.md and ${rel}/epics/${epic}.md (its epic's last story) in your PR, and nothing else under ${rel}/stories/ or ${rel}/epics/."
+    else
+      cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
+    fi
   else
     # The board is elsewhere: read the story there, and leave it for the lead.
     story_ref="${story_ref} (this worktree is $(basename "${src}"))"
@@ -334,7 +342,6 @@ CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides 
 the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
 in the PR body. $(reply_sentence)
 EOF
-  epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
   rules="$(project_rules)"
@@ -647,6 +654,16 @@ touches_rows() {
   python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}"
 }
 
+# board_pr_merge_rule — who lands a conductor's board PR: the conductor with merge = agent, the user
+# with merge = human.
+board_pr_merge_rule() {
+  if [[ "${CFG_merge}" == human ]]; then
+    echo "With merge = human you cannot land that PR: list it in your report for the user."
+  else
+    echo "Land it with \`swarm.sh merge --board <url>\` once its checks are green."
+  fi
+}
+
 # The brief a conductor gets: one epic, from a fresh session, so its context holds only that epic.
 # The epic backlog is the backlog conductor's: the ready stories with no epic.
 conduct_brief() {
@@ -673,6 +690,11 @@ EOF
 ${scope} A
 story whose \`kind\` is set and is not code, docs or chore (a \`lead\` story: real cloud, credentials, a human step) is not yours to run; list it
 for the user, unless it has \`escalated_from:\`: that one is the lead's, as above. $(stop_rule "${epic}")
+
+When the board is in the project's repo, make a scope or body edit to a story in a board PR
+(\`swarm.sh board-pr\`), as the lead does, never in the main checkout. $(board_pr_merge_rule) A builder
+starts from origin's base, so it reads the old story text until that PR merges: do not start, or
+start again, a story whose edit is still in a board PR.
 
 Start every story, a retry too, with \`swarm.sh story --strict <slug>\`. It refuses when an open story
 of another epic (in review, or with its builder open) touches the same function or file. On a refusal

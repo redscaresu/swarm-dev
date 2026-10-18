@@ -7,7 +7,7 @@
 # --watch rebuilds it every N seconds (default 2) and repaints in place; q quits, t and l toggle the
 # tree and the ladder. Colour only on a terminal with NO_COLOR unset, or as DASH_COLOR says when set.
 # Each --project <dir> (repeatable) draws that project's frame in turn (dash_frame) in place of this
-# project's, so it runs from any git repo; every dir is checked before anything is drawn.
+# project's, so it runs from any directory; every dir is checked before anything is drawn.
 dash() {
   local every="" tty=0 i d b c
   DASH_LADDER=0; DASH_TREE=0; DASH_DIRS=(); DASH_LEAD_ANY=off; DASH_ENV_W="${DASH_W:-}"; DASH_ENV_H="${DASH_H:-}"
