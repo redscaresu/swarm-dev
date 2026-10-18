@@ -162,56 +162,74 @@ check "--watch off a terminal does not repeat an unchanged frame" test "$(grep -
 check "--watch off a terminal has no ANSI escapes" lacks $'\033' "${w}"
 
 # --watch on a terminal: a pty, 30x120, its size read with the real stty. ptywatch.py runs
-# `dash --watch <seconds>`, resizes the pty to 30x150 and sends SIGWINCH at <resize-at> seconds (0:
-# never), types each <key>@<seconds> given after <q-at>, types q at <q-at>, and kills the watch if
-# it is still running 5 seconds later. A <q-at> of F<seconds> types q that long after the first frame
-# (its first cursor home), or at 15 seconds when none comes, so a slow start only makes the run longer.
+# `dash --watch <seconds>` and times everything from its first frame (its first cursor home, waited
+# for up to 30 seconds), so a slow render only makes the run longer: it resizes the pty to 30x150 and
+# sends SIGWINCH <resize-after> seconds after it (0: never), types each <key>@<seconds> given after
+# <q>, and types q <q> seconds after it, or with H<n> once n cursor homes have come and with N<n>
+# once n frames have (at most 15 seconds after the first frame, well inside --watch 30), then kills
+# the watch if it is still running 5 seconds later. A key or q waits for 0.3 seconds with no output:
+# typed mid-frame, the tty would echo it between the bytes of a character.
 cat > "${ROOT}/ptywatch.py" <<'PY'
-import fcntl, os, pty, select, signal, struct, sys, termios, time
-swarm, out_path, every, resize_at, q_at = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5]
-after = float(q_at[1:]) if q_at.startswith("F") else 0
-q_at = 15.0 if after else float(q_at)
+import fcntl, os, pty, re, select, signal, struct, sys, termios, time
+swarm, out_path, every, resize_after, q = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5]
+until = (q[0], int(q[1:])) if q[0] in "HN" else None
+q_after = 15.0 if until else float(q)
 keys = [(k.split("@")[0].encode(), float(k.split("@")[1])) for k in sys.argv[6:]]
 def size(fd, rows, cols):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+def seen(kind):
+    if kind == "H":
+        return out.count(b"\x1b[H")
+    return re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", out).count("╭─ needs you".encode())
 pid, fd = pty.fork()
 if pid == 0:
     size(0, 30, 120)
     os.execvp("bash", ["bash", swarm, "dash", "--watch", every])
-out, start, resized, typed, status = b"", time.time(), False, False, None
+out, start, first, resized, typed, status, last = b"", time.time(), None, False, False, None, time.time()
 while status is None:
-    now = time.time() - start
-    if resize_at and not resized and now > resize_at:
+    if first is None and (b"\x1b[H" in out or time.time() - start > 30):
+        first = time.time()
+    now = time.time() - first if first is not None else -1
+    quiet = time.time() - last > 0.3
+    if resize_after and not resized and now > resize_after:
         size(fd, 30, 150); os.kill(pid, signal.SIGWINCH); resized = True
-    while keys and now > keys[0][1]:
+    while keys and now > keys[0][1] and quiet:
         os.write(fd, keys.pop(0)[0])
-    if after and b"\x1b[H" in out:
-        q_at, after = min(q_at, now + after), 0
-    if not typed and now > q_at:
+    if until and now >= 0 and seen(until[0]) >= until[1]:
+        q_after, until = min(q_after, now), None
+    if not typed and now > q_after and quiet:
         os.write(fd, b"q"); typed = True
-    if now > q_at + 5:
+    if now > q_after + 5:
         os.kill(pid, signal.SIGKILL)
     r, _, _ = select.select([fd], [], [], 0.2)
     if r:
         try:
-            out += os.read(fd, 65536)
+            out += os.read(fd, 65536); last = time.time()
         except OSError:
             pass
     done, st = os.waitpid(pid, os.WNOHANG)
     if done:
         status = st
+while True:   # what the watch wrote before it exited, still in the pty
+    try:
+        chunk = os.read(fd, 65536)
+    except OSError:
+        break
+    if not chunk:
+        break
+    out += chunk
 open(out_path, "wb").write(out)
 sys.exit(os.waitstatus_to_exitcode(status))
 PY
-ptywatch() { # <out> <seconds> <resize-at> <q-at> [<key>@<seconds>...]; PTY_BIN puts another stub dir first on PATH
+ptywatch() { # <out> <seconds> <resize-after> <q> [<key>@<seconds>...]; PTY_BIN puts another stub dir first on PATH
   (cd "${P}" && env -u HERDR_ENV PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
 }
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '╭─ needs you' | wc -l | tr -d ' '; }
 
-# Nothing changes for 3.5 seconds after the first frame at --watch 1: one full frame, the header line
-# rewritten each second.
-if ptywatch "${ROOT}/pty.out" 1 0 F3.5; then rc=0; else rc=$?; fi
+# Nothing changes after the first frame at --watch 1: one full frame, then the header line rewritten
+# each second (q once three cursor homes have come).
+if ptywatch "${ROOT}/pty.out" 1 0 H3; then rc=0; else rc=$?; fi
 w="$(cat "${ROOT}/pty.out")"; text="$(plain "${ROOT}/pty.out")"
 check "--watch on a terminal quits on q" test "${rc}" -eq 0
 check "--watch enters the alternate screen and hides the cursor" test "${w:0:14}" == $'\033[?1049h\033[?25l'
@@ -222,13 +240,14 @@ check "--watch rewrites the header line while nothing changes" test "$(grep -o $
 check "--watch measures the terminal with stty (120 columns)" grep -qE '^╰─{118}╯$' <<< "${text}"
 check "--watch on a terminal paints the needs-you title red and bold" has $'\033[1;31mneeds you\033[0m' "${w}"
 check "--watch lists its keys in the legend" grep -qE 'q quit · t tree · l ladder · r redraw' <<< "${text}"
-# At --watch 30, a resize at 2 seconds redraws at once, at the new width, before the q at 4.
-ptywatch "${ROOT}/pty2.out" 30 2 4 || true
+# At --watch 30, a resize 2 seconds after the first frame redraws at once (q once two frames have
+# come, at most 15 seconds after the first), at the new width.
+ptywatch "${ROOT}/pty2.out" 30 2 N2 || true
 text="$(plain "${ROOT}/pty2.out")"
 check "--watch redraws at once on SIGWINCH" test "$(frames <<< "${text}")" -eq 2
 check "--watch re-measures on SIGWINCH (150 columns, two columns)" test "$(grep -E '^╭─ needs you ─+╮ ╭─ recent ─+╮$' <<< "${text}" | widest)" -eq 150
 # t shows the tree in place of the epics, l adds the ladder (beside recent from 140 columns).
-ptywatch "${ROOT}/pty4.out" 30 0 4 t@1.5 l@2.5 || true
+ptywatch "${ROOT}/pty4.out" 30 0 N3 t@1.5 l@2.5 || true
 text="$(plain "${ROOT}/pty4.out")"
 check "--watch redraws on t and on l" test "$(frames <<< "${text}")" -eq 3
 check "t in --watch shows the tree" has "─ agents by workspace and tab" "${text}"

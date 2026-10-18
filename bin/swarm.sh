@@ -70,6 +70,13 @@ if [[ "${1:-}" == wait-pr ]]; then
   trap 'rc=$?; rm -f "${WAIT_PR_TMP}"; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 
+# SWARM_SLEEP_SCALE multiplies the fixed sleeps (nap; default 1, make test sets 0.01). It is checked
+# here, before anything runs: a bad one found at its first sleep would stop a command halfway, after a
+# merge, a started agent or a started codex. At least 0.001, so the shortest of them (1 s) still
+# sleeps a millisecond: 0, or a scale that rounds to it, would make a poll loop a busy one.
+awk -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { exit !(k ~ /^[0-9]*\.?[0-9]+$/ && k + 0 >= 0.001) }' \
+  || die "SWARM_SLEEP_SCALE: '${SWARM_SLEEP_SCALE}' is not a number of at least 0.001"
+
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -424,13 +431,12 @@ tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}
 # the TERM, since a child whose parent dies leaves it. Stderr is off, so bash prints no "Terminated"
 # line for the job.
 stop_codex() {
-  local pids p left
+  local pids p
   pids="$(tree_pids "$1")"
   # shellcheck disable=SC2046,SC2086 # one pid per word
   {
     kill -TERM ${pids}
-    left=$((SECONDS + CODEX_GRACE))   # a deadline, as codex_review's timeout is
-    while ((SECONDS < left)); do kill -0 ${pids} || break; nap 1; done
+    poll_while "${CODEX_GRACE}" kill -0 ${pids}
     for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
     wait "$1"
   } 2>/dev/null || true
@@ -492,10 +498,7 @@ codex_review() {
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
-  # A deadline, not a count of naps: SWARM_SLEEP_SCALE quickens the polling, never the timeout
-  # (nor stop_codex's grace).
-  left=$((SECONDS + left))
-  while ((SECONDS < left)) && kill -0 "${pid}" 2>/dev/null; do nap 1; done
+  poll_while "${left}" kill -0 "${pid}" 2>/dev/null
   if ! kill -0 "${pid}" 2>/dev/null; then
     wait "${pid}" || rc=$?
     return "${rc}"

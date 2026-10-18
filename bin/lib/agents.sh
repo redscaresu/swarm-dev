@@ -645,14 +645,19 @@ SETTLED='^(idle|waiting|gone)(:|$)'
 # long; nothing for zero or less.
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 1000)))"; }
-# scaled <seconds> — <seconds> times SWARM_SLEEP_SCALE (default 1; make test sets 0.01), to the
-# millisecond. A scale that is not a number above 0 fails: 0 would make a poll loop a busy one.
-scaled() {
-  awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { if (k !~ /^[0-9]*\.?[0-9]+$/ || k + 0 <= 0) exit 1; printf "%.3f\n", s * k }' \
-    || die "SWARM_SLEEP_SCALE: '${SWARM_SLEEP_SCALE}' is not a number above 0"
+# scaled <seconds> — <seconds> times SWARM_SLEEP_SCALE (default 1; make test sets 0.01, and swarm.sh
+# checks it at startup), to the millisecond. nap <seconds> — sleep that long.
+scaled() { awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { printf "%.3f\n", s * k }'; }
+nap() { sleep "$(scaled "$1")"; }
+# poll_while <seconds> <command...> — run <command> while it succeeds, every second scaled (but no
+# more often than every tenth of one), for <seconds> unscaled: the scale quickens the polling, never
+# the wait, and each step is slept in full, so it is never shorter than at scale 1.
+poll_while() {
+  local step n
+  read -r step n <<< "$(awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { t = k < 0.1 ? 0.1 : k; n = int(s / t); if (n < s / t) n++; printf "%.3f %d\n", t, n }')"
+  shift
+  while ((n-- > 0)) && "$@"; do sleep "${step}"; done
 }
-# nap <seconds> — sleep <seconds>, scaled.
-nap() { local s; s="$(scaled "$1")" || exit 1; sleep "${s}"; }
 
 # settle <target> <name> <timeout-ms> [<since>] [wake] — block until the agent settles and print its
 # state. A Claude agent has settled when its session says so (session_state: idle, waiting or gone);

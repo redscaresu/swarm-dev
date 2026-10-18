@@ -77,14 +77,16 @@ check "neither the stub nor its child sleep is left" "yes" "$(gone)"
 check "a timed-out codex-review leaves no marker" "" "$(markers)"
 
 # --- One that traps TERM and sleeps on is KILLed after the grace, with whatever it started since.
+# Each nap of the limit and the grace adds a little to its length, so the bound has 3 s to spare.
 stub "trap 'echo TERM ignored' TERM; while :; do \"\${d}/stubsleep\" 60; done"
 review
 check "a codex that ignores TERM is stopped within the limit plus the grace" "fails|yes|yes" \
-  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 1)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
 
-# --- The grace is real: a codex that exits on its own a second after TERM is not KILLed.
-stub "trap 'sleep 1; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+# --- The grace is real, and never shorter than CODEX_GRACE: a codex that exits on its own 2.5 s
+# after TERM is not KILLed.
+stub "trap 'sleep 2.5; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
 review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
