@@ -182,6 +182,11 @@ for ladder in sonnet,opus,fable ""; do
     echo "s1 w:1" > "${ROOT}/agents"; echo "w:1 s1" > "${P}/.swarm/state/s1"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
     check "a build whose step-up failed partway is not stepped up again" "|yes" \
       "$(escalates)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
+    # A tell whose step-up fails after closing the builder is not sent, and says why.
+    fresh "${ladder}" idle; touch "${ROOT}/startfail"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
+    check "a tell whose step-up fails partway is not sent, and says so" "1|yes|no" \
+      "${rc}|$(grep -q 'its step-up failed partway' <<< "${out}" && echo yes)|$(grep -q 'told s1' <<< "${out}" && echo yes || echo no)"
+    rm -f "${ROOT}/startfail"
     # A step-up that fails before it closes anything, with a status of its own (here handover_brief's
     # git diff exits 128 under pipefail: the worktree is no longer a git checkout), is a refusal: the
     # close goes on and counts the attempt.
