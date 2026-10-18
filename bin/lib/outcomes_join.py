@@ -118,6 +118,58 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     for u in urls:
         named_reviews[pr_key(u)].append(f"review={e[0]}")
 
+def board_commits(*args):
+    # The board's commits that add or delete a story file, newest first, as (the format's text, [the
+    # story paths]); [] when git fails. Read on the default branch, where merges land (HEAD when there
+    # is no origin/HEAD, as dash_base_ref), so a story branch deleting its own file is no merge.
+    # --first-parent dates a commit by the merge, and --no-renames keeps a story deleted beside a
+    # similar new one a deletion. Each commit prints as "\x01<format>\0" and then its paths (from the
+    # repo root, any characters), each ending "\0".
+    board = sys.argv[2]
+    has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
+    got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
+                          "--first-parent", "--diff-merges=first-parent", "--no-renames", "-z", "--name-only", *args,
+                          "--", "stories/"], capture_output=True, text=True)
+    commits = [c.split("\0") for c in got.stdout.split("\x01")[1:]] if got.returncode == 0 else []
+    return [(c[0], [p.lstrip("\n") for p in c[1:] if p.strip("\n")]) for c in commits]
+
+# held: a story's first build waited ready while a conductor of its epic ran (conduct-backlog for a
+# story with no epic). It was ready from the latest of its file reaching the board's default branch
+# and its unblock events; a conductor runs from its ok `conduct` event to its agent's first ok close
+# after that (or for good, when none came).
+# ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
+ready_at, conducting, stops = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
+for when, paths in board_commits("--diff-filter=A", "--format=%x01%ct"):
+    for p in paths:
+        ready_at[os.path.splitext(os.path.basename(p))[0]].append(float(when))
+for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
+    e = line.rstrip("\n").split("\t")
+    t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    if t is None:
+        continue
+    if e[1] == "unblock":
+        ready_at[e[2]].append(t)
+    elif e[1] == "conduct":
+        conducting[agent_name("conduct-" + ("backlog" if e[2] == "--backlog" else e[2]))].append(t)
+    elif e[1].split(":")[0] == "close":
+        stops[e[2]].append(t)
+
+def held(slug, epic, start):
+    # The minutes from the story's ready time before start to start that a conductor of its epic ran,
+    # each minute once however many conductors ran it; empty when start is.
+    s = secs(start)
+    if s is None:
+        return ""
+    ready = max((t for t in ready_at[slug] if t <= s), default=0)
+    name = agent_name("conduct-" + (epic or "backlog"))
+    runs = sorted((a, min([c for c in stops[name] if c > a], default=s)) for a in conducting[name])
+    total, edge = 0, ready
+    for a, b in runs:
+        a, b = max(a, edge), min(b, s)
+        if b > a:
+            total, edge = total + b - a, b
+    return str(round(total / 60))
+
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
 
@@ -128,7 +180,7 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
       "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens"
-      "\t" + "\t".join(p + "_min" for p in PHASES))
+      "\t" + "\t".join(p + "_min" for p in PHASES) + "\theld_min")
 for (f, kind, risk, story_epic, asked, prs, *the_pr), c in zip(rows, found):
     pr, state, merged, created, main_merges = the_pr[:5]
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
@@ -140,28 +192,19 @@ for (f, kind, risk, story_epic, asked, prs, *the_pr), c in zip(rows, found):
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
-                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))))
+                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))
+                     + [held(slug, story_epic, f[AS_IS]) if attempts == "1" else ""]))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
-    # finds a merged story), as (slug, day it was deleted); None when git has none. Read on the
-    # default branch, where merges land (HEAD when there is no origin/HEAD, as dash_base_ref), so a
-    # story branch deleting its own file is no merge. --first-parent dates it by the merge commit, and
-    # --no-renames keeps a story deleted beside a similar new one a deletion. Each commit prints as
-    # "\x01<day>\0" and then its deleted paths (from the repo root, any characters), each ending "\0".
-    # Without --pickaxe-all, -G lists only the files whose removed lines name the kind, so a story
-    # deleted beside it is never taken for it.
-    board = sys.argv[2]
-    has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
-    got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
-                          "--first-parent", "--diff-merges=first-parent", "--no-renames", "--diff-filter=D", "-z",
-                          "--name-only", "--format=%x01%cs", "-G", f"^checks: *{kind} *$", "--", "stories/"],
-                         capture_output=True, text=True)
-    commits = got.stdout.split("\x01")[1:] if got.returncode == 0 else []
-    if not commits:
+    # finds a merged story), as (slug, day it was deleted); None when git has none. Without
+    # --pickaxe-all, -G lists only the files whose removed lines name the kind, so a story deleted
+    # beside it is never taken for it.
+    commits = board_commits("--diff-filter=D", "--format=%x01%cs", "-G", f"^checks: *{kind} *$")
+    if not commits or not commits[0][1]:
         return None
-    deleted, path = commits[0].split("\0")[:2]
-    return os.path.splitext(os.path.basename(path.lstrip("\n")))[0], datetime.date.fromisoformat(deleted)
+    deleted, paths = commits[0]
+    return os.path.splitext(os.path.basename(paths[0]))[0], datetime.date.fromisoformat(deleted)
 
 TODAY, DAY = datetime.date.today(), datetime.timedelta(days=1)
 WINDOW = datetime.timedelta(days=RECURRING_DAYS)

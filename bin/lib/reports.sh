@@ -123,7 +123,8 @@ cost_report() {
 # its start to that and from that to the merge, the commits on the PR that merge the base into it,
 # its subagents' cost, in all and per model (its own cost and tokens leave them out), and last its
 # start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
-# time_in_state, from its PR's review and tell:findings events and its head's checks). A finding goes to the latest build on
+# time_in_state, from its PR's review and tell:findings events and its head's checks), then on a
+# story's first build the minutes it waited ready while its epic's conductor ran (held). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.

@@ -11,6 +11,11 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
         return ""
