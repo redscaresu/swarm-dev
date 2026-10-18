@@ -220,7 +220,7 @@ dataset_report() {
     while IFS= read -r line; do
       [[ -z "${line}" ]] || prs+="${slug}"$'\t'"${src}"$'\t'"${line}"$'\n'
     done <<< "${got}"
-  done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "story_merged") c = i; next } { m[$2] = $c } END { for (s in m) print s "\t" m[s] }' <<< "${rows}")"
+  done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "story_merged") c = i; next } { m[$2] = $c } END { for (s in m) print s "\t" m[s] }' <<< "${rows}" | sort)"
   [[ ${skipped} -eq 0 ]] || echo "dataset: skipped ${skipped} stories whose repo could not be found; their lines from the last run stay" >&2
   mkdir -p "${PROJECT_DIR}/.swarm"
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_PRS="${prs}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \

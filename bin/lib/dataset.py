@@ -1,6 +1,6 @@
 import datetime, json, os, re, subprocess, sys
 from report import *
-from touches_rows import deps, entries, pairs
+from touches_rows import deps, entries, front_text
 board, agents, events, findings, projects, archive, out = sys.argv[1:8]
 EASY_MAX_LINES = 100   # was_easy rule 1: a diff under this many lines
 FETCH_SECONDS = 60
@@ -13,17 +13,26 @@ def git(repo, *args):
 def default_ref(repo):
     return "origin/HEAD" if git(repo, "rev-parse", "-q", "--verify", "origin/HEAD") else "HEAD"
 
-def front(text):
-    # The front matter's keys as touches_rows reads them (a key's first line wins), CRLF tolerated.
-    lines, fm = [l.rstrip("\r") for l in text.split("\n")], {}
-    if lines[0] == "---":
-        pairs(lines[1:], fm, "---")
-    return {k: v.strip() for k, v in fm.items()}
+fetched = set()
+def fetch(repo):
+    # git fetch origin, once a run per repo: never a prompt (no stdin, ssh in batch mode), and a fetch
+    # that fails or hangs leaves the history as it was.
+    top = os.path.realpath(git(repo, "rev-parse", "--show-toplevel").strip() or repo)
+    if top in fetched:
+        return
+    fetched.add(top)
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=os.environ.get("GIT_SSH_COMMAND", "ssh") + " -o BatchMode=yes")
+    try:
+        subprocess.run(["git", "-C", top, "fetch", "-q", "origin"], stdin=subprocess.DEVNULL, capture_output=True,
+                       timeout=FETCH_SECONDS, env=env)
+    except subprocess.TimeoutExpired:
+        pass
 
 def planned(slug):
     # The story as the board PR merged it: the oldest commit on the board's default branch (first
-    # parent, so a merged PR counts as its merge) that added the file; the board's current text when
-    # git has no such commit.
+    # parent, so a merged PR counts as its merge, and fetched first) that added the file; the board's
+    # current text when git has no such commit.
+    fetch(board)
     added = git(board, "log", default_ref(board), "--first-parent", "--diff-merges=first-parent", "--diff-filter=A",
                 "--no-patch", "--format=%H", "--", f"stories/{slug}.md").split()
     if added:
@@ -43,20 +52,14 @@ def planner_model(epic):
                 model = f[4]
     return model
 
-fetched = set()
 def diff_of(repo, slug, epic, pr, merge_sha, heads):
-    # (lines, files) of the PR on the default branch, fetched once per run: from gh's merge commit, a
-    # rebase (the subjects of its last commits are the PR's commit headlines, heads, in order) against
-    # the commit before them, a merge or a squash against its first parent. When the merge commit is
-    # not on the branch, the commit whose subject is a squash's `... (#N)` or a `Merge pull request #N`.
-    # The board's own files it changes (the story and its epic) are not counted.
-    if repo not in fetched:
-        fetched.add(repo)
-        try:   # a fetch that fails or hangs leaves the history as it was
-            subprocess.run(["git", "-C", repo, "fetch", "-q", "origin"], capture_output=True, timeout=FETCH_SECONDS,
-                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
-        except subprocess.TimeoutExpired:
-            pass
+    # (lines, files) of the PR on the default branch, fetched first: from gh's merge commit, a rebase
+    # (the subjects of its last commits are the PR's commit headlines, heads, in order; gh cuts a long
+    # headline and ends it with …) against the commit before them, a merge or a squash against its
+    # first parent. When the merge commit is not on the branch, the commit whose subject is a squash's
+    # `... (#N)` or a `Merge pull request #N`. The board's own files it changes (the story and its epic)
+    # are not counted. (None, None) when git cannot find the commit or diff it (a shallow clone).
+    fetch(repo)
     n = pr_key(pr).rpartition("#")[2]
     log = [(c.split("\x00") + ["", ""])[:3] for c in git(repo, "log", default_ref(repo), "--first-parent", "--format=%H%x00%s%x00%P").splitlines()]
     hit = [c for c in log if merge_sha and c[0] == merge_sha] or \
@@ -65,10 +68,16 @@ def diff_of(repo, slug, epic, pr, merge_sha, heads):
         return None, None
     sha, _, parents = hit[0]
     mine = git(repo, "log", "--first-parent", f"-{len(heads)}", "--format=%s", sha).splitlines()[::-1] if sha == merge_sha else []
-    rebased = len(heads) > 1 and len(parents.split()) == 1 and [h.replace("\t", " ") for h in mine] == heads
-    rel = os.path.relpath(board, git(repo, "rev-parse", "--show-toplevel").strip() or repo)
+    mine = [m.replace("\t", " ") for m in mine]
+    rebased = len(heads) > 1 and len(parents.split()) == 1 and len(mine) == len(heads) and all(
+        m == h or h.endswith("…") and m.startswith(h[:-1]) for m, h in zip(mine, heads))
+    rel = os.path.relpath(os.path.realpath(board), os.path.realpath(git(repo, "rev-parse", "--show-toplevel").strip() or repo))
     own = {os.path.normpath(os.path.join(rel, p)) for p in [f"stories/{slug}.md"] + ([f"epics/{epic}.md"] if epic else [])}
-    stat = [l.split("\t") for l in git(repo, "diff", "--numstat", "--no-renames", f"{sha}~{len(heads)}" if rebased else f"{sha}^", sha).splitlines()]
+    got = subprocess.run(["git", "-C", repo, "diff", "--numstat", "--no-renames", f"{sha}~{len(heads)}" if rebased else f"{sha}^", sha],
+                         capture_output=True, text=True)
+    if got.returncode != 0:
+        return None, None
+    stat = [l.split("\t") for l in got.stdout.splitlines()]
     stat = [s for s in stat if len(s) == 3 and os.path.normpath(s[2]) not in own]
     return sum(int(a) + int(d) for a, d, _ in stat if a.isdigit() and d.isdigit()), len(stat)
 
@@ -84,14 +93,20 @@ def escalations(slug):
                        else {"at": f[0], "trigger": m[1], "from": None, "to": None})
     return got
 
+def started(build):
+    # When a build started, as outcomes has it: its session log's first time, or with none 00:00 local
+    # on its agents.tsv day.
+    if build["started"]:
+        return build["started"]
+    try:
+        return datetime.datetime.strptime(build["date"], "%Y-%m-%d").astimezone().isoformat()
+    except ValueError:
+        return ""
+
 def minutes(start, end):
     # Whole minutes from start to end; None when either does not parse or end comes first.
-    try:
-        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-        d = t(end) - t(start)
-    except (ValueError, AttributeError):
-        return None
-    return round(d / 60) if d >= 0 else None
+    s, e = merge_time(start), merge_time(end)
+    return round((e - s).total_seconds() / 60) if s and e and e >= s else None
 
 def num(s):
     try:
@@ -129,7 +144,7 @@ for slug, (repo, ps) in prs.items():
     builds = [r for r in rows if r["slug"] == slug]
     pr, merged_at, merge_sha, heads = max(ps, key=lambda p: p[1])
     text = planned(slug)
-    fm = front(text)
+    fm = {k: v.strip() for k, v in front_text(text).items()}
     lines_n, files_n = diff_of(repo, slug, fm.get("epic", ""), pr, merge_sha, heads) if repo else (None, None)
     rounds = sum(int(r["tells_findings"] or 0) for r in builds)
     rework = any(pr_key(u) in reworked for u in [p[0] for p in ps] + [r["pr"] for r in builds if r["pr"]])
@@ -145,7 +160,7 @@ for slug, (repo, ps) in prs.items():
             "attempts": len(builds), "findings_rounds": rounds,
             "substantive_findings": sum(int(r["findings_fixed"] or 0) for r in builds), "rework": rework,
             "cost_usd": round(sum(num(r["cost_usd"]) + num(r.get("subagent_cost_usd", "")) for r in builds), 2),
-            "minutes": minutes(builds[0]["started"], merged_at) if builds else None,
+            "minutes": minutes(started(builds[0]), merged_at) if builds else None,
             "models": list(dict.fromkeys(r["model"] for r in builds)), "escalations": escalations(slug),
         },
         # Unknown (null) without a diff to judge its size by.
