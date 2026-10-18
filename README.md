@@ -128,7 +128,8 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
   There, `make test` runs every `tests/*_test.sh`, as many at once as the machine has CPUs (`make test JOBS=2` for fewer),
-  with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`).
+  with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`). A file that fails
+  is run once more on its own, and is reported as flaky if it passes then.
 
 ## License
 
