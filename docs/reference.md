@@ -629,7 +629,8 @@ the lead, each write one more line of their own (§ Model and effort). The plugi
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
-`reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
+`reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`),
+and the first line of a failed command's error.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
@@ -661,7 +662,23 @@ turn in the `subagents/*.jsonl` logs in the folder named after the session, next
 and the tokens columns count the builder's own turns only, so `cost_usd` plus `subagent_cost_usd` is
 the whole build. The subagent columns are empty when there is no session log. When only the copy
 `close` keeps of a deleted log is left, they count the subagent turns inside that log alone: the copy
-leaves out the `subagents/` logs beside it. A story the lead holds after an escalation (`kind: lead` with
+leaves out the `subagents/` logs beside it. After them come five columns that split the minutes
+from `started` to `merged_at` into phases: `building_min`, `ci_min` (a check
+on the PR's head was running), `review_wait_min` (from `pr_created_at` to the first `review`
+event after it, which hands the PR to the merger, or to the merge), `fixing_min` (from each
+`tell:findings` logged between `pr_created_at` and the merge to whichever comes first: the PR's
+next commit (a commit that merges the base in does not count), the next check start, `review` or
+`tell:findings` event, or the merge) and
+`merge_wait_min` (from that first `review` event to the merge). A `review` event, of the story or
+of its epic (`swarm.sh review <epic> <PRs>`), counts for the PRs it names in its outcome. One logged
+before reviews named their PRs (a bare `ok`) counts for its story's PR when exactly one was open then. Where two phases cover the same
+minute, the higher one takes it: fixing, then CI, then review wait, then merge wait; a minute none
+covers is building. The five add up to the whole minutes from `started` to `merged_at`, and are
+empty when either is missing. The events are those of every build of the story, so a retry's tells
+count in the first build's minutes too, and the first build's in the retry's; a tell on an earlier,
+abandoned PR is not counted, as it came before this PR was created. `gh` gives only the latest run of
+each check on the PR's last head, so other CI counts as whichever phase lies under it. A check cancelled while
+queued, which `gh` dates to the year 1, adds no CI. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
@@ -711,7 +728,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `model_fit`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -807,6 +824,14 @@ into `proxy_review_wait_min` instead, timed to its first `tell:findings` or `rev
 come when a review ends, so the two columns are never averaged together. `stacked`
 counts the `stacked` events for the epic's slugs, or all of them on the `all` row. The project
 row comes last, so an epic named `all` still gets its own row above it.
+
+The `time_in_state` section prints TSV `epic prs start_to_merge_min largest_first`, one row per
+epic and a last `all` row, over the `outcomes` rows dated in the window that have the five phase
+columns (their PR merged). With `--epic` it prints that epic's row alone. Each PR counts once, by
+its build that started first, since a retried PR repeats its phases on every build, and is in the
+window only when that build's date is.
+`largest_first` gives the five sums as `<phase>:<minutes>`, the largest first, so
+`ci:45 review_wait:15 fixing:15 merge_wait:15 building:10` says CI held the epic's stories longest.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying
@@ -1030,7 +1055,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (each epic's start-to-merge minutes split into building, CI, review wait, fixing and merge wait, largest first). |
 
 ## Cleanup, escalation and session logs
 
