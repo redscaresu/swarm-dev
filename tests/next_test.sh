@@ -82,6 +82,20 @@ expect "epic planned once its dependency's stories are all in review" "plan-epic
   "item epics/b.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
   "item stories/s2.md 'status: review' 'kind: code' 'epic: b'"
+# A later epic whose one dependency is done is planned before the gate: planning is read-only, and
+# its stories still wait for the user's approval. One not done yet leaves the gate.
+expect "a later epic whose dependency is done is planned before the gate" "plan-epic a" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item epics/b.md 'status: done'" \
+  "item stories/l.md 'status: ready' 'kind: lead'"
+expect "a later epic whose dependency is not done waits in the gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item epics/b.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: b'"
+# shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
+if grep -qF 'its why says the epic'"'"'s dependencies are done' "$(dirname "${SWARM}")/../commands/swarm.md" \
+  && grep -qF 'run it unasked' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
+else echo "FAIL swarm.md does not say the lead plans an unblocked epic unasked"; fails=$((fails + 1)); fi
 # A ready lead story: no agent builds it, so next reaches the plan-epic arm instead of conduct b.
 expect "a ready story of its dependency holds an epic's planning" "gate" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \
@@ -266,8 +280,11 @@ expect "ready story in a later epic waits" "gate" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"
 expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
-expect "only later epics left is a gate" "gate" \
-  "item epics/e1.md 'status: later'"
+# A later epic already planned waits for the user to start it; one with no stories and no open
+# dependency is planned first (below).
+expect "only a planned later epic left is a gate" "gate" \
+  "item epics/e1.md 'status: later'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: e1'"
 # A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
 # A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
 # idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]

@@ -132,6 +132,10 @@ Repeat until a step below says stop:
      (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
+     When its why says the epic's dependencies are done (a `later` or `active` epic, offered before
+     the gate), run it unasked: planning is read-only and costs nothing. Approving its stories
+     stays the user's, unless the user named the epic as pre-approved (in the brief or in chat).
+     A `later` epic's stories then wait in the gate until the user starts it.
      When `next`'s why names a conductor that is still working, start
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.

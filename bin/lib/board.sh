@@ -93,6 +93,8 @@ epic_has_stories() {
 #                     reset, or drops it
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
 #                     file outside the board (release_due): the lead cuts a release
+#   plan-epic <epic>  (again) a later or active epic with no stories whose depends_on are all done
+#                     (unblocked_epic): planning is read-only and its stories wait for approval
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
@@ -171,6 +173,10 @@ next_step() {
   if [[ -n "${n}" ]]; then
     echo "release"; echo "origin/${base} has ${n} commit(s) since ${tag} that change files outside the board: cut a release"; return
   fi
+  epic="$(unblocked_epic)"
+  if [[ -n "${epic}" ]]; then
+    echo "plan-epic ${epic}"; echo "the epic ${epic}'s dependencies are done; planning costs nothing, the plan waits for approval"; return
+  fi
   waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
@@ -223,6 +229,17 @@ plannable_epic() {
   while IFS= read -r f; do
     held="$(epic_holding_deps "${f}")" || continue
     [[ -z "${held}" ]] || continue
+    basename "${f}" .md; return
+  done < <(board epics)
+}
+
+# unblocked_epic — the first later or active epic, in board order, with no stories whose depends_on
+# are all done or gone (open_deps), or nothing. Unlike plannable_epic, a dependency in review holds it.
+unblocked_epic() {
+  local f
+  while IFS= read -r f; do
+    case "$(fm "${f}" status)" in later|active) ;; *) continue ;; esac
+    ! epic_has_stories "$(basename "${f}" .md)" && [[ -z "$(open_deps "$(story_deps "${f}")")" ]] || continue
     basename "${f}" .md; return
   done < <(board epics)
 }
