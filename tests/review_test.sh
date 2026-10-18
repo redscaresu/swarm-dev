@@ -487,6 +487,22 @@ check "a 2000-byte decision of two-byte characters is cut at 1500 bytes on a cha
 for l in "${CHECKLIST[@]:0:5}"; do
   check "a fallback brief with no story still carries: ${l:2:40}..." "yes" "$(has "${l}" "${fbare}")"
 done
+# The layouts a decision is written in, straight through user_decisions (after an empty story file):
+# a paragraph or a bold label with a list under it, a blank line before the list, a loose bullet's
+# continuation, and a wrapped paragraph; each ends where the next block starts.
+printf '%s\n' "We agreed RV-PARA (user, 2026-10-17):" "- RV-PARA-A" "- RV-PARA-B" "" "RV-PARA-END" "" \
+  "**Scope RV-LOOSE (user, 2026-10-17):**" "" "- RV-LOOSE-A" "" "  RV-LOOSE-CONT" "- RV-LOOSE-B" "" \
+  "- **Item RV-ITEM (user, 2026-10-17).**" "" "  RV-ITEM-CONT" "- RV-ITEM-NEXT" "" \
+  "**Phase RV-WRAP (user, 2026-10-13):** the lead" "sets RV-WRAP-LINE" "" "RV-WRAP-END" > "${ROOT}/layouts.md"
+: > "${ROOT}/empty.md"
+lay="$(bash -c '. "$1/lib/build.sh"; user_decisions "$2" "$3"' _ "${SWARM%/*}" "${ROOT}/empty.md" "${ROOT}/layouts.md")"
+for l in "- We agreed RV-PARA (user, 2026-10-17):" "  - RV-PARA-A" "  - RV-PARA-B" \
+  "- **Scope RV-LOOSE (user, 2026-10-17):**" "  - RV-LOOSE-A" "    RV-LOOSE-CONT" "  - RV-LOOSE-B" \
+  "- **Item RV-ITEM (user, 2026-10-17).**" "  RV-ITEM-CONT" "- **Phase RV-WRAP (user, 2026-10-13):** the lead" "  sets RV-WRAP-LINE"; do
+  check "a decision keeps what was decided: ${l}" "yes" "$(has "${l}" "${lay}")"
+done
+check "a decision ends at the next block: after a blank line, or the next bullet for a bullet" "0" \
+  "$(grep -c 'RV-PARA-END\|RV-ITEM-NEXT\|RV-WRAP-END' <<< "${lay}" || true)"
 check "a fallback brief with no story has neither the decision check nor any decision" "0|0" \
   "$(grep -c '(user, ' <<< "${fbare}" || true)|$(grep -c RV-DECISION <<< "${fbare}" || true)"
 rm -f "${p}/.swarm/state/rv" "${p}/.swarm/state/fallback" "${b}/epics/rv.md" "${b}/stories/rv1.md"
