@@ -49,7 +49,10 @@ is one column, top to bottom:
   so a session that sat idle for a while counts as busy; one that ends as another starts, in the same
   second, is no overlap. Each kind of agent has a cell and a colour
   of its own: `█` builders (green), `▓` conductors (cyan), `▒` review agents (yellow), `▪` anything
-  else. With no agent list from herdr the running gauge is left out. When a watched frame is too short to
+  else. After it, `idle: <n> buildable not started` counts the stories `swarm.sh next` would start (ready, of a kind an agent
+  builds, a one-off or in an active epic, a one-off with no worktree yet) that have no builder, no conductor of their
+  epic and, for a one-off, no backlog conductor in this project's panes; it is left out at 0.
+  With no agent list from herdr the running gauge and the idle count are left out. When a watched frame is too short to
   keep the ladder, a few rows of recent and (from 140 columns) the whole left column, the sparkline's
   line goes first, then the gauges. Then one summary line: epics active, agents working (as
   `swarm.sh status` counts them, stalled ones included), PRs green and waiting for you, stalled builders, and today's

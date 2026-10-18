@@ -65,6 +65,21 @@ def deps(fm):
 if __name__ == "__main__":
     stories, me, project_dir, repos_dir, state = sys.argv[1:]
     fms = {os.path.basename(f)[:-3]: front(f) for f in glob.glob(os.path.join(stories, "*.md")) if not f.endswith("/README.md")}
+    # --idle: a blocked story an agent builds (SWARM_AGENT_KINDS; a lead story's step is no code to
+    # share), with no needs: line and no held_by: (a review holds it), whose depends_on story an agent
+    # builds, neither done nor in review (unblock stacks on a PR), has touches and shares no file
+    # with it, waits for nothing it uses (idle_lines).
+    if me == "--idle":
+        kinds = [""] + os.environ.get("SWARM_AGENT_KINDS", "").split()
+        for slug, fm in sorted(fms.items()):
+            files = {e[:2] for e in entries(fm, project_dir, repos_dir)}
+            if fm.get("status") != "blocked" or fm.get("kind", "") not in kinds or fm.get("held_by") or fm.get("needs") or not files:
+                continue
+            for d in sorted(deps(fm) & set(fms)):
+                theirs = {e[:2] for e in entries(fms[d], project_dir, repos_dir)}
+                if fms[d].get("status") not in ("done", "review") and fms[d].get("kind", "") in kinds and theirs and not files & theirs:
+                    print(f"idle: {slug} waits on {d} but shares no touches with it")
+        sys.exit()
     mine = entries(fms[me], project_dir, repos_dir)
     for slug, fm in sorted(fms.items()):
         # A stacked story starts on its parents' branches: neither holds the other back.
