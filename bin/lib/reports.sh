@@ -193,6 +193,8 @@ outcomes_report() {
 #     agents.tsv line of a `role:<role>` or `agent:<name>`, or a findings.tsv row of a
 #     `reviewer:<who>`. An `unlogged: <why>` feature (a read-only command leaves no events line)
 #     shows `-` and is judged on its metric alone.
+#   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
+#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
