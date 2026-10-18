@@ -253,6 +253,22 @@ deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
 
+**The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
+exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
+`zsh -f` (no rc file runs) holding only:
+`PATH`, `HOME`, `TERM`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and the `LC_*` variables,
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `SSH_AUTH_SOCK` (each with swarm.sh's value, when it has one),
+`HERDR_ENV=1`, and herdr's own variables for the pane. A story's `env: [NAME, ...]` adds those names
+for its builder. A conductor gets the names of every story in its epic (or, for `conduct --backlog`,
+of every story with no epic), so the builders it starts can receive them. Each value comes from the
+session that runs `swarm.sh`, and a name it does not have is left out with a warning. A name that is
+not `[A-Z_][A-Z0-9_]*` makes `story` and `conduct` refuse before anything starts. No value goes
+through a command line: swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's
+shell runs and which deletes itself, so the pane's scrollback shows the launch line with no value in
+it. A token `gh` reads from `GH_TOKEN` reaches no agent unless a story names it, so log `gh` in with
+`gh auth login`. Provider settings (Foundry, Bedrock, Vertex) go under `env` in
+`~/.claude/settings.json`, which every Claude Code session reads.
+
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
 `escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
 `close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to

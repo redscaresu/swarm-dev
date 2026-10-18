@@ -93,7 +93,9 @@ section shows how long CI takes per push, how often it goes red and how often it
 builders that stopped with no PR.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the
+while you watch. Agents start with a short list of environment variables, and a token you exported
+reaches a builder only when its story names it under `env:`
+([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
 details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
 
@@ -101,12 +103,8 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 
 - [The method](docs/method.md): the short guide to how planning, building and merging work.
 - [Reference](docs/reference.md): every rule, setting, command and log.
-- On Foundry, Bedrock or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them
-  up (an alias won't reach them):
-
-  ```bash
-  [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
-  ```
+- On Foundry, Bedrock or Vertex, put your provider settings under `env` in `~/.claude/settings.json`.
+  Agents start without your shell's environment, so `~/.zshrc` does not reach them.
 
 - [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in

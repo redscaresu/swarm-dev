@@ -418,7 +418,7 @@ story_role() {
 }
 
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" msg parents
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" msg parents names
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -431,6 +431,7 @@ build_story() {
   touches_overlap "${slug}" "${strict}"   # before anything is made, so --strict leaves nothing behind
   repo=$(sed -n 's/^repo: *//p' "${story}" | head -1)   # a repo in repos_dir; empty is the project's own
   role="$(story_role "${slug}")" || die "${role}"
+  names="$(story_env "${story}")" || die "${names}"
   policy "${role}" >/dev/null
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the worktree exists, so a refusal leaves nothing to clean up.
@@ -459,7 +460,7 @@ build_story() {
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
-  start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
+  AGENT_ENV_NAMES="${names}" start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
@@ -946,10 +947,22 @@ conduct_epic() {
   echo "${want#conduct-}"
 }
 
+# epic_env <epic> — the env: names of every story on the board in <epic> (empty: the stories with no
+# epic), so the builders a conductor starts can receive them. A bad name prints the reason and returns 1.
+epic_env() {
+  local s n out=""
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "$1" ]] || continue
+    n="$(story_env "${s}")" || { echo "${n}"; return 1; }
+    out+=" ${n}"
+  done < <(board stories)
+  printf '%s' "${out# }"
+}
+
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog, in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err names
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -963,6 +976,7 @@ start_conductor() {
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
   require_claude
+  if [[ "$1" == --backlog ]]; then names="$(epic_env "")"; else names="$(epic_env "${epic}")"; fi || die "${names}"
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
@@ -970,7 +984,7 @@ start_conductor() {
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
-  HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
+  HERDR_WORKSPACE_ID="${ws}" AGENT_ENV_NAMES="${names}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
   inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
