@@ -14,7 +14,9 @@ each step is in [`reference.md`](reference.md).
    codex check for gaps and overlaps (reference.md § Scoping an epic).
 3. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
-   § Building, § Merging).
+   § Building, § Merging). Where the base has a merge queue, `swarm.sh merge` sends the PR through
+   it, so each PR is tested on top of the PRs merging with it. A PR the queue drops is handled like
+   a red check: its builder gets the failing checks, merges the base in and pushes.
 
 `/swarm-dev:swarm` runs the chain after the epic. `swarm.sh next` reads the board and names the next
 step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a

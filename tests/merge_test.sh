@@ -48,6 +48,8 @@ case "$1 $2" in
   "pr merge")
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
+    # --auto enqueues: the queue fixture (serve queue) says what happens next.
+    case " $* " in *" --auto "*) exit 0 ;; esac
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
@@ -60,6 +62,9 @@ case "$1 $2" in
     for a in "$@"; do path="${a}"; done
     sha="${path#*/commits/}"; sha="${sha%%/*}"
     case "${path}" in
+      # The merge queue's read of the PR (api graphql); a read that says merged marks the PR so.
+      query=*) out="$(serve queue)" || exit 1; echo "${out}"
+               case "${out}" in *'"state":"MERGED"'*) echo MERGED > "${FX}/state"; printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;; esac ;;
       */check-runs*) serve "${sha}.checks"
                      # The head moves once its checks are read, before the merge.
                      [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head" ;;
@@ -563,8 +568,38 @@ echo '[{"type":"pull_request","parameters":{}},{"type":"deletion"},{"type":"non_
 echo '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_deletions":{"enabled":false},"enforce_admins":{"enabled":false}}' > "${FX}/branch"
 merge "${URL}"; is "merge_admin = on, only the review and push rules: exits 0" 0 "${rc}"
 check "merge_admin = on, only the review and push rules: --admin" grep -q -- "^pr merge 7 .*--admin" "${ROOT}/gh.log"
-fresh; echo '[{"type":"merge_queue","parameters":{}}]' > "${FX}/rules"; merge "${URL}"
-is "merge_admin off: a merge_queue rule is GitHub's, not read" 0 "${rc}"
+
+# --- A merge_queue rule on the base: enqueue the pinned head, wait for the queue, no main-ci wait.
+G=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb   # the merge group's commit
+# qread <file> <state> <in queue> <auto-merge> <group|-> <merge commit|-> [reason] — one graphql read of the PR.
+qread() {
+  local g=null m=null r=""
+  [[ "$5" == - ]] || g="{\"headCommit\":{\"oid\":\"$5\"}}"; [[ "$6" == - ]] || m="{\"oid\":\"$6\"}"
+  [[ -z "${7:-}" ]] || r="{\"reason\":\"$7\"}"
+  printf '{"data":{"repository":{"pullRequest":{"state":"%s","isInMergeQueue":%s,"autoMergeRequest":%s,"mergeCommit":%s,"mergeQueueEntry":%s,"timelineItems":{"nodes":[%s]}}}}}\n' \
+    "$2" "$3" "$4" "${m}" "${g}" "${r}" > "$1"
+}
+queue_rule='[{"type":"pull_request","parameters":{}},{"type":"merge_queue","parameters":{"grouping_strategy":"ALLGREEN"}}]'
+fresh; echo "${queue_rule}" > "${FX}/rules"
+qread "${FX}/queue.1" OPEN false '{"enabledAt":"x"}' - -; qread "${FX}/queue.2" OPEN true null "${G}" -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "queue: exits 0" 0 "${rc}"
+check "queue: enqueued with --auto pinned to the head, no method" grep -qxF "pr merge 7 --repo o/r --auto --match-head-commit ${H1}" "${ROOT}/gh.log"
+check "queue: no direct merge" bash -c "! grep -E -- '^pr merge .*--(squash|merge|rebase)' '${ROOT}/gh.log'"
+is "queue: merge ok, then reconcile, no main-ci wait" "merge s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "queue: says it merged through the queue" said "merged: #7 through the merge queue (head 1111111, merge commit aaaaaaa)"
+fresh; echo "${queue_rule}" > "${FX}/rules"; checks "${FX}/${G}.checks" "$(run test completed success)" "$(run lint completed failure)"; statuses "${FX}/${G}.status"
+qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" OPEN false null - - "MERGE_QUEUE_STATUS_CHECK_FAILED"
+merge "${URL}"
+is "dequeue: exits non-zero" 1 "${rc}"
+check "dequeue: names the failing check on the merge group's commit" said "dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): lint (failure) https://github.com/o/r/runs/lint"
+is "dequeue: one merge line naming the check, no reconcile" "merge s dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): lint (failure) https://github.com/o/r/runs/lint" "$(events)"
+check "dequeue: the story stays on the board" test -e "${S}"
+fresh; echo "${queue_rule}" > "${FX}/rules"; qread "${FX}/queue" OPEN true null "${G}" -
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+is "a queue that never merges: exits non-zero" 1 "${rc}"
+check "a queue that never merges: unconfirmed, still in the queue" logged "^merge s unconfirmed (timeout (in the merge queue))"
+fresh; touch "${FX}/rules.fail"; merge "${URL}"; refused "rules that cannot be read" "cannot tell whether main has a merge queue"
 # The review rule's own settings: thread resolution, and merge methods that leave out the one used.
 fresh "merge_admin = on"; echo '[{"type":"pull_request","parameters":{"required_review_thread_resolution":true}}]' > "${FX}/rules"
 merge "${URL}"; refused "merge_admin = on, the review rule's required_review_thread_resolution" "pull_request's required_review_thread_resolution"

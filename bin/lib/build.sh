@@ -207,7 +207,12 @@ Merge a PR only when it is green and reviewed, and only through \`swarm.sh merge
 \`gh pr merge\` or \`gh api\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
 repo's merge method, squash when allowed
 (\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
-and only once every check on that head has completed and passed, which it checks itself. Run one
+and only once every check on that head has completed and passed, which it checks itself. On a base
+with a merge queue it enqueues that head with \`--auto --match-head-commit\` instead and waits for the
+queue, which tests it on top of the base and the PRs ahead of it. A PR the queue drops prints
+\`dequeued (<reason>): <checks>\` and merged nothing: handle it like a red check. Send the failing
+checks to the builder with \`swarm.sh tell <slug> findings <file>\`, telling it to merge
+origin/<base> in, fix what broke and push; then review the new head and merge it again. Run one
 \`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and
 reconcile done. Run it in the background (Bash \`run_in_background\`)
 and wait for it: it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the merge commit on the

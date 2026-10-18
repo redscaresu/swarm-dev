@@ -129,6 +129,63 @@ def admin(repo, base, sha, method):
             why.append("%s requires the head up to date, and it is %d commit(s) behind %s" % (base, behind, base))
     return why
 
+def has_queue(repo, base):
+    """Whether base's rulesets hold a merge_queue rule. The branch is one path segment, / encoded."""
+    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, urllib.parse.quote(base, safe=""))):
+        if not isinstance(d, list):
+            raise Err("unreadable rules for " + base)
+        if any(isinstance(r, dict) and r.get("type") == "merge_queue" for r in d):
+            return True
+    return False
+
+QUEUE_QUERY = """query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) {
+  state isInMergeQueue autoMergeRequest { enabledAt } mergeCommit { oid } mergeQueueEntry { headCommit { oid } }
+  timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { reason } } } } } }"""
+
+def dequeued(repo, group, pr):
+    """Why the PR left the queue: GitHub's reason, and the red or unfinished checks on the merge
+    group's commit when one was seen."""
+    nodes = (pr.get("timelineItems") or {}).get("nodes") or [{}]
+    why = "dequeued (%s)" % ((nodes[-1] or {}).get("reason") or "no reason given")
+    if not group:
+        return why + ": no merge group commit seen"
+    try:
+        red, wait, _ = checks(repo, group, need_run=False)
+    except Err as e:
+        return "%s: cannot read the checks on %s: %s" % (why, group[:7], e)
+    return "%s: %s" % (why, "; ".join(red + wait) or "no red check on " + group[:7])
+
+def queued(repo, n, secs, poll):
+    """Wait for PR n, enqueued with auto-merge, to merge (0, "merged <merge commit>") or leave the queue
+    unmerged (1): open, not in the queue and with no auto-merge waiting is a dequeue, closed is too.
+    The merge group's commit is read while it is queued. A gh error is a missed read, READ_TRIES in
+    a row an error; 2 is a timeout after secs."""
+    owner, name = repo.split("/")
+    end, missed, group, last = time.time() + secs, 0, None, "not read yet"
+    while True:
+        try:
+            pr = json.loads(gh("api", "graphql", "-f", "o=" + owner, "-f", "r=" + name, "-F", "n=" + n,
+                               "-f", "query=" + QUEUE_QUERY))["data"]["repository"]["pullRequest"]
+            state = pr["state"]
+        except (Err, ValueError, KeyError, TypeError) as e:
+            missed += 1
+            if missed == READ_TRIES:
+                raise Err("%s (%d reads in a row failed)" % (e, missed))
+            last = "a read failed: %s" % e
+        else:
+            missed = 0
+            group = ((pr.get("mergeQueueEntry") or {}).get("headCommit") or {}).get("oid") or group
+            if state == "MERGED":
+                return 0, "merged %s" % ((pr.get("mergeCommit") or {}).get("oid") or "")
+            if state != "OPEN":
+                return 1, "%s while queued" % state.lower()
+            if not pr.get("isInMergeQueue") and not pr.get("autoMergeRequest"):
+                return 1, dequeued(repo, group, pr)
+            last = "in the merge queue" if pr.get("isInMergeQueue") else "auto-merge waits for the head's checks"
+        if time.time() >= end:
+            return 2, "timeout (%s)" % last
+        time.sleep(poll)
+
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
     match nothing and skip the workflow."""
@@ -306,6 +363,12 @@ try:
         if why:
             print("; ".join(why))
             sys.exit(1)
+    elif mode == "queue":
+        print("yes" if has_queue(repo, args[0]) else "no")
+    elif mode == "queued":
+        rc, msg = queued(repo, args[0], float(args[1]), float(args[2]))
+        print(msg)
+        sys.exit(rc)
     elif mode == "files":
         files = pr_files(repo, args[0], int(args[1]))
         if not files:

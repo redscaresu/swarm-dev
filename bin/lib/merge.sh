@@ -34,6 +34,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # protection is unprotected only when GitHub says "Branch not protected".
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them.
+# ci_gate queue <owner/repo> <base> — yes when <base>'s rulesets hold a merge_queue rule, else no;
+# a read that fails is 3.
+# ci_gate queued <owner/repo> <pr> <seconds> <poll> — wait for the enqueued PR: merged <commit> (0),
+# dequeued (<reason>): <checks red on the merge group's commit> or closed (1), timeout (2), error (3).
 ci_gate() {
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"
 }
@@ -88,13 +92,14 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # old or new, is on the board; with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
-# merge_admin = on, --admin; never --auto. Then wait for CI on the merge commit and, without --board or --release, run
+# merge_admin = on, --admin; never --auto, unless (merge_admin off) the base's rules hold a merge_queue:
+# then queue_merge enqueues the head instead. Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -168,31 +173,38 @@ merge_pr() {
   [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
   # merge_admin = on: --admin skips every rule on the base, not only the review, so ci_gate admin
   # checks them first.
-  admin=()
+  # Without it, a merge_queue rule on the base sends the head through the queue (queue_merge).
+  admin=(); queue=no
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${CFG_merge_admin}" == on ]]; then
     why="$(ci_gate admin "${repo}" "${base}" "${head}" "${method}")" || merge_fail "--admin may not merge ${head:0:7} into ${base}: ${why}"
     admin=(--admin)
-  fi
-  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
-  # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
-  read -r state oid <<< "$(merged_state "${n}" "${repo}")"
-  if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
-    # A failed gh pr merge on a PR that still reads open or closed never reached a merge.
-    [[ -n "${ran}" || "${state}" == unreadable ]] || merge_fail "gh pr merge failed: ${why##*$'\n'}"
-    [[ "${state}" != MERGED ]] || state="MERGED, no merge commit"
-    merge_fail "unconfirmed (${state}): gh pr merge ran, but ${url} does not read as merged; check it by hand"
-  fi
-  record_event merge "${MERGE_TARGET}" ok
-  echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
-  if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
-      "${SWARM_MERGE_POLL:-${MERGE_POLL}}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
-    why=ok
   else
-    rc=$?; why="${why:-error (exit ${rc})}"
+    queue="$(ci_gate queue "${repo}" "${base}")" || merge_fail "cannot tell whether ${base} has a merge queue: ${queue}"
   fi
-  record_event main-ci "${MERGE_TARGET}" "${why}"
-  echo "main-ci: ${why}"
+  if [[ "${queue}" == yes ]]; then
+    queue_merge "${n}" "${repo}" "${head}"
+  else
+    why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
+    # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
+    read -r state oid <<< "$(merged_state "${n}" "${repo}")"
+    if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+      # A failed gh pr merge on a PR that still reads open or closed never reached a merge.
+      [[ -n "${ran}" || "${state}" == unreadable ]] || merge_fail "gh pr merge failed: ${why##*$'\n'}"
+      [[ "${state}" != MERGED ]] || state="MERGED, no merge commit"
+      merge_fail "unconfirmed (${state}): gh pr merge ran, but ${url} does not read as merged; check it by hand"
+    fi
+    record_event merge "${MERGE_TARGET}" ok
+    echo "merged: ${url} (${method}, head ${head:0:7}, merge commit ${oid:0:7}); waiting for CI on ${base}"
+    if why="$(ci_gate main "${repo}" "${oid}" "${base}" "${n}" "${changed}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
+        "${SWARM_MERGE_POLL:-${MERGE_POLL}}" "${SWARM_MERGE_CI_GRACE:-${MERGE_CI_GRACE}}")"; then
+      why=ok
+    else
+      rc=$?; why="${why:-error (exit ${rc})}"
+    fi
+    record_event main-ci "${MERGE_TARGET}" "${why}"
+    echo "main-ci: ${why}"
+  fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -206,7 +218,27 @@ merge_pr() {
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
 }
 
-# within <seconds> <command>... — the command in its own process group, the group KILLed after
+# queue_merge <n> <owner/repo> <head> — merge's path for a base with a merge queue: enqueue the head
+# with --auto pinned by --match-head-commit (the queue picks the method), wait up to MERGE_CI_SECONDS
+# for it to merge (ci_gate queued) and log merge ok. The queue ran CI on the commit it merges, so
+# there is no main-ci wait. A dequeue fails naming the checks red on the merge group's commit; a
+# merge with no merge commit, or a wait that ends otherwise, is unconfirmed.
+queue_merge() {
+  local why rc=0 oid
+  why="$(gh pr merge "$1" --repo "$2" --auto --match-head-commit "$3" 2>&1)" || merge_fail "gh pr merge --auto failed: ${why##*$'\n'}"
+  echo "queued: ${MERGE_TARGET} #$1 (head ${3:0:7}); waiting for the merge queue"
+  why="$(ci_gate queued "$2" "$1" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-${MERGE_POLL}}")" || rc=$?
+  case ${rc} in
+    0) oid="${why#merged }"
+       [[ "${oid}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "unconfirmed (MERGED, no merge commit): the merge queue merged #$1; check it by hand" ;;
+    1) merge_fail "${why}" ;;
+    *) merge_fail "unconfirmed (${why:-error (exit ${rc})}): #$1 was enqueued but does not read as merged; check it by hand" ;;
+  esac
+  record_event merge "${MERGE_TARGET}" ok
+  echo "merged: #$1 through the merge queue (head ${3:0:7}, merge commit ${oid:0:7})"
+}
+
+# within <seconds> <command>... —the command in its own process group, the group KILLed after
 # <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
 # its children. Else the command's own status (128+N for a signal).
 within() {

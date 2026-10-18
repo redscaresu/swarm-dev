@@ -650,7 +650,8 @@ per item they move. `merge` writes all its own lines, under the story's or epic'
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
-or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+or `error <why>`, then reconcile's lines. Through a merge queue (§ Merging) it is `merge ok` and then
+reconcile's lines, or a single `merge dequeued (<reason>): <checks>` line. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
@@ -1020,7 +1021,25 @@ The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
-after the check stops the merge. It never passes `--auto`. It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
+after the check stops the merge. It never passes `--auto`, except to join a merge queue (below). It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
+
+**Merge queue.** With `merge_admin` off, `merge` reads the base's rulesets
+(`repos/<owner>/<repo>/rules/branches/<base>`) before it merges. When they hold a `merge_queue` rule,
+it enqueues the head with `gh pr merge --auto --match-head-commit <head>` (the queue picks the
+method) instead of merging. The queue tests the PR on top of the base and the PRs queued ahead of
+it, so two PRs that are each green alone but red together never land. `merge` then reads the PR
+every 20 seconds, up to 30 minutes, until it merges or leaves the queue. A merged PR logs `merge ok`
+and goes straight to reconcile: the queue already ran CI on the commit it merged, so there is no
+`main-ci` wait. A PR that leaves the queue unmerged is a dequeue. `merge` exits non-zero with one
+`merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished
+on the merge group's commit. The conductor handles that like a red check: it sends the failing
+checks to the builder, which merges the base in and pushes, then reviews and merges the new head.
+A queue wait that runs out, or a PR that merged with no merge commit, is logged as unconfirmed. If
+the rules cannot be read, `merge` refuses and merges nothing. With no `merge_queue` rule the path
+is the one above. ci.yml and zizmor.yml run on `merge_group`, so the required checks report on each
+group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
+merges with `--admin`, which would skip a queue. `ci_gate admin` refuses a base with a
+`merge_queue` rule for that reason.
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as

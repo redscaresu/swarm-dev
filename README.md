@@ -27,7 +27,8 @@ the run stops whenever a decision is yours.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
    `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
-   session, so merges go through `swarm.sh merge`. It also refuses a `cd` followed by `;`, a
+   session, so merges go through `swarm.sh merge`. Where the base has a GitHub merge queue,
+   `swarm.sh merge` goes through it ([details](docs/reference.md#merging)). The hook also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
    `reset --hard` in the main checkout.
 
