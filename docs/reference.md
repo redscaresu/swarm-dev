@@ -236,8 +236,8 @@ first 9 characters of the project directory's name, then 6 hex characters of a c
 `backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
 names span every project, so naming it for the project's path lets two projects each run one at once,
 even two directories with the same name. A name another project's agent holds is refused before the
-old report or brief is touched, and the refusal says where that agent runs. An epic slugged
-`backlog-<x>` is refused too, since its conductor would get a backlog conductor's kind of name. It watches only
+old report or brief is touched, and the refusal says where that agent runs. An epic whose
+conductor would take that name (`backlog-<dir>-<hash>` for this project) is refused too. It watches only
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as

@@ -71,7 +71,7 @@ for p in "${A_DIR}" "${B_DIR}"; do
 done
 run() { local p="$1"; shift; (cd "${ROOT}/${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 # started <n> — the name of the <n>th backlog conductor herdr started.
-started() { sed -n 's/^agent start \(conduct-backlog-[^ ]*\) .*/\1/p' "${ROOT}/herdr.log" | sed -n "$1p"; }
+started() { sed -n 's/^agent start \(conduct-backlog-[^ ]*-[0-9a-f]\{6\}\) .*/\1/p' "${ROOT}/herdr.log" | sed -n "$1p"; }
 fits() { if [[ "$1" =~ ^conduct-backlog-api-[0-9a-f]{6}$ ]]; then echo yes; else echo "no, got: $1"; fi; }
 
 out_a="$(run "${A_DIR}" conduct --backlog || echo "exit $?")"
@@ -91,6 +91,9 @@ check "next in each project waits on its own backlog conductor" "wait ${A}|wait 
 echo reported > "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md"
 check "A's report is A's alone: A collects, B still waits" "collect ${A}|wait ${B}" \
   "$(run "${A_DIR}" next | head -1)|$(run "${B_DIR}" next | head -1)"
+
+rm "${brief_a}"
+check "with its brief gone, A's reported conductor is still collected" "collect ${A}" "$(run "${A_DIR}" next | head -1)"
 
 # dash: A's conductor, its session idle, has reported (its report is found by its name).
 sess="$(grep -F "${A}" "${ROOT}/${A_DIR}/.swarm/agents.tsv" | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -1)"
@@ -126,12 +129,17 @@ check "a name held by another project's agent is refused, naming that project's 
 check "a refused conduct --backlog keeps the uncollected report and the brief" "reported|kept" \
   "$(cat "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md" 2>/dev/null || echo gone)|$(cat "${brief_a}")"
 
-# An epic slugged backlog-<x> would get a backlog conductor's kind of name: refused, starting nothing.
-item "${ROOT}/${A_DIR}/docs" epics/backlog-x.md "status: active"
+# An epic whose conductor would take A's backlog conductor's name is refused, starting nothing; an
+# epic merely slugged backlog-<x> is not.
+item "${ROOT}/${A_DIR}/docs" "epics/${A#conduct-}.md" "status: active"
 n="$(grep -c '^agent start' "${ROOT}/herdr.log")"
-out="$(run "${A_DIR}" conduct backlog-x || echo "exit $?")"
-check "conduct backlog-<x> is refused, and starts nothing" "yes|yes|${n}" \
-  "$(has "exit 1" "${out}")|$(has "backlog-* are the backlog conductor's names" "${out}")|$(grep -c '^agent start' "${ROOT}/herdr.log")"
+out="$(run "${A_DIR}" conduct "${A#conduct-}" || echo "exit $?")"
+check "conduct <the backlog conductor's name, as an epic> is refused, and starts nothing" "yes|yes|${n}" \
+  "$(has "exit 1" "${out}")|$(has "would take the backlog conductor's name" "${out}")|$(grep -c '^agent start' "${ROOT}/herdr.log")"
+item "${ROOT}/${A_DIR}/docs" epics/backlog-grooming.md "status: active"
+out="$(run "${A_DIR}" conduct backlog-grooming || echo "exit $?")"
+check "conduct backlog-grooming, an epic of that slug, starts its conductor" "no|yes" \
+  "$(hasnt "exit" "${out}")|$(has "agent start conduct-backlog-grooming " "$(cat "${ROOT}/herdr.log")")"
 
 # A dir named like a retired agent (work-done) still gives a live conductor's name: next waits on it.
 mkdir -p "${ROOT}/work-done/.claude/swarm"; : > "${ROOT}/work-done/.claude/swarm/config"
@@ -141,6 +149,21 @@ run work-done conduct --backlog >/dev/null || true
 C="$(started 3)"
 check "a project dir ending -done gets a name that is not a retired one, and next waits on it" "no|wait ${C}" \
   "$([[ "${C}" =~ -done[0-9]*$ ]] && echo yes || echo no)|$(run work-done next | head -1)"
+
+# A dir name of multibyte characters still leaves room for the hash.
+mkdir -p "${ROOT}/ünï-cödé-ünï/.claude/swarm"; : > "${ROOT}/ünï-cödé-ünï/.claude/swarm/config"
+git -C "${ROOT}/ünï-cödé-ünï" init -q
+item "${ROOT}/ünï-cödé-ünï/docs" stories/u1.md "status: ready" "kind: code"
+run "ünï-cödé-ünï" conduct --backlog >/dev/null || true
+D="$(sed -n 's/^agent start \(conduct-backlog-[^ ]*\) .*/\1/p' "${ROOT}/herdr.log" | tail -1)"
+check "a multibyte dir name keeps the hash in the name" "yes" \
+  "$([[ "${D}" =~ ^conduct-backlog-[a-z0-9_-]{1,9}-[0-9a-f]{6}$ ]] && echo yes || echo "no, got: ${D}")"
+
+# Once the holder elsewhere is gone, A starts again, and its new run removes the old report.
+awk '$2 != "w:99"' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
+out="$(run "${A_DIR}" conduct --backlog || echo "exit $?")"
+check "a new conduct --backlog removes the report its earlier run left" "no|gone" \
+  "$(hasnt "exit" "${out}")|$(cat "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md" 2>/dev/null || echo gone)"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

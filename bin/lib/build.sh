@@ -936,10 +936,11 @@ hld_workspace() {
 # of the project's path>: 32 characters at most, distinct for two dirs of one name, and never ending
 # like a retired agent's (-done).
 conductor_name() {
-  local b crc
+  local n crc
   [[ "$1" == backlog ]] || { agent_name "conduct-$1"; return; }
-  b="$(basename "${PROJECT_DIR}")"; crc="$(printf '%s' "${PROJECT_DIR}" | cksum)"
-  agent_name "conduct-backlog-${b:0:9}-$(printf '%06x' $((${crc%% *} % 16777216)))"
+  # Sanitized before the cut: a multibyte character can become several dashes.
+  n="$(agent_name "conduct-backlog-$(basename "${PROJECT_DIR}")")"; crc="$(printf '%s' "${PROJECT_DIR}" | cksum)"
+  printf '%s-%06x' "${n:0:25}" $((${crc%% *} % 16777216))
 }
 
 # conductor_report <agent> — where a conductor writes its report as its last act.
@@ -953,6 +954,7 @@ conductor_inbox() { echo "${PROJECT_DIR}/.swarm/inbox/$1"; }
 conduct_epic() {
   local f e want
   want="$(agent_name "$1")"
+  [[ "${want}" != "$(conductor_name backlog)" ]] || { echo backlog; return; }   # even with no brief
   # shellcheck disable=SC2012 # newest first; brief names are epic slugs, [a-z0-9-]
   while IFS= read -r f; do
     e="$(basename "${f}" .md)"; e="${e#conduct-}"
@@ -988,8 +990,9 @@ start_conductor() {
     [[ ! -e "${epic_file}" ]] || die "conduct --backlog: ${epic_file} is an epic named backlog; rename it first"
   else
     [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
-    # An epic backlog-<x> would get conduct-backlog-<x>, the backlog conductor's kind of name.
-    [[ "${epic}" != backlog && "${epic}" != backlog-* ]] || die "conduct: backlog and backlog-* are the backlog conductor's names; run conduct --backlog, or rename ${epic_file}"
+    # An epic whose conductor would take this project's backlog conductor's name.
+    [[ "${epic}" != backlog && "$(conductor_name "${epic}")" != "$(conductor_name backlog)" ]] \
+      || die "conduct: ${epic} would take the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
     hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
     [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
@@ -1000,7 +1003,7 @@ start_conductor() {
   name="$(conductor_name "${epic}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
-  rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
+  rm -f "${PROJECT_DIR}/.swarm/conduct-${epic}.report.md"   # a report left by an earlier run is not this one's
   read -r ws placeholder <<< "$(hld_workspace "${hld}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
