@@ -32,10 +32,10 @@ def exists(path):
     return path.startswith("docs/") and bool(glob.glob(os.path.join(repo, "templates", path)))
 
 def check_code(code, out):
-    for c in re.findall(r"(?<![\w.-])swarm\.sh\s+([a-z][\w-]*)", code):
+    for c in re.findall(r"(?<![\w.-])swarm\.sh[ \t]+([a-z][\w-]*)", code):
         if c not in commands:
             out.append("swarm.sh " + c)
-    for k in re.findall(r"(?<![\w.-])swarm\.sh\s+config\s+([a-z][\w-]*)", code):
+    for k in re.findall(r"(?<![\w.-])swarm\.sh[ \t]+config[ \t]+([a-z][\w-]*)", code):
         if k not in keys | {"project"}:
             out.append("config key " + k)
     for m in re.finditer(r"(?<![\w.~/$-])(?:\./)?(" + ROOTS + r"[\w./*-]*)", code):
@@ -88,18 +88,22 @@ for rel in files:
 EOF
 }
 
+# unknown <found> <known> — the findings <known> does not allow. gone <found> <known> — the entries of
+# <known> that are no longer found.
+unknown() { comm -23 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
+gone() { comm -13 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
+
 fails=0
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
-doc_check "${REPO}" | LC_ALL=C sort > "${tmp}/found"
-LC_ALL=C sort "${KNOWN}" > "${tmp}/known"
-new="$(comm -23 "${tmp}/found" "${tmp}/known")"
+doc_check "${REPO}" > "${tmp}/found"
+new="$(unknown "${tmp}/found" "${KNOWN}")"
 if [[ -n "${new}" ]]; then
   echo "FAIL the docs name something swarm.sh does not have (fix the doc; AGENTS.md is the lead's):"; echo "${new}"
   fails=$((fails + 1))
 else echo "ok   every command, config key and path the docs name exists, or is in doc_check_known.txt"; fi
-gone="$(comm -13 "${tmp}/found" "${tmp}/known")"
-if [[ -n "${gone}" ]]; then
-  echo "FAIL doc_check_known.txt lists what the docs no longer say; remove it:"; echo "${gone}"
+stale="$(gone "${tmp}/found" "${KNOWN}")"
+if [[ -n "${stale}" ]]; then
+  echo "FAIL doc_check_known.txt lists what the docs no longer say; remove it:"; echo "${stale}"
   fails=$((fails + 1))
 else echo "ok   every doc_check_known.txt entry is still found"; fi
 if [[ "$(cat "${KNOWN}")" != "$(LC_ALL=C sort "${KNOWN}")" ]]; then
@@ -107,7 +111,9 @@ if [[ "$(cat "${KNOWN}")" != "$(LC_ALL=C sort "${KNOWN}")" ]]; then
 else echo "ok   doc_check_known.txt is sorted"; fi
 
 # Fixture docs: each kind of stale reference is caught, and the real ones are not.
-mkdir -p "${tmp}/fixture/docs"
+mkdir -p "${tmp}/fixture/docs" "${tmp}/fixture/templates"
+# A line ending in swarm.sh does not make the next line's first word a command.
+printf 'note: swarm.sh\nreads this\n' > "${tmp}/fixture/templates/Board.base"
 cat > "${tmp}/fixture/README.md" <<'EOF'
 Run `swarm.sh nosuch`, `swarm.sh dash2`, `swarm.sh config merge2` or `swarm.sh dash`, then `swarm.sh cost` (removed, prints a pointer).
 See [the method](docs/method.md) and [gone](docs/nosuch.md), `bin/lib/nosuch.sh`, `./bin/gone.sh` and `./bin/swarm.sh`.
@@ -121,11 +127,27 @@ cat > "${tmp}/fixture/docs/method.md" <<'EOF'
 | plain_key | 0 | stale, no backticks |
 EOF
 want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tlink docs/nosuch.md\nREADME.md\tpath docs/nosuch/\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key'
-got="$(doc_check "${tmp}/fixture")"
+doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
+got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
   echo "ok   fixture docs: an unknown command, config key, link and path are each caught, and nothing else"
 else
   echo "FAIL fixture docs: want:"; echo "${want}"; echo "got:"; echo "${got}"; fails=$((fails + 1))
+fi
+
+# A fixture known list, written as an entry is: one finding it allows and one the docs no longer say.
+printf 'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh stale\n' > "${tmp}/fixture.known"
+new="$(unknown "${tmp}/fixture.found" "${tmp}/fixture.known")"
+if [[ "${new}" != *$'README.md\tswarm.sh nosuch'* && "${new}" == *$'README.md\tswarm.sh dash2'* ]]; then
+  echo "ok   fixture known list: its entry is allowed and a finding not in it still fails"
+else
+  echo "FAIL fixture known list: allowed wrongly, the findings left were:"; echo "${new}"; fails=$((fails + 1))
+fi
+stale="$(gone "${tmp}/fixture.found" "${tmp}/fixture.known")"
+if [[ "${stale}" == $'README.md\tswarm.sh stale' ]]; then
+  echo "ok   fixture known list: an entry no longer found is reported gone"
+else
+  echo "FAIL fixture known list: want swarm.sh stale gone, got:"; echo "${stale}"; fails=$((fails + 1))
 fi
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
