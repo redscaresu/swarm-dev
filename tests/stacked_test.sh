@@ -287,7 +287,7 @@ check "the merge = human brief drops 'stays blocked until the human merges', and
   "$(hasnt "stays blocked until the human merges" "${cb}")|$(has 'A story printed `(stacked on <parents>)` starts on its parents'"'"' branches' "${cb}")|$(
   has 'When `swarm.sh review` holds a stacked story instead (`held: <slug> waits for <p> to merge`)' "${cb}")|$(
   has 'close its builder with a bare `swarm.sh close <slug>`, which counts nothing for a blocked story and keeps its build' "${cb}")|$(held_ready "${cb}")"
-run close conduct-backlog >/dev/null || true
+run close conduct-backlog-proj >/dev/null || true
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null || true
 cb="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-backlog.md")"

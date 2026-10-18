@@ -78,8 +78,8 @@ rm "${b}/epics/backlog.md"
 # --- merge = human: the brief, and next waiting on it, then collecting it.
 run conduct --backlog >/dev/null
 bl="$(cat "${brief}" 2>/dev/null || true)"
-check "conduct --backlog starts conduct-backlog in a workspace named backlog" "yes|yes" \
-  "$(has "agent start conduct-backlog" "$(cat "${ROOT}/herdr.log")")|$(has "workspace create --label backlog" "$(cat "${ROOT}/herdr.log")")"
+check "conduct --backlog starts conduct-backlog-<project dir> in a workspace named backlog" "yes|yes" \
+  "$(has "agent start conduct-backlog-proj " "$(cat "${ROOT}/herdr.log")")|$(has "workspace create --label backlog" "$(cat "${ROOT}/herdr.log")")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the backlog brief names stories with no epic:, story --strict and watch --backlog" "yes|yes|yes|yes" \
   "$(has 'You are the backlog conductor: you build the ready stories on the board with no `epic:`.' "${bl}")|$(has 'Start only stories with no `epic:`, and leave every epic and its stories alone.' "${bl}")|$(has 'swarm.sh story --strict <slug>' "${bl}")|$(has 'swarm.sh watch --backlog` in the background' "${bl}")"
@@ -99,11 +99,11 @@ check "with merge = human, a refusal naming another one-off in review is reporte
 refused story as \`not started: <slug> (waits on <other>'s merge)\`." "${bl}")"
 check "the backlog conductor reports to conduct-backlog.report.md" "yes" "$(has "${p}/.swarm/conduct-backlog.report.md" "${bl}")"
 nx="$(run next)"
-check "with conduct-backlog alive, next waits on it" "wait conduct-backlog" "${nx%%$'\n'*}"
+check "with conduct-backlog-proj alive, next waits on it" "wait conduct-backlog-proj" "${nx%%$'\n'*}"
 echo reported > "${p}/.swarm/conduct-backlog.report.md"
 nx="$(run next)"
-check "once conduct-backlog has reported, next collects it" "collect conduct-backlog" "${nx%%$'\n'*}"
-run close conduct-backlog >/dev/null
+check "once conduct-backlog-proj has reported, next collects it" "collect conduct-backlog-proj" "${nx%%$'\n'*}"
+run close conduct-backlog-proj >/dev/null
 
 # --- The epic conductor's brief: the same review paragraph, and no 'or verify'.
 run conduct e >/dev/null
@@ -127,7 +127,7 @@ check "with merge = agent, the backlog conductor also stops when CI on the base 
 check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
   "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
 
-run close conduct-backlog >/dev/null
+run close conduct-backlog-proj >/dev/null
 run conduct e >/dev/null
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has '`swarm.sh finish <epic>` only on a board outside the repo' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"

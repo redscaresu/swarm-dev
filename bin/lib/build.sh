@@ -673,7 +673,7 @@ board_pr_merge_rule() {
 # The epic backlog is the backlog conductor's: the ready stories with no epic.
 conduct_brief() {
   local epic="$1" inbox scope="Stay inside this epic: start no story outside it, and leave the HLD and other epics alone."
-  inbox="$(conductor_inbox "$(agent_name "conduct-$1")")"
+  inbox="$(conductor_inbox "$(conductor_name "$1")")"
   if [[ "${epic}" == backlog ]]; then
     scope="Start only stories with no \`epic:\`, and leave every epic and its stories alone."
     cat <<EOF
@@ -931,6 +931,17 @@ hld_workspace() {
   echo "${ws}"
 }
 
+# conductor_name <epic>|backlog — a conductor's agent name. herdr's names span projects and every
+# project has a backlog, so the backlog conductor's carries the project's dir name (cut to 32 characters).
+# One that would end like a retired agent's (a dir named work-done) ends in _ instead.
+conductor_name() {
+  local n
+  [[ "$1" == backlog ]] || { agent_name "conduct-$1"; return; }
+  n="$(agent_name "conduct-backlog-$(basename "${PROJECT_DIR}")")"
+  [[ ! "${n}" =~ -done[0-9]*$ ]] || n="${n:0:31}_"
+  printf '%s' "${n}"
+}
+
 # conductor_report <agent> — where a conductor writes its report as its last act.
 conductor_report() { echo "${PROJECT_DIR}/.swarm/conduct-$(conduct_epic "$1").report.md"; }
 # conductor_inbox <name> — the conductor's inbox, without its .md: notes are <it>.md, a read in progress <it>.reading.md.
@@ -945,7 +956,7 @@ conduct_epic() {
   # shellcheck disable=SC2012 # newest first; brief names are epic slugs, [a-z0-9-]
   while IFS= read -r f; do
     e="$(basename "${f}" .md)"; e="${e#conduct-}"
-    [[ "$(agent_name "conduct-${e}")" == "${want}" ]] && { echo "${e}"; return; }
+    [[ "$(conductor_name "${e}")" == "${want}" ]] && { echo "${e}"; return; }
   done < <(ls -t "${PROJECT_DIR}/.swarm/briefs"/conduct-*.md 2>/dev/null)
   echo "${want#conduct-}"
 }
@@ -968,9 +979,9 @@ epic_env() {
 }
 
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
-# stories with no epic: conduct-backlog, in a workspace named backlog, needing no epic file.
+# stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err names
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err names tab name
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -992,10 +1003,13 @@ start_conductor() {
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
-  HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
+  # The backlog's tab takes the conductor's name too: every project's backlog tab shares the workspace
+  # named backlog, and close shuts every tab with its label there.
+  name="$(conductor_name "${epic}")"; tab="${epic}"; [[ "${epic}" != backlog ]] || tab="${name}"
+  HERDR_WORKSPACE_ID="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
-  inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
+  inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md"
   echo "workspace ${hld} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.

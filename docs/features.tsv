@@ -44,7 +44,7 @@ role escalate	2026-09-29	outcomes: story_merged of escalate builds	unavailable: 
 role conduct	2026-09-29	flow cost: conduct est. $	214.62 (infrafactory, flow cost to 2026-10-16)	role:conduct
 stacked builds	leaner-faster-swarm	flow: stacked and builders_mean (all)	stacked 0, builders_mean 0.37, max 8 (infrafactory, flow --until 2026-10-16)	event:stacked
 review agents	leaner-faster-swarm	flow: review_wait_min (all)	unavailable: no review-start event before review-agent; proxy 14 min (infrafactory, flow --until 2026-10-16)	event:review-agent
-backlog conductor	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	agent:conduct-backlog
+backlog conductor	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	agent:conduct-backlog agent:conduct-backlog-swarm-dev agent:conduct-backlog-infrafactory
 wait --lead	leaner-faster-swarm	outcomes: PR-to-merge time	unavailable: outcomes has no PR-to-merge time before outcomes-timings; 3 held stories waited 2 h unnoticed on 2026-10-16	event:lead-woken
 planning during review	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	role:lead
 short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:skeptic
