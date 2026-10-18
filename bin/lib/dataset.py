@@ -1,24 +1,31 @@
 import datetime, json, os, re, subprocess, sys
 from report import *
+from touches_rows import deps, entries, pairs
 board, agents, events, findings, projects, archive, out = sys.argv[1:8]
 EASY_MAX_LINES = 100   # was_easy rule 1: a diff under this many lines
+FETCH_SECONDS = 60
+project_dir = os.path.dirname(os.path.dirname(findings))
 
 def git(repo, *args):
     got = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
     return got.stdout if got.returncode == 0 else ""
 
-def front(text):
-    # A story's frontmatter as {key: value}, the values as written.
-    m = re.match(r"---\n(.*?)\n---", text, re.S)
-    return dict(re.findall(r"(?m)^([a-z_]+): *(.*?) *$", m[1])) if m else {}
+def default_ref(repo):
+    return "origin/HEAD" if git(repo, "rev-parse", "-q", "--verify", "origin/HEAD") else "HEAD"
 
-def listed(v):
-    return [x.strip().strip("\"'") for x in (v or "").strip("[]").split(",") if x.strip()]
+def front(text):
+    # The front matter's keys as touches_rows reads them (a key's first line wins), CRLF tolerated.
+    lines, fm = [l.rstrip("\r") for l in text.split("\n")], {}
+    if lines[0] == "---":
+        pairs(lines[1:], fm, "---")
+    return {k: v.strip() for k, v in fm.items()}
 
 def planned(slug):
-    # The story as the board PR that added it wrote it (the oldest commit adding the file); the
-    # board's current text when git has no add.
-    added = git(board, "log", "--diff-filter=A", "--format=%H", "--", f"stories/{slug}.md").split()
+    # The story as the board PR merged it: the oldest commit on the board's default branch (first
+    # parent, so a merged PR counts as its merge) that added the file; the board's current text when
+    # git has no such commit.
+    added = git(board, "log", default_ref(board), "--first-parent", "--diff-merges=first-parent", "--diff-filter=A",
+                "--no-patch", "--format=%H", "--", f"stories/{slug}.md").split()
     if added:
         return git(board, "show", f"{added[-1]}:./stories/{slug}.md")
     path = os.path.join(board, "stories", f"{slug}.md")
@@ -36,26 +43,34 @@ def planner_model(epic):
                 model = f[4]
     return model
 
-def diff_of(repo, slug, pr, merge_sha, heads):
-    # (lines, files) of the PR on the default branch, from gh's
-    # merge commit: a rebase (the subjects of its last commits are the PR's commit headlines, heads,
-    # in order) against the commit before them, a merge or a squash against its first parent. Without gh's
-    # answer, the commit whose subject is a squash's or a `Merge pull request #N ...`. The story file it
-    # deletes is not counted.
+fetched = set()
+def diff_of(repo, slug, epic, pr, merge_sha, heads):
+    # (lines, files) of the PR on the default branch, fetched once per run: from gh's merge commit, a
+    # rebase (the subjects of its last commits are the PR's commit headlines, heads, in order) against
+    # the commit before them, a merge or a squash against its first parent. When the merge commit is
+    # not on the branch, the commit whose subject is a squash's `... (#N)` or a `Merge pull request #N`.
+    # The board's own files it changes (the story and its epic) are not counted.
+    if repo not in fetched:
+        fetched.add(repo)
+        try:   # a fetch that fails or hangs leaves the history as it was
+            subprocess.run(["git", "-C", repo, "fetch", "-q", "origin"], capture_output=True, timeout=FETCH_SECONDS,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+        except subprocess.TimeoutExpired:
+            pass
     n = pr_key(pr).rpartition("#")[2]
-    ref = "origin/HEAD" if git(repo, "rev-parse", "-q", "--verify", "origin/HEAD") else "HEAD"
-    for c in git(repo, "log", ref, "--first-parent", "--format=%H%x00%s%x00%P").splitlines():
-        sha, subject, parents = (c.split("\x00") + ["", ""])[:3]
-        named = subject.endswith(f"(#{n})") or subject.startswith(f"Merge pull request #{n} ")
-        if sha != merge_sha if merge_sha else not named:
-            continue
-        mine = git(repo, "log", "--first-parent", f"-{len(heads)}", "--format=%s", sha).splitlines()[::-1] if merge_sha else []
-        rebased = len(heads) > 1 and len(parents.split()) == 1 and [h.replace("\t", " ") for h in mine] == heads
-        stat = [l.split("\t") for l in git(repo, "diff", "--numstat", f"{sha}~{len(heads)}" if rebased else f"{sha}^", sha).splitlines()]
-        stat = [s for s in stat if len(s) == 3 and not s[2].endswith(f"stories/{slug}.md")]
-        lines = sum(int(a) + int(d) for a, d, _ in stat if a.isdigit() and d.isdigit())
-        return lines, len(stat)
-    return None, None
+    log = [(c.split("\x00") + ["", ""])[:3] for c in git(repo, "log", default_ref(repo), "--first-parent", "--format=%H%x00%s%x00%P").splitlines()]
+    hit = [c for c in log if merge_sha and c[0] == merge_sha] or \
+          [c for c in log if c[1].endswith(f"(#{n})") or c[1].startswith(f"Merge pull request #{n} ")]
+    if not hit:
+        return None, None
+    sha, _, parents = hit[0]
+    mine = git(repo, "log", "--first-parent", f"-{len(heads)}", "--format=%s", sha).splitlines()[::-1] if sha == merge_sha else []
+    rebased = len(heads) > 1 and len(parents.split()) == 1 and [h.replace("\t", " ") for h in mine] == heads
+    rel = os.path.relpath(board, git(repo, "rev-parse", "--show-toplevel").strip() or repo)
+    own = {os.path.normpath(os.path.join(rel, p)) for p in [f"stories/{slug}.md"] + ([f"epics/{epic}.md"] if epic else [])}
+    stat = [l.split("\t") for l in git(repo, "diff", "--numstat", "--no-renames", f"{sha}~{len(heads)}" if rebased else f"{sha}^", sha).splitlines()]
+    stat = [s for s in stat if len(s) == 3 and os.path.normpath(s[2]) not in own]
+    return sum(int(a) + int(d) for a, d, _ in stat if a.isdigit() and d.isdigit()), len(stat)
 
 def escalations(slug):
     # Each ok escalate line of the slug: `ok (attempt N)`, or step-up's `ok (<trigger>: <from> -> <to>)`.
@@ -70,11 +85,13 @@ def escalations(slug):
     return got
 
 def minutes(start, end):
+    # Whole minutes from start to end; None when either does not parse or end comes first.
     try:
         t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-        return round((t(end) - t(start)) / 60)
+        d = t(end) - t(start)
     except (ValueError, AttributeError):
         return None
+    return round(d / 60) if d >= 0 else None
 
 def num(s):
     try:
@@ -82,57 +99,73 @@ def num(s):
     except ValueError:
         return 0.0
 
+def touch(e):
+    r, f, fn = e
+    return (f"{r}: " if r else "") + f + (f":{fn}" if fn else "")
+
 lines = os.environ["SWARM_ROWS"].splitlines()
 head = lines[0].split("\t") if lines else []
 rows = [dict(zip(head, l.split("\t"))) for l in lines[1:]]
-# slug, repo, gh's merge commit and the PR's commit headlines joined by \x01 (both empty when gh did not answer).
-repos = {f[0]: f[1:3] + [f[3].split("\x01") if f[3] else []] for f in (l.split("\t") for l in os.environ.get("SWARM_REPOS", "").splitlines()) if len(f) == 4}
-finished = {}
-for slug in dict.fromkeys(r["slug"] for r in rows if r.get("story_merged") == "true"):
-    builds = [r for r in rows if r["slug"] == slug]
-    if any(r.get("merged_at") for r in builds):
-        finished[slug] = builds
-# Rework is report.py's rework_of, as flow's model_fit counts it: over every PR gh lists merged in the
-# finished stories' repos from the first of their merges on. When gh fails, only escaped findings count.
-ends = {pr_key(m["pr"]): m["merged_at"] for b in finished.values() for m in [[r for r in b if r["merged_at"]][-1]]}
-merged = merged_prs({m["pr"] for b in finished.values() for m in b}, f"merged:>={min(ends.values())[:10]}") if ends else {}
+# slug, repo, then each merged PR of story/<slug> as gh lists it: url, mergedAt, merge commit, and its
+# commit headlines joined by \x01 (gh's @tsv writes a backslash as two).
+prs = {}
+for f in (l.split("\t") for l in os.environ.get("SWARM_PRS", "").splitlines()):
+    if len(f) == 6 and f[3]:
+        heads = [h.replace("\\\\", "\\") for h in f[5].split("\x01")] if f[5] else []
+        prs.setdefault(f[0], (f[1], []))[1].append((f[2], f[3], f[4], heads))
+# Rework is report.py's rework_of, as flow's model_fit counts it: a story is reworked when any of its
+# PRs is, over every PR gh lists merged in the stories' repos from the first of their merges on. When
+# gh fails, only escaped findings count.
+ends = {pr_key(p[0]): p[1] for _, ps in prs.values() for p in ps}
+merged = merged_prs({p[0] for _, ps in prs.values() for p in ps}, f"merged:>={min(ends.values())[:10]}") if ends else {}
 if merged is None:
     print("dataset: gh could not list the merged PRs, so rework counts escaped findings alone", file=sys.stderr)
 merged = merged or {}
 for k, t in ends.items():
     merged.setdefault(k, (t, "", None))
 reworked = rework_of(merged, finding_rows(findings, ("escaped",)))
-stories = []
-for slug, builds in finished.items():
-    merged_row = [r for r in builds if r["merged_at"]][-1]
-    pr, merged_at = merged_row["pr"], merged_row["merged_at"]
+stories = {}
+for slug, (repo, ps) in prs.items():
+    builds = [r for r in rows if r["slug"] == slug]
+    pr, merged_at, merge_sha, heads = max(ps, key=lambda p: p[1])
     text = planned(slug)
     fm = front(text)
-    repo, merge_sha, heads = repos.get(slug, ("", "", []))
-    lines_n, files_n = diff_of(repo, slug, pr, merge_sha, heads) if repo else (None, None)
+    lines_n, files_n = diff_of(repo, slug, fm.get("epic", ""), pr, merge_sha, heads) if repo else (None, None)
     rounds = sum(int(r["tells_findings"] or 0) for r in builds)
-    rework = pr_key(pr) in reworked
+    rework = any(pr_key(u) in reworked for u in [p[0] for p in ps] + [r["pr"] for r in builds if r["pr"]])
     est = fm.get("estimate_lines", "")
-    results = {
-        "pr": pr, "merged_at": merged_at, "diff_lines": lines_n, "diff_files": files_n,
-        "attempts": len(builds), "findings_rounds": rounds,
-        "substantive_findings": sum(int(r["findings_fixed"] or 0) for r in builds), "rework": rework,
-        "cost_usd": round(sum(num(r["cost_usd"]) + num(r.get("subagent_cost_usd", "")) for r in builds), 2),
-        "minutes": minutes(builds[0]["started"], merged_at),
-        "models": list(dict.fromkeys(r["model"] for r in builds)), "escalations": escalations(slug),
-    }
-    stories.append({
+    stories[slug] = {
         "slug": slug,
-        "inputs": {"text": text, "kind": fm.get("kind"), "risk": fm.get("risk"), "touches": listed(fm.get("touches")),
-                   "depends_on": listed(fm.get("depends_on")), "estimate_lines": int(est) if est.isdigit() else None,
+        "inputs": {"text": text, "kind": fm.get("kind"), "risk": fm.get("risk"),
+                   "touches": [touch(e) for e in entries(fm, project_dir, "")], "depends_on": sorted(deps(fm) - {""}),
+                   "estimate_lines": int(est) if est.isdigit() else None,
                    "easy": {"true": True, "false": False}.get(fm.get("easy")), "planner_model": planner_model(fm.get("epic"))},
-        "results": results,
-        "was_easy": len(builds) == 1 and rounds <= 1 and not rework and lines_n is not None and lines_n < EASY_MAX_LINES,
+        "results": {
+            "pr": pr, "merged_at": merged_at, "diff_lines": lines_n, "diff_files": files_n,
+            "attempts": len(builds), "findings_rounds": rounds,
+            "substantive_findings": sum(int(r["findings_fixed"] or 0) for r in builds), "rework": rework,
+            "cost_usd": round(sum(num(r["cost_usd"]) + num(r.get("subagent_cost_usd", "")) for r in builds), 2),
+            "minutes": minutes(builds[0]["started"], merged_at) if builds else None,
+            "models": list(dict.fromkeys(r["model"] for r in builds)), "escalations": escalations(slug),
+        },
+        # Unknown (null) without a diff to judge its size by.
+        "was_easy": None if lines_n is None else len(builds) == 1 and rounds <= 1 and not rework and lines_n < EASY_MAX_LINES,
         "was_easy_rule": 1,
-    })
+    }
+# A finished story stays finished: a story this run could not read (its repo gone, or its builds no
+# longer in agents.tsv) keeps its line from the last run, so the file never shrinks.
+kept = 0
+for line in open(out, encoding="utf-8", errors="replace") if os.path.exists(out) else ():
+    try:
+        old = json.loads(line)
+        slug = old["slug"] if isinstance(old, dict) else None
+    except (ValueError, KeyError):
+        continue
+    if isinstance(slug, str) and slug not in stories:
+        stories[slug], kept = old, kept + 1
 tmp = out + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
-    for s in sorted(stories, key=lambda s: s["results"]["merged_at"]):
+    for s in sorted(stories.values(), key=lambda s: str((s.get("results") or {}).get("merged_at"))):
         f.write(json.dumps(s, sort_keys=True) + "\n")
 os.replace(tmp, out)
-print(f"wrote {len(stories)} stories to {out}")
+print(f"wrote {len(stories)} stories to {out}" + (f" ({kept} kept from the last run)" if kept else ""))

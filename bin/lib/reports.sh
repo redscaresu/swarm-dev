@@ -141,7 +141,7 @@ outcomes_report() {
   # columns the report prints after attempts as they are: started to drop_at, then subagent_cost_usd and
   # subagent_cost_by_model, which it prints last.
   rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
-    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
+    "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")" || die "outcomes: reading the logs failed"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
   # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
@@ -175,40 +175,49 @@ outcomes_report() {
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}"
 }
 
-# dataset — write .swarm/dataset.jsonl, one JSON line per finished story (a PR of its story merged),
-# for scoring the planner (flow's predictions). inputs: the story as the board PR that added it wrote it
-# (text, kind, risk, touches, depends_on, estimate_lines, easy) and planner_model, the model of the
-# agents.tsv lead whose session log names .swarm/<epic>/lead.json. results, from outcomes, events.tsv,
-# findings.tsv and git: the PR, merged_at, diff_lines and diff_files of what it merged into the default
-# branch (a squash, merge commit or rebase, from gh's merge commit; the story file it deletes left out), attempts (builds), findings_rounds (tells of findings),
-# substantive_findings (fixed), rework (report.py's rework_of over the PRs gh lists merged, as model_fit), cost_usd (subagents included), minutes
-# from the first build's start to the merge, models (each build's, in order) and escalations (each ok
-# escalate line: its trigger, and step-up's from and to). was_easy (was_easy_rule 1): one build, at most
-# one findings round, no rework and a diff under 100 lines. Model names, counts and the story text
-# only: no environment and no transcript text. The file is rewritten whole each run.
+# dataset — write .swarm/dataset.jsonl, one JSON line per finished story (a PR of story/<slug> merged),
+# for scoring the planner (flow's predictions). inputs: the story as the board PR merged it (text, kind,
+# risk, touches, depends_on, estimate_lines, easy) and planner_model, the model of the agents.tsv lead
+# whose session log names .swarm/<epic>/lead.json. results, from gh, outcomes, events.tsv, findings.tsv
+# and git: its newest merged PR and merged_at, diff_lines and diff_files of what that PR merged into the
+# default branch (a squash, merge commit or rebase, from gh's merge commit; the story and epic files it
+# deletes left out; null when git cannot find it), attempts (builds), findings_rounds (tells of findings),
+# substantive_findings (fixed), rework (report.py's rework_of on any of its PRs, as model_fit counts it),
+# cost_usd (subagents included), minutes from the first build's start to the merge, models (each
+# build's, in order) and escalations (each ok escalate line: its trigger, and step-up's from and to).
+# was_easy (was_easy_rule 1): one build, at most one findings round, no rework and a diff under 100
+# lines; null with no diff. Model names, counts and the story text only: no environment and no
+# transcript text. A story whose repo cannot be found is skipped (counted on stderr) and keeps its line
+# from the last run; when outcomes or gh fails, it dies and leaves the file as it was.
 dataset_report() {
   [[ $# -eq 0 ]] || die "usage: swarm.sh dataset"
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
-  local rows repos="" slug pr src got
+  local out="${PROJECT_DIR}/.swarm/dataset.jsonl" rows prs="" slug merged text src got line skipped=0
+  # Into a variable first: a failure inside a pipeline's $(...) would be lost, and the file emptied.
   # shellcheck disable=SC2119 # takes no argument here
-  rows="$(outcomes_report | sed '/^$/,$d')"   # the rows, without the recurring kinds after them
-  # Each finished slug's repo, where its PR's commit is (a story whose repo is gone gets no diff), and
-  # gh's merge commit and commit headlines for its merged PR, so a rebase merge is diffed over all its
-  # commits; a gh that fails leaves both empty.
-  while IFS=$'\t' read -r slug pr; do
+  rows="$(outcomes_report)" || die "dataset: outcomes failed; ${out} is left as it was"
+  rows="$(sed '/^$/,$d' <<< "${rows}")"   # the rows, without the recurring kinds after them
+  # Per slug, outcomes' story_merged: true or false when gh answered, empty when it did not or the
+  # story's repo could not be found (told apart here, as repo_dir runs before gh).
+  while IFS=$'\t' read -r slug merged; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    src="$(repo_dir "$(story_text "${slug}" | sed -n 's/^repo: *//p' | head -1)")" || src=""
-    got=$'\t'
-    [[ -z "${src}" ]] || got="$( (cd "${src}" && gh pr view "${pr}" --json mergeCommit,commits \
-      --jq '[.mergeCommit.oid // "", ([.commits[].messageHeadline | gsub("[\t\n]"; " ")] | join("\u0001"))] | @tsv') 2>/dev/null)" \
-      || got=$'\t'
-    repos+="${slug}"$'\t'"${src}"$'\t'"${got}"$'\n'
-  done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) { if ($i == "story_merged") c = i; if ($i == "merged_at") m = i; if ($i == "pr") p = i }; next }
-    $c == "true" && $m != "" { last[$2] = $p } END { for (s in last) print s "\t" last[s] }' <<< "${rows}")"
+    text="$(story_text "${slug}")"
+    [[ -n "${text}" ]] || continue   # no story to read: neither outcomes nor dataset knows it
+    if ! src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then skipped=$((skipped + 1)); continue; fi
+    [[ -n "${merged}" ]] || die "dataset: gh could not read the PRs of story/${slug} (see gh auth status); ${out} is left as it was"
+    [[ "${merged}" == true ]] || continue
+    # shellcheck disable=SC2016 # jq's
+    got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state merged --json url,mergedAt,mergeCommit,commits \
+      --jq '.[] | [.url, .mergedAt, .mergeCommit.oid // "", ([.commits[].messageHeadline | gsub("[\t\n\r]"; " ")] | join("\u0001"))] | @tsv') 2>/dev/null)" \
+      || die "dataset: gh could not list the merged PRs of story/${slug} (see gh auth status); ${out} is left as it was"
+    while IFS= read -r line; do
+      [[ -z "${line}" ]] || prs+="${slug}"$'\t'"${src}"$'\t'"${line}"$'\n'
+    done <<< "${got}"
+  done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "story_merged") c = i; next } { m[$2] = $c } END { for (s in m) print s "\t" m[s] }' <<< "${rows}")"
+  [[ ${skipped} -eq 0 ]] || echo "dataset: skipped ${skipped} stories whose repo could not be found; their lines from the last run stay" >&2
   mkdir -p "${PROJECT_DIR}/.swarm"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_REPOS="${repos}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
-    "${BOARD}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" \
-    "${PROJECT_DIR}/.swarm/dataset.jsonl"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_PRS="${prs}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
+    "${BOARD}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${out}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section

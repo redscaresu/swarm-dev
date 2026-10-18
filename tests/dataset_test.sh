@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
-# dataset_test.sh — `swarm.sh dataset` against a fixture of three merged stories planned in one board
-# PR: easy-easy (easy, and was: one build, one findings round, a small diff), easy-hard (easy, but was
-# not: two rounds, a 120-line diff and a PR 3 days later that fixes it) and escalated (sonnet, a step-up
-# to opus, then Fable, and an escaped finding). A later commit edits easy-hard's story, so its inputs
-# must come from the commit that added it. A PR that fixes easy-easy 8 days after its merge is too
-# late to be rework (gh lists the merged PRs, as flow's model_fit reads them). rebased (easy, and was) merged by rebase as two commits with no PR number in
-# them, so only gh's merge commit and commit headlines find its diff; gh answers easy-easy's squash of
-# two commits too (diffed against its parent alone), and fails for the other two, which are found by their `(#N)` subjects. An env value and a transcript line planted in the session logs, and the env
-# value exported to the run, must appear nowhere in the output. gh is a stub on PATH.
+# dataset_test.sh — `swarm.sh dataset` against a fixture of merged stories planned in one board PR, a
+# branch whose review fix raised easy-hard's estimate before it merged (so inputs are the merged
+# version, not the first draft, nor the later edit on main):
+#   easy-easy  easy, and was: one build, one round, a small diff. A PR stacked on it ("Merge after",
+#              "Depends on") within 7 days is no fix, and one that fixes it 8 days later is too late.
+#   easy-hard  easy, but was not: two rounds, a 120-line diff, a PR 3 days later that fixes it. Its
+#              touches hold a note in parentheses with a comma, and its depends_on a comment.
+#   escalated  sonnet, a step-up to opus, then Fable, and an escaped finding; the board PR merged its
+#              story file as CRLF,
+#              gh's merge commit is not in the local history, and its PR deletes the epic's file too.
+#   rebased    merged by rebase as two commits, one subject with a backslash, no PR number in either.
+#   retried    two builds with no session logs and two PRs, so outcomes gives no build a PR: gh's
+#              merged PR is read for the story directly. It merged on origin after the last fetch.
+#              Its first PR also merged, and an escaped finding on that one is rework of the story.
+#   lost       its merged PR's commit is in no history git has, so its diff and was_easy are unknown
+#              (null); its build started after the merge, so its minutes are null too.
+#   gone       its repo: cannot be found, so it is skipped and counted on stderr.
+# A line from the last run (ancient) stays. An impossible escaped-finding day is skipped. An env value
+# and a transcript line planted in the session logs, and the env value exported to the run, appear
+# nowhere in the output. Then a failing gh, a failing outcomes and a run with no finished story each
+# leave the file as it was. gh is a stub on PATH.
 set -euo pipefail
 export TZ=UTC
 
@@ -15,30 +27,60 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
-P="$(cd "${dir}" && pwd -P)/repo"; ENV_SECRET="planted-env-value-4242"; TRANSCRIPT="planted transcript line 9137"
-mkdir -p "${P}/.swarm" "${P}/docs/stories" "${P}/src" "${dir}/projects/p" "${dir}/bin"
+dir="$(cd "${dir}" && pwd -P)"
+P="${dir}/repo"; ENV_SECRET="planted-env-value-4242"; TRANSCRIPT="planted transcript line 9137"
+S="${P}/docs/stories"
+mkdir -p "${P}/.swarm" "${S}" "${P}/docs/epics" "${P}/src" "${dir}/projects/p" "${dir}/bin" "${dir}/nobin" "${dir}/badpy"
 git -C "${P}" init -q
 commit() { # <ISO time> <subject> — commit everything at that time
   git -C "${P}" add -A
   GIT_AUTHOR_DATE="$1" GIT_COMMITTER_DATE="$1" git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm "$2"
 }
 lines() { seq "$1" | sed 's/^/line /'; }
-echo ".swarm/" > "${P}/.gitignore"
-printf -- '---\nkind: code\nstatus: ready\nepic: e1\ndepends_on: []\ntouches: [src/a.txt]\neasy: true\nestimate_lines: 30\n---\n\n# Easy and was easy\n' > "${P}/docs/stories/easy-easy.md"
-printf -- '---\nkind: code\nrisk: low\nstatus: ready\nepic: e1\ndepends_on: [easy-easy]\ntouches: [src/b.txt, src/c.txt:fn]\neasy: true\nestimate_lines: 40\n---\n\n# Easy but was hard\n' > "${P}/docs/stories/easy-hard.md"
-printf -- '---\nkind: code\nrisk: high\nstatus: ready\nepic: e1\ndepends_on: []\ntouches: [src/d.txt]\neasy: false\nestimate_lines: 200\n---\n\n# Escalated\n' > "${P}/docs/stories/escalated.md"
-printf -- '---\nkind: code\nstatus: ready\nepic: e1\ndepends_on: []\ntouches: [src/e.txt]\neasy: true\nestimate_lines: 20\n---\n\n# Rebased\n' > "${P}/docs/stories/rebased.md"
-commit 2026-10-01T08:00:00Z "plan e1 (#1)"
-sed -i.bak 's/^estimate_lines: 40$/estimate_lines: 999/' "${P}/docs/stories/easy-hard.md" && rm "${P}/docs/stories/easy-hard.md.bak"
+story() { # <slug> <front matter lines...> — a story file, its title the last line
+  local slug="$1"; shift
+  { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${slug}"; } > "${S}/${slug}.md"
+}
+echo ".swarm/" > "${P}/.gitignore"; commit 2026-09-30T08:00:00Z init
+MAIN="$(git -C "${P}" symbolic-ref --short HEAD)"
+git -C "${P}" checkout -q -b board
+story easy-easy "kind: code" "status: ready" "epic: e1" "depends_on: []" "touches: [src/a.txt]" "easy: true" "easy: false" "estimate_lines: 30"
+story easy-hard "kind: code" "risk: low" "status: ready" "epic: e1" "depends_on: [easy-easy] # after the first" \
+  "touches: [src/b.txt, src/c.txt:fn (new, small)]" "easy: true" "estimate_lines: 35"
+story escalated "kind: code" "risk: high" "status: ready" "epic: e1" "depends_on: []" "touches: [src/d.txt]" "easy: false" "estimate_lines: 200"
+sed -i.bak 's/$/\r/' "${S}/escalated.md" && rm "${S}/escalated.md.bak"
+story rebased "kind: code" "status: ready" "epic: e1" "depends_on: []" "touches: [src/e.txt]" "easy: true" "estimate_lines: 20"
+story retried "kind: code" "status: ready" "epic: e1" "depends_on: []" "touches: [src/f.txt]" "easy: true" "estimate_lines: 10"
+story lost "kind: code" "status: ready" "epic: e1" "depends_on: []" "touches: [src/g.txt]" "easy: true" "estimate_lines: 5"
+story gone "kind: code" "repo: nosuch" "status: ready" "epic: e1" "easy: true"
+lines 20 > "${P}/docs/epics/e1.md"
+commit 2026-10-01T07:00:00Z "plan e1: first draft"
+sed -i.bak 's/^estimate_lines: 35$/estimate_lines: 40/' "${S}/easy-hard.md" && rm "${S}/easy-hard.md.bak"
+commit 2026-10-01T07:30:00Z "plan e1: review fixes"
+git -C "${P}" checkout -q "${MAIN}"
+GIT_AUTHOR_DATE=2026-10-01T08:00:00Z GIT_COMMITTER_DATE=2026-10-01T08:00:00Z \
+  git -C "${P}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false merge -q --no-ff -m "Merge pull request #1 from o/board" board
+sed -i.bak 's/^estimate_lines: 40$/estimate_lines: 999/' "${S}/easy-hard.md" && rm "${S}/easy-hard.md.bak"
+# escalated back to LF on main: outcomes reads a story's last version, and its meta does not take CRLF.
+sed -i.bak $'s/\r$//' "${S}/escalated.md" && rm "${S}/escalated.md.bak"
 commit 2026-10-01T09:00:00Z "easy-hard: in progress"
-lines 10 > "${P}/src/a.txt"; rm "${P}/docs/stories/easy-easy.md"; commit 2026-10-02T12:00:00Z "easy one (#2)"
-lines 60 > "${P}/src/b.txt"; lines 60 > "${P}/src/c.txt"; rm "${P}/docs/stories/easy-hard.md"; commit 2026-10-03T12:00:00Z "hard one (#3)"
-lines 30 > "${P}/src/d.txt"; rm "${P}/docs/stories/escalated.md"; commit 2026-10-05T12:00:00Z "escalated (#4)"
+lines 10 > "${P}/src/a.txt"; rm "${S}/easy-easy.md"; commit 2026-10-02T12:00:00Z "easy one (#2)"
+lines 60 > "${P}/src/b.txt"; lines 60 > "${P}/src/c.txt"; rm "${S}/easy-hard.md"; commit 2026-10-03T12:00:00Z "hard one (#3)"
+lines 30 > "${P}/src/d.txt"; rm "${S}/escalated.md" "${P}/docs/epics/e1.md"; commit 2026-10-05T12:00:00Z "escalated (#4)"
 echo fixed >> "${P}/src/b.txt"; commit 2026-10-06T12:00:00Z "fix the bug from #3 (#5)"
 echo tidy >> "${P}/src/a.txt"; commit 2026-10-10T13:00:00Z "fixes #2 (#6)"
 lines 5 > "${P}/src/e.txt"; commit 2026-10-11T10:00:00Z "rebased: part one"
-lines 10 > "${P}/src/e.txt"; rm "${P}/docs/stories/rebased.md"; commit 2026-10-11T10:00:00Z "rebased: part two"
-SQUASH="$(git -C "${P}" log --format=%H --grep '^easy one (#2)$')"; REBASED="$(git -C "${P}" rev-parse HEAD)"
+lines 10 > "${P}/src/e.txt"; rm "${S}/rebased.md"; commit 2026-10-11T10:00:00Z 'rebased: part \ two'
+REBASED="$(git -C "${P}" rev-parse HEAD)"
+# retried merges on origin after the last fetch: only dataset's own fetch brings its commit.
+git clone -q --bare "${P}" "${dir}/origin.git"
+git -C "${P}" remote add origin "${dir}/origin.git"; git -C "${P}" fetch -q origin; git -C "${P}" remote set-head origin "${MAIN}"
+git clone -q "${dir}/origin.git" "${dir}/other"
+lines 7 > "${dir}/other/src/f.txt"; rm "${dir}/other/docs/stories/retried.md"; git -C "${dir}/other" add -A
+GIT_AUTHOR_DATE=2026-10-12T12:00:00Z GIT_COMMITTER_DATE=2026-10-12T12:00:00Z \
+  git -C "${dir}/other" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm "retried (#10)"
+git -C "${dir}/other" push -q origin "${MAIN}"
+RETRIED="$(git -C "${dir}/other" rev-parse HEAD)"; SQUASH="$(git -C "${P}" log --format=%H --grep '^easy one (#2)$')"
 
 session() { # <slug> <model> <timestamp> [pull URL] — a builder's session log, with the planted lines
   printf '{"type":"user","cwd":"%s/repo-wt/%s","timestamp":"%s"}\n' "${dir}" "$1" "$3"
@@ -57,6 +99,7 @@ session escalated claude-sonnet-5-5 2026-10-03T09:00:00Z "${U}/4" > "${dir}/proj
 session escalated claude-opus-5-5 2026-10-04T08:00:00Z "${U}/4" > "${dir}/projects/p/s4.jsonl"
 session escalated claude-fable-5-1 2026-10-04T10:00:00Z "${U}/4" > "${dir}/projects/p/s5.jsonl"
 session rebased claude-sonnet-5-5 2026-10-11T09:00:00Z "${U}/7" > "${dir}/projects/p/s6.jsonl"
+session lost claude-sonnet-5-5 2026-10-13T05:00:00Z "${U}/11" > "${dir}/projects/p/s10.jsonl"
 printf '%s\n' \
   $'2026-10-01\tlead\tlead\tclaude\topus\thigh\tl1' \
   $'2026-10-01\tlead\tlead\tclaude\tsonnet\thigh\tl2' \
@@ -65,7 +108,11 @@ printf '%s\n' \
   $'2026-10-03\tcode-sonnet\tescalated\tclaude\tsonnet\tmedium\ts3' \
   $'2026-10-04\tcode\tescalated\tclaude\topus\txhigh\ts4' \
   $'2026-10-04\tescalate\tescalated\tclaude\tfable\txhigh\ts5' \
-  $'2026-10-11\tcode-sonnet\trebased\tclaude\tsonnet\tmedium\ts6' > "${P}/.swarm/agents.tsv"
+  $'2026-10-11\tcode-sonnet\trebased\tclaude\tsonnet\tmedium\ts6' \
+  $'2026-10-11\tcode\tretried\tclaude\topus\txhigh\ts7' \
+  $'2026-10-12\tcode\tretried\tclaude\topus\txhigh\ts8' \
+  $'2026-10-12\tcode\tgone\tclaude\topus\txhigh\ts9' \
+  $'2026-10-13\tcode-sonnet\tlost\tclaude\tsonnet\tmedium\ts10' > "${P}/.swarm/agents.tsv"
 printf '%s\n' \
   $'2026-10-02T11:00:00Z\ttell:findings\teasy-easy\tw:1\tok' \
   $'2026-10-02T13:00:00Z\ttell:findings\teasy-hard\tw:1\tok' \
@@ -76,37 +123,71 @@ printf '%s\n' \
 printf '%s\n' \
   $'2026-10-02\tmissing-check\to/r#3\ta\tfixed\tcodex' \
   $'2026-10-02\tnit-kind\to/r#3\tb\tdeclined\tcodex\tnit' \
-  $'2026-10-07\tlate-bug\to/r#4\tc\tescaped\tescaped' > "${P}/.swarm/findings.tsv"
-pr() { printf '{"url":"%s/%s","mergedAt":"%s","title":"%s","body":"","files":[{"path":"src/x"}]}' "${U}" "$1" "$2" "$3"; }
-printf '[%s,%s,%s,%s,%s,%s]\n' "$(pr 2 2026-10-02T12:00:00Z "easy one")" "$(pr 3 2026-10-03T12:00:00Z "hard one")" \
+  $'2026-02-30\tbad-day\to/r#7\tan impossible day\tescaped\tescaped' \
+  $'2026-10-07\tlate-bug\to/r#4\tc\tescaped\tescaped' \
+  $'2026-10-13\tfirst-pr-bug\to/r#9\td\tescaped\tescaped' > "${P}/.swarm/findings.tsv"
+ANCIENT='{"results": {"merged_at": "2026-09-01T00:00:00Z"}, "slug": "ancient"}'
+echo "${ANCIENT}" > "${P}/.swarm/dataset.jsonl"
+
+# gh: outcomes' PR list per story; dataset's merged PRs per story (as gh's @tsv writes them: a
+# backslash doubled); model_fit's merged PRs of the repo.
+pr() { printf '{"url":"%s/%s","mergedAt":"%s","title":"%s","body":"%s","files":[{"path":"src/x"}]}' "${U}" "$1" "$2" "$3" "${4:-}"; }
+printf '[%s,%s,%s,%s,%s,%s,%s,%s,%s,%s]\n' "$(pr 2 2026-10-02T12:00:00Z "easy one")" "$(pr 3 2026-10-03T12:00:00Z "hard one")" \
+  "$(pr 8 2026-10-03T00:00:00Z "stacked child" 'Merge after https://github.com/o/r/pull/2\nDepends on the fix in #2\nStacked on #2')" \
   "$(pr 4 2026-10-05T12:00:00Z escalated)" "$(pr 5 2026-10-06T12:00:00Z "fix the bug from #3")" \
-  "$(pr 6 2026-10-10T13:00:00Z "fixes #2")" "$(pr 7 2026-10-11T10:00:00Z rebased)" > "${dir}/merged.json"
-# shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\ncase "$1 $2 $3 $4" in
-  "pr list -R o/r") cat "%s" ;;
-  "pr list --head story/easy-easy") printf "%s/2\\tMERGED\\t2026-10-02T12:00:00Z\\t2026-10-02T11:30:00Z\\t0\\n" ;;
-  "pr list --head story/easy-hard") printf "%s/3\\tMERGED\\t2026-10-03T12:00:00Z\\t2026-10-02T12:00:00Z\\t0\\n" ;;
-  "pr list --head story/escalated") printf "%s/4\\tMERGED\\t2026-10-05T12:00:00Z\\t2026-10-03T12:00:00Z\\t0\\n" ;;
-  "pr list --head story/rebased") printf "%s/7\\tMERGED\\t2026-10-11T10:00:00Z\\t2026-10-11T09:30:00Z\\t0\\n" ;;
-  "pr view %s/2 "*) printf "%s\\tsquashed a\\001squashed b\\n" ;;
-  "pr view %s/7 "*) printf "%s\\trebased: part one\\001rebased: part two\\n" ;;
+  "$(pr 6 2026-10-10T13:00:00Z "fixes #2")" "$(pr 7 2026-10-11T10:00:00Z rebased)" \
+  "$(pr 9 2026-10-11T12:00:00Z "retried, first")" "$(pr 10 2026-10-12T12:00:00Z retried)" "$(pr 11 2026-10-13T00:00:00Z lost)" > "${dir}/merged.json"
+printf '%s\t%s\t%s\t%s\n' "${U}/2" 2026-10-02T12:00:00Z "${SQUASH}" $'squashed a\001squashed b' > "${dir}/merged-easy-easy.tsv"
+printf '%s\t%s\t\t\n' "${U}/3" 2026-10-03T12:00:00Z > "${dir}/merged-easy-hard.tsv"
+printf '%s\t%s\t%s\t\n' "${U}/4" 2026-10-05T12:00:00Z deadbeefdeadbeefdeadbeefdeadbeefdeadbeef > "${dir}/merged-escalated.tsv"
+printf '%s\t%s\t%s\t%s\n' "${U}/7" 2026-10-11T10:00:00Z "${REBASED}" $'rebased: part one\001rebased: part \\\\ two' > "${dir}/merged-rebased.tsv"
+printf '%s\t%s\t%s\t%s\n' "${U}/10" 2026-10-12T12:00:00Z "${RETRIED}" retried "${U}/9" 2026-10-11T12:00:00Z 0123456789012345678901234567890123456789 first \
+  > "${dir}/merged-retried.tsv"
+printf '%s\t%s\t%s\t%s\n' "${U}/11" 2026-10-13T00:00:00Z 9999999999999999999999999999999999999999 lost > "${dir}/merged-lost.tsv"
+cat > "${dir}/bin/gh" <<EOF
+#!/bin/sh
+case "\$1 \$2 \$3 \$4 \$5 \$6" in
+  "pr list --head story/easy-easy --state all") printf '${U}/2\tMERGED\t2026-10-02T12:00:00Z\t2026-10-02T11:30:00Z\t0\n' ;;
+  "pr list --head story/easy-hard --state all") printf '${U}/3\tMERGED\t2026-10-03T12:00:00Z\t2026-10-02T12:00:00Z\t0\n' ;;
+  "pr list --head story/escalated --state all") printf '${U}/4\tMERGED\t2026-10-05T12:00:00Z\t2026-10-03T12:00:00Z\t0\n' ;;
+  "pr list --head story/rebased --state all") printf '${U}/7\tMERGED\t2026-10-11T10:00:00Z\t2026-10-11T09:30:00Z\t0\n' ;;
+  "pr list --head story/retried --state all") printf '${U}/10\tMERGED\t2026-10-12T12:00:00Z\t2026-10-12T10:00:00Z\t0\n${U}/9\tMERGED\t2026-10-11T12:00:00Z\t2026-10-11T10:00:00Z\t0\n' ;;
+  "pr list --head story/lost --state all") printf '${U}/11\tMERGED\t2026-10-13T00:00:00Z\t2026-10-12T23:00:00Z\t0\n' ;;
+  "pr list --head story/"*" --state merged") cat "${dir}/merged-\${4#story/}.tsv" 2>/dev/null; exit 0 ;;
+  "pr list -R o/r --state merged") cat "${dir}/merged.json" ;;
   *) exit 1 ;;
-esac\n' "${dir}/merged.json" "${U}" "${U}" "${U}" "${U}" "${U}" "${SQUASH}" "${U}" "${REBASED}" > "${dir}/bin/gh"
-chmod +x "${dir}/bin/gh"
+esac
+EOF
+printf '#!/bin/sh\nexit 1\n' > "${dir}/nobin/gh"
+# A python3 that fails outcomes' row reader and runs everything else.
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\ncase "$1" in *outcomes_rows.py) exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "${dir}/badpy/python3"
+chmod +x "${dir}/bin/gh" "${dir}/nobin/gh" "${dir}/badpy/python3"
 
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
+run() { # <PATH prefix> — the dataset run, its stdout and stderr, then its exit status
+  local rc=0
+  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT DATASET_PLANTED="${ENV_SECRET}" CLAUDE_PROJECTS_DIR="${dir}/projects" \
+    PATH="$1:${PATH}" bash "${SWARM}" dataset 2>&1) || rc=$?
+  echo "exit ${rc}"
+}
 events_before="$(cat "${P}/.swarm/events.tsv")"
-got="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT DATASET_PLANTED="${ENV_SECRET}" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" dataset)"
 OUT="${P}/.swarm/dataset.jsonl"
-check "it says where it wrote the file, under .swarm/" "${got}" "wrote 4 stories to ${OUT}"
+check "it says where it wrote the file under .swarm/, keeps last run's line, and counts the skipped story on stderr" "$(run "${dir}/bin")" \
+  "dataset: skipped 1 stories whose repo could not be found; their lines from the last run stay
+wrote 7 stories to ${OUT} (1 kept from the last run)
+exit 0"
 # One line per story, its inputs and results as `key=value` (JSON values), in merge order.
 show() { python3 -c '
 import json, sys
 for l in open(sys.argv[1]):
-    d = json.loads(l); i, r = d["inputs"], d["results"]
+    d = json.loads(l)
+    if "inputs" not in d:
+        continue
+    i, r = d["inputs"], d["results"]
     print(d["slug"], *(f"{k}={json.dumps(i[k])}" for k in ("kind", "risk", "touches", "depends_on", "estimate_lines", "easy", "planner_model")))
     print(" ", *(f"{k}={json.dumps(r[k])}" for k in sorted(r) if k != "escalations"))
     print(" ", *(json.dumps(e, sort_keys=True) for e in r["escalations"]), "was_easy=" + json.dumps(d["was_easy"]), "rule=%s" % d["was_easy_rule"])' "$1"; }
@@ -122,17 +203,38 @@ E3='escalated kind="code" risk="high" touches=["src/d.txt"] depends_on=[] estima
 E4='rebased kind="code" risk=null touches=["src/e.txt"] depends_on=[] estimate_lines=20 easy=true planner_model="opus"
   attempts=1 cost_usd=2.0 diff_files=1 diff_lines=10 findings_rounds=0 merged_at="2026-10-11T10:00:00Z" minutes=60 models=["sonnet"] pr="https://github.com/o/r/pull/7" rework=false substantive_findings=0
   was_easy=true rule=1'
+E5='retried kind="code" risk=null touches=["src/f.txt"] depends_on=[] estimate_lines=10 easy=true planner_model="opus"
+  attempts=2 cost_usd=0.0 diff_files=1 diff_lines=7 findings_rounds=0 merged_at="2026-10-12T12:00:00Z" minutes=null models=["opus"] pr="https://github.com/o/r/pull/10" rework=true substantive_findings=0
+  was_easy=false rule=1'
+E6='lost kind="code" risk=null touches=["src/g.txt"] depends_on=[] estimate_lines=5 easy=true planner_model="opus"
+  attempts=1 cost_usd=2.0 diff_files=null diff_lines=null findings_rounds=0 merged_at="2026-10-13T00:00:00Z" minutes=null models=["sonnet"] pr="https://github.com/o/r/pull/11" rework=false substantive_findings=0
+  was_easy=null rule=1'
 shown="$(show "${OUT}")"
-check "easy-and-was-easy: inputs as planned, one build, one round, a 10-line diff, a fix 8 days later is no rework" "$(sed -n 1,3p <<< "${shown}")" "${E1}"
-check "easy-but-was-hard: inputs from the commit that added it, two rounds, a 120-line diff, a fix 3 days later is rework" "$(sed -n 4,6p <<< "${shown}")" "${E2}"
-check "escalated: every model in build order, each escalation with its trigger, an escaped finding is rework" "$(sed -n 7,9p <<< "${shown}")" "${E3}"
-check "rebase-merged: gh's merge commit and commit headlines give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"
-check "four lines, each with the story text the board PR added" \
-  "$(python3 -c 'import json, sys; [print(json.loads(l)["inputs"]["text"].splitlines()[-1]) for l in open(sys.argv[1])]' "${OUT}")" \
-  "$(printf '%s\n' '# Easy and was easy' '# Easy but was hard' '# Escalated' '# Rebased')"
+check "easy-and-was-easy: inputs as planned (first key wins), one round, a 10-line diff, a stacked child and a fix 8 days later are no rework" "$(sed -n 1,3p <<< "${shown}")" "${E1}"
+check "easy-but-was-hard: inputs as the board PR merged them, touches and depends_on as touches_rows reads them, a fix 3 days later is rework" "$(sed -n 4,6p <<< "${shown}")" "${E2}"
+check "escalated: CRLF read, every model in build order, each escalation with its trigger, an escaped finding is rework, the epic file and a merge commit not fetched left out" "$(sed -n 7,9p <<< "${shown}")" "${E3}"
+check "rebase-merged: gh's merge commit and commit headlines (one with a backslash) give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"
+check "a retried story whose PR outcomes gives no build: gh's newest merged PR read directly, its merge fetched, rework on its first PR" "$(sed -n 13,15p <<< "${shown}")" "${E5}"
+check "a merge git cannot find: diff and was_easy null; a start after the merge: minutes null" "$(sed -n 16,18p <<< "${shown}")" "${E6}"
+check "each line holds the story text the board PR merged, and last run's line stays as it was" \
+  "$(python3 -c 'import json, sys; [print(json.loads(l).get("inputs", {}).get("text", l).splitlines()[-1]) for l in open(sys.argv[1])]' "${OUT}")" \
+  "$(printf '%s\n' "${ANCIENT}" '# easy-easy' '# easy-hard' '# escalated' '# rebased' '# retried' '# lost')"
 check "the planted env value and transcript line appear nowhere in the output" \
   "$(grep -c -e "${ENV_SECRET}" -e "${TRANSCRIPT}" "${OUT}" || true)" 0
 check "git status stays clean and no events.tsv line is written" \
   "$(git -C "${P}" status --porcelain; [[ "$(cat "${P}/.swarm/events.tsv")" == "${events_before}" ]] || echo events changed)" ""
+
+written="$(cat "${OUT}")"
+same() { [[ "$(cat "${OUT}")" == "${written}" ]] && echo same || echo changed; }
+check "a failing gh dies and leaves the file as it was" \
+  "$(run "${dir}/nobin" | grep -c -e '^swarm: dataset: gh could not read the PRs of story/' -e '^exit 1$'; same)" "2
+same"
+check "a failing outcomes dies and leaves the file as it was" \
+  "$(run "${dir}/badpy:${dir}/bin" | grep -c -e 'outcomes: reading the logs failed' -e '^exit 1$'; same)" "2
+same"
+cp "${P}/.swarm/agents.tsv" "${dir}/agents.tsv"; head -2 "${dir}/agents.tsv" > "${P}/.swarm/agents.tsv"
+check "a run that finds no finished story keeps every line" "$(run "${dir}/bin" | tail -1; same)" "exit 0
+same"
+cp "${dir}/agents.tsv" "${P}/.swarm/agents.tsv"
 
 if [[ ${fails} -eq 0 ]]; then echo "all dataset checks passed"; else echo "${fails} dataset check(s) failed"; exit 1; fi
