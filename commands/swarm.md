@@ -76,10 +76,13 @@ Repeat until a step below says stop:
      recent builds; the `recurring` block counts its own last 30 days either way) and read its
      `recurring` block. For each kind there with an empty `check` column, file one story with
      `checks: <kind>` in its front matter that adds a test, lint rule, hook or review-prompt line
-     which catches that kind, through `swarm.sh board-pr` named `check-<kind>`, like any board edit.
-     Skip the kind when a story on the board already has `checks: <kind>`, or when
-     `gh pr list --state all --head board/check-<kind> --json state,closedAt` shows one `OPEN`
-     (pending) or one `CLOSED` (unmerged) in the last 90 days, which means the user declined it.
+     which catches that kind, like any board edit: through `swarm.sh board-pr` named `check-<kind>`
+     when the board is in the project's repo, or written where the board is when it is outside.
+     Skip the kind when a story on the board already has `checks: <kind>`, or, with the board in the
+     repo, when `gh pr list -R <owner/repo> --state all --head board/check-<kind> --json state,closedAt`
+     (the project's origin, as `git remote get-url origin` names it) shows one `OPEN` (pending),
+     one `MERGED` (its story is on the board, or about to be, since collect only fetches), or one
+     `CLOSED` (unmerged) in the last 90 days, which means the user declined it.
      A kind whose check has merged (`check_merged` set) still recurs once its fixes after the merge
      reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
      `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
