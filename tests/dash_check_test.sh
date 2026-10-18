@@ -180,7 +180,7 @@ check "with the waiting epic quiet, --check names the epics waiting" names "${B}
 check "mutant: status lists one more working agent" \
   mutant status swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) status_report "${1:-}"; echo "  ghost  working  [x w9:p9]" ;;/'
 check "with that status, --check names agents working" names "${A}" "agents working" env SWARM_PROJECT="${A}" "${M}" dash --check
-check "mutant: next fails" mutant next swarm.sh 's/^    next)   next_step ;;$/    next)   exit 3 ;;/'
+check "mutant: next fails" mutant next swarm.sh 's/^    next)   next_report ;;$/    next)   exit 3 ;;/'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 # shellcheck disable=SC2016 # the script's own $1 and $2
 check "with next failing, --check exits 1 naming next (exit ${rc}: ${out})" \
