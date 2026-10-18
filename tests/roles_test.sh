@@ -28,8 +28,8 @@ done
 reached+=$'\n'"$(cat "${SWARM}" "${REPO}"/bin/lib/*.sh | grep -v '^[[:space:]]*#' \
   | sed -n 's/.*start_agent \([^ ]*\) \([^ ]*\) \([^ ]*\) \([a-z-]*\)\( .*\)\{0,1\}$/\4/p')"
 
-# _role for one fixture story per arm of story_role. With sonnet_share = 4, slug e4-f lands in the
-# code-sonnet sample and slug e4-a does not. escalate_after is set too, so its default can change.
+# _role for one fixture story per arm of story_role. With sonnet_share = 4, slug e4-f marked easy: true
+# lands in the code-sonnet sample and slug e4-a does not. escalate_after is set too, so its default can change.
 mkdir -p "${tmp}/docs/stories" "${tmp}/.claude/swarm"
 printf '%s\n' "sonnet_share = 4" "escalate_after = 2" > "${tmp}/.claude/swarm/config"
 story() { # <slug> <front-matter line>... — write the story, add its _role to reached
@@ -42,7 +42,7 @@ story() { # <slug> <front-matter line>... — write the story, add its _role to 
 }
 story e4-a "kind: code"
 story e4-a "kind: code" "risk: high"
-story e4-f "kind: code"
+story e4-f "kind: code" "easy: true"
 story a "kind: docs"
 story a "kind: chore"
 story a "kind: code" "attempts: 2"

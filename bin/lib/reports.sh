@@ -220,6 +220,11 @@ dataset_report() {
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
 #     local day). Usage comes from Claude Code's own session logs (or close's copy, once Claude Code
 #     deleted one), deduplicated by session and message id; codex agents are listed but not priced.
+#   epic_totals: one TSV row per epic, then `all`, over the outcomes rows dated in the window; with
+#     --epic, that epic's row alone. builds, cost_usd and start_to_pr_min summed over its builds, and
+#     per PR (counted once): pr_to_merge_min summed, merged_prs (merged, with main_merges gh read), main_merged
+#     (main_merges above 0) and main_merged_share, then a line with leaner-faster-swarm's 55% baseline.
+#     cost_usd ends `(N not in the logs)` for builds with no cost, as cost's agents do.
 #   features: the project's own docs/features.tsv (or SWARM_FEATURES; with neither, one line saying
 #     there is no feature list) joined with this project's logs: per feature, its uses from --since
 #     (default the 30 days up to --until, or up to today) to --until, its metric and its baseline, and `delete?` for a feature with no
