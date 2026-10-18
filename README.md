@@ -68,6 +68,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for a PR's checks: exits 0 green, 1 red, 2 when gh fails, no checks appear, or one is still pending at the timeout (30 minutes by default). |
 
 The other commands are tools the lead runs; they are listed in
 [reference.md § Commands](docs/reference.md#commands). Settings go in `.claude/swarm/config`
@@ -96,7 +97,9 @@ section shows how long CI takes per push, how often it goes red and how often it
 builders that stopped with no PR, and the board pulls that an uncommitted edit stopped. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
-money waits on you, so only those count.
+money waits on you, so only those count. Its `model_fit` section sets cost against results for each
+model and kind of story, so you can see where a cheaper model holds up before you move more work to
+it.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. Agents start with a short list of environment variables, and a token you exported
