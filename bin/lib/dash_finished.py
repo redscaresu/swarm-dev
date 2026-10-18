@@ -5,8 +5,9 @@ def git(args, data=None):
                           capture_output=True, check=True).stdout
 KEY = re.compile(r"([A-Za-z_]+): *(.*)$")
 def front(text):
-    # The front matter's keys, as dash_fields reads them: only after a leading ---, up to the next;
-    # a key's first line wins, an empty value too; CRLF tolerated.
+    # The front matter's keys, as dash_fields reads a file's: only after a leading ---, up to the
+    # next; a key's first line wins, an empty value too; CRLF tolerated. No state file: these are
+    # deleted versions, and a slug's state file may be a later story's.
     keys, lines = {}, [l.rstrip("\r") for l in text.split("\n")]
     if lines[0] != "---":
         return keys
