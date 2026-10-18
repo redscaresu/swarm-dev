@@ -45,6 +45,18 @@ A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the f
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
 worktree of `../<name>`, and the lead deletes the story file once that PR merges.
 
+A `lead` story with an `after:` line naming its own epic (`epic: x`, `after: x`) waits until that
+epic is built, such as a check on real cloud once the code is in. It does not count in its epic, so
+an epic with only `after:` stories is still planned by `/plan-epic`. Once code stories were planned
+for an active epic and none is open, it counts as done in `next`, `status` and `dash` while its
+`after:` stories wait, so what depends on it goes ahead. On a board in the story's repo, the epic's
+last code story's PR deletes the epic file without waiting for them. A list counts when it names
+the story's own epic (`after: [x, y]`), and so do `after: [x]` and `after: x  # note`. An `after:`
+that does not name its own epic is ignored, and a draft or later epic never counts as done this
+way. "Planned" is read from the board and from its git history (an uncommitted deletion too); a
+board not in git has no history, so there an active epic with only `after:` stories counts as done. The `after:` story stays on the board and is listed with the lead's other
+stories.
+
 `env: [NAME, ...]` names the environment variables a story's builder needs beyond the short list
 every agent starts with (swarm-dev `docs/reference.md` § Building, The agents' environment). A story
 holds names, never values: each value comes from the session that starts the agent, and the epic's
