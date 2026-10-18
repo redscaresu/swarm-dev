@@ -1,4 +1,4 @@
-import json, re, subprocess, sys, time
+import json, re, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 
@@ -49,7 +49,7 @@ def judge(runs, red, wait):
         elif r.get("conclusion") not in OK:
             red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
 
-def checks(repo, sha, need_run=True):
+def checks(repo, sha, required=(), need_run=True):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
     red, wait = [], ([] if runs or not need_run else ["no check runs"])
@@ -59,7 +59,30 @@ def checks(repo, sha, need_run=True):
             wait.append("%s (pending)" % s.get("context"))
         elif s.get("state") != "success":
             red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
+    # A required check bound to an app (not None or -1, any source) needs a run from that app.
+    have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
+    names = {n for n, _ in have} | {s.get("context") for s in sts}
+    wait += ["%s (required, absent)" % c for c, app in required
+             if (c not in names if app in (None, -1) else (c, app) not in have)]
     return red, wait
+
+def required(repo, base):
+    """The status checks base requires, its rulesets' and its classic branch protection's, each as
+    (context, the app that must report it or None). The branch is one path segment, / encoded."""
+    out, base = [], urllib.parse.quote(base, safe="")
+    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, base)):
+        if not isinstance(d, list):
+            raise Err("unreadable rules for " + base)
+        for rule in d:
+            if rule["type"] == "required_status_checks":
+                out += [(c["context"], c.get("integration_id")) for c in rule["parameters"]["required_status_checks"]]
+    try:
+        rsc = json.loads(gh("api", "repos/%s/branches/%s/protection/required_status_checks" % (repo, base)))
+    except Err as e:
+        if "HTTP 404" in str(e):   # not protected, or no required checks
+            return out
+        raise
+    return out + [(c, None) for c in rsc["contexts"]] + [(c["context"], c.get("app_id")) for c in rsc["checks"]]
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -229,7 +252,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
-        red, wait = checks(repo, args[0])
+        red, wait = checks(repo, args[0], required(repo, args[1]) if len(args) > 1 else ())
         if red or wait:
             print("; ".join(red + wait))
             sys.exit(1 if red else 2)

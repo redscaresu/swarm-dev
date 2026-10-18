@@ -6,9 +6,10 @@ MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get t
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 
-# ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
-# run completed as success, skipped or neutral, and every commit status success. Else print which
-# checks and fail (1 red, 2 pending). It is the
+# ci_gate head <owner/repo> <sha> [base] — succeed when <sha> is green: at least one check run, every
+# run completed as success, skipped or neutral, and every commit status success; with [base]
+# (merge_admin), also every status check the base's rulesets or branch protection require present
+# among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -73,14 +74,14 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # story or stacked parent costs money is the user's) (with --board instead: the PR is in the board's own repo and every path it changes,
 # old or new, is on the board; with --release: the PR is in the project's own repo and every path it
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
-# Merge with the repo's method (squash, else merge, else rebase) and --match-head-commit; never
-# --admin or --auto. Then wait for CI on the merge commit and, without --board or --release, run
+# Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
+# merge_admin = on, --admin; never --auto. Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin req
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -147,12 +148,16 @@ merge_pr() {
     fi
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}"
   fi
-  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  # merge_admin = on: --admin skips GitHub's own required checks too, so ci_gate checks them first.
+  admin=(); req=""
+  # shellcheck disable=SC2154 # assigned in another file
+  if [[ "${CFG_merge_admin}" == on ]]; then admin=(--admin); req="${base}"; fi
+  why="$(ci_gate head "${repo}" "${head}" ${req:+"${req}"})" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
   [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
-  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" 2>&1)" || ran=""
+  why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
   # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
   read -r state oid <<< "$(merged_state "${n}" "${repo}")"
   if [[ "${state}" != MERGED || ! "${oid}" =~ ^[0-9a-f]{40}$ ]]; then

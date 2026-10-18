@@ -121,7 +121,7 @@ fresh() {
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
   echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
-  echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"
+  echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; echo '[]' > "${FX}/rules"
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
   checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
@@ -486,6 +486,51 @@ check "plan-epic's small path names costs: money" grep -qF 'costs: money' <<< "$
 check "plan-epic's decompose brief names costs: money" grep -qF 'costs: money' <<< "$(step '**2. Decompose**' '**3. Verify**')"
 # shellcheck disable=SC2016 # the backticks are plan-epic's
 check "plan-epic's skeptic brief names costs: money" grep -qF 'costs: money' <<< "$(step 'skeptic-<slug>' 'one `codex`')"
+
+# --- merge_admin = on: --admin on the pinned merge, only once every check has passed.
+fresh "merge_admin = on"; merge "${URL}"
+is "merge_admin = on: exits 0" 0 "${rc}"
+check "merge_admin = on: pr merge passes --admin" grep -qxF "pr merge 7 --repo o/r --squash --match-head-commit ${H1} --admin" "${ROOT}/gh.log"
+fresh "merge_admin = off"; merge "${URL}"
+check "merge_admin = off: pr merge without --admin" grep -qxF "pr merge 7 --repo o/r --squash --match-head-commit ${H1}" "${ROOT}/gh.log"
+fresh "merge_admin = on"; checks "${FX}/${H1}.checks" "$(run test completed failure)"
+merge "${URL}"; refused "merge_admin = on, a red head" "test (failure)"
+fresh "merge = agent" "merge_admin = on"; item s "status: review" "prs: ${URL}" "costs: money"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "merge_admin = on, costs: money" "held: s costs money"
+fresh "merge_admin = on"; echo "${H2}" > "${FX}/head"
+merge --head "${H1}" "${URL}"; refused "merge_admin = on, a moved head" "is 2222222, not 1111111"
+# --admin skips GitHub's required checks too, so merge checks each one is on the head.
+# protected <context>... — main's classic branch protection requires these checks, from any app.
+protected() {
+  local c list=""; for c in "$@"; do list+="${list:+,}\"${c}\""; done
+  echo "{\"strict\":false,\"contexts\":[${list}],\"checks\":[]}" > "${FX}/branch"
+}
+fresh "merge_admin = on"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
+protected test; merge "${URL}"
+is "merge_admin = on, required checks present: exits 0" 0 "${rc}"
+fresh "merge_admin = on"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"},{"context":"build"}]}}]' > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, a ruleset's required check absent from the head" "build (required, absent)"
+fresh "merge_admin = on"; protected
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":99}]}}]' > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, a required check whose app never reported it" "test (required, absent)"
+fresh "merge_admin = on"; protected
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":99}]}}]' > "${FX}/rules"
+checks "${FX}/${H1}.checks" '{"name":"test","status":"completed","conclusion":"success","app":{"id":99}}'; merge "${URL}"
+is "merge_admin = on, a required check its app reported: exits 0" 0 "${rc}"
+fresh "merge_admin = on"; protected test lint
+merge "${URL}"; refused "merge_admin = on, branch protection's required check absent from the head" "lint (required, absent)"
+fresh "merge_admin = on"
+echo '{"strict":false,"contexts":["test"],"checks":[{"context":"test","app_id":99}]}' > "${FX}/branch"
+merge "${URL}"; refused "merge_admin = on, branch protection's check bound to an app that never reported it" "test (required, absent)"
+fresh "merge_admin = on"; echo release/1.x > "${FX}/base"; merge "${URL}"
+check "merge_admin = on, base release/1.x: the rules path encodes the branch" grep -q -- "repos/o/r/rules/branches/release%2F1.x?" "${ROOT}/gh.log"
+check "merge_admin = on, base release/1.x: so does branch protection's" grep -q -- "repos/o/r/branches/release%2F1.x/protection/required_status_checks" "${ROOT}/gh.log"
+fresh "merge_admin = on"; touch "${FX}/branch.fail"
+merge "${URL}"; refused "merge_admin = on, branch protection unreadable" "HTTP 502"
+fresh; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"build"}]}}]' > "${FX}/rules"
+merge "${URL}"; is "merge_admin off: the required checks are GitHub's, not read" 0 "${rc}"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
