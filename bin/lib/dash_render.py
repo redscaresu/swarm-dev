@@ -79,8 +79,10 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text (dash_fields').
-board = [(l.split("\t") + [""] * 11)[:11] for l in lines("DASH_BOARD")]
+# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text,
+# after (dash_fields'): BOARD_FIELDS fields, AFTER the index of the after_story flag.
+BOARD_FIELDS, AFTER = 12, 11
+board = [(l.split("\t") + [""] * BOARD_FIELDS)[:BOARD_FIELDS] for l in lines("DASH_BOARD")]
 stories = [b for b in board if b[0] == "stories"]
 story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
@@ -88,6 +90,8 @@ epics = collections.OrderedDict((b[1], b) for b in board if b[0] == "epics")
 epic_of = {b[5]: b[1] for b in epics.values()}
 # An active epic with no stories -> the depends_on slugs that hold its planning up (dash_render's DASH_EPIC_WAITS).
 waits = dict(l.split("\t", 1) for l in lines("DASH_EPIC_WAITS") if "\t" in l)
+# The epics that count as done with only after: stories open (board.sh's epic_after_only).
+after_done = set(lines("DASH_EPIC_DONE"))
 finished = collections.Counter()
 for l in lines("DASH_FINISHED"):
     e, _, n = l.partition("\t")
@@ -371,7 +375,7 @@ for l in lines("DASH_WAITING"):
     if m:
         slug = m.group(2)
         need_slugs.add(slug)
-        b = story_by_slug.get(slug) or [""] * 11
+        b = story_by_slug.get(slug) or [""] * BOARD_FIELDS
         row = bang + [(f"run {m.group(1)} story {slug}{story_title(slug)}", ""), ("  waits for: ", "dim")]
         if b[9] != "you":
             add(lq, row + [("the lead", "")], ("stories", slug))
@@ -459,25 +463,41 @@ if WIDE:
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
 
+# An after_story waits on its epic and does not count in it (dash_fields' flag, from board.sh).
+def in_epic(b, slug):
+    return b[6] == slug and not b[AFTER]
+
+def needs_look(slug):
+    # A story of the epic, an after: one too, is in needs you or the lead's queue.
+    return any(b[6] == slug and b[1] in need_slugs for b in stories)
+
+def after_open(slug):
+    # The epic's open after: stories, which its row names in place of a count.
+    return [b[1] for b in stories if b[6] == slug and b[AFTER] and b[2] != "done"]
+
 def epic_rows(slug, members):
     if not slug:
         return [[("  ", ""), ("no epic", "dim")]] + [agent_row(r) for r in members]
-    mine = [b for b in stories if b[6] == slug]
+    mine = [b for b in stories if in_epic(b, slug)]
     done = finished[slug] + sum(b[2] == "done" for b in mine)
     left = collections.Counter(b[2] or "?" for b in mine if b[2] != "done")
     total = done + sum(left.values())
     prs = [(m, b[1]) for b in mine + [epics[slug]] if b[2] != "done" for m in URL.finditer(b[3])]
     states = [pr_state(m.group(0)) for m, _ in prs]
-    k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or any(b[1] in need_slugs for b in mine)
+    # An after: story that needs a look still marks its epic, though it does not count in it.
+    k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or needs_look(slug)
          else "working" if any(r["state"] == "working" for r in members)
-         else "review" if prs or left["review"] else "blocked" if slug in waits else "done" if not left else "ready" if left["ready"]
+         else "review" if prs or left["review"] else "blocked" if slug in waits
+         else "done" if not left and (slug in after_done or not after_open(slug)) else "ready" if not left or left["ready"]
          else "blocked" if set(left) <= {"blocked", "later"} else "unknown")
     bar_w = 6 if NARROW else 12
     fill = round(bar_w * done / total) if total else 0
     order = ["review", "ready", "blocked", "later"]
     counts = " · ".join(f"{left[s]} {s}" for s in order + sorted(s for s in left if s not in order) if left[s])
     rows = [[sym(k), (f"{cut(epic_label(slug), epic_w):<{epic_w}}  ", "b"), ("█" * fill, "ok"), ("░" * (bar_w - fill), "dim"),
-             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or (f"waits on {', '.join(waits[slug].split())}" if slug in waits else "" if total else "no stories on the board or in git"), "dim")]]
+             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or (f"waits on {', '.join(waits[slug].split())}" if slug in waits
+                          else ("" if slug in after_done else "not planned yet · ") + f"after: {', '.join(after_open(slug))} waits on the lead" if after_open(slug)
+                          else "" if total else "no stories on the board or in git"), "dim")]]
     rows += [agent_row(r) for r in members]
     for (m, owner), st in zip(prs, states):
         k = st[0] if st else "review"
@@ -490,13 +510,15 @@ def rank(item):
     slug, members = item
     if not slug:
         return 3
-    if any(r["look"] for r in members) or any(b[6] == slug and b[1] in need_slugs for b in stories):
+    if any(r["look"] for r in members) or needs_look(slug):
         return 0
     return 1 if any(r["state"] == "working" for r in members) else 2
 
 # An active epic with no open story and no agent shown is one line for them all, unless its
-# depends_on holds it up (DASH_EPIC_WAITS): it keeps its own row, which names what it waits on.
-quiet = [s for s, m in groups.items() if s and not m and s not in waits and not any(b[6] == s and b[2] != "done" for b in stories)]
+# depends_on holds it up (DASH_EPIC_WAITS) or an after: story of it is open: it keeps its own row,
+# which names what it waits on, or the after: story.
+quiet = [s for s, m in groups.items() if s and not m and s not in waits and not after_open(s)
+         and not any(in_epic(b, s) and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
 epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
