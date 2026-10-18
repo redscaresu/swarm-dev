@@ -5,9 +5,12 @@
 # its state, even with its file removed by hand. An untracked copy of a story the pull brings gives way
 # to it. A story whose uncommitted edit is only to swarm.sh's own keys (an older swarm.sh's review) has
 # them moved to its state and pulls, reading as before even where its state disagrees with the file.
-# A hand edit to a tracked story the pull also changes stops the pull, before any key is moved, names
-# the file, changes nothing, and logs one pull-failed incident; with nothing to pull it stops nothing.
-# After a pull by hand, reconcile still drops the state of the stories the pulled commits deleted. gh is a stub on PATH; origin is a local bare repo.
+# Only a file the pull changes has its keys moved; a key edit on any other stays in it. A hand edit
+# to a tracked story the pull also changes stops the pull, before any key is moved, names the file,
+# changes nothing, and logs one pull-failed incident; with nothing to pull it stops nothing. A merge
+# git refuses puts back every change made for it. After a pull by hand, reconcile still drops the
+# state of the stories the pulled commits deleted, and of an epic whose deletion took docs/epics.
+# gh is a stub on PATH; origin is a local bare repo.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -73,6 +76,11 @@ setup() {
   "${GIT[@]}" -C "${d}-up" push -q origin main
 }
 state() { gone "${ROOT}/$1/.swarm/board-state/stories/$2"; }
+# base_edit <name> — <name>-up pushes a body line to e, so the pull changes e too.
+base_edit() {
+  echo "the base's line" >> "${ROOT}/$1-up/docs/stories/e.md"
+  "${GIT[@]}" -C "${ROOT}/$1-up" commit -q -am "edit e" && "${GIT[@]}" -C "${ROOT}/$1-up" push -q origin main
+}
 
 # --- a's PR merged and deleted a: reconcile pulls with no backup, stash or error, and a's and d's
 # state files go; e, still on the board, keeps its state, and so does f, an untracked story in review
@@ -104,8 +112,8 @@ rc=0; at ok reconcile >/dev/null || rc=$?
 check "a story file removed by hand, no pull due: reconcile exits 0, and e keeps its state" "0|there" "${rc}|$(state ok e)"
 
 # --- e in review as an older swarm.sh wrote it, in the file: its status: and prs: lines uncommitted,
-# with no state. reconcile moves them to e's state, checks e out, and pulls.
-setup ks; rm "${ROOT}/ks/.swarm/board-state/stories/e"
+# with no state, and the pull changes e. reconcile moves them to e's state, checks e out, and pulls.
+setup ks; base_edit ks; rm "${ROOT}/ks/.swarm/board-state/stories/e"
 perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/ks/docs/stories/e.md"
 rc=0; out="$(at ks reconcile)" || rc=$?
 check "a story edited only in swarm.sh's keys pulls, with its file checked out" "0|$(git -C "${ROOT}/ks.git" rev-parse main)|" \
@@ -115,7 +123,7 @@ check "and reads as it did: review, with its PR, from its state" "review|${U}/2|
 
 # --- e as an older swarm.sh's review wrote it, but its state, written since, says blocked (its base
 # the file's review): e reads blocked before the pull and after it, with the file's PR.
-setup kb
+setup kb; base_edit kb
 printf '%s\n' "status: blocked" "status@base: review" > "${ROOT}/kb/.swarm/board-state/stories/e"
 perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/kb/docs/stories/e.md"
 was="$(val "${ROOT}/kb/docs/stories/e.md" status)"
@@ -124,28 +132,49 @@ check "a key edit under newer state moves as it reads: blocked before and after,
   "${rc}|${was}|$(val "${ROOT}/kb/docs/stories/e.md" status)|$(val "${ROOT}/kb/docs/stories/e.md" prs)|$(git -C "${ROOT}/kb" status --porcelain)"
 
 # --- The same, but e's state cannot be written: e's edit is put back, and the pull stops, naming e.
-setup kf; rm "${ROOT}/kf/.swarm/board-state/stories/e"
+setup kf; base_edit kf; rm "${ROOT}/kf/.swarm/board-state/stories/e"
 perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/kf/docs/stories/e.md"; cp "${ROOT}/kf/docs/stories/e.md" "${ROOT}/kf-e"
 chmod a-w "${ROOT}/kf/.swarm/board-state/stories"
 rc=0; out="$(at kf reconcile)" || rc=$?
 chmod u+w "${ROOT}/kf/.swarm/board-state/stories"
 check "a state write that fails puts the key edit back, and the pull stops, naming the file" "1|same|yes" \
-  "${rc}|$(cmp -s "${ROOT}/kf-e" "${ROOT}/kf/docs/stories/e.md" && echo same)|$(has "reconcile: cannot pull ${ROOT}/kf: cannot move swarm.sh's keys in docs/stories/e.md into its board state, so its edit stays" "${out}")"
+  "${rc}|$(cmp -s "${ROOT}/kf-e" "${ROOT}/kf/docs/stories/e.md" && echo same)|$(has "reconcile: cannot pull ${ROOT}/kf: cannot move swarm.sh's keys in docs/stories/e.md into its board state, so every edit stays" "${out}")"
 
 # --- e's key edit, and a hand edit to d, which the pull deletes: the pull stops on d before e's keys
 # move, so e's file and state are as they were.
-setup k4; rm "${ROOT}/k4/.swarm/board-state/stories/e"
+setup k4; base_edit k4; rm "${ROOT}/k4/.swarm/board-state/stories/e"
 perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/k4/docs/stories/e.md"; cp "${ROOT}/k4/docs/stories/e.md" "${ROOT}/k4-e"
 echo "a local note" >> "${ROOT}/k4/docs/stories/d.md"
 rc=0; out="$(at k4 reconcile)" || rc=$?
 check "a stop on another file moves no key first: e's edit stays, with no state" "1|yes|same|gone" \
   "${rc}|$(has "board files are changed here: docs/stories/d.md;" "${out}")|$(cmp -s "${ROOT}/k4-e" "${ROOT}/k4/docs/stories/e.md" && echo same)|$(state k4 e)"
 
+# --- A hand edit to e's swarm.sh keys (kind: lead, the lead's own) on a file the pull leaves alone:
+# it stays in the file, and e's state is as it was.
+setup kl
+perl -pi -e 's|^kind: code$|kind: lead|' "${ROOT}/kl/docs/stories/e.md"; cp "${ROOT}/kl/.swarm/board-state/stories/e" "${ROOT}/kl-se"
+rc=0; at kl reconcile >/dev/null || rc=$?
+check "a key edit on a file the pull leaves alone stays in the file, and e's state as it was" "0|$(git -C "${ROOT}/kl.git" rev-parse main)| M docs/stories/e.md|kind: lead|same" \
+  "${rc}|$(git -C "${ROOT}/kl" rev-parse HEAD)|$(git -C "${ROOT}/kl" status --porcelain)|$(grep -x 'kind: lead' "${ROOT}/kl/docs/stories/e.md")|$(cmp -s "${ROOT}/kl-se" "${ROOT}/kl/.swarm/board-state/stories/e" && echo same)"
+
+# --- A merge git refuses (an untracked notes.txt the base adds, with other bytes): every change made
+# for the pull is put back. e's key edit (the pull changes e), e's state and g's identical untracked
+# copy are as they were.
+setup rf; base_edit rf
+item "${ROOT}/rf-up/docs/stories/g.md" "status: ready" "kind: code"; echo theirs > "${ROOT}/rf-up/notes.txt"
+"${GIT[@]}" -C "${ROOT}/rf-up" add docs notes.txt && "${GIT[@]}" -C "${ROOT}/rf-up" commit -q -m "add g and notes" && "${GIT[@]}" -C "${ROOT}/rf-up" push -q origin main
+cp "${ROOT}/rf-up/docs/stories/g.md" "${ROOT}/rf/docs/stories/g.md"; cp "${ROOT}/rf/docs/stories/g.md" "${ROOT}/rf-g"; echo mine > "${ROOT}/rf/notes.txt"
+perl -pi -e 's|^kind: code$|kind: lead|' "${ROOT}/rf/docs/stories/e.md"; cp "${ROOT}/rf/docs/stories/e.md" "${ROOT}/rf-e"; cp "${ROOT}/rf/.swarm/board-state/stories/e" "${ROOT}/rf-se"
+before="$(git -C "${ROOT}/rf" rev-parse HEAD)"
+rc=0; out="$(at rf reconcile)" || rc=$?
+check "a merge git refuses, after e's keys moved, is reported" "1|yes|yes" \
+  "${rc}|$(has "changed only swarm.sh's own keys" "${out}")|$(has "git refused the pull (" "$(grep 'cannot pull' <<< "${out}")")"
+check "and every change made for it is put back: HEAD, e's edit, e's state, g's copy, notes.txt" "${before}|same|same|same|mine" \
+  "$(git -C "${ROOT}/rf" rev-parse HEAD)|$(cmp -s "${ROOT}/rf-e" "${ROOT}/rf/docs/stories/e.md" && echo same)|$(cmp -s "${ROOT}/rf-se" "${ROOT}/rf/.swarm/board-state/stories/e" && echo same)|$(cmp -s "${ROOT}/rf-g" "${ROOT}/rf/docs/stories/g.md" && echo same)|$(cat "${ROOT}/rf/notes.txt")"
+
 # --- A hand edit to e, a tracked story the base changes too: the pull stops, names e, changes
 # nothing, and logs one pull-failed incident.
-setup he
-echo "the base's line" >> "${ROOT}/he-up/docs/stories/e.md"
-"${GIT[@]}" -C "${ROOT}/he-up" commit -q -am "edit e" && "${GIT[@]}" -C "${ROOT}/he-up" push -q origin main
+setup he; base_edit he
 echo "a local note" >> "${ROOT}/he/docs/stories/e.md"; cp "${ROOT}/he/docs/stories/e.md" "${ROOT}/he-e"
 before="$(git -C "${ROOT}/he" rev-parse HEAD)"
 rc=0; out="$(at he reconcile)" || rc=$?
@@ -175,6 +204,17 @@ check "after a pull by hand, the deleted stories lose their state, and e keeps i
 item "${ROOT}/hp/docs/stories/d.md" "status: ready" "kind: code"
 check "and a new story d reads as written: ready, kind code" "ready|code" \
   "$(val "${ROOT}/hp/docs/stories/d.md" status)|$(val "${ROOT}/hp/docs/stories/d.md" kind)"
+
+# --- A board PR deletes x, the only epic, so git removes docs/epics with it: x's state goes too.
+setup ep; git -C "${ROOT}/ep" pull -q --ff-only
+item "${ROOT}/ep-up/docs/epics/x.md" "status: planned"
+"${GIT[@]}" -C "${ROOT}/ep-up" add docs && "${GIT[@]}" -C "${ROOT}/ep-up" commit -q -m "add x" && "${GIT[@]}" -C "${ROOT}/ep-up" push -q origin main
+git -C "${ROOT}/ep" pull -q --ff-only
+mkdir -p "${ROOT}/ep/.swarm/board-state/epics"; printf '%s\n' "status: ready" "status@base: planned" > "${ROOT}/ep/.swarm/board-state/epics/x"
+"${GIT[@]}" -C "${ROOT}/ep-up" rm -q docs/epics/x.md && "${GIT[@]}" -C "${ROOT}/ep-up" commit -q -m "drop x" && "${GIT[@]}" -C "${ROOT}/ep-up" push -q origin main
+rc=0; at ep reconcile >/dev/null || rc=$?
+check "a pull that deletes the last epic takes docs/epics, and x's state goes" "0|gone|gone" \
+  "${rc}|$(gone "${ROOT}/ep/docs/epics")|$(gone "${ROOT}/ep/.swarm/board-state/epics/x")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

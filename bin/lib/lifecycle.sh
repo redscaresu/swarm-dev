@@ -144,36 +144,45 @@ keys_only() {
 # keys_to_state <path> — for the story or epic <path>, whose unstaged edit is keys_only: move into its
 # state each SET_FM_KEYS value it reads now (through that state, so a value swarm.sh wrote after the
 # edit wins) that differs from HEAD's, with HEAD's value as its base, and check the file out, so fm
-# reads it as before. A state write that fails puts the edit back (it is kept in git's object store
-# until then) and fails.
+# reads it as before. Fails when a step does; the caller puts the file and its state back.
 keys_to_state() {
-  local f="${PROJECT_DIR}/$1" head k v blob pairs=()
+  local f="${PROJECT_DIR}/$1" head k v pairs=()
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
   for k in ${SET_FM_KEYS}; do
     v="$(get_fm "${f}" "${k}")"
     [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" ]] || pairs+=("${k}" "${v}")
   done
-  blob="$(git -C "${PROJECT_DIR}" hash-object -w -- "$1")" || return 1
   git -C "${PROJECT_DIR}" checkout -q -- "$1" || return 1
-  if [[ ${#pairs[@]} -gt 0 ]] && ! (state_set "${f}" "${pairs[@]}"); then
-    git -C "${PROJECT_DIR}" cat-file blob "${blob}" > "${f}"; return 1
-  fi
+  [[ ${#pairs[@]} -eq 0 ]] || (state_set "${f}" "${pairs[@]}") || return 1
   echo "reconcile: $1 changed only swarm.sh's own keys; they are in its board state now, and the file is checked out"
+}
+
+# blob_of <file> — the id of <file>'s bytes, written to git's object store, or - when there is no file.
+blob_of() { if [[ -f "$1" ]]; then git -C "${PROJECT_DIR}" hash-object -w --no-filters -- "$1"; else echo -; fi; }
+
+# put_back <file> <blob>... — write each <file> back from its <blob> in git's object store, or remove it
+# for -: what pull_board_repo changed before a pull that failed.
+put_back() {
+  while [[ $# -gt 1 ]]; do
+    if [[ "$2" == - ]]; then rm -f "$1"; else git -C "${PROJECT_DIR}" cat-file blob "$2" > "$1"; fi
+    shift 2
+  done
 }
 
 # pull_board_repo — pull the main checkout fast-forward, touching no edit. Once it has fetched, it
 # succeeds, touching nothing, when there is nothing to pull (HEAD has every upstream commit). It
 # stops, touching nothing, when it cannot fetch, the pull cannot fast-forward (local commits), or a
 # tracked file the incoming commits change is changed here too, staged or not: that stop names those
-# files and logs an incident, pull-failed: <files>. A changed file they leave alone stays as it is
-# through the pull, and so does a story or epic edit that is only to swarm.sh's own keys, which it
-# first moves into board state (keys_to_state). It removes each untracked board file whose bytes are
-# already the incoming one's, which the pull brings back. A pull git itself refuses (another untracked
-# file it would overwrite) changes nothing more. On failure PULL_WHY says why and what to do before
-# reconcile runs again.
+# files and logs an incident, pull-failed: <files>. A story or epic among them whose edit is only to
+# swarm.sh's own keys does not stop it: before the merge it moves those keys into board state
+# (keys_to_state). It also removes each untracked board file whose bytes are already the incoming
+# one's, which the pull brings back. If the merge then fails (git refuses it: another untracked file
+# it would overwrite), it puts each of those changes back (put_back), so a failed pull changes
+# nothing. A changed file the incoming commits leave alone stays as it is through the pull. On
+# failure PULL_WHY says why and what to do before reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local incoming line p stop="" board other out keys=()
+  local incoming line p b stop="" board other out keys=() undo=()
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   ! git -C "${PROJECT_DIR}" merge-base --is-ancestor '@{upstream}' HEAD || return 0
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
@@ -183,10 +192,11 @@ pull_board_repo() {
   incoming="$(git -C "${PROJECT_DIR}" diff --name-only --no-renames HEAD '@{upstream}')"
   while IFS= read -r line; do
     p="${line:3}"
+    grep -qxF -- "${p}" <<< "${incoming}" || continue   # the pull leaves it alone
     if [[ "${line:0:2}" == " M" && ( "${PROJECT_DIR}/${p}" == "${BOARD}/stories/"* || "${PROJECT_DIR}/${p}" == "${BOARD}/epics/"* ) ]] \
       && keys_only "${p}"; then
       keys+=("${p}")
-    elif grep -qxF -- "${p}" <<< "${incoming}"; then
+    else
       stop+="${stop:+$'\n'}${p}"
     fi
   done < <(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no)
@@ -199,19 +209,28 @@ pull_board_repo() {
     [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"
     return 1
   fi
+  # From here undo lists each file changed and the blob it was (- for none), for put_back.
   for p in "${keys[@]+"${keys[@]}"}"; do
-    keys_to_state "${p}" || { PULL_WHY="cannot move swarm.sh's keys in ${p} into its board state, so its edit stays; fix what the error above names"; return 1; }
+    state_name "${PROJECT_DIR}/${p}"
+    if ! { b="$(blob_of "${PROJECT_DIR}/${p}")" && undo+=("${PROJECT_DIR}/${p}" "${b}") \
+      && b="$(blob_of "${STATE_PATH}")" && undo+=("${STATE_PATH}" "${b}") && keys_to_state "${p}"; }; then
+      put_back "${undo[@]+"${undo[@]}"}"
+      PULL_WHY="cannot move swarm.sh's keys in ${p} into its board state, so every edit stays; fix what the error above names"
+      return 1
+    fi
   done
   while IFS= read -r p; do
-    if git -C "${PROJECT_DIR}" cat-file -e "@{upstream}:${p}" 2>/dev/null \
-      && git -C "${PROJECT_DIR}" show "@{upstream}:${p}" | cmp -s - "${PROJECT_DIR}/${p}"; then
-      rm "${PROJECT_DIR}/${p}"
-    fi
+    b="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "@{upstream}:${p}")" || continue
+    git -C "${PROJECT_DIR}" cat-file blob "${b}" | cmp -s - "${PROJECT_DIR}/${p}" || continue
+    undo+=("${PROJECT_DIR}/${p}" "${b}"); rm "${PROJECT_DIR}/${p}"
   done < <(git -C "${PROJECT_DIR}" ls-files --others --exclude-standard -- "${BOARD}")
   # Fast-forward to the upstream fetched above, which every check here read: a pull would fetch again.
-  # shellcheck disable=SC2034 # PULL_WHY is read in another file
-  out="$(git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}' 2>&1)" \
-    || { PULL_WHY="git refused the pull ($(tr '\t' ' ' <<< "${out}" | paste -sd' ' -)); fix what it names"; return 1; }
+  if ! out="$(git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}' 2>&1)"; then
+    put_back "${undo[@]+"${undo[@]}"}"
+    # shellcheck disable=SC2034 # PULL_WHY is read in another file
+    PULL_WHY="git refused the pull ($(tr '\t' ' ' <<< "${out}" | paste -sd' ' -)); fix what it names"
+    return 1
+  fi
 }
 
 # tab_label <name> — the tab label an agent name came from. Agent names stop at 32 characters

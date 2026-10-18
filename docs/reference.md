@@ -776,12 +776,13 @@ Then it pulls the board's repo, fast-forward only. swarm.sh keeps its own keys o
 main checkout already has every upstream commit), reconcile goes on and leaves every edit as it is.
 reconcile touches nothing, and stops naming why, when the main checkout cannot fast-forward (it has
 local commits), or when a tracked file the incoming commits change is changed there too, staged or
-not. A changed file the pull leaves alone, such as Obsidian's own settings, stays as it is. When the
-only uncommitted change to a story or epic is to swarm.sh's keys, as an older swarm.sh wrote them,
-reconcile moves the values, as the item reads them, into its state and checks the file out, so the
-item reads as it did. An untracked board file whose bytes match the incoming file's is removed, and
-the pull brings it back. A pull git refuses (an untracked file it would overwrite) also stops
-reconcile. On a stop for changed files, it names each of them and logs an `incident` line in
+not. A changed file the pull leaves alone, such as Obsidian's own settings, stays as it is. A story
+or epic the pull changes whose only uncommitted change is to swarm.sh's keys, as an older swarm.sh
+wrote them, does not stop it: reconcile moves the values, as the item reads them, into its state and
+checks the file out, so the item reads as it did. An untracked board file whose bytes match the
+incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
+would overwrite) also stops reconcile, and reconcile puts back each of those changes first, so a
+failed pull changes nothing. On a stop for changed files, it names each of them and logs an `incident` line in
 events.tsv with the outcome `pull-failed: <files>`. For a board
 file it says to land the edit through `swarm.sh board-pr` or check the file out to drop it; for any
 other file, to commit or move the change. Then run `swarm.sh reconcile` again. On a board in the

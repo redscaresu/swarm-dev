@@ -762,13 +762,13 @@ reconcile() {
 # drop_gone_state — state_drop each story and epic, by its board-state or escalated file, whose file a
 # commit deleted (its PR or a board PR, pulled by reconcile or by hand): it is in neither HEAD nor the
 # main checkout, and was in a commit before. A later item with its slug then starts with no state. A
-# file missing only from the main checkout, or never committed, keeps its state, and a board
-# directory that is not there drops nothing.
+# file missing only from the main checkout, or never committed, keeps its state. A board directory
+# that is not there (git removes it with its last file) counts as holding no item.
 drop_gone_state() {
   local s n d rel
   for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
     n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
-    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && -d "${BOARD}/${d}" && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
+    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
     rel="${BOARD#"${PROJECT_DIR}"/}/${d}/${n}.md"
     ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}" 2>/dev/null || continue
     [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}")" ]] || continue
