@@ -1,6 +1,5 @@
 feature	landed	metric	baseline	uses
 /epic	safer-faster-swarm	outcomes: story_merged share of builds	132 of 144 (as /hld, infrafactory, outcomes to 2026-10-16)	role:epic
-/plan-hld	2026-09-29	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:hld-lead
 /plan-epic	2026-09-29	flow reviewers: findings raised per PR	4.1 (565 over 137 PRs) (infrafactory, flow reviewers to 2026-10-16)	role:skeptic role:survey
 /swarm-dev:swarm	2026-09-29	flow: builders_mean (all)	0.37, max 8 (infrafactory, flow --until 2026-10-16)	event:conduct
 status	2026-10-02	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
@@ -29,7 +28,6 @@ codex_minutes	2026-10-15	flow reviewers: raised by codex	1 (infrafactory, flow r
 lead = session	2026-10-15	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a config key, read on every run
 role epic	safer-faster-swarm	flow cost: epic est. $	0.96 (as hld, infrafactory, flow cost to 2026-10-16)	role:epic
 role epic-review	safer-faster-swarm	flow cost: epic-review est. $	14.82 (as hld-review, infrafactory, flow cost to 2026-10-16)	role:epic-review
-role hld-lead	2026-09-29	flow cost: hld-lead est. $	3.81 (infrafactory, flow cost to 2026-10-16)	role:hld-lead
 role survey	2026-09-29	flow cost: survey est. $	25.82 (infrafactory, flow cost to 2026-10-16)	role:survey
 role lead	2026-09-29	flow cost: lead est. $	46.89 (infrafactory, flow cost to 2026-10-16)	role:lead
 role skeptic	2026-09-29	flow cost: skeptic est. $	54.31 (infrafactory, flow cost to 2026-10-16)	role:skeptic

@@ -135,5 +135,18 @@ run conduct e >/dev/null
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has '`swarm.sh finish <epic>` only on a board outside the repo' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
 
+# --- An epic conductor's workspace: the epic's parent:, read as the template writes it (a trailing
+# comment) or quoted, else the epic's own slug.
+item "${b}" epics/c1.md "status: active" "parent: big-epic            # only on a child epic of a split one"
+item "${b}" epics/c2.md "status: active" 'parent: "big-epic"'
+item "${b}" stories/c1s.md "status: ready" "kind: code" "epic: c1"
+item "${b}" stories/c2s.md "status: ready" "kind: code" "epic: c2"
+item "${b}" epics/solo.md "status: active"
+item "${b}" stories/solos.md "status: ready" "kind: code" "epic: solo"
+: > "${ROOT}/herdr.log"
+o1="$(run conduct c1 || echo "exit $?")"; o2="$(run conduct c2 || echo "exit $?")"; o3="$(run conduct solo || echo "exit $?")"
+check "conduct names the workspace for a commented or quoted parent:, else the epic" "yes|yes|yes|2|yes" \
+  "$(has "workspace big-epic (w)" "${o1}")|$(has "workspace big-epic (w)" "${o2}")|$(has "workspace solo (w)" "${o3}")|$(grep -c 'workspace create --label big-epic' "${ROOT}/herdr.log")|$(has "workspace create --label solo " "$(cat "${ROOT}/herdr.log")")"
+
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
