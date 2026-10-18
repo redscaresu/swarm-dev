@@ -57,6 +57,9 @@ When a review agent reports \`codex skipped: <why>\` (its file's second line say
 Wait for the builder, then start a new review agent on its new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason.
+Review stops after round 3: from round 4 on, only a real bug (wrong behaviour, data loss, a security
+hole) sends the PR back. Decline anything smaller with a reason in the PR, and log it with
+\`log-finding --declined nit --reviewer <who>\`.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
@@ -119,7 +122,7 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
 When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
 \`swarm.sh close <slug>\`. Then run \`swarm.sh unblock\`, and start each story ${scope} it prints as
-\`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
+\`ready:\` that clashes with no running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again with its build kept: close its builder with a bare
 \`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, and go on.
@@ -147,7 +150,7 @@ $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the buil
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
 Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
-whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
+that clashes with no running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again and nothing merges: leave its builder open, unless that line
 says \`(costs money)\`. The user merges that parent, maybe days later, so close its builder with a
@@ -856,15 +859,30 @@ leave the rest to their own conductor.
 EOF
 }
 
+# clash_rule — when two stories may build at once, and what a conflict with the base costs. Git merges
+# edits to different parts of one file, so only a shared symbol or a bare file holds a story back.
+clash_rule() {
+  cat <<EOF
+Two stories clash only when their \`touches\` name the same \`file:symbol\`, or when either names
+the bare file (no \`:symbol\`) of a file the other also names. Otherwise both build at once, even
+in the same file. A builder whose PR conflicts with its base merges the base in, resolves it, re-runs
+the tests and pushes; when \`swarm.sh watch\` says a PR CONFLICTS, tell its builder that with
+\`swarm.sh tell <slug> findings <file>\`. A conflict never sends a story back to \`ready\`: never
+close a builder over one.
+EOF
+}
+
 # A PR per story.
 conduct_story_mode() {
   local epic="$1"
   cat <<EOF
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as reference.md
-§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
+§ Building describes: pick waves of \`ready\` stories that do not clash,
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
+
+$(clash_rule)
 
 $(stacked_rule "${epic}")
 
@@ -894,7 +912,7 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`."
   fi
   cat <<EOF
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as reference.md
-§ Building describes: pick waves of them whose \`touches\` do not overlap, start each with
+§ Building describes: pick waves of them that do not clash, start each with
 \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --backlog\` in the background, and review each PR. Each story's base branch is in
 its brief, .swarm/briefs/<slug>.md.
@@ -908,6 +926,8 @@ start it, and report it as not started, with the reason \`build died\`. A held c
 
 List each ready story with no \`epic:\` that you could not start in your report, one line each:
 \`not started: <slug> (<the refusal's first line>)\`.${own}
+
+$(clash_rule)
 
 $(stacked_rule backlog)
 

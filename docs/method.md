@@ -14,7 +14,12 @@ each step is in [`reference.md`](reference.md).
    codex check for gaps and overlaps (reference.md § Scoping an epic).
 3. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
-   § Building, § Merging).
+   § Building, § Merging). Two stories clash only when their `touches` name the same `file:symbol`,
+   or when either names the bare file of a file the other also names; otherwise both build at once.
+   A builder whose PR conflicts with main merges main in, resolves it, reruns the tests and pushes;
+   a conflict never sends a story back to `ready`. Review stops after round 3: from round 4 on, only
+   a real bug (wrong behaviour, data loss, a security hole) sends the PR back, and anything smaller
+   is declined with a reason and logged as declined (reference.md § The outer loop).
 
 `/swarm-dev:swarm` runs the chain after the epic. `swarm.sh next` reads the board and names the next
 step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a
