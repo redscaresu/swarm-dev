@@ -353,7 +353,7 @@ check "the review agent's brief has the checklist among what to check, before Wh
   "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
 for l in "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
   "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" \
-  "- its second line (user, 2026-10-17), the title on its first."; do
+  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB"; do
   check "both briefs carry the epic's decision line (from its Done when): ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
 for l in "- **Scope RV-LABEL (user, 2026-10-17):**" "  - RV-LABEL-A" "  - RV-LABEL-B"; do
@@ -361,7 +361,7 @@ for l in "- **Scope RV-LABEL (user, 2026-10-17):**" "  - RV-LABEL-A" "  - RV-LAB
 done
 check "a marked heading is a decision, its line alone" "yes|yes" \
   "$(has "- Release plan RV-HEAD (user, 2026-10-17)" "${brief}")|$(has "- Release plan RV-HEAD (user, 2026-10-17)" "${fbrief}")"
-for w in RV-NOT-A-DECISION RV-CODE RV-FENCE RV-FILLER RV-HEAD-BODY RV-HEAD-SUB RV-NEXT-SECTION RV-AFTER-HEAD RV-WRAP-SUB; do
+for w in RV-NOT-A-DECISION RV-CODE RV-FENCE RV-FILLER RV-HEAD-BODY RV-HEAD-SUB RV-NEXT-SECTION RV-AFTER-HEAD; do
   check "neither brief carries ${w}: not a decision (the next bullet, code, a fence) or past the 2000 bytes" "0|0" \
     "$(grep -c "${w}" <<< "${brief}" || true)|$(grep -c "${w}" <<< "${fbrief}" || true)"
 done
@@ -381,24 +381,27 @@ for l in "${CHECKLIST[@]:0:5}"; do
 done
 # The layouts a decision is written in, straight through user_decisions (after an empty story file):
 # a paragraph or a bold label ending in `:` with a list under it, one blank line before the list
-# allowed; two marked paragraphs in a row; a bullet then a marked paragraph; and a paragraph with an
-# unrelated list after a blank line. Each ends where its line and deeper lines (or its list) end.
+# allowed; two marked paragraphs in a row; a bullet then a marked paragraph; a paragraph with an
+# unrelated list after a blank line; and hard-wrapped paragraphs, whose wrapped lines belong to them.
+# Each ends where its lines, deeper lines (or its list) end.
 printf '%s\n' "We agreed RV-PARA (user, 2026-10-17):" "- RV-PARA-A" "- RV-PARA-B" "" "RV-PARA-END" "" \
   "**Scope RV-LOOSE (user, 2026-10-17):**" "" "- RV-LOOSE-A" "  RV-LOOSE-CONT" "- RV-LOOSE-B" "RV-LOOSE-END" "" \
   "RV-TWO-X first (user, 2026-10-17)." "RV-TWO-Y second (user, 2026-10-17)." "" \
   "- **RV-BUL bullet (user, 2026-10-17).**" "  - RV-BUL-SUB" "RV-BPAR paragraph (user, 2026-10-17)." "" \
   "RV-UNREL decided (user, 2026-10-17)." "" "- RV-UNREL-LIST" "" \
   "- **RV-COLON bullet (user, 2026-10-17):**" "  - RV-COLON-SUB" "- RV-COLON-SIBLING" "" \
-  "**Phase RV-WRAP (user, 2026-10-13):** the lead" "sets RV-WRAP-LINE" "" "RV-WRAP-END" > "${ROOT}/layouts.md"
+  "**Phase RV-WRAP (user, 2026-10-13):** the lead" "sets RV-WRAP-LINE" "" "RV-WRAP-END" "" \
+  "We decided RV-REASON one release (user, 2026-10-17), because" "the lead cannot verify RV-REASON-LINE one big release." > "${ROOT}/layouts.md"
 : > "${ROOT}/empty.md"
 lay="$(bash -c '. "$1/lib/build.sh"; user_decisions "$2" "$3"' _ "${SWARM%/*}" "${ROOT}/empty.md" "${ROOT}/layouts.md")"
 for l in "- We agreed RV-PARA (user, 2026-10-17):" "  - RV-PARA-A" "  - RV-PARA-B" \
   "- **Scope RV-LOOSE (user, 2026-10-17):**" "  - RV-LOOSE-A" "    RV-LOOSE-CONT" "  - RV-LOOSE-B" \
-  "- **RV-BUL bullet (user, 2026-10-17).**" "  - RV-BUL-SUB" "- **Phase RV-WRAP (user, 2026-10-13):** the lead"; do
+  "- **RV-BUL bullet (user, 2026-10-17).**" "  - RV-BUL-SUB" "- **Phase RV-WRAP (user, 2026-10-13):** the lead" "  sets RV-WRAP-LINE" \
+  "- We decided RV-REASON one release (user, 2026-10-17), because" "  the lead cannot verify RV-REASON-LINE one big release."; do
   check "a decision keeps what was decided: ${l}" "yes" "$(has "${l}" "${lay}")"
 done
 check "a decision ends with its list or its deeper lines: what follows is not in it" "0" \
-  "$(grep -c 'RV-PARA-END\|RV-LOOSE-END\|RV-WRAP-LINE\|RV-WRAP-END' <<< "${lay}" || true)"
+  "$(grep -c 'RV-PARA-END\|RV-LOOSE-END\|RV-WRAP-END' <<< "${lay}" || true)"
 check "two marked paragraphs in a row are two decisions, each once" "1|1|yes|yes" \
   "$(grep -c RV-TWO-X <<< "${lay}")|$(grep -c RV-TWO-Y <<< "${lay}")|$(has "- RV-TWO-X first (user, 2026-10-17)." "${lay}")|$(has "- RV-TWO-Y second (user, 2026-10-17)." "${lay}")"
 check "a bullet then a marked paragraph are two decisions: the bullet once, the paragraph its own" "1|yes" \

@@ -547,8 +547,11 @@ DECISIONS_MAX_BYTES=2000
 
 # user_decisions <file>... — each decision the files mark `(user, <date>`, printed as its own bullet,
 # a blank line apart, cut to DECISION_MAX_BYTES, while they fit in DECISIONS_MAX_BYTES. A decision is
-# the marked line and the lines after it indented deeper; a marked line ending in `:` that is not a
-# list item (a bold label, a paragraph introducing a list) also takes the list items after it (one blank line before them allowed), up to the first line that is neither an
+# the marked line and the lines after it indented deeper. A paragraph keeps its wrapped lines (at its
+# indent, not blank, an item, a heading, a fence or marked); a mark on a bullet's wrapped line starts
+# the decision at the bullet's first line (bul, the bullet read so far, bi its indent). A marked line
+# ending in `:` that is not a list item (a bold label, a paragraph introducing a list) also takes the
+# list items after it (one blank line before them allowed), up to the first line that is neither an
 # item nor deeper. A marked heading is its line alone. A mark in a fenced block, an inline code span or
 # the first file's (the story's) **Done when** section, which the brief already quotes, is not a
 # decision; an epic's decisions sit in its Done when.
@@ -570,19 +573,25 @@ user_decisions() {
     }
     function indent(s) { match(s, /^ */); return RLENGTH }
     function item(s) { return s ~ /^ *([-*+]|[0-9]+\.) / }
+    function colon(s) { return s ~ /:(\*\*|\*|__|_)?[[:space:]]*$/ }
     function marked(s) { gsub(/`[^`]*`/, "", s); return s ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ }
-    FNR == 1 { flush(); fence = 0; dw = 0 }
+    FNR == 1 { flush(); fence = 0; dw = 0; bul = "" }
     # Collecting: a deeper line, a list item after a `:` line (with one blank before the first), or the end.
     d != "" && $0 !~ /[^[:space:]]/ { if (list && !items && !blank) { blank = 1; next } flush() }
     d != "" && indent($0) > ind { d = d "\n" $0; next }
     d != "" && list && item($0) { d = d "\n" $0; items = 1; next }
+    d != "" && !item(d) && !items && indent($0) == ind && !item($0) && !/^ *(#|```|~~~)/ && !marked($0) {
+      d = d "\n" $0; list = colon($0); next
+    }
     d != "" { flush() }
     /^ *(```|~~~)/ { fence = !fence; next }
     fence { next }
+    { if (item($0)) { bul = $0; bi = indent($0) } else if (bul != "" && /[^[:space:]]/ && !/^#/ && indent($0) > bi) bul = bul "\n" $0; else bul = "" }
     /^\*\*|^#/ { dw = FILENAME == story && index($0, "**Done when") == 1 }
     dw || !marked($0) { next }
     /^#/ { d = $0; src = FILENAME; flush(); next }
-    { d = $0; ind = indent($0); src = FILENAME; list = !item($0) && $0 ~ /:(\*\*|\*|__|_)?[[:space:]]*$/; items = 0; blank = 0 }
+    { if (!item($0) && bul != "" && indent($0) > bi) { d = bul; ind = bi } else { d = $0; ind = indent($0) }
+      src = FILENAME; list = !item(d) && colon($0); items = 0; blank = 0; bul = "" }
     END {
       flush(); if (out != "") print out
       if (left) printf "\n%d more decision%s left out of this brief (past %d bytes): read %s.\n", left, (left > 1 ? "s are" : " is"), all, where
