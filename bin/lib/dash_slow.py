@@ -1,9 +1,10 @@
 import datetime, json, os, re, signal, subprocess, sys, time
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
-# The ci line reads two weeks of PRs, 3 gh calls each, so at most every 6 hours: a week's median barely
-# moves in that time. ponytail: every PR is read again each time; keep a closed PR's ci_time if the
-# calls ever crowd gh's rate limit.
-CI_SECONDS = 6 * 3600
+# The ci line runs flow's ci_health over two weeks of PRs, 3 gh calls each, so at most every 6 hours:
+# a week's median barely moves in that time. A refresh that fails is tried again after CI_RETRY.
+# ponytail: every PR is read again each time; keep a closed PR's ci_time if the calls ever crowd
+# gh's rate limit.
+CI_SECONDS, CI_RETRY = 6 * 3600, 600
 def gh(args):
     p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
@@ -17,41 +18,38 @@ def origin_of(repo):
     # The repo named from its origin, as nudge_reason names it, so an upstream remote never answers.
     return subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
 
-def ci_line(origin):
-    # dash's ci line: flow ci_health's ci time over origin's PRs created in the last 7 days, against the
-    # 7 days before (flow --since <6 days ago>), as `ci 11m (slowest: test 9m) ▼2m vs last week`.
-    from flow_ci_health import ci_time, summary
-    from report import local_day, merge_time
-    today = datetime.date.today()
-    prs = json.loads(gh(["pr", "list", "-R", origin, "--state", "all", "--search", f"created:>={today - datetime.timedelta(days=14)}",
-                         "--limit", "1000", "--json", "url,createdAt"]))
-    weeks = ([], [])
-    for p in prs:
-        age = (today - local_day(merge_time(p["createdAt"]))).days
-        if 0 <= age < 14:
-            weeks[age >= 7].append(p["url"])
-    now, before = ([ci_time(u) for u in sorted(w)] for w in weeks)
-    if None in now + before:
+def ci_line(flow, repo):
+    # dash's ci line from flow's ci_health output: repo's ci time row, as `ci 11m (slowest: test 9m)
+    # ▼2m vs last week`, the change from the minutes it shows; "" with no PRs, None with no table or
+    # when gh could read none of them.
+    lines = flow.splitlines()
+    head = next((i for i, l in enumerate(lines) if l.startswith("repo\tprs\tci_min_median\t")), None)
+    if head is None:
         return None
-    now, before = summary([t for t in now if t]), summary([t for t in before if t])
-    if not now:
-        return ""
-    line = f"ci {now[0]:.0f}m (slowest: {now[1]} {now[2]:.0f}m)"
-    if before:
-        d = now[0] - before[0]
-        line += f" {'▼' if d < 0 else '▲' if d > 0 else '±'}{abs(d):.0f}m vs last week"
+    row = next((l.split("\t") for l in lines[head + 1:] if l.split("\t")[0].lower() == repo.lower()), None)
+    if not row or not row[2]:
+        return None if any(l.startswith("ci time: gh could not read") for l in lines) else ""
+    now = round(float(row[2]))
+    line = f"ci {now}m (slowest: {row[3]} {float(row[4]):.0f}m)"
+    if row[6]:
+        d = now - round(float(row[6]))
+        line += f" {'▼' if d < 0 else '▲' if d > 0 else '±'}{abs(d)}m vs last week"
     return line
 
 if sys.argv[1:2] == ["--ci"]:
-    # A detached refresh: <origin> <cache>. Anything gh or the repo answers oddly leaves the cache as it was.
-    try:
-        line = ci_line(sys.argv[2])
-        if line is not None:
-            with open(sys.argv[3] + f".{os.getpid()}", "w") as f:
-                f.write(line)
-            os.replace(sys.argv[3] + f".{os.getpid()}", sys.argv[3])
-    except Exception:
-        pass
+    # A detached refresh: <project> <owner/repo> <cache>. It runs `swarm.sh flow --since <6 days ago>`'s
+    # ci_health alone in the project, and writes the cache only when flow printed its ci time table.
+    project, repo, cache = sys.argv[2:5]
+    since = (datetime.date.today() - datetime.timedelta(days=6)).isoformat()
+    env = {k: v for k, v in os.environ.items() if k != "HERDR_ENV"}
+    env.update(SWARM_PROJECT=project, SWARM_FLOW_SECTIONS="ci_health")
+    swarm = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "swarm.sh")
+    flow = subprocess.run(["bash", swarm, "flow", "--since", since], cwd=project, env=env, capture_output=True, text=True).stdout
+    line = ci_line(flow, repo)
+    if line is not None:
+        with open(f"{cache}.{os.getpid()}", "w") as f:
+            f.write(line)
+        os.replace(f"{cache}.{os.getpid()}", cache)
     sys.exit()
 for url in sys.argv[1:]:
     out = gh(["pr", "view", url, "--json", FIELDS])
@@ -77,18 +75,21 @@ for repo, mine in slugs.items():
             out = gh(["pr", "view", pr["url"], "--json", FIELDS]) if pr.get("url") not in sys.argv[1:] else None
             if out is not None:
                 print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
-# The project's ci line from its cache (SWARM_CI_CACHE), which a detached copy of this script reads
-# again when it is over CI_SECONDS old; its mtime is moved first, so one dash starts it.
-cache, origin = os.environ.get("SWARM_CI_CACHE"), origin_of(os.environ.get("SWARM_CI_PROJECT", "."))
-if cache and re.search(r"github\.com[:/]", origin):
+# The project's ci line from its cache (SWARM_CI_CACHE), which a detached copy of this script writes
+# again once it is over CI_SECONDS old. <cache>.run marks a refresh started, so one dash starts it and
+# a failed one is tried again after CI_RETRY. A cache it cannot read or write leaves the line out.
+cache, project = os.environ.get("SWARM_CI_CACHE"), os.environ.get("SWARM_CI_PROJECT", ".")
+m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", origin_of(project))
+if cache and m:
     try:
-        stale = time.time() - os.path.getmtime(cache) > CI_SECONDS
+        now = time.time()
+        if not os.path.exists(cache) or now - os.path.getmtime(cache) > CI_SECONDS:
+            if not os.path.exists(cache + ".run") or now - os.path.getmtime(cache + ".run") > CI_RETRY:
+                open(cache + ".run", "w").close()
+                subprocess.Popen([sys.executable, os.path.abspath(__file__), "--ci", project, m.group(1), cache],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        if os.path.exists(cache):
+            with open(cache) as f:
+                print("ci\t" + f.read().strip())
     except OSError:
-        stale = True
-    if stale:
-        open(cache, "a").close()
-        os.utime(cache)
-        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--ci", origin, cache], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    with open(cache) as f:
-        print("ci\t" + f.read().strip())
+        pass

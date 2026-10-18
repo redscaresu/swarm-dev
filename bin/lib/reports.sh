@@ -196,9 +196,10 @@ outcomes_report() {
 #     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
 #     10 s prints `ci health: gh failed` and no numbers. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from one jobs
-#     listing): its PRs, the median minutes, the job most often slowest and that job's median
-#     minutes, the same for the window of as many days before it, and the change in minutes
-#     (`ci time: gh failed` when gh fails). dash's ci line reads the same over the last 7 days.
+#     listing, its control characters dropped): its PRs, the median minutes, of the jobs that were a
+#     PR's slowest the one with the highest median minutes and that median, the same for the window
+#     of as many days before it, and the change in minutes. A PR gh cannot read is left out, and a
+#     line says how many. dash's ci line is its origin repo's row of `flow --since <6 days ago>`.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
@@ -257,6 +258,7 @@ outcomes_report() {
 #     phase minutes (a merged PR), each PR once by its first build; with --epic, that epic's row alone:
 #     its PRs, their start-to-merge minutes, and the five phases' sums largest first as <phase>:<min>.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
+# SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
   local since="" until="" epic="" rows=""
@@ -277,7 +279,8 @@ flow_report() {
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(SWARM_REWORK_SINCE="${since}" outcomes_report)"
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}"
+  # shellcheck disable=SC2086 # one section name per word
+  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}" ${SWARM_FLOW_SECTIONS:-}
 }
 
 # flow_sections <since> <until> <epic> <outcomes rows> <lead session> [section...] — run flow_report.py

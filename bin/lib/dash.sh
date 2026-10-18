@@ -145,8 +145,8 @@ dash_base_ref() {
 # open story's open story/<slug> PR in that story's own repo (a builder's PR, which its story lists
 # only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
 # view per PR that matches, each with the same limit; how many stories of each epic finished
-# (dash_finished); and the project's ci line (dash_slow.py's ci_line, from a cache of its own that a
-# detached dash_slow.py refreshes every 6 hours).
+# (dash_finished); and the project's ci line (its origin repo's row of flow's ci time, from a cache of
+# its own that a detached dash_slow.py refreshes every 6 hours).
 dash_slow() {
   local cache f r urls pairs day key
   # Today, or SWARM_DASH_NOW's day (dash_render's fixed clock).
