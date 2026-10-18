@@ -196,7 +196,10 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 
 An epic (`docs/epics/<slug>.md`: goal, **Done when**, out of scope, constraints) becomes stories
 with `/plan-epic <slug>`. An epic of at most 3 stories with no `risk: high` is planned by the lead
-alone, with one codex pass over stories committed in a board-PR worktree. Any other epic gets one survey agent unless its text names another repo (three
+alone, with one codex pass over stories committed in a board-PR worktree. A large one (more than 8
+stories, or goals that can ship apart) is split by the lead alone into child epics, each with
+`parent: <epic>` and its own **Done when**, planned in turn; the parent becomes `status: split` and
+counts as done once none of its children is left. Any other epic gets one survey agent unless its text names another repo (three
 then), one lead decomposition into one-PR stories with `kind`, `touches` and `depends_on` (a
 chain at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`),
 and a skeptic per story (capped at five, the rest logged), a codex pass and a critic, all in
@@ -230,10 +233,14 @@ that tab, named for the story; a tab holds four panes, and the fifth opens `<epi
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
-**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog`, which builds the
-ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
+**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
+first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
 `story --strict`, the same review, and the same handover or merge. It runs in a workspace named
-`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. It watches only
+`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
+names span every project, so naming it for the project's path lets two projects each run one at once,
+even two directories with the same name. A name another project's agent holds is refused before the
+old report or brief is touched, and the refusal says where that agent runs. An epic whose
+conductor would take that name (`backlog-<dir>-<hash>` for this project) is refused too. It watches only
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
@@ -316,9 +323,9 @@ put back as it was given after them.
 `.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
 the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
 reads a key from that file first and from the item's front matter second, so a key with no line
-there, as on an existing board, reads from the file; `dash` still draws its board rows from the
-files alone. A line with no value clears the key, and swarm.sh writes no line that would only repeat
-the file's value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
+there, as on an existing board, reads from the file. `dash` reads its board rows the same way. A line
+with no value clears the key, and swarm.sh writes no line that would only repeat the file's value.
+Beside each line it keeps a `<key>@base:` line with the file's value at the time.
 Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
 read, and the next write to the item drops the old line. A write holds the item's lock, a
 `<slug>.lock` directory beside its state file, so two commands writing one item at once keep both

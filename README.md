@@ -124,7 +124,7 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 
 - [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in
-  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` reads both.
+  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` and `swarm.sh dash` read both.
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
