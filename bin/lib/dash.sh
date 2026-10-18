@@ -187,11 +187,15 @@ dash_slow() {
 # the board, as docs/operations.md does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
 # the deleted file's last status was done or review (reconcile finishes only items in review) or it
 # listed prs. A re-scope (a board/ PR, or a commit that edits only the board and root notes such as
-# STATUS.md) has none of these, so it counts as nothing.
+# STATUS.md) has none of these, so it counts as nothing. An after: story (waits_on_epic, on the deleted
+# version's front matter) never counts in its epic.
 dash_finished() {
-  local prefix
+  local prefix tag epic kind after
   prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
-  python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true
+  { python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true; } \
+    | while IFS=$'\t' read -r tag epic kind after; do
+        if [[ "${tag}" == story ]] && ! waits_on_epic "${kind}" "${after}" "${epic}"; then printf '%s\n' "${epic}"; fi
+      done | sort | uniq -c | awk '{ print "finished\t" $2 "\t" $1 }'
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;

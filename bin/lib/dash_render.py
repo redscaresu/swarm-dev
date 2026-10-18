@@ -458,9 +458,13 @@ if WIDE:
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
 
-# An after_story waits on its epic and does not count in it.
+# An after_story waits on its epic and does not count in it (dash_fields' flag, from board.sh).
 def in_epic(b, slug):
     return b[6] == slug and not b[AFTER]
+
+def after_open(slug):
+    # The epic's open after: stories, which its row names in place of a count.
+    return [b[1] for b in stories if b[6] == slug and b[AFTER] and b[2] != "done"]
 
 def epic_rows(slug, members):
     if not slug:
@@ -480,7 +484,9 @@ def epic_rows(slug, members):
     order = ["review", "ready", "blocked", "later"]
     counts = " · ".join(f"{left[s]} {s}" for s in order + sorted(s for s in left if s not in order) if left[s])
     rows = [[sym(k), (f"{cut(epic_label(slug), epic_w):<{epic_w}}  ", "b"), ("█" * fill, "ok"), ("░" * (bar_w - fill), "dim"),
-             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or (f"waits on {', '.join(waits[slug].split())}" if slug in waits else "" if total else "no stories on the board or in git"), "dim")]]
+             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or (f"waits on {', '.join(waits[slug].split())}" if slug in waits
+                          else f"after: {', '.join(after_open(slug))} waits on the lead" if after_open(slug)
+                          else "" if total else "no stories on the board or in git"), "dim")]]
     rows += [agent_row(r) for r in members]
     for (m, owner), st in zip(prs, states):
         k = st[0] if st else "review"
@@ -498,8 +504,10 @@ def rank(item):
     return 1 if any(r["state"] == "working" for r in members) else 2
 
 # An active epic with no open story and no agent shown is one line for them all, unless its
-# depends_on holds it up (DASH_EPIC_WAITS): it keeps its own row, which names what it waits on.
-quiet = [s for s, m in groups.items() if s and not m and s not in waits and not any(in_epic(b, s) and b[2] != "done" for b in stories)]
+# depends_on holds it up (DASH_EPIC_WAITS) or an after: story of it is open: it keeps its own row,
+# which names what it waits on, or the after: story.
+quiet = [s for s, m in groups.items() if s and not m and s not in waits and not after_open(s)
+         and not any(in_epic(b, s) and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
 epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]

@@ -60,32 +60,52 @@ board() {
   return 0
 }
 
-# after_story <story-file> — true for a kind: lead story whose after: names its own epic: it waits on
-# the epic, so it does not count in it (the epic goes, and reads as done, without it). An after: that
-# names anything else is ignored. It stays on the board and is listed with the lead's stories.
-after_story() {
-  local epic
-  epic="$(get_fm "$1" epic)"
-  [[ -n "${epic}" && "$(get_fm "$1" kind)" == lead && "$(get_fm "$1" after)" == "${epic}" ]]
+# waits_on_epic <kind> <after> <epic> — the after: rule on a story's front-matter values: kind lead,
+# and after: (slug_list) names exactly its own epic. Such a story waits on the epic, so it does not
+# count in it (the epic goes, and reads as done, without it); it stays on the board and is listed with
+# the lead's stories. An after: naming anything else is ignored. after_story reads a story file with
+# it, dash_finished a deleted one.
+waits_on_epic() {
+  local a rest
+  read -r a rest <<< "$(slug_list "$2")" || true
+  [[ -n "$3" && "$1" == lead && -z "${rest}" && "${a}" == "$3" ]]
 }
 
-# epic_has_stories <epic> [<slug>] — true when any story names <epic>. With <slug>, true when any
-# story but <slug> does, not counting an after_story: story_brief's test for the epic's last story.
+# after_story <story-file> — true for a story waits_on_epic holds for (kind and after: state-aware).
+after_story() { waits_on_epic "$(get_fm "$1" kind)" "$(get_fm "$1" after)" "$(fm "$1" epic)"; }
+
+# epic_stories <epic> — the story files that count in <epic>, any status: those naming it, but an
+# after_story. Every test of an epic's stories reads them here.
+epic_stories() {
+  local s
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "$1" ]] && ! after_story "${s}" && echo "${s}"
+  done < <(board stories)
+  return 0
+}
+
+# epic_has_stories <epic> [<slug>] — true when a story counts in <epic> (epic_stories). With <slug>,
+# one but <slug>: story_brief's test for the epic's last story.
 epic_has_stories() {
   local s
   while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "$1" ]] || continue
-    [[ -n "${2:-}" ]] || return 0
-    [[ "$(basename "${s}" .md)" == "$2" ]] && continue
-    after_story "${s}" && continue
-    return 0
-  done < <(board stories)
+    [[ "$(basename "${s}" .md)" == "${2:-}" ]] || return 0
+  done < <(epic_stories "$1")
   return 1
 }
 
-# epic_after_only <epic-file> — true when the epic is active (planned), has an after_story, and every
-# other story of it is done: it counts as done (open_item), so what depends on it goes ahead. A draft
-# or later epic never does.
+# epic_planned <epic> — true once code stories were planned for <epic>: one counts in it on the board
+# (epic_stories, done ones too), or one of them finished and left the board (dash_finished, from its
+# repo's history).
+epic_planned() {
+  [[ -n "$(epic_stories "$1")" ]] && return 0
+  dash_finished | awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }'
+}
+
+# epic_after_only <epic-file> — true when the epic is active, its open stories are all after_story
+# ones (at least one), and code stories were planned for it (epic_planned): it counts as done
+# (open_item), so what depends on it goes ahead, and it is not planned again. A draft or later epic,
+# or one whose only story ever was an after: one, never does.
 epic_after_only() {
   local s slug n=0
   [[ "$(fm "$1" status)" == active ]] || return 1
@@ -95,7 +115,7 @@ epic_after_only() {
     after_story "${s}" || return 1
     n=1
   done < <(board stories)
-  [[ ${n} -eq 1 ]]
+  [[ ${n} -eq 1 ]] && epic_planned "${slug}"
 }
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
@@ -216,13 +236,13 @@ plannable_epic() {
   done < <(board epics)
 }
 
-# epic_holding_deps <epic file> — fails unless it is an active epic with no stories (the epics
-# planning waits for); else prints its depends_on slugs that still hold its planning up (dep_holds),
+# epic_holding_deps <epic file> — fails unless it is an active epic with no stories (epic_has_stories;
+# an after: story is none) that does not count as done (epic_after_only): the epics planning waits for; else prints its depends_on slugs that still hold its planning up (dep_holds),
 # space-separated, none when it can be planned. Its deps are read only once it has no stories. A child
 # epic's own parent: never holds it: the split parent is open for as long as the child is.
 epic_holding_deps() {
   local b held="" parent
-  [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" || return 1
+  [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" && ! epic_after_only "$1" || return 1
   parent="$(fm_list "$1" parent)"
   for b in $(story_deps "$1"); do
     [[ "${b}" != "${parent}" ]] && dep_holds "${b}" && held+=" ${b}"
@@ -232,16 +252,14 @@ epic_holding_deps() {
 
 # dep_holds <slug> — true while an epic's depends_on slug holds up its planning: an open story, or an
 # open epic with no stories or with one not yet in review. Stories are scoped against the code the
-# dependency builds, and code in review is code that exists. An after_story does not count.
+# dependency builds, and code in review is code that exists. Its stories are epic_stories.
 dep_holds() {
   local f n=0
   open_item "${BOARD}/stories/$1.md" && return 0
   open_item "${BOARD}/epics/$1.md" || return 1
   while IFS= read -r f; do
-    [[ "$(fm "${f}" epic)" == "$1" ]] || continue
-    after_story "${f}" && continue
     case "$(fm "${f}" status)" in review) n=1 ;; done) ;; *) return 0 ;; esac
-  done < <(board stories)
+  done < <(epic_stories "$1")
   [[ ${n} -eq 0 ]]
 }
 
@@ -395,11 +413,14 @@ has_child_epics() {
 # story_deps <story> — the depends_on slugs in its front matter (fm_list).
 story_deps() { fm_list "$1" depends_on; }
 
-# fm_list <file> <key> — <key>'s slugs in its front matter, space-separated, YAML brackets, quotes, a
+# fm_list <file> <key> — <key>'s slugs in its front matter (slug_list).
+fm_list() { slug_list "$(get_fm "$1" "$2")"; }
+
+# slug_list <value> — a front-matter value's slugs, space-separated, YAML brackets, quotes, a
 # trailing # comment and trailing whitespace (a CR too) gone.
-fm_list() {
-  local v
-  v="$(get_fm "$1" "$2")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+slug_list() {
+  local v="$1"
+  v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
   printf '%s' "${v//\'/}"
 }
