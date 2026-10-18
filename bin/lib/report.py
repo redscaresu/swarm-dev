@@ -3,6 +3,10 @@ import datetime, glob, gzip, json, os, re, sys, zlib
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
 
+# The phases outcomes splits a build's start-to-merge minutes into, in the order its columns print
+# (<phase>_min); flow's time_in_state reads them by these names.
+PHASES = ("building", "ci", "review_wait", "fixing", "merge_wait")
+
 def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
