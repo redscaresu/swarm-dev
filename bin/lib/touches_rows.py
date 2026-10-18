@@ -1,18 +1,31 @@
 import glob, os, re, sys
-stories, me, project_dir, repos_dir = sys.argv[1:]
+stories, me, project_dir, repos_dir, state = sys.argv[1:]
 project = os.path.basename(project_dir)
 
-def front(path):
-    lines, out = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}
-    if lines[0] != "---":
-        return out
-    for line in lines[1:]:
-        if line == "---":
+# pairs(lines, out, stop) — each key's first value, as board.sh's awk reads it: leading spaces dropped.
+def pairs(lines, out, stop=None):
+    for line in lines:
+        if line == stop:
             break
         k, sep, v = line.partition(":")
         if sep and k not in out:
-            out[k] = v.strip()
-    return out
+            out[k] = v.lstrip(" ")
+
+# front(path) — the story's front matter, under what swarm.sh wrote to its state file (state_set),
+# but for a key whose <key>@base: the file no longer has: a later edit to the file wins. The values
+# are compared as state_value compares them, then trimmed.
+def front(path):
+    lines, out, st = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}, {}
+    if lines[0] == "---":
+        pairs(lines[1:], out, "---")
+    try:
+        pairs(open(os.path.join(state, os.path.basename(path)[:-3]), encoding="utf-8", errors="replace").read().split("\n"), st)
+    except FileNotFoundError:
+        pass
+    for k, v in st.items():
+        if not k.endswith("@base") and st.get(k + "@base", out.get(k, "")) == out.get(k, ""):
+            out[k] = v
+    return {k: v.strip() for k, v in out.items()}
 
 def entries(fm):
     repo = fm.get("repo", "")

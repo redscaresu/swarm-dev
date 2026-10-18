@@ -219,9 +219,10 @@ key_clash() {
   local k l h u head up deps=""
   up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)" || return 0
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
-  [[ "$(get_fm "${PROJECT_DIR}/$1" status)" == "$(get_fm - status <<< "${head}")" ]] || deps="depends_on"
+  # The file as it is (- reads stdin), never its state in STATE_DIR.
+  [[ "$(get_fm - status < "${PROJECT_DIR}/$1")" == "$(get_fm - status <<< "${head}")" ]] || deps="depends_on"
   for k in ${SET_FM_KEYS} ${deps}; do
-    l="$(get_fm "${PROJECT_DIR}/$1" "${k}")"; h="$(get_fm - "${k}" <<< "${head}")"; u="$(get_fm - "${k}" <<< "${up}")"
+    l="$(get_fm - "${k}" < "${PROJECT_DIR}/$1")"; h="$(get_fm - "${k}" <<< "${head}")"; u="$(get_fm - "${k}" <<< "${up}")"
     [[ "${u}" == "${h}" || "${u}" == "${l}" ]] && continue
     [[ "${l}" == "${h}" && " ${deps} " != *" ${k} "* ]] && continue
     echo "${k}"; return 0
@@ -237,7 +238,7 @@ keys_back() {
   was="$(git -C "${PROJECT_DIR}" show "$2:$1")"
   for k in ${SET_FM_KEYS}; do
     v="$(get_fm "$3" "${k}")"
-    [[ "${v}" == "$(get_fm - "${k}" <<< "${was}")" ]] || set_fm "${PROJECT_DIR}/$1" "${k}" "${v}" || bad+=" ${k}"
+    [[ "${v}" == "$(get_fm - "${k}" <<< "${was}")" ]] || set_file_fm "${PROJECT_DIR}/$1" "${k}" "${v}" || bad+=" ${k}"
   done
   [[ -z "${bad}" ]] || { echo "reconcile: cannot set${bad} again on $1 after the pull (its copy is in $3)"; return 1; }
   echo "reconcile: $1 took the pull and keeps its uncommitted front-matter edit"
@@ -504,7 +505,7 @@ clear_build() {
   fi
   # A held child's hold goes with its build, and so does the prs: line the hold kept.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
-    set_fm "${BOARD}/stories/$1.md" held_by; set_fm "${BOARD}/stories/$1.md" prs
+    state_set "${BOARD}/stories/$1.md" held_by "" prs ""
   fi
 }
 

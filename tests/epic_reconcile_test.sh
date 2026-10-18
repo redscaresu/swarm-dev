@@ -27,12 +27,15 @@ check() { # <name> <want> <got>
 }
 has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi; }
 
-item() { # <board> <path> <front-matter line>...
-  local path="$1/$2" title; shift 2
+item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
+  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/board-state/${2%.md}"; shift 2
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
+# val <slug> <key> — <key> of a story on ${b} as swarm.sh reads it: board.sh's own get_fm.
+# shellcheck source=/dev/null
+val() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
 
 # goal_story <board> <slug> <front-matter line>... — a story with a Done when and a From review block,
 # and a From the spike block that is not part of a goal.
@@ -181,11 +184,11 @@ for c in paused cleared-on-error impossible; do
   touch "${ROOT}/svc-wt/y1/untracked"
   run close y1 "${c}" >/dev/null
   cleared+="$(left y1)|"
-  [[ "${c}" == impossible ]] || holds+="$(sed -n 's/^kind: //p' "${b}/stories/y1.md")$(run reset y1 lift the hold >/dev/null && echo ok || echo failed) "
+  [[ "${c}" == impossible ]] || holds+="$(val y1 kind)$(run reset y1 lift the hold >/dev/null && echo ok || echo failed) "
 done
 check "each build of y1 starts, and after each uncounted close its worktree, local and origin's story/y1 are gone" "ok ok ok |||" "${adds}${cleared}"
 check "paused and cleared-on-error each hold y1 (kind: lead), and reset lifts each hold" "leadok leadok " "${holds}"
-got="$(sed -n 's/^kind: //p' "${b}/stories/y1.md")|$(run reset y1 its Done when is fixed >/dev/null && echo ok || echo failed)"
+got="$(val y1 kind)|$(run reset y1 its Done when is fixed >/dev/null && echo ok || echo failed)"
 check "close y1 impossible leaves it kind: lead; reset y1 succeeds, and then story y1 succeeds" "lead|ok|ok" \
   "${got}|$(run story y1 >/dev/null && echo ok || echo failed)"
 rm -f "${b}/stories/x1.md" "${b}/stories/y1.md" "${ROOT}/prs.json"
@@ -201,7 +204,7 @@ built() {
   "${GIT[@]}" -C "${ROOT}/svc-wt/$1" commit -q --allow-empty -m "$1" && "${GIT[@]}" -C "${ROOT}/svc-wt/$1" push -q origin "story/$1"
   run review "$1" "${UR}/$2" >/dev/null
 }
-fmv() { sed -n "s/^$2: //p" "${b}/stories/$1.md"; }   # <slug> <key>
+fmv() { val "$@"; }   # <slug> <key>
 gone() { [[ -e "${b}/stories/$1.md" ]] && echo there || echo gone; }   # <slug>: finish deletes its file
 built ru1 11; run close ru1 >/dev/null; echo "${UR}/11 CLOSED" >> "${ROOT}/pr-states"
 run reconcile >/dev/null
