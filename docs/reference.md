@@ -196,7 +196,10 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 
 An epic (`docs/epics/<slug>.md`: goal, **Done when**, out of scope, constraints) becomes stories
 with `/plan-epic <slug>`. An epic of at most 3 stories with no `risk: high` is planned by the lead
-alone, with one codex pass over stories committed in a board-PR worktree. Any other epic gets one survey agent unless its text names another repo (three
+alone, with one codex pass over stories committed in a board-PR worktree. A large one (more than 8
+stories, or goals that can ship apart) is split by the lead alone into child epics, each with
+`parent: <epic>` and its own **Done when**, planned in turn; the parent becomes `status: split` and
+counts as done once none of its children is left. Any other epic gets one survey agent unless its text names another repo (three
 then), one lead decomposition into one-PR stories with `kind`, `touches` and `depends_on` (a
 chain at most 3 stories deep, and a story's scope opens with what it needs from each `depends_on`),
 and a skeptic per story (capped at five, the rest logged), a codex pass and a critic, all in
