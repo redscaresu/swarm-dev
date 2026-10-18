@@ -689,7 +689,7 @@ def running_view():
     return rows + [[sym("blocked"), (f"held {b[1]}: {held_cause(b[1]) or '?'}", "")] for b in stories if b[9] == "held"]
 
 # The speedometer: stories merged per day over 7 days, the distinct slugs events.tsv says were
-# finished in the last 7 days (finish, or reconcile's "finished" once a PR merged; a drop or a
+# finished on the last 7 calendar days, today's among them, each on the day of its newest finish (finish, or reconcile's "finished" once a PR merged; a drop or a
 # rescope writes neither), and two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
 # needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
 # waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
@@ -701,12 +701,12 @@ def waited_from(item):
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
-moved, merged = {}, set()
+moved, done_at = {}, {}   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0])
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
-    if t is not None and NOW - t <= 7 * 86400 and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
-        merged.add(f[2])
+    if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
+        done_at[f[2]] = max(t, done_at.get(f[2], t))
     t = t if f[1] in ("review", "escalated") or f[1].startswith("close:") else None
     if t is not None and t > moved.get(f[2], 0):
         moved[f[2]] = t
@@ -717,13 +717,106 @@ def days_ago(day):
     except ValueError:
         return None
 
+# Days ago -> the stories finished that day; the speedometer, the sparkline and the rate gauge all
+# read the same last 7 of them.
+per_day = collections.Counter((TODAY - datetime.date.fromtimestamp(t)).days for t in done_at.values())
+last7 = sum(per_day[d] for d in range(7))
 n_waiting = len(need) + len(queue) + more
 since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
 escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
-speed = [(f"{len(merged) / 7:.1f}", "b"), (" merged/day over 7 days", "")]
+speed = [(f"{last7 / 7:.1f}", "b"), (" merged/day over 7 days", "")]
 for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
                  (escaped, "escaped in 7 days")):
     speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
+
+# Under the speedometer from 60 columns: the stories finished per day over 14 days (done_at's days) as
+# a sparkline, oldest first, then today's count and the average of its last 7 days. From 100
+# columns, two gauges (on the sparkline's line when both fit): the 7-day rate against the best 7 calendar days in events.tsv, and the agents
+# working now (status's count, as the summary's) by kind against the most at once in the last 7 days.
+SPARK = "▁▂▃▅▇"
+G = 12   # a gauge's cells, as an epic's bar
+PEAK_ROW_DAYS = 14   # busy_peak reads the agents.tsv rows started on the last 14 days, today's among them
+RECENT_MIN = 3   # a frame with a height keeps this many rows of recent before the lines under the speedometer
+
+def sparkline():
+    days = [per_day[d] for d in range(13, -1, -1)]
+    top = max(days) or 1
+    bars = "".join(SPARK[-(-n * (len(SPARK) - 1) // top)] for n in days)   # 0 is the lowest, the busiest day the highest
+    return [("14 days ", "dim"), (bars, "ok"), ("  today ", "dim"), (str(days[-1]), "b"), ("  7-day avg ", "dim"), (f"{last7 / 7:.1f}", "b")]
+
+# Each working agent's kind: a cell character and a colour each, so plain text tells them apart too.
+KINDS = (("builder", "█", "ok"), ("conductor", "▓", "h"), ("review", "▒", "warn"), ("other", "▪", "dim"))
+
+def kind_of(role):
+    return "conductor" if role == "conduct" else "review" if role == "review" else "builder" if role in E.get("DASH_BUILDERS", "").split() else "other"
+
+def json_or_none(l):
+    try:
+        return json.loads(l)
+    except ValueError:
+        return None
+
+def busy_peak():
+    # The most agents at once on the last 7 calendar days (the speedometer's): each agents.tsv
+    # session from its log's first timestamp to its last write, swept with ends first, so a hand-off
+    # in the same second is no overlap; never fewer than work now.
+    # ponytail: an idle stretch inside a session counts as busy, and only rows started in the last
+    # PEAK_ROW_DAYS are read; log working spans if the peak reads high.
+    spans, since = [], datetime.datetime.combine(TODAY - datetime.timedelta(days=6), datetime.time()).timestamp()
+    for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
+        if days_ago(f[0]) not in range(PEAK_ROW_DAYS):
+            continue
+        path = session_log(E["DASH_PROJECTS"], f[6])
+        try:
+            end = os.path.getmtime(path)
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                start = next((epoch(d.get("timestamp")) for d in map(json_or_none, itertools.islice(fh, 50)) if isinstance(d, dict) and d.get("timestamp")), None)
+        except OSError:
+            continue
+        if start is not None and start < end and end >= since:
+            spans += [(start, 1), (end, -1)]
+    peak = n = 0
+    for _, step in sorted(spans):
+        n += step; peak = max(peak, n)
+    return peak
+
+def bar(parts, of):
+    # parts: (count, char, style). The cells add up to the whole's rounded share of G, split by largest
+    # remainder, so a full gauge has no gap; a count above 0 keeps at least one cell, taken from the
+    # widest part, and the bar never exceeds G.
+    q = [n * G / of if of else 0 for n, _, _ in parts]
+    total = min(G, max(round(sum(q)), sum(n > 0 for n, _, _ in parts)))
+    cells = [int(x) for x in q]
+    for i in sorted(range(len(q)), key=lambda i: q[i] - cells[i], reverse=True)[:max(total - sum(cells), 0)]:
+        cells[i] += 1
+    for i, (n, _, _) in enumerate(parts):
+        if n and not cells[i]:
+            cells[cells.index(max(cells))] -= 1
+            cells[i] = 1
+    return [(ch * c, s) for c, (_, ch, s) in zip(cells, parts)] + [("·" * (G - sum(cells)), "dim")]
+
+def gauges():
+    best = max([last7] + [sum(per_day[d] for d in range(k, k + 7)) for k in range(max(per_day, default=0) + 1)])
+    rate = [("rate ", "dim")] + bar([(last7, "█", "ok")], best) + [(f" {last7 / 7:.1f} of best {best / 7:.1f}/day", "")]
+    if agents is None:   # no agent list from herdr: nothing is known to work, so no running gauge
+        return rate
+    working = collections.Counter(kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled"))   # status's count
+    now = sum(working.values())
+    peak = max(busy_peak(), now)
+    return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
+            + [(f" {now} of peak {peak} in 7 days", "")])
+
+SEP = (" · ", "dim")
+
+def pack(groups, n):
+    # Groups of styled segments onto as few lines of n as they fit, never splitting a group; each
+    # group carries the separator it takes after another on the same line.
+    rows = [[]]
+    for sep, g in groups:
+        if rows[-1] and sum(len(t) for t, _ in rows[-1] + [sep] + g) > n:
+            rows.append([])
+        rows[-1] += ([sep] if rows[-1] else []) + g
+    return [fit(r, n) for r in rows if r]
 
 # Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
 # (from 140 columns, the status bar at the bottom carries it, with the merge mode).
@@ -736,6 +829,7 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 out.append(fit(speed, W))
+under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
@@ -748,18 +842,6 @@ esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "esc
 on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
 on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
            (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
-SEP = (" · ", "dim")
-
-def pack(groups, n):
-    # Groups of styled segments onto as few lines of n as they fit, never splitting a group; each
-    # group carries the separator it takes after another on the same line.
-    rows = [[]]
-    for sep, g in groups:
-        if rows[-1] and sum(len(t) for t, _ in rows[-1] + [sep] + g) > n:
-            rows.append([])
-        rows[-1] += ([sep] if rows[-1] else []) + g
-    return [fit(r, n) for r in rows]
-
 if not WIDE:
     out += pack([(SEP, summary), (SEP, on_call)], W)
 drift = lines("DASH_DRIFT")
@@ -795,9 +877,18 @@ if WIDE:
 # under the main column; from 140 recent and the ladder are the right column, the ladder on top.
 # A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
 ladder = E.get("DASH_LADDER") == "1"
+
+def make_room(room, spare=H):
+    # The lines under the speedometer (under) take recent's rows; a cut frame keeps RECENT_MIN of them
+    # (or the ladder, when even those do not fit) and, from 140 columns, the whole left column (spare:
+    # the rows under it) first, dropping the sparkline's line, then the gauges.
+    while under and FIT and H and (room - len(under) < RECENT_MIN or spare < len(under)):
+        under.pop(0)
+    return room - len(under)
+
 if WIDE:
     side = ladder_box(RW) if ladder else []
-    room = H - len(out) - len(foot) - len(side) - 2 if H else max(8, len(left) - len(side) - 2)
+    room = make_room(H - len(out) - len(foot) - len(side) - 2, H - len(out) - len(foot) - len(left)) if H else max(8, len(left) - len(side) - 2)
     if not KEYS:
         room = max(5, room)
     if room > 0:
@@ -809,11 +900,12 @@ else:
         out += ladder_box(W)
     if running:
         out += box("running now", running, W)
-    room = H - len(out) - 2 - len(foot) if H else 8
+    room = make_room(H - len(out) - 2 - len(foot)) if H else 8
     if not KEYS:
         room = max(5, room)
     if room > 0:
         out += recent_box(W, room)
+out[2:2] = under
 if FIT and H:
     # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
     out = out[:max(H - len(foot), 1)]
