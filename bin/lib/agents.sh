@@ -646,9 +646,10 @@ SETTLED='^(idle|waiting|gone)(:|$)'
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 1000)))"; }
 # scaled <seconds> — <seconds> times SWARM_SLEEP_SCALE (default 1; make test sets 0.01, and swarm.sh
-# checks it at startup), to the millisecond. nap <seconds> — sleep that long.
+# checks it at startup), to the millisecond. nap <seconds> — sleep that long, but at least a tenth of
+# a second, so a scaled poll loop never comes near a busy one.
 scaled() { awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { printf "%.3f\n", s * k }'; }
-nap() { sleep "$(scaled "$1")"; }
+nap() { sleep "$(awk -v s="$(scaled "$1")" 'BEGIN { print (s + 0 < 0.1 ? 0.1 : s) }')"; }
 # poll_while <seconds> <command...> — run <command> while it succeeds, every second scaled (but no
 # more often than every tenth of one), for <seconds> unscaled: the scale quickens the polling, never
 # the wait, and each step is slept in full, so it is never shorter than at scale 1.

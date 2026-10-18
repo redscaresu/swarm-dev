@@ -4,8 +4,9 @@
 # SWARM_SLEEP_SCALE scales swarm.sh's fixed sleeps: at 0.01 a start_agent retry (3 s) and a
 # deliver_prompt wait (5 s) each finish in under a second; a scale of 0, one that rounds a 1 s sleep
 # to 0 or one that is not a number is refused at startup, before any command runs. board's reader
-# stopping early prints no write error. Then make test itself: a failed file that reads stdin on its rerun does not eat the rest of the rerun list, and
-# xargs stopping early fails the run.
+# stopping early prints no write error. Then make test itself: a failing file fails it and its output
+# comes whole after its phase, a SERIAL file runs after the parallel ones, and xargs stopping early
+# fails the run and leaves no job running.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,6 +35,7 @@ check "every tests/*_test.sh exports HOME or CLAUDE_CONFIG_DIR under its own mkt
 
 # timed <case> — run one case with agents.sh sourced and its helpers stubbed, at SWARM_SLEEP_SCALE
 # 0.01; print "<herdr calls>|<under a second?>". herdr fails its first call and takes the second.
+# Case nap prints 1 when nap 1 took at least 100 ms.
 timed() (
   PROJECT_DIR="${ROOT}/p"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; export SWARM_SLEEP_SCALE=0.01
   mkdir -p "${PROJECT_DIR}"; : > "${ROOT}/calls"
@@ -58,11 +60,13 @@ timed() (
   case "$1" in
     start) deliver_prompt() { :; }; start_agent tab a "${ROOT}" builder "${ROOT}/brief" >/dev/null ;;
     deliver) deliver_prompt a "${ROOT}/brief" w:1 ;;
+    nap) nap 1; echo "$(( $(now_ms) - t0 >= 100 ))"; return ;;
   esac
   echo "$(wc -l < "${ROOT}/calls" | tr -d ' ')|$( (( $(now_ms) - t0 < 1000 )) && echo yes || echo "no, $(( $(now_ms) - t0 )) ms")"
 )
 check "at SWARM_SLEEP_SCALE=0.01 a start_agent retry finishes in under a second" "2|yes" "$(timed start)"
 check "at SWARM_SLEEP_SCALE=0.01 a deliver_prompt wait finishes in under a second" "2|yes" "$(timed deliver)"
+check "at SWARM_SLEEP_SCALE=0.01 nap 1 still sleeps a tenth of a second, so no poll loop is near busy" "1" "$(timed nap)"
 # scale <value> — taken or refused: swarm.sh run outside any project, so a scale it takes stops it next,
 # at the project lookup.
 scale() {
@@ -86,22 +90,32 @@ o="$( (trap '' PIPE; PROJECT_DIR="${ROOT}/b"; BOARD="${ROOT}/b"
   source "${REPO}/bin/lib/board.sh"; board stories | { read -r _; }) 2>&1)"
 check "board's reader stopping early, SIGPIPE ignored, prints no write error" "" "${o}"
 
-# mk <file>... — make test over these files, two at a time: its output, then its exit on the last line.
-mk() { local rc=0 o; o="$(make -s -C "${REPO}" test TESTS="$*" JOBS=2 2>&1)" || rc=$?; printf '%s\n%s\n' "${o}" "${rc}"; }
-# reader fails first, then on its rerun reads all of stdin and passes; failer fails after it, both times.
+# mk <file>... — make test over these files, two at a time (SERIAL from $SERIAL): its output, then its
+# exit on the last line.
+mk() { local rc=0 o; o="$(make -s -C "${REPO}" test TESTS="$*" SERIAL="${SERIAL:-}" JOBS=2 2>&1)" || rc=$?; printf '%s\n%s\n' "${o}" "${rc}"; }
+# A failing file fails make, and its output comes whole once its phase is over: failer prints 3000
+# lines (past PIPE_BUF) at once and fails; slow passes a second later.
+printf '#!/usr/bin/env bash\nseq 1 3000; exit 1\n' > "${ROOT}/failer_test.sh"
+printf '#!/usr/bin/env bash\nsleep 1\n' > "${ROOT}/slow_test.sh"
+o="$(mk "${ROOT}/failer_test.sh" "${ROOT}/slow_test.sh")"
+check "a failing file fails make test, and its output comes whole after every file of its phase ended" "2|yes|yes" \
+  "$(tail -1 <<< "${o}")|$(sed -n "/^---- ${ROOT//\//\\/}\/failer_test.sh$/,\$p" <<< "${o}" | sed -n '2,3001p' | cmp -s - <(seq 1 3000) && echo yes || echo no)|$(awk -v s="ok   ${ROOT}/slow_test.sh" -v f="---- ${ROOT}/failer_test.sh" 'index($0, s) == 1 { ok = NR } $0 == f { at = NR } END { print (ok && at > ok) ? "yes" : "no" }' <<< "${o}")"
+# A SERIAL file starts only once the parallel ones have ended.
+# shellcheck disable=SC2016 # the stubs' own shell expands these
+printf '#!/usr/bin/env bash\nsleep 1; python3 -c "import time; print(time.time())" > "%s/par.end"\n' "${ROOT}" > "${ROOT}/par_test.sh"
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\npython3 -c "import time; print(time.time())" > "%s/ser.start"\n' "${ROOT}" > "${ROOT}/ser_test.sh"
+o="$(SERIAL="${ROOT}/ser_test.sh" mk "${ROOT}/ser_test.sh" "${ROOT}/par_test.sh")"
+check "a SERIAL file runs after the parallel ones have ended" "0|yes" \
+  "$(tail -1 <<< "${o}")|$(python3 -c 'import sys; print("yes" if float(open(sys.argv[1]).read()) >= float(open(sys.argv[2]).read()) else "no")' "${ROOT}/ser.start" "${ROOT}/par.end")"
+# killer kills xargs (its wrapper's parent): make fails, and the job beside it (late, which would
+# write its mark after 2 s) is stopped before make returns, not left running.
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/usr/bin/env bash\nm="%s/reader.ran"; [ -e "$m" ] && { cat > /dev/null; exit 0; }; touch "$m"; exit 1\n' "${ROOT}" > "${ROOT}/reader_test.sh"
-printf '#!/usr/bin/env bash\nsleep 0.5; exit 1\n' > "${ROOT}/failer_test.sh"
-o="$(mk "${ROOT}/reader_test.sh" "${ROOT}/failer_test.sh")"
-check "make test reruns every failed file, though one reads stdin, and fails on the one that fails again" "yes|yes|2" \
-  "$(grep -qxF "flaky ${ROOT}/reader_test.sh: failed beside the others, passed alone" <<< "${o}" && echo yes || echo no)|$(grep -qxF "FAIL ${ROOT}/failer_test.sh, alone too" <<< "${o}" && echo yes || echo no)|$(tail -1 <<< "${o}")"
-# killer kills its xargs wrapper (or xargs, where bash runs it in place of its $(...) subshell) on
-# its first run: the file is never recorded as failed, so no rerun can make it pass.
-# shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/usr/bin/env bash\nm="%s/killer.ran"; [ -e "$m" ] && exit 0; touch "$m"; kill -KILL "$(ps -o ppid= -p "${PPID}" | tr -d " ")"\n' "${ROOT}" > "${ROOT}/killer_test.sh"
-o="$(mk "${ROOT}/killer_test.sh")"
-check "make test fails when xargs stops before every file has run" "yes|2" \
-  "$(grep -q '^FAIL xargs stopped (exit [0-9]*): not every file ran$' <<< "${o}" && echo yes || echo "no: ${o}")|$(tail -1 <<< "${o}")"
+printf '#!/usr/bin/env bash\nsleep 0.3; kill -KILL "$(ps -o ppid= -p "${PPID}" | tr -d " ")"\n' > "${ROOT}/killer_test.sh"
+printf '#!/usr/bin/env bash\nsleep 2; : > "%s/late.mark"\n' "${ROOT}" > "${ROOT}/late_test.sh"
+o="$(mk "${ROOT}/killer_test.sh" "${ROOT}/late_test.sh")"; sleep 3
+check "make test fails when xargs stops early, and leaves no job running" "yes|2|no mark" \
+  "$(grep -q '^FAIL xargs stopped (exit [0-9]*): not every file ran$' <<< "${o}" && echo yes || echo "no: ${o}")|$(tail -1 <<< "${o}")|$([[ -e "${ROOT}/late.mark" ]] && echo "late ran on" || echo "no mark")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
