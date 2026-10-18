@@ -269,9 +269,10 @@ changes; a command that finds the lock still there after 10 seconds stops and na
 does when a state file cannot be read or written. The
 escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Deleting an item's file
 where it is (`reconcile`, `finish` or `drop`, on a board outside the repo) deletes its state file
-and escalated block too. `reconcile` also deletes them when an item's PR marked it `done`, and for
-each story or epic file deleted by a pull it made (its PR or a board PR took it off). A file
-removed only by hand keeps its state.
+and escalated block too. `reconcile` also deletes them when an item's PR marked it `done`, and, on
+a board in the repo, for each story or epic a commit deleted (its PR or a board PR), whether
+reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A file
+removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
@@ -773,13 +774,15 @@ build even then, and prints `build cleared: <slug>`: close that builder's pane y
 Then it pulls the board's repo, fast-forward only. swarm.sh keeps its own keys out of tracked files
 (§ Building, Board state), so a main checkout with no edits pulls as it is. With nothing to pull (the
 main checkout already has every upstream commit), reconcile goes on and leaves every edit as it is.
-When the only uncommitted change to a story or epic is to those keys, as an older swarm.sh wrote them, reconcile moves the values
-into the item's state and checks the file out, so the item reads as it did and the pull goes. An
-untracked board file whose bytes match the incoming file's is removed, and the pull brings it back.
-reconcile touches nothing else, and stops naming why, when the main checkout
-cannot fast-forward (it has local commits), when any other tracked file there is changed, staged or not,
-or when git refuses the pull (an untracked file it would overwrite). It names each changed tracked
-file and logs an `incident` line in events.tsv with the outcome `pull-failed: <files>`. For a board
+reconcile touches nothing, and stops naming why, when the main checkout cannot fast-forward (it has
+local commits), or when a tracked file the incoming commits change is changed there too, staged or
+not. A changed file the pull leaves alone, such as Obsidian's own settings, stays as it is. When the
+only uncommitted change to a story or epic is to swarm.sh's keys, as an older swarm.sh wrote them,
+reconcile moves the values, as the item reads them, into its state and checks the file out, so the
+item reads as it did. An untracked board file whose bytes match the incoming file's is removed, and
+the pull brings it back. A pull git refuses (an untracked file it would overwrite) also stops
+reconcile. On a stop for changed files, it names each of them and logs an `incident` line in
+events.tsv with the outcome `pull-failed: <files>`. For a board
 file it says to land the edit through `swarm.sh board-pr` or check the file out to drop it; for any
 other file, to commit or move the change. Then run `swarm.sh reconcile` again. On a board in the
 repo, reconcile never deletes a tracked file in the main checkout. After a pull, an item whose PR

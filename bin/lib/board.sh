@@ -680,8 +680,8 @@ builder_state() {
 # cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
 # dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
 # there, so the main checkout keeps no edit: after a pull it is marked done, and with no pull it stays in
-# review for the reconcile that pulls. Each item the pull took off the board loses its state
-# (drop_gone_state).
+# review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
+# loses its state, however that commit was pulled (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -731,9 +731,7 @@ reconcile() {
     echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
     due=0
   fi
-  local from=""
   if [[ ${due} == 1 ]]; then
-    from="$(git -C "${PROJECT_DIR}" rev-parse HEAD)"
     pull_board_repo || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}, then run reconcile again"
   fi
   local i
@@ -758,16 +756,24 @@ reconcile() {
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
-  [[ -z "${from}" ]] || drop_gone_state "${from}"
+  [[ ${BOARD_IN_REPO} == 0 ]] || drop_gone_state
 }
 
-# drop_gone_state <rev> — state_drop each story and epic file the pull from <rev> deleted (its PR or a
-# board PR took it off), so a later item with its slug starts with no state. A file removed only by
-# hand keeps its state.
+# drop_gone_state — state_drop each story and epic, by its board-state or escalated file, whose file a
+# commit deleted (its PR or a board PR, pulled by reconcile or by hand): it is in neither HEAD nor the
+# main checkout, and was in a commit before. A later item with its slug then starts with no state. A
+# file missing only from the main checkout, or never committed, keeps its state, and a board
+# directory that is not there drops nothing.
 drop_gone_state() {
-  local p
-  while IFS= read -r p; do state_drop "${PROJECT_DIR}/${p}"; done \
-    < <(git -C "${PROJECT_DIR}" diff --name-only --no-renames --diff-filter=D "$1" HEAD -- "${BOARD}/stories" "${BOARD}/epics")
+  local s n d rel
+  for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
+    n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
+    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && -d "${BOARD}/${d}" && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
+    rel="${BOARD#"${PROJECT_DIR}"/}/${d}/${n}.md"
+    ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}" 2>/dev/null || continue
+    [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}")" ]] || continue
+    state_drop "${BOARD}/${d}/${n}.md"
+  done
 }
 
 # has_upstream — true when the board is in the project repo and its main checkout has an upstream.

@@ -189,8 +189,10 @@ out="$(at nf reconcile || true)"
 check "no fast-forward: reconcile stops and says why" "yes" "$(has "cannot fast-forward" "${out}")"
 check "no fast-forward: the board edit survives, unstaged" " M docs/stories/m.md|same" \
   "$(git -C "${ROOT}/nf" status --porcelain -- docs/stories/m.md)|$(same_as_base nf)"
-# A changed tracked file outside the board: stop, name it, touch nothing.
+# A changed tracked file outside the board, which the base changes too: stop, name it, touch nothing.
 setup_app nb; echo changed >> "${ROOT}/nb/README"
+echo "the base's readme" >> "${ROOT}/nb-up/README"
+"${GIT[@]}" -C "${ROOT}/nb-up" commit -q -am "edit README" && "${GIT[@]}" -C "${ROOT}/nb-up" push -q origin main
 out="$(at nb reconcile || true)"
 check "a changed file outside the board stops reconcile, named, with no advice to check it out" "yes|no" \
   "$(has "board files are changed here: docs/stories/m.md; land each edit through swarm.sh board-pr, or check the file out to drop it; files outside the board are changed here: README; commit or move each change, then run reconcile again" "${out}")|$(if grep -q "pull it by hand" <<< "${out}"; then echo yes; else echo no; fi)"
@@ -234,10 +236,11 @@ setup_behind bp ahead
 out="$(at bp reconcile; echo "exit $?")"
 check "no item merged, the base ahead: reconcile fast-forwards, g is gone, h keeps its flip" "yes|$(git -C "${ROOT}/bp.git" rev-parse main)|gone|ready" \
   "$(has "exit 0" "${out}")|$(git -C "${ROOT}/bp" rev-parse HEAD)|$(gone "${ROOT}/bp/docs/stories/g.md")|$(val "${ROOT}/bp/docs/stories/h.md" status)"
-setup_behind bo ahead; echo changed >> "${ROOT}/bo/README"; before="$(tree bo)"
-out="$(at bo reconcile || true)"
-check "no item merged, a changed file outside the board: reconcile cannot pull, and touches nothing" "yes|same" \
-  "$(has "reconcile: cannot pull ${ROOT}/bo: files outside the board are changed here: README; commit or move each change, then run reconcile again" "${out}")|$([[ "$(tree bo)" == "${before}" ]] && echo same || echo differs)"
+# Edits to README and h's body, files the pull leaves alone (as Obsidian rewrites its own): the pull goes, and they stay.
+setup_behind bo ahead; echo changed >> "${ROOT}/bo/README"; echo "a local note" >> "${ROOT}/bo/docs/stories/h.md"
+rc=0; at bo reconcile >/dev/null || rc=$?
+check "no item merged, changed files the pull does not touch: reconcile pulls, and keeps the edits" "0|$(git -C "${ROOT}/bo.git" rev-parse main)|gone| M README| M docs/stories/h.md" \
+  "${rc}|$(git -C "${ROOT}/bo" rev-parse HEAD)|$(gone "${ROOT}/bo/docs/stories/g.md")|$(git -C "${ROOT}/bo" status --porcelain --untracked-files=no | paste -sd'|' -)"
 setup_behind bn; echo changed >> "${ROOT}/bn/README"; before="$(tree bn)"   # a pull, if tried, would stop on README
 out="$(at bn reconcile; echo "exit $?")"
 check "no item merged, the base not ahead: reconcile prints nothing, and HEAD is unchanged" "exit 0|same" \

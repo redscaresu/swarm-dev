@@ -132,20 +132,25 @@ board_pr() {
   esac
 }
 
-# keys_to_state <path> — when the unstaged edit to the tracked story or epic <path> changes only
-# SET_FM_KEYS lines of its front matter (an older swarm.sh wrote its keys there), move each value it
-# changes into the item's state, with HEAD's value as its base, so fm reads it as before, and check
-# the file out. Fails, touching nothing, on any other edit; a state write that fails puts the edit
-# back (it is kept in git's object store until then).
-keys_to_state() {
-  local f="${PROJECT_DIR}/$1" head k v blob pairs=()
+# keys_only <path> — true when the edit to the tracked file <path> changes only SET_FM_KEYS lines of
+# its front matter (an older swarm.sh wrote its keys there).
+keys_only() {
   # shellcheck disable=SC2016 # $0 is awk's
   local rest='/^---$/ { n++ } n == 1 && match($0, /^[a-z_]+:/) && index(keys, " " substr($0, 1, RLENGTH - 1) " ") { next } { print }'
   cmp -s <(git -C "${PROJECT_DIR}" show "HEAD:$1" | awk -v keys=" ${SET_FM_KEYS} " "${rest}") \
-    <(awk -v keys=" ${SET_FM_KEYS} " "${rest}" "${f}") || return 1
+    <(awk -v keys=" ${SET_FM_KEYS} " "${rest}" "${PROJECT_DIR}/$1")
+}
+
+# keys_to_state <path> — for the story or epic <path>, whose unstaged edit is keys_only: move into its
+# state each SET_FM_KEYS value it reads now (through that state, so a value swarm.sh wrote after the
+# edit wins) that differs from HEAD's, with HEAD's value as its base, and check the file out, so fm
+# reads it as before. A state write that fails puts the edit back (it is kept in git's object store
+# until then) and fails.
+keys_to_state() {
+  local f="${PROJECT_DIR}/$1" head k v blob pairs=()
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
   for k in ${SET_FM_KEYS}; do
-    v="$(get_fm - "${k}" < "${f}")"
+    v="$(get_fm "${f}" "${k}")"
     [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" ]] || pairs+=("${k}" "${v}")
   done
   blob="$(git -C "${PROJECT_DIR}" hash-object -w -- "$1")" || return 1
@@ -157,36 +162,46 @@ keys_to_state() {
 }
 
 # pull_board_repo — pull the main checkout fast-forward, touching no edit. Once it has fetched, it
-# succeeds, touching nothing, when there is nothing to pull (HEAD has every upstream commit). When it
-# can fast-forward, it moves each story or epic edit that is only to swarm.sh's own keys into board
-# state (keys_to_state). It stops, touching nothing more, when it cannot fetch, the pull cannot
-# fast-forward (local commits), or any other tracked file is changed, staged or not: that stop names
-# the files and logs an incident, pull-failed: <files>. It removes each untracked board file whose
-# bytes are already the incoming one's, which the pull brings back. A pull git itself refuses (another
-# untracked file it would overwrite) changes nothing more. On failure PULL_WHY says why and what to do
-# before reconcile runs again.
+# succeeds, touching nothing, when there is nothing to pull (HEAD has every upstream commit). It
+# stops, touching nothing, when it cannot fetch, the pull cannot fast-forward (local commits), or a
+# tracked file the incoming commits change is changed here too, staged or not: that stop names those
+# files and logs an incident, pull-failed: <files>. A changed file they leave alone stays as it is
+# through the pull, and so does a story or epic edit that is only to swarm.sh's own keys, which it
+# first moves into board state (keys_to_state). It removes each untracked board file whose bytes are
+# already the incoming one's, which the pull brings back. A pull git itself refuses (another untracked
+# file it would overwrite) changes nothing more. On failure PULL_WHY says why and what to do before
+# reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local changed board other out p
+  local incoming line p stop="" board other out keys=()
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   ! git -C "${PROJECT_DIR}" merge-base --is-ancestor '@{upstream}' HEAD || return 0
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
     PULL_WHY="it has commits the base does not ($(git -C "${PROJECT_DIR}" log --format=%h '@{upstream}..HEAD' | paste -sd' ' -)), so it cannot fast-forward; pull it by hand"
     return 1
   fi
-  while IFS= read -r p; do
-    keys_to_state "${p}" || true
-  done < <(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no -- "${BOARD}/stories" "${BOARD}/epics" | sed -n 's/^ M //p')
-  changed="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no | cut -c4-)"
-  if [[ -n "${changed}" ]]; then
-    record_event incident - "pull-failed: $(paste -sd' ' - <<< "${changed}")"
-    board="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) == 1' <<< "${changed}" | paste -sd' ' -)"
-    other="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) != 1' <<< "${changed}" | paste -sd' ' -)"
+  incoming="$(git -C "${PROJECT_DIR}" diff --name-only --no-renames HEAD '@{upstream}')"
+  while IFS= read -r line; do
+    p="${line:3}"
+    if [[ "${line:0:2}" == " M" && ( "${PROJECT_DIR}/${p}" == "${BOARD}/stories/"* || "${PROJECT_DIR}/${p}" == "${BOARD}/epics/"* ) ]] \
+      && keys_only "${p}"; then
+      keys+=("${p}")
+    elif grep -qxF -- "${p}" <<< "${incoming}"; then
+      stop+="${stop:+$'\n'}${p}"
+    fi
+  done < <(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no)
+  if [[ -n "${stop}" ]]; then
+    record_event incident - "pull-failed: $(paste -sd' ' - <<< "${stop}")"
+    board="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) == 1' <<< "${stop}" | paste -sd' ' -)"
+    other="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) != 1' <<< "${stop}" | paste -sd' ' -)"
     PULL_WHY=""
     [[ -z "${board}" ]] || PULL_WHY="board files are changed here: ${board}; land each edit through swarm.sh board-pr, or check the file out to drop it"
     [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"
     return 1
   fi
+  for p in "${keys[@]+"${keys[@]}"}"; do
+    keys_to_state "${p}" || { PULL_WHY="cannot move swarm.sh's keys in ${p} into its board state, so its edit stays; fix what the error above names"; return 1; }
+  done
   while IFS= read -r p; do
     if git -C "${PROJECT_DIR}" cat-file -e "@{upstream}:${p}" 2>/dev/null \
       && git -C "${PROJECT_DIR}" show "@{upstream}:${p}" | cmp -s - "${PROJECT_DIR}/${p}"; then
