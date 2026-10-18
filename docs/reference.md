@@ -185,7 +185,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 
 - `merge` (default `human`): `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges, except a PR `swarm.sh merge` holds for you (§ Merging)
 - `lessons_file` (default `.claude/swarm/brief.md`): where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped
-- `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
+- `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
 - `sonnet_share` (default `0`): `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
@@ -223,9 +223,9 @@ A story's **Done when** names what the builder's session can show (a test run, a
 stops and reports; the session it was started from stays free. Its last act is writing that report
 to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, is how
 `/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
-background work. When it starts, an epic still `later` is set `active` (an uncommitted board edit
-that `conduct` reports in one line), so `status` and `next` stop listing it as waiting on you. It
-runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
+background work. When it starts, an epic still `later` is set `active` (in
+`.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
+stop listing it as waiting on you. It runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
 it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
@@ -252,6 +252,25 @@ Otherwise clear the stop by discarding the build from its repo
 deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic, such as a code PR
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
+
+**Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
+`escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
+`close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to
+`.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
+the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
+reads a key from that file first and from the item's front matter second, so a key with no line
+there, as on an existing board, reads from the file; `dash` still draws its board rows from the
+files alone. A line with no value clears the key, and swarm.sh writes no line that would only repeat
+the file's value. Beside each line it keeps a `<key>@base:` line with the file's value at the time.
+Once the file's value differs from that (a board PR set the epic `later`, say), the file's value is
+read, and the next write to the item drops the old line. A write holds the item's lock, a
+`<slug>.lock` directory beside its state file, so two commands writing one item at once keep both
+changes; a command that finds the lock still there after 10 seconds stops and names it, as one
+does when a state file cannot be read or written. Deleting an item's file where it is (`reconcile`
+after its pull, or `finish` and `drop` on a board outside the repo) deletes its state file too, and
+so does `reconcile` when an item's PR took it off the board or marked it `done`. The
+escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Where an older swarm.sh
+left these keys uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
@@ -523,7 +542,14 @@ exempt (`READ_ONLY_COMMANDS` in `bin/swarm.sh`: `dash`, `status`, `next`, `confi
 `cost`, `outcomes`, `flow`, `review-yield`, `features`, `lessons`, `findings`, the `wait` and `watch` that conductors run all the time, `base`, and
 `tidy` without `--yes`), so a new command is logged until someone names it read-only. The one
 exception is `wait`, which logs each nudge it sends as `nudge <agent>`. The stall rule skips those
-lines, because a nudge is not a sign of life. A `tell` is logged as `tell:<kind>` with the slug as
+lines, because a nudge is not a sign of life. Something that went wrong is an `incident` line,
+its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait` writes two kinds:
+`wait-timeout` when its wait runs out (not when herdr's wait fails sooner, and not for a
+`wait --until-report` hour that it waits again), and `login` when it returns `auth`, once per
+expired login: a second wait adds none, and a `tell` (the resume after the `/login`) starts a new
+one. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
+unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write
+none, so one stuck builder is one incident. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about
@@ -611,7 +637,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `features`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `features`, `incidents`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -631,6 +657,11 @@ conclusion from `gh api`. A run whose times do not parse adds no minutes. When a
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
 day). With `--epic` it still counts every agent in the window, and says so.
+
+The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
+(§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
+for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
+so `--epic` does not narrow it.
 
 The `throughput` section prints one TSV
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and
@@ -868,7 +899,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 

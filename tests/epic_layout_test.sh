@@ -98,12 +98,15 @@ goal_off() {
   grep -qF 'close <slug> impossible`' <<< "$1" && echo yes || echo no
 }
 
-item() { # <board> <path> <front-matter line>...
-  local path="$1/$2" title; shift 2
+item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
+  local path="$1/$2" title; rm -f "$(dirname "$1")/.swarm/board-state/${2%.md}"; shift 2
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
+# val <slug> <key> — <key> of a story on ${b} as swarm.sh reads it: board.sh's own get_fm.
+# shellcheck source=/dev/null
+val() { (export BOARD="${b}" PROJECT_DIR="${p}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${b}/stories/$1.md" "$2"); }
 # The sentence finding_rule gives every conductor: which --reviewer value names which reviewer.
 MAPPING="<who> is the reviewer that first raised it, whoever passed it on: codex for a finding from \`swarm.sh codex-review\`, code-review for /code-review's, ci for the PR review bot's or a \`swarm.sh findings\` note's, conductor for one from your own reading of the diff, and lead only for one from the lead's own reading."
 # logs_findings <brief> — the brief's log-finding lines, filled in with --reviewer codex, a kind, a PR
@@ -280,7 +283,7 @@ run close s1 >/dev/null
 check "closing a story closes its pane and leaves the epic's tab" "yes|no|no" \
   "$(has "pane close w:2" "$(log)")|$(grep -q 'tab close' "${ROOT}/herdr.log" && echo yes || echo no)|$(grep -q ' s1$' "${p}/.swarm/state/e" && echo yes || echo no)"
 check "closing a ready story's builder counts a failed build and removes its worktree" "1|no" \
-  "$(sed -n 's/^attempts: //p' "${b}/stories/s1.md")|$([[ -d "${ROOT}/svc-wt/s1" ]] && echo yes || echo no)"
+  "$(val s1 attempts)|$([[ -d "${ROOT}/svc-wt/s1" ]] && echo yes || echo no)"
 run close conduct-e >/dev/null
 check "closing the conductor closes the epic's tabs" "tab close t1|tab close t5" "$(grep '^tab close' "${ROOT}/herdr.log" | paste -sd'|' -)"
 

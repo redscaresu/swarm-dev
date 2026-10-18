@@ -50,13 +50,16 @@ body() { awk '/^---$/ && ++n <= 2 { next } n >= 2' "$1"; }   # everything after 
 same_body() { [[ "$(body "${P}/docs/stories/$1.md")" == "$(git -C "${P}" show "HEAD:docs/stories/$1.md" | body /dev/stdin)" ]] && echo same; }
 next() { (cd "${P}" && env -u HERDR_ENV bash "${SWARM}" next); }
 committed() { git -C "${P}" diff --quiet -- "docs/stories/$1.md" && echo identical; }   # byte for byte, front matter too
+# val <slug> <key> — <key> as swarm.sh reads it: board.sh's own get_fm (its board state, then the file).
+# shellcheck source=/dev/null
+val() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${BOARD}/stories/$1.md" "$2"); }
 
-# A paused build holds h for the lead (held_story): kind: lead goes into the front matter, the block
-# into .swarm/escalated, and the committed body is untouched.
+# A paused build holds h for the lead (held_story): kind: lead goes into its board state, the block
+# into .swarm/escalated, and the committed file is untouched.
 started h w:p1; sw close h paused >/dev/null
 is "close h paused: kind: lead, the body as committed, and the block in .swarm/escalated/h" "lead|same|yes" \
-  "$(awk '/^kind: /{ print $2; exit }' "${P}/docs/stories/h.md")|$(same_body h)|$(grep -q '^\*\*Held (paused)\.\*\*' "${S}/h" && echo yes)"
-# next names h from its front matter (kind: lead, escalated_from:, held_for:); the held block itself is
+  "$(val h kind)|$(same_body h)|$(grep -q '^\*\*Held (paused)\.\*\*' "${S}/h" && echo yes)"
+# next names h from its board state (kind: lead, escalated_from:, held_for:); the held block itself is
 # for the lead to read, and the only place it is is .swarm/escalated/h.
 # shellcheck disable=SC2016 # the backticks are the block's
 is "next still names h escalated, and .swarm/escalated/h holds its choices: lift the hold or drop" "escalated h|yes|yes" \
