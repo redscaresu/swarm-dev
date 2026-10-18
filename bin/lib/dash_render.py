@@ -725,21 +725,22 @@ for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}
     speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
 
 # Under the speedometer from 60 columns: the stories finished per day over 14 days (done_at's days) as
-# a sparkline, oldest first, then today's count and the speedometer's 7-day average. From 100
+# a sparkline, oldest first, then today's count and the average of its last 7 days. From 100
 # columns, two gauges (on the sparkline's line when both fit): the 7-day rate against the best 7 calendar days in events.tsv, and the agents
 # working now (status's count, as the summary's) by kind against the most at once in the last 7 days.
 SPARK = "▁▂▃▅▇"
 G = 12   # a gauge's cells, as an epic's bar
 per_day = collections.Counter((TODAY - datetime.date.fromtimestamp(t)).days for t in done_at.values())
+last7 = sum(per_day[d] for d in range(7))   # the last 7 bars, today's among them: the average and the rate
 
 def sparkline():
     days = [per_day[d] for d in range(13, -1, -1)]
     top = max(days) or 1
     bars = "".join(SPARK[-(-n * (len(SPARK) - 1) // top)] for n in days)   # 0 is the lowest, the busiest day the highest
-    return [("14 days ", "dim"), (bars, "ok"), ("  today ", "dim"), (str(days[-1]), "b"), ("  7-day avg ", "dim"), (f"{len(merged) / 7:.1f}", "b")]
+    return [("14 days ", "dim"), (bars, "ok"), ("  today ", "dim"), (str(days[-1]), "b"), ("  7-day avg ", "dim"), (f"{last7 / 7:.1f}", "b")]
 
 # Each working agent's kind: a cell character and a colour each, so plain text tells them apart too.
-KINDS = (("builder", "█", "ok"), ("conductor", "▓", "h"), ("review", "▒", "warn"), ("other", "░", "dim"))
+KINDS = (("builder", "█", "ok"), ("conductor", "▓", "h"), ("review", "▒", "warn"), ("other", "▪", "dim"))
 
 def kind_of(role):
     return "conductor" if role == "conduct" else "review" if role == "review" else "builder" if role in E.get("DASH_BUILDERS", "").split() else "other"
@@ -766,7 +767,7 @@ def busy_peak():
                 start = next((epoch(d.get("timestamp")) for d in map(json_or_none, itertools.islice(fh, 50)) if isinstance(d, dict) and d.get("timestamp")), None)
         except OSError:
             continue
-        if start is not None and end >= NOW - 7 * 86400:
+        if start is not None and start <= end and end >= NOW - 7 * 86400:
             spans += [(start, 1), (end, -1)]
     peak = n = 0
     for _, step in sorted(spans, key=lambda s: (s[0], -s[1])):
@@ -774,21 +775,22 @@ def busy_peak():
     return peak
 
 def bar(parts, of):
-    # parts: (cells' count, char, style); cut at cumulative rounded edges, so they add up to at most G.
-    segs, edge, total = [], 0, 0
-    for n, ch, s in parts:
-        total += n
-        nxt = min(round(total * G / of), G) if of else 0
-        segs.append((ch * (nxt - edge), s)); edge = nxt
-    return segs + [("·" * (G - edge), "dim")]
+    # parts: (count, char, style), each its share of G cells and at least one when above 0; past G
+    # the widest gives cells back, so the bar never exceeds G.
+    cells = [max(1, round(n * G / of)) if n and of else 0 for n, _, _ in parts]
+    while sum(cells) > G:
+        cells[cells.index(max(cells))] -= 1
+    return [(ch * c, s) for c, (_, ch, s) in zip(cells, parts)] + [("·" * (G - sum(cells)), "dim")]
 
 def gauges():
-    best = max([sum(per_day[d] for d in range(k, k + 7)) for k in range(max(per_day, default=0) + 1)] + [len(merged)])
+    best = max([last7] + [sum(per_day[d] for d in range(k, k + 7)) for k in range(max(per_day, default=0) + 1)])
+    rate = [("rate ", "dim")] + bar([(last7, "█", "ok")], best) + [(f" {last7 / 7:.1f} of best {best / 7:.1f}/day", "")]
+    if agents is None:   # no agent list from herdr: nothing is known to work, so no running gauge
+        return rate
     working = collections.Counter(kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled"))
     now = sum(working.values())
     peak = max(busy_peak(), now)
-    return ([("rate ", "dim")] + bar([(len(merged), "█", "ok")], best) + [(f" {len(merged) / 7:.1f} of best {best / 7:.1f}/day", "")]
-            + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
+    return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
             + [(f" {now} of peak {peak} in 7 days", "")])
 
 SEP = (" · ", "dim")
@@ -801,7 +803,7 @@ def pack(groups, n):
         if rows[-1] and sum(len(t) for t, _ in rows[-1] + [sep] + g) > n:
             rows.append([])
         rows[-1] += ([sep] if rows[-1] else []) + g
-    return [fit(r, n) for r in rows]
+    return [fit(r, n) for r in rows if r]
 
 # Layout. Header: one line, the clock at the right; then the speedometer, then the summary line
 # (from 140 columns, the status bar at the bottom carries it, with the merge mode).
