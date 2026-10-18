@@ -80,7 +80,8 @@ epic_has_stories() {
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
-#                     why starts `auth:` when its login expired (wait then prints auth at once)
+#                     why starts `auth:` when its login expired (wait then prints auth at once);
+#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads)
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
@@ -116,6 +117,7 @@ next_step() {
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
+        blocking_leads
       fi
       return
     fi
@@ -181,6 +183,37 @@ next_step() {
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
+}
+
+# blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
+# (kind: lead, or a legacy or unknown kind: agent_kind fails) that a blocked
+# story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
+# An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
+# after: (it waits for its epic to finish, as epic_has_stories says). Only a blocked story an agent
+# builds counts, and neither story may sit in an epic the user holds (epic_held).
+blocking_leads() {
+  local f b slug blocks
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == ready && -z "$(get_fm "${f}" after)" ]] || continue
+    if agent_kind "$(fm "${f}" kind)"; then continue; fi
+    if is_escalated "${f}" || epic_held "${f}"; then continue; fi
+    slug=$(basename "${f}" .md); blocks=""
+    while IFS= read -r b; do
+      [[ "$(fm "${b}" status)" == blocked && " $(story_deps "${b}") " == *" ${slug} "* ]] || continue
+      agent_kind "$(fm "${b}" kind)" || continue
+      if epic_held "${b}"; then continue; fi
+      blocks+=" $(basename "${b}" .md)"
+    done < <(board stories)
+    if [[ -n "${blocks}" ]]; then echo "also: lead ${slug} blocks${blocks}"; fi
+  done < <(board stories)
+}
+
+# epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.
+epic_held() {
+  local e
+  e="$(fm "$1" epic)"; [[ -n "${e}" ]] || return 1
+  case "$(fm "${BOARD}/epics/${e}.md" status 2>/dev/null)" in later|draft) return 0 ;; esac
+  return 1
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
