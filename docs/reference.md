@@ -649,7 +649,11 @@ its outcome `<kind>: <detail>`, which `flow`'s `incidents` section counts. `wait
 expired login: a second wait adds none, and a `tell` (the resume after the `/login`) starts a new
 one. A `close` that ends a build with no open or merged PR on `story/<slug>` writes `idle-no-pr`,
 unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the waits on that builder write
-none, so one stuck builder is one incident. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
+none, so one stuck builder is one incident. When `status` or `wait` reads an agent's pane and its
+last turn ended on an `API Error:` line or a "denied by the Claude Code auto mode classifier" line, it
+writes `api-error` or `auto-denied` with that line, once per stop: reading the same stopped pane
+again adds none. Both keep `.swarm/panes/<agent>`, the pane's checksum and when they last saw it
+change, which `dash` shows. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about
@@ -813,7 +817,10 @@ after its PR was created and for a build with no PR.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
-so `--epic` does not narrow it.
+so `--epic` does not narrow it. After a blank line, TSV `epic kind stops` counts the `api-error`
+and `auto-denied` lines per epic: a builder's or `review-<slug>`'s epic is its story's, a
+`conduct-<epic>`'s its epic, as `outcomes` gives them, and `-` when none does. `--epic` keeps that
+epic's rows.
 
 The `model_fit` section sets cost against results. It prints one TSV row per model and effort
 crossed with a story class, over the stories whose first build is dated in the window (with
@@ -1121,7 +1128,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (each epic's start-to-merge minutes split into building, CI, review wait, fixing and merge wait, largest first). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (each epic's start-to-merge minutes split into building, CI, review wait, fixing and merge wait, largest first). |
 
 ## Cleanup, escalation and session logs
 

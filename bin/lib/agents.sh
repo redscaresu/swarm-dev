@@ -542,11 +542,44 @@ API_RESUME_MSG="Your last turn stopped on an API error; carry on where you stopp
 # pane_text <target> — the recent text of the agent's pane, or nothing when herdr cannot read it.
 pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || true; }
 
+# PANE_DIR: per agent, a file kept by pane_check and read by dash (its pane's checksum, and when status
+# or wait first saw the pane so, in epoch seconds); per pane, a stop.<pane>.<key> directory for each
+# stop an api-error or auto-denied incident was logged for, kept by pane so a retired agent's renamed
+# pane (retire_agent) is not logged again.
+# ponytail: stop directories are never removed (one empty directory per stop); removing them would
+# race a concurrent pane_check into logging a stop again.
+PANE_DIR="${PROJECT_DIR}/.swarm/panes"
+
+# pane_check <name> <target> — print <target>'s pane text (pane_text) and keep PANE_DIR/<name>. When
+# the pane's last turn ended on Claude Code's `API Error:` line or an auto mode denial (no assistant
+# line, ⏺ or ●, after it), log an api-error or auto-denied incident for <name> with that line, once
+# per stop: the stop is the pane's text up to that line, and only the call whose mkdir makes its
+# directory logs it, so a stopped pane read again, or by status and wait at once, logs nothing more.
+pane_check() {
+  local text f sum seen="" at="" hit n kind line
+  text="$(pane_text "$2")"; [[ -n "${text}" ]] || return 0
+  printf '%s\n' "${text}"; [[ -n "$1" ]] || return 0
+  f="${PANE_DIR}/$1"; sum="$(printf '%s' "${text}" | cksum)"
+  [[ ! -f "${f}" ]] || IFS=$'\t' read -r seen at < "${f}" || true
+  [[ "${sum}" == "${seen}" && -n "${at}" ]] || at="$(date +%s)"
+  { mkdir -p "${PANE_DIR}" && printf '%s\t%s\n' "${sum}" "${at}" > "${f}"; } 2>/dev/null || return 0
+  hit="$(awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { n = NR; k = "api-error"; l = $0; next }
+    /^[[:space:]]*(⏺|●)/ { n = 0; next }
+    /denied by the Claude Code auto mode classifier/ { n = NR; k = "auto-denied"; l = $0 }
+    END { if (n) { sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", l); print n "\t" k "\t" l } }' <<< "${text}")"
+  [[ -n "${hit}" ]] || return 0
+  IFS=$'\t' read -r n kind line <<< "${hit}"
+  f="${PANE_DIR}/stop.${2//[^A-Za-z0-9]/-}"; hit="${f}.$(head -n "${n}" <<< "${text}" | cksum | tr ' ' -)"
+  mkdir "${hit}" 2>/dev/null || return 0
+  record_event incident "$1" "${kind}: ${line}"
+}
+
 # api_stopped <name> <target> — succeed when herdr says <name> is done or idle and its pane's last
 # turn ended on Claude Code's `API Error:` line (no assistant line, ⏺ or ●, after the last one). Its
-# session can still read busy then: background shells it left open keep it so.
+# session can still read busy then: background shells it left open keep it so. It reads the pane
+# through pane_check, so the stop is logged.
 api_stopped() {
-  pane_text "$2" | awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { e = 1; next } /^[[:space:]]*(⏺|●)/ { e = 0 } END { exit !e }' \
+  pane_check "$1" "$2" | awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { e = 1; next } /^[[:space:]]*(⏺|●)/ { e = 0 } END { exit !e }' \
     && [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]
 }
 
@@ -558,13 +591,13 @@ resume_agent() {
   [[ "${s}" =~ ^(working|blocked)$ ]]
 }
 
-# pane_quiet <target> — succeed when the agent's pane has not changed for stall_minutes, setting the
+# pane_quiet <target> <name> — succeed when the agent's pane has not changed for stall_minutes, setting the
 # caller's state to `stalled: no output for <N>m (<target>)`. Between calls it keeps the caller's
 # pane_sum (the pane's checksum at the last read) and pane_at (when it last changed; first, the time
-# the wait began). An empty read says nothing.
+# the wait began). It reads the pane through pane_check. An empty read says nothing.
 pane_quiet() {
   local text sum min
-  text="$(pane_text "$1")"; [[ -n "${text}" ]] || return 1
+  text="$(pane_check "$2" "$1")"; [[ -n "${text}" ]] || return 1
   sum="$(printf '%s' "${text}" | cksum)"
   [[ -z "${pane_sum}" || "${sum}" == "${pane_sum}" ]] || pane_at="$(date +%s)"
   pane_sum="${sum}"; min=$((($(date +%s) - pane_at) / 60))
@@ -674,7 +707,7 @@ herdr_wait() {
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
     fi
-    if pane_quiet "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
+    if pane_quiet "${target}" "${name}"; then rm -f "${err}"; echo "${state}"; return; fi
   done
   rm -f "${err}"
   herdr agent wait "${target}" --timeout "${left}" | json "d['result']['agent']['agent_status']"
@@ -723,7 +756,7 @@ settle() {
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
     fi
-    if [[ "${state}" == busy ]] && pane_quiet "${target}"; then break; fi
+    if [[ "${state}" == busy ]] && pane_quiet "${target}" "${name}"; then break; fi
     t0="$(now_ms)"
     if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
     sleep_ms $((end - t0))
@@ -791,14 +824,14 @@ wait_agent() {
 }
 
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
-# incident in events.tsv is one already and no ok tell that sends a prompt (findings, nudge, resume,
+# incident in events.tsv (an api-error or auto-denied one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
 # after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
 # --backlog through conductor_name (b).
 login_incident() {
   awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
-    $2 == "incident" && $3 == n { login = $5 ~ /^login:/ }
+    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied):/ { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
     $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
