@@ -598,19 +598,24 @@ session log is gone starts at 00:00 local time on its agents.tsv day, converted 
 
 `swarm.sh dataset` writes `.swarm/dataset.jsonl`, one JSON line per finished story (one whose PR
 merged), oldest merge first, for scoring the planner's guesses against what happened. Each run
-rewrites the whole file. `inputs` is the story as it was planned: its file at the newest commit that
+rewrites the whole file, through a temporary file. If `gh` could not read a story's PRs (an expired
+login, no network, a rate limit), it says which stories, exits non-zero and leaves the old file as
+it was. `inputs` is the story as it was planned: its file at the newest commit that
 added it, with `text`, `kind`, `risk`, `touches`, `depends_on`, `estimate_lines` and `easy`, and
 `planner_model`, the model of the last plan-epic `lead` in agents.tsv started by that day whose
 session log names the story's epic (`null` when the lead planned a small epic alone, or the log is
 gone). `results` comes from the `outcomes` rows, events.tsv, findings.tsv and git: `diff_lines` and
-`diff_files` of the PR from `gh` (any merge method), less the story's own file; `attempts`;
+`diff_files` of the PR from `gh` (any merge method), less the board files (the story's file, and its
+epic's, which an epic's last story PR deletes); `attempts`;
 `findings_rounds` (the `tell:findings` it took); `findings_fixed`; `rework`; `cost_usd`; `minutes`
 from its first build's start to the merge; `models`, every model that built it; and `escalations`,
 one per `escalate` line with its `trigger` (`attempt N`, or a step-up's own trigger) and its `from`
-and `to` models. `rework` is true when a later PR fixed it within 7 days: a commit on the default
-branch of the story's repo names its PR (`#N` or its URL), or an escaped finding points at it. `was_easy` is true when
-it merged on the first attempt with at most one findings round, no rework and a diff under 100
-lines, and `was_easy_rule` says which version of that rule applied (now `1`). It copies nothing
+and `to` models. A `minutes` whose times do not parse is `null`. `rework` is true when a later PR
+fixed it within 7 days: a commit on the default branch of the story's repo names its PR (`#N`,
+`owner/repo#N` or its URL) on a line that says it fixes it (fix, rework, revert or regression), or
+an escaped finding points at it. A stacked PR's `Merge after`, `Depends on` or `Stacked on` line
+never counts. `was_easy` is true when it merged on the first attempt with at most one findings
+round, no rework and a diff under 100 lines, and `was_easy_rule` says which version of that rule applied (now `1`). It copies nothing
 from the environment or from a session log's text. The file stays in `.swarm/`, which is
 git-ignored.
 

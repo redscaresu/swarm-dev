@@ -26,17 +26,21 @@ echo .swarm/ > "${P}/.gitignore"; echo "# Stories" > "${P}/docs/stories/README.m
 printf -- '---\nkind: code\neasy: true\nestimate_lines: 40\ndepends_on: []\ntouches: [src/a (new)]\n---\n\n# Easy ok\n' > "${P}/docs/stories/easy-ok.md"
 printf -- '---\nkind: code\nepic: e1\neasy: true\nestimate_lines: 30\ndepends_on: [easy-ok]\ntouches: [src/b:f (x, y), src/c]\n---\n\n# Easy hard\n' > "${P}/docs/stories/easy-hard.md"
 printf -- '---\nkind: code\nrisk: high\nepic: e0\neasy: false\nestimate_lines: 200\ndepends_on: []\ntouches: [src/c]\n---\n\n# Escalated\n' > "${P}/docs/stories/escalated.md"
+mkdir -p "${P}/docs/epics" && printf -- '---\nstatus: active\n---\n\n# e0\n' > "${P}/docs/epics/e0.md"
 git -C "${P}" add -A && commit 2026-10-01T08:00:00Z "Plan e0 and e1 (#1)"
 # A later edit of the plan (attempts:, a changed estimate): the dataset reads the story as planned.
 sed -i.bak 's/^estimate_lines: 40$/estimate_lines: 999/' "${P}/docs/stories/easy-ok.md" && rm "${P}/docs/stories/easy-ok.md.bak"
 git -C "${P}" add -A && commit 2026-10-01T12:00:00Z "Re-plan easy-ok"
 # easy-ok's PR was rebased onto main: its commit names no PR, so its diff and merge commit come from gh.
 lines 10 a; git -C "${P}" rm -q docs/stories/easy-ok.md; git -C "${P}" add -A && commit 2026-10-02T10:00:00Z "Add a"
-lines 12 a; git -C "${P}" add -A && commit 2026-10-02T12:00:00Z "Bump for https://github.com/other/dep/pull/2 and other/dep#2 (#7)"
+lines 12 a; git -C "${P}" add -A && commit 2026-10-02T12:00:00Z "Fix the bump for https://github.com/other/dep/pull/2 and other/dep#2 (#7)"
+# A PR stacked on #2: its body names #2 only to say what it waits on, or for background, so it is no
+# fix of #2.
+lines 13 a; git -C "${P}" add -A && commit 2026-10-02T13:00:00Z "$(printf 'Stacked story (#8)\n\nMerge after https://github.com/o/r/pull/2, which it fixes the order of\nDepends on #2 (a fix)\nStacked on o/r#2 to fix nothing\nSee #2 for the background.\n\nFixes a typo in the README.')"
 lines 20 b; git -C "${P}" rm -q docs/stories/easy-hard.md; git -C "${P}" add -A && commit 2026-10-03T10:00:00Z "Easy hard (#3)"
 lines 21 b; git -C "${P}" add -A && commit 2026-10-05T10:00:00Z "Fix the regression from #3 (#4)"
-lines 150 c; git -C "${P}" rm -q docs/stories/escalated.md; git -C "${P}" add -A && commit 2026-10-06T10:00:00Z "Escalated (#5)"
-lines 11 a; git -C "${P}" add -A && commit 2026-10-12T10:00:00Z "Touch up #2, ten days on (#6)"
+lines 150 c; git -C "${P}" rm -q docs/stories/escalated.md docs/epics/e0.md; git -C "${P}" add -A && commit 2026-10-06T10:00:00Z "Escalated (#5)"
+lines 11 a; git -C "${P}" add -A && commit 2026-10-12T10:00:00Z "Fix a typo from #2, ten days on (#6)"
 
 session() { # <slug> <model> [extra line] — a session log: worktree cwd, a timestamp TS, 1M input tokens, its PR
   printf '{"type":"user","cwd":"%s/repo-wt/%s","timestamp":"%s"}\n' "${dir}" "$1" "${TS}"
@@ -82,9 +86,11 @@ view() { # <n> <merge commit subject> <path:additions:deletions>...
 }
 view 2 "Add a" src/a:10:0 docs/stories/easy-ok.md:0:9
 view 3 "Easy hard (#3)" src/b:20:0 docs/stories/easy-hard.md:0:9
-view 5 "Escalated (#5)" src/c:150:0 docs/stories/escalated.md:0:10
+# escalated is its epic's last story, so its PR deletes the epic too: neither board file counts.
+view 5 "Escalated (#5)" src/c:150:0 docs/stories/escalated.md:0:10 docs/epics/e0.md:0:5
 cat > "${dir}/bin/gh" <<STUB
 #!/bin/sh
+[ -z "\${GH_FAIL:-}" ] || exit 1
 if [ "\$1 \$2" = "pr view" ]; then cat "${dir}/prs/\${3##*/}.json"; exit; fi
 [ "\$1 \$2" = "pr list" ] || exit 1
 case "\$4" in
@@ -93,6 +99,7 @@ case "\$4" in
   story/escalated) n=5 c=2026-10-04T10:00:00Z m=2026-10-06T10:00:00Z ;;
   *) exit 0 ;;
 esac
+[ -z "\${BAD_MERGE:-}" ] || [ "\$n" != 2 ] || m=2026-10-02T25:00:00Z
 printf '${U}/%s\tMERGED\t%s\t%s\t0\n' "\$n" "\$m" "\$c"
 STUB
 chmod +x "${dir}/bin/gh"
@@ -101,9 +108,12 @@ fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
-out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SECRET="${PLANT_ENV}" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" dataset 2>&1)" || true   # a crash fails the checks below
+dataset() { # [VAR=value...] — run swarm.sh dataset with the stub gh, then print its exit status
+  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT SECRET="${PLANT_ENV}" CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" "$@" bash "${SWARM}" dataset 2>&1) && echo "exit 0" || echo "exit $?"
+}
+out="$(dataset)"
 F="${P}/.swarm/dataset.jsonl"
-check "it says what it wrote" "${out}" "wrote 3 finished stories to ${F}"
+check "it says what it wrote" "${out}" "$(printf 'wrote 3 finished stories to %s\nexit 0' "${F}")"
 # One summary line per story: slug | inputs | results | was_easy.
 summary() {
   python3 -c '
@@ -124,6 +134,15 @@ EOF
 check "the planted env value and transcript line appear nowhere in the output" \
   "$(grep -c -e "${PLANT_ENV}" -e "${PLANT_LINE}" "${F}" || true)" 0
 check "the file is under .swarm/ and git status stays clean" "$(git -C "${P}" status --porcelain)" ""
+
+# A merge time that does not parse leaves that story's minutes null and stops nothing.
+check "a merge time that does not parse gives null minutes and still writes every line" \
+  "$(dataset BAD_MERGE=1 | tail -1; python3 -c 'import json, sys; print([json.loads(l)["results"]["minutes"] for l in open(sys.argv[1])])' "${F}")" \
+  "$(printf 'exit 0\n[None, 120, 2940]')"
+before="$(cksum < "${F}")"
+check "when gh cannot be read, it refuses, says so, and leaves the file as it was" \
+  "$(dataset GH_FAIL=1; cksum < "${F}")" \
+  "$(printf 'gh could not read the PRs of easy-hard, easy-ok, escalated; %s is left as it was: check gh auth status and run it again\nexit 1\n%s' "${F}" "${before}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

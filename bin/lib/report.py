@@ -56,11 +56,15 @@ def session_usage(path, seen):
     return tok, usd, models
 
 REWORK_DAYS = 7   # a fix this soon after a merge is rework of it
+FIXING = re.compile(r"\b(fix(es|ed)?|rework|revert(s|ed)?|regression)\b", re.I)
+STACKED = re.compile(r"\b(merge after|depends on|stacked on)\b", re.I)
 
 def rework_of(pr, merged_at, commits, escaped):
     # True when a later PR fixed the merged pr within REWORK_DAYS of merged_at (UTC, as gh writes it):
     # a commit after it (commits: (UTC time, message) on the default branch, the pr's own merge left
-    # out) names it as #N, owner/repo#N or its pull URL, or an escaped finding ((local day, pr) pairs) points at it.
+    # out) names it as #N, owner/repo#N or its pull URL on a line that says it fixes it (fix, rework,
+    # revert, regression), or an escaped finding ((local day, pr) pairs) points at it. A stacked PR's
+    # "Merge after", "Depends on" or "Stacked on" line never counts, whatever else it says.
     try:
         t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
         start = t(merged_at)
@@ -72,7 +76,8 @@ def rework_of(pr, merged_at, commits, escaped):
     names = re.compile(rf"(?<![\w/])#{n}(?!\d)|(?<![\w.-])(github\.com/{r}/pull/|{r}#){n}(?!\d)", re.I)
     for when, msg in commits:
         try:
-            if start < t(when) <= end and names.search(msg):
+            if start < t(when) <= end and any(names.search(l) and FIXING.search(l) and not STACKED.search(l)
+                                              for l in msg.splitlines()):
                 return True
         except ValueError:
             continue

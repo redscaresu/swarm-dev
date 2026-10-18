@@ -51,14 +51,16 @@ def merges(repo):
     log = git(repo, "log", ref, "--first-parent", "--format=%H%x00%cI%x00%B%x01")
     return tuple(tuple(c.lstrip("\n").split("\0", 2)) for c in log.split("\x01") if c.strip())
 
-def pr_diff(pr, slug):
-    # The PR's lines added and removed and its files, less the story's own file, and its merge commit,
+def pr_diff(pr, slug, epic):
+    # The PR's lines added and removed and its files, less the board's (the story's file, and its epic's,
+    # which an epic's last story PR deletes), and its merge commit,
     # from gh, so any merge method (squash, merge or rebase) and any repo reads alike; (None, None, "")
     # when gh cannot say. ponytail: gh lists a PR's first 100 files; page the API if a story outgrows that.
     r = subprocess.run(["gh", "pr", "view", pr, "--json", "files,mergeCommit"], capture_output=True, text=True)
     try:
         d = json.loads(r.stdout)
-        files = [f for f in d["files"] if not f["path"].endswith(f"stories/{slug}.md")]
+        board_files = (f"stories/{slug}.md",) + ((f"epics/{epic}.md",) if epic else ())
+        files = [f for f in d["files"] if not f["path"].endswith(board_files)]
         return sum(f["additions"] + f["deletions"] for f in files), len(files), (d.get("mergeCommit") or {}).get("oid", "")
     except (ValueError, TypeError, KeyError, AttributeError):
         return None, None, ""
@@ -72,6 +74,14 @@ def escalations(slug):
             found.append({"at": f[0], "trigger": f"attempt {m[1]}" if m[1] else m[2],
                           "from": m[3], "to": m[4] or "fable"})
     return found
+
+def minutes(start, end):
+    # Whole minutes from one UTC time to another, as a string; "" when either does not parse.
+    try:
+        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return str(round((t(end) - t(start)).total_seconds() / 60))
+    except ValueError:
+        return ""
 
 def num(v, cast):
     try:
@@ -88,6 +98,9 @@ for line in lines[1:]:
     b = dict(zip(lines[0].split("\t"), line.split("\t")))
     builds[b["slug"]].append(b)
 
+# A story gh could not read (kind is known, so outcomes asked, but story_merged is empty): an expired
+# token, offline or a rate limit would read every story as unmerged, so nothing is overwritten.
+unread = sorted(s for s, bs in builds.items() if any(b["kind"] and not b["story_merged"] for b in bs))
 stories = []
 for slug, bs in builds.items():
     done = [b for b in bs if b.get("merged_at")]
@@ -97,12 +110,13 @@ for slug, bs in builds.items():
     text, added = planned(slug)
     fm = front(text)
     epic = fm.get("epic") or bs[-1]["epic"] or None
-    diff_lines, diff_files, own = pr_diff(pr, slug)
+    diff_lines, diff_files, own = pr_diff(pr, slug, epic)
+    if diff_lines is None:
+        unread.append(slug)
     rework = rework_of(pr, merged_at, [c[1:] for c in merges(REPOS.get(slug, "")) if c[0] != own], ESCAPED)
     rounds = sum(num(b["tells_findings"], int) or 0 for b in bs)
     costs = [num(b["cost_usd"], float) for b in bs if b["cost_usd"]]
     starts = sorted(b["started"] for b in bs if b["started"])
-    t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
     attempts = max(num(b["attempts"], int) or 0 for b in bs)
     was_easy = None if diff_lines is None else attempts == 1 and rounds <= 1 and not rework and diff_lines < EASY_MAX_LINES
     stories.append((merged_at, {
@@ -115,11 +129,13 @@ for slug, bs in builds.items():
         "results": {"diff_lines": diff_lines, "diff_files": diff_files, "attempts": attempts,
                     "findings_rounds": rounds, "findings_fixed": sum(num(b["findings_fixed"], int) or 0 for b in bs),
                     "rework": rework, "cost_usd": round(sum(costs), 2) if costs else None,
-                    "minutes": round((t(merged_at) - t(starts[0])).total_seconds() / 60) if starts else None,
+                    "minutes": num(minutes(starts[0], merged_at), int) if starts else None,
                     "models": list(dict.fromkeys(b["model"] for b in bs if b["model"])),
                     "escalations": escalations(slug)},
         "was_easy": was_easy, "was_easy_rule": WAS_EASY_RULE}))
 
+if unread:
+    sys.exit(f"gh could not read the PRs of {', '.join(unread)}; {out} is left as it was: check gh auth status and run it again")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 with open(out + ".tmp", "w") as f:
     for _, s in sorted(stories, key=lambda s: s[0]):

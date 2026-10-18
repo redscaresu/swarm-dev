@@ -86,7 +86,8 @@ record_finding() {
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 #   rework_of(pr, merged_at, commits, escaped) is whether a later PR fixed a merged one within
-#   REWORK_DAYS: a later commit on the default branch names it, or an escaped finding points at it.
+#   REWORK_DAYS: a later commit on the default branch names it on a line that says it fixes it (never a
+#   stacked PR's Merge after, Depends on or Stacked on line), or an escaped finding points at it.
 
 # lessons [--all] — the "brief" below is lessons_file (default the brief itself).
 # Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
@@ -171,11 +172,13 @@ outcomes_report() {
 # prediction-scores to score the planner against. inputs: the story as planned, read from git at the
 # newest commit that added it (text, kind, risk, touches, depends_on, estimate_lines, easy), and
 # planner_model, the model of the last agents.tsv lead started by then whose session log scopes its
-# epic. results: diff_lines and diff_files of its PR from gh (less its own story file), attempts, findings_rounds (tells:findings), findings_fixed, rework (rework_of), cost_usd,
-# minutes from its first build's start to the merge, every model that built it, and each escalate
-# event as its trigger (attempt N, or step-up's trigger) with from and to. was_easy: merged on the first
+# epic. results: diff_lines and diff_files of its PR from gh (less the story's and its epic's files),
+# attempts, findings_rounds (tells:findings), findings_fixed, rework (rework_of), cost_usd, minutes
+# from its first build's start to the merge, every model that built it, and each escalate event as
+# its trigger (attempt N, or step-up's trigger) with from and to. was_easy: merged on the first
 # attempt, at most one findings round, no rework and a diff under 100 lines, under was_easy_rule 1.
-# Nothing from the environment or a session log's text is written. Each run rewrites the file whole.
+# Nothing from the environment or a session log's text is written. Each run rewrites the file whole
+# through a temporary file, and a story gh could not read stops it before it writes.
 dataset_report() {
   local rows repos="" slug src
   [[ $# -eq 0 ]] || die "usage: swarm.sh dataset"
