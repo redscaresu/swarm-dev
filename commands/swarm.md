@@ -114,7 +114,8 @@ Repeat until a step below says stop:
      stop: a story or epic added, changed or removed (a merge removes one), or, for a fix that
      touches neither (a code PR that turns CI on the base green), deleting
      `.swarm/conduct-backlog.report.md` once the cause is fixed. Then stop. Otherwise run
-     `swarm.sh conduct --backlog`, then handle it as `wait conduct-backlog`.
+     `swarm.sh conduct --backlog`, then handle it as `wait` on the conductor it started
+     (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
      When `next`'s why names a conductor that is still working, start
@@ -157,8 +158,12 @@ Repeat until a step below says stop:
      of a new branch `release/v<new>` from `origin/<base>`, and in it bump only
      `.claude-plugin/plugin.json`, to the next minor version (a patch when every change since the
      tag is a fix). Commit with the brief's trailers, push, and open the PR titled
-     `Release v<new>`, listing the PRs merged since the tag. Wait for its checks in the
-     background. If `swarm.sh config merge` is `agent`, run
+     `Release v<new>`, listing the PRs merged since the tag. Run `swarm.sh wait-pr <PR URL>` in the
+     background and wait for it. If it exits 1, a check is red. A release PR may change only the
+     version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
+     story or a lead PR, then close this PR and cut the release branch again from the base's latest
+     green commit. Stop there, and go back to 1 once the fix is on the base. If it exits 2, gh failed, no checks appeared or they never finished: tell the user
+     what it printed and stop. If `swarm.sh config merge` is `agent`, run
      `swarm.sh merge --release --head <its head SHA> <PR URL>` in the background and wait for it.
      Then check that the tag `v<new>` exists and that `gh release view v<new>` shows the release,
      remove the worktree and the branch, and go back to 1. If it is `human`, tell the user the PR

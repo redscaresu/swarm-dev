@@ -69,6 +69,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for a PR's checks: exits 0 green, 1 red, 2 when gh fails, no checks appear, or one is still pending at the timeout (30 minutes by default). |
 
 The other commands are tools the lead runs; they are listed in
 [reference.md § Commands](docs/reference.md#commands). Settings go in `.claude/swarm/config`
@@ -96,7 +97,11 @@ section shows how long CI takes per push, how often it goes red and how often it
 `incidents` section counts, per day, the waits that timed out, the logins that expired and the
 builders that stopped with no PR. Its `lead_queue` section shows, per day, the median and longest
 time a held, escalated or ready-to-merge item waited on the lead, and names any still waiting. With
-`merge = agent`, only a PR that costs money waits on you, so only those count.
+`merge = agent`, only a PR that costs money waits on you, so only those count. Its `model_fit`
+section sets cost against results for each model and kind of story, so you can see where a cheaper
+model holds up before you move more work to it. Its `time_in_state`
+section shows where each epic's stories spent their time between start and merge: building, CI,
+waiting for review, fixing findings or waiting for a merge.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. Agents start with a short list of environment variables, and a token you exported
@@ -121,7 +126,7 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 
 - [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in
-  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` reads both.
+  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` and `swarm.sh dash` read both.
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
