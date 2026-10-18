@@ -124,8 +124,13 @@ check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, agai
 git -C "${P}" remote add origin https://github.com/o/r.git && touch "${P}/docs/stories/README.md"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
-dash() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
-  COLUMNS=200 bash "${SWARM}" dash 2>&1 | grep -o "ci [0-9].*vs last week" || true); rm -f "${dir}"/tmp/swarm-dash-3-*; }
+dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so the next dash reads the ci cache again
+  local out
+  out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
+    COLUMNS=200 bash "${SWARM}" dash 2>&1)" || true
+  rm -f "${dir}"/tmp/swarm-dash-3-*
+  grep -o "ci [0-9].*vs last week" <<< "${out}" || true
+}
 refreshed() { # waits up to 60 s for the detached refresh to end
   for _ in $(seq 300); do pgrep -f "dash_slow.py --ci .*${dir##*/}" > /dev/null || return 0; sleep 0.2; done
 }
