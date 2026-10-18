@@ -5,7 +5,8 @@
 # its state, even with its file removed by hand. An untracked copy of a story the pull brings gives way
 # to it. A story whose uncommitted edit is only to swarm.sh's own keys (an older swarm.sh's review) has
 # them moved to its state and pulls. A hand edit to a tracked story stops the pull, names the file,
-# changes nothing, and logs one pull-failed incident. gh is a stub on PATH; origin is a local bare repo.
+# changes nothing, and logs one pull-failed incident, but with nothing to pull a hand edit stops
+# nothing. gh is a stub on PATH; origin is a local bare repo.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -34,7 +35,7 @@ case "$1 $2" in
 esac
 EOF
 chmod +x "${ROOT}/bin/gh"
-printf '%s\n' "${U}/1 MERGED" "${U}/2 OPEN" > "${ROOT}/prs"
+printf '%s\n' "${U}/1 MERGED" "${U}/2 OPEN" "${U}/3 MERGED" > "${ROOT}/prs"
 
 item() { # <file> <front-matter line>...
   local path="$1" title; shift
@@ -132,6 +133,16 @@ check "and changes nothing: HEAD, e's edit, a in review, and no stash" "${before
   "$(git -C "${ROOT}/he" rev-parse HEAD)|$(git -C "${ROOT}/he" status --porcelain)|$(cmp -s "${ROOT}/he-e" "${ROOT}/he/docs/stories/e.md" && echo same)|$(state he a)|$(git -C "${ROOT}/he" stash list)"
 check "one incident line: pull-failed, naming e" "1|pull-failed: docs/stories/e.md" \
   "$(awk -F'\t' '$2 == "incident"' "${ROOT}/he/.swarm/events.tsv" | wc -l | tr -d ' ')|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/he/.swarm/events.tsv")"
+
+# --- Nothing to pull (the base pulled by hand), e in review with its PR merged, and a hand edit to a
+# tracked file: reconcile marks e done, leaves the edit, and logs no incident.
+setup np; git -C "${ROOT}/np" pull -q --ff-only
+at np review e "${U}/3" >/dev/null; echo "# mine" >> "${ROOT}/np/.gitignore"
+rc=0; out="$(at np reconcile)" || rc=$?
+check "nothing to pull: a hand edit stops nothing, and the merged story is marked done" "0|done|yes" \
+  "${rc}|$(val "${ROOT}/np/docs/stories/e.md" status)|$(has "merged: e, marked done" "${out}")"
+check "and the edit stays, with no incident" " M .gitignore|no" \
+  "$(git -C "${ROOT}/np" status --porcelain)|$(if grep -qs incident "${ROOT}/np/.swarm/events.tsv"; then echo yes; else echo no; fi)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -771,8 +771,9 @@ herdr cannot list its agents, since a builder may then be open unseen. After a m
 build even then, and prints `build cleared: <slug>`: close that builder's pane yourself with
 `swarm.sh close <slug>`. Outside herdr it treats every builder as closed and never calls herdr.
 Then it pulls the board's repo, fast-forward only. swarm.sh keeps its own keys out of tracked files
-(§ Building, Board state), so a main checkout with no edits pulls as it is. When the only uncommitted
-change to a story or epic is to those keys, as an older swarm.sh wrote them, reconcile moves the values
+(§ Building, Board state), so a main checkout with no edits pulls as it is. With nothing to pull (the
+main checkout already has every upstream commit), reconcile goes on and leaves every edit as it is.
+When the only uncommitted change to a story or epic is to those keys, as an older swarm.sh wrote them, reconcile moves the values
 into the item's state and checks the file out, so the item reads as it did and the pull goes. An
 untracked board file whose bytes match the incoming file's is removed, and the pull brings it back.
 reconcile touches nothing else, and stops naming why, when the main checkout

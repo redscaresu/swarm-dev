@@ -156,7 +156,8 @@ keys_to_state() {
   echo "reconcile: $1 changed only swarm.sh's own keys; they are in its board state now, and the file is checked out"
 }
 
-# pull_board_repo — pull the main checkout fast-forward, touching no edit. Once it has fetched and
+# pull_board_repo — pull the main checkout fast-forward, touching no edit. Once it has fetched, it
+# succeeds, touching nothing, when there is nothing to pull (HEAD has every upstream commit). When it
 # can fast-forward, it moves each story or epic edit that is only to swarm.sh's own keys into board
 # state (keys_to_state). It stops, touching nothing more, when it cannot fetch, the pull cannot
 # fast-forward (local commits), or any other tracked file is changed, staged or not: that stop names
@@ -168,6 +169,7 @@ PULL_WHY=""
 pull_board_repo() {
   local changed board other out p
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
+  ! git -C "${PROJECT_DIR}" merge-base --is-ancestor '@{upstream}' HEAD || return 0
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
     PULL_WHY="it has commits the base does not ($(git -C "${PROJECT_DIR}" log --format=%h '@{upstream}..HEAD' | paste -sd' ' -)), so it cannot fast-forward; pull it by hand"
     return 1
