@@ -57,9 +57,12 @@ When a review agent reports \`codex skipped: <why>\` (its file's second line say
 Wait for the builder, then start a new review agent on its new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason.
-Review stops after round 3: from round 4 on, only a real bug (wrong behaviour, data loss, a security
-hole) sends the PR back. Decline anything smaller with a reason in the PR, and log it with
-\`log-finding --declined nit --reviewer <who>\`.
+A round is one review whose findings you sent to the builder (\`swarm.sh tell <slug> findings\`); a
+review started again (head moved, no \`## Findings\` section, a review agent that timed out or
+crashed) is not one. Review stops after round 3: from round 4 on, only a real bug (wrong behaviour,
+data loss, a security hole) sends the PR back. Decline anything
+smaller with a reason in the PR, and log it with \`log-finding --declined <reason> --reviewer <who>\`
+as below: nit for a nit or an edge case, out-of-scope or wrong where they apply.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
@@ -378,7 +381,7 @@ EOF
 # rules_review_rule — the conductor's half of rules_check_step, while the project has tagged rules.
 rules_review_rule() {
   [[ -n "$(project_rules | rule_kinds)" ]] || return 0
-  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other."
+  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other, after round 3 too."
 }
 
 # project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
@@ -863,12 +866,19 @@ EOF
 # edits to different parts of one file, so only a shared symbol or a bare file holds a story back.
 clash_rule() {
   cat <<EOF
-Two stories clash only when their \`touches\` name the same \`file:symbol\`, or when either names
-the bare file (no \`:symbol\`) of a file the other also names. Otherwise both build at once, even
-in the same file. A builder whose PR conflicts with its base merges the base in, resolves it, re-runs
-the tests and pushes; when \`swarm.sh watch\` says a PR CONFLICTS, tell its builder that with
-\`swarm.sh tell <slug> findings <file>\`. A conflict never sends a story back to \`ready\`: never
-close a builder over one.
+Two stories clash only when their \`touches\` name the same \`file:symbol\` in the same repo, or
+when either names the bare file (no \`:symbol\`) of a file the other also names in the same repo.
+Otherwise both build at once, even in the same file. A builder whose PR conflicts with its base
+merges the base in, resolves it, re-runs the tests and pushes. A conflict never sends a story back
+to \`ready\`: never close a builder over one. When \`swarm.sh watch\` says a PR CONFLICTS, write a
+file saying to merge origin/<base> into its branch, resolve it, re-run the tests and push, and to
+stop waiting on CI until then (a conflicting PR runs none). Send it with \`swarm.sh tell <slug> nudge
+<file>\`, never as findings, which would count as a review round. Watch reports each conflict once,
+so do not drop it: if the builder is working, run \`swarm.sh wait <slug>\` in the background and send
+it once the wait returns. If the story has no builder (closed after \`swarm.sh review\`), start one
+in its worktree with \`swarm.sh agent <tab> <slug> <worktree> <role> <brief>\`, as the Stacked rule
+below does for \`(no builder)\`, with a brief that says the same and to reply with the PR URL. If its
+worktree is gone too, list the PR in your report for the lead.
 EOF
 }
 

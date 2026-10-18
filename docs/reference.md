@@ -342,10 +342,13 @@ reconcile pulled that commit or you did: the file is in neither `HEAD` nor the m
 removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories that do not clash. Two stories clash only when their
-`touches` name the same `file:symbol`, or when either names the bare file of a file the other also
-names. Otherwise both build at once, even in the same file: git merges edits to different parts of
-one file, and a story names the functions it changes. A builder whose PR conflicts with main merges
-main in, resolves it, reruns the tests and pushes; a conflict never sends a story back to `ready`.
+`touches` name the same `file:symbol` in the same repo, or when either names the bare file of a file
+the other also names. Otherwise both build at once, even in the same file: git merges edits to
+different parts of one file, and a story names the functions it changes. A builder whose PR
+conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict
+never sends a story back to `ready`. The conductor sends that as a `nudge` tell, which is not a
+review round. It waits first for a builder that is working, and starts a builder in the story's
+worktree when the one it had was closed after `swarm.sh review`.
 Work that edits a shared file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the
 lead, alone.
 
@@ -565,9 +568,13 @@ conductor starts the review again. When the wait returns with no file (a timeout
 session, an expired login), it closes the review agent without answering its prompt, and reviews
 again in a later round or reads the diff itself. It sends the real findings to the story's builder with `swarm.sh tell <slug> findings
 <file>`, and logs each out-of-scope item with `log-finding --declined out-of-scope --reviewer <who>`.
-It starts a new review agent on the builder's next head. Review stops after round 3: from round 4
-on, only a real bug (wrong behaviour, data loss, a security hole) sends the PR back. Anything smaller
-is declined with a reason and logged with `log-finding --declined nit --reviewer <who>`. Before a story merges or goes to review, it
+It starts a new review agent on the builder's next head. A round is one review whose findings went
+to the builder; a review started again (head moved, no findings section, a review agent that timed
+out or crashed) is not one. Review stops after round 3: from round 4 on, only a real bug (wrong
+behaviour, data loss, a security hole) sends the PR back, and so does a `rules-unchecked` finding
+when the project has tagged rules. Anything
+smaller is declined with a reason and logged with `log-finding --declined <reason> --reviewer <who>`:
+`nit` for a nit or an edge case, `out-of-scope` or `wrong` where they apply. Before a story merges or goes to review, it
 compares the file's `head:` line with the PR's head, and reviews the new head when they differ. `tell`'s kind (`findings`, `nudge`
 or `resume`) is required and goes in the audit log. `tell` sends only to an idle session. It
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
