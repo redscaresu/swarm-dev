@@ -206,6 +206,15 @@ for c in 'kill $!' "kill 1234" "kill -9 1234" "kill -s TERM 1234" "echo pkill"; 
   check "an agent's ${c} passes" as agent "${W}" 0 "${c}"
   check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
 done
+# An agent waits on CI with swarm.sh wait-pr, never a watch or a loop of its own; one read passes.
+for c in "gh pr checks 271 --watch" "until gh pr checks 271; do sleep 30; done" "while ! gh -R o/r pr checks 271; do sleep 30; done"; do
+  was="$(lines)"
+  check "an agent's ${c} blocks" as agent "${W}" 2 "${c}"
+  check "  ... and logs guard-blocked: gh pr checks loop" test "$(lines)/$(tail -1 "${LOG}" | cut -f5)" == "$((was + 1))/guard-blocked: gh pr checks loop"
+  check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
+done
+check "an agent's gh pr checks 271 passes" as agent "${W}" 0 "gh pr checks 271"
+check "the lead's gh pr checks 271 passes" as lead "${W}" 0 "gh pr checks 271"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

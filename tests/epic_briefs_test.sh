@@ -167,6 +167,8 @@ check "a builder walks its diff against each tagged rule, and lists both kinds i
 run conduct f >/dev/null || true
 check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
   "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the builder and conductor briefs wait on CI only with wait-pr, never a loop of their own" "yes|yes|yes" \
+  "$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 fix the red check; on a conflict merge origin/dev in and push." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 fix the red check; on a conflict merge the PR's base in and push." "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own" "$(cat "${p}/.swarm/briefs/g1.md")")"
 cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"

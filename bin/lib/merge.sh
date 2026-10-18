@@ -231,10 +231,12 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
 # A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
+# That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
+# and UNKNOWN (GitHub still computing it) is read again every poll.
 wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
-  local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS}
+  local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid state base
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -252,9 +254,17 @@ wait_pr() {
     if [[ -z "${head}" ]]; then
       # The head read is retried like a check read: a transient error is as likely here. Its stderr
       # is only the error: a notice beside a good answer (a gh update) is not one.
-      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid -q .headRefOid 2> "${WAIT_PR_TMP}")" || rc=$?
-      if [[ ${rc} -eq 0 && "${why}" =~ ^[0-9a-f]{40}$ ]]; then head="${why}"; missed=0; echo "head ${head}"; continue; fi
-      [[ ${rc} -eq 142 ]] || { rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${WAIT_PR_TMP}")"; }
+      # A conflicted PR runs no checks, so it ends here; UNKNOWN is GitHub still computing, read again.
+      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid,mergeable,baseRefName \
+        -q '[.headRefOid, .mergeable, .baseRefName] | join(" ")' 2> "${WAIT_PR_TMP}")" || rc=$?
+      read -r oid state base <<< "${why}"
+      if [[ ${rc} -eq 0 && "${oid}" =~ ^[0-9a-f]{40}$ ]]; then
+        [[ "${state}" != CONFLICTING ]] || wait_pr_fail "conflicts with ${base}: merge ${base} in, then push"
+        [[ "${state}" == UNKNOWN ]] || { head="${oid}"; missed=0; echo "head ${head}"; continue; }
+        rc=2; why="mergeable state UNKNOWN"
+      elif [[ ${rc} -ne 142 ]]; then
+        rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${WAIT_PR_TMP}")"
+      fi
     else
       why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
     fi
