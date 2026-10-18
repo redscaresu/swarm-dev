@@ -1,11 +1,8 @@
 # shellcheck shell=bash
 
 # The outer loop: every review finding someone fixed is logged by kind, so a kind that keeps coming
-# back across PRs can become a standing rule in the project's brief. Rules are proposed, never written.
+# back across PRs (outcomes' recurring block) gets a check story.
 FINDINGS_LOG_NAME="findings.tsv"
-LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs is a candidate rule
-LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
-BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
 # code-scanning alerts (swarm.sh findings). skeptic and critic are the plan reviewers, logging on a
 # board PR; escaped is a defect a later fix found in merged work, logged against the original PR. A
@@ -41,7 +38,7 @@ finding_flags() {
 # text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
 # have four fields and were all fixed, and rows from before the reviewer column have five. An
 # escaped defect's outcome is escaped, so outcomes and flow's reviewers, which count what review raised,
-# leave it out; lessons and dash count fixed and escaped rows, never declined ones.
+# leave it out; outcomes' recurring block and dash count fixed and escaped rows, never declined ones.
 record_finding() {
   local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
@@ -82,29 +79,10 @@ record_finding() {
 #   A reviewer is one of SWARM_FINDING_REVIEWERS (bash's FINDING_REVIEWERS, which every report that
 #   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
 #   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
-#   escaped ones: both are a mistake someone fixed, so both are lessons.
+#   escaped ones: both are a mistake someone fixed.
 #   turns(path, seen) is each of one session's turns, once, as (record, model, tokens, est. USD).
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
-
-# lessons [--all] — the "brief" below is lessons_file (default the brief itself).
-# Kinds fixed in at least LESSON_MIN_PRS distinct PRs, recently, that the brief has
-# no rule for (candidates), and a brief that has grown too long. A rule in the brief carries its kind
-# as <!-- lesson: <kind> -->. The brief is read from the default branch, where adopted rules land; a
-# declined rule is a closed 'lesson: <kind>' PR, which /swarm-dev:swarm checks before proposing. A lead's memory
-# (Claude Code's per-project memory directory, which builders in their own worktrees never see) that
-# carries `lesson: <kind>` in its frontmatter is a candidate too, until the brief rules that kind. There is no staleness check: the log is local while the brief is committed, and a
-# rule that works stops its own findings, so "quiet" cannot tell a working rule from an unneeded one.
-lessons_report() {
-  [[ -z "${1:-}" || "${1}" == --all ]] || die "usage: swarm.sh lessons [--all]"
-  # Claude Code keys memory on the repo root (the cwd outside git), not on a project's subdirectory.
-  local key; key="$(git -C "${PROJECT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${PROJECT_DIR}")"
-  local memory="${SWARM_MEMORY_DIR:-${CLAUDE_PROJECTS}/${key//[^A-Za-z0-9]/-}/memory}"
-  # The size cap is the brief's, the file pasted into every prompt; a lessons_file like AGENTS.md
-  # is long by design and loaded by the agents themselves.
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" python3 "${SWARM_HOME}/bin/lib/lessons_report.py" "${PROJECT_DIR}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${LESSONS_FILE}" \
-    "${LESSON_MIN_PRS}" "${LESSON_RECENT_DAYS}" "${BRIEF_MAX_BYTES}" "${1:-}" "${memory}" "${PROJECT_BRIEF}"
-}
 
 # cost_report <YYYY-MM-DD> — flow's cost section alone, since that day, for dash's cost of the day.
 # No calling session: dash runs every project's frame from one pane, and that session is no

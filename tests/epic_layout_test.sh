@@ -231,7 +231,7 @@ check "and its pane is named conductor" "yes" "$(has "pane rename w:1 conductor"
 check "the conductor's brief watches only its own epic's PRs" "yes" \
   "$(grep -q 'swarm.sh watch --epic e`' "${p}/.swarm/briefs/conduct-e.md" && echo yes || echo no)"
 cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
-check "the conductor's brief includes the project's brief, so adopted lessons reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
+check "the conductor's brief includes the project's brief, so the project's rules reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the story-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${cbrief}")"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
   "$(has "runs codex-review with the story's slug" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
@@ -265,8 +265,6 @@ for s in s1 s2 s3 s4; do run story "${s}" >/dev/null; done
 check "the story-mode builder runs codex-review against its story in the background, and knows what a timeout means" "yes|yes|yes|yes" \
   "$(codex_form main "$(cat "${p}/.swarm/briefs/s1.md")")|$(has "SWARM_STORY=s1 SWARM_PROJECT=${p} ${SWARM} codex-review main\`" "$(cat "${p}/.swarm/briefs/s1.md")")"
 check "the builder's brief says nothing of review agents" "0" "$(grep -c 'review agent' "${p}/.swarm/briefs/s1.md" || true)"
-check "with no tagged rule, a builder gets no rules check and the conductor no rules-unchecked" "no|no" \
-  "$(grep -q "Rules checked:" "${p}/.swarm/briefs/s1.md" && echo yes || echo no)|$(grep -q "rules-unchecked" <<< "${cbrief}" && echo yes || echo no)"
 sid="$(grep '^agent start s1 ' "${ROOT}/herdr.log" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')"
 check "a story starts with a --session-id, and its agents.tsv line ends in it" "yes|${sid}" \
   "$([[ -n "${sid}" ]] && echo yes || echo no)|$(awk -F'\t' 'NF == 7 && $3 == "s1" { print $7 }' "${p}/.swarm/agents.tsv")"

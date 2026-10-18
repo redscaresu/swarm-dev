@@ -13,13 +13,11 @@ flow cost	2026-09-29	flow cost: total est. $	1211.60 over 343 agents (infrafacto
 outcomes	2026-10-13	outcomes: cost_usd per build	5.75 mean over 146 builds (infrafactory, outcomes to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
 flow reviewers	2026-10-16	flow reviewers: decline_rate (all all)	19% of 565 (infrafactory, flow reviewers to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
 log-finding	2026-10-10	flow reviewers: raised (all all)	565 (infrafactory, flow reviewers to 2026-10-16)	event:log-finding
-lessons	2026-10-10	flow reviewers: fixed per PR	3.3 (456 over 137 PRs) (infrafactory, flow reviewers to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
 flow	leaner-faster-swarm	flow: builders_mean, stories_per_chain, review waits, stacked	unavailable: flow is new in this epic; its first run gives the other rows' baselines	unlogged: a read-only command leaves no events.tsv line
 flow features	leaner-faster-swarm	flow cost: total est. $	1211.60 (infrafactory, flow cost to 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
 board_dir	2026-09-30	flow: builds (all)	151 (infrafactory, flow --until 2026-10-16)	unlogged: a config key, read on every run
 repos_dir	2026-09-30	flow: builds (all)	151 (infrafactory, flow --until 2026-10-16)	unlogged: a config key, read on every run
 merge = agent	2026-09-30	flow: proxy_review_wait_min (all)	13 (swarm-dev, flow --until 2026-10-16)	unlogged: a config key; its merges log as merge
-lessons_file	2026-10-10	flow reviewers: fixed per PR	3.3 (infrafactory, flow reviewers to 2026-10-16)	unlogged: a config key, read on every run
 stall_minutes	2026-10-12	outcomes: close_cause stalled	0 of 146 builds (infrafactory, outcomes to 2026-10-16)	event:close:stalled
 sonnet_share	2026-10-13	outcomes: cost_usd of code-sonnet against code	unavailable: no code-sonnet build in infrafactory to 2026-10-16; code is 4.77 per build	role:code-sonnet
 escalate_after	2026-10-15	outcomes: story_merged of escalate builds	unavailable: no escalate build in infrafactory to 2026-10-16	role:escalate

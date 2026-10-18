@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# epic_briefs_test.sh — an epic's check:, lessons_file's rules and merge = agent in the briefs,
+# epic_briefs_test.sh — an epic's check:, AGENTS.md's tagged rules and merge = agent in the briefs,
 # the role a build gets (sonnet_share, escalate_after) and builder_subagent_model.
 # herdr is a stub on PATH that hands out pane ids in order and remembers tab labels; the repo is a
 # local bare remote. gh is a stub too, so a close's PR lookup never reaches the real gh.
@@ -155,18 +155,14 @@ check "with goal on, a /goal message over GOAL_SEND_MAX fails naming the story, 
   "yes|nothing sent|no|no|no" \
   "$(has "${gx}: its /goal message is" "${out}")|$(grep -qE '^agent (start|prompt) ' "${ROOT}/herdr.log" && echo sent || echo "nothing sent")|$([[ -e "${ROOT}/svc-wt/${gx}" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)"
 rm -f "${b}/stories/${gx}.md"
-# lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
-printf '%s\n' "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
+# The project's AGENTS.md: its tagged rules (only those) reach a builder in another repo's worktree.
+: > "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
 printf 'A PROJECT RULE every agent reads. <!-- lesson: brief-kind -->' > "${p}/.claude/swarm/brief.md"   # no final newline
 item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
 run story g1 >/dev/null
 gbrief="$(cat "${p}/.swarm/briefs/g1.md")"
-check "a builder walks its diff against each tagged rule, and lists both kinds in the PR body" "yes|yes|yes|yes" \
-  "$(has "Before you open the PR, walk your diff against each rule tagged" "${gbrief}")|$(has "the PR body a \`Rules checked:\` section" "${gbrief}")|$(has "- agents-kind: <file:line>, or n/a: <why>" "${gbrief}")|$(has "- brief-kind: <file:line>, or n/a: <why>" "${gbrief}")"
-run conduct f >/dev/null || true
-check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
-  "$(has "is a finding of kind \`rules-unchecked\`" "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "with tagged rules, a builder gets no rules check step" "no" "$(grep -q "Rules checked:" <<< "${gbrief}" && echo yes || echo no)"
 cfg="$(cat "${p}/.claude/swarm/config")"; printf '%s\n' "merge = agent" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 brief="$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")"
@@ -190,11 +186,10 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "with escalate_after = 0, the conductor stops retrying a story that failed twice and reports it to the lead" "yes|yes|no" \
   "$(has "model: escalation is off (escalate_after = 0), so once a story has failed twice" "${brief}")|$(has "do not start it again: report it to the lead." "${brief}")|$(grep -q "picks Fable for build" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
-check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
+check "a builder gets AGENTS.md's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 run close g1 >/dev/null; rm -f "${b}/stories/g1.md" "${p}/AGENTS.md"
-grep -v '^lessons_file' "${p}/.claude/swarm/config" > "${p}/cfg.tmp" || true; mv "${p}/cfg.tmp" "${p}/.claude/swarm/config"
 check "base prints a repo's base" "dev" "$(run base svc)"
 rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
 : > "${p}/.claude/swarm/config"

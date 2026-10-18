@@ -14,7 +14,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
-#   swarm.sh lessons [--all]                                kinds recurring in 3+ PRs (or tagged lead memories) with no rule in lessons_file yet, and a long brief
+#   swarm.sh lessons                                        removed: prints that recurring kinds are in outcomes
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
@@ -143,7 +143,6 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
-CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
@@ -151,7 +150,7 @@ CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Co
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
-CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
+CONFIG_KEYS="board_dir repos_dir merge stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes lead"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -167,14 +166,8 @@ load_config() {
       || die "${where}: expected 'key = value'"
     key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
     [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
+    [[ "${key}" != lessons_file ]] || continue   # removed with lessons; an old config still loads
     case "${key}" in
-      lessons_file)
-        # Only a file every agent reads: the brief is pasted into each prompt, each brief says to read
-        # AGENTS.md first, and Claude Code loads CLAUDE.md. A rule anywhere else would retire its
-        # candidate without ever reaching an agent.
-        case "${value}" in .claude/swarm/brief.md|AGENTS.md|CLAUDE.md|.claude/CLAUDE.md) ;;
-          *) die "${where}: lessons_file must be one every agent reads: .claude/swarm/brief.md, AGENTS.md, CLAUDE.md or .claude/CLAUDE.md" ;;
-        esac ;;
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
@@ -211,9 +204,6 @@ BOARD_IN_REPO=0; [[ ${PROJECT_IS_GIT} == 1 && "${BOARD}/" == "${PROJECT_DIR}/"* 
 STATE_DIR="${PROJECT_DIR}/.swarm/state"
 # Project rules every builder gets after the standard ones: commit trailers, secrets, ADR rules.
 PROJECT_BRIEF="${PROJECT_DIR}/.claude/swarm/brief.md"
-# Where lesson rules are read from. The briefs paste the brief whole and, from any other
-# lessons_file, only its tagged rule lines (project_rules), never the whole file.
-LESSONS_FILE="$(abs_path "${CFG_lessons_file}")"
 PANES_PER_TAB=4
 
 show_config() {
@@ -222,7 +212,6 @@ show_config() {
     case "$1" in
       board_dir) echo "${BOARD}" ;;
       repos_dir) echo "${REPOS_DIR}" ;;
-      lessons_file) echo "${LESSONS_FILE}" ;;
       project) echo "${PROJECT_DIR}" ;;
       *) [[ " ${CONFIG_KEYS} " == *" $1 "* ]] || die "unknown key '$1' (known: project ${CONFIG_KEYS})"
          v="CFG_$1"; echo "${!v}" ;;
@@ -232,7 +221,7 @@ show_config() {
   echo "project = ${PROJECT_DIR}"
   for key in ${CONFIG_KEYS}; do
     v="CFG_${key}"; local s="SRC_${key}"
-    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; lessons_file) v=LESSONS_FILE ;; esac
+    case "${key}" in board_dir) v=BOARD ;; repos_dir) v=REPOS_DIR ;; esac
     echo "${key} = ${!v}    (${!s})"
   done
 }
@@ -352,7 +341,7 @@ dispatch() {
     review-yield) moved review-yield reviewers "[--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
-    lessons) lessons_report "${1:-}" ;;
+    lessons) echo "swarm.sh lessons is removed: recurring finding kinds are in swarm.sh outcomes" ;;
     features) moved features features "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;

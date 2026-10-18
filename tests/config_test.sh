@@ -71,6 +71,11 @@ for k in pr''_per base''_branches sign''_commits review''_bot keep''_panes merge
   project "${p}" "${k} = true"
   check "${k} is an unknown key" "yes" "$(fails_with "config:1: unknown key '${k}'" run "${p}" config)"
 done
+# lessons_file went with lessons: an old config that sets it still loads, with no error or output.
+project "${p}" "lessons_file = AGENTS.md" "stall_minutes = 45"
+check "a config with lessons_file loads silently" "45" "$(run "${p}" config stall_minutes)"
+check "lessons points to outcomes and exits 0" "swarm.sh lessons is removed: recurring finding kinds are in swarm.sh outcomes|0" \
+  "$(out="$(run "${p}" lessons)" && echo "${out}|0" || echo "${out}|$?")"
 project "${p}" "board_dir = \$(touch ${p}/pwned)"
 check "a \$(...) value is refused" "yes" "$(fails_with 'config:1: board_dir: \$ and backticks' run "${p}" config)"
 check "a \$(...) value never runs" "no" "$([[ -e "${p}/pwned" ]] && echo yes || echo no)"

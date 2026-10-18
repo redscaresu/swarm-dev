@@ -60,7 +60,7 @@ declined is such a pass, even if it is not empty. Rebut what it found in the PR 
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
-its latest head has passed.$(rules_review_rule)
+its latest head has passed.
 
 $(finding_rule)
 EOF
@@ -81,8 +81,8 @@ codex_rule() {
   printf '%s ' "Run codex-review in the background (Bash run_in_background) and wait for it to finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last."
   printf '%s' 'If codex reports a usage limit, or codex-review stops it and prints "codex skipped: timed out", do not wait or run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
 }
-# finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
-# logged too, with their reason, and never count as lessons.
+# finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
+# are logged too, with their reason, and never count toward it.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -102,7 +102,7 @@ When a fix finds a defect in work that already merged, log it as \`--reviewer es
 PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
+\`cut -f2 ${proj}/.swarm/findings.tsv | sort -u\` already lists when it fits.
 EOF
 }
 # conduct_merge_rule [backlog] — how a conductor hands over or merges a reviewed PR: an epic's, or
@@ -346,42 +346,13 @@ EOF
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
   rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
-  rules_check_step "open the PR" "${rules}"
 }
 
-# rule_kinds — the kinds of the tagged rules (<!-- lesson: <kind> -->) on stdin, one per line.
-rule_kinds() {
-  grep -oE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' | sed -E 's/.*lesson:[[:space:]]*([a-z0-9-]+).*/\1/' | sort -u || true
-}
-
-# rules_check_step <before> <rules> — a rule pasted into the brief does not stop the mistake, so a
-# builder walks its diff against each tagged rule and says what it checked. Nothing without one.
-rules_check_step() {
-  local kinds where="the PR body"; kinds="$(rule_kinds <<< "$2")"
-  [[ -n "${kinds}" ]] || return 0
-  [[ "$1" == "open the PR" ]] || where="your reply"
-  cat <<EOF
-
-Before you $1, walk your diff against each rule tagged \`<!-- lesson: <kind> -->\` above. Then give
-${where} a \`Rules checked:\` section with one line per kind: what in the diff you checked (file:line),
-or \`n/a: <why>\`:
-
-Rules checked:
-EOF
-  sed 's/^/- /; s/$/: <file:line>, or n\/a: <why>/' <<< "${kinds}"
-}
-
-# rules_review_rule — the conductor's half of rules_check_step, while the project has tagged rules.
-rules_review_rule() {
-  [[ -n "$(project_rules | rule_kinds)" ]] || return 0
-  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other."
-}
-
-# project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
-# builder in another repo's worktree never reads this project's AGENTS.md.
+# project_rules — the brief, then only the tagged rule lines (the grep below) of the project's
+# AGENTS.md, when it has one: a builder in another repo's worktree never reads that file.
 project_rules() {
   [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
-  [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
+  grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${PROJECT_DIR}/AGENTS.md" 2>/dev/null || true
 }
 
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
