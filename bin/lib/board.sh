@@ -1,7 +1,55 @@
 # shellcheck shell=bash
 
-# fm <file> <key> — the first front-matter value for <key>, or nothing.
-fm() { sed -n "s/^$2: *//p" "$1" | head -1; }
+# fm <file> <key> — <key>'s value in the item's state file (state_value), else the first line for
+# <key> anywhere in <file>, or nothing.
+fm() { state_value "$1" "$2" || sed -n "s/^$2: *//p" "$1" | head -1; }
+
+# BOARD_STATE_DIR: where swarm.sh keeps the SET_FM_KEYS it writes for the board's items, a root of its
+# own: STATE_DIR's files are tab records named after epic and story slugs.
+BOARD_STATE_DIR="${PROJECT_DIR}/.swarm/board-state"
+
+# state_path <item-file> [key] — set STATE_PATH to the file under BOARD_STATE_DIR (stories/<slug> or
+# epics/<slug>) that holds the SET_FM_KEYS swarm.sh wrote for a story or epic on the board, or to
+# nothing for any other file, one that is gone, or a [key] not in SET_FM_KEYS. It sets a variable,
+# not output, so fm reads it without a subshell.
+state_path() {
+  state_name "$@"
+  [[ -f "$1" ]] || STATE_PATH=""
+}
+
+# state_name <item-file> [key] — state_path, for an item file that may be gone.
+state_name() {
+  local d="${1%/*}" n="${1##*/}"
+  STATE_PATH=""
+  [[ -z "${2:-}" || " ${SET_FM_KEYS} " == *" $2 "* ]] || return 0
+  [[ ( "${d}" == "${BOARD}/stories" || "${d}" == "${BOARD}/epics" ) && "${n}" == *.md ]] || return 0
+  STATE_PATH="${BOARD_STATE_DIR}/${d##*/}/${n%.md}"
+}
+
+# state_drop <item-file> — delete the item's state file and its lock (state_name), so a later item
+# with its slug starts with no state.
+state_drop() {
+  state_name "$1"
+  [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
+}
+
+# state_value <item-file> <key> — print <key>'s value from the item's state file (state_path; nothing
+# when the line is empty, which clears the key) and succeed; fail when the state file has no line for
+# it, or the item file's front matter no longer has the value its <key>@base: line recorded (a later
+# edit to the file wins over what swarm.sh wrote before it). Dies when the state file is there but
+# cannot be read: the committed value could be stale (a story in review read as ready).
+state_value() {
+  state_path "$1" "$2"
+  [[ -f "${STATE_PATH}" ]] || return 1
+  [[ -r "${STATE_PATH}" ]] || die "board state: cannot read ${STATE_PATH}; make it readable, or remove it to read $1 as committed"
+  awk -v k="$2" 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+    FILENAME == ARGV[1] { if (!h && index($0, k ":") == 1) { v = val($0, length(k) + 1); h = 1 }
+      if (!hb && index($0, k "@base:") == 1) { b = val($0, length(k) + 6); hb = 1 }
+      next }
+    /^---$/ && ++n == 2 { exit }
+    n == 1 && index($0, k ":") == 1 { t = val($0, length(k) + 1); exit }
+    END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
+}
 
 # board <dir> — the item files in <board>/<dir>/, never the README.
 board() {
@@ -136,16 +184,24 @@ next_step() {
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
-# (dep_holds), or nothing.
+# (epic_holding_deps), or nothing.
 plannable_epic() {
-  local f epic b
+  local f held
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == active ]] || continue
-    epic=$(basename "${f}" .md)
-    epic_has_stories "${epic}" && continue
-    for b in $(story_deps "${f}"); do dep_holds "${b}" && continue 2; done
-    echo "${epic}"; return
+    held="$(epic_holding_deps "${f}")" || continue
+    [[ -z "${held}" ]] || continue
+    basename "${f}" .md; return
   done < <(board epics)
+}
+
+# epic_holding_deps <epic file> — fails unless it is an active epic with no stories (the epics
+# planning waits for); else prints its depends_on slugs that still hold its planning up (dep_holds),
+# space-separated, none when it can be planned. Its deps are read only once it has no stories.
+epic_holding_deps() {
+  local b held=""
+  [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" || return 1
+  for b in $(story_deps "$1"); do if dep_holds "${b}"; then held+=" ${b}"; fi; done
+  printf '%s' "${held# }"
 }
 
 # dep_holds <slug> — true while an epic's depends_on slug holds up its planning: an open story, or an
@@ -216,19 +272,18 @@ pr_held() {
   money_walk "${s}"
 }
 
-# pr_stories <pr-url> — the slugs of the stories whose front matter's prs: (split on spaces and commas)
-# lists the PR in any spelling: owner and repo in any case, the number with leading zeros. Fails when
-# a story cannot be read.
+# pr_stories <pr-url> — the slugs of the stories whose prs: (get_fm: their state file over their
+# front matter; split on spaces and commas) lists the PR in any spelling: owner and repo in any case,
+# the number with leading zeros. Fails when a story or its state file cannot be read.
 pr_stories() {
-  local f files=()
-  while IFS= read -r f; do files+=("${f}"); done < <(board stories)
-  [[ ${#files[@]} -gt 0 ]] || return 0
+  local f v rows=""
+  while IFS= read -r f; do
+    v="$(get_fm "${f}" prs)" || return 1
+    rows+="$(basename "${f}" .md) ${v}"$'\n'
+  done < <(board stories)
   awk -v k="$1" 'function canon(u) { u = tolower(u); gsub(/[][,"\047]/, "", u); sub(/\/pull\/0+/, "/pull/", u); return u }
     BEGIN { k = canon(k) }
-    FNR == 1 { n = 0; d = 0 }
-    /^---$/ { n++; next }
-    n == 1 && !d && index($0, "prs:") == 1 { d = 1; m = split(substr($0, 5), u, /[ \t,]+/)
-      for (i = 1; i <= m; i++) if (canon(u[i]) == k) { s = FILENAME; sub(/.*\//, "", s); sub(/\.md$/, "", s); print s; break } }' "${files[@]}"
+    { for (j = 2; j <= NF; j++) { m = split($j, u, ","); for (i = 1; i <= m; i++) if (canon(u[i]) == k) { print $1; next } } }' <<< "${rows}"
 }
 
 # money_walk <slugs> — why their PRs wait for the user's merge, or nothing: the first of these stories,
@@ -355,9 +410,10 @@ open_pr() {
 # it is readied plainly, without held_by: or the prs: line the hold kept, to be built fresh. An old
 # blocked_by line stays; nothing reads it. Prints each story it flips.
 unblock() {
-  local story slug deps open on why src rc
+  local story slug deps open on why src rc drop
   while IFS= read -r story; do
-    grep -q '^status: blocked$' "${story}" || continue
+    [[ "$(fm "${story}" status)" == blocked ]] || continue
+    drop=()
     slug="$(basename "${story}" .md)"
     deps=$(story_deps "${story}")
     [[ -n "${deps// /}" ]] || continue   # blocked for a reason no merge clears
@@ -371,17 +427,18 @@ unblock() {
       if src="$(repo_dir "$(fm "${story}" repo)")" && [[ -d "$(worktree_for "${src}" "${slug}")" ]]; then
         why="held: merge origin/$(story_base "${story}"), review again"
       else
-        set_fm "${story}" held_by; set_fm "${story}" prs
+        drop=(held_by "" prs "")
       fi
     fi
-    sed -i.bak -e 's/^status: blocked$/status: ready/' "${story}" && rm -f "${story}.bak"
+    state_set "${story}" ${drop[@]+"${drop[@]}"} status ready
     record_event unblock "${slug}"
     echo "ready: ${slug}${why:+ (${why})}"
   done < <(board stories)
 }
 
-# delete_item <slug> — delete a story or epic's file where it is: reconcile's, after its pull.
-delete_item() { local f; f="$(item_file "$1")"; rm "${f}"; echo "deleted: ${f}"; }
+# delete_item <slug> — delete a story or epic's file where it is, and its state file (state_drop), so
+# a later item with the slug starts with none: reconcile's, after its pull.
+delete_item() { local f; f="$(item_file "$1")"; state_drop "${f}"; rm "${f}"; echo "deleted: ${f}"; }
 
 # finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
 finish_item() { remove_item finish "$1"; }
@@ -492,36 +549,100 @@ item_file() {
   else die "no story or epic '$1' in ${BOARD}"; fi
 }
 
-# set_status <file> <status> [prs] — in the front matter, set the status line and replace the prs
-# line with [prs], or drop it when [prs] is empty.
-set_status() {
-  awk -v st="$2" -v prs="${3:-}" '
-    /^---$/ { n++ }
-    n == 1 && /^prs: / { next }
-    n == 1 && !d && /^status: / { print "status: " st; if (prs != "") print "prs: " prs; d = 1; next }
-    { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-}
+# set_status <file> <status> [prs] — set the item's status, and its prs to [prs] or nothing, in one
+# write (state_set).
+set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
 # too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
-# reconcile puts them back as committed on an item whose PRs merged, and carries another board file's
-# edit to them over its pull, so they never stop it.
+# They live in BOARD_STATE_DIR, never in a tracked file. reconcile puts an older swarm.sh's edit to
+# them in a board file back as committed on an item whose PRs merged, and carries another board
+# file's over its pull, so they never stop it.
 SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
 
-# set_fm <file> <key> [value] — in the front matter, set <key>'s line to <value>, adding it at the end
-# when there is none, or drop it when <value> is empty. <key> must be one of SET_FM_KEYS.
+# set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
+# an empty <value> clears it. <key> must be one of SET_FM_KEYS.
 set_fm() {
   [[ " ${SET_FM_KEYS} " == *" $2 "* ]] || die "set_fm: $2 is not in SET_FM_KEYS"
+  state_set "$1" "$2" "${3:-}"
+}
+
+# state_set <file> <key> <value> [<key> <value>]... — in one write to the item's state file
+# (state_path), never <file>: each <key>: <value> line, and <key>@base: with <file>'s front-matter
+# value now, which state_value compares. A value <file> already has needs no line, so its lines go and
+# the file's reads again; so do the lines of any key whose base <file> no longer has. A state file
+# left with no line goes. It holds the item's lock (state_lock) from its read to its write, so two
+# writers to one item keep each other's keys. Dies naming the state file when any step fails.
+state_set() {
+  local f="$1" s pairs="" rc=0
+  state_path "${f}"; s="${STATE_PATH}"
+  [[ -n "${s}" ]] || die "set_fm: ${f} is not a story or epic in ${BOARD}"
+  shift
+  while [[ $# -gt 0 ]]; do pairs+="$1"$'\t'"${2:-}"$'\n'; shift 2 || shift; done
+  # Checked first, or the lock's mkdir would fail as if it were held.
+  { mkdir -p "${s%/*}" && [[ -w "${s%/*}" ]]; } || die "board state: cannot write ${s}: ${s%/*} cannot be made or written"
+  state_lock "${s}.lock"
+  state_write "${f}" "${s}" "${pairs}" || rc=1
+  rmdir "${s}.lock" || die "board state: cannot remove ${s}.lock; remove it by hand"
+  [[ ${rc} -eq 0 ]] || die "board state: cannot write ${s}"
+}
+
+# STATE_LOCK_WAIT: seconds state_lock waits for an item's lock (SWARM_LOCK_WAIT).
+STATE_LOCK_WAIT=10
+
+# state_lock <dir> — take the lock <dir>: mkdir makes it or fails, so one writer holds it (macOS has no
+# flock). It tries every 0.1s, and dies naming it after STATE_LOCK_WAIT seconds.
+# ponytail: a writer killed holding the lock leaves it; the next write dies, saying to remove it.
+state_lock() {
+  local i n=$(( ${SWARM_LOCK_WAIT:-${STATE_LOCK_WAIT}} * 10 ))
+  for ((i = 0; i < n; i++)); do
+    if mkdir "$1" 2>/dev/null; then return 0; fi
+    sleep 0.1
+  done
+  die "board state: ${1%.lock} is locked (${1} is still there after ${SWARM_LOCK_WAIT:-${STATE_LOCK_WAIT}}s); if no swarm.sh is writing it, remove ${1} and run this again"
+}
+
+# state_write <file> <state-file> <pairs> — state_set's read and write, under its lock: <pairs> (lines
+# of <key><tab><value>) over the state file, through a temp file of its own. Either step failing fails
+# the write, with no temp file left.
+state_write() {
+  local in="$2" t
+  [[ -f "$2" ]] || in=/dev/null
+  t="$(mktemp "$2.XXXXXX")" || return 1
+  if ! { SWARM_SET="$3" awk 'function val(l, n) { l = substr(l, n + 1); sub(/^ +/, "", l); return l }
+    function put(k, v) { print k ":" (v == "" ? "" : " " v) }
+    BEGIN { n = split(ENVIRON["SWARM_SET"], L, "\n")
+      for (i = 1; i <= n; i++) if ((p = index(L[i], "\t")) > 0) { k = substr(L[i], 1, p - 1); set[k] = substr(L[i], p + 1); order[++o] = k } }
+    FILENAME == ARGV[1] { if ($0 == "---") { m++; next }
+      if (m == 1 && (p = index($0, ":")) > 1 && !((k = substr($0, 1, p - 1)) in fv)) fv[k] = val($0, p)
+      next }
+    (p = index($0, ":")) > 1 { k = substr($0, 1, p - 1)
+      if (k ~ /@base$/) { k = substr(k, 1, length(k) - 5); if (!(k in b)) b[k] = val($0, p) }
+      else if (!(k in sv)) { sv[k] = val($0, p); keep[++c] = k } }
+    END { for (i = 1; i <= c; i++) { k = keep[i]
+        if (k in set || (k in b && b[k] != fv[k])) continue
+        put(k, sv[k]); if (k in b) put(k "@base", b[k]) }
+      for (i = 1; i <= o; i++) { k = order[i]; if (set[k] != fv[k]) { put(k, set[k]); put(k "@base", fv[k]) } } }' "$1" "${in}" > "${t}" && mv "${t}" "$2"; }; then
+    rm -f "${t}"; return 1
+  fi
+  [[ -s "$2" ]] || rm -f "$2"
+}
+
+# set_file_fm <file> <key> [value] — in <file>'s own front matter, set <key>'s line to <value>, adding
+# it at the end when there is none, or drop it when <value> is empty: only to put back what an older
+# swarm.sh wrote there, over a pull.
+set_file_fm() {
   awk -v k="$2" -v v="${3:-}" '
     /^---$/ && ++n == 2 && !d && v != "" { print k ": " v }
     n == 1 && index($0, k ":") == 1 { if (!d && v != "") print k ": " v; d = 1; next }
     { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
-# get_fm <file> <key> — <key>'s value in the front matter alone, where set_fm writes it (fm takes the
-# first line for <key> anywhere, so a story's body could answer). <file> may be - for stdin.
+# get_fm <file> <key> — <key>'s value in the item's state file (state_value), else in <file>'s front
+# matter alone (fm takes the first line for <key> anywhere, so a story's body could answer). <file>
+# may be - for stdin, which is read as it is.
 get_fm() {
-  awk -v k="$2" '/^---$/ && ++n == 2 { exit }
+  state_value "$1" "$2" || awk -v k="$2" '/^---$/ && ++n == 2 { exit }
     n == 1 && index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
 }
 
@@ -537,12 +658,12 @@ mark_review() {
   done
   [[ "${f}" != "${BOARD}/stories/"* ]] || held="$(open_parents "${f}")"
   if [[ -n "${held:-}" ]]; then
-    set_status "${f}" blocked "$*"; set_fm "${f}" held_by "${held}"
+    state_set "${f}" status blocked prs "$*" held_by "${held}"
     # A parent that costs money waits on the user's merge (money_walk), maybe for days.
     [[ -z "$(money_walk "${held}")" ]] || held+=" (costs money)"
     die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
-  set_status "${f}" review "$*"; set_fm "${f}" held_by
+  state_set "${f}" status review prs "$*" held_by ""
   echo "review: $(basename "${f}" .md) $*"
 }
 
@@ -569,7 +690,7 @@ builder_state() {
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
 # cannot be read: said on stderr, naming it.
 reconcile() {
-  local f slug url state closed waiting urls builder unread="" merged=()
+  local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
     slug="$(basename "${f}" .md)"
@@ -605,7 +726,7 @@ reconcile() {
         [[ "${builder}" != unknown ]] \
           || echo "build cleared: ${slug}'s builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close ${slug}"
       fi
-      merged+=("${slug}")
+      merged+=("${slug}"); merged_files+=("${f}")
     fi
   done < <(board stories; board epics)
   # A pull is due after an item merged when there is an upstream, and otherwise when the checkout is
@@ -625,13 +746,13 @@ reconcile() {
   local i k committed saved=()
   if [[ ${BOARD_IN_REPO} == 1 && ${held} == 0 ]]; then
     # The board is in the project repo, and a merged PR may itself have taken the item off it or
-    # changed it. Our own edits (each SET_FM_KEYS key, such as the review status or a retry's
-    # attempts:) would block that pull, so put them back as committed first, and the whole file as it
-    # was if the pull fails. A hand edit is left alone, and still stops the pull.
+    # changed it. An older swarm.sh's edits in the file (each SET_FM_KEYS key, such as the review
+    # status or a retry's attempts:) would block that pull, so put them back as committed first, and
+    # the whole file as it was if the pull fails. A hand edit is left alone, and still stops the pull.
     for slug in "${merged[@]}"; do
       f="$(item_file "${slug}")"; saved+=("$(cat "${f}"; echo .)")   # the dot keeps trailing newlines
       if committed="$(git -C "${PROJECT_DIR}" show "HEAD:${f#"${PROJECT_DIR}"/}" 2>/dev/null)"; then
-        for k in ${SET_FM_KEYS}; do set_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
+        for k in ${SET_FM_KEYS}; do set_file_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
       fi
     done
     if [[ ${due} == 1 ]] && ! pull_board_repo; then
@@ -639,11 +760,15 @@ reconcile() {
       die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
     fi
   fi
-  for slug in "${merged[@]}"; do
-    f="${BOARD}/stories/${slug}.md"; [[ -f "${f}" ]] || f="${BOARD}/epics/${slug}.md"
-    [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]] || { record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"; continue; }
-    delete_item "${slug}"
-    record_event reconcile "${slug}" "ok (finished)"
+  for i in "${!merged[@]}"; do
+    slug="${merged[i]}"; f="${merged_files[i]}"
+    if [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]]; then
+      delete_item "${slug}"; record_event reconcile "${slug}" "ok (finished)"; continue
+    fi
+    # Its PR took it off the board or marked it done: its state goes too, or a later item with the
+    # slug would read it.
+    state_drop "${f}"
+    record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
 }
 

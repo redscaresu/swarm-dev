@@ -22,8 +22,8 @@ check() { # <name> <test...>
   if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
 }
 
-item() { # <path under docs> <front-matter line>...
-  local path="${P}/docs/$1" title; shift
+item() { # <path under docs> <front-matter line>... — a fresh item: its file, and no state file
+  local path="${P}/docs/$1" title; rm -f "${P}/.swarm/board-state/${1%.md}"; shift
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
