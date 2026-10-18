@@ -933,7 +933,7 @@ The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
-after the check stops the merge. It never passes `--auto` or `--admin`.
+after the check stops the merge. It never passes `--auto`. It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
