@@ -4,6 +4,10 @@
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
 
+iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "${iso}"' EXIT
+export CLAUDE_CONFIG_DIR="${iso}/claude-config"   # under its own root, so parallel runs share no ~/.claude
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 F="${1:-$ROOT/commands/plan-epic.md}"
 M="${2:-$ROOT/docs/reference.md}"

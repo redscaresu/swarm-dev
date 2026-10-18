@@ -151,7 +151,9 @@ Repeat until a step below says stop:
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
      When its why says a `later` epic's dependencies are done (offered before the gate), run it
-     unasked: planning is read-only. Approving its stories stays the user's, unless the user named
+     unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`, so `next` stops offering it
+     whether the plan is running, waiting for approval or declined; the gate then lists it as
+     planned unasked. Approving its stories stays the user's, unless the user named
      the epic as pre-approved (in the brief or in chat). Its stories, or its child epics (kept
      `later`), then wait in the gate until the user starts it.
      When `next`'s why names a conductor that is still working, start

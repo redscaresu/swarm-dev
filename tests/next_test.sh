@@ -6,6 +6,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 fails=0
 # The claude stub goes first on PATH, so no run here reaches the real claude.
 STUB_BIN="$(mktemp -d)"; trap 'rm -rf "${STUB_BIN}"' EXIT
+export CLAUDE_CONFIG_DIR="${STUB_BIN}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${STUB_BIN}/claude"
 export PATH="${STUB_BIN}:${PATH}"
 
@@ -93,27 +94,24 @@ expect "a later epic whose dependency is not done waits in the gate" "gate" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'"
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 if grep -qF 'its why says a `later` epic'"'"'s dependencies are done' "$(dirname "${SWARM}")/../commands/swarm.md" \
-  && grep -qF 'unasked: planning is read-only' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
+  && grep -qF 'unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
 else echo "FAIL swarm.md does not say the lead plans an unblocked epic unasked"; fails=$((fails + 1)); fi
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 if grep -qF '`status: later` when $1 is `later`' "$(dirname "${SWARM}")/../commands/plan-epic.md"; then echo "ok   plan-epic.md keeps a later epic's child epics later"
 else echo "FAIL plan-epic.md's split arm makes a later epic's children active"; fails=$((fails + 1)); fi
-# A scope board PR on board/scope-a: open (the user has the plan) or closed unmerged (declined) keeps
-# a later epic from being planned again; none, or a merged one, plans it. gh answers through a stub.
-GH_BIN="$(mktemp -d)"
-# shellcheck disable=SC2016 # the stub's own $* and ${SCOPE_STATES}, expanded when it runs
-printf '#!/bin/sh\ncase "$*" in *"--head board/scope-a "*) [ -n "${SCOPE_STATES:-}" ] && printf "%%s\\n" ${SCOPE_STATES}; exit 0 ;; esac\nexit 1\n' > "${GH_BIN}/gh"
-chmod +x "${GH_BIN}/gh"
-scope_case() {
-  SCOPE_STATES="$3" PATH="${GH_BIN}:${PATH}" expect "$1" "$2" \
-    "git remote add origin https://github.com/o/r" \
-    "item epics/a.md 'status: later' 'depends_on: [b]'" \
-    "item stories/l.md 'status: ready' 'kind: lead'"
-}
-scope_case "a later epic whose scope PR is open is not planned again" "gate" "OPEN"
-scope_case "a later epic whose scope PR closed unmerged is not planned again" "gate" "MERGED CLOSED"
-scope_case "a later epic with no scope PR is planned" "plan-epic a" ""
-rm -rf "${GH_BIN}"
+# Once the lead ran plan-unasked on it, the epic is offered no more (the plan runs, waits for
+# approval, or was declined), and the gate says it was planned unasked. Only a later epic takes it.
+expect "a later epic planned unasked is offered no more" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked a >/dev/null"
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F): approve its stories, or start it yourself)"* ]]; then echo "ok   the gate lists a later epic planned unasked, with its date"
+else echo "FAIL the gate does not say the later epic a was planned unasked: ${out}"; fails=$((fails + 1)); fi
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item epics/e.md 'status: active')
+got="$(cd "${dir}" && bash "${SWARM}" plan-unasked e 2>&1; echo "exit $?")"
+if [[ "${got}" == *"plan-unasked: e is not a later epic"*"exit 1" ]]; then echo "ok   plan-unasked refuses an epic that is not later"
+else echo "FAIL plan-unasked on an active epic: ${got}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
 # A ready lead story: no agent builds it, so next reaches the plan-epic arm instead of conduct b.
 expect "a ready story of its dependency holds an epic's planning" "gate" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \

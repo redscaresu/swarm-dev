@@ -10,6 +10,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 mkdir -p "${dir}/plugin" "${dir}/repo/.swarm"
 cp -R "${REPO}/bin" "${REPO}/docs" "${dir}/plugin/"
 git -C "${dir}/repo" init -q
