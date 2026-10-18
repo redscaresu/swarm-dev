@@ -7,12 +7,13 @@ LESSON_MIN_PRS=3           # the rule of three: a kind in this many distinct PRs
 LESSON_RECENT_DAYS=90      # a candidate's kind must have been fixed this recently: an old pattern is not news
 BRIEF_MAX_BYTES=4096       # past this, the brief every agent reads is too long to stay read; prune by hand
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
-# code-scanning alerts (swarm.sh findings). skeptic and critic are the plan reviewers, logging on a
+# code-scanning alerts (swarm.sh findings). fallback is the agent codex-review starts in codex's place
+# on a usage limit (fallback_reviewer). skeptic and critic are the plan reviewers, logging on a
 # board PR; escaped is a defect a later fix found in merged work, logged against the original PR. A
 # row logged without --reviewer says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
 # A new reviewer a conductor logs also needs its line in finding_rule's mapping and in the story arm
 # of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
-FINDING_REVIEWERS="codex code-review ci conductor lead skeptic critic escaped"
+FINDING_REVIEWERS="codex fallback code-review ci conductor lead skeptic critic escaped"
 # Why a finding was declined (log-finding --declined <reason>).
 FINDING_REASONS="out-of-scope nit wrong"
 
