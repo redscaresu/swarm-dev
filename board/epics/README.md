@@ -5,12 +5,15 @@ and the epic is done when its **Done when** holds and its stories have merged; i
 board (`swarm.sh finish`). An epic in `review` waits for a human to merge the PRs on its `prs:`
 line, and leaves the board once they have all merged. `check:` is optional: a command every
 story's builder runs from its worktree, and makes pass, before opening its PR.
+`/epic <title>` writes a new epic with you as `status: draft`, with the sections Problem (with
+evidence), Goals (its **Done when**), Non-goals and Constraints; a reviewer attacks the draft, and
+it becomes `active` only when you agree it. Nothing plans a draft epic.
 `depends_on` lists the epics this one builds on (`[]` when none); `swarm.sh next` plans an
 epic only once every epic it lists is done.
 
 ```
 ---
-status: active | later | review
+status: draft | active | later | review
 depends_on: [other-epic]
 check: make test
 ---

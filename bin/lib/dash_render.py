@@ -305,7 +305,7 @@ for path in sorted(glob.glob(os.path.join(E["DASH_STATE"], "codex-review.*"))):
                   "epic": epic_for("", None, re.sub(r"^epic-", "", wt))})
 
 # Needs you: only what you act on, each as a short action. With lead = session a lead session acts
-# for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft HLD) and
+# for you, so needs you keeps your steps (a story's **You:** line, an expired login, a draft epic) and
 # the rest goes to the lead's queue (lq); with lead off, lq is needs you. Of the stories with a
 # **You:** step only the first is listed, with +N more for the rest (more).
 need, blocked, later, green, need_slugs, held_seen = [], 0, 0, 0, set(), set()
@@ -397,8 +397,8 @@ for r in recs:
         add(lq, bang + [(f"look at {r['name']}: " + ("session ended" if r["state"] == "gone" else "no session state"), "")], item)
 lq += [bang + [(f"look at {n}: working {age} min with {lack}", "")] for n, age, lack in stalled]
 for b in board:
-    if b[0] == "hld" and b[2] == "draft":
-        add(need, bang + [(f"agree draft HLD {b[1]}: ", ""), (f"/hld {b[1]}", "dim")], ("hld", b[1]))
+    if b[0] == "epics" and b[2] == "draft":
+        add(need, bang + [(f"agree draft epic {b[1]}: ", ""), (f"/epic {b[1]}", "dim")], ("epics", b[1]))
 
 # Epics: one row per active epic (and any other epic an agent shown works for), its progress, then
 # its live agents and open PRs beneath it.

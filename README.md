@@ -17,8 +17,9 @@ the run stops whenever a decision is yours.
   <img alt="How the swarm builds a design: /hld, /swarm-dev:swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
-1. **Design.** You write a design with a co-author agent (`/hld`). A reviewer agent attacks it
-   before you agree it.
+1. **Design.** You write a draft epic with a co-author agent (`/epic`): the problem with its
+   evidence, goals that can be checked, non-goals and constraints. A reviewer agent attacks it, and
+   nothing plans it until you agree it.
 2. **Plan.** Planning agents split it into epics, then into stories of one PR each, and skeptic
    agents try to break the plan. You approve it.
 3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
@@ -51,17 +52,17 @@ anywhere and the next `/swarm-dev:swarm` picks up where it left off.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm` (type the whole name; the short form
-   completes to `/swarm-dev:hld`). The first time, it sets up the board and asks once for your rules
+   completes to another command). The first time, it sets up the board and asks once for your rules
    for builders: commit trailers, where credentials live, commands that must never run. Commit the
    `.claude/swarm/brief.md` it writes.
-4. Run `/hld Add rate limiting to the API`, agree the design, then run `/swarm-dev:swarm` again.
+4. Run `/epic Add rate limiting to the API`, agree the epic, then run `/swarm-dev:swarm` again.
    Run it each time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
 
 | Command | What it does |
 |---|---|
-| `/hld <title>` | Write a design with a co-author agent. |
+| `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
@@ -74,7 +75,7 @@ The other commands are tools the lead runs; they are listed in
 
 | You see | Do |
 |---|---|
-| a draft design | finish it with the co-author, then agree it |
+| a draft epic | finish it with the co-author, then agree it |
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |

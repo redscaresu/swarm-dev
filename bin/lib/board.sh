@@ -38,7 +38,7 @@ epic_has_stories() {
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic); while a conductor works, this comes before its wait
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
-#   hld <hld>         an HLD is still a draft
+#   epic <epic>       an epic is still a draft: it waits on the user, who agrees it in /epic
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -47,7 +47,7 @@ epic_has_stories() {
 #                     file outside the board (release_due): the lead cuts a release
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, and PRs awaiting the user's merge
-#   done              nothing open; start the next HLD with /hld <title>
+#   done              nothing open; start the next epic with /epic <title>
 next_step() {
   local f slug epic kind story_epic src buildable="" waiting="" when held n tag base
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
@@ -104,9 +104,13 @@ next_step() {
         if [[ $(awk '/^## Epics/{e=1;next} /^## /{e=0} e && /^[-*] /{n++} END{print n+0}' "${f}") -eq 0 ]]; then
           echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has no epics yet"; return
         fi ;;
-      draft) echo "hld ${slug}"; echo "the HLD ${slug} is still a draft"; return ;;
     esac
   done < <(board hld)
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == draft ]] || continue
+    slug=$(basename "${f}" .md)
+    echo "epic ${slug}"; echo "the epic ${slug} is a draft and waits on you: agree it in /epic ${slug}"; return
+  done < <(board epics)
   while IFS= read -r f; do
     is_escalated "${f}" || continue
     slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
@@ -132,7 +136,7 @@ next_step() {
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
-  echo "done"; echo "nothing is open; start the next HLD with /hld <title>"
+  echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up

@@ -121,9 +121,9 @@ Repeat until a step below says stop:
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
    - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.
-   - `hld <hld>`: the HLD is a draft, and only the user can write it. Follow `/hld` to resume it
-     (the title is in the file): the user works in the co-author's pane, and the review and the
-     agreement are picked up in the background. Go back to 1 once `/hld` reports it agreed.
+   - `epic <epic>`: the epic is a draft, and only the user can write and agree it. Follow `/epic` to
+     resume it (the title is in the file): the user works in the co-author's pane, and the review
+     and the agreement are picked up in the background. Go back to 1 once `/epic` reports it agreed.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,
@@ -174,9 +174,9 @@ Repeat until a step below says stop:
      story is never in that list: it is yours, and `next` names it first. Stop.
    - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
-     about five lines (a design written with you, split into epics, split into stories, built by
+     about five lines (an epic written with you, split into stories, built by
      agents in panes, and where it stops for you: approvals, `lead` stories, merges) and suggest
-     `/hld <title>`. Otherwise suggest `/hld <title>` for the next piece of work.
+     `/epic <title>`. Otherwise suggest `/epic <title>` for the next piece of work.
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.
 

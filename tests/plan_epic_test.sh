@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # plan_epic_test.sh — pins the plan-epic rules with a grep each. Run on another copy with
-# `bash tests/plan_epic_test.sh <plan-epic.md> <reference.md>`.
+# `bash tests/plan_epic_test.sh <plan-epic.md> <reference.md> <epic.md>`.
 # shellcheck disable=SC2016 # the patterns hold literal backticks
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 F="${1:-$ROOT/commands/plan-epic.md}"
 M="${2:-$ROOT/docs/reference.md}"
+EPIC="${3:-$ROOT/commands/epic.md}"
 fails=0
 
 has() { # <name> <pattern> [text]
@@ -48,5 +49,13 @@ m=$(awk '/^## Scoping an epic/{on=1;next} /^## /{on=0} on' "$M")
 if [ -z "$m" ]; then echo "FAIL method-section"; fails=$((fails + 1)); fi
 hasnt method-three-surveys 'three surveys' "$m"
 hasnt method-then-critic 'then a critic' "$m"
+
+# /epic writes a draft epic on the board with its four sections, and only the user's agreement makes it active.
+e=$(cat "$EPIC")
+eflat=$(tr '\n' ' ' <<< "$e" | tr -s ' ')
+has epic-path 'docs/epics/<slug>\.md' "$e"
+has epic-draft '^ *status: draft$' "$e"
+for h in Problem Goals Non-goals Constraints; do has "epic-section-$h" "^ *## $h$" "$e"; done
+has epic-active-on-agreement 'Only then, on the user.s agreement, set `status: active`; nothing plans a draft epic' "$eflat"
 
 [ "$fails" -eq 0 ]

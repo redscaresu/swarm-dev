@@ -17,7 +17,8 @@ item() {
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
 
-# expect <name> <first line of `next`> <setup...> — build a board with the setup, check next.
+# expect <name> <first line of `next`> <setup...> — build a board with the setup, check next. The
+# whole output is left in out.
 expect() {
   local name="$1" want="$2" dir got; shift 2
   dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -29,7 +30,7 @@ expect() {
   )
   # The whole output, then its first line: `| head -1` can close the pipe while next is still
   # printing a gate's list, and the broken pipe fails the run under pipefail.
-  got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; got="${got%%$'\n'*}"
+  out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; got="${out%%$'\n'*}"
   if [[ "${got}" == "${want}" ]]; then
     echo "ok   ${name}"
   else
@@ -39,7 +40,15 @@ expect() {
 }
 
 expect "empty board" "done"
-expect "draft HLD" "hld 2026-01-01-x" \
+if [[ "${out}" == *"/epic <title>"* ]]; then echo "ok   an empty board names the /epic step"
+else echo "FAIL an empty board does not name /epic <title>: ${out}"; fails=$((fails + 1)); fi
+expect "draft epic waits on the user, not planned" "epic e1" \
+  "item epics/e1.md 'status: draft'"
+if [[ "${out}" == *"waits on you"* ]]; then echo "ok   a draft epic is named as waiting on the user"
+else echo "FAIL a draft epic is not named as waiting on the user: ${out}"; fails=$((fails + 1)); fi
+expect "draft epic once active is planned" "plan-epic e1" \
+  "item epics/e1.md 'status: active'"
+expect "a draft HLD is no step" "done" \
   "item hld/2026-01-01-x.md 'status: draft'"
 expect "agreed HLD, no epics" "plan-hld 2026-01-01-x" \
   "item hld/2026-01-01-x.md 'status: agreed'"
@@ -252,7 +261,7 @@ expect "only later stories left is a gate, not done" "gate" \
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
 expect "stories before planning" "conduct e2" \
-  "item hld/2026-01-01-x.md 'status: draft'" \
+  "item epics/e0.md 'status: draft'" \
   "item epics/e1.md 'status: active'" \
   "item epics/e2.md 'status: active'" \
   "item stories/a.md 'status: ready' 'epic: e2'"

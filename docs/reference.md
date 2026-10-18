@@ -52,41 +52,39 @@ The lead handles each line at once and starts it again. It keeps what it last sa
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
 
-## Writing the HLD
+## Writing an epic
 
-Everything starts here, and it is the one stage you do by hand: the HLD decides what every epic,
-story and line of code after it is for, so it is written with you, not for you.
+Everything starts here, and it is the one stage you do by hand: the epic decides what every story
+and line of code after it is for, so you write it with a co-author.
 
-1. **Start it.** In your Claude session, inside herdr: `/hld <title>`, for example
-   `/hld Add rate limiting to the API`. This creates `docs/hld/YYYY-MM-DD-<slug>.md` from the
-   template with `status: draft`, and opens a new pane (tab `hld`) with a co-author on the most
-   capable model. Your session only supervises from here.
+1. **Start it.** In your Claude session, inside herdr: `/epic <title>`, for example
+   `/epic Add rate limiting to the API`. This creates `docs/epics/<slug>.md` with `status: draft`
+   and opens a new pane (tab `epic`) with a co-author on the most capable model. Your session only
+   supervises from here.
 2. **Write it in the co-author's pane.** Switch to that pane and talk to it there. It reads the
-   code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the design, one
-   or two at a time, and writes your answers into the file section by section, citing evidence.
-   It does not invent requirements, commit, or change `status`.
-3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the most capable model, at
-   `xhigh` effort) starts on its own and attacks the draft: goals that cannot be verified, a
-   design that contradicts an ADR or a safety rule, missing alternatives, unnamed risks, open
-   questions that would block splitting it into epics. Its findings arrive in the co-author's
-   pane; go through them there and revise until you are satisfied. You never switch tabs.
-4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: agreed`,
-   opens a PR for the HLD (reviewed like any other change), and closes the co-author's pane. Only
-   you can agree an HLD; no agent changes its status.
-5. **Hand over.** Run `/swarm-dev:swarm`. It sees an agreed HLD with no epics and starts `/plan-hld`.
+   code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the epic, one or
+   two at a time, and writes your answers into the file section by section, citing evidence. It
+   does not invent requirements, commit, or change `status`.
+3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the `epic-review` role, the
+   most capable model at `xhigh` effort) starts on its own and attacks the draft: a problem with no
+   evidence, goals that cannot be checked, an epic that contradicts an ADR or a safety rule, unnamed
+   risks, open questions that would block planning it into stories. Its findings arrive in the
+   co-author's pane; go through them there and revise until you are satisfied. You never switch
+   tabs.
+4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: active`,
+   opens a PR for the epic (reviewed like any other change), and closes the co-author's pane. Only
+   you can agree an epic; no agent changes its status, and `next` plans no draft epic.
+5. **Hand over.** Run `/swarm-dev:swarm`. It sees an active epic with no stories and starts
+   `/plan-epic`.
 
-**What a good HLD has.** The template's sections: Problem (with evidence), Goals, Non-goals,
-Current state, Design, Alternatives, Risks and safety, Rollout, Open questions, and Epics (filled
-in later by `/plan-hld`). The ones that matter most downstream: **Goals** that could be checked
-and fail, because each epic's **Done when** comes from them; **Non-goals**, which keep the
-decomposition from growing; **Rollout**, which becomes the order of the epics; and **Open
-questions**, which must be answered or explicitly deferred before the HLD is agreed.
+**What a good epic has.** Four sections: Problem (with evidence), Goals, Non-goals and
+Constraints, and a **Your part** line. **Goals** are its **Done when**: checks that could fail,
+because the conductor stops when they hold. **Non-goals** keep the plan from growing.
 
-**Stopping and resuming.** The HLD is a file, so nothing is lost if you stop: run `/hld` on its own
-(or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress from the
-file; if there are several, it asks which. With no draft at all, it tells you where the chain
-stands instead. To
-replace a design later, write a new HLD and set the old one `status: superseded`.
+**Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
+own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress
+from the file; if there are several, it asks which. With no draft at all, it tells you where the
+chain stands instead.
 
 ## Model and effort
 
@@ -828,7 +826,7 @@ exist. With `merge = human` it waits on your merge.
 
 | Command | What it does |
 |---|---|
-| `/hld <title>` | Write a design with a co-author agent. |
+| `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights. `swarm.sh dash --project <dir>` (repeatable) draws several projects. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
