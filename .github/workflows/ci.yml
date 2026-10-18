@@ -38,7 +38,7 @@ jobs:
       - name: Run shellcheck
         if: steps.gate.outputs.board_only != 'true'
         # shellcheck is preinstalled on GitHub's ubuntu runners.
-        run: shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh tests/*.sh
+        run: shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
 
   test:
     runs-on: ubuntu-latest
@@ -64,9 +64,9 @@ jobs:
       - name: Compile bin/lib/*.py
         if: steps.gate.outputs.board_only != 'true'
         run: python3 -m py_compile bin/lib/*.py
-      - name: Run every tests/*_test.sh
+      - name: Run every tests/*_test.sh (make test)
         if: steps.gate.outputs.board_only != 'true'
-        run: for t in tests/*_test.sh; do echo "== ${t}"; bash "${t}" || exit 1; done
+        run: make test
 
   plugin-validate:
     runs-on: ubuntu-latest
