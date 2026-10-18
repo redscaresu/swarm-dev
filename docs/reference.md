@@ -230,12 +230,14 @@ that tab, named for the story; a tab holds four panes, and the fifth opens `<epi
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
-**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<project dir>` (the
-project directory's name, the whole name cut to 32 characters), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
+**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
+first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
 `story --strict`, the same review, and the same handover or merge. It runs in a workspace named
 `backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
-names span every project, so naming it for the project lets two projects each run one at once. A
-name another project's agent holds is refused, and the refusal says where that agent runs. It watches only
+names span every project, so naming it for the project's path lets two projects each run one at once,
+even two directories with the same name. A name another project's agent holds is refused before the
+old report or brief is touched, and the refusal says where that agent runs. An epic slugged
+`backlog-<x>` is refused too, since its conductor would get a backlog conductor's kind of name. It watches only
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as

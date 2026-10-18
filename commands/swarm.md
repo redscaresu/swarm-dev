@@ -115,7 +115,7 @@ Repeat until a step below says stop:
      touches neither (a code PR that turns CI on the base green), deleting
      `.swarm/conduct-backlog.report.md` once the cause is fixed. Then stop. Otherwise run
      `swarm.sh conduct --backlog`, then handle it as `wait` on the conductor it started
-     (`conduct-backlog-<project dir>`; `next` prints the name).
+     (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
      When `next`'s why names a conductor that is still working, start

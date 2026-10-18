@@ -932,14 +932,14 @@ hld_workspace() {
 }
 
 # conductor_name <epic>|backlog — a conductor's agent name. herdr's names span projects and every
-# project has a backlog, so the backlog conductor's carries the project's dir name (cut to 32 characters).
-# One that would end like a retired agent's (a dir named work-done) ends in _ instead.
+# project has a backlog, so the backlog conductor's is conduct-backlog-<the dir's name, cut to 9>-<6 hex
+# of the project's path>: 32 characters at most, distinct for two dirs of one name, and never ending
+# like a retired agent's (-done).
 conductor_name() {
-  local n
+  local b crc
   [[ "$1" == backlog ]] || { agent_name "conduct-$1"; return; }
-  n="$(agent_name "conduct-backlog-$(basename "${PROJECT_DIR}")")"
-  [[ ! "${n}" =~ -done[0-9]*$ ]] || n="${n:0:31}_"
-  printf '%s' "${n}"
+  b="$(basename "${PROJECT_DIR}")"; crc="$(printf '%s' "${PROJECT_DIR}" | cksum)"
+  agent_name "conduct-backlog-${b:0:9}-$(printf '%06x' $((${crc%% *} % 16777216)))"
 }
 
 # conductor_report <agent> — where a conductor writes its report as its last act.
@@ -988,7 +988,8 @@ start_conductor() {
     [[ ! -e "${epic_file}" ]] || die "conduct --backlog: ${epic_file} is an epic named backlog; rename it first"
   else
     [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
-    [[ "${epic}" != backlog ]] || die "conduct: backlog is the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
+    # An epic backlog-<x> would get conduct-backlog-<x>, the backlog conductor's kind of name.
+    [[ "${epic}" != backlog && "${epic}" != backlog-* ]] || die "conduct: backlog and backlog-* are the backlog conductor's names; run conduct --backlog, or rename ${epic_file}"
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
     hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
     [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
@@ -996,6 +997,7 @@ start_conductor() {
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
   require_claude
   if [[ "$1" == --backlog ]]; then names="$(epic_env "")"; else names="$(epic_env "${epic}")"; fi || die "${names}"
+  name="$(conductor_name "${epic}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "$(conductor_report "conduct-${epic}")"   # a report left by an earlier run is not this one's
@@ -1005,7 +1007,7 @@ start_conductor() {
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
   # The backlog's tab takes the conductor's name too: every project's backlog tab shares the workspace
   # named backlog, and close shuts every tab with its label there.
-  name="$(conductor_name "${epic}")"; tab="${epic}"; [[ "${epic}" != backlog ]] || tab="${name}"
+  tab="${epic}"; [[ "${epic}" != backlog ]] || tab="${name}"
   HERDR_WORKSPACE_ID="${ws}" start_agent "${tab}" "${name}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # conduct_backlog_test.sh — two projects under one herdr each run `conduct --backlog`. herdr names span
-# projects, so each backlog conductor is named for its project's dir; next, wait, close and status in
-# each project find its own and not the other's, and a name held by another project's agent is refused
-# naming where it runs. herdr, gh and claude are stubs on PATH; herdr's state is shared by both projects.
+# projects, so each backlog conductor is named for its project's dir and a hash of its path; next, wait,
+# close, status and dash in each project find its own and not the other's, even for two dirs of one name,
+# and a name held by another project's agent is refused naming where it runs, before the report goes. herdr, gh and claude are stubs on PATH; herdr's state is shared by both projects.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -61,71 +61,86 @@ EOF
 printf '#!/bin/sh\necho "[]"\n' > "${ROOT}/bin/gh"
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
 
-# Two projects, each with a ready story outside any epic.
-for p in alpha bravo; do
+# Two projects whose dirs share a name (work/api and oss/api), each with a ready story outside any epic.
+A_DIR=work/api; B_DIR=oss/api
+for p in "${A_DIR}" "${B_DIR}"; do
   mkdir -p "${ROOT}/${p}/.claude/swarm"; : > "${ROOT}/${p}/.claude/swarm/config"
   git -C "${ROOT}/${p}" init -q
-  item "${ROOT}/${p}/docs" "stories/${p}1.md" "status: ready" "kind: code"
+  item "${ROOT}/${p}/docs" "stories/${p%%/*}1.md" "status: ready" "kind: code"
   : > "${ROOT}/${p}/docs/stories/README.md"   # dash's mark of a board
 done
 run() { local p="$1"; shift; (cd "${ROOT}/${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# started <n> — the name of the <n>th backlog conductor herdr started.
+started() { sed -n 's/^agent start \(conduct-backlog-[^ ]*\) .*/\1/p' "${ROOT}/herdr.log" | sed -n "$1p"; }
+fits() { if [[ "$1" =~ ^conduct-backlog-api-[0-9a-f]{6}$ ]]; then echo yes; else echo "no, got: $1"; fi; }
 
-out_a="$(run alpha conduct --backlog || echo "exit $?")"
-out_b="$(run bravo conduct --backlog || echo "exit $?")"
-log="$(cat "${ROOT}/herdr.log")"
-check "both projects start a backlog conductor, each named for its project" "yes|yes|no|no" \
-  "$(has "agent start conduct-backlog-alpha " "${log}")|$(has "agent start conduct-backlog-bravo " "${log}")|$(hasnt "exit" "${out_a}")|$(hasnt "exit" "${out_b}")"
+out_a="$(run "${A_DIR}" conduct --backlog || echo "exit $?")"
+out_b="$(run "${B_DIR}" conduct --backlog || echo "exit $?")"
+A="$(started 1)"; B="$(started 2)"
+check "two projects whose dirs share a name both start a backlog conductor, each with its own name" "yes|yes|yes|no|no" \
+  "$(fits "${A}")|$(fits "${B}")|$([[ "${A}" != "${B}" ]] && echo yes || echo no)|$(hasnt "exit" "${out_a}")|$(hasnt "exit" "${out_b}")"
+brief_a="${ROOT}/${A_DIR}/.swarm/briefs/conduct-backlog.md"; brief_b="${ROOT}/${B_DIR}/.swarm/briefs/conduct-backlog.md"
 check "each gets its own brief, under its own project" "yes|yes" \
-  "$([[ -f "${ROOT}/alpha/.swarm/briefs/conduct-backlog.md" ]] && echo yes || echo no)|$([[ -f "${ROOT}/bravo/.swarm/briefs/conduct-backlog.md" ]] && echo yes || echo no)"
+  "$([[ -f "${brief_a}" ]] && echo yes || echo no)|$([[ -f "${brief_b}" ]] && echo yes || echo no)"
 check "each brief reports to its own project's report" "yes|no|yes|no" \
-  "$(has "${ROOT}/alpha/.swarm/conduct-backlog.report.md" "$(cat "${ROOT}/alpha/.swarm/briefs/conduct-backlog.md")")|$(hasnt "${ROOT}/bravo/" "$(cat "${ROOT}/alpha/.swarm/briefs/conduct-backlog.md")")|$(has "${ROOT}/bravo/.swarm/conduct-backlog.report.md" "$(cat "${ROOT}/bravo/.swarm/briefs/conduct-backlog.md")")|$(hasnt "${ROOT}/alpha/" "$(cat "${ROOT}/bravo/.swarm/briefs/conduct-backlog.md")")"
+  "$(has "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md" "$(cat "${brief_a}")")|$(hasnt "${ROOT}/${B_DIR}/" "$(cat "${brief_a}")")|$(has "${ROOT}/${B_DIR}/.swarm/conduct-backlog.report.md" "$(cat "${brief_b}")")|$(hasnt "${ROOT}/${A_DIR}/" "$(cat "${brief_b}")")"
 
-# next: each waits on its own; once alpha has reported, alpha collects and bravo still waits.
-check "next in each project waits on its own backlog conductor" "wait conduct-backlog-alpha|wait conduct-backlog-bravo" \
-  "$(run alpha next | head -1)|$(run bravo next | head -1)"
-echo reported > "${ROOT}/alpha/.swarm/conduct-backlog.report.md"
-check "alpha's report is alpha's alone: alpha collects, bravo still waits" "collect conduct-backlog-alpha|wait conduct-backlog-bravo" \
-  "$(run alpha next | head -1)|$(run bravo next | head -1)"
+# next: each waits on its own; once A has reported, A collects and B still waits.
+check "next in each project waits on its own backlog conductor" "wait ${A}|wait ${B}" \
+  "$(run "${A_DIR}" next | head -1)|$(run "${B_DIR}" next | head -1)"
+echo reported > "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md"
+check "A's report is A's alone: A collects, B still waits" "collect ${A}|wait ${B}" \
+  "$(run "${A_DIR}" next | head -1)|$(run "${B_DIR}" next | head -1)"
 
-# dash: alpha's conductor, its session idle, has reported (its report is found by its name).
-sess="$(grep -F "conduct-backlog-alpha" "${ROOT}/alpha/.swarm/agents.tsv" | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -1)"
+# dash: A's conductor, its session idle, has reported (its report is found by its name).
+sess="$(grep -F "${A}" "${ROOT}/${A_DIR}/.swarm/agents.tsv" | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -1)"
 echo "[{\"sessionId\":\"${sess}\",\"status\":\"idle\"}]" > "${ROOT}/claude.json"
-check "dash in alpha shows its backlog conductor as reported" "yes" \
-  "$(has "reported" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" run alpha dash | grep "conduct-backlog-alpha" || true)")"
+check "dash in A shows its backlog conductor as reported" "yes" \
+  "$(has "reported" "$(CLAUDE_STUB_AGENTS="${ROOT}/claude.json" run "${A_DIR}" dash | grep -F "${A}" || true)")"
 
-# wait: alpha's conductor has reported, so the wait returns; the other project's name is never waited on.
-w_a="$(run alpha wait conduct-backlog-alpha 2000 || echo "exit $?")"
-w_x="$(run alpha wait conduct-backlog-bravo 2000 || echo "exit $?")"
-check "wait in alpha returns on alpha's conductor, and refuses bravo's" "no|no|yes|yes" \
+# wait: A's conductor has reported, so the wait returns; the other project's name is never waited on.
+w_a="$(run "${A_DIR}" wait "${A}" 2000 || echo "exit $?")"
+w_x="$(run "${A_DIR}" wait "${B}" 2000 || echo "exit $?")"
+check "wait in A returns on A's conductor, and refuses B's" "no|no|yes|yes" \
   "$(hasnt "exit" "${w_a}")|$(hasnt "no agent this project started" "${w_a}")|$(has "exit 1" "${w_x}")|$(has "no agent this project started holds this name" "${w_x}")"
 
 # status --all: each lists its own backlog conductor and not the other's.
-st_a="$(run alpha status --all)"; st_b="$(run bravo status --all)"
+st_a="$(run "${A_DIR}" status --all)"; st_b="$(run "${B_DIR}" status --all)"
 check "status in each project lists only its own backlog conductor" "yes|no|yes|no" \
-  "$(has "conduct-backlog-alpha" "${st_a}")|$(hasnt "conduct-backlog-bravo" "${st_a}")|$(has "conduct-backlog-bravo" "${st_b}")|$(hasnt "conduct-backlog-alpha" "${st_b}")"
+  "$(has "${A}" "${st_a}")|$(hasnt "${B}" "${st_a}")|$(has "${B}" "${st_b}")|$(hasnt "${A}" "${st_b}")"
 
-# close: alpha's close of bravo's name closes nothing; alpha's own closes alpha's alone.
-run alpha close conduct-backlog-bravo >/dev/null 2>&1 || true
-check "close in alpha leaves bravo's conductor" "yes" "$(has "conduct-backlog-bravo " "$(cat "${ROOT}/agents")")"
-run alpha close conduct-backlog-alpha >/dev/null 2>&1 || true
-check "close in alpha closes alpha's conductor and keeps bravo's" "no|yes" \
-  "$(hasnt "conduct-backlog-alpha " "$(cat "${ROOT}/agents")")|$(has "conduct-backlog-bravo " "$(cat "${ROOT}/agents")")"
+# close: A's close of B's name closes nothing; A's own closes A's alone.
+run "${A_DIR}" close "${B}" >/dev/null 2>&1 || true
+check "close in A leaves B's conductor" "yes" "$(has "${B} " "$(cat "${ROOT}/agents")")"
+run "${A_DIR}" close "${A}" >/dev/null 2>&1 || true
+check "close in A closes A's conductor and keeps B's" "no|yes" \
+  "$(hasnt "${A} " "$(cat "${ROOT}/agents")")|$(has "${B} " "$(cat "${ROOT}/agents")")"
 
-# The name-held refusal: a third project in a dir named bravo would want bravo's name.
-mkdir -p "${ROOT}/other/bravo/.claude/swarm"; : > "${ROOT}/other/bravo/.claude/swarm/config"
-git -C "${ROOT}/other/bravo" init -q
-item "${ROOT}/other/bravo/docs" stories/o1.md "status: ready" "kind: code"
-out="$(run other/bravo conduct --backlog || echo "exit $?")"
+# The name-held refusal: an agent of a project elsewhere holds A's name. A's uncollected report and
+# its brief are left as they were.
+echo "${A} w:99 ${ROOT}/elsewhere" >> "${ROOT}/agents"
+echo kept > "${brief_a}"
+out="$(run "${A_DIR}" conduct --backlog || echo "exit $?")"
 check "a name held by another project's agent is refused, naming that project's dir" "yes|yes|yes" \
-  "$(has "exit 1" "${out}")|$(has "an agent this project did not start" "${out}")|$(has "it runs in ${ROOT}/bravo" "${out}")"
+  "$(has "exit 1" "${out}")|$(has "an agent this project did not start" "${out}")|$(has "it runs in ${ROOT}/elsewhere" "${out}")"
+check "a refused conduct --backlog keeps the uncollected report and the brief" "reported|kept" \
+  "$(cat "${ROOT}/${A_DIR}/.swarm/conduct-backlog.report.md" 2>/dev/null || echo gone)|$(cat "${brief_a}")"
+
+# An epic slugged backlog-<x> would get a backlog conductor's kind of name: refused, starting nothing.
+item "${ROOT}/${A_DIR}/docs" epics/backlog-x.md "status: active"
+n="$(grep -c '^agent start' "${ROOT}/herdr.log")"
+out="$(run "${A_DIR}" conduct backlog-x || echo "exit $?")"
+check "conduct backlog-<x> is refused, and starts nothing" "yes|yes|${n}" \
+  "$(has "exit 1" "${out}")|$(has "backlog-* are the backlog conductor's names" "${out}")|$(grep -c '^agent start' "${ROOT}/herdr.log")"
 
 # A dir named like a retired agent (work-done) still gives a live conductor's name: next waits on it.
 mkdir -p "${ROOT}/work-done/.claude/swarm"; : > "${ROOT}/work-done/.claude/swarm/config"
 git -C "${ROOT}/work-done" init -q
 item "${ROOT}/work-done/docs" stories/w1.md "status: ready" "kind: code"
 run work-done conduct --backlog >/dev/null || true
-check "a project dir ending -done gets a name that is not a retired one, and next waits on it" "wait conduct-backlog-work-done_" \
-  "$(run work-done next | head -1)"
+C="$(started 3)"
+check "a project dir ending -done gets a name that is not a retired one, and next waits on it" "no|wait ${C}" \
+  "$([[ "${C}" =~ -done[0-9]*$ ]] && echo yes || echo no)|$(run work-done next | head -1)"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
