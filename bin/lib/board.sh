@@ -26,11 +26,12 @@ state_name() {
   STATE_PATH="${BOARD_STATE_DIR}/${d##*/}/${n%.md}"
 }
 
-# state_drop <item-file> — delete the item's state file and its lock (state_name), so a later item
-# with its slug starts with no state.
+# state_drop <item-file> — delete the item's state file and its lock (state_name), and a story's
+# escalated block (escalated_file), so a later item with its slug starts with no state.
 state_drop() {
   state_name "$1"
   [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
+  [[ "${STATE_PATH}" != "${BOARD_STATE_DIR}/stories/"* ]] || rm -f "$(escalated_file "${STATE_PATH##*/}")"
 }
 
 # state_value <item-file> <key> — print <key>'s value from the item's state file (state_path; nothing
@@ -463,9 +464,9 @@ unblock() {
   done < <(board stories)
 }
 
-# delete_item <slug> — delete a story or epic's file where it is, and its state file (state_drop), so
-# a later item with the slug starts with none: reconcile's, after its pull.
-delete_item() { local f; f="$(item_file "$1")"; state_drop "${f}"; rm "${f}"; echo "deleted: ${f}"; }
+# delete_item <file> — delete a story or epic's file where it is, and its state file (state_drop), so
+# a later item with the slug starts with none: reconcile's, on a board outside the repo.
+delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
 # finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
 finish_item() { remove_item finish "$1"; }
@@ -478,7 +479,7 @@ finish_item() { remove_item finish "$1"; }
 remove_item() {
   local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
   f="$(item_file "${slug}")"
-  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${slug}"; return; }
+  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${f}"; return; }
   rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
   wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
   if [[ ! -d "${wt}" ]]; then
@@ -582,9 +583,7 @@ set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
 # too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
-# They live in BOARD_STATE_DIR, never in a tracked file. reconcile puts an older swarm.sh's edit to
-# them in a board file back as committed on an item whose PRs merged, and carries another board
-# file's over its pull, so they never stop it.
+# They live in BOARD_STATE_DIR, never in a tracked file.
 SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
 
 # set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
@@ -655,16 +654,6 @@ state_write() {
   [[ -s "$2" ]] || rm -f "$2"
 }
 
-# set_file_fm <file> <key> [value] — in <file>'s own front matter, set <key>'s line to <value>, adding
-# it at the end when there is none, or drop it when <value> is empty: only to put back what an older
-# swarm.sh wrote there, over a pull.
-set_file_fm() {
-  awk -v k="$2" -v v="${3:-}" '
-    /^---$/ && ++n == 2 && !d && v != "" { print k ": " v }
-    n == 1 && index($0, k ":") == 1 { if (!d && v != "") print k ": " v; d = 1; next }
-    { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-}
-
 # get_fm <file> <key> — <key>'s value in the item's state file (state_value), else in <file>'s front
 # matter alone (fm takes the first line for <key> anywhere, so a story's body could answer). <file>
 # may be - for stdin, which is read as it is.
@@ -715,7 +704,11 @@ builder_state() {
 # story can be built again. With no item merged, it still pulls the main checkout when that is behind
 # its upstream (a PR merged with no review item), and dies as a failed pull below does; a failed fetch
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
-# cannot be read: said on stderr, naming it.
+# cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
+# dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
+# there, so the main checkout keeps no edit: after a pull, or with no upstream to pull from, it is
+# marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
+# loses its state, however that commit was pulled (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -759,43 +752,55 @@ reconcile() {
   # A pull is due after an item merged when there is an upstream, and otherwise when the checkout is
   # behind it (a PR merged with no review item: a board PR, a one-off). It is held after an unread PR:
   # if that merged, the pull would take its file before its build is cleared.
-  local due=1 held=0
+  local due=1
   if [[ ${#merged[@]} -gt 0 ]]; then has_upstream || due=0; else behind_upstream || due=0; fi
   if [[ ${due} == 1 && -n "${unread}" ]]; then
     echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
-    due=0; held=1
+    due=0
   fi
-  if [[ ${#merged[@]} -eq 0 ]]; then
-    [[ ${due} == 0 ]] || pull_board_repo \
-      || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
-    return 0
+  if [[ ${due} == 1 ]]; then
+    pull_board_repo || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}, then run reconcile again"
   fi
-  local i k committed saved=()
-  if [[ ${BOARD_IN_REPO} == 1 && ${held} == 0 ]]; then
-    # The board is in the project repo, and a merged PR may itself have taken the item off it or
-    # changed it. An older swarm.sh's edits in the file (each SET_FM_KEYS key, such as the review
-    # status or a retry's attempts:) would block that pull, so put them back as committed first, and
-    # the whole file as it was if the pull fails. A hand edit is left alone, and still stops the pull.
-    for slug in "${merged[@]}"; do
-      f="$(item_file "${slug}")"; saved+=("$(cat "${f}"; echo .)")   # the dot keeps trailing newlines
-      if committed="$(git -C "${PROJECT_DIR}" show "HEAD:${f#"${PROJECT_DIR}"/}" 2>/dev/null)"; then
-        for k in ${SET_FM_KEYS}; do set_file_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
-      fi
-    done
-    if [[ ${due} == 1 ]] && ! pull_board_repo; then
-      for i in "${!merged[@]}"; do printf '%s' "${saved[i]%.}" > "$(item_file "${merged[i]}")"; done
-      die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
-    fi
-  fi
-  for i in "${!merged[@]}"; do
+  local i
+  for ((i = 0; i < ${#merged[@]}; i++)); do
     slug="${merged[i]}"; f="${merged_files[i]}"
+    if [[ -f "${f}" && "$(fm "${f}" status)" != "done" && ${BOARD_IN_REPO} == 1 ]] \
+      && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
+      # Its tracked file is still here: with a pull held, its PR may have deleted it on the base.
+      if [[ ${due} == 0 ]] && has_upstream; then
+        echo "merged: ${slug}, not pulled yet; it stays in review until reconcile pulls ${PROJECT_DIR}"
+        continue
+      fi
+      # Its PR left it on the board: done in its state, so the main checkout stays clean.
+      set_status "${f}" "done"; record_event reconcile "${slug}" "ok (finished)"
+      echo "merged: ${slug}, marked done; its file stays on the board until swarm.sh finish ${slug} takes it off"; continue
+    fi
     if [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]]; then
-      delete_item "${slug}"; record_event reconcile "${slug}" "ok (finished)"; continue
+      delete_item "${f}"; record_event reconcile "${slug}" "ok (finished)"; continue
     fi
     # Its PR took it off the board or marked it done: its state goes too, or a later item with the
     # slug would read it.
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
+  done
+  [[ ${BOARD_IN_REPO} == 0 ]] || drop_gone_state
+}
+
+# drop_gone_state — state_drop each story and epic, by its board-state or escalated file, whose file a
+# commit deleted (its PR or a board PR, pulled by reconcile or by hand): it is in neither HEAD nor the
+# main checkout, and was in a commit before. A later item with its slug then starts with no state. A
+# file missing only from the main checkout, or never committed, keeps its state. A board directory
+# that is not there (git removes it with its last file) counts as holding no item.
+drop_gone_state() {
+  local s n d rel=""
+  # The board's path from the root with a trailing /, or empty when the board is the root.
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
+    n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
+    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
+    ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}${d}/${n}.md" 2>/dev/null || continue
+    [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}${d}/${n}.md")" ]] || continue
+    state_drop "${BOARD}/${d}/${n}.md"
   done
 }
 
