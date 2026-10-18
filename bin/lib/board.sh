@@ -678,8 +678,8 @@ builder_state() {
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
 # cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
 # dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
-# there, so the main checkout keeps no edit: after a pull it is marked done, and with no pull it stays in
-# review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
+# there, so the main checkout keeps no edit: after a pull, or with no upstream to pull from, it is
+# marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
 # loses its state, however that commit was pulled (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
@@ -738,9 +738,9 @@ reconcile() {
     slug="${merged[i]}"; f="${merged_files[i]}"
     if [[ -f "${f}" && "$(fm "${f}" status)" != "done" && ${BOARD_IN_REPO} == 1 ]] \
       && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
-      # Its tracked file is still here: with no pull, its PR may have deleted it on the base.
-      if [[ ${due} == 0 ]]; then
-        echo "merged: ${slug}, not pulled yet; it stays in review until reconcile pulls ${PROJECT_DIR}$(has_upstream || echo ", which needs an upstream")"
+      # Its tracked file is still here: with a pull held, its PR may have deleted it on the base.
+      if [[ ${due} == 0 ]] && has_upstream; then
+        echo "merged: ${slug}, not pulled yet; it stays in review until reconcile pulls ${PROJECT_DIR}"
         continue
       fi
       # Its PR left it on the board: done in its state, so the main checkout stays clean.

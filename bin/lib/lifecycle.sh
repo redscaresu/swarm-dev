@@ -143,19 +143,27 @@ keys_only() {
 
 # key_moves <path> — each SET_FM_KEYS key of the story or epic <path> whose value, read through its
 # state (so a value swarm.sh wrote after the edit wins), differs from HEAD's, as <key><tab><value>
-# lines: what keys_to_state moves.
+# lines: what keys_to_state moves. When the incoming commits change the file's status or prs, those
+# two are left out: an older swarm.sh's status write gives way to theirs (a merged PR's status: done),
+# so checking the file out drops it.
 key_moves() {
-  local f="${PROJECT_DIR}/$1" head k v
+  local f="${PROJECT_DIR}/$1" head up k v skip=""
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
+  if up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)"; then
+    for k in status prs; do
+      [[ "$(get_fm - "${k}" <<< "${up}")" == "$(get_fm - "${k}" <<< "${head}")" ]] || skip=" status prs "
+    done
+  fi
   for k in ${SET_FM_KEYS}; do
+    [[ "${skip}" != *" ${k} "* ]] || continue
     v="$(get_fm "${f}" "${k}")"
     [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" ]] || printf '%s\t%s\n' "${k}" "${v}"
   done
 }
 
 # keys_meet_base <path> — true when the incoming commits keep the story or epic <path> and change its
-# depends_on, or a key key_moves would move: moved to its state, the old values would read over the
-# new ones (a status flipped to ready over a new dependency).
+# depends_on, or a key key_moves would move (never status or prs, which give way): moved to its state,
+# the old values would read over the new ones (a status flipped to ready over a new dependency).
 keys_meet_base() {
   local k head up
   up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)" || return 1

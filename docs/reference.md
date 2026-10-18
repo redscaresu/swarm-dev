@@ -902,18 +902,19 @@ wrote them, does not stop it: reconcile moves the values, as the item reads them
 checks the file out, so the item reads as it did. It stops instead, naming the file, when the incoming
 commits change that file's `depends_on` or the same keys, since the old values would read over the new
 ones (a status flipped to `ready` over a new dependency): check the file out, and once the pull is in,
-set its keys again through swarm.sh. An untracked board file whose bytes match the
-incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
+set its keys again through swarm.sh. A `status` and `prs` the incoming commits change are the exception:
+the old ones give way and are dropped, so a story whose merged PR set `status: done` reads as done.
+An untracked board file whose bytes match the incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
 would overwrite) also stops reconcile, and reconcile puts back each of those changes first, so a
 failed pull changes nothing. On a stop for changed files, it names each of them and logs an `incident` line in
 events.tsv with the outcome `pull-failed: <files>`. For a board
 file it says to land the edit through `swarm.sh board-pr` or check the file out to drop it; for any
 other file, to commit or move the change. Then run `swarm.sh reconcile` again. On a board in the
-repo, reconcile never deletes a tracked file in the main checkout. After a pull, an item whose PR
-merged but left its file on the board is marked `done` in its state, and stays on the board until
-`swarm.sh finish <slug>` takes it off through a board PR. When reconcile makes no pull (it cannot
-read a PR in review, or the checkout's branch has no upstream), the item stays in review until a
-later reconcile pulls. On a board outside the repo it deletes the file of the item that merged. `swarm.sh unblock` then readies a
+repo, reconcile never deletes a tracked file in the main checkout. An item whose PR merged but left
+its file on the board is marked `done` in its state after a pull, or at once when the checkout's
+branch has no upstream (there is nothing to pull), and stays on the board until
+`swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
+cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>

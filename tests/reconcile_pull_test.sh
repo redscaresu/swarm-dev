@@ -6,7 +6,8 @@
 # to it. A story whose uncommitted edit is only to swarm.sh's own keys (an older swarm.sh's review) has
 # them moved to its state and pulls, reading as before even where its state disagrees with the file.
 # Only a file the pull changes has its keys moved; a key edit on any other stays in it, and one whose
-# file the pull gives a new dependency, or changes the same keys in, stops the pull. A hand edit
+# file the pull gives a new dependency, or changes the same keys in, stops the pull, except a status
+# write, which gives way to the incoming status. With no upstream, a merged item is marked done. A hand edit
 # to a tracked story the pull also changes stops the pull, before any key is moved, names the file,
 # changes nothing, and logs one pull-failed incident; with nothing to pull it stops nothing. A merge
 # git refuses puts back every change made for it. After a pull by hand, reconcile still drops the
@@ -164,15 +165,25 @@ rc=0; out="$(at kd reconcile)" || rc=$?
 check "an old ready flip under a new dependency stops the pull, naming h, and moves nothing" "1|yes|same|gone|pull-failed: docs/stories/h.md" \
   "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/h.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kd-h" "${ROOT}/kd/docs/stories/h.md" && echo same)|$(state kd h)|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/kd/.swarm/events.tsv")"
 
-# --- e in review as an older swarm.sh wrote it (status: and prs: uncommitted, no state), and incoming
-# commits that set e's status too: the pull stops, naming e, and e's edit stays, with no state.
+# --- e in review as an older swarm.sh wrote it (status: review and prs: uncommitted, no state), and
+# its merged PR sets status: done: the old status write gives way, and the pull goes, e done.
 setup kc; rm "${ROOT}/kc/.swarm/board-state/stories/e"
-perl -pi -e 's|^status: ready$|status: blocked|' "${ROOT}/kc-up/docs/stories/e.md"
-"${GIT[@]}" -C "${ROOT}/kc-up" commit -q -am "block e" && "${GIT[@]}" -C "${ROOT}/kc-up" push -q origin main
-perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/kc/docs/stories/e.md"; cp "${ROOT}/kc/docs/stories/e.md" "${ROOT}/kc-e"
+perl -pi -e 's|^status: ready$|status: done|' "${ROOT}/kc-up/docs/stories/e.md"
+"${GIT[@]}" -C "${ROOT}/kc-up" commit -q -am "e's PR" && "${GIT[@]}" -C "${ROOT}/kc-up" push -q origin main
+perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/3"'|' "${ROOT}/kc/docs/stories/e.md"
 rc=0; out="$(at kc reconcile)" || rc=$?
+check "a leftover status: review gives way to the PR's status: done, and the pull goes" "0|$(git -C "${ROOT}/kc.git" rev-parse main)||done||yes|no" \
+  "${rc}|$(git -C "${ROOT}/kc" rev-parse HEAD)|$(git -C "${ROOT}/kc" status --porcelain)|$(val "${ROOT}/kc/docs/stories/e.md" status)|$(val "${ROOT}/kc/docs/stories/e.md" prs)|$(has "merged: e" "${out}")|$(if grep -qs incident "${ROOT}/kc/.swarm/events.tsv"; then echo yes; else echo no; fi)"
+
+# --- e escalated by an older swarm.sh (kind: lead, uncommitted), and incoming commits that set e's
+# kind too: the pull stops, naming e, and e's edit stays, with no state.
+setup kk; rm "${ROOT}/kk/.swarm/board-state/stories/e"
+perl -pi -e 's|^kind: code$|kind: docs|' "${ROOT}/kk-up/docs/stories/e.md"
+"${GIT[@]}" -C "${ROOT}/kk-up" commit -q -am "e is docs" && "${GIT[@]}" -C "${ROOT}/kk-up" push -q origin main
+perl -pi -e 's|^kind: code$|kind: lead\nescalated_from: code|' "${ROOT}/kk/docs/stories/e.md"; cp "${ROOT}/kk/docs/stories/e.md" "${ROOT}/kk-e"
+rc=0; out="$(at kk reconcile)" || rc=$?
 check "an old key edit the incoming commits change too stops the pull, naming e, and moves nothing" "1|yes|same|gone" \
-  "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/e.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kc-e" "${ROOT}/kc/docs/stories/e.md" && echo same)|$(state kc e)"
+  "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/e.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kk-e" "${ROOT}/kk/docs/stories/e.md" && echo same)|$(state kk e)"
 
 # --- A hand edit to e's swarm.sh keys (kind: lead, the lead's own) on a file the pull leaves alone:
 # it stays in the file, and e's state is as it was.
@@ -240,6 +251,13 @@ mkdir -p "${ROOT}/ep/.swarm/board-state/epics"; printf '%s\n' "status: ready" "s
 rc=0; at ep reconcile >/dev/null || rc=$?
 check "a pull that deletes the last epic takes docs/epics, and x's state goes" "0|gone|gone" \
   "${rc}|$(gone "${ROOT}/ep/docs/epics")|$(gone "${ROOT}/ep/.swarm/board-state/epics/x")"
+
+# --- No upstream for the main checkout: nothing can be pulled, so a, merged with its file still
+# here, is marked done at once, and the main checkout keeps no edit.
+setup nu; git -C "${ROOT}/nu" branch -q --unset-upstream
+rc=0; out="$(at nu reconcile)" || rc=$?
+check "no upstream: a merged item is marked done, not left in review" "0|done||yes" \
+  "${rc}|$(val "${ROOT}/nu/docs/stories/a.md" status)|$(git -C "${ROOT}/nu" status --porcelain)|$(has "merged: a, marked done" "${out}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
