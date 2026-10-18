@@ -710,7 +710,7 @@ wait_agent() {
     if [[ "${status}" == stalled:* ]]; then
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
       [[ ${rc} != 0 ]] || { echo "${out}"; return 0; }
-      [[ ${rc} == 1 ]] || { echo "${out}"; return 1; }
+      [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || { echo "${out}"; return 1; }
       echo "${status}"; return "${WAIT_STALLED}"
     fi
     if [[ ${rc} -ne 0 ]]; then
@@ -826,7 +826,7 @@ tell_agent() {
   if [[ "${kind}" == findings ]] && (( $(findings_told "$1") >= STEP_UP_FINDINGS - 1 )); then
     rc=0; ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}" || rc=$?
     [[ ${rc} != 0 ]] || die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
-    [[ ${rc} == 1 ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; list it for the lead"
+    [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "tell: ${name} was not told: its step-up failed partway, after its builder was closed; list it for the lead"
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die

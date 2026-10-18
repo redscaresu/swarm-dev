@@ -372,7 +372,7 @@ dispatch() {
             else [[ -z "${2:-}" ]] || die "story: unknown argument '$2'"; build_story "${1:?slug}"; fi ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
-    step-up) require_herdr; step_up "${1:-}" "${2:-}" "${3:-}" ;;
+    step-up|_step-up) require_herdr; step_up "${1:-}" "${2:-}" "${3:-}" ;;   # _step-up: ladder_step's, not logged
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
     next)   next_step ;;
@@ -423,7 +423,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait wait-pr watch base _base _role _name _brief _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait wait-pr watch base _base _role _name _brief _target _label _trusted _pane _mtime _step-up"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -737,6 +737,7 @@ main() {
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
+  EV_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
   # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
@@ -750,6 +751,8 @@ main() {
   elif [[ ${rc} -ne 0 ]]; then
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
+  elif [[ "${EV_CMD}" == close* ]] && stepped_up_since "${EV_TARGET}" "${EV_START}"; then
+    :   # a step-up took the close's place (close_agent): its escalate line ends that build
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi

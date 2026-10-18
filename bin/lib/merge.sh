@@ -418,37 +418,42 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   done
 }
 
-# RED_HEADS: `<slug> <sha> <time> <seen|red|green>`: each PR head a watch saw, and ci_gate's verdict
-# on it once it gave one. Only appended to, one short line at a time, so two watches at once lose none.
+# RED_HEADS: `<slug> <sha> <time> <seen|red|green|refused>`: each PR head a watch saw, ci_gate's
+# verdict on it once it gave one, and a step-up that closed nothing while it was the PR's head. Only
+# appended to, one short line at a time, so two watches at once lose none.
 RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 
-# ci_red_scan <owner/repo> <head> <slug> — with escalate_ladder set: note <head> as seen in this build
-# (build_started) unless an earlier build judged it, then judge with ci_gate head every head seen in
-# this build and not judged yet, the current one or one replaced since; red or green is final, and
-# pending or a failed read is judged again next poll. With STEP_UP_RED_HEADS distinct red heads or
-# more and the story's builder open (a PR whose builder was closed is the lead's), step it up
-# (ladder_step ci-red-<N>) and succeed unless that closed nothing; else fail.
+# ci_red_scan <owner/repo> <head> <slug> — with escalate_ladder set: note <head> as seen, the first
+# time any watch sees it, then judge with ci_gate head every head first seen in this build
+# (build_started) and not judged yet, the current one or one replaced since; red or green is final,
+# and pending or a failed read is judged again next poll. A head that was there before the build is
+# not this build's. With STEP_UP_RED_HEADS distinct red heads or more, the story's builder open (a PR
+# whose builder was closed is the lead's) and no step-up refused on this head, step it up
+# (ladder_step ci-red-<N>) and succeed unless that closed nothing, which is noted (refused) so this
+# head is not tried again; else fail.
 # ponytail: ci_gate reads a head still running on each poll; skip it there if watch's gh calls matter.
 ci_red_scan() {
   local since now h rc v n
   [[ -n "${CFG_escalate_ladder:-}" ]] || return 1
   since="$(build_started "$3")"; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   mkdir -p "${RED_HEADS%/*}"; touch "${RED_HEADS}"
-  # mine: heads seen this build, judged: with a verdict this build, old: with one from an earlier build.
-  awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && ($3 >= t || $4 != "seen") { f = 1 } END { exit !f }' "${RED_HEADS}" \
+  # A head is noted once, the first time any watch sees it: one there before the build is never this
+  # build's. mine: heads first seen this build, judged: those with a verdict.
+  awk -v s="$3" -v h="$2" '$1 == s && $2 == h { f = 1 } END { exit !f }' "${RED_HEADS}" \
     || printf '%s %s %s seen\n' "$3" "$2" "${now}" >> "${RED_HEADS}"
   while read -r h; do
     rc=0; ci_gate head "$1" "${h}" >/dev/null 2>&1 || rc=$?
     case "${rc}" in 0) v=green ;; 1) v=red ;; *) continue ;; esac
     printf '%s %s %s %s\n' "$3" "${h}" "${now}" "${v}" >> "${RED_HEADS}"
-  done < <(awk -v s="$3" -v t="${since}" '$1 != s { next } $3 < t && $4 != "seen" { old[$2] = 1 }
-      $3 >= t { if ($4 == "seen") mine[$2] = 1; else judged[$2] = 1 }
-      END { for (h in mine) if (!(h in judged) && !(h in old)) print h }' "${RED_HEADS}")
+  done < <(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t { if ($4 == "seen") mine[$2] = 1; else if ($4 == "red" || $4 == "green") judged[$2] = 1 }
+      END { for (h in mine) if (!(h in judged)) print h }' "${RED_HEADS}")
   # Distinct heads: two watches can both judge one head.
-  n="$(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t && $4 == "red" && !seen[$2]++' "${RED_HEADS}" | wc -l | tr -d ' ')"
+  n="$(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t && $4 == "red" && !red[$2]++ { n++ } END { print n + 0 }' "${RED_HEADS}")"
   (( n >= STEP_UP_RED_HEADS )) && [[ -n "$(agent_field "$(agent_name "$3")" pane_id)" ]] || return 1
+  ! awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "refused" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
   rc=0; ladder_step "$3" "ci-red-${STEP_UP_RED_HEADS}" || rc=$?
-  [[ ${rc} != 1 ]]
+  [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" ]] && return 0
+  printf '%s %s %s refused\n' "$3" "$2" "${now}" >> "${RED_HEADS}"; return 1
 }
 
 # ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when

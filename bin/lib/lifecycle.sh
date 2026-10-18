@@ -379,9 +379,10 @@ close_agent() {
       record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
       # With the ladder on, the next model takes the build over instead: no attempt, nothing cleared.
       # A step-up that failed partway closed the builder already: nothing more is done here.
+      # main logs no close then (stepped_up_since): the escalate line ends the stepped-up build.
       rc=0; ladder_step "$1" no-pr || rc=$?
       [[ ${rc} != 0 ]] || return 0
-      [[ ${rc} == 1 ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
+      [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
     fi
   fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
@@ -428,7 +429,7 @@ close_agent() {
 # STEP_UP_RED_HEADS: the red heads on its PR that do (ci_red_step). The trigger names carry them.
 STEP_UP_FINDINGS=3
 STEP_UP_RED_HEADS=2
-# STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder (a refusal is 1).
+# STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder, and only then.
 STEP_UP_PARTWAY=4
 STEP_UP_TRIGGERS="findings-${STEP_UP_FINDINGS} ci-red-${STEP_UP_RED_HEADS} stalled no-pr"
 step_trigger() {
@@ -508,23 +509,54 @@ build_started() {
     END { print t }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
-# ladder_step <slug> <trigger> [findings] — with escalate_ladder set, step_up <slug> for a trigger
-# swarm.sh saw itself (close, wait --stall, tell, watch): 0 when it stepped up, 1 when nothing was
-# closed (a refusal, said on stderr), and the caller carries on as before, STEP_UP_PARTWAY (or any
-# other status) when it failed partway, and the caller stops. With the ladder empty, the builder's model
-# at the ladder's top or off it, or a step-up of this build that failed partway already, it runs
-# nothing and returns 1.
+# ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
+# wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
+# builder, and the caller stops; any other status when nothing was closed (a refusal, said on stderr,
+# or a failure before the close), and the caller carries on as before. One step-up of a story at a
+# time, under its lock (step_lock); inside it step_due reads the build again, and with nothing due
+# (another step-up came first, no rung above, a partway failure this build) it runs nothing and returns 1.
 ladder_step() {
-  local from since ladder=",${CFG_escalate_ladder:-},"
-  from="$(builder_model "$1")"
-  # A model with a rung above it: with the ladder empty, none has.
-  [[ -n "${from}" && "${ladder}" == *",${from},"?* ]] || return 1
+  local since lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc=1
   since="$(build_started "$1")"
-  ! awk -F'\t' -v s="$1" -v t="${since}" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^failed partway/ { f = 1 } END { exit !f }' \
-    "${EVENTS_LOG}" 2>/dev/null || return 1
-  # A swarm.sh of its own, logged as step-up: step_up's die then ends only it, and set -e holds in it,
-  # which a subshell called from a condition, as every caller does, would run without.
-  "${BASH}" "${SWARM_HOME}/bin/swarm.sh" step-up "$1" "$2" ${3:+"$3"}
+  step_lock "${lock}" || return 1
+  if step_due "$1" "${since}"; then
+    # A swarm.sh of its own: step_up's die then ends only it, and set -e holds in it, which a subshell
+    # called from a condition, as every caller does, would run without. As _step-up it is not logged:
+    # a refusal is no sign of life (stall.py), and step_up logs its own escalate line.
+    rc=0; "${BASH}" "${SWARM_HOME}/bin/swarm.sh" _step-up "$1" "$2" ${3:+"$3"} || rc=$?
+  fi
+  rm -rf "${lock}"
+  return "${rc}"
+}
+
+# step_due <slug> <since> — a step-up of <slug> is due: its build is still the one that started at
+# <since>, its builder's model has a rung above it (none has with the ladder empty), and no step-up of
+# this build failed partway.
+step_due() {
+  local from ladder=",${CFG_escalate_ladder:-},"
+  [[ "$(build_started "$1")" == "$2" ]] || return 1
+  from="$(builder_model "$1")"
+  [[ -n "${from}" && "${ladder}" == *",${from},"?* ]] || return 1
+  ! awk -F'\t' -v s="$1" -v t="$2" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^failed partway/ { f = 1 } END { exit !f }' \
+    "${EVENTS_LOG}" 2>/dev/null
+}
+
+# step_lock <dir> — take a lock: make <dir> with this shell's pid in it. Held by a live pid, or by
+# one still writing its pid, it fails; held by a pid that is gone, it is taken over.
+step_lock() {
+  local pid
+  mkdir -p "${1%/*}"
+  if ! mkdir "$1" 2>/dev/null; then
+    pid="$(cat "$1/pid" 2>/dev/null || true)"
+    [[ -n "${pid}" ]] && ! kill -0 "${pid}" 2>/dev/null || return 1
+    rm -rf "$1"; mkdir "$1" 2>/dev/null || return 1
+  fi
+  echo "$$" > "$1/pid"
+}
+
+# stepped_up_since <slug> <time> — <slug> has an ok escalate line at or after <time>.
+stepped_up_since() {
+  awk -F'\t' -v s="$1" -v t="$2" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^ok/ { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
 }
 
 # handover_brief <slug> <src> <base> <trigger> <from> <to> [findings] — the next rung's brief: the builder's

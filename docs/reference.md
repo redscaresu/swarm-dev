@@ -1153,12 +1153,17 @@ it. A build here starts at the story's newest `story`, `escalate` or `agent` sta
   that are not review findings, such as a stacked child's merge, go as `tell <slug> nudge`.
 - `watch --epic` or `--backlog` steps up a story of its own whose builder is open, once the PR has
   gone red on two heads of the build. Every head it sees goes into `.swarm/red-heads.tsv`, and each
-  is judged again on later polls until `ci_gate` calls it red or green, even after a new push. The
-  lead's bare `watch` steps up nothing.
+  is judged again on later polls until `ci_gate` calls it red or green, even after a new push. A
+  head that was already there when the build started is not counted. The lead's bare `watch` steps
+  up nothing.
 
 Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on that builder
-again, not to close, retry or tell it. No step-up is tried at the top rung or off the ladder, so the
-command carries on as it would with the ladder empty. A step-up that fails after closing the builder
+again, not to close, retry or tell it. A close that a step-up replaced logs no close: the escalate
+line ends that build. One step-up of a story runs at a time, under `.swarm/locks/step-up-<slug>`. No
+step-up is tried at the top rung or off the ladder, so the command carries on as it would with the
+ladder empty. A step-up that is refused, or fails before it closes the builder, says why on stderr,
+logs nothing (a refusal is no sign of life), and leaves the command to carry on the same way. `watch`
+does not try it again on the same head. A step-up that fails after closing the builder
 logs `escalate` `failed partway (...)`, prints `step-up failed: <slug>`, and stops the command that
 ran it: a close counts nothing and clears nothing. The story is then the lead's, and no trigger
 tries that build again.

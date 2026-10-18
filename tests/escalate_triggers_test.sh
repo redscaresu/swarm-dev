@@ -62,7 +62,7 @@ P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
 # fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
 # (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail"; : > "${ROOT}/run.log"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -79,9 +79,12 @@ fresh() {
 }
 OLD=$(($(date +%s) - 7200))
 echo '[]' > "${ROOT}/prs.json"
-run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWARM_STALL_POLL_MS=1000 PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1); }
-# stepped — the escalate lines' results, and any step-up that was refused, comma-separated.
-stepped() { awk -F'\t' '$2 == "escalate" { print $5 } $2 == "step-up" && $5 != "ok" { print "refused: " $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
+# run — swarm.sh in the project; its output also goes to run.log, which fresh empties.
+run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWARM_STALL_POLL_MS=1000 PATH="${STUB_BIN}:${PATH}" bash "${SWARM}" "$@" 2>&1) | tee -a "${ROOT}/run.log"; }
+# stepped — the escalate lines' results, then each step-up that was tried and refused (said in a
+# run's output, as a refused automatic step-up is not logged), comma-separated.
+stepped() { { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv"; sed -n 's/^swarm: step-up: /refused: step-up: /p' "${ROOT}/run.log"; } | paste -sd, -; }
+closes() { grep -c $'\tclose\t' "${P}/.swarm/events.tsv" || true; }
 findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 1 2 >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"; }
 heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
 attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
@@ -91,6 +94,7 @@ for ladder in sonnet,opus,fable ""; do
   want="ok (no-pr: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
   fresh "${ladder}" idle; run close s1 >/dev/null || true
   check "ladder '${ladder}': a close with no PR logs idle-no-pr and steps up only with the ladder on" "1|${want}" "$(grep -c 'idle-no-pr' "${P}/.swarm/events.tsv")|$(stepped)"
+  check "ladder '${ladder}': a close a step-up took the place of logs no close" "$([[ -n "${ladder}" ]] && echo 0 || echo 1)" "$(closes)"
 
   want="ok (stalled: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
   fresh "${ladder}" busy; out="$(SWARM_WAIT_STARTED="${OLD}" run wait --stall s1 3000)" || true
@@ -131,6 +135,20 @@ for ladder in sonnet,opus,fable ""; do
     printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
     heads aaaa1111 bbbb2222
     check "the head an earlier build judged red is not counted again for this one" "ok (stalled: haiku -> sonnet)" "$(stepped)"
+    # A head still pending when the build was stepped up was there before this build: it never counts.
+    fresh "${ladder}" idle
+    printf 's1 aaaa1111 2026-10-01T10:00:00Z seen\n' > "${P}/.swarm/red-heads.tsv"
+    printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
+    heads aaaa1111 bbbb2222
+    check "a head pending at the step-up, red after it, is not the new build's red head" "ok (stalled: haiku -> sonnet)" "$(stepped)"
+    # A step-up refused after ladder_step's check (here the story is no longer ready) is said, is not
+    # logged (a refusal is no sign of life), and is not tried again on the same head.
+    fresh "${ladder}" idle; sed -i.bak 's/^status: ready$/status: review/' "${P}/docs/stories/s1.md"
+    heads aaaa1111 bbbb2222
+    { grep -v '^done bbbb2222$' "${P}/.swarm/state/watch-seen" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${P}/.swarm/state/watch-seen"
+    heads bbbb2222
+    check "a refused step-up is noted on its head, not logged, and not tried again there" "1|0|1" \
+      "$(grep -c 'step-up: s1 is not status: ready' "${ROOT}/run.log")|$(grep -c $'\tstep-up\t' "${P}/.swarm/events.tsv" || true)|$(grep -c ' bbbb2222 .* refused$' "${P}/.swarm/red-heads.tsv")"
     # So does one the builder started by hand (swarm.sh agent) inherits.
     fresh "${ladder}" idle
     printf 's1 old0000 2026-10-01T10:00:00Z red\n' > "${P}/.swarm/red-heads.tsv"
@@ -164,6 +182,22 @@ for ladder in sonnet,opus,fable ""; do
     echo "s1 w:1" > "${ROOT}/agents"; echo "w:1 s1" > "${P}/.swarm/state/s1"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
     check "a build whose step-up failed partway is not stepped up again" "failed partway (no-pr: sonnet -> opus)|yes" \
       "$(escalates)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
+    # A step-up that fails before it closes anything, with a status of its own (here handover_brief's
+    # git diff exits 128 under pipefail: the worktree is no longer a git checkout), is a refusal: the
+    # close goes on and counts the attempt.
+    fresh "${ladder}" idle; rm -f "${WT}/.git"
+    out="$(run close s1)" && rc=0 || rc=$?
+    check "a step-up that fails before closing the builder is a refusal: the close goes on" "0|no|1|" \
+      "${rc}|$(grep -q 'step-up failed' <<< "${out}" && echo yes || echo no)|$(attempts)|$(escalates)"
+    # One step-up of a story at a time: a lock held by a live process makes a trigger skip it; one left
+    # by a process that is gone is taken over.
+    fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
+    run close s1 >/dev/null || true
+    check "a step-up lock held by a live process: no step-up, the close counts the attempt" "|1" "$(stepped)|$(attempts)"
+    fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; (exit 0) & dead=$!; wait "${dead}"; echo "${dead}" > "${P}/.swarm/locks/step-up-s1/pid"
+    run close s1 >/dev/null || true
+    check "a step-up lock left by a process that is gone is taken over, and released" "ok (no-pr: sonnet -> opus)|no" \
+      "$(stepped)|$([[ -e "${P}/.swarm/locks/step-up-s1" ]] && echo yes || echo no)"
     # At the ladder's top rung no step-up runs: the close counts the attempt as it would with the ladder off.
     fresh "${ladder}" idle fable; run close s1 >/dev/null || true
     check "at the top rung no step-up is tried, and the close counts the attempt" "|1" "$(stepped)|$(attempts)"
