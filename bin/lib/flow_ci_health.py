@@ -1,8 +1,9 @@
 # CI health, a flow section (flow_report.py gives its globals): one TSV row for the project over the
 # PRs of the outcomes rows dated in the window (with --epic, that epic's; without --since, the 30
 # days up to --until or today, as each PR costs 2 or more gh calls). gh gives each PR's commits and
-# its branch's workflow runs; a run counts when its head is one of the PR's commits.
-import datetime, json, re, statistics, subprocess
+# its branch's workflow runs; a run counts when its head is one of the PR's commits. Then per repo, the
+# CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
+import collections, datetime, functools, json, re, statistics, subprocess, sys
 from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
@@ -23,18 +24,24 @@ def secs(t):
     except (ValueError, AttributeError):
         return None
 
-def pr_runs(url):
-    # The PR's completed runs, each with its conclusions first attempt first (gh run list gives a
-    # rerun's last attempt alone, so the earlier ones come from /attempts/<n>), or None when gh cannot
-    # read them.
+@functools.lru_cache(maxsize=None)
+def head_runs(url):
+    # The PR's completed runs on its own commits, or None when gh cannot read them; read once per PR.
     repo = GITHUB.match(url).group(1)
     pr = gh("pr", "view", url, "--json", "headRefName,commits")
     runs = pr and gh("run", "list", "-R", repo, "--branch", pr["headRefName"], "--limit", "200", "--json",
-                     "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,updatedAt")
+                     "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt")
     if runs is None:
         return None
     shas = {c["oid"] for c in pr["commits"]}
-    runs = [r for r in runs if r["headSha"] in shas and r["status"] == "completed"]
+    return [r for r in runs if r["headSha"] in shas and r["status"] == "completed"]
+
+def pr_runs(url):
+    # head_runs, each with its conclusions first attempt first (gh run list gives a rerun's last
+    # attempt alone, so the earlier ones come from /attempts/<n>), or None when gh cannot read them.
+    repo, runs = GITHUB.match(url).group(1), head_runs(url)
+    if runs is None:
+        return None
     for r in runs:
         earlier = [gh("api", f"repos/{repo}/actions/runs/{r['databaseId']}/attempts/{n}") for n in range(1, r["attempt"])]
         if None in earlier:
@@ -70,16 +77,75 @@ def health(urls):
     return [str(len(urls)), str(len(heads)), f"{statistics.median(mins):.1f}" if mins else "",
             f"{red / len(urls):.2f}" if urls else "", str(flakes)]
 
-if since == "0000-00-00":
+def ci_time(url):
+    # The PR's CI time: its newest head's longest run (its last attempt, startedAt to updatedAt) and
+    # that run's slowest job (one jobs listing), as (minutes, job, job minutes); () when it has no
+    # timed run or job, None when gh fails.
+    runs = head_runs(url)
+    if runs is None:
+        return None
+    timed = [(secs(r["startedAt"]), secs(r["updatedAt"]), r) for r in runs]
+    timed = [t for t in timed if None not in t[:2]]
+    if not timed:
+        return ()
+    newest = max(timed, key=lambda t: t[2]["createdAt"])[2]["headSha"]
+    start, end, run = max((t for t in timed if t[2]["headSha"] == newest), key=lambda t: t[1] - t[0])
+    got = gh("api", f"repos/{GITHUB.match(url).group(1)}/actions/runs/{run['databaseId']}/jobs")
+    if got is None:
+        return None
+    jobs = [(secs(j.get("completed_at")) - secs(j.get("started_at")), j["name"]) for j in got["jobs"]
+            if secs(j.get("started_at")) is not None and secs(j.get("completed_at")) is not None]
+    if not jobs:
+        return ()
+    job_secs, job = max(jobs)
+    return (end - start) / 60, job, job_secs / 60
+
+def summary(times):
+    # ci_time over PRs: the median minutes, the job most often slowest and that slowest job's median
+    # minutes; None for no PRs.
+    if not times:
+        return None
+    return (statistics.median(t[0] for t in times), collections.Counter(t[1] for t in times).most_common(1)[0][0],
+            statistics.median(t[2] for t in times))
+
+def trend(now, before):
+    # One TSV row per repo of the PRs in now or before: its PRs, median CI minutes, slowest job and its
+    # median minutes in now, the same in before, and the change in CI minutes; None when gh fails.
+    times = {}
+    for i, urls in enumerate((now, before)):
+        for url in urls:
+            t = ci_time(url)
+            if t is None:
+                return None
+            times.setdefault(GITHUB.match(url).group(1), ([], []))[i].extend([t] if t else [])
+    rows = []
+    for repo, (a, b) in sorted(times.items()):
+        sa, sb = summary(a), summary(b)
+        cells = lambda s: [f"{s[0]:.1f}", s[1], f"{s[2]:.1f}"] if s else ["", "", ""]
+        rows.append([repo, str(len(a))] + cells(sa) + [str(len(b))] + cells(sb)
+                    + [f"{sa[0] - sb[0]:+.1f}" if sa and sb else ""])
+    return rows
+
+def windowed(start, end):
+    # The github.com PRs of the outcomes rows dated start to end (with --epic, its own). One off
+    # github.com (Enterprise, or written by hand) is left out: gh run list needs its repo.
+    return sorted({pr_key(r["pr"]): r["pr"] for r in rows if GITHUB.match(r["pr"]) and start <= r["date"] <= end
+                   and (not epic or r["epic"] == epic)}.values())
+
+if __name__ == "__main__":
     end = datetime.date.today() if until == "9999-12-30" else datetime.date.fromisoformat(until)
-    since = (end - datetime.timedelta(days=30)).isoformat()
-    print(f"PRs from the last 30 days, {since} on; --since sets the start")
-# A PR URL off github.com (Enterprise, or written by hand) is left out: gh run list needs its repo.
-prs = {pr_key(r["pr"]): r["pr"] for r in rows
-       if GITHUB.match(r["pr"]) and since <= r["date"] <= until and (not epic or r["epic"] == epic)}
-got = health(sorted(prs.values()))
-if got is None:
-    print("ci health: gh failed")
-else:
+    if since == "0000-00-00":
+        since = (end - datetime.timedelta(days=30)).isoformat()
+        print(f"PRs from the last 30 days, {since} on; --since sets the start")
+    got = health(windowed(since, until))
+    if got is None:
+        print("ci health: gh failed")
+        sys.exit()
     print("prs\theads\tci_min_median\tred_runs_per_pr\tflakes")
     print("\t".join(got))
+    # The window before: as many days, up to the day before since.
+    start, day = datetime.date.fromisoformat(since), datetime.timedelta(days=1)
+    got = trend(windowed(since, until), windowed((start - (end - start) - day).isoformat(), (start - day).isoformat()))
+    print("\nci time: gh failed" if got is None else
+          "\nrepo\tprs\tci_min_median\tslowest_job\tslowest_job_min_median\tprev_prs\tprev_ci_min_median"
+          "\tprev_slowest_job\tprev_slowest_job_min_median\tci_min_change\n" + "\n".join("\t".join(r) for r in got))

@@ -194,7 +194,11 @@ outcomes_report() {
 #     (failure, timed_out or startup_failure) per PR and flakes (a red run, then a green one of the
 #     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
 #     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
-#     10 s prints `ci health: gh failed` and no numbers.
+#     10 s prints `ci health: gh failed` and no numbers. Then, per repo, a PR's CI time (its newest
+#     head's longest run, from its last attempt's start, and that run's slowest job, from one jobs
+#     listing): its PRs, the median minutes, the job most often slowest and that job's median
+#     minutes, the same for the window of as many days before it, and the change in minutes
+#     (`ci time: gh failed` when gh fails). dash's ci line reads the same over the last 7 days.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's

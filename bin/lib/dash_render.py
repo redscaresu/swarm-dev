@@ -842,8 +842,10 @@ esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "esc
 on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
 on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
            (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
+# CI time this week against last (dash_slow.py's ci line), a group of its own.
+ci = [(SEP, [(E["DASH_CI"], "")])] if E.get("DASH_CI") else []
 if not WIDE:
-    out += pack([(SEP, summary), (SEP, on_call)], W)
+    out += pack([(SEP, summary), (SEP, on_call)] + ci, W)
 drift = lines("DASH_DRIFT")
 if drift:
     out.append(fit([(f"board: {len(drift)} uncommitted edit{'' if len(drift) == 1 else 's'} in the main checkout: {', '.join(drift)}", "warn")], W))
@@ -870,7 +872,7 @@ if blocked or later:
 LEGEND_ON = E.get("DASH_LEGEND") != "0"
 foot = [fit([(cut(l, W), "dim")], W) for l in legend_lines(W, KEYS, WIDE, LEAD)] if LEGEND_ON else []
 if WIDE:
-    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
+    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)] + ci
                  + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
 
 # Recent fills the height left. Under 140 columns it, a shown ladder and running now are stacked
