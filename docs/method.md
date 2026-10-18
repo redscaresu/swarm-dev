@@ -81,14 +81,18 @@ project). `templates/docs/` holds the READMEs that define each format and two Ob
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
 without overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and
 adds `.swarm/` and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no
-`.github/workflows`, it writes a `ci.yml` that runs `make check` on each PR and on pushes to the
-default branch, and skips a PR that changes only the board's own files (`stories/`, `epics/`, `hld/`,
-`Board.base` and `.obsidian/` under `board_dir`, so other pages in `docs/` still get checked). A board
-outside the repo gets the workflow without the skip. With workflows already there, init leaves them
-and prints the skip step to add to the job that runs your checks. It also writes a git pre-commit
-hook that runs `make check` while the Makefile has a `check` target, skipping a commit that changes
-only the board's own files. When a hook exists, or `core.hooksPath` is set, init writes no hook and
-prints the lines to add. The next `/swarm-dev:swarm` asks once for the brief
+`.github/workflows`, it writes a `ci.yml` that runs `make check` on each PR and on pushes to origin's
+default branch (with no origin, it writes no CI and says so). Its gate, `.github/swarm-board-only.sh`,
+skips the checks for a PR or push that changes only the board's own files (`stories/`, `epics/`,
+`hld/`, `Board.base` and `.obsidian/` under `board_dir`, so other pages in `docs/` still get
+checked). CI runs the base commit's copy of the gate, so a PR that edits it doesn't change how its
+own run is judged. A board outside the repo gets the workflow without the gate. A `ci.yml` that init
+wrote carries a marker line, and init leaves it alone after that. With other workflows already
+there, init leaves them, writes the gate, and prints the step to add to the job that runs your
+checks. It also writes a git pre-commit hook that runs `make check` while the Makefile has a
+`check` target, skipping a commit that changes only the board's own files. When a hook exists, or
+the repo sets `core.hooksPath`, init writes no hook and prints the lines to add. A global
+`core.hooksPath` gets no hook and no lines, since a hook there runs in every repo. The next `/swarm-dev:swarm` asks once for the brief
 (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never
@@ -98,7 +102,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 
 | Key | Default | What it does |
 |---|---|---|
-| `board_dir` | `docs` | where the board is, relative to the project unless absolute |
+| `board_dir` | `docs` | where the board is, relative to the project unless absolute; a `"` or `\` in it is refused, since init writes it into quoted strings |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live; the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`. Every brief carries the file's tagged rule lines; a brief over 4 KB with them is flagged, not cut (reference.md § The outer loop) |

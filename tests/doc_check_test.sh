@@ -3,7 +3,8 @@
 # skills/ and templates/ (AGENTS.md is the lead's, so it is not read), every `swarm.sh <command>` in
 # code must be one of dispatch's arms (or version and update, which run before it), every key in a
 # setting table (header `| Key |`) or after `swarm.sh config` one of CONFIG_KEYS, and every repo path
-# in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board.
+# in code or a markdown link must exist; a docs/ path may instead be one templates/docs gives a board,
+# and .github/swarm-board-only.sh the gate init writes from templates/ci/board-only.sh.
 # A removed command that prints a pointer is still an arm, so it passes. tests/doc_check_known.txt
 # lists the stale references found when this landed (file, tab, text); they pass until fixed, and an
 # entry no longer found fails, so the list only shrinks.
@@ -29,6 +30,9 @@ ROOTS = r"(?:bin|commands|docs|hooks|scripts|skills|templates|tests|\.claude-plu
 def exists(path):
     if glob.glob(os.path.join(repo, path)):
         return True
+    # swarm.sh init writes CI's board-only gate there, from templates/ci/board-only.sh.
+    if path == ".github/swarm-board-only.sh":
+        return os.path.exists(os.path.join(repo, "templates/ci/board-only.sh"))
     return path.startswith("docs/") and bool(glob.glob(os.path.join(repo, "templates", path)))
 
 def check_code(code, out):

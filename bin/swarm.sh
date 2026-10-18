@@ -178,6 +178,8 @@ load_config() {
         esac ;;
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
+        # init writes board_dir into quoted strings in CI's gate and the pre-commit hook.
+        [[ "${key}" != board_dir || "${value}" != *[\"\\]* ]] || die "${where}: board_dir: \" and \\ are refused; name a plain path"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
       merge)

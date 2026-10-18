@@ -130,6 +130,10 @@ for v in "Ann <a@x.io>" "Co-Authored-By: Ann <a@x.io> ;"; do
     "$(fails_with "${p}/.claude/swarm/config:1: commit_trailers must be trailers" run "${p}" config)"
 done
 
+for v in 'my"board' 'my\board'; do
+  project "${p}" "board_dir = ${v}"
+  check "board_dir = ${v} is refused, since init quotes it" "yes" "$(fails_with 'config:1: board_dir: " and \\ are refused' run "${p}" config)"
+done
 project "${p}" "commit_trailers = Refs: #123"
 check "a commit_trailers cut short by a # says a # starts a comment" "yes" \
   "$(fails_with "commit_trailers must be trailers .*(a # starts a comment, so no trailer can hold one)" run "${p}" config)"

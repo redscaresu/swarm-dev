@@ -1,3 +1,4 @@
+# swarm-dev wrote this file with swarm.sh init; delete it and run init again to rewrite it.
 name: CI
 
 on:
@@ -17,24 +18,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the gate diffs against the PR's base
+          fetch-depth: 0 # the gate diffs against the base
           persist-credentials: false
-      # swarm-dev: a pull request that changes only the board's own files skips the checks.
-      - name: Skip a board-only PR
+      # swarm-dev: a change to only the board's own files skips the checks. The gate is the base's
+      # copy when the base has one, so a PR's change to it applies only once it has merged.
+      - name: Skip a board-only change
         id: gate
         shell: bash
         env:
-          BOARD: "@BOARD@"
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          only=false
-          if [ -n "${BASE_SHA}" ] && paths="$(git diff --name-only --no-renames "${BASE_SHA}...HEAD")" && [ -n "${paths}" ]; then
-            only=true
-            while IFS= read -r p; do
-              case "${p}" in "${BOARD}"stories/*|"${BOARD}"epics/*|"${BOARD}"hld/*|"${BOARD}"Board.base|"${BOARD}".obsidian/*) ;; *) only=false ;; esac
-            done <<< "${paths}"
-          fi
-          echo "board_only=${only}" >> "${GITHUB_OUTPUT}"
+          git show "${BASE_SHA}:.github/swarm-board-only.sh" > "${RUNNER_TEMP}/board-only.sh" 2>/dev/null || cp .github/swarm-board-only.sh "${RUNNER_TEMP}/board-only.sh"
+          bash "${RUNNER_TEMP}/board-only.sh"
       - name: make check
         if: steps.gate.outputs.board_only != 'true'
         run: |

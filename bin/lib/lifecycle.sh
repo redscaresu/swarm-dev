@@ -574,45 +574,64 @@ init_check() {
 # fill <text> <placeholder> <value> — <text> with its one <placeholder> replaced by <value>, literally.
 fill() { printf '%s' "${1%%"$2"*}$3${1#*"$2"}"; }
 
-# init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there: it runs make check on a
-# PR and on a push to the default branch (origin/HEAD, else the branch checked out), and its gate skips
-# the checks for a PR that changes only the board's own files under <board> (the board's path from the
-# root with a trailing /, empty for the root). A board outside the repo (<board> is /) gets no gate.
-# With workflows, leave them and print the gate step to add.
+# CI_MARK — the line that names a workflow init wrote.
+CI_MARK="# swarm-dev wrote this file with swarm.sh init"
+
+# init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there, which runs make check on
+# a PR and on a push to origin's default branch, and, for a board in the repo, the gate it runs:
+# templates/ci/board-only.sh as .github/swarm-board-only.sh, which skips the checks when every path
+# changed is one of the board's own files under <board> (the board's path from the root with a
+# trailing /, empty for the root). A board outside the repo (<board> is /) gets no gate. A workflow
+# init wrote is left as it is; with any other, init prints the gate step to add.
 init_ci() {
-  local t branch ci=.github/workflows/ci.yml
-  branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD || git symbolic-ref -q --short HEAD || echo main)"
-  t="$(fill "$(cat "${SWARM_HOME}/templates/ci/ci.yml")" @BRANCH@ "${branch#origin/}")"
-  t="$(fill "${t}" @BOARD@ "$1")"
-  # The gate: its comment to its last line, and the if: it sets on make check.
-  [[ "$1" != / ]] || t="$(sed '/# swarm-dev: a pull request/,/echo "board_only=/d; /if: steps.gate/d' <<< "${t}")"
-  if [[ -f "${ci}" && "$(cat "${ci}")" == "${t}" ]]; then echo "left   ${ci} (swarm-dev wrote it)"; return; fi
+  local t branch ci=.github/workflows/ci.yml gate=.github/swarm-board-only.sh ours
+  ours="$(grep -lsF "${CI_MARK}" .github/workflows/* | head -1 || true)"
+  if [[ -n "${ours}" ]]; then echo "left   ${ours} (swarm-dev wrote it; delete it and run init again to rewrite it)"; return; fi
   if [[ -d .github/workflows ]]; then
     if [[ "$1" == / ]]; then echo "left   .github/workflows (it exists)"; return; fi
+    init_gate "$1" "${gate}"
     echo "left   .github/workflows (it exists); add this step to the job that runs your checks, before them (its checkout needs fetch-depth: 0), and give each check if: steps.gate.outputs.board_only != 'true'"
-    sed -n '/- name: Skip a board-only PR/,/- name: make check/p' <<< "${t}" | sed '$d'
+    sed -n '/- name: Skip a board-only change/,/- name: make check/p' "${SWARM_HOME}/templates/ci/ci.yml" | sed '$d'
     return
   fi
+  git remote set-head origin --auto >/dev/null 2>&1 || true   # a cached origin/HEAD may still do
+  branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD)" \
+    || { echo "wrote no CI: cannot tell origin's default branch; add origin and run init again"; return; }
+  t="$(fill "$(cat "${SWARM_HOME}/templates/ci/ci.yml")" @BRANCH@ "${branch#origin/}")"
+  # No gate: its comment to its last line, the if: it sets on make check, and the deep checkout.
+  # shellcheck disable=SC2016 # the workflow's own ${...}, matched literally
+  [[ "$1" != / ]] || t="$(sed '/# swarm-dev: a change to only/,/bash "${RUNNER_TEMP}/d; /if: steps.gate/d; /fetch-depth: 0/d' <<< "${t}")"
+  [[ "$1" == / ]] || init_gate "$1" "${gate}"
   mkdir -p .github/workflows && printf '%s\n' "${t}" > "${ci}"
-  echo "wrote  ${ci} (it runs make check$([[ "$1" == / ]] || echo ", and skips a board-only PR"))"
+  echo "wrote  ${ci} (it runs make check$([[ "$1" == / ]] || echo ", unless a change is board-only"))"
+}
+
+# init_gate <board> <path> — the board-only gate at <path>, unless a file is there.
+init_gate() {
+  if [[ -e "$2" ]]; then echo "left   $2 (it exists)"; return; fi
+  mkdir -p "$(dirname "$2")" && fill "$(cat "${SWARM_HOME}/templates/ci/board-only.sh")" @BOARD@ "$1" > "$2" && echo >> "$2"
+  echo "wrote  $2 (CI's board-only gate)"
 }
 
 # init_hook <board> — the git pre-commit hook from templates/pre-commit, with <board> as init_ci has it:
 # make check, unless the commit changes only the board's own files. A hook that exists is left as it
-# is, and none is written while core.hooksPath is set (a global one runs in every repo, a repo's own is
-# tracked): init prints the lines to add instead.
+# is, and none is written while core.hooksPath is set: a repo's own is tracked, so init prints the
+# lines to add, and a global one runs in every repo, so init says to add them nowhere there.
 init_hook() {
-  local hook t why=""
+  local hook t why="" hooks_path
   t="$(fill "$(cat "${SWARM_HOME}/templates/pre-commit")" @BOARD@ "$1")"
   hook="$(git rev-parse --git-path hooks/pre-commit)"
-  [[ -z "$(git config core.hooksPath)" ]] || why="core.hooksPath is $(git config core.hooksPath)"
-  if [[ -z "${why}" && -f "${hook}" && "$(cat "${hook}")" == "${t}" ]]; then echo "left   ${hook} (swarm-dev wrote it)"
-  elif [[ -n "${why}" || -e "${hook}" ]]; then
+  hooks_path="$(git config core.hooksPath || true)"
+  if [[ -n "${hooks_path}" && -z "$(git config --local core.hooksPath)" ]]; then
+    echo "left   ${hook} (core.hooksPath is ${hooks_path}, set outside this repo): wrote no hook, since one there runs in every repo; this repo's checks belong in none of them"
+  elif [[ -z "${hooks_path}" && -f "${hook}" && "$(cat "${hook}")" == "${t}" ]]; then echo "left   ${hook} (swarm-dev wrote it)"
+  elif [[ -n "${hooks_path}" || -e "${hook}" ]]; then
+    [[ -z "${hooks_path}" ]] || why="core.hooksPath is ${hooks_path}"
     echo "left   ${hook} (${why:-it exists}); add these lines to it:"
     tail -n +2 <<< "${t}"
   else
     mkdir -p "$(dirname "${hook}")" && printf '%s\n' "${t}" > "${hook}" && chmod +x "${hook}"
-    echo "wrote  ${hook} (it runs make check, and skips a board-only commit)"
+    echo "wrote  ${hook} (it runs make check$([[ "$1" == / ]] || echo ", unless a commit is board-only"))"
   fi
   grep -q '^check:' Makefile 2>/dev/null || echo "the Makefile has no check target: add one, for the hook and CI to run"
 }
