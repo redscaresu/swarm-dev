@@ -37,6 +37,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 P="${dir}/repo"; ENV_SECRET="planted-env-value-4242"; TRANSCRIPT="planted transcript line 9137"
 S="${P}/docs/stories"
 mkdir -p "${P}/.swarm" "${S}" "${P}/docs/epics" "${P}/src" "${dir}/projects/p" "${dir}/bin" "${dir}/nobin" "${dir}/badpy"
