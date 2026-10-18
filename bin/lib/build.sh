@@ -420,8 +420,23 @@ story_role() {
   fi
 }
 
+# goal_preflight <slug> <src> — before a builder starts: with goal off, require_claude and an empty
+# PREFLIGHT_GOAL; else PREFLIGHT_GOAL is the story's goal condition, refused when its /goal message is
+# over GOAL_SEND_MAX or Claude Code is older than GOAL_MIN_CLAUDE. Run in the caller's shell, so a die
+# is the command's own.
+goal_preflight() {
+  local msg
+  PREFLIGHT_GOAL=""
+  if [[ "${CFG_goal}" == off ]]; then require_claude; return; fi
+  PREFLIGHT_GOAL="$(goal_condition "$1" "$2")" || die "${PREFLIGHT_GOAL}"
+  msg="$(goal_message "${PREFLIGHT_GOAL}")"
+  (( ${#msg} <= GOAL_SEND_MAX )) \
+    || die "$1: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
+  require_claude "${GOAL_MIN_CLAUDE}"
+}
+
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" msg parents names
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -439,13 +454,7 @@ build_story() {
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the worktree exists, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
-  if [[ "${CFG_goal}" == off ]]; then require_claude; else
-    goal="$(goal_condition "${slug}" "${src}")" || die "${goal}"
-    msg="$(goal_message "${goal}")"
-    (( ${#msg} <= GOAL_SEND_MAX )) \
-      || die "${slug}: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
-    require_claude "${GOAL_MIN_CLAUDE}"
-  fi
+  goal_preflight "${slug}" "${src}"; goal="${PREFLIGHT_GOAL}"
   base="$(base_for "${src}")"
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
   if build_exists "${src}" "${slug}"; then

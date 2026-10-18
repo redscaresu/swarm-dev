@@ -148,7 +148,8 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
-# Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
+# Escalation: today's escalate builds (fable_escalate: a step-up to a lower rung is none), and each
+# slug's newest one (its attempt and when).
 ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
 escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
 for f in read_tsv(E["DASH_EVENTS"], 5):
@@ -156,7 +157,7 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
         was_reset.add(f[2])
     t = epoch(f[0]) if f[1] == "escalate" else None
     m = re.match(r"ok \(attempt (\d+)\)", f[4])
-    if t is None or not f[4].startswith("ok"):
+    if t is None or not fable_escalate(f[4]):
         continue
     escalations += datetime.date.fromtimestamp(t) == TODAY
     if m and t > escalated_at.get(f[2], (0,))[0]:

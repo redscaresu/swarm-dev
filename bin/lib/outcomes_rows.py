@@ -100,7 +100,10 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
     # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
     # line whose time does not parse goes to no build.
+    # An escalate line pairs with an escalate build only when it started one (fable_escalate).
     t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
+    if t is not None and f[1] == "escalate" and not fable_escalate(f[4]):
+        t = None
     if t is not None:
         oks.append((t, f))
         if f[1] == "escalate":

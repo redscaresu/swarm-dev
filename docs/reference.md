@@ -187,6 +187,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
 - `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
+- `escalate_ladder` (default empty): models from low to high, separated by commas, such as `sonnet,opus,fable`. Each must be the model of `code-sonnet`, `code` or `escalate` in the policy, or the config is refused. Empty is off, and `swarm.sh step-up` refuses (§ The escalation ladder)
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
 - `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic)
@@ -1003,6 +1004,28 @@ it again (once per story), or drops it. Then it tells you what it chose and why.
 can stop to ask your consent to spend usage credits. The conductor accepts it for you, so a third
 build can spend Fable usage credits. `swarm.sh dash` shows who is on call, how many builds
 escalated today, which attempt each Fable builder is on, and each escalation step in the recent panel.
+
+### The escalation ladder
+
+A step-up keeps the work done so far, where `escalate_after` clears a failed attempt away and the
+next build starts from the base. With `escalate_ladder = sonnet,opus,fable`,
+`swarm.sh step-up <slug> <trigger>` closes the story's builder without counting an attempt and starts
+the next model on the ladder in the same worktree and on the same `story/<slug>` branch, with any open
+PR left as it is. Sonnet runs as `code-sonnet`, Opus as `code` and Fable as `escalate`. The trigger
+says why: `findings-3` (a third round of review findings), `ci-red-2` (CI red twice), `stalled`, or
+`no-pr` (the builder stopped with no PR). The model the build is on is the one on the newest
+agents.tsv line for its builder. Nothing is closed when the ladder is empty, when that model is at
+the top of the ladder or not on it, or when the story is not `ready`, not of a kind an agent builds,
+or has no worktree.
+
+The new builder's brief is the usual one with a handover after it: why it took over, the diff
+against the base (committed or not, up to 400 lines), the review agent's findings from
+`.swarm/reviews/<slug>.md`, and the open PR's failing checks. It also tells the builder to put a
+`Models:` line in the PR body naming every model that worked on the story, in order.
+
+A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to Fable starts
+a Fable build, so `outcomes` pairs only those (and build_story's `ok (attempt N)`) with an escalate
+build, and `dash` counts only those among today's escalations.
 
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session

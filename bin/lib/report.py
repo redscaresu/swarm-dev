@@ -7,6 +7,11 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
+def fable_escalate(result):
+    # An escalate line that started a Fable build: build_story's ok (attempt N), or a step-up to fable
+    # (ok (<trigger>: <from> -> fable)). A step-up to a lower rung started none.
+    return re.fullmatch(r"ok \((attempt \d+|[a-z0-9-]+: \S+ -> fable)\)", result) is not None
+
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
         return ""
