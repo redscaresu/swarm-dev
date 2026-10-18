@@ -45,10 +45,12 @@ A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the f
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
 worktree of `../<name>`, and the lead deletes the story file once that PR merges.
 
-A `lead` story with an `after: <epic>` line waits until that epic is built, such as a check on real
-cloud once the code is in. It does not count in its epic: an epic whose only stories are `after:`
-stories counts as done in `next`, `status` and `dash`, so what depends on it goes ahead, and the
-epic's last story's PR deletes the epic file without waiting for it. The `after:` story stays on the
+A `lead` story with an `after:` line naming its own epic (`epic: x`, `after: x`) waits until that
+epic is built, such as a check on real cloud once the code is in. It does not count in its epic: an
+active epic whose only open stories are `after:` stories counts as done in `next`, `status` and
+`dash`, so what depends on it goes ahead, and the epic's last story's PR deletes the epic file
+without waiting for it. An `after:` naming anything else is ignored, and a draft or later epic never
+counts as done this way. The `after:` story stays on the
 board and is listed with the lead's other stories.
 
 `env: [NAME, ...]` names the environment variables a story's builder needs beyond the short list

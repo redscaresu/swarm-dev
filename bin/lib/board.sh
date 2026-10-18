@@ -60,10 +60,14 @@ board() {
   return 0
 }
 
-# after_story <story-file> — true for a kind: lead story with an after: line: it waits on its epic, so
-# it does not count in it (the epic goes, and reads as done, without it). It stays on the board and is
-# listed with the lead's stories.
-after_story() { [[ "$(get_fm "$1" kind)" == lead && -n "$(get_fm "$1" after)" ]]; }
+# after_story <story-file> — true for a kind: lead story whose after: names its own epic: it waits on
+# the epic, so it does not count in it (the epic goes, and reads as done, without it). An after: that
+# names anything else is ignored. It stays on the board and is listed with the lead's stories.
+after_story() {
+  local epic
+  epic="$(get_fm "$1" epic)"
+  [[ -n "${epic}" && "$(get_fm "$1" kind)" == lead && "$(get_fm "$1" after)" == "${epic}" ]]
+}
 
 # epic_has_stories <epic> [<slug>] — true when any story names <epic>. With <slug>, true when any
 # story but <slug> does, not counting an after_story: story_brief's test for the epic's last story.
@@ -79,10 +83,12 @@ epic_has_stories() {
   return 1
 }
 
-# epic_after_only <epic-file> — true when the epic has an after_story and every other story of it is
-# done: it counts as done (open_item), so what depends on it goes ahead.
+# epic_after_only <epic-file> — true when the epic is active (planned), has an after_story, and every
+# other story of it is done: it counts as done (open_item), so what depends on it goes ahead. A draft
+# or later epic never does.
 epic_after_only() {
   local s slug n=0
+  [[ "$(fm "$1" status)" == active ]] || return 1
   slug="$(basename "$1" .md)"
   while IFS= read -r s; do
     [[ "$(fm "${s}" epic)" == "${slug}" && "$(fm "${s}" status)" != "done" ]] || continue
@@ -357,7 +363,7 @@ waiting_on_user() {
 }
 
 # open_item <file> — true while a board item is still open: its file exists and is not status: done,
-# and it is not an epic whose only stories are after: lead stories (epic_after_only).
+# and it is not an active epic whose only open stories are after: lead stories (epic_after_only).
 open_item() {
   [[ -f "$1" && "$(fm "$1" status)" != "done" ]] || return 1
   [[ "$1" != "${BOARD}/epics/"* ]] || ! epic_after_only "$1"

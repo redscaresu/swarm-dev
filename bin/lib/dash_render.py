@@ -79,8 +79,10 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text, after (dash_fields').
-board = [(l.split("\t") + [""] * 12)[:12] for l in lines("DASH_BOARD")]
+# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text,
+# after (dash_fields'): BOARD_FIELDS fields, AFTER the index of the after_story flag.
+BOARD_FIELDS, AFTER = 12, 11
+board = [(l.split("\t") + [""] * BOARD_FIELDS)[:BOARD_FIELDS] for l in lines("DASH_BOARD")]
 stories = [b for b in board if b[0] == "stories"]
 story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
@@ -368,7 +370,7 @@ for l in lines("DASH_WAITING"):
     if m:
         slug = m.group(2)
         need_slugs.add(slug)
-        b = story_by_slug.get(slug) or [""] * 12
+        b = story_by_slug.get(slug) or [""] * BOARD_FIELDS
         row = bang + [(f"run {m.group(1)} story {slug}{story_title(slug)}", ""), ("  waits for: ", "dim")]
         if b[9] != "you":
             add(lq, row + [("the lead", "")], ("stories", slug))
@@ -456,9 +458,9 @@ if WIDE:
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
 
-# A kind: lead story with after: waits on its epic and does not count in it (board.sh's after_story).
+# An after_story waits on its epic and does not count in it.
 def in_epic(b, slug):
-    return b[6] == slug and not (b[7] == "lead" and b[11])
+    return b[6] == slug and not b[AFTER]
 
 def epic_rows(slug, members):
     if not slug:

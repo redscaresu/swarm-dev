@@ -45,22 +45,28 @@ echo "# Stories" > "${P}/docs/stories/README.md"   # dash reads a board only wit
 item epics/alpha.md 'status: active'
 item epics/beta.md 'status: active' 'depends_on: [alpha]'
 
+# first <output> — its first line: next's step.
+first() { printf '%s\n' "${1%%$'\n'*}"; }
+# step <status output> — the step under status's Next heading.
+step() { sed -n '/^Next$/{n;s/^  //;p;}' <<< "$1"; }
+# alpha_lines <dash frame> — the frame's lines that name alpha, but for the uncommitted-board line.
+alpha_lines() { grep -F alpha <<< "$1" | grep -vF uncommitted || true; }
+
 # With after: alpha counts as done, so beta can be planned.
 item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
 out="$(run next)"
-check "next: an after: lead story leaves its epic done, so the epic after it is planned" test "${out%%$'\n'*}" = "plan-epic beta"
+check "next: an after: lead story leaves its epic done, so the epic after it is planned" test "$(first "${out}")" = "plan-epic beta"
 out="$(run status)"
-check "status: an after: lead story leaves its epic done" has "plan-epic beta" "${out}"
+check "status: an after: lead story leaves its epic done" test "$(step "${out}")" = "plan-epic beta"
 check "status: the after: story is listed as a lead story" has "lead: check" "${out}"
 out="$(run dash)"
-check "dash: an epic with only an after: lead story has no open story" has "with no open story: alpha, beta" "${out}"
-check "dash: the epic shows no ready story" lacks "1 ready" "${out}"
-check "dash: the epic after it waits on nothing" lacks "waits on alpha" "${out}"
+check "dash: an epic with only an after: lead story is one line with the epics with no open story" \
+  test "$(alpha_lines "${out}" | sed 's/^[^a-z0-9]*//; s/ *│$//')" = "2 active epics with no open story: alpha, beta"
 check "dash: the after: story is still listed for the lead" has "run lead story check" "${out}"
 # A done story kept beside it does not hold alpha open either.
 item stories/built.md 'status: done' 'kind: code' 'epic: alpha'
 out="$(run next)"
-check "next: a done story beside the after: story leaves its epic done" test "${out%%$'\n'*}" = "plan-epic beta"
+check "next: a done story beside the after: story leaves its epic done" test "$(first "${out}")" = "plan-epic beta"
 rm "${P}/docs/stories/built.md"
 
 # With beta gone, nothing is left but the lead's: next stops at the gate and lists check, and alpha,
@@ -68,20 +74,52 @@ rm "${P}/docs/stories/built.md"
 mv "${P}/docs/epics/beta.md" "${ROOT}/beta.md"
 out="$(run next)"
 check "next: the after: story is listed as a lead story" has "lead: check" "${out}"
-check "next: the after: story's epic is not planned again" test "${out%%$'\n'*}" = "gate"
+check "next: the after: story's epic is not planned again" test "$(first "${out}")" = "gate"
 mv "${ROOT}/beta.md" "${P}/docs/epics/beta.md"
+
+# A draft or later epic is not planned, so an after: story never makes it done: beta waits.
+for st in draft later; do
+  item epics/alpha.md "status: ${st}"
+  out="$(run next)"
+  check "next: a ${st} epic with only an after: story holds the epic after it" test "$(first "${out}")" = "gate"
+  check "next: a ${st} epic with only an after: story is still waiting on you" has "${st} epic: alpha" "${out}"
+done
+item epics/alpha.md 'status: active'
+# An epic that never had a story is not done: it is planned first, and beta waits.
+mv "${P}/docs/stories/check.md" "${ROOT}/check.md"
+out="$(run next)"
+check "next: an epic that never had a story is planned, not done" test "$(first "${out}")" = "plan-epic alpha"
+mv "${ROOT}/check.md" "${P}/docs/stories/check.md"
+
+# An after: that names anything but the story's own epic is ignored: the story holds alpha open.
+for v in beta tbd; do
+  item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' "after: ${v}"
+  out="$(run next)"
+  check "next: after: ${v} (not its epic) holds its epic open" test "$(first "${out}")" = "gate"
+done
+out="$(run dash)"
+check "dash: after: tbd (not its epic) shows the epic's ready story" test "$(alpha_lines "${out}" | grep -c '1 ready')" -eq 1
+
+# kind is read state-aware, as next reads it: a board-state kind: code makes it no after: story,
+# in next and in dash alike.
+item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
+mkdir -p "${P}/.swarm/board-state/stories" && echo 'kind: code' > "${P}/.swarm/board-state/stories/check"
+out="$(run next)"
+check "next: a board-state kind: code is no after: story" test "$(first "${out}")" = "conduct alpha"
+out="$(run dash)"
+check "dash: a board-state kind: code is no after: story" test "$(alpha_lines "${out}" | grep -c '1 ready')" -eq 1
+rm -r "${P}/.swarm/board-state"
 
 # Without after: the lead story holds alpha open, so beta waits and next stops at the gate.
 item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha'
 out="$(run next)"
-check "next: without after: the lead story holds its epic open" test "${out%%$'\n'*}" = "gate"
+check "next: without after: the lead story holds its epic open" test "$(first "${out}")" = "gate"
 check "next: the gate lists it as a lead story" has "lead: check" "${out}"
 out="$(run status)"
-check "status: without after: the epic is open" lacks "plan-epic beta" "${out}"
+check "status: without after: the epic is open" test "$(step "${out}")" = "gate"
 check "status: without after: the story is listed as a lead story" has "lead: check" "${out}"
 out="$(run dash)"
-check "dash: without after: the epic has an open story" lacks "no open story: alpha" "${out}"
-check "dash: without after: the epic shows its ready story" has "1 ready" "${out}"
+check "dash: without after: the epic shows its ready story" test "$(alpha_lines "${out}" | grep -c '1 ready')" -eq 1
 check "dash: without after: the epic after it waits on it" has "waits on alpha" "${out}"
 
 if [[ ${fails} -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
