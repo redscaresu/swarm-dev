@@ -385,10 +385,15 @@ project_rules() {
   [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
-# agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
-# lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# agent_kind — true for a kind a swarm agent may build (AGENT_KINDS); an empty kind means code.
+# Anything else, lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# touches_rows.py --idle reads AGENT_KINDS as SWARM_AGENT_KINDS.
+AGENT_KINDS="code docs chore"
 agent_kind() {
-  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
+  local k
+  [[ -n "$1" ]] || return 0
+  for k in ${AGENT_KINDS}; do [[ "$1" == "${k}" ]] && return 0; done
+  return 1
 }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
@@ -932,9 +937,10 @@ $(conduct_merge_rule backlog)
 EOF
 }
 
-# hld_workspace <label> — the herdr workspace labelled <label>, created if there is none. Every epic
-# of one HLD shares it; a new workspace's placeholder tab is closed once the caller has added its own.
-hld_workspace() {
+# epic_workspace <label> — the herdr workspace labelled <label>, created if there is none. A conductor's
+# label is its epic's parent: (so the child epics of a split one share a workspace), else the epic's own
+# slug. A new workspace's placeholder tab is closed once the caller has added its own.
+epic_workspace() {
   local label="$1" ws
   ws=$(herdr workspace list | json "next((w['workspace_id'] for w in d['result']['workspaces'] if w.get('label')=='${label}'),'')")
   if [[ -z "${ws}" ]]; then
@@ -996,9 +1002,9 @@ epic_env() {
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err names tab name
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name
   if [[ "${epic}" == --backlog ]]; then
-    epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
+    epic=backlog; label=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
     [[ ! -e "${epic_file}" ]] || die "conduct --backlog: ${epic_file} is an epic named backlog; rename it first"
   else
@@ -1007,8 +1013,8 @@ start_conductor() {
     [[ "${epic}" != backlog && "$(conductor_name "${epic}")" != "$(conductor_name backlog)" ]] \
       || die "conduct: ${epic} would take the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
-    hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
-    [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
+    label="$(fm_list "${epic_file}" parent)"; label="${label:-${epic}}"
+    [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
   require_claude
@@ -1017,7 +1023,7 @@ start_conductor() {
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
   rm -f "${PROJECT_DIR}/.swarm/conduct-${epic}.report.md"   # a report left by an earlier run is not this one's
-  read -r ws placeholder <<< "$(hld_workspace "${hld}")"
+  read -r ws placeholder <<< "$(epic_workspace "${label}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
@@ -1028,7 +1034,7 @@ start_conductor() {
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
   inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md"
-  echo "workspace ${hld} (${ws})"
+  echo "workspace ${label} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
   # The conductor is already running, so a state file that cannot be written is reported, never

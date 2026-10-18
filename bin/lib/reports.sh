@@ -18,17 +18,18 @@ FINDING_REVIEWERS="codex fallback code-review ci conductor lead skeptic critic e
 FINDING_REASONS="out-of-scope nit wrong"
 
 # finding_flags <args...> — log-finding's flags, which come before the kind in either order: sets
-# FINDING_OUTCOME (fixed, or declined with --declined), FINDING_REASON to --declined's reason (empty
+# FINDING_OUTCOME (fixed, declined with --declined, or filed with --filed), FINDING_REASON to --declined's reason (empty
 # when the next word is a flag or missing), FINDING_REVIEWER to --reviewer's value (unset without
 # one) and FINDING_SKIP to how many words the flags took. It checks nothing and never dies, so main
 # reads the events target with it before the command runs.
 finding_flags() {
   local n
   FINDING_OUTCOME=fixed; FINDING_REASON=""; unset FINDING_REVIEWER; FINDING_SKIP=0
-  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer ]]; do
+  while [[ "${1:-}" == --declined || "${1:-}" == --reviewer || "${1:-}" == --filed ]]; do
     n=1
     # shellcheck disable=SC2034 # read in another file
-    if [[ "$1" == --declined ]]; then
+    if [[ "$1" == --filed ]]; then FINDING_OUTCOME=filed
+    elif [[ "$1" == --declined ]]; then
       FINDING_OUTCOME=declined
       [[ $# -lt 2 || "$2" == --* ]] || { FINDING_REASON="$2"; n=2; }
     else FINDING_REVIEWER="${2:-}"; [[ $# -lt 2 ]] || n=2; fi
@@ -36,20 +37,22 @@ finding_flags() {
   done
 }
 
-# record_finding <kind> <pr-url> <text> <fixed|declined> [reviewer] — log one finding, what became of
+# record_finding <kind> <pr-url> <text> <fixed|declined|filed> [reviewer] — log one finding, what became of
 # it and who raised it: one of FINDING_REVIEWERS, or unknown when it is left out. A declined one's
 # reason (one of FINDING_REASONS) comes from finding_flags' FINDING_REASON. A row is date, kind, PR,
 # text, outcome, reviewer, and a declined row adds the reason; rows from before the outcome column
 # have four fields and were all fixed, and rows from before the reviewer column have five. An
 # escaped defect's outcome is escaped, so outcomes and flow's reviewers, which count what review raised,
-# leave it out; lessons and dash count fixed and escaped rows, never declined ones.
+# leave it out; lessons and dash count fixed and escaped rows, never declined ones. A filed row (a
+# declined out-of-scope finding the lead filed as a story) is counted by none of them: it only stops
+# out_of_scope_findings offering that text again.
 record_finding() {
   local kind="$1" pr="$2" text="$3" outcome="$4" reviewer="${5-unknown}" reason=""
   [[ -n "${kind}" && -n "${pr}" && -n "${text//[[:space:]]/}" ]] \
-    || die "usage: swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <one line>"
+    || die "usage: swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr-url> <one line>"
   # A defect review missed is no finding review raised: its own outcome keeps it out of their counts.
   if [[ "${reviewer}" == escaped ]]; then
-    [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined: drop --declined"
+    [[ "${outcome}" == fixed ]] || die "an escaped defect is fixed, never declined or filed: drop --${outcome}"
     outcome=escaped
   fi
   if [[ "${outcome}" == declined ]]; then
@@ -68,6 +71,27 @@ record_finding() {
   printf '%s\t%s\t%s\t%s\t%s\t%s%s\n' "$(date +%F)" "${kind}" "${pr//[$'\t\n\r']/ }" "${text//[$'\t\n\r']/ }" "${outcome}" "${reviewer}" "${reason}" \
     >> "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}"
   echo "recorded ${kind} (${outcome})"
+}
+
+# out_of_scope_findings — the findings declined as out-of-scope in the last IDLE_FINDING_DAYS days,
+# newest first, as "<date> <kind> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers.
+# A text is listed once, and only while its newest row is that decline: the lead's log-finding
+# --filed once it files one as a story (commands/swarm.md), or a later fixed row, drops it. That
+# record works wherever the board is and whatever the story says. In case the lead did not log it,
+# a story that carries the text also drops it: one on the board, or, when the board is in a git
+# repo, one any branch (an open board PR's too) added or removed since the finding's day.
+IDLE_FINDING_DAYS=30
+out_of_scope_findings() {
+  local since text day line git=""
+  since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
+  git -C "${BOARD}" rev-parse -q --git-dir >/dev/null 2>&1 && git=1
+  while IFS=$'\t' read -r text day line; do
+    grep -qsF -- "${text}" "${BOARD}"/stories/*.md && continue
+    [[ -z "${git}" || -z "$(git -C "${BOARD}" log --all -1 --since="${day} 00:00" -S"${text}" --format=%h -- stories 2>/dev/null)" ]] || continue
+    printf '%s\n' "${line}"
+  done < <(awk -F'\t' -v s="${since}" '{ t[NR] = $4; last[$4] = NR }
+    $5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[NR] = $1 " " $2 " " $3 ": " $4; d[NR] = $1 }
+    END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" d[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
 }
 
 # bin/lib/report.py: what the reports share (each python imports it), so they agree.
@@ -122,9 +146,11 @@ cost_report() {
 # drop), then its story's epic:, when its PR merged, whether any PR of the story merged (empty when
 # unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
 # its start to that and from that to the merge, the commits on the PR that merge the base into it,
-# its subagents' cost, in all and per model (its own cost and tokens leave them out), and last its
+# its subagents' cost, in all and per model (its own cost and tokens leave them out), its
 # start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
-# time_in_state, from its PR's review and tell:findings events and its head's checks). A finding goes to the latest build on
+# time_in_state, from its PR's review and tell:findings events and its head's checks), and last rework
+# (report.py's rework_of over every merged PR of the builds' repos, from one gh list: 1 when a later fix
+# reworked its merged PR, on the latest build on it, once 7 days have passed; empty when gh failed). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -179,7 +205,9 @@ outcomes_report() {
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
+  # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
+  SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
+    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
@@ -225,9 +253,9 @@ outcomes_report() {
 #     leaving line counts only while its story or epic is on the board in review, held or escalated.
 #     --epic does not narrow it.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
-#     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
+#     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
-#     all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
+#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
 #     rounds are not split by one. --epic keeps only the PRs of that epic (outcomes epic column) in
 #     both blocks, and a third block lists every PR either block counted.
@@ -266,7 +294,7 @@ flow_report() {
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines, and an epic
   # PR built before since still keeps its later findings.
   # shellcheck disable=SC2119 # takes no argument here
-  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(SWARM_REWORK_SINCE="${since}" outcomes_report)"
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}"
