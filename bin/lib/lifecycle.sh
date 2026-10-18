@@ -421,13 +421,14 @@ impossible_story() {
 
 # held_story <slug> <cause> <prs> — after `close <slug> paused` or `close <slug> cleared-on-error`
 # ends a build, the story is held for the lead: a lead_block with no **You:** step and held_for: <cause>, so
-# no conductor or /swarm-dev:swarm run builds it again. attempts: stays as it was. Lifting the hold with reset
+# no conductor or /swarm-dev:swarm run builds it again, logged as held. attempts: stays as it was. Lifting the hold with reset
 # is not the story's one reset (main logs it as reset:held, which reset_at does not read).
 held_story() {
   local why="it paused on its goal"
   [[ "$2" != cleared-on-error ]] || why="its goal was cleared on an error"
   lead_block "$1" "**Held ($2).** The builder stopped because ${why}, and this build was not counted as an attempt. No agent builds this story until the lead decides, then tells the user what it chose and why:"$'\n\n'"- Lift the hold: run \`swarm.sh reset $1 <reason>\`, which puts its kind back and leaves \`attempts:\` as it is, so it is built again. Lifting a hold is not the story's one reset, and a later pause or error holds it again."$'\n'"- Or drop it: run \`swarm.sh drop $1 <reason>\`, which takes this story off the board, and commit the change in a board PR." "$3" >/dev/null
   set_fm "${BOARD}/stories/$1.md" held_for "$2"
+  record_event held "$1" "ok ($2)"
   echo "held: $1 is kind: lead now (${2}), for the lead to lift the hold with reset, or drop"
 }
 
