@@ -993,7 +993,7 @@ epic_env() {
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; label=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -1013,7 +1013,11 @@ start_conductor() {
   name="$(conductor_name "${epic}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
-  rm -f "${PROJECT_DIR}/.swarm/conduct-${epic}.report.md"   # a report left by an earlier run is not this one's
+  report="${PROJECT_DIR}/.swarm/conduct-${epic}.report.md"
+  # A report left by an earlier run is not this one's. Its time, when that run ended, goes to
+  # events.tsv first: outcomes' held_min ends the run there.
+  [[ ! -f "${report}" ]] || record_event report "${epic}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
+  rm -f "${report}"
   read -r ws placeholder <<< "$(epic_workspace "${label}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
