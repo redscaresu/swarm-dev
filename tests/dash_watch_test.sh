@@ -175,13 +175,13 @@ def size(fd, rows, cols):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 pid, fd = pty.fork()
 if pid == 0:
-    size(0, 32, 120)
+    size(0, 30, 120)
     os.execvp("bash", ["bash", swarm, "dash", "--watch", every])
 out, start, resized, typed, status = b"", time.time(), False, False, None
 while status is None:
     now = time.time() - start
     if resize_at and not resized and now > resize_at:
-        size(fd, 32, 150); os.kill(pid, signal.SIGWINCH); resized = True
+        size(fd, 30, 150); os.kill(pid, signal.SIGWINCH); resized = True
     while keys and now > keys[0][1]:
         os.write(fd, keys.pop(0)[0])
     if after and b"\x1b[H" in out:
@@ -237,14 +237,14 @@ check "before t and l, the frame shows the epics, not the tree or the ladder" te
 NO_COLOR=1 ptywatch "${ROOT}/pty5.out" 30 0 2 || true
 check "NO_COLOR on a terminal still draws the frame" has "needs you" "$(plain "${ROOT}/pty5.out")"
 check "NO_COLOR leaves no colour on a terminal" test "$(grep -cE $'\033\\[[0-9;]*m' "${ROOT}/pty5.out")" -eq 0
-# A failed render with a long error is cut to the terminal's 32 lines, and its last line is the error.
+# A failed render with a long error is cut to the terminal's 30 lines, and its last line is the error.
 mkdir -p "${ROOT}/longpy"
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '#!/bin/sh\nif [ -n "${DASH_PROJECT:-}" ]; then seq 1 100 >&2; exit 1; fi\nexec "%s" "$@"\n' "$(command -v python3)" > "${ROOT}/longpy/python3"
 chmod +x "${ROOT}/longpy/python3"
 PTY_BIN="${ROOT}/longpy" ptywatch "${ROOT}/pty3.out" 30 0 3 || true
 text="$(plain "${ROOT}/pty3.out")"
-check "a failed render is cut to the terminal's height" test "$(wc -l <<< "${text}" | tr -d ' ')" -le 32
+check "a failed render is cut to the terminal's height" test "$(wc -l <<< "${text}" | tr -d ' ')" -le 30
 check "a cut failed render keeps its error line" grep -q '^(dash: this render failed; retrying in 30s)' <<< "${text}"
 # A render that fails shows its error in the frame, and the watch keeps going.
 mkdir -p "${ROOT}/badpy"

@@ -29,9 +29,9 @@ is one column, top to bottom:
 
 - **Header**: the project, the swarm-dev version, the `merge` mode, what `/swarm-dev:swarm` does next, and the
   time of the last refresh. Under it, at every width, the speedometer: `2.0 merged/day over 7 days`
-  is the number of stories the swarm finished in the last 7 days, divided by 7. dash reads them from
-  `events.tsv`: a `finish` line, or `reconcile`'s `finished` line once a story's PR merged, each slug
-  counted once. A story that was dropped or rescoped writes neither, so it never counts. It asks gh
+  is the number of stories the swarm finished on the last 7 calendar days, today included, divided
+  by 7. dash reads them from `events.tsv`: a `finish` line, or `reconcile`'s `finished` line once a
+  story's PR merged, each slug counted once, on the day it last finished. A story that was dropped or rescoped writes neither, so it never counts. It asks gh
   nothing. Two lights follow it,
   each `!` and lit when its count is above 0, `✓ 0` when not. The first counts what waits on you
   (or on you or the lead, with `lead = session`): every row in needs you and the lead's queue, plus
@@ -39,15 +39,16 @@ is one column, top to bottom:
   from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
   (`--reviewer escaped` in `findings.tsv`). From 60 columns a sparkline follows: the stories
-  finished on each of the last 14 days, oldest first (`▁` for none, `▇` for the busiest day; a slug
-  counts once, on the day it last finished), then today's count and the average of its last 7 days. From 100
+  finished on each of the last 14 days, oldest first (`▁` for none, `▇` for the busiest day), then
+  today's count and the average of its last 7 days, which is the speedometer's number. From 100
   columns two gauges follow, on the sparkline's line when both fit. `rate` is that average against the best 7 days in a row
-  in `events.tsv`. `running` is the agents working now, by the same count as the summary, against
+  in `events.tsv`. `running` is the agents working now (the summary's count) plus any running codex reviews, against
   the most agents that were busy at once in the last 7 days. dash works that peak out from each
   `agents.tsv` session's log, taking the first timestamp as the start and the last write as the end,
   so a session that sat idle for a while counts as busy. Each kind of agent has a cell and a colour
   of its own: `█` builders (green), `▓` conductors (cyan), `▒` review agents (yellow), `▪` anything
-  else. With no agent list from herdr the running gauge is left out. Then one summary line: epics active, agents working (as
+  else. With no agent list from herdr the running gauge is left out. When a watched frame is too short to
+  keep the ladder and a few rows of recent, the sparkline's line goes first, then the gauges. Then one summary line: epics active, agents working (as
   `swarm.sh status` counts them, stalled ones included), PRs green and waiting for you, stalled builders, and today's
   estimated cost of this project (the `cost` section of `swarm.sh flow --since <today>`, without the session of the
   pane dash runs in). After

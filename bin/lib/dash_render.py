@@ -687,7 +687,7 @@ def running_view():
     return rows + [[sym("blocked"), (f"held {b[1]}: {held_cause(b[1]) or '?'}", "")] for b in stories if b[9] == "held"]
 
 # The speedometer: stories merged per day over 7 days, the distinct slugs events.tsv says were
-# finished in the last 7 days (finish, or reconcile's "finished" once a PR merged; a drop or a
+# finished on the last 7 calendar days, today's among them, each on the day of its newest finish (finish, or reconcile's "finished" once a PR merged; a drop or a
 # rescope writes neither), and two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
 # needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
 # waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
@@ -715,11 +715,14 @@ def days_ago(day):
     except ValueError:
         return None
 
-merged = {s for s, t in done_at.items() if NOW - t <= 7 * 86400}
+# Days ago -> the stories finished that day; the speedometer, the sparkline and the rate gauge all
+# read the same last 7 of them.
+per_day = collections.Counter((TODAY - datetime.date.fromtimestamp(t)).days for t in done_at.values())
+last7 = sum(per_day[d] for d in range(7))
 n_waiting = len(need) + len(queue) + more
 since = [t for t in map(waited_from, dict.fromkeys(waiting)) if t is not None] if n_waiting else []
 escaped = sum(days_ago(f[0]) in range(7) for f in finding_rows(E["DASH_FINDINGS"], ("escaped",)))
-speed = [(f"{len(merged) / 7:.1f}", "b"), (" merged/day over 7 days", "")]
+speed = [(f"{last7 / 7:.1f}", "b"), (" merged/day over 7 days", "")]
 for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
                  (escaped, "escaped in 7 days")):
     speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
@@ -730,8 +733,8 @@ for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}
 # working now (status's count, as the summary's) by kind against the most at once in the last 7 days.
 SPARK = "▁▂▃▅▇"
 G = 12   # a gauge's cells, as an epic's bar
-per_day = collections.Counter((TODAY - datetime.date.fromtimestamp(t)).days for t in done_at.values())
-last7 = sum(per_day[d] for d in range(7))   # the last 7 bars, today's among them: the average and the rate
+PEAK_ROW_DAYS = 14   # busy_peak reads the agents.tsv rows started on the last 14 days, today's among them
+RECENT_MIN = 3   # a frame with a height keeps this many rows of recent before the lines under the speedometer
 
 def sparkline():
     days = [per_day[d] for d in range(13, -1, -1)]
@@ -754,11 +757,11 @@ def json_or_none(l):
 def busy_peak():
     # The most agents at once in the last 7 days: each agents.tsv session from its log's first
     # timestamp to its last write, swept; never fewer than work now.
-    # ponytail: an idle stretch inside a session counts as busy, and only rows started in the last 14
-    # days are read; log working spans if the peak reads high.
+    # ponytail: an idle stretch inside a session counts as busy, and only rows started in the last
+    # PEAK_ROW_DAYS are read; log working spans if the peak reads high.
     spans = []
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
-        if days_ago(f[0]) not in range(15):
+        if days_ago(f[0]) not in range(PEAK_ROW_DAYS):
             continue
         path = session_log(E["DASH_PROJECTS"], f[6])
         try:
@@ -775,11 +778,18 @@ def busy_peak():
     return peak
 
 def bar(parts, of):
-    # parts: (count, char, style), each its share of G cells and at least one when above 0; past G
-    # the widest gives cells back, so the bar never exceeds G.
-    cells = [max(1, round(n * G / of)) if n and of else 0 for n, _, _ in parts]
-    while sum(cells) > G:
-        cells[cells.index(max(cells))] -= 1
+    # parts: (count, char, style). The cells add up to the whole's rounded share of G, split by largest
+    # remainder, so a full gauge has no gap; a count above 0 keeps at least one cell, taken from the
+    # widest part, and the bar never exceeds G.
+    q = [n * G / of if of else 0 for n, _, _ in parts]
+    total = min(G, max(round(sum(q)), sum(n > 0 for n, _, _ in parts)))
+    cells = [int(x) for x in q]
+    for i in sorted(range(len(q)), key=lambda i: q[i] - cells[i], reverse=True)[:max(total - sum(cells), 0)]:
+        cells[i] += 1
+    for i, (n, _, _) in enumerate(parts):
+        if n and not cells[i]:
+            cells[cells.index(max(cells))] -= 1
+            cells[i] = 1
     return [(ch * c, s) for c, (_, ch, s) in zip(cells, parts)] + [("·" * (G - sum(cells)), "dim")]
 
 def gauges():
@@ -787,7 +797,9 @@ def gauges():
     rate = [("rate ", "dim")] + bar([(last7, "█", "ok")], best) + [(f" {last7 / 7:.1f} of best {best / 7:.1f}/day", "")]
     if agents is None:   # no agent list from herdr: nothing is known to work, so no running gauge
         return rate
-    working = collections.Counter(kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled"))
+    # status's working agents, and the running codex reviews (rows of shown alone) as review agents.
+    working = collections.Counter([kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled")]
+                                  + ["review" for r in shown if r.get("state") == "codex"])
     now = sum(working.values())
     peak = max(busy_peak(), now)
     return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
@@ -816,7 +828,7 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 out.append(fit(speed, W))
-out += pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
+under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
@@ -864,9 +876,17 @@ if WIDE:
 # under the main column; from 140 recent and the ladder are the right column, the ladder on top.
 # A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
 ladder = E.get("DASH_LADDER") == "1"
+
+def make_room(room):
+    # The lines under the speedometer (under) take recent's rows; a cut frame keeps RECENT_MIN of them
+    # (or the ladder, when even those do not fit) first, dropping the sparkline's line, then the gauges.
+    while under and FIT and H and room - len(under) < RECENT_MIN:
+        under.pop(0)
+    return room - len(under)
+
 if WIDE:
     side = ladder_box(RW) if ladder else []
-    room = H - len(out) - len(foot) - len(side) - 2 if H else max(8, len(left) - len(side) - 2)
+    room = make_room(H - len(out) - len(foot) - len(side) - 2) if H else max(8, len(left) - len(side) - 2)
     if not KEYS:
         room = max(5, room)
     if room > 0:
@@ -878,11 +898,12 @@ else:
         out += ladder_box(W)
     if running:
         out += box("running now", running, W)
-    room = H - len(out) - 2 - len(foot) if H else 8
+    room = make_room(H - len(out) - 2 - len(foot)) if H else 8
     if not KEYS:
         room = max(5, room)
     if room > 0:
         out += recent_box(W, room)
+out[2:2] = under
 if FIT and H:
     # A watched frame never scrolls the screen; the header line stays even when the foot does not fit.
     out = out[:max(H - len(foot), 1)]
