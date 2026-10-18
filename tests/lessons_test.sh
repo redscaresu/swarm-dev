@@ -88,7 +88,7 @@ check "an empty --reviewer is refused" "refused" "$(refused --reviewer '' k o/r#
 check "unknown is not a --reviewer value" "refused" "$(refused --reviewer unknown k o/r#1 t)"
 check "two reviewers in one value are refused" "refused" "$(refused --reviewer 'conductor lead' k o/r#1 t)"
 check "the refusal lists the reviewers, not unknown" "yes" \
-  "$(has "must be one of: codex code-review ci conductor lead skeptic critic escaped" "$(sw log-finding --reviewer unknown k o/r#1 t || true)")"
+  "$(has "must be one of: codex fallback code-review ci conductor lead skeptic critic escaped" "$(sw log-finding --reviewer unknown k o/r#1 t || true)")"
 
 # finding_rows reads rows of any width from four fields up: a later column drops no row, an unknown
 # reviewer is read, and a bad one drops the row.

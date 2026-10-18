@@ -122,6 +122,12 @@ check "builder_subagent_model that is not a model name is refused, naming the ke
   "$(fails_with 'config:1: builder_subagent_model must be a model name' run "${p}" config)"
 project "${p}" "builder_subagent_model = claude-haiku-5-5"
 check "builder_subagent_model is read" "claude-haiku-5-5" "$(run "${p}" config builder_subagent_model)"
+check "fallback_reviewer ships empty" "" "$(project "${p}"; run "${p}" config fallback_reviewer)"
+project "${p}" "fallback_reviewer = sonnet"
+check "fallback_reviewer is read" "sonnet" "$(run "${p}" config fallback_reviewer)"
+project "${p}" "fallback_reviewer = son net"
+check "fallback_reviewer that is not a model name is refused, naming the key" "yes" \
+  "$(fails_with "config:1: fallback_reviewer must be a model name such as haiku, not 'son net'" run "${p}" config)"
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
