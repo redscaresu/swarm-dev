@@ -61,12 +61,13 @@ check "init writes a CI that runs the gate on a PR and a push, and otherwise mak
 check "init writes an executable pre-commit hook for docs/" "yes|yes" \
   "$(grep -qxF 'swarm_board="docs/"' "${p}/.git/hooks/pre-commit" && echo yes)|$([[ -x "${p}/.git/hooks/pre-commit" ]] && echo yes)"
 check "init says to commit what it wrote, naming each path" \
-  "Commit what init wrote, so CI runs and the config travels with the repo: .gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh docs/.obsidian/app.json docs/Board.base docs/epics/README.md docs/hld/HLDs.base docs/hld/README.md docs/stories/README.md" \
+  "Commit what init wrote, so CI runs and the config travels with the repo: .gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh $(cd "${TEMPLATES}" && find . -type f | sed 's|^\./|docs/|' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')" \
   "$(grep '^Commit what init wrote' <<< "${out}")"
 # make_check <dir> — CI's make check step, run in <dir>: its output and exit code.
 make_check() {
   sed -n '/- name: make check/,$p' "${p}/.github/workflows/ci.yml" | sed -n '/run: |/,$p' | sed '1d; s/^          //' > "${ROOT}/make-check.sh"
-  (cd "$1" && bash "${ROOT}/make-check.sh" 2>&1; echo "exit $?")
+  # As CI runs it: not under the make that runs this suite, whose MAKEFLAGS would add make[1] lines.
+  (cd "$1" && env -u MAKEFLAGS -u MAKELEVEL -u MFLAGS bash "${ROOT}/make-check.sh" 2>&1; echo "exit $?")
 }
 mkdir -p "${ROOT}/no-make" "${ROOT}/with-make"; printf 'check:\n\t@echo checked\n' > "${ROOT}/with-make/Makefile"
 check "CI's make check fails, naming the missing target, when make has no check target" \
