@@ -91,9 +91,8 @@ chain stands instead.
 Every agent's model and effort come from its role, set in one place: `policy()` in
 `bin/swarm.sh` (`swarm.sh policy <role>` prints it). Spend on judgment, save on reading:
 
-- **Design is Fable.** The HLD is co-written at `high`, because the user waits on every turn, and
-  attacked at `xhigh` before it is agreed. Splitting an HLD into epics shapes all the work below
-  it, so it runs on Fable at `xhigh`.
+- **Design is Fable.** An epic is co-written at `high`, because the user waits on every turn, and
+  attacked at `xhigh` before it is agreed.
 - **Judgment is Opus.** An epic's decomposition into stories runs at `xhigh`. Skeptics and the
   critic run at `high`, because a skeptic is the only gate a story passes before it is built.
 - **Reading is Sonnet, chores are Haiku.** Surveys read and cite at `high`, since they feed the

@@ -979,7 +979,7 @@ start_conductor() {
     [[ "${epic}" =~ ^[a-z0-9-]+$ ]] || die "bad epic '${epic}'"
     [[ "${epic}" != backlog ]] || die "conduct: backlog is the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
-    label=$(sed -n 's/^parent: *//p' "${epic_file}" | head -1); label="${label:-${epic}}"
+    label="$(fm "${epic_file}" parent)"; label="${label:-${epic}}"
     [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.

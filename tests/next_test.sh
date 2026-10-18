@@ -56,19 +56,14 @@ expect "a draft epic is in the gate beside a lead story" "gate" \
   "item stories/l.md 'status: ready' 'kind: lead'"
 if [[ "${out}" == *"lead: l"* && "${out}" == *"draft epic: e1, run /epic e1"* ]]; then echo "ok   the gate lists the lead story and the draft epic"
 else echo "FAIL the gate does not list both the lead story and the draft epic: ${out}"; fails=$((fails + 1)); fi
-expect "a draft HLD is no step" "done" \
-  "item hld/2026-01-01-x.md 'status: draft'"
-# HLD files are plain docs now: an agreed one with no epics is no step, and an epic made from one plans.
-expect "agreed HLD, no epics" "done" \
-  "item hld/2026-01-01-x.md 'status: agreed'"
+# HLD files are plain docs: next never reads hld/, whatever their status, and an epic made from one plans.
+expect "HLD files are ignored" "done" \
+  "item hld/2026-01-01-a.md 'status: draft'" \
+  "item hld/2026-01-01-b.md 'status: agreed'" \
+  "item hld/2026-01-01-c.md 'status: superseded'"
 expect "an epic with an hld: key and its HLD present is planned" "plan-epic e1" \
   "item hld/2026-01-01-x.md 'status: agreed'" \
   "item epics/e1.md 'status: active' 'hld: 2026-01-01-x'"
-expect "agreed HLD, epics listed and done" "done" \
-  "item hld/2026-01-01-x.md 'status: agreed'" \
-  "printf '\n## Epics\n\n- e1 — done (#1)\n' >> docs/hld/2026-01-01-x.md"
-expect "superseded HLD" "done" \
-  "item hld/2026-01-01-x.md 'status: superseded'"
 expect "active epic, no stories" "plan-epic e1" \
   "item epics/e1.md 'status: active'"
 expect "epic waits on an open dependency" "plan-epic b" \
