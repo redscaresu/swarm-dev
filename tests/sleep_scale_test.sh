@@ -3,8 +3,8 @@
 # CLAUDE_CONFIG_DIR under a root of its own from mktemp (a grep over tests/*_test.sh). And
 # SWARM_SLEEP_SCALE scales swarm.sh's fixed sleeps: at 0.01 a start_agent retry (3 s) and a
 # deliver_prompt wait (5 s) each finish in under a second; a scale of 0, one that rounds a 1 s sleep
-# to 0 or one that is not a number is refused at startup, before any command runs. Then make test
-# itself: a failed file that reads stdin on its rerun does not eat the rest of the rerun list, and
+# to 0 or one that is not a number is refused at startup, before any command runs. board's reader
+# stopping early prints no write error. Then make test itself: a failed file that reads stdin on its rerun does not eat the rest of the rerun list, and
 # xargs stopping early fails the run.
 set -euo pipefail
 
@@ -77,6 +77,14 @@ mkdir -p "${ROOT}/bin"; printf '#!/bin/sh\necho "$*" >> "%s/gh.log"\nexit 1\n' "
 o="$(cd "${ROOT}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0 PATH="${ROOT}/bin:${PATH}" bash "${REPO}/bin/swarm.sh" merge https://github.com/o/r/pull/1 2>&1)" && rc=0 || rc=$?
 check "SWARM_SLEEP_SCALE=0 stops swarm.sh at startup, saying why, before merge calls gh" "1|yes|no gh" \
   "${rc}|$([[ "${o}" == *"SWARM_SLEEP_SCALE: '0' is not a number of at least 0.001"* ]] && echo yes || echo "no: ${o}")|$([[ -e "${ROOT}/gh.log" ]] && echo "gh ran" || echo "no gh")"
+
+# board's reader stopping early, with SIGPIPE ignored (as under ptywatch.py's python), prints nothing:
+# a write error in a dash frame made it repaint (a flake the parallel runs showed).
+mkdir -p "${ROOT}/b/stories"; for i in $(seq 1 200); do : > "${ROOT}/b/stories/s${i}.md"; done
+o="$( (trap '' PIPE; PROJECT_DIR="${ROOT}/b"; BOARD="${ROOT}/b"
+  # shellcheck source=bin/lib/board.sh
+  source "${REPO}/bin/lib/board.sh"; board stories | { read -r _; }) 2>&1)"
+check "board's reader stopping early, SIGPIPE ignored, prints no write error" "" "${o}"
 
 # mk <file>... — make test over these files, two at a time: its output, then its exit on the last line.
 mk() { local rc=0 o; o="$(make -s -C "${REPO}" test TESTS="$*" JOBS=2 2>&1)" || rc=$?; printf '%s\n%s\n' "${o}" "${rc}"; }

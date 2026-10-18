@@ -51,11 +51,14 @@ state_value() {
     END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
 }
 
-# board <dir> — the item files in <board>/<dir>/, never the README.
+# board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
+# that found its item) ends it quietly: with SIGPIPE ignored, as under a python parent, echo would
+# print a write error, and dash would draw it in the frame.
 board() {
   local f
   for f in "${BOARD}/$1"/*.md; do
-    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] && echo "${f}"
+    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] || continue
+    echo "${f}" 2>/dev/null || return 0
   done
   return 0
 }

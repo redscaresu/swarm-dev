@@ -221,8 +221,11 @@ while True:   # what the watch wrote before it exited, still in the pty
 open(out_path, "wb").write(out)
 sys.exit(os.waitstatus_to_exitcode(status))
 PY
+# The frame's clock is fixed (SWARM_DASH_NOW) at the test's start, so its ages cannot tick over a
+# minute between frames; the header's own HH:MM:SS still moves.
+PTY_NOW="$(date +%s)"
 ptywatch() { # <out> <seconds> <resize-after> <q> [<key>@<seconds>...]; PTY_BIN puts another stub dir first on PATH
-  (cd "${P}" && env -u HERDR_ENV PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
+  (cd "${P}" && env -u HERDR_ENV SWARM_DASH_NOW="${PTY_NOW}" PATH="${PTY_BIN:-${ROOT}/bin}:${ROOT}/bin:${REALPATH}" python3 -I "${ROOT}/ptywatch.py" "${SWARM}" "$@")
 }
 plain() { python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", sys.stdin.read().replace("\r", "")))' < "$1"; }
 frames() { grep -o -- '╭─ needs you' | wc -l | tr -d ' '; }
