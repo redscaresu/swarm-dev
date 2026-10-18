@@ -175,6 +175,35 @@ outcomes_report() {
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}"
 }
 
+# dataset — write .swarm/dataset.jsonl, one JSON line per finished story (a PR of its story merged),
+# for scoring the planner (flow's predictions). inputs: the story as the board PR that added it wrote it
+# (text, kind, risk, touches, depends_on, estimate_lines, easy) and planner_model, the model of the
+# agents.tsv lead whose session log names .swarm/<epic>/lead.json. results, from outcomes, events.tsv,
+# findings.tsv and git: the PR, merged_at, diff_lines and diff_files of its commit on the default branch
+# (the story file it deletes left out), attempts (builds), findings_rounds (tells of findings),
+# substantive_findings (fixed), rework (rework_of in report.py), cost_usd (subagents included), minutes
+# from the first build's start to the merge, models (each build's, in order) and escalations (each ok
+# escalate line: its trigger, and step-up's from and to). was_easy (was_easy_rule 1): one build, at most
+# one findings round, no rework and a diff under 100 lines. Model names, counts and the story text
+# only: no environment and no transcript text. The file is rewritten whole each run.
+dataset_report() {
+  [[ $# -eq 0 ]] || die "usage: swarm.sh dataset"
+  [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
+  local rows repos="" slug src
+  # shellcheck disable=SC2119 # takes no argument here
+  rows="$(outcomes_report | sed '/^$/,$d')"   # the rows, without the recurring kinds after them
+  # Each finished slug's repo, where its PR's commit is; a story whose repo is gone gets no diff.
+  while IFS= read -r slug; do
+    [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
+    src="$(repo_dir "$(story_text "${slug}" | sed -n 's/^repo: *//p' | head -1)")" || src=""
+    repos+="${slug}"$'\t'"${src}"$'\n'
+  done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "story_merged") c = i; next } $c == "true" { print $2 }' <<< "${rows}" | sort -u)"
+  mkdir -p "${PROJECT_DIR}/.swarm"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_REPOS="${repos}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
+    "${BOARD}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" \
+    "${PROJECT_DIR}/.swarm/dataset.jsonl"
+}
+
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
 # per bin/lib/flow_<name>.py in name order, each under `## <name>` (flow_report.py runs them):
 #   ci_health: one TSV row over the github.com PRs of the outcomes rows dated in the window (with

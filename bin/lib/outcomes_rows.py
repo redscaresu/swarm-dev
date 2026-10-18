@@ -52,11 +52,6 @@ def secs(t):
     except ValueError:
         return None
 
-def agent_name(n):
-    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
-    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
-    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
-
 def usage(path):
     # A builder's own tokens and est. USD, its subagents' tokens, and their est. USD per model (opus,
     # haiku, ...; other for a model no PRICES key matches, so a raw log string never reaches the row). A subagent turn is one with parent_tool_use_id or isSidechain set in the builder's log,

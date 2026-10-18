@@ -1,4 +1,4 @@
-import glob, gzip, json, os, re, zlib
+import datetime, glob, gzip, json, os, re, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -6,6 +6,42 @@ PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4
 def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
+
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+
+REWORK_DAYS = 7   # a fix this soon after a merge is rework of it, not new work
+
+def rework_of(pr, merged, later, escaped):
+    # True when the PR, merged at UTC time merged, was fixed within REWORK_DAYS: a later commit (later:
+    # (ISO time, message) pairs) names it as #N or by URL, or an escaped finding (findings.tsv rows, as
+    # (day, kind, pr, ...)) points at it. dataset and rework share it, so both count the same fixes.
+    m = re.fullmatch(r"([^#]+)#(\d+)", pr_key(pr))
+    if not m or not merged:
+        return False
+    try:
+        t0 = datetime.datetime.fromisoformat(merged.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    o_r, n = re.escape(m[1]), m[2]
+    names = re.compile(r"((?<![\w/])|(?<![\w./-])%s)#%s(?!\d)|github\.com/%s/pull/%s(?!\d)" % (o_r, n, o_r, n), re.I)
+    for when, message in later:
+        try:
+            dt = datetime.datetime.fromisoformat(when.replace("Z", "+00:00")) - t0
+        except ValueError:
+            continue
+        if datetime.timedelta(0) < dt <= datetime.timedelta(days=REWORK_DAYS) and names.search(message):
+            return True
+    for f in escaped:
+        try:
+            days = (datetime.date.fromisoformat(f[0]) - t0.date()).days
+        except ValueError:
+            continue
+        if pr_key(f[2]) == pr_key(pr) and 0 <= days <= REWORK_DAYS:
+            return True
+    return False
 
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
