@@ -1,4 +1,4 @@
-import glob, gzip, json, os, re, zlib
+import datetime, glob, gzip, json, os, re, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -62,3 +62,36 @@ def session_usage(path, seen):
         tok = [x + y for x, y in zip(tok, t)]
         usd += cost
     return tok, usd, models
+
+REWORK_DAYS = 7
+
+def utc(t):
+    # A UTC time as gh and events.tsv write it, as an aware datetime; None when empty or it does not parse.
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+def rework_of(prs, escaped):
+    # The PRs (as pr_key) a later fix reworked: a merged PR that a later merged PR names (a pull URL, or
+    # #N of its own repo, in its title or body) merged within REWORK_DAYS after it, or that a
+    # log-finding --reviewer escaped row points at within REWORK_DAYS of its merge's local day (findings
+    # are dated in local time). prs is (url, merged_at, names), names the refs joined by "+" ("" for
+    # none); escaped is (day, pr).
+    merged = {pr_key(u): utc(m) for u, m, _ in prs if utc(m)}
+    out = set()
+    for url, m, names in prs:
+        repo = pr_key(url).partition("#")[0]
+        for n in names.split("+") if utc(m) and names else ():
+            k = repo + n if n.startswith("#") else pr_key(n)
+            if k in merged and datetime.timedelta(0) < utc(m) - merged[k] <= datetime.timedelta(days=REWORK_DAYS):
+                out.add(k)
+    for day, pr in escaped:
+        k = pr_key(pr)
+        try:
+            d = datetime.date.fromisoformat(day)
+        except ValueError:
+            continue
+        if k in merged and 0 <= (d - merged[k].astimezone().date()).days <= REWORK_DAYS:
+            out.add(k)
+    return out

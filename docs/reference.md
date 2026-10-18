@@ -648,7 +648,12 @@ build, so they repeat on every build that shares it: count a retried PR once whe
 come `subagent_cost_usd`, the estimated cost of the builder's subagents, `subagent_cost_by_model`,
 the same cost split by model as `<model>:<usd>` pairs joined by commas (`haiku:1.00,opus:2.00`, with
 `other` for a model that has no price), and
-`subagent_tokens`, their tokens of every type. A
+`subagent_tokens`, their tokens of every type, and then `rework`. `rework` is 1 when a later fix
+reworked the build's merged PR and 0 when none did. A fix counts when the PR of a later build in
+`outcomes` names the PR in its title or body (its URL, or `#N` in the same repo) and merged within 7
+days after it, or when `log-finding --reviewer escaped` points at the PR within 7 days of its merge
+day. A fix made outside the swarm counts only when it is logged that way. It is empty on a PR
+that never merged and on an earlier build that shares the PR, so a reworked PR counts once. A
 subagent turn is one with `parent_tool_use_id` or `isSidechain` set in the builder's session log, or any
 turn in the `subagents/*.jsonl` logs in the folder named after the session, next to its log. `cost_usd`
 and the tokens columns count the builder's own turns only, so `cost_usd` plus `subagent_cost_usd` is
@@ -782,11 +787,12 @@ Without `--since`, the window is the 30 days up to `--until` (or up to today). T
 `--epic`.
 
 The `reviewers` section shows what review yields, so the
-reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate`,
+reviewers can be tuned. The first block is TSV `reviewer kind raised fixed declined decline_rate rework`,
 counted from `findings.tsv` rows dated in the window. Each reviewer gets an `all` row and then
 a row per kind, most declined first. Rows from before the reviewer column count as `unknown`. Then
 come an `all <kind>` row per kind across reviewers and a last `all all` row. The decline rate is
-declined over raised as a whole percent. After a blank line, the second block is TSV `prs rounds
+declined over raised as a whole percent. `rework` counts the PRs that line raised a finding on and that
+`outcomes` shows as reworked, among builds dated in the window. After a blank line, the second block is TSV `prs rounds
 rounds_per_pr max_rounds`: the `tells_findings` of every `outcomes` row that has a PR and is dated in
 the window, summed per PR, so a PR built twice counts the rounds of both builds and a retry
 with its own PR keeps its own. A tell names no reviewer, so rounds are not split by one. With no

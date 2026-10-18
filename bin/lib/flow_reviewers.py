@@ -1,27 +1,32 @@
 # Reviewers, a flow section (flow_report.py gives its globals): findings raised, fixed and declined per
-# reviewer and kind, then review rounds per PR, and with --epic the PRs counted.
+# reviewer and kind, and the reworked PRs among those it raised them on, then review rounds per PR, and
+# with --epic the PRs counted.
 import collections
 from report import *
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
 urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
 # None is the all of a reviewer or kind, apart from a finding whose kind is the word all.
-c, counted = collections.defaultdict(collections.Counter), set()
+c, counted, on = collections.defaultdict(collections.Counter), set(), collections.defaultdict(set)
 for day, kind, pr, _, outcome, reviewer in finding_rows(findings):
     if since <= day <= until and (not epic or pr_key(pr) in urls):
         counted.add(pr_key(pr))
         for key in ((reviewer, kind), (reviewer, None), (None, kind), (None, None)):
             c[key][outcome] += 1
+            on[key].add(pr_key(pr))
+# outcomes' rework, on the builds dated in the window: a PR a later fix reworked.
+reworked = {pr_key(r["pr"]) for r in rows if r.get("rework") == "1" and since <= r["date"] <= until}
 
 def line(who, kind):
     fixed, declined = c[(who, kind)]["fixed"], c[(who, kind)]["declined"]
     raised = fixed + declined
     rate = f"{int(100 * declined / raised + 0.5)}%" if raised else "-"
-    return "\t".join(["all" if x is None else x for x in (who, kind)] + [str(raised), str(fixed), str(declined), rate])
+    return "\t".join(["all" if x is None else x for x in (who, kind)]
+                     + [str(raised), str(fixed), str(declined), rate, str(len(on[(who, kind)] & reworked))])
 
 def kinds(who):
     return sorted((k for w, k in list(c) if w == who and k is not None), key=lambda k: (-c[(who, k)]["declined"], k))
 
-print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate")
+print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework")
 for who in sorted({w for w, _ in c if w is not None}):
     print("\n".join(line(who, k) for k in [None] + kinds(who)))
 print("\n".join(line(None, k) for k in kinds(None) + [None]))
