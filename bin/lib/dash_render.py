@@ -809,13 +809,13 @@ def gauges():
 def idle_gauge():
     # Beside the running gauge: the stories next would start (DASH_BUILDABLE, dash_render's) with no
     # agent of their own in this project's panes (story_for's slug, a retired <slug>-done too) and no
-    # conductor: the epic's, or for a one-off the backlog conductor. Nothing when there are none, or
+    # conductor: the epic's, or for a one-off the backlog conductor (DASH_BACKLOG). Nothing when there are none, or
     # no agent list.
     if agents is None:
         return []
     mine = {r["slug"] for r in recs if r.get("slug")}
     conducted = {r["epic"] for r in recs if r.get("role") == "conduct" and r.get("epic")}
-    backlog = any(r["name"] == E["DASH_BACKLOG_CONDUCTOR"] for r in recs)
+    backlog = any(r["name"] == E.get("DASH_BACKLOG") for r in recs)
     idle = 0
     for l in lines("DASH_BUILDABLE"):
         slug, _, epic = l.partition("\t")

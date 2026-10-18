@@ -374,7 +374,7 @@ for a in agents:
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_BUILDABLE="${buildable}" DASH_BACKLOG_CONDUCTOR="$(agent_name conduct-backlog)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
+  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
