@@ -8,7 +8,8 @@
 # comes whole after its phase, a SERIAL file runs after the parallel ones, and xargs stopping early
 # fails the run and leaves no job (nor anything a job started) running, BSD xargs's exit 1 still runs
 # the SERIAL phase, a job with no result fails it, an interrupt stops each test with a TERM and leaves
-# nothing behind, and a path with a space runs.
+# nothing behind, a test's end stops what it left running, a test sees none of make's variables, and
+# a path with a space runs.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -153,6 +154,14 @@ for ((i = 0; i < 100; i++)); do kill -0 "${ipid}" 2>/dev/null || break; sleep 0.
 check "an interrupt TERMs each test (its EXIT trap runs), leaving no test process and no temp dir" "yes|none|empty" \
   "$([[ -e "${ROOT}/exit.mark" ]] && echo yes || echo no)|$(pgrep -f "${ROOT}/slowint_test.sh" > /dev/null && echo "left running" || echo none)|$([[ -z "$(ls -A "${ROOT}/rt")" ]] && echo empty || echo "left: $(ls -A "${ROOT}/rt")")"
 pkill -KILL -f "${ROOT}/slowint_test.sh" 2>/dev/null || true
+# A test's end stops what it left running (lingering's child would write its mark after 1 s), and a
+# test sees none of make's JOBS, SERIAL or TESTS.
+printf '#!/usr/bin/env bash\n(sleep 1; : > "%s/linger.mark") &\nexit 0\n' "${ROOT}" > "${ROOT}/lingering_test.sh"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/usr/bin/env bash\necho "${JOBS-unset} ${SERIAL-unset} ${TESTS-unset}" > "%s/env.seen"\n' "${ROOT}" > "${ROOT}/env_test.sh"
+o="$(SERIAL="${ROOT}/env_test.sh" mk "${ROOT}/lingering_test.sh" "${ROOT}/env_test.sh")"; sleep 2
+check "a test's end stops what it left running, and a test sees no JOBS, SERIAL or TESTS" "0|no mark|unset unset unset" \
+  "$(tail -1 <<< "${o}")|$([[ -e "${ROOT}/linger.mark" ]] && echo "its child ran on" || echo "no mark")|$(cat "${ROOT}/env.seen" 2>&1)"
 # A file whose path holds a space runs.
 printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/sp ace_test.sh"
 check "a test file whose path holds a space runs" "yes" \
