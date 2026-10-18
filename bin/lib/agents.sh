@@ -179,16 +179,19 @@ next_pane() {
 }
 
 # AGENT_ENV: the variables every agent starts with besides those AGENT_PREFIXES name (the locale,
-# and swarm.sh's own SWARM_* settings, SWARM_PROJECT as PROJECT_DIR, absolute), each with swarm.sh's
-# own value when it has one: the env-allowlist spike's (herdr 0.9.1); where claude, codex, gh, git
-# and gpg keep their logins, config and logs; the ssh agent's socket and git's ssh command, so a push
-# works; and the proxy and CA settings, so an agent behind a proxy or an intercepting CA reaches
-# GitHub. Settings and paths, not secrets (a proxy URL with a password in it passes too). Any other
-# variable reaches an agent only by name, through a story's env: (story_env). AGENT_SET are the ones
-# swarm.sh sets for every agent itself (launch_file).
-AGENT_ENV="PATH HOME TERM USER LOGNAME TMPDIR LANG CLAUDE_CONFIG_DIR CLAUDE_PROJECTS_DIR CODEX_HOME XDG_CONFIG_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL GNUPGHOME SSH_AUTH_SOCK GIT_SSH_COMMAND HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy SSL_CERT_FILE NODE_EXTRA_CA_CERTS"
-AGENT_PREFIXES="LC_ SWARM_"
-AGENT_SET="SHELL ZDOTDIR"
+# swarm.sh's own SWARM_* settings, SWARM_PROJECT as PROJECT_DIR, absolute, and the XDG_* directories),
+# each with swarm.sh's own value when it has one: the env-allowlist spike's (herdr 0.9.1); where
+# claude, codex, gh, git and gpg keep their logins, config and logs; the session bus, through which
+# gh's keyring token and git-credential-libsecret reach the Secret Service on Linux; the ssh agent's
+# socket and git's ssh command, so a push works; the proxy and CA settings, so an agent behind a
+# proxy or an intercepting CA reaches GitHub; and which provider and model Claude Code uses (Bedrock,
+# Vertex, Foundry), whose credentials come from the provider's own login or profile files. Settings
+# and paths, not secrets (a proxy URL with a password in it passes too). Any other variable reaches
+# an agent only by name, through a story's env: (story_env). AGENT_SET are the ones swarm.sh sets for
+# every agent itself (launch_file).
+AGENT_ENV="PATH HOME TERM USER LOGNAME TMPDIR LANG CLAUDE_CONFIG_DIR CLAUDE_PROJECTS_DIR CODEX_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL GNUPGHOME DBUS_SESSION_BUS_ADDRESS SSH_AUTH_SOCK GIT_SSH_COMMAND HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy SSL_CERT_FILE NODE_EXTRA_CA_CERTS CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_MODEL ANTHROPIC_SMALL_FAST_MODEL AWS_REGION AWS_PROFILE CLOUD_ML_REGION ANTHROPIC_VERTEX_PROJECT_ID"
+AGENT_PREFIXES="LC_ SWARM_ XDG_"
+AGENT_SET="SHELL ZDOTDIR GPG_TTY"
 # HERDR_PANE_ENV: herdr's variables for a pane, which the agent's swarm.sh and herdr's hooks read.
 # Only the new pane's shell has its values, so the launch line names them and that shell expands them.
 HERDR_PANE_ENV="HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_BIN_PATH"
@@ -241,8 +244,10 @@ reserved_env() {
 }
 
 # launch_file <file> <names> <marker> <zdotdir> — write clean_env's wrapper: it deletes itself,
-# exports AGENT_ENV, AGENT_PREFIXES' variables and <names> with swarm.sh's values, sets AGENT_SET,
-# prints <marker>, and execs AGENT_SHELL. SHELL is AGENT_SHELL's zsh and ZDOTDIR <zdotdir>
+# exports AGENT_ENV, AGENT_PREFIXES' variables and <names> with swarm.sh's values, sets AGENT_SET
+# (GPG_TTY to the pane's own terminal, so pinentry asks there, never in the lead's), unsets the
+# HERDR_PANE_ENV variables the pane left empty (so a ${NAME-default} applies), prints <marker>, and
+# execs AGENT_SHELL. SHELL is AGENT_SHELL's zsh and ZDOTDIR <zdotdir>
 # (clean_env's, empty), so every shell the agent starts later (Claude Code's Bash tool, codex's
 # commands) is that zsh, and it reads its user startup files, and Claude Code its snapshot's .zshrc,
 # from there: never ~/.bashrc, ~/.bash_profile or HOME's zsh files, which could export a secret
@@ -258,7 +263,11 @@ launch_file() {
       v="${!n}"; [[ "${n}" != SWARM_PROJECT ]] || v="${PROJECT_DIR}"   # resolved, so a relative one holds from any cwd
       printf 'export %s=%q\n' "${n}" "${v}"
     done
-    printf 'export SHELL=%q ZDOTDIR=%q\necho %q\nexec %s\n' "${AGENT_SHELL%% *}" "$4" "$3" "${AGENT_SHELL}"
+    printf 'export SHELL=%q ZDOTDIR=%q\n' "${AGENT_SHELL%% *}" "$4"
+    # shellcheck disable=SC2016 # the wrapper's own bash expands them
+    printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
+      "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done"
+    printf 'echo %q\nexec %s\n' "$3" "${AGENT_SHELL}"
   } > "$1")
 }
 
@@ -268,8 +277,15 @@ launch_file() {
 # reaches argv, herdr's typed line or the scrollback. story_env has checked <names>.
 clean_env() {
   local pane="$1" base="${PROJECT_DIR}/.swarm/launch/$2" zdot="${PROJECT_DIR}/.swarm/zdotdir/$2" n line out try marker typed=""
-  # The agent's own ZDOTDIR, made afresh and 0700, so nothing an earlier agent wrote there runs.
-  rm -rf "${zdot}"; (umask 077; mkdir -p "${zdot}")
+  # The agent's own ZDOTDIR, made afresh and 0700, so nothing an earlier agent wrote there runs. A
+  # login shell runs /etc/zprofile between .zshenv and .zprofile, and its path_helper (macOS) puts
+  # /usr/bin and /bin ahead of the lead's own git, python3 and bash: .zshenv keeps the PATH the shell
+  # was given, and .zprofile puts it back. Neither holds a value, and a shell that is not a login one
+  # keeps its PATH as it came.
+  rm -rf "${zdot}"
+  # shellcheck disable=SC2016 # the agent's zsh expands them
+  (umask 077; mkdir -p "${zdot}"; printf '%s\n' '__swarm_path="${PATH}"' > "${zdot}/.zshenv"
+    printf '%s\n' '[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"' > "${zdot}/.zprofile")
   # A freshly split pane is not always ready (as for agent start): retry a failed run once. A failed
   # run may still have typed its line, so each try has its own wrapper and marker, and the wait is for
   # the last one's: two typed lines run both wrappers in turn, and the second leaves the clean shell.

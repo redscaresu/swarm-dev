@@ -105,8 +105,13 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 
 - [The method](docs/method.md): the short guide to how planning, building and merging work.
 - [Reference](docs/reference.md): every rule, setting, command and log.
-- On Foundry, Bedrock or Vertex, put your provider settings under `env` in `~/.claude/settings.json`.
-  Agents start without your shell's environment, so `~/.zshrc` does not reach them.
+- On Foundry, Bedrock or Vertex, agents get the provider and model selection (`CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+  `AWS_REGION`, `AWS_PROFILE`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`) from the session that
+  runs swarm.sh, so a `claude()` wrapper in `~/.zshrc` that exports them still picks the provider.
+  Exported credentials do not reach agents. Log in through the provider's own tools instead
+  (`aws sso login` or a profile in `~/.aws`, `gcloud auth application-default login`), and put any
+  other settings under `env` in `~/.claude/settings.json`.
 
 - [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in

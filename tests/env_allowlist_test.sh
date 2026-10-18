@@ -51,6 +51,8 @@ case "$1 $2" in
   "pane wait-output") grep -qF -- "$5" "$H/screen-$3" ;;
   "agent start")      cp "$H/env-$7" "$H/agent-env-$3"; echo "$3 $7" >> "$H/agents" ;;
   "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "tab list")         echo '{"result":{"tabs":[]}}' ;;
+  "pane list")        echo '{"result":{"panes":[]}}' ;;
   "agent list")       awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                            { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
@@ -66,6 +68,11 @@ chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 NET=(HTTPS_PROXY=http://proxy:1 HTTP_PROXY=http://proxy:2 NO_PROXY=a.example https_proxy=http://proxy:3 http_proxy=http://proxy:4
   no_proxy=b.example SSL_CERT_FILE="${ROOT}/ca.pem" NODE_EXTRA_CA_CERTS="${ROOT}/extra.pem" GIT_SSH_COMMAND="ssh -F /dev/null"
   GNUPGHOME="${ROOT}/gnupg")
+# The Linux session bus and XDG directories, and a Bedrock provider setup with a secret beside it.
+DESK=(DBUS_SESSION_BUS_ADDRESS="unix:path=${ROOT}/bus" XDG_RUNTIME_DIR="${ROOT}/run" XDG_DATA_HOME="${ROOT}/data"
+  XDG_CACHE_HOME="${ROOT}/cache" XDG_STATE_HOME="${ROOT}/state")
+PROVIDER=(CLAUDE_CODE_USE_BEDROCK=1 CLAUDE_CODE_USE_VERTEX=0 CLAUDE_CODE_USE_FOUNDRY=0 ANTHROPIC_MODEL=m1 ANTHROPIC_SMALL_FAST_MODEL=m2
+  AWS_REGION=eu-west-2 AWS_PROFILE=dev CLOUD_ML_REGION=europe-west4 ANTHROPIC_VERTEX_PROJECT_ID=proj-1)
 LEAD_PATH="${STUB_BIN}:${PATH}" TEST_HOME="${ROOT}/home"
 mkdir -p "${TEST_HOME}"; : > "${ROOT}/gitconfig"
 for f in zshenv zprofile zshrc; do echo "export ZSH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
@@ -73,7 +80,7 @@ for f in bashrc bash_profile; do echo "export BASH_LEAK=${f}" > "${TEST_HOME}/.$
 run() {
   (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
-    "${NET[@]}" SWARM_MERGE_CI_SECONDS=7 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET \
+    "${NET[@]}" "${DESK[@]}" "${PROVIDER[@]}" AWS_SECRET_ACCESS_KEY=aws-secret GPG_TTY=/dev/lead-tty SWARM_MERGE_CI_SECONDS=7 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET \
     SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
@@ -124,18 +131,33 @@ check "the proxy, CA, git ssh and gpg settings reach it" "$(printf '%s|' "${NET[
   "$(for v in "${NET[@]}"; do printf '%s=%s|' "${v%%=*}" "$(var conduct-plain "${v%%=*}")"; done)"
 check "swarm.sh's own SWARM_* settings and CLAUDE_PROJECTS_DIR reach it" "7|${ROOT}/projects" \
   "$(var conduct-plain SWARM_MERGE_CI_SECONDS)|$(var conduct-plain CLAUDE_PROJECTS_DIR)"
-# zdot <agent> — its ZDOTDIR's mode and how many files are in it.
+# zdot <agent> — its ZDOTDIR's mode and the files in it.
 # shellcheck disable=SC2012 # one directory, a path swarm.sh made; ls -ld's mode string reads the same on macOS and Linux
-zdot() { local d; d="$(var "$1" ZDOTDIR)"; printf '%s|%s' "$(ls -ld "${d}" | cut -c1-10)" "$(find "${d}" -mindepth 1 2>&1 | wc -l | tr -d ' ')"; }
-check "its ZDOTDIR is its own empty 0700 directory under .swarm, so zsh reads no startup file from HOME" \
-  "${p}/.swarm/zdotdir/conduct-plain|drwx------|0" "$(var conduct-plain ZDOTDIR)|$(zdot conduct-plain)"
+zdot() { local d; d="$(var "$1" ZDOTDIR)"; printf '%s|%s' "$(ls -ld "${d}" | cut -c1-10)" "$(find "${d}" -mindepth 1 2>&1 | sed 's#.*/##' | sort | tr '\n' ' ')"; }
+ZDOT_FILES="drwx------|.zprofile .zshenv "
+check "its ZDOTDIR is its own 0700 directory under .swarm, holding only swarm.sh's .zshenv and .zprofile" \
+  "${p}/.swarm/zdotdir/conduct-plain|${ZDOT_FILES}" "$(var conduct-plain ZDOTDIR)|$(zdot conduct-plain)"
+# shellcheck disable=SC2016 # the sourcing bash expands them
+check "and they put back the PATH a login shell was given, after a path_helper-style reorder" "/extra:${LEAD_PATH}" \
+  "$(env -i PATH="/extra:${LEAD_PATH}" bash -c '. "$1/.zshenv"; PATH="/usr/bin:/bin:${PATH}"; . "$1/.zprofile"; printf %s "${PATH}"' \
+    _ "$(var conduct-plain ZDOTDIR)")"
+check "the session bus and XDG directories reach it, so gh and git reach the Secret Service on Linux" "$(printf '%s|' "${DESK[@]}")" \
+  "$(for v in "${DESK[@]}"; do printf '%s=%s|' "${v%%=*}" "$(var conduct-plain "${v%%=*}")"; done)"
+check "GPG_TTY is the pane's own terminal (none here), never the lead's" "" "$(var conduct-plain GPG_TTY)"
+check "the provider and model selection reaches it, and the secret beside it does not" "$(printf '%s|' "${PROVIDER[@]}")|" \
+  "$(for v in "${PROVIDER[@]}"; do printf '%s=%s|' "${v%%=*}" "$(var conduct-plain "${v%%=*}")"; done)|$(var conduct-plain AWS_SECRET_ACCESS_KEY)"
+check "a herdr variable the pane lacks is left unset, not set empty" "0|0" \
+  "$(grep -c '^HERDR_TAB_ID=' "${ROOT}/agent-env-conduct-plain")|$(grep -c '^HERDR_BIN_PATH=' "${ROOT}/agent-env-conduct-plain")"
 if command -v zsh >/dev/null; then
   agent_env conduct-plain
   # shellcheck disable=SC2016 # the agent's zsh expands it
   check "a zsh -lc the agent starts sees no secret exported in HOME's .zshenv or .zprofile" "none" \
     "$(env -i "${a[@]}" zsh -lc 'echo ${ZSH_LEAK:-none}' 2>&1 </dev/null)"
+  # shellcheck disable=SC2016 # the agent's zsh expands it
+  check "and keeps swarm.sh's PATH, in its order, past /etc/zprofile" "${LEAD_PATH}" "$(env -i "${a[@]}" zsh -lc 'printf %s "${PATH}"' 2>&1 </dev/null)"
 else
   echo "skip a zsh -lc the agent starts sees no secret exported in HOME's .zshenv or .zprofile (no zsh here)"
+  echo "skip and keeps swarm.sh's PATH, in its order, past /etc/zprofile (no zsh here)"
 fi
 agent_env conduct-plain
 check "its SHELL is the agent shell, not the lead's bash" "/bin/sh" "$(var conduct-plain SHELL)"
@@ -180,7 +202,10 @@ echo 1 > "${ROOT}/runtypedfail"
 # A .zshenv an earlier agent left in typed-once's ZDOTDIR is gone once it starts.
 mkdir -p "${p}/.swarm/zdotdir/typed-once"; echo "export PLANTED=1" > "${p}/.swarm/zdotdir/typed-once/.zshenv"
 run agent t4 typed-once "${p}" conduct "${ROOT}/brief.md" >/dev/null
-check "an agent's ZDOTDIR is made afresh at each launch: a .zshenv left there is gone" "drwx------|0" "$(zdot typed-once)"
+check "an agent's ZDOTDIR is made afresh at each launch: a .zshenv left there is gone" "${ZDOT_FILES}|0" \
+  "$(zdot typed-once)|$(grep -c PLANTED "${p}/.swarm/zdotdir/typed-once/.zshenv")"
+run close typed-once >/dev/null
+check "closing the agent removes its ZDOTDIR" "no" "$([[ -e "${p}/.swarm/zdotdir/typed-once" ]] && echo yes || echo no)"
 scr="${ROOT}/screen-$(pane_of typed-once)"
 check "a pane run that typed its line and then failed is retried with its own marker, and the wait is for that one" "2|yes" \
   "$(grep '^swarm: agent environment ready' "${scr}" | sort -u | wc -l | tr -d ' ')|$(has "--match $(grep '^swarm: agent environment ready' "${scr}" | tail -1) --timeout" "$(cat "${ROOT}/herdr.log")")"
@@ -216,7 +241,7 @@ reserved_all() { local n; for n in "$@"; do refused "env: [${n}]" "env: ${n} is 
 check "names that load code or belong to the lead's session are refused" "${REFUSED}" \
   "$(reserved_all BASH_ENV ENV LD_PRELOAD DYLD_INSERT_LIBRARIES CLAUDECODE CLAUDE_CODE_OAUTH_TOKEN CLAUDE_PID)"
 check "and so are swarm.sh's own settings and the passed-through proxy and CA names" "${REFUSED}" \
-  "$(reserved_all SWARM_MERGE_CI_SECONDS HTTPS_PROXY SSL_CERT_FILE GIT_SSH_COMMAND CLAUDE_PROJECTS_DIR)"
+  "$(reserved_all SWARM_MERGE_CI_SECONDS HTTPS_PROXY SSL_CERT_FILE GIT_SSH_COMMAND CLAUDE_PROJECTS_DIR XDG_RUNTIME_DIR GPG_TTY AWS_PROFILE)"
 check "a name swarm.sh's environment does not have is refused, naming it" "${REFUSED}" \
   "$(refused "env: [NOT_SET_HERE]" "env: NOT_SET_HERE is not set here, so its builder would start without it")"
 check "a block-style env: list is refused, not read as no names" "${REFUSED}" \
