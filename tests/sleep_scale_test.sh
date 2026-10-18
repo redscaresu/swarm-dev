@@ -6,7 +6,9 @@
 # to 0 or one that is not a number is refused at startup, before any command runs. board's reader
 # stopping early prints no write error. Then make test itself: a failing file fails it and its output
 # comes whole after its phase, a SERIAL file runs after the parallel ones, and xargs stopping early
-# fails the run and leaves no job (nor anything a job started) running, and a path with a space runs.
+# fails the run and leaves no job (nor anything a job started) running, BSD xargs's exit 1 still runs
+# the SERIAL phase, a job with no result fails it, an interrupt stops each test with a TERM and leaves
+# nothing behind, and a path with a space runs.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -123,6 +125,34 @@ o="$(JOBS=3 mk "${ROOT}/killer_test.sh" "${ROOT}/late_test.sh" "${ROOT}/stubborn
 sleep 7
 check "make test fails when xargs stops early, stops what the jobs left started (TERM, then KILL), and returns within 5 s" "yes|2|no marks|yes" \
   "$(grep -q '^FAIL xargs stopped (exit [0-9]*): not every file ran$' <<< "${o}" && echo yes || echo "no: ${o}")|$(tail -1 <<< "${o}")|$(compgen -G "${ROOT}/*.mark" | sed 's#.*/##' | tr '\n' ' ' | grep . || echo "no marks")|$( ((took < 5000)) && echo yes || echo "no, ${took} ms")"
+# BSD xargs exits 1 when a command failed, every file run: a stub xargs that does so still leads
+# to the SERIAL phase, with no "stopped".
+mkdir -p "${ROOT}/bsd"; printf '#!/bin/sh\n"%s" "$@"\nexit 1\n' "$(command -v xargs)" > "${ROOT}/bsd/xargs"; chmod +x "${ROOT}/bsd/xargs"
+printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/one_test.sh"; cp "${ROOT}/one_test.sh" "${ROOT}/two_test.sh"
+o="$(PATH="${ROOT}/bsd:${PATH}" SERIAL="${ROOT}/two_test.sh" mk "${ROOT}/one_test.sh" "${ROOT}/two_test.sh")"
+check "an xargs exit of 1 (BSD's for a failed command) counts as every file run, and the SERIAL phase runs" "0|yes|no" \
+  "$(tail -1 <<< "${o}")|$(grep -q "^ok   ${ROOT}/two_test.sh " <<< "${o}" && echo yes || echo no)|$(grep -q 'xargs stopped' <<< "${o}" && echo yes || echo no)"
+# A job that ends with no result (here its TERM trap, which the test pulls) fails make test.
+# shellcheck disable=SC2016 # the stub's own shell expands it
+printf '#!/usr/bin/env bash\nkill -TERM "${PPID}"; sleep 5\n' > "${ROOT}/noresult_test.sh"
+o="$(SERIAL="${ROOT}/noresult_test.sh" mk "${ROOT}/noresult_test.sh")"
+check "a SERIAL job that ends with no result fails make test" "2|yes" \
+  "$(tail -1 <<< "${o}")|$(grep -qxF "FAIL ${ROOT}/noresult_test.sh: its job ended without a result" <<< "${o}" && echo yes || echo "no: ${o}")"
+# An interrupt (INT to the runner's process group, as Ctrl-C sends it) TERMs each test, so its EXIT
+# trap runs, and leaves no test process and no temp dir behind.
+mkdir -p "${ROOT}/rt"
+printf '#!/usr/bin/env bash\ntrap ": > %s/exit.mark" EXIT\nsleep 20\n' "${ROOT}" > "${ROOT}/slowint_test.sh"
+# The runner gets INT back to its default first: started in the background here, it would come in
+# ignored, and a signal ignored on entry cannot be trapped. A terminal's Ctrl-C has no such catch.
+(TMPDIR="${ROOT}/rt" JOBS=2 exec python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+  bash "${REPO}/scripts/test.sh" "${ROOT}/slowint_test.sh" > "${ROOT}/int.out" 2>&1) &
+ipid=$!
+for ((i = 0; i < 50; i++)); do grep -q '^run ' "${ROOT}/int.out" 2>/dev/null && pgrep -f "${ROOT}/slowint_test.sh" > /dev/null && break; sleep 0.1; done
+kill -INT -- "-${ipid}"
+for ((i = 0; i < 100; i++)); do kill -0 "${ipid}" 2>/dev/null || break; sleep 0.1; done
+check "an interrupt TERMs each test (its EXIT trap runs), leaving no test process and no temp dir" "yes|none|empty" \
+  "$([[ -e "${ROOT}/exit.mark" ]] && echo yes || echo no)|$(pgrep -f "${ROOT}/slowint_test.sh" > /dev/null && echo "left running" || echo none)|$([[ -z "$(ls -A "${ROOT}/rt")" ]] && echo empty || echo "left: $(ls -A "${ROOT}/rt")")"
+pkill -KILL -f "${ROOT}/slowint_test.sh" 2>/dev/null || true
 # A file whose path holds a space runs.
 printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/sp ace_test.sh"
 check "a test file whose path holds a space runs" "yes" \
