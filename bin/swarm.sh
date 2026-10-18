@@ -194,7 +194,7 @@ load_config() {
         [[ "${value}" == off || "${value}" == session ]] || die "${where}: lead must be off or session, not '${value}'" ;;
       commit_trailers)
         [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
-          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}'" ;;
+          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"

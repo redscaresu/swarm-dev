@@ -7,7 +7,6 @@ set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 TEMPLATES="$(dirname "${SWARM}")/../templates/docs"
-HOOK="$(dirname "${SWARM}")/../templates/pre-commit"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
@@ -38,10 +37,20 @@ check "init adds the three .gitignore lines after the existing one" \
   $'node_modules/\n.swarm/\ndocs/.obsidian/*\n!docs/.obsidian/app.json' "$(cat "${p}/.gitignore")"
 check "init adds a commented commit_trailers line" "# commit_trailers = Co-Authored-By: Your Name <you@example.com>" \
   "$(cat "${p}/.claude/swarm/config")"
-check "init writes a CI that skips a board-only PR and otherwise runs make check" "yes|yes|yes" \
-  "$(grep -qF 'BOARD: "docs/"' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'if: steps.gate.outputs.board_only != '"'true'" "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qxF '        run: make check' "${p}/.github/workflows/ci.yml" && echo yes)"
-check "init writes an executable pre-commit hook that runs make check" "same|yes" \
-  "$(cmp -s "${HOOK}" "${p}/.git/hooks/pre-commit" && echo same)|$([[ -x "${p}/.git/hooks/pre-commit" ]] && echo yes)"
+check "init writes a CI that skips a board-only PR and otherwise runs make check, on pushes to main" "yes|yes|yes|yes" \
+  "$(grep -qF 'BOARD: "docs/"' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'if: steps.gate.outputs.board_only != '"'true'" "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'then make check;' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'branches: ["main"]' "${p}/.github/workflows/ci.yml" && echo yes)"
+check "init writes an executable pre-commit hook for docs/" "yes|yes" \
+  "$(grep -qxF 'swarm_board="docs/"' "${p}/.git/hooks/pre-commit" && echo yes)|$([[ -x "${p}/.git/hooks/pre-commit" ]] && echo yes)"
+# gate <repo> <path> — the CI gate's verdict on a PR that adds <path> in <repo>, run as CI would.
+gate() {
+  local base
+  sed -n '/id: gate/,/- name: make check/p' "$1/.github/workflows/ci.yml" | sed -n '/run: |/,$p' | sed '1d;$d' \
+    | sed 's/^          //' > "${ROOT}/gate.sh"
+  base="$(cd "$1" && "${GIT[@]}" add -A && "${GIT[@]}" commit -q --allow-empty -m base --no-verify && git rev-parse HEAD)"
+  mkdir -p "$(dirname "$1/$2")" && echo x > "$1/$2"
+  (cd "$1" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm pr --no-verify \
+    && BOARD="$(sed -n 's/^ *BOARD: "\(.*\)"$/\1/p' .github/workflows/ci.yml)" BASE_SHA="${base}" GITHUB_OUTPUT=/dev/stdout bash "${ROOT}/gate.sh")
+}
 check "init ends with the trust step" "yes" "$(grep -q 'run claude once in .* and accept the folder trust prompt' <<< "${out}" && echo yes || echo no)"
 before="$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
 out="$(run "${p}" init || true)"
@@ -50,7 +59,7 @@ check "a second run adds no line and says so" "yes" "$(has "${out}" ".gitignore 
 check "a second run changes no file" "${before}" \
   "$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
 check "a second run leaves the CI and the hook, naming them" "yes|yes" \
-  "$(has "${out}" "left   .github/workflows/ci.yml (it has the board-only skip)")|$(has "${out}" "left   .git/hooks/pre-commit (it runs make check)")"
+  "$(has "${out}" "left   .github/workflows/ci.yml (swarm-dev wrote it)")|$(has "${out}" "left   .git/hooks/pre-commit (swarm-dev wrote it)")"
 check "init is logged" "init" "$(cut -f2 "${p}/.swarm/events.tsv" | sort -u)"
 
 # --- A board file the user changed is left, and named.
@@ -78,8 +87,45 @@ mkdir -p "${q}/.claude/swarm" && echo "board_dir = ." > "${q}/.claude/swarm/conf
 out="$(run "${q}" init || true)"
 check "board_dir = . names the lines without a path" $'.swarm/\n.obsidian/*\n!.obsidian/app.json' "$(cat "${q}/.gitignore")"
 check "board_dir = . lists files relative to the root" "yes" "$(has "${out}" "copied stories/README.md")"
-check "board_dir = . writes no CI, since no PR is board-only" "yes|no" \
-  "$(has "${out}" "wrote no CI: the board is not a directory in the repo, so no PR is board-only")|$([[ -e "${q}/.github" ]] && echo yes || echo no)"
+check "board_dir = . gates on the board's own files at the root" "yes|board_only=true|board_only=false" \
+  "$(grep -qF 'BOARD: ""' "${q}/.github/workflows/ci.yml" && echo yes)|$(gate "${q}" stories/a.md)|$(gate "${q}" src/main.go)"
+
+# --- The gate skips only the board's own files: a docs page beside the board runs the checks.
+q="${ROOT}/docs-pages"; "${GIT[@]}" init -q "${q}"
+run "${q}" init >/dev/null || true
+check "a PR that changes only docs/stories/ is board-only" "board_only=true" "$(gate "${q}" docs/stories/a.md)"
+check "a PR that adds a docs page beside the board is not" "board_only=false" "$(gate "${q}" docs/guide.md)"
+
+# --- A board outside the repo: CI without the gate, and a hook that never skips.
+q="${ROOT}/outside"; "${GIT[@]}" init -q "${q}"
+mkdir -p "${q}/.claude/swarm" && echo "board_dir = ${ROOT}/vault" > "${q}/.claude/swarm/config"
+out="$(run "${q}" init || true)"
+check "a board outside the repo gets a CI with no gate, and a hook with /" "yes|no|yes" \
+  "$(has "${out}" "wrote  .github/workflows/ci.yml (it runs make check)")|$(grep -qE 'id: gate|steps.gate' "${q}/.github/workflows/ci.yml" && echo yes || echo no)|$(grep -qxF 'swarm_board="/"' "${q}/.git/hooks/pre-commit" && echo yes)"
+
+# --- The CI's push branch is the branch checked out when origin has no HEAD.
+q="${ROOT}/trunk"; git -c init.defaultBranch=trunk init -q "${q}"
+run "${q}" init >/dev/null || true
+check "the CI's push branch is the repo's own" "yes" "$(grep -qF 'branches: ["trunk"]' "${q}/.github/workflows/ci.yml" && echo yes || echo no)"
+
+# --- The hook: a board-only commit skips make check; any other commit runs it.
+q="${ROOT}/hooked"; "${GIT[@]}" init -q "${q}"
+run "${q}" init >/dev/null || true
+printf 'check:\n\t@echo checked; false\n' > "${q}/Makefile"
+(cd "${q}" && "${GIT[@]}" add Makefile && "${GIT[@]}" commit -qm make --no-verify)
+echo s > "${q}/docs/stories/s.md"
+check "the hook lets a board-only commit through without make check" "ok" \
+  "$(cd "${q}" && "${GIT[@]}" add -A docs && "${GIT[@]}" commit -qm board >/dev/null 2>&1 && echo ok || echo refused)"
+echo c > "${q}/code.txt"
+check "the hook runs make check on any other commit, and a failing check stops it" "refused" \
+  "$(cd "${q}" && "${GIT[@]}" add code.txt && "${GIT[@]}" commit -qm code >/dev/null 2>&1 && echo ok || echo refused)"
+
+# --- core.hooksPath set: no hook is written there, and the lines to add are printed.
+q="${ROOT}/hookspath"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/.githooks"
+git -C "${q}" config core.hooksPath .githooks
+out="$(run "${q}" init || true)"
+check "with core.hooksPath set, init writes no hook and prints the lines to add" "no|no|yes|yes" \
+  "$([[ -e "${q}/.githooks/pre-commit" ]] && echo yes || echo no)|$([[ -e "${q}/.git/hooks/pre-commit" ]] && echo yes || echo no)|$(has "${out}" "left   .githooks/pre-commit (core.hooksPath is .githooks); add these lines to it:")|$(has "${out}" 'swarm_board="docs/"')"
 
 # --- A repo with workflows: they are left, and the skip step is printed to add.
 q="${ROOT}/workflows"; "${GIT[@]}" init -q "${q}"
@@ -87,8 +133,8 @@ mkdir -p "${q}/.github/workflows" && printf 'name: mine\n' > "${q}/.github/workf
 out="$(run "${q}" init || true)"
 check "with workflows, init writes no ci.yml and leaves theirs" "no|name: mine" \
   "$([[ -e "${q}/.github/workflows/ci.yml" ]] && echo yes || echo no)|$(cat "${q}/.github/workflows/build.yml")"
-check "and prints the board-only step to add" "yes|yes|yes" \
-  "$(grep -q 'left   .github/workflows (it exists); add this step' <<< "${out}" && echo yes)|$(has "${out}" "      - name: Skip a board-only PR")|$(has "${out}" '          BOARD: "docs/"')"
+check "and prints the board-only step to add, for the checks' own job, with shell: bash" "yes|yes|yes|yes" \
+  "$(grep -q "left   .github/workflows (it exists); add this step to the job that runs your checks" <<< "${out}" && echo yes)|$(has "${out}" "      - name: Skip a board-only PR")|$(has "${out}" '          BOARD: "docs/"')|$(has "${out}" '        shell: bash')"
 
 # --- An existing pre-commit hook stays byte for byte, and init prints the line to add.
 q="${ROOT}/hook"; "${GIT[@]}" init -q "${q}"
@@ -96,8 +142,8 @@ printf '#!/bin/sh\ngitleaks protect --staged\n' > "${q}/.git/hooks/pre-commit"
 hook="$(cksum < "${q}/.git/hooks/pre-commit")"
 out="$(run "${q}" init || true)"
 check "an existing pre-commit hook is left byte-identical" "${hook}" "$(cksum < "${q}/.git/hooks/pre-commit")"
-check "and init prints the line to add" "yes" \
-  "$(has "${out}" "left   .git/hooks/pre-commit (it exists); add this line to it: make check || exit 1")"
+check "and init prints the lines to add" "yes|yes" \
+  "$(has "${out}" "left   .git/hooks/pre-commit (it exists); add these lines to it:")|$(has "${out}" "  if [ -f Makefile ] && grep -q '^check:' Makefile; then make check || exit 1; fi")"
 
 # --- A CRLF .gitignore that has every line already gets none of them again.
 q="${ROOT}/crlf"; "${GIT[@]}" init -q "${q}"

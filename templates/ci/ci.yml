@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: ["@BRANCH@"]
 
 permissions:
   contents: read
@@ -19,9 +19,10 @@ jobs:
         with:
           fetch-depth: 0 # the gate diffs against the PR's base
           persist-credentials: false
-      # swarm-dev: a pull request that changes only the board skips the checks.
+      # swarm-dev: a pull request that changes only the board's own files skips the checks.
       - name: Skip a board-only PR
         id: gate
+        shell: bash
         env:
           BOARD: "@BOARD@"
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -29,9 +30,13 @@ jobs:
           only=false
           if [ -n "${BASE_SHA}" ] && paths="$(git diff --name-only --no-renames "${BASE_SHA}...HEAD")" && [ -n "${paths}" ]; then
             only=true
-            while IFS= read -r p; do case "${p}" in "${BOARD}"*) ;; *) only=false ;; esac; done <<< "${paths}"
+            while IFS= read -r p; do
+              case "${p}" in "${BOARD}"stories/*|"${BOARD}"epics/*|"${BOARD}"hld/*|"${BOARD}"Board.base|"${BOARD}".obsidian/*) ;; *) only=false ;; esac
+            done <<< "${paths}"
           fi
           echo "board_only=${only}" >> "${GITHUB_OUTPUT}"
       - name: make check
         if: steps.gate.outputs.board_only != 'true'
-        run: make check
+        run: |
+          if [ -f Makefile ] && grep -q '^check:' Makefile; then make check; else
+            echo "::warning::the Makefile has no check target, so CI checked nothing; add one"; fi

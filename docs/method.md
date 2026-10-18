@@ -80,11 +80,15 @@ project). `templates/docs/` holds the READMEs that define each format and two Ob
 
 `swarm.sh init`, run from the project's git root, copies the board templates into `board_dir`
 without overwriting a file, creates `.claude/swarm/` with a commented `commit_trailers` line, and
-adds `.swarm/` and the board's Obsidian lines to `.gitignore`. It also sets up checks: with no
-`.github/workflows`, it writes a `ci.yml` that runs `make check` and skips a PR that changes only the
-board; with workflows, it leaves them and prints the skip step to add. It writes a git pre-commit
-hook that runs `make check` while the Makefile has a `check` target, or, when a hook exists, leaves
-it and prints the line to add. The next `/swarm-dev:swarm` asks once for the brief
+adds `.swarm/` and the board's Obsidian lines to `.gitignore`. It also sets up checks. With no
+`.github/workflows`, it writes a `ci.yml` that runs `make check` on each PR and on pushes to the
+default branch, and skips a PR that changes only the board's own files (`stories/`, `epics/`, `hld/`,
+`Board.base` and `.obsidian/` under `board_dir`, so other pages in `docs/` still get checked). A board
+outside the repo gets the workflow without the skip. With workflows already there, init leaves them
+and prints the skip step to add to the job that runs your checks. It also writes a git pre-commit
+hook that runs `make check` while the Makefile has a `check` target, skipping a commit that changes
+only the board's own files. When a hook exists, or `core.hooksPath` is set, init writes no hook and
+prints the lines to add. The next `/swarm-dev:swarm` asks once for the brief
 (`.claude/swarm/brief.md`) and writes only what you say; an empty file means you declined.
 
 `.claude/swarm/config` holds `key = value` lines and `#` comments. The script parses it and never

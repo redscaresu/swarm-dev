@@ -130,6 +130,10 @@ for v in "Ann <a@x.io>" "Co-Authored-By: Ann <a@x.io> ;"; do
     "$(fails_with "${p}/.claude/swarm/config:1: commit_trailers must be trailers" run "${p}" config)"
 done
 
+project "${p}" "commit_trailers = Refs: #123"
+check "a commit_trailers cut short by a # says a # starts a comment" "yes" \
+  "$(fails_with "commit_trailers must be trailers .*(a # starts a comment, so no trailer can hold one)" run "${p}" config)"
+
 # --- One set of keys: the method's config table, CONFIG_KEYS and load_config's case arms. A key
 # missing from any of the three is named.
 REPO="$(dirname "${SWARM}")/.."

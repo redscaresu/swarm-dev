@@ -571,33 +571,48 @@ init_check() {
   [[ "${PROJECT_DIR}" == "${top}" ]] || die "init: the project is ${PROJECT_DIR}; run init there"
 }
 
-# init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there with <board> (the board's
-# path from the root, with a trailing /) in its board-only skip; with workflows, leave them and print
-# the skip step to add. An empty <board> (the board is the root, or outside the repo) gets neither.
+# fill <text> <placeholder> <value> — <text> with its one <placeholder> replaced by <value>, literally.
+fill() { printf '%s' "${1%%"$2"*}$3${1#*"$2"}"; }
+
+# init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there: it runs make check on a
+# PR and on a push to the default branch (origin/HEAD, else the branch checked out), and its gate skips
+# the checks for a PR that changes only the board's own files under <board> (the board's path from the
+# root with a trailing /, empty for the root). A board outside the repo (<board> is /) gets no gate.
+# With workflows, leave them and print the gate step to add.
 init_ci() {
-  local t ci=.github/workflows/ci.yml
-  [[ -n "$1" ]] || { echo "wrote no CI: the board is not a directory in the repo, so no PR is board-only"; return; }
-  t="$(cat "${SWARM_HOME}/templates/ci/ci.yml")"; t="${t%%@BOARD@*}$1${t#*@BOARD@}"
-  if [[ -f "${ci}" && "$(cat "${ci}")" == "${t}" ]]; then echo "left   ${ci} (it has the board-only skip)"; return; fi
+  local t branch ci=.github/workflows/ci.yml
+  branch="$(git symbolic-ref -q --short refs/remotes/origin/HEAD || git symbolic-ref -q --short HEAD || echo main)"
+  t="$(fill "$(cat "${SWARM_HOME}/templates/ci/ci.yml")" @BRANCH@ "${branch#origin/}")"
+  t="$(fill "${t}" @BOARD@ "$1")"
+  # The gate: its comment to its last line, and the if: it sets on make check.
+  [[ "$1" != / ]] || t="$(sed '/# swarm-dev: a pull request/,/echo "board_only=/d; /if: steps.gate/d' <<< "${t}")"
+  if [[ -f "${ci}" && "$(cat "${ci}")" == "${t}" ]]; then echo "left   ${ci} (swarm-dev wrote it)"; return; fi
   if [[ -d .github/workflows ]]; then
-    echo "left   .github/workflows (it exists); add this step before your checks (it needs fetch-depth: 0 on your checkout), and give each check if: steps.gate.outputs.board_only != 'true'"
+    if [[ "$1" == / ]]; then echo "left   .github/workflows (it exists)"; return; fi
+    echo "left   .github/workflows (it exists); add this step to the job that runs your checks, before them (its checkout needs fetch-depth: 0), and give each check if: steps.gate.outputs.board_only != 'true'"
     sed -n '/- name: Skip a board-only PR/,/- name: make check/p' <<< "${t}" | sed '$d'
     return
   fi
   mkdir -p .github/workflows && printf '%s\n' "${t}" > "${ci}"
-  echo "wrote  ${ci} (it runs make check, and skips a board-only PR)"
+  echo "wrote  ${ci} (it runs make check$([[ "$1" == / ]] || echo ", and skips a board-only PR"))"
 }
 
-# init_hook — the git pre-commit hook from templates/pre-commit, which runs make check; a hook that
-# exists is left as it is, and the line to add is printed.
+# init_hook <board> — the git pre-commit hook from templates/pre-commit, with <board> as init_ci has it:
+# make check, unless the commit changes only the board's own files. A hook that exists is left as it
+# is, and none is written while core.hooksPath is set (a global one runs in every repo, a repo's own is
+# tracked): init prints the lines to add instead.
 init_hook() {
-  local hook src="${SWARM_HOME}/templates/pre-commit"
+  local hook t why=""
+  t="$(fill "$(cat "${SWARM_HOME}/templates/pre-commit")" @BOARD@ "$1")"
   hook="$(git rev-parse --git-path hooks/pre-commit)"
-  if cmp -s "${src}" "${hook}"; then echo "left   ${hook} (it runs make check)"
-  elif [[ -e "${hook}" ]]; then echo "left   ${hook} (it exists); add this line to it: make check || exit 1"
+  [[ -z "$(git config core.hooksPath)" ]] || why="core.hooksPath is $(git config core.hooksPath)"
+  if [[ -z "${why}" && -f "${hook}" && "$(cat "${hook}")" == "${t}" ]]; then echo "left   ${hook} (swarm-dev wrote it)"
+  elif [[ -n "${why}" || -e "${hook}" ]]; then
+    echo "left   ${hook} (${why:-it exists}); add these lines to it:"
+    tail -n +2 <<< "${t}"
   else
-    mkdir -p "$(dirname "${hook}")" && cp "${src}" "${hook}" && chmod +x "${hook}"
-    echo "wrote  ${hook} (it runs make check)"
+    mkdir -p "$(dirname "${hook}")" && printf '%s\n' "${t}" > "${hook}" && chmod +x "${hook}"
+    echo "wrote  ${hook} (it runs make check, and skips a board-only commit)"
   fi
   grep -q '^check:' Makefile 2>/dev/null || echo "the Makefile has no check target: add one, for the hook and CI to run"
 }
@@ -615,7 +630,7 @@ init_config() {
 # (never over a file that exists), .claude/swarm/ with a commented commit_trailers line, the .gitignore
 # lines, a CI workflow and a pre-commit hook. A second run changes nothing.
 init_project() {
-  local rel f line n=0
+  local rel board f line n=0
   mkdir -p "${BOARD}" && BOARD="$(cd "${BOARD}" && pwd -P)"
   # The board's path from the root with a trailing /, or empty when the board is the root.
   rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}/"}/"
@@ -637,8 +652,10 @@ init_project() {
     echo "${line}" >> .gitignore; echo "added ${line} to .gitignore"; n=$((n + 1))
   done
   [[ ${n} -gt 0 ]] || echo ".gitignore already has every line"
-  init_ci "$([[ -n "${rel}" && "${BOARD}/" == "${PROJECT_DIR}/"* ]] && echo "${rel}")"
-  init_hook
+  # The board for the CI gate and the hook: / for one outside the repo, which no repo path starts with.
+  board="${rel}"; [[ "${BOARD}/" == "${PROJECT_DIR}/"* ]] || board=/
+  init_ci "${board}"
+  init_hook "${board}"
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
