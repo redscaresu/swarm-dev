@@ -32,10 +32,10 @@ def exists(path):
     return path.startswith("docs/") and bool(glob.glob(os.path.join(repo, "templates", path)))
 
 def check_code(code, out):
-    for c in re.findall(r"(?<![\w.-])swarm\.sh[ \t]+([a-z][\w-]*)", code):
+    for c in re.findall(r"(?<![\w./-])swarm\.sh[ \t]+([a-z][\w-]*)", code):
         if c not in commands:
             out.append("swarm.sh " + c)
-    for k in re.findall(r"(?<![\w.-])swarm\.sh[ \t]+config[ \t]+([a-z][\w-]*)", code):
+    for k in re.findall(r"(?<![\w./-])swarm\.sh[ \t]+config[ \t]+([a-z][\w-]*)", code):
         if k not in keys | {"project"}:
             out.append("config key " + k)
     for m in re.finditer(r"(?<![\w.~/$-])(?:\./)?(" + ROOTS + r"[\w./*-]*)", code):
@@ -45,29 +45,39 @@ def check_code(code, out):
         if not exists(path):
             out.append("path " + path)
 
+def check_prose(rel, para, out):
+    # A paragraph's lines are joined first: the docs are hard-wrapped, so a code span or link can
+    # open on one line and close on the next.
+    text = " ".join(para)
+    for span in re.findall(r"`([^`]+)`", text):
+        check_code(span, out)
+    for link in re.findall(r"\]\(([^)\s]+)\)", text):
+        target = link.split("#", 1)[0]
+        if not target or "://" in link or link.startswith("mailto:") or "<" in target:
+            continue
+        if not os.path.exists(os.path.normpath(os.path.join(root, os.path.dirname(rel), target))):
+            out.append("link " + link)
+
 def check_md(rel, text, out):
     fence = in_table = False
+    para = []
     for line in text.splitlines():
-        if line.lstrip().startswith("```"):
-            fence = not fence
+        if line.lstrip().startswith("```") or (not fence and not line.strip()):
+            check_prose(rel, para, out)
+            para = []
+            fence ^= line.lstrip().startswith("```")
             continue
         if fence:
             check_code(line, out)
             continue
-        for span in re.findall(r"`([^`]+)`", line):
-            check_code(span, out)
+        para.append(line)
         if re.match(r"\|\s*Key\s*\|", line):
             in_table = True
         elif not line.startswith("|"):
             in_table = False
         elif in_table and (k := re.match(r"\|\s*`?([a-z][\w-]*)`?\s*\|", line)) and k.group(1) not in keys:
             out.append("config key " + k.group(1))
-        for link in re.findall(r"\]\(([^)\s]+)\)", line):
-            target = link.split("#", 1)[0]
-            if not target or "://" in link or link.startswith("mailto:") or "<" in target:
-                continue
-            if not os.path.exists(os.path.normpath(os.path.join(root, os.path.dirname(rel), target))):
-                out.append("link " + link)
+    check_prose(rel, para, out)
 
 files = ["README.md"] + [os.path.relpath(f, root) for g in ("docs/*.md", "commands/*.md")
                           for f in sorted(glob.glob(os.path.join(root, g)))]
@@ -126,7 +136,18 @@ cat > "${tmp}/fixture/docs/method.md" <<'EOF'
 | `nosuch_key` | `0` | stale |
 | plain_key | 0 | stale, no backticks |
 EOF
-want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tlink docs/nosuch.md\nREADME.md\tpath docs/nosuch/\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key'
+# A span wrapped over two lines is still code, and prose between two wrapped spans is not; a path
+# ending in swarm.sh is not followed by a command.
+cat > "${tmp}/fixture/docs/wrap.md" <<'EOF'
+Run `swarm.sh
+nosuch <slug>` or `swarm.sh drop
+<slug>` then swarm.sh realnope and `swarm.sh next`.
+
+```bash
+shellcheck bin/swarm.sh bin/lib/*.sh
+```
+EOF
+want=$'README.md\tswarm.sh nosuch\nREADME.md\tswarm.sh dash2\nREADME.md\tconfig key merge2\nREADME.md\tpath bin/lib/nosuch.sh\nREADME.md\tpath bin/gone.sh\nREADME.md\tpath docs/nosuch/\nREADME.md\tlink docs/nosuch.md\ndocs/method.md\tconfig key nosuch_key\ndocs/method.md\tconfig key plain_key\ndocs/wrap.md\tswarm.sh nosuch'
 doc_check "${tmp}/fixture" > "${tmp}/fixture.found"
 got="$(cat "${tmp}/fixture.found")"
 if [[ "${got}" == "${want}" ]]; then
