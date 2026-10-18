@@ -821,7 +821,7 @@ from git history, so merged stories keep their class. The columns are:
 
 A PR is rework when a PR merged after it, on its merge day or up to 7 days later, says it fixes it,
 or when a `log-finding --reviewer escaped` row dated up to 7 days after its merge day points at it.
-Both count calendar days from the merge day in local time, as `log-finding` dates its rows. Saying so
+Both count calendar days from the merge day in local time, as `findings.tsv` dates its rows. Saying so
 means a fix verb (`fix`, `fixes`, `fixed`, `fixing`, `hotfix`, `bugfix` or `quickfix`), `rework of`
 or `regression from` in the title or body, then the PR within 40 characters in the same clause
 (clauses end at a sentence end, a `;` or a line break): its URL, `owner/repo#N`, or `#N` from the
