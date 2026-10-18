@@ -312,14 +312,17 @@ expect_conductor "a working conductor's dependent epic with a blocked story left
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'" \
   "item stories/s2.md 'status: blocked' 'kind: code' 'epic: e1'"
 # A ready lead story that a blocked story depends on is named under the wait: the lead runs it
-# meanwhile. One nothing blocked depends on is not, nor an escalated one (wait --lead hands it on).
+# meanwhile. One nothing blocked depends on is not, nor an escalated one (wait --lead hands it on),
+# nor one with after: (it waits for its epic to finish).
 expect_conductor "a working conductor's wait names a lead story that blocks one" "wait conduct-e1" no e1 "*" \
   "item stories/l.md 'status: ready' 'kind: lead'" "item stories/l2.md 'status: ready' 'kind: lead'" \
   "item stories/s.md 'status: blocked' 'kind: code' 'depends_on: [l]'" \
   "item stories/t.md 'status: blocked' 'kind: code' 'depends_on: [x, l]'" \
   "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'" \
-  "item stories/u.md 'status: blocked' 'kind: code' 'depends_on: [esc]'"
-if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t" ]]; then echo "ok   the wait is followed by also: lead l blocks s t, and nothing for l2 or the escalated esc"
+  "item stories/u.md 'status: blocked' 'kind: code' 'depends_on: [esc]'" \
+  "item stories/aft.md 'status: ready' 'kind: lead' 'epic: e1' 'after: e1'" \
+  "item stories/v.md 'status: blocked' 'kind: code' 'depends_on: [aft]'"
+if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t" ]]; then echo "ok   the wait is followed by also: lead l blocks s t, and nothing for l2, the escalated esc or aft with after:"
 else echo "FAIL the wait's also: lines: ${out}"; fails=$((fails + 1)); fi
 expect_conductor "a working conductor's wait with no blocked dependant" "wait conduct-e1" no e1 "*" \
   "item stories/l.md 'status: ready' 'kind: lead'" \
@@ -527,8 +530,8 @@ step="$(sed -n '/^   - `wait <agent>`:/,/^     If any `wait` here/p' "$(dirname 
 if [[ "${step}" == *"swarm.sh wait --until-report <agent>"* && "${step}" != *"an hour"* ]]; then
   echo "ok   commands/swarm.md's wait step runs wait --until-report, with no hour"; else
   echo "FAIL commands/swarm.md's wait step runs wait --until-report, with no hour: got '${step}'"; fails=$((fails + 1)); fi
-# shellcheck disable=SC2016 # the backticks are the step's Markdown
-if grep -q 'For each `also: lead <slug> blocks <slugs>` line after the why, run that lead story while the' <<< "${step}"; then
+flat="$(tr -s ' \n' '  ' <<< "${step}")"   # wrapping-proof
+if [[ "${flat}" == *"also: lead"* && "${flat}" == *"while the wait runs"* ]]; then
   echo "ok   commands/swarm.md's wait step runs each also: lead story while the wait runs"; else
   echo "FAIL commands/swarm.md's wait step does not run the also: lead stories"; fails=$((fails + 1)); fi
 

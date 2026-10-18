@@ -58,7 +58,9 @@ Repeat until a step below says stop:
      For each `also: lead <slug> blocks <slugs>` line after the why, run that lead story while the
      wait runs: the stories it names stay blocked until it is done, and no conductor builds it.
      Tell the user, as the gate does, that you will run it once they say go, with its **You:**
-     steps. Once it is done, `swarm.sh finish <slug>`, then `swarm.sh unblock`.
+     steps. Once it is done, run `swarm.sh finish <slug>` and land the board PR it opens as above
+     (`swarm.sh merge --board <url>`, or with `merge = human` hand it to the user), then
+     `swarm.sh unblock`.
 
      In the same response, also run `swarm.sh wait --lead` in the background. It returns when
      something new lands in your queue while the conductor works, one line per item. For a

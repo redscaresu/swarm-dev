@@ -185,11 +185,12 @@ next_step() {
 
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready kind: lead story that a blocked
 # story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
-# An escalated story is left out: wait --lead hands it to the escalated step.
+# An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
+# after: (it waits for its epic to finish, as epic_has_stories says).
 blocking_leads() {
   local f b slug blocks
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready && "$(fm "${f}" kind)" == lead ]] || continue
+    [[ "$(fm "${f}" status)" == ready && "$(fm "${f}" kind)" == lead && -z "$(get_fm "${f}" after)" ]] || continue
     if is_escalated "${f}"; then continue; fi
     slug=$(basename "${f}" .md); blocks=""
     while IFS= read -r b; do
