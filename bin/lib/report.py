@@ -35,11 +35,13 @@ def finding_rows(path, outcomes=("fixed", "declined")):
 def fixed_rows(path):
     return [f[:4] for f in finding_rows(path, ("fixed", "escaped"))]
 
-def session_usage(path, seen):
-    tok, usd, models = [0, 0, 0, 0], 0.0, set()
+def turns(path, seen):
+    # Each turn of a session's log once, as (its record, model, (input, cache write, cache read, output)
+    # tokens, est. USD), skipping (and adding to seen) message ids already counted.
     for line in log_lines(path):
         try:
-            m = json.loads(line).get("message") or {}
+            d = json.loads(line)
+            m = d.get("message") or {}
         except (ValueError, AttributeError):
             continue
         u, mid = m.get("usage"), m.get("id")
@@ -48,9 +50,13 @@ def session_usage(path, seen):
         seen.add(mid)
         t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
         model = m.get("model", "?")
+        price = next((v for k, v in PRICES.items() if k in model), None)
+        yield d, model, t, sum(x * p for x, p in zip(t, price)) / 1e6 if price else 0.0
+
+def session_usage(path, seen):
+    tok, usd, models = [0, 0, 0, 0], 0.0, set()
+    for _, model, t, cost in turns(path, seen):
         models.add(model)
         tok = [x + y for x, y in zip(tok, t)]
-        price = next((v for k, v in PRICES.items() if k in model), None)
-        if price:
-            usd += sum(x * p for x, p in zip(t, price)) / 1e6
+        usd += cost
     return tok, usd, models

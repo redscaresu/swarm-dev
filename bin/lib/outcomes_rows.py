@@ -1,4 +1,4 @@
-import collections, datetime, json, os, sys
+import collections, datetime, glob, json, os, sys
 from report import *
 log, events, since, projects, roles, archive = sys.argv[1:7]
 
@@ -56,6 +56,20 @@ def agent_name(n):
     # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
     n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
     return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+
+def usage(path):
+    # A builder's own tokens and est. USD, and its subagents' est. USD per model (opus, haiku, ...). A
+    # subagent turn is one with parent_tool_use_id set in the builder's log, or any turn in
+    # subagents/*.jsonl in the folder named after its session beside the log: Claude Code writes either.
+    tok, usd, sub, seen = [0, 0, 0, 0], 0.0, collections.Counter(), set()
+    side = glob.glob(os.path.join(glob.escape(re.sub(r"\.jsonl(\.gz)?$", "", path)), "subagents", "*.jsonl"))
+    for p in [path] + sorted(side):
+        for d, model, t, cost in turns(p, seen):
+            if p == path and not d.get("parent_tool_use_id"):
+                tok, usd = [x + y for x, y in zip(tok, t)], usd + cost
+            else:
+                sub[next((k for k in PRICES if k in model), model)] += cost
+    return tok, usd, sub
 
 builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
@@ -127,12 +141,13 @@ for b in builds:
     day, role, _, _, model, effort, _ = b["f"]
     if day < since:
         continue
-    cost = tokens = ""
+    cost = tokens = sub_cost = sub_models = ""
     tok = ["", "", "", ""]
     if b["path"]:
-        t, usd, _ = session_usage(b["path"], set())
+        t, usd, sub = usage(b["path"])
         cost, tokens, tok = f"{usd:.2f}", str(sum(t)), [str(x) for x in t]
+        sub_cost, sub_models = f"{sum(sub.values()):.2f}", ",".join(f"{m}:{v:.2f}" for m, v in sorted(sub.items()))
     counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
     steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
     print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
-                    + tok + [b.get("cause", "")] + steps))
+                    + tok + [b.get("cause", "")] + steps + [sub_cost, sub_models]))

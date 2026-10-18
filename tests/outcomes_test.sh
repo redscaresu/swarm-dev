@@ -68,7 +68,8 @@ chmod +x "${dir}/bin/gh" "${dir}/nobin/gh"
 
 outcomes() { # <gh dir> [args] — the report, with that gh first on PATH
   local bin="$1"; shift
-  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${bin}:${PATH}" bash "${SWARM}" outcomes "$@" | sed '/^$/,$d')  # the rows, without the recurring kinds after them
+  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${bin}:${PATH}" bash "${SWARM}" outcomes "$@" | sed '/^$/,$d' | cut -f1-39)  # the rows, without the recurring kinds after them
+  # or the subagent columns (subagent_cost_test.sh checks those)
 }
 fails=0
 check() { # <name> <output> <exact expected output>
