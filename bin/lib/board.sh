@@ -239,7 +239,8 @@ unblocked_epic() {
   local f
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in later|active) ;; *) continue ;; esac
-    ! epic_has_stories "$(basename "${f}" .md)" && [[ -z "$(open_deps "$(story_deps "${f}")")" ]] || continue
+    epic_has_stories "$(basename "${f}" .md)" && continue
+    [[ -z "$(open_deps "$(story_deps "${f}")")" ]] || continue
     basename "${f}" .md; return
   done < <(board epics)
 }
