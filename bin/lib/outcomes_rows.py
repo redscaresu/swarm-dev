@@ -83,7 +83,7 @@ for line in open(log, errors="ignore"):
     tries[slug] += 1
     started = started_of(path)
     builds.append({"f": f, "path": path, "slug": slug, "n": tries[slug], "started": started,
-                   "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}})
+                   "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}, "times": []})
 
 def of(target):
     # The builds an events.tsv target names: by slug or agents.tsv name, and a build whose slug is
@@ -129,9 +129,9 @@ for t, f in oks:
                 m = re.fullmatch(r"ok \((accepted|dismissed)\)", f[4])
                 b["at"]["answer"] = m.group(1) if m else ""
         continue
-    if c.split(":")[0] not in ("tell", "close"):
+    if c.split(":")[0] not in ("tell", "close") and c != "review":
         continue
-    # A tell or close goes to the build of its target that started last at or before it.
+    # A tell, close or review goes to the build of its target that started last at or before it.
     b = max((b for b in reversed(of(target)) if b["t"] <= t), key=lambda b: b["t"], default=None)
     if b and c.split(":")[0] == "close":
         # Counted whatever its cause (close:<cause>); close_cause is the cause of the last close (none: empty).
@@ -139,6 +139,13 @@ for t, f in oks:
         b["cause"] = c.partition(":")[2]
     elif b:
         b["steer"][c] += 1
+        if c in ("tell:findings", "review"):
+            b["times"].append(f"{c}={when}")
+# Every build of a slug carries all its review and tell:findings times, a build before since among them:
+# a retry's minutes count the first build's tells too.
+slug_times = collections.defaultdict(list)
+for b in builds:
+    slug_times[b["slug"]] += b["times"]
 for b in builds:
     day, role, _, _, model, effort, _ = b["f"]
     if day < since:
@@ -152,4 +159,4 @@ for b in builds:
     counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
     steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
     print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
-                    + tok + [b.get("cause", "")] + steps + [sub_cost, sub_models, sub_tokens]))
+                    + tok + [b.get("cause", "")] + steps + [sub_cost, sub_models, sub_tokens, " ".join(slug_times[b["slug"]])]))
