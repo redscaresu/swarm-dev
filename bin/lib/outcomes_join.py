@@ -2,14 +2,15 @@ import collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
-NO_PR = ("", "", "", "", "")
+NO_PR = ("", "", "", "", "", "", "", "")
 RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct PRs recurs
 RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
-    # The (url, state, mergedAt, createdAt, main_merges) of each PR in the meta column; a stub may
-    # leave out the last three.
-    return [tuple((p.split(" ") + [""] * 4)[:5]) for p in prs.split(",") if " " in p]
+    # The (url, state, mergedAt, createdAt, main_merges, checks, commits, closedAt) of each PR in the
+    # meta column; a stub may leave out the last six. checks is its head's check runs as start/end pairs
+    # joined by ";", commits its commits' committedDate joined by ";".
+    return [tuple((p.split(" ") + [""] * 7)[:8]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
     # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
@@ -20,27 +21,72 @@ def pr_of(prs, pulls):
     keyed = {pr_key(p[0]): p for p in prs}
     return next((keyed[pr_key(u)] for u in reversed(pulls.split()) if pr_key(u) in keyed), NO_PR)
 
+def secs(t):
+    # A UTC time in epoch seconds; None when it is empty or does not parse.
+    try:
+        return datetime.datetime.fromisoformat(t.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
 def minutes(start, end):
     # Whole minutes from one UTC time to a later one; empty when either is empty or does not parse, or
     # end comes first (a retry started after the PR it took over was created).
-    try:
-        t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-        d = t(end) - t(start)
-    except ValueError:
-        return ""
-    return str(round(d / 60)) if d >= 0 else ""
+    a, b = secs(start), secs(end)
+    return str(round((b - a) / 60)) if None not in (a, b) and b >= a else ""
+
+# The phases of a build's start-to-merge minutes, highest first: where two cover the same minute, the
+# higher takes it, and a minute none covers is building.
+PRECEDENCE = ("fixing", "ci", "review_wait", "merge_wait")
+
+def fixed_at(t, commits, ends):
+    # Where fixing findings told at t ends: the first after it of the PR's next commit (one that merges
+    # the base in is no fix, and gh leaves it out), the next check start, review event, tell:findings
+    # or the merge (ends).
+    return min([x for x in commits if x > t] + [e for e in ends if e > t])
+
+def time_in_state(start, merged, pr, times):
+    # The PHASES' minutes from start to merged, as strings that sum to minutes(start, merged); all empty
+    # when a time is missing. CI runs over each check's start to end; review wait from the PR's creation
+    # to its first review event after it (handed to the merger) or the merge; merge wait from that to the
+    # merge; fixing from each tell:findings between the PR's creation and the merge (fixed_at), so a tell
+    # on an earlier PR of the slug is not this one's.
+    # ponytail: gh gives the latest run of each check on the PR's head alone, so other CI counts as the
+    # phase under it; read every head's runs (as ci_health does) if that hides too much.
+    s, c, m = secs(start), secs(pr[3]), secs(merged)
+    if None in (s, c, m) or m < s:
+        return [""] * len(PHASES)
+    runs = [tuple(map(secs, r.split("/"))) for r in pr[5].split(";") if r.count("/") == 1]
+    # A run cancelled while queued starts at gh's zero time (year 1): no CI.
+    runs = [r for r in runs if None not in r and 0 < r[0] <= r[1]]
+    commits = [x for x in map(secs, pr[6].split(";")) if x is not None]
+    events = sorted((secs(w), k) for k, _, w in (t.partition("=") for t in times) if secs(w) is not None)
+    handed = min((t for t, k in events if k == "review" and t >= c), default=m)
+    ends = [a for a, _ in runs] + [t for t, _ in events] + [m]
+    spans = {"ci": runs, "review_wait": [(c, handed)], "merge_wait": [(handed, m)],
+             "fixing": [(t, fixed_at(t, commits, ends)) for t, k in events if k == "tell:findings" and c <= t < m]}
+    # Each piece between two cuts goes to one phase; rounding where it starts and ends (from start)
+    # keeps the sum the rounded whole.
+    cuts = sorted({s, m} | {min(max(x, s), m) for v in spans.values() for span in v for x in span})
+    got = collections.Counter()
+    for a, b in zip(cuts, cuts[1:]):
+        mid = (a + b) / 2
+        phase = next((p for p in PRECEDENCE if any(x <= mid < y for x, y in spans[p])), "building")
+        got[phase] += round((b - s) / 60) - round((a - s) / 60)
+    return [str(got[p]) for p in PHASES]
 
 # outcomes_rows' columns: up to pulls, then the ones printed as they are (started, the four tokens_*,
-# close_cause and the six escalation steps), then the subagent ones (cost, cost by model, tokens) printed last.
+# close_cause and the six escalation steps), then the subagent ones (cost, cost by model, tokens), then
+# its slug's review and tell:findings times (kind=time, space-separated), read here and not printed.
 AS_IS = 13                 # where started, the first printed as it is, sits
 AS_IS_N, SUBAGENT_N = 12, 3
 SUBAGENT = AS_IS + AS_IS_N
+TIMES = SUBAGENT + SUBAGENT_N
 rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():
     f = line.split("\t")
-    if len(f) != SUBAGENT + SUBAGENT_N:
+    if len(f) != TIMES + 1:
         # A damaged log (a tab in a cwd) or the two files out of step: skip the row, never the report.
-        print(f"outcomes: skipped a row of {len(f)} columns, not {SUBAGENT + SUBAGENT_N}: {line[:80]!r}", file=sys.stderr)
+        print(f"outcomes: skipped a row of {len(f)} columns, not {TIMES + 1}: {line[:80]!r}", file=sys.stderr)
         continue
     kind, risk, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", ""))
     rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(prs, f[12])))
@@ -51,6 +97,26 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
     on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
     if on:
         found[on[-1]][(outcome, reviewer)] += 1
+def open_at(slug, t):
+    # The URLs of the slug's PRs open at t: created by then, and not closed (or merged) by then.
+    return [p[0] for p in parsed(meta.get(slug, ("", "", ""))[2])
+            if secs(p[3]) is not None and secs(p[3]) <= t and not (secs(p[7]) is not None and secs(p[7]) <= t)]
+
+# A review (`swarm.sh review <slug or epic> <PRs>`) logs the PRs it names in its outcome, ok (<PRs>): its
+# time goes to the builds on each PR it names. One logged before reviews named their PRs (a bare ok)
+# goes to its slug's PR when the slug had exactly one open then, and to none otherwise.
+named_reviews = collections.defaultdict(list)
+for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
+    e = line.rstrip("\n").split("\t")
+    t = secs(e[0]) if len(e) == 5 and e[1] == "review" and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    if t is None:
+        continue
+    urls = re.findall(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", e[4])
+    if e[4] == "ok":
+        urls = open_at(e[2], t)
+        urls = urls if len(urls) == 1 else []
+    for u in urls:
+        named_reviews[pr_key(u)].append(f"review={e[0]}")
 
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
@@ -61,8 +127,10 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
-      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens")
-for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c in zip(rows, found):
+      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens"
+      "\t" + "\t".join(p + "_min" for p in PHASES))
+for (f, kind, risk, story_epic, asked, prs, *the_pr), c in zip(rows, found):
+    pr, state, merged, created, main_merges = the_pr[:5]
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
     story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
@@ -71,7 +139,8 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
-                        created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:]))
+                        created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
+                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text

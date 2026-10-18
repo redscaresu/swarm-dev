@@ -98,7 +98,9 @@ builders that stopped with no PR. Its `lead_queue` section shows, per day, the m
 time a held, escalated or ready-to-merge item waited on the lead, and names any still waiting. With
 `merge = agent`, only a PR that costs money waits on you, so only those count. Its `model_fit`
 section sets cost against results for each model and kind of story, so you can see where a cheaper
-model holds up before you move more work to it. `swarm.sh dataset` writes
+model holds up before you move more work to it. Its `time_in_state`
+section shows where each epic's stories spent their time between start and merge: building, CI,
+waiting for review, fixing findings or waiting for a merge. `swarm.sh dataset` writes
 `.swarm/dataset.jsonl`, one line per merged story, so you can compare what the planner predicted (easy
 or not, and the size estimate) with what the build took.
 

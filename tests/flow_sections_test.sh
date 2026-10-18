@@ -22,7 +22,7 @@ check() { # <name> <output> <exact expected output>
 }
 check "the dropped-in section prints its line, with the window, under its name, last" "$(tail -2 <<< "${out}")" \
   "$(printf '%s\n' "## zz_test" "zz_test saw since 2026-10-01, until 9999-12-30, epic 'e1', 0 rows")"
-check "each section in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## ci_health ## cost ## epic_totals ## features ## incidents ## lead_queue ## model_fit ## reviewers ## throughput ## zz_test "
+check "each section in name order" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## ci_health ## cost ## epic_totals ## features ## incidents ## lead_queue ## model_fit ## reviewers ## throughput ## time_in_state ## zz_test "
 check "the copy differs from bin/lib by that file alone" "$(diff -rq -x __pycache__ "${REPO}/bin" "${dir}/plugin/bin" || true)" \
   "Only in ${dir}/plugin/bin/lib: flow_zz_test.py"
 
@@ -31,7 +31,7 @@ printf 'import sys\nsys.exit(3)\n' > "${dir}/plugin/bin/lib/flow_ab_exit.py"
 printf 'import sys\nprint("done early")\nsys.exit(0)\nprint("never")\n' > "${dir}/plugin/bin/lib/flow_ac_done.py"
 out="$(cd "${dir}/repo" && env -u HERDR_ENV -u SWARM_PROJECT bash "${dir}/plugin/bin/swarm.sh" flow 2>/dev/null)" && code=0 || code=$?
 check "a section that raises prints its error under its heading" "$(sed -n 1,2p <<< "${out}")" "$(printf '%s\n' "## aa_boom" "error: aa_boom: boom")"
-check "the sections after it still run" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## ab_exit ## ac_done ## ci_health ## cost ## epic_totals ## features ## incidents ## lead_queue ## model_fit ## reviewers ## throughput ## zz_test "
+check "the sections after it still run" "$(grep '^## ' <<< "${out}" | tr '\n' ' ')" "## aa_boom ## ab_exit ## ac_done ## ci_health ## cost ## epic_totals ## features ## incidents ## lead_queue ## model_fit ## reviewers ## throughput ## time_in_state ## zz_test "
 check "a section's sys.exit(3) is its error, under its heading" "$(sed -n '/^## ab_exit$/,/^## /p' <<< "${out}")" "$(printf '%s\n' "## ab_exit" "error: ab_exit: exit 3" "" "## ac_done")"
 check "a section's sys.exit(0) ends it with no error" "$(sed -n '/^## ac_done$/,/^## /p' <<< "${out}")" "$(printf '%s\n' "## ac_done" "done early" "" "## ci_health")"
 check "flow exits 1 when a section raised" "${code}" 1
