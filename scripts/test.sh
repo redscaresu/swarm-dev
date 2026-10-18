@@ -29,7 +29,7 @@ run="$(mktemp -d)" || exit 1
 mkdir -p "${run}/logs"
 # On any exit, stop the jobs left (only after xargs stopped early can there be any), wait for them,
 # and only then remove their logs.
-# shellcheck disable=SC2329 # invoked by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
   pkill -TERM -f -- "--one ${run} " 2>/dev/null
   while pgrep -f -- "--one ${run} " > /dev/null; do sleep 0.1; done
