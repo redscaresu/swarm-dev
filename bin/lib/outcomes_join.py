@@ -39,7 +39,9 @@ rows = []
 for line in os.environ["SWARM_ROWS"].splitlines():
     f = line.split("\t")
     if len(f) != SUBAGENT + SUBAGENT_N:
-        sys.exit(f"outcomes: a row of {len(f)} columns, not {SUBAGENT + SUBAGENT_N}: outcomes_rows.py and outcomes_join.py disagree")
+        # A damaged log (a tab in a cwd) or the two files out of step: skip the row, never the report.
+        print(f"outcomes: skipped a row of {len(f)} columns, not {SUBAGENT + SUBAGENT_N}: {line[:80]!r}", file=sys.stderr)
+        continue
     kind, risk, prs, story_epic, asked = meta.get(f[1], ("", "", "", "", ""))
     rows.append((f, kind, risk, story_epic, asked, prs) + tuple(pr_of(prs, f[12])))
 # Each finding goes to the latest build on its PR that started on or before the finding (both are

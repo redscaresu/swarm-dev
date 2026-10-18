@@ -59,7 +59,7 @@ def agent_name(n):
 
 def usage(path):
     # A builder's own tokens and est. USD, its subagents' tokens, and their est. USD per model (opus,
-    # haiku, ...). A subagent turn is one with parent_tool_use_id or isSidechain set in the builder's log,
+    # haiku, ...; other for a model no PRICES key matches, so a raw log string never reaches the row). A subagent turn is one with parent_tool_use_id or isSidechain set in the builder's log,
     # or any turn in subagents/*.jsonl in the folder named after its session beside the log: Claude Code
     # writes either. close's copy (.jsonl.gz) holds no subagents/ folder, so only the first shape is read.
     tok, usd, sub, sub_tok, seen = [0, 0, 0, 0], 0.0, collections.Counter(), 0, set()
@@ -69,7 +69,7 @@ def usage(path):
             if p == path and not (d.get("parent_tool_use_id") or d.get("isSidechain")):
                 tok, usd = [x + y for x, y in zip(tok, t)], usd + cost
             else:
-                sub[next((k for k in PRICES if k in model), model)] += cost
+                sub[next((k for k in PRICES if k in model), "other")] += cost
                 sub_tok += sum(t)
     return tok, usd, sub, sub_tok
 

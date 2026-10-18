@@ -588,7 +588,8 @@ commits on the PR whose headline merges the base branch into it (`Merge origin/m
 when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` describe the PR, not the
 build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. Last
 come `subagent_cost_usd`, the estimated cost of the builder's subagents, `subagent_cost_by_model`,
-the same cost split by model as `<model>:<usd>` pairs joined by commas (`haiku:1.00,opus:2.00`), and
+the same cost split by model as `<model>:<usd>` pairs joined by commas (`haiku:1.00,opus:2.00`, with
+`other` for a model that has no price), and
 `subagent_tokens`, their tokens of every type. A
 subagent turn is one with `parent_tool_use_id` or `isSidechain` set in the builder's session log, or any
 turn in the `subagents/*.jsonl` logs in the folder named after the session, next to its log. `cost_usd`
