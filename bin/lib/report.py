@@ -20,6 +20,11 @@ def escalate_build(result, model):
     m = STEP_UP.fullmatch(result)
     return re.fullmatch(r"ok \(attempt \d+\)", result) is not None or (m is not None and m.group(3) == model)
 
+def agent_name(n):
+    # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
+    n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
+    return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
+
 def session_log(projects, session, archive=""):
     if session in ("", "-"):
         return ""

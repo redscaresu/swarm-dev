@@ -99,11 +99,14 @@ builders that stopped with no PR, and the board pulls that an uncommitted edit s
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
 money waits on you, so only those count. Its `model_fit` section sets cost against results for each
 model and kind of story, so you can see where a cheaper model holds up before you move more work to
-it. Its `time_in_state` section shows where each epic's stories spent their time between start and
-merge: building, CI, waiting for review, fixing findings or waiting for a merge.
+it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
+conductor ran but before their build started, building, CI, waiting for review, fixing findings or
+waiting for a merge, in hours and as a share of the whole.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. Agents start with a short list of environment variables, and a token you exported
+while you watch. A `lead` story whose `after:` names its own epic waits for that epic and does not
+hold it open: once its code stories are built, `next`, `status` and `dash` count the epic as done
+without it. Agents start with a short list of environment variables, and a token you exported
 reaches a builder only when its story names it under `env:`. That includes a login kept in the
 environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). Agents with no story
 of their own, such as planners and review agents, never get one, so log in through `claude`,
@@ -132,6 +135,9 @@ attempt ([reference.md](docs/reference.md#the-escalation-ladder)).
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
+  There, `make test` runs every `tests/*_test.sh`, as many at once as the machine has CPUs (`make test JOBS=2` for fewer),
+  with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`). The few files whose
+  timing does not hold up beside the others (`SERIAL` in the Makefile) run one at a time after them.
 
 ## License
 

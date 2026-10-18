@@ -150,7 +150,8 @@ cost_report() {
 # start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
 # time_in_state, from its PR's review and tell:findings events and its head's checks), and last rework
 # (report.py's rework_of over every merged PR of the builds' repos, from one gh list: 1 when a later fix
-# reworked its merged PR, on the latest build on it, once 7 days have passed; empty when gh failed). A finding goes to the latest build on
+# reworked its merged PR, on the latest build on it, once 7 days have passed; empty when gh failed), then on a story's first build the minutes it waited ready under the
+# conductor run it started in (held). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -207,7 +208,8 @@ outcomes_report() {
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
   # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
   SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
-    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
+    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
+    python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
@@ -275,7 +277,8 @@ outcomes_report() {
 #     counts in neither wait.
 #   time_in_state: one TSV row per epic, then `all`, over the outcomes rows dated in the window with
 #     phase minutes (a merged PR), each PR once by its first build; with --epic, that epic's row alone:
-#     its PRs, their start-to-merge minutes, and the five phases' sums largest first as <phase>:<min>.
+#     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
+#     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
