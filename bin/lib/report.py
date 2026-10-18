@@ -65,18 +65,20 @@ def session_usage(path, seen):
 
 REWORK_DAYS = 7
 RELEASE_FILES = [".claude-plugin/plugin.json"]   # a release PR changes these alone, and fixes nothing
-# A line that names an earlier PR without fixing it: a stacked child's parent, a main merge note.
-NOT_A_FIX = re.compile(r"^\W*(merge after|depends on|stacked on|merged origin/main)\b", re.I)
-FIX = r"\b(?:fix(?:es|ed)?|rework of|regression (?:from|in|of))\b[^\n]{0,40}?"
+# A clause that names an earlier PR without fixing it (a stacked child's parent, a main merge note),
+# or says it does not fix it.
+NOT_A_FIX = re.compile(r"\b(?:merge after|depends on|stacked on|merged origin/main)\b|\b(?:not|never|no longer)\b|n't\b", re.I)
+FIX = r"\b(?:fix(?:es|ed)?|rework of|regression (?:from|in|of))\b.{0,40}?"
+CLAUSE = re.compile(r"(?<=[.!?])\s+|;|\n")   # a sentence end before a space, a semicolon or a line break
 
 def fixes_pr(text, key, by):
-    # Whether the title and body of the PR whose pr_key is by say it fixes the PR whose pr_key is key: a
-    # fix, fixes, fixed, rework of or regression from phrase, then on that line within 40 characters its
-    # URL, owner/repo#N, or a bare #N when both are in one repo; never on a NOT_A_FIX line.
+    # Whether the title and body of the PR whose pr_key is by say it fixes the PR whose pr_key is key:
+    # in one clause, a fix, fixes, fixed, rework of or regression from phrase, then within 40 characters
+    # its URL, owner/repo#N, or a bare #N when both are in one repo; never in a NOT_A_FIX clause.
     repo, _, n = key.partition("#")
     bare = r"|(?<![\w/#])#" if by.partition("#")[0] == repo else ""
     ref = re.compile(rf"{FIX}(?:github\.com/{re.escape(repo)}/pull/|(?<![\w./-]){re.escape(repo)}#{bare}){n}(?!\d)", re.I)
-    return bool(n) and any(ref.search(l) for l in text.splitlines() if not NOT_A_FIX.match(l))
+    return bool(n) and any(ref.search(c) and not NOT_A_FIX.search(c) for c in CLAUSE.split(text))
 
 def merge_time(t):
     # gh's mergedAt as an aware time, or None when it is empty, malformed or has no offset.

@@ -8,7 +8,10 @@
 # escaped finding 3 days after #3 merged is rework, one 8 days after #5 is not; both count as escaped.
 # Cell sonnet/medium docs none other holds two stories, so it prints its count alone. Then the same
 # through swarm.sh flow: a story deleted in a git commit keeps its class. The s stories' touches hold
-# a parenthesised note and functions after a file (`bin/y.sh:f, g, h, i`), which are no files. Also:
+# a parenthesised note and functions after a file (`bin/y.sh:f, g, h, i`), which are no files; t1's
+# and t2's name a bare Makefile and LICENSE the project has, which are files (other), and t2's docs file
+# counts once whatever functions follow it. Also, a gh missing from PATH falls back to escaped findings,
+# the gh list starts 7 days before --since, a cell whose merges gh could not read prints no rate, and:
 # which PR texts fix a PR (a fix phrase; never a Merge after, Depends on, Stacked on or Merged
 # origin/main line or a release PR; a bare #N in its own repo only), a mergedAt that does not parse
 # is skipped, a gh list at its limit warns, a merged story with no merged_at adds no wait, and a build
@@ -34,10 +37,11 @@ ROWS="$(printf 'date\tslug\tkind\trisk\tmodel\teffort\tcost_usd\tattempts\tfindi
   row 2026-10-02 t1 docs sonnet medium 0.20 1 0 "${U}/6" 2026-10-02T12:00:00Z true 2026-10-02T10:00:00Z ""
   row 2026-10-02 t2 docs sonnet medium 0.20 1 0 "" "" "" "" "")"
 STORIES="$(for s in s1 s2 s3 s4 s5; do printf '%s\t150\tbin/lib/x.py (new, renamed), bin/y.sh:f, g, h, i, docs/z.md\n' "${s}"; done
-  printf 't1\t\tREADME.md:commands\nt2\t\tREADME.md, docs/a.md\n')"
+  printf 't1\t\tdocs/b.md, Makefile, LICENSE\nt2\t\tdocs/a.md:f, g, h, Makefile, LICENSE\n')"
+P="${dir}/proj"; mkdir -p "${P}/.swarm"; touch "${P}/Makefile" "${P}/LICENSE"
 printf '%s\n' $'2026-10-06\tmissed\thttps://github.com/o/r/pull/3\tx\tescaped\tescaped' \
   $'2026-10-18\tmissed\thttps://github.com/o/r/pull/5\tx\tescaped\tescaped' \
-  $'2026-10-06\tnit\thttps://github.com/o/r/pull/1\tx\tdeclined\tcodex\tnit' > "${dir}/findings.tsv"
+  $'2026-10-06\tnit\thttps://github.com/o/r/pull/1\tx\tdeclined\tcodex\tnit' > "${P}/.swarm/findings.tsv"
 # gh: the repo's merged PRs (or GH_JSON's), #10 fixing #1 and #11 fixing #2.
 cat > "${dir}/merged.json" <<EOF
 [{"url":"${U}/1","mergedAt":"2026-10-02T12:00:00Z","title":"s1","body":""},
@@ -45,11 +49,12 @@ cat > "${dir}/merged.json" <<EOF
  {"url":"${U}/11","mergedAt":"2026-10-10T11:00:00Z","title":"Follow-up","body":"Fixes ${U}/2"}]
 EOF
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2 $3 $4 $5 $6" = "pr list -R o/r --state merged" ] && exec cat "${GH_JSON:-%s/merged.json}"\nexit 1\n' "${dir}" > "${dir}/bin/gh"
+printf '#!/bin/sh\necho "$*" > "%s/gh.args"\n[ "$1 $2 $3 $4 $5 $6" = "pr list -R o/r --state merged" ] && exec cat "${GH_JSON:-%s/merged.json}"\nexit 1\n' "${dir}" "${dir}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
-section() { # the model_fit section alone, as flow runs it
-  PATH="${dir}/bin:${PATH}" SWARM_FINDING_REVIEWERS="codex escaped" SWARM_ROWS="${ROWS}" SWARM_STORIES="${STORIES}" \
-    python3 "${REPO}/bin/lib/flow_report.py" 2026-10-01 9999-12-30 "" x x "${dir}/findings.tsv" x x x x "" x model_fit
+PY="$(command -v python3)"
+section() { # the model_fit section alone, as flow runs it; PATH may be given
+  PATH="${PATH_FOR:-${dir}/bin:${PATH}}" SWARM_FINDING_REVIEWERS="codex escaped" SWARM_ROWS="${ROWS}" SWARM_STORIES="${STORIES}" \
+    "${PY}" "${REPO}/bin/lib/flow_report.py" 2026-10-01 9999-12-30 "" x x "${P}/.swarm/findings.tsv" x x x x "" x model_fit
 }
 fails=0
 check() { # <name> <output> <exact expected output>
@@ -61,6 +66,14 @@ check "the five-story cell: every column, the escalation to fable under opus, re
 check "no cell for the fable build" "$(grep -c '^fable' <<< "${out}" || true)" 0
 check "the two-story cell prints its count and no verdict" \
   "$(grep $'^sonnet\tmedium' <<< "${out}")" $'sonnet\tmedium\tdocs\t-\tnone\tother\t2\t-\t-\t-\t-\t-\t-\t-'
+check "the gh list starts 7 days before --since" "$(cat "${dir}/gh.args")" \
+  "pr list -R o/r --state merged --limit 1000 --json url,mergedAt,title,body,files --search merged:>=2026-09-24"
+check "with no gh on PATH, only escaped findings mark rework: s3 alone" \
+  "$(PATH_FOR="${dir}/nothing" section | grep -E $'^opus\thigh\tcode|^rework:' | cut -f1,12)" \
+  $'opus\t1\nrework: gh failed, so only escaped findings mark rework.'
+UNKNOWN="${ROWS//$'\ttrue\t'/$'\t\t'}"
+check "a cell whose merges gh could not read prints no first-attempt rate" \
+  "$(ROWS="${UNKNOWN//$'\tfalse\t'/$'\t\t'}" section | grep $'^opus\thigh\tcode' | cut -f9)" -
 check "a subagent row: 0.50 of 2.50 is 20%" \
   "$(sed -n '/^subagents/,/^$/p' <<< "${out}")" $'subagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share\nopus\thigh\t0.50\t2.50\t20%'
 fixes() { # <later PR's key> <its text> [its files, JSON] — 1 when rework_of counts o/r#1 as fixed by it, else 0
@@ -68,10 +81,12 @@ fixes() { # <later PR's key> <its text> [its files, JSON] — 1 when rework_of c
 j, t, f = sys.argv[1:]
 print(int("o/r#1" in rework_of({"o/r#1": ("2026-10-01T00:00:00Z", "", None), j: ("2026-10-02T00:00:00Z", t, json.loads(f))}, [])))' "$1" "$2" "${3:-null}")
 }
-check "a fix, rework of or regression from phrase fixes a PR" \
-  "$(fixes o/r#2 'Fix #1')$(fixes o/r#2 $'Docs\nThis is a rework of #1.')$(fixes o/r#2 "Regression from ${U}/1")" 111
+check "a fix, rework of or regression from phrase fixes a PR, in a clause of its own" \
+  "$(fixes o/r#2 'Fix #1')$(fixes o/r#2 $'Docs\nThis is a rework of #1.')$(fixes o/r#2 "Regression from ${U}/1")$(fixes o/r#2 'Merge after #3. Fixes #1')" 1111
 check "a PR named on a Merge after, Depends on, Stacked on or Merged origin/main line, or with no fix phrase, is not fixed" \
   "$(fixes o/r#2 "Merge after the fix in ${U}/1")$(fixes o/r#2 'Depends on the fix in #1')$(fixes o/r#2 $'Docs\n- Stacked on the fix in #1')$(fixes o/r#2 'Merged origin/main at abc, which fixed #1')$(fixes o/r#2 'Refactors #1')" 00000
+check "a fix phrase in another clause, or a negated one, does not fix a PR" \
+  "$(fixes o/r#2 'Fixes review findings; merge after #1')$(fixes o/r#2 'Fix the typo. Stacked on #1')$(fixes o/r#2 "Doesn't fix #1 yet")" 000
 check "a release PR, which changes only plugin.json, fixes nothing" \
   "$(fixes o/r#2 'Release: fixes #1' '[".claude-plugin/plugin.json"]')$(fixes o/r#2 'Fixes #1' '["bin/x.sh"]')" 01
 check "a bare #N fixes a PR in its own repo alone; owner/repo#N one in another, with a left boundary" \

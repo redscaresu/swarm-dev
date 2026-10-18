@@ -8,12 +8,14 @@
 # repos, from gh; when gh fails, only escaped findings mark rework, and a line says so. A cell under
 # MIN_STORIES stories prints its count alone. After a blank line, a subagent row per model and effort
 # of the builds that logged subagent columns: their cost and its share of build cost (own and theirs).
-import collections, datetime, json, re, subprocess
+import collections, datetime, json, os, re, subprocess
 from report import *
+from touches_rows import entries as touches_entries
 MIN_STORIES = 5
 AREAS = ("bin", "commands", "docs", "tests")
 GH_SECONDS = 30
 GH_LIMIT = 1000
+project_dir = os.path.dirname(os.path.dirname(findings))
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
 
 def num(x):
@@ -29,28 +31,13 @@ def size(lines):
         return "none"
     return "<=100" if n <= 100 else "<=300" if n <= 300 else ">300"
 
-def files(touches):
-    # The files touches names, split as touches_rows.py splits it: at commas outside parentheses, a
-    # `<repo>: ` prefix dropped, and a part with no / or . in its head (g in `bin/x.sh:f, g`) taken as
-    # a function of the file before it, not a file. ponytail: it does not check the disk for a bare
-    # file such as Makefile after the first entry, as touches_rows.py does.
-    parts, cur, depth = [], "", 0
-    for c in touches:
-        depth += (c == "(") - (c == ")" and depth > 0)
-        if depth == 0 and c == ",":
-            parts.append(cur); cur = ""
-        elif depth == 0 and c != ")":
-            cur += c
-    out = []
-    for p in (re.sub(r"^[A-Za-z0-9._-]+: ", "", p.strip()) for p in parts + [cur]):
-        head = re.split(r"[:\s]", p, maxsplit=1)[0]
-        if head and (not out or "/" in head or "." in head):
-            out.append(head)
-    return out
-
 def area(touches):
-    # The most named top-level area, the first named on a tie; other for a file outside AREAS, none for no touches.
-    tops = [f.split("/") for f in files(touches)]
+    # The most named top-level area, the first named on a tie; other for a file outside AREAS, none for no
+    # touches. The files are touches_rows.py's, so a bare name after a file (g in `bin/x.sh:f, g`) is
+    # a function unless the project has a file by that name (Makefile). The project is the findings
+    # log's (<project>/.swarm/<log>); a file in another repo is read under no repos_dir, as a function.
+    # Each file counts once, however many of its functions follow it.
+    tops = [f.split("/") for f in dict.fromkeys(f for _, f, _ in touches_entries({"touches": touches}, project_dir, ""))]
     tops = [f"{p[0]}/" if len(p) > 1 and p[0] in AREAS else "other" for p in tops]
     return collections.Counter(tops).most_common(1)[0][0] if tops else "none"
 
@@ -63,15 +50,19 @@ def minutes(start, end):
 
 def merged_prs(urls):
     # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
-    # in, or None when gh fails. A list that comes back GH_LIMIT long prints that rework may be undercounted.
+    # in, or None when gh fails. With --since, only those merged from REWORK_DAYS before it, as a PR merged
+    # earlier can neither be in the window nor fix one in it. A list that comes back GH_LIMIT long prints
+    # that rework may be undercounted. files is read for rework_of's release PRs.
     # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
-    out = {}
+    out, search = {}, []
+    if since != "0000-00-00":
+        search = ["--search", f"merged:>={datetime.date.fromisoformat(since) - datetime.timedelta(days=REWORK_DAYS)}"]
     for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
         try:
             got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
-                                  "--json", "url,mergedAt,title,body,files"], capture_output=True, text=True, timeout=GH_SECONDS)
+                                  "--json", "url,mergedAt,title,body,files", *search], capture_output=True, text=True, timeout=GH_SECONDS)
             prs = json.loads(got.stdout) if got.returncode == 0 else None
-        except (subprocess.TimeoutExpired, ValueError):
+        except (subprocess.TimeoutExpired, ValueError, OSError):   # OSError: no gh on PATH
             prs = None
         if not isinstance(prs, list):
             return None
@@ -113,6 +104,8 @@ def cell(entries):
         return out + ["-"] * 7
     keys = {pr_key(r["pr"]) for _, rs in entries for r in rs if r["pr"]}
     done = [(first, rs) for first, rs in entries if any(r["story_merged"] == "true" for r in rs)]
+    # story_merged is empty when outcomes could not ask gh: such a story is left out of the rate.
+    known = [rs for _, rs in entries if any(r["story_merged"] for r in rs)]
     cost = sum(num(r["cost_usd"]) + num(r["subagent_cost_usd"]) for _, rs in entries for r in rs)
     # A story can have merged on a PR no build of it named, so with no merged_at: it adds no wait.
     ends = [(first["started"], min(r["merged_at"] for r in rs if r["merged_at"])) for first, rs in done if any(r["merged_at"] for r in rs)]
@@ -121,7 +114,7 @@ def cell(entries):
     # As epic_totals: a build with no cost (no session log, a codex agent) is named, never counted as free.
     missing = sum(1 for _, rs in entries for r in rs if not r["cost_usd"])
     return out + [(f"{cost / len(done):.2f}" + (f" ({missing} not in the logs)" if missing else "")) if done else "-",
-                  f"{100 * sum(1 for _, rs in done if len(rs) == 1) / len(entries):.0f}%",
+                  f"{100 * sum(1 for _, rs in done if len(rs) == 1) / len(known):.0f}%" if known else "-",
                   f"{sum(len(rs) for _, rs in entries) / len(entries):.1f}",
                   f"{sum(num(r['findings_fixed']) for _, rs in entries for r in rs) / len(keys):.1f}" if keys else "-",
                   str(reworked), str(sum(escaped[k] for k in keys)),
