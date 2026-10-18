@@ -177,6 +177,11 @@ check "the lead's git checkout main in the main checkout passes" as lead "${P}" 
 check "git checkout -- g on a clean g passes" as lead "${W}" 0 "git checkout -- g"
 check "git checkout -- s on a staged-only s passes" as lead "${W}" 0 "git checkout -- s"
 check "git checkout HEAD -- s on a staged-only s blocks" as lead "${W}" 2 "git checkout HEAD -- s"
+check "git checkout -q HEAD s on a staged-only s blocks" as lead "${W}" 2 "git checkout -q HEAD s"
+# The hook's git status only reads: it leaves a stale index as it is, so it never takes index.lock.
+idx="$(git -C "${W}" rev-parse --path-format=absolute --git-path index)"
+touch -t 202001010000 "${W}/g"; was_idx="$(cksum < "${idx}")"
+check "the hook's git status leaves a stale index alone" test "$(call "${W}" "git checkout -- g")/$(cksum < "${idx}")" == "0/${was_idx}"
 # shellcheck disable=SC2016 # the substitution is the hook's to see
 check 'DIR=$(cd "$(dirname x)"; pwd) passes' as lead "${W}" 0 'DIR=$(cd "$(dirname x)"; pwd)'
 check "cd d || exit 1 && cp a b passes" as lead "${W}" 0 "cd d || exit 1 && cp a b"

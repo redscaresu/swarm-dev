@@ -326,12 +326,18 @@ def reads_only(sub, rest):
 def drops_changes(d, rest):
     """Whether git checkout <rest>, run in d, overwrites a change: an unstaged one, or a staged one
     too when it checks out from a commit (HEAD -- f, main f). A conflicted path is not counted."""
-    paths = rest[rest.index("--") + 1:] if "--" in rest else [w for w in rest if not w.startswith("-")]
+    if "--" in rest:
+        k = rest.index("--")
+        src, paths = [w for w in rest[:k] if not w.startswith("-")], rest[k + 1:]
+    else:
+        paths = [w for w in rest if not w.startswith("-")]
+        src = paths[:1]  # git reads the first word as a commit when it names one
     if not paths:
         return False
-    src = [w for w in (rest[:rest.index("--")] if "--" in rest else rest[:1]) if not w.startswith("-")]
     commit = any(git(d, "rev-parse", "--verify", "--quiet", w + "^{tree}") for w in src)
-    status = (git(d, "status", "--porcelain", "--untracked-files=no", "--", *paths) or "").splitlines()
+    # --no-optional-locks: a status that refreshes the index would take index.lock from another git.
+    status = (git(d, "--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--", *paths)
+              or "").splitlines()
     return any(line[:2] not in UNMERGED and (commit or line[1] != " ") for line in status)
 
 
