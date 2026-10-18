@@ -93,19 +93,19 @@ def of(target):
             and (target in (b["slug"], b["f"][2]) or b["slug"] == b["f"][2] == cut)]
 
 STEPS = ("escalate", "dialog", "escalated", "reset", "drop")
-STEP_UP = re.compile(r"ok \(([a-z0-9-]+): (\S+) -> (\S+)\)")
+ESCALATE_MODEL = os.environ["SWARM_ESCALATE_MODEL"]   # the escalate role's model (policy)
 oks, escalates, step_ups = [], collections.defaultdict(list), []
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
     # for that and for the answer of a dialog alone: a reset or drop holds the reason the lead gave. A
     # line whose time does not parse goes to no build.
-    # An escalate line pairs with an escalate build only when it started one (fable_escalate).
+    # An escalate line pairs with an escalate build only when it started one (escalate_build).
     t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
     s = STEP_UP.fullmatch(f[4]) if t is not None and f[1] == "escalate" else None
     if s:
         step_ups.append((t, f[2]) + s.groups())
-    if t is not None and f[1] == "escalate" and not fable_escalate(f[4]):
+    if t is not None and f[1] == "escalate" and not escalate_build(f[4], ESCALATE_MODEL):
         t = None
     if t is not None:
         oks.append((t, f))
@@ -152,18 +152,27 @@ for t, f in oks:
 slug_times = collections.defaultdict(list)
 for b in builds:
     slug_times[b["slug"]] += b["times"]
-# A step-up (swarm.sh step-up) closes the build it replaced: of its target's builds on <from> that
-# started by then, the last in agents.tsv order, its close cause step-up:<trigger>. The next build
-# of that slug on <to> is the same attempt, a rung, so attempt counts only the builds that are not.
+# A step-up (swarm.sh step-up) closes the build it replaced and starts the next. The step-ups of a
+# target, in event order, take its builds in agents.tsv order: each the first pair from where the last
+# one ended of a build on <from> and the next on <to>: of those, the pair whose next build started
+# nearest the step-up (step-up logs it as that build starts), and on a tie (no session logs: each
+# build starts at midnight on its day) the first. So order keeps two step-ups off one pair, and the
+# start keeps a step-up off an older pair of builds that were attempts of their own.
+# ponytail: same-day builds with no session logs at all cannot be told apart, so an older pair of
+# that day may be taken; log the rung's session id in the step-up event if that matters.
+# The replaced build gets a close, cause
+# step-up:<trigger>; the next one is the same attempt, a rung, so attempt counts only the others.
+after = collections.Counter()   # per target: the index in of(target) its next step-up's search starts at
 for t, target, trigger, frm, to in step_ups:
-    old = next((b for b in reversed(of(target)) if b["f"][4] == frm and b["t"] <= t), None)
-    if not old:
+    mine = of(target)
+    i = min((i for i in range(after[target], len(mine) - 1) if mine[i]["f"][4] == frm and mine[i + 1]["f"][4] == to),
+            key=lambda i: (abs(mine[i + 1]["t"] - t), i), default=None)
+    if i is None:
         continue
-    old["steer"]["close"] += 1
-    old["cause"] = f"step-up:{trigger}"
-    new = next((b for b in builds[builds.index(old) + 1:] if b["slug"] == old["slug"] and b["f"][4] == to), None)
-    if new:
-        new["rung"] = True
+    after[target] = i + 1
+    mine[i]["steer"]["close"] += 1
+    mine[i]["cause"] = f"step-up:{trigger}"
+    mine[i + 1]["rung"] = True
 tries = collections.Counter()
 for b in builds:
     tries[b["slug"]] += not b.get("rung")

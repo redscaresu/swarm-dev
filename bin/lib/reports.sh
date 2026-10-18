@@ -143,7 +143,7 @@ outcomes_report() {
   # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
   # columns the report prints after attempts as they are: started to drop_at, then subagent_cost_usd and
   # subagent_cost_by_model, which it prints last.
-  rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
+  rows="$(SWARM_ESCALATE_MODEL="$(policy escalate | cut -d' ' -f2)" python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
   # story/<slug> (newest first, as `url state mergedAt createdAt main_merges checks commits closedAt` joined by commas, where

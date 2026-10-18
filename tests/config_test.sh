@@ -102,7 +102,7 @@ project "${p}" "escalate_ladder = sonnet,opus,fable"
 check "escalate_ladder = sonnet,opus,fable is read" "sonnet,opus,fable" "$(run "${p}" config escalate_ladder)"
 project "${p}" "escalate_ladder = sonnet,gpt,fable"
 check "an escalate_ladder model no building role runs on is refused, naming file and line" "yes" \
-  "$(fails_with "${p}/.claude/swarm/config:1: escalate_ladder: 'gpt' is not the model of any of" run "${p}" config)"
+  "$(fails_with "${p}/.claude/swarm/config:1: escalate_ladder: 'gpt' is not one of the models building roles run on (haiku sonnet opus fable)" run "${p}" config)"
 for v in fable,opus sonnet,opus,sonnet opus,opus; do
   project "${p}" "escalate_ladder = ${v}"
   check "escalate_ladder = ${v}, a rung that does not rise, is refused" "yes" \
