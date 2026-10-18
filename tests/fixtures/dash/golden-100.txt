@@ -33,7 +33,7 @@ on call: fable·xhigh · 0 escalations today
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 bravo  swarm-dev 0.0.0  merge human  next conduct bravo-ui                                  12:00:00
 0.9 merged/day over 7 days · ! 5 waiting on you or the lead, oldest 4d · ✓ 0 escaped in 7 days
-3 epics active · 0 agents working · 0 PRs green, waiting · 1 stalled · $2.80 today
+3 epics active · 1 agents working · 0 PRs green, waiting · 1 stalled · $2.80 today
 on call: fable·xhigh · 0 escalations today
 ╭─ needs you ──────────────────────────────────────────────────────────────────────────────────────╮
 │ ! run lead story b-cert: renew the cert  waits for: you: approve the renewal email  +1 more      │
