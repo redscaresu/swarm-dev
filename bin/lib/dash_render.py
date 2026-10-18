@@ -149,19 +149,19 @@ for f in read_tsv(E["DASH_EVENTS"], 5):
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
 # Escalation: today's escalate builds (fable_escalate: a step-up to a lower rung is none), and each
-# slug's newest one (its attempt and when).
+# slug's newest one: when, and its attempt, or for a step-up the model it came from.
 ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
 escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
 for f in read_tsv(E["DASH_EVENTS"], 5):
     if f[1] == "reset" and f[4].startswith("ok"):
         was_reset.add(f[2])
     t = epoch(f[0]) if f[1] == "escalate" else None
-    m = re.match(r"ok \(attempt (\d+)\)", f[4])
     if t is None or not fable_escalate(f[4]):
         continue
     escalations += datetime.date.fromtimestamp(t) == TODAY
-    if m and t > escalated_at.get(f[2], (0,))[0]:
-        escalated_at[f[2]] = (t, m.group(1))
+    m = re.match(r"ok \((?:attempt (\d+)|[a-z0-9-]+: (\S+) -> fable)\)", f[4])
+    if t > escalated_at.get(f[2], (0,))[0]:
+        escalated_at[f[2]] = (t, f"attempt {m.group(1)}" if m.group(1) else f"from {m.group(2)}")
 recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
@@ -441,7 +441,7 @@ def agent_cols(r):
         row.append((f"  {m}m" if m < 60 else f"  {m // 60}h{m % 60:02d}m", "dim"))
     if r.get("escalated"):
         t, n = r["escalated"]
-        row.append((f"  attempt {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
+        row.append((f"  {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
     return row
 
 def agent_row(r):

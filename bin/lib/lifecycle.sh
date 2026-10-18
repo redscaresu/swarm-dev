@@ -294,8 +294,18 @@ CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
 is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
-# close_agent <name> [cause] — close what was opened for <name> (close_panes), its session log
-# archived first.
+# shut_agent <name> — archive <name>'s session log, close what was opened for it (close_panes) and
+# remove its ZDOTDIR (clean_env's). close_agent and step_up both end a builder this way.
+shut_agent() {
+  archive_session "$1"
+  # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
+  # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
+  # matches. Passing close_panes the cut name would leave a long slug's pane open.
+  close_panes "$1"
+  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
+}
+
+# close_agent <name> [cause] — close what was opened for <name> (shut_agent).
 # An unknown cause is refused before anything closes, and so, with goal on, is a missing one while
 # <name>'s story is still ready (its builder is giving up), and so is impossible for a story that
 # cannot be handed on (impossible_refused). A close that ends a failed build (failed_build, decided
@@ -318,17 +328,12 @@ close_agent() {
   if [[ "${cause}" == impossible ]] && why="$(impossible_refused "$1")"; then
     die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
   fi
-  archive_session "$1"
   if prs="$(failed_build "$1")"; then
     counted=1
     [[ "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ || "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" == True ]] \
       || record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
   fi
-  # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
-  # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
-  # matches. Passing close_panes the cut name would leave a long slug's pane open.
-  close_panes "$1"
-  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"   # its ZDOTDIR (clean_env's), with the agent gone
+  shut_agent "$1"
   if [[ "${cause}" == impossible ]]; then
     # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
@@ -405,11 +410,12 @@ step_up() {
   base="$(base_for "${src}")"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "${prompt%/*}"
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" > "${prompt}"
-  archive_session "${slug}"
-  close_panes "${slug}"
-  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "${slug}")"
+  # The old builder goes first: the new one takes its name. A start that fails leaves the build as
+  # it is, with the brief written, and says how to start the next rung by hand.
+  shut_agent "${slug}"
   epic="$(fm "${f}" epic)"
-  start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
+  (start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}") \
+    || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start; its worktree, branch and brief are kept, so start it with: swarm.sh agent $(printf '%q %q %q %q %q' "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}")"
   record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})"
   echo "stepped up: ${slug} from ${from} to ${to} (${role}), in ${wt}"
   [[ -z "${goal}" ]] || { printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"; send_goal "${slug}" "${prompt%.md}.goal.md" brief; }
@@ -417,21 +423,28 @@ step_up() {
 
 # handover_brief <slug> <src> <base> <trigger> <from> <to> — the next rung's brief: the builder's
 # brief (story_brief), then why the build was handed on, the PR body's Models: line, the story as the
-# board holds it (the last builder may have deleted it from the worktree already), the diff against
-# origin/<base> (committed or not; its first HANDOVER_DIFF_LINES lines), the review agent's open
-# findings and the story PR's failing checks.
+# board holds it (the last builder may have deleted it from the worktree already), for a stacked
+# story build_story's Merge after note, the diff from handover_from (committed, uncommitted and
+# untracked; its first HANDOVER_DIFF_LINES lines), the review agent's open findings and the story PR's
+# failing checks.
 handover_brief() {
-  local wt models diff pr checks findings="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  local wt models from parents p prs="" stack="" diff pr checks findings="${PROJECT_DIR}/.swarm/reviews/$1.md"
   wt="$(worktree_for "$2" "$1")"
+  parents="$(stacked_parents "$1")"; parents="${parents//,/ }"
+  for p in ${parents}; do if pr="$(open_pr "$2" "${p}")"; then prs+="${prs:+ }${pr}"; fi; done
+  [[ -z "${prs}" ]] || stack=$'\n\n'"This story is stacked on ${parents}: open your PR against \`$3\` all the same, with \`Merge after ${prs}\` in its body. The diff below starts at their branches, so their commits are not in it."
+  from="$(handover_from "${wt}" "$2" "$3" "${parents}")" || from="origin/$3"
   # Every model agents.tsv has building this story, in order, then this one.
   models="$({ awk -F'\t' -v n="$(agent_name "$1")" '$3 == n { print $5 }' "${AGENTS_LOG}" 2>/dev/null; echo "$6"; } | awk '!seen[$0]++' | paste -sd, - | sed 's/,/, /g')"
   # awk reads the whole diff: head would close the pipe early, and git's SIGPIPE fails the pipeline.
-  diff="$(git -C "${wt}" diff "origin/$3" 2>&1 | awk -v n="${HANDOVER_DIFF_LINES}" 'NR <= n')"
-  pr="$(gh pr list -R "$(git -C "$2" remote get-url origin)" --head "story/$1" --state open --json url --jq '.[0].url // ""' 2>/dev/null)" || pr=""
-  if [[ -z "${pr}" ]]; then
+  # git diff --no-index exits 1 when the files differ, which is every untracked file.
+  diff="$( { git -C "${wt}" diff "${from}"
+             git -C "${wt}" ls-files -z --others --exclude-standard | while IFS= read -r -d '' p; do git -C "${wt}" diff --no-index -- /dev/null "${p}" || true; done
+           } 2>&1 | awk -v n="${HANDOVER_DIFF_LINES}" 'NR <= n')"
+  if ! pr="$(open_pr "$2" "$1")"; then
     checks="No open PR on story/$1."
   else
-    checks="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' 2>/dev/null)" \
+    checks="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' </dev/null 2>/dev/null)" \
       || checks="gh could not list ${pr}'s checks: run \`gh pr checks ${pr}\`."
     [[ -n "${checks}" ]] || checks="None failing on ${pr}."
   fi
@@ -443,13 +456,13 @@ handover_brief() {
 You take this story over from a builder on $5, stepped up to you on $6 because $(step_trigger "$4").
 This worktree and its branch story/$1 are as that builder left them: carry on from them, and never
 start again from origin/$3. The PR body lists every model that worked on this story on one line, the
-models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).
+models line: \`Models: ${models}\`. If a PR is open, edit its body to add it (\`gh pr edit --body-file\`).${stack}
 
 ### The story, as the board holds it
 
 $(story_text "$1")
 
-### The diff against origin/$3, committed or not (its first ${HANDOVER_DIFF_LINES} lines; \`git diff origin/$3\` has it all)
+### The diff since ${from}, committed or not, untracked files too (its first ${HANDOVER_DIFF_LINES} lines; \`git diff ${from}\` has the tracked files' all)
 
 \`\`\`diff
 ${diff:-(no change yet)}
@@ -463,6 +476,21 @@ $(if [[ -f "${findings}" ]]; then cat "${findings}"; else echo "No review findin
 
 ${checks}
 EOF
+}
+
+# handover_from <wt> <src> <base> <parents> — where a handover diff starts: the merge-base of HEAD
+# and origin/<base>, or for a story stacked on <parents> (fetched first) of HEAD and their branches,
+# so neither the base's newer commits nor the parents' are in it.
+# ponytail: with several parents git picks one merge-base, so the others' commits show; diff against
+# a merge of their branches if that matters.
+handover_from() {
+  local refs="" p
+  for p in $4; do
+    git -C "$2" fetch -q origin "+refs/heads/story/${p}:refs/remotes/origin/story/${p}" 2>/dev/null || true
+    if git -C "$1" rev-parse -q --verify "origin/story/${p}" >/dev/null; then refs+=" origin/story/${p}"; fi
+  done
+  # shellcheck disable=SC2086 # one ref per word
+  git -C "$1" merge-base HEAD ${refs:-"origin/$3"}
 }
 
 # impossible_refused <name> — print why `close <name> impossible` cannot hand <name>'s story on, and

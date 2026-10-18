@@ -73,16 +73,15 @@ def usage(path):
                 sub_tok += sum(t)
     return tok, usd, sub, sub_tok
 
-builds, tries = [], collections.Counter()
+builds = []
 for line in open(log, errors="ignore"):
     f = line.rstrip("\n").split("\t")
     if len(f) != 7 or f[1] not in roles.split():
         continue
     path = session_log(projects, f[6], archive)
     slug = slug_of(path, f[2])
-    tries[slug] += 1
     started = started_of(path)
-    builds.append({"f": f, "path": path, "slug": slug, "n": tries[slug], "started": started,
+    builds.append({"f": f, "path": path, "slug": slug, "started": started,
                    "t": secs(started) if started else midnight(f[0]), "steer": collections.Counter(), "at": {}, "times": []})
 
 def of(target):
@@ -94,7 +93,8 @@ def of(target):
             and (target in (b["slug"], b["f"][2]) or b["slug"] == b["f"][2] == cut)]
 
 STEPS = ("escalate", "dialog", "escalated", "reset", "drop")
-oks, escalates = [], collections.defaultdict(list)
+STEP_UP = re.compile(r"ok \(([a-z0-9-]+): (\S+) -> (\S+)\)")
+oks, escalates, step_ups = [], collections.defaultdict(list), []
 for line in open(events, errors="ignore") if os.path.exists(events) else ():
     f = line.rstrip("\n").split("\t")
     # Only an ok line counts: a refused or interrupted tell never reached the builder. Field 5 is read
@@ -102,6 +102,9 @@ for line in open(events, errors="ignore") if os.path.exists(events) else ():
     # line whose time does not parse goes to no build.
     # An escalate line pairs with an escalate build only when it started one (fable_escalate).
     t = secs(f[0]) if len(f) == 5 and (f[4] == "ok" or f[4].startswith("ok (")) else None
+    s = STEP_UP.fullmatch(f[4]) if t is not None and f[1] == "escalate" else None
+    if s:
+        step_ups.append((t, f[2]) + s.groups())
     if t is not None and f[1] == "escalate" and not fable_escalate(f[4]):
         t = None
     if t is not None:
@@ -149,6 +152,22 @@ for t, f in oks:
 slug_times = collections.defaultdict(list)
 for b in builds:
     slug_times[b["slug"]] += b["times"]
+# A step-up (swarm.sh step-up) closes the build it replaced: of its target's builds on <from> that
+# started by then, the last in agents.tsv order, its close cause step-up:<trigger>. The next build
+# of that slug on <to> is the same attempt, a rung, so attempt counts only the builds that are not.
+for t, target, trigger, frm, to in step_ups:
+    old = next((b for b in reversed(of(target)) if b["f"][4] == frm and b["t"] <= t), None)
+    if not old:
+        continue
+    old["steer"]["close"] += 1
+    old["cause"] = f"step-up:{trigger}"
+    new = next((b for b in builds[builds.index(old) + 1:] if b["slug"] == old["slug"] and b["f"][4] == to), None)
+    if new:
+        new["rung"] = True
+tries = collections.Counter()
+for b in builds:
+    tries[b["slug"]] += not b.get("rung")
+    b["n"] = max(tries[b["slug"]], 1)
 for b in builds:
     day, role, _, _, model, effort, _ = b["f"]
     if day < since:

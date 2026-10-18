@@ -103,6 +103,13 @@ check "escalate_ladder = sonnet,opus,fable is read" "sonnet,opus,fable" "$(run "
 project "${p}" "escalate_ladder = sonnet,gpt,fable"
 check "an escalate_ladder model no building role runs on is refused, naming file and line" "yes" \
   "$(fails_with "${p}/.claude/swarm/config:1: escalate_ladder: 'gpt' is not the model of any of" run "${p}" config)"
+for v in fable,opus sonnet,opus,sonnet opus,opus; do
+  project "${p}" "escalate_ladder = ${v}"
+  check "escalate_ladder = ${v}, a rung that does not rise, is refused" "yes" \
+    "$(fails_with "config:1: escalate_ladder: '.*' comes after a model as high or higher" run "${p}" config)"
+done
+project "${p}" "escalate_ladder = opus,fable"
+check "a ladder that skips a rung but rises is read" "opus,fable" "$(run "${p}" config escalate_ladder)"
 project "${p}" "escalate_ladder = sonnet opus"
 check "an escalate_ladder that is not a comma list is refused" "yes" \
   "$(fails_with "config:1: escalate_ladder must be models separated by commas" run "${p}" config)"

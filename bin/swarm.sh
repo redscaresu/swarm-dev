@@ -323,10 +323,16 @@ ladder_role() {
   for r in ${LADDER_ROLES}; do read -r _ m _ <<< "$(policy "${r}")"; [[ "${m}" != "$1" ]] || { echo "${r}"; return 0; }; done
   return 1
 }
+# The ladder's rungs rise in LADDER_ROLES' order, each once, so a step-up never steps down or back.
+_rank=-1
 for _m in ${CFG_escalate_ladder//,/ }; do
   # shellcheck disable=SC2154 # load_config assigns it with printf -v
-  ladder_role "${_m}" >/dev/null \
+  _r="$(ladder_role "${_m}")" \
     || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' is not the model of any of ${LADDER_ROLES} (swarm.sh policy <role>)"
+  _p=" ${LADDER_ROLES} "; _p="${_p%%" ${_r} "*}"   # the role's place: what comes before it
+  (( ${#_p} > _rank )) \
+    || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' comes after a model as high or higher; name each model once, from low to high, such as sonnet,opus,fable"
+  _rank=${#_p}
 done
 
 # agent_name <name> — the herdr agent name for anything started or waited on. start_agent and
