@@ -68,8 +68,6 @@ sw reset h lifted >/dev/null
 is "reset h deletes .swarm/escalated/h and leaves the story file byte for byte as committed" "gone|identical" \
   "$([[ -e "${S}/h" ]] || echo gone)|$(committed h)"
 
-# next's whole output, then grep: grep -q quits at its match while next still prints its idle:
-# lines, and the broken pipe fails the run under pipefail.
 # impossible hands i on: next reads the **Impossible.** block from .swarm/escalated, not from the story file.
 # h is done first, so next has no other story to build.
 sed -i.bak 's/^status: ready$/status: done/' "${P}/docs/stories/h.md"; rm "${P}/docs/stories/h.md.bak"
@@ -78,10 +76,10 @@ started i w:p2; sw close i impossible >/dev/null
 is "close i impossible: the body as committed, and the block in .swarm/escalated/i" "same|yes" \
   "$(same_body i)|$(grep -q '^\*\*Impossible\.\*\*' "${S}/i" && echo yes)"
 is "next names i escalated, its builder having called its Done when impossible (impossible_block reads .swarm/escalated)" \
-  "escalated i|yes" "$(next | head -1)|$(grep -qF "i's builder called its Done when impossible:" <<< "$(next)" && echo yes)"
+  "escalated i|yes" "$(next | head -1)|$(next | grep -qF "i's builder called its Done when impossible:" && echo yes)"
 cp "${S}/i" "${ROOT}/i.block"; rm "${S}/i"
 is "with .swarm/escalated/i gone, next no longer says its builder called it impossible (the story file has no block)" "escalated i|yes" \
-  "$(next | head -1)|$(grep -qF "i failed on Fable:" <<< "$(next)" && echo yes)"
+  "$(next | head -1)|$(next | grep -qF "i failed on Fable:" && echo yes)"
 cp "${ROOT}/i.block" "${S}/i"
 sw reset i re-scoped >/dev/null
 is "reset i deletes .swarm/escalated/i and leaves the story file byte for byte as committed" "gone|identical" \

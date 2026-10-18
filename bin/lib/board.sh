@@ -197,23 +197,35 @@ one_off_started() {
 # idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
 # per blocked story whose depends_on story shares no file in touches with it (touches_rows.py
 # --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
-# step, no conductor at work) and no story is buildable (buildable_story), idle: "<project>" (quoted:
-# a slug never starts with a quote, and a space stays in the name) with up to
-# IDLE_CANDIDATES out-of-scope findings (out_of_scope_findings) to file as a one-off. Later stories
-# are the user's (waiting_on_user), never offered here.
+# step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
+# finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
+# quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
+# Later stories are the user's (waiting_on_user), never offered here.
 IDLE_CANDIDATES=5
 idle_lines() {
-  local f
-  # Advisory: a failed check warns, and never fails next after it printed its step.
+  local f found
+  # Advisory: a failed check warns, and never fails next.
   SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" \
     || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
   case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
   while IFS= read -r f; do
     if buildable_story "${f}"; then return 0; fi
   done < <(board stories)
-  echo "idle: \"$(basename "${PROJECT_DIR}")\""
   # sed, not head: head can exit before the writers finish, and the broken pipe fails under pipefail.
-  out_of_scope_findings | sed 's/^/  out-of-scope finding: /' | sed -n "1,${IDLE_CANDIDATES}p"
+  found="$(out_of_scope_findings | sed -n "1,${IDLE_CANDIDATES}p")"
+  [[ -n "${found}" ]] || return 0
+  echo "idle: \"$(basename "${PROJECT_DIR}")\""
+  printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
+}
+
+# next_report — swarm.sh next: next_step's step, then idle_lines' for it. Both are worked out first
+# and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
+# the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning.
+next_report() {
+  local step idle
+  step="$(next_step)"; idle="$(idle_lines "${step%%[ $'\n']*}")"
+  trap '' PIPE
+  printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
