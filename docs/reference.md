@@ -980,7 +980,14 @@ With `merge = human` (the default) no agent merges: each agent starts unable to 
 runs `swarm.sh review <slug> <PR URL>...`, which sets the item `status: review` with its PRs on a
 `prs:` line, and `next` lists it as awaiting your merge. When the stories left in an epic are all
 in review and its **Done when** will hold once they merge, the conductor puts the epic in review
-too, with every PR still waiting. You merge on GitHub; the next `/swarm-dev:swarm` runs `swarm.sh reconcile`,
+too, with every PR still waiting. A `kind: lead` story whose `after:` names its own epic does not count in it
+(alone or in a list; an `after:` that does not name its own epic is ignored), so an epic with only
+such stories is still planned.
+An active epic that had code stories planned (on the board, in its git history, or a board not in
+git, which has none to read), none of them open, counts as done in `next`,
+`status` and `dash` while its `after:` stories wait, so an epic or story that `depends_on` it goes
+ahead. On a board in the story's repo, its last code story's PR deletes the epic file without them.
+The `after:` story stays on the board and is listed with the lead's stories. You merge on GitHub; the next `/swarm-dev:swarm` runs `swarm.sh reconcile`,
 which finishes each item whose PRs have all merged and sends back to `ready` any item with a PR
 closed unmerged; that item keeps its `attempts:`, and reconcile never counts one. While the story
 file still names its repo, it also clears each story's build away: its worktree, and `story/<slug>`
