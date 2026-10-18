@@ -423,8 +423,8 @@ story_role() {
 build_story() {
   local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" msg parents
   [[ -f "${story}" ]] || die "no story ${story}"
-  grep -q '^status: ready$' "${story}" || die "${slug} is not status: ready"
-  kind=$(sed -n 's/^kind: *//p' "${story}" | head -1); kind="${kind:-code}"
+  [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
+  kind="$(fm "${story}" kind)"; kind="${kind:-code}"
   case "${kind}" in
     code|docs|chore) ;;
     lead) die "${slug} is kind: lead — real cloud, credentials or a human step; the lead runs it, not a swarm agent" ;;
@@ -570,8 +570,8 @@ EOF
 
 # stack_start <story> <repo-dir> <worktree> <parents> — a stacked story's worktree, on story/<slug> at
 # origin/story/<first parent>, with each other parent's branch merged in. Each parent's branch is
-# fetched first and its PR must still be open; when one is not, the story goes back to blocked (an
-# uncommitted board edit, as unblock's) and nothing is made. A merge that fails leaves no worktree or
+# fetched first and its PR must still be open; when one is not, the story goes back to blocked (in
+# BOARD_STATE_DIR, as unblock's) and nothing is made. A merge that fails leaves no worktree or
 # branch, and names the two branches that conflict and their files (merge_clash). Sets STACK_PRS to the
 # parents' PR URLs, for the brief.
 stack_start() {
@@ -645,7 +645,8 @@ touches_overlap() {
 }
 
 # touches_rows <slug> — a line per story of another epic whose touches overlap <slug>'s: slug, epic
-# (none for no epic), status (held for a story with held_by:) and its overlapping entries. <slug>'s
+# (none for no epic), status (held for a story with held_by:; both read from its state file first)
+# and its overlapping entries. <slug>'s
 # depends_on parents, and the stories that name <slug> in theirs, are left out: a stacked story starts
 # on its parents' branches. Touches are a bracketed list split on commas
 # outside parentheses, parentheticals dropped. An entry is [<repo>: ]<file>[:<fn>]. One with no / or .
@@ -654,7 +655,7 @@ touches_overlap() {
 # overlaps the whole file. An empty status prints as -. Its own function, not inside a <(...):
 # bash 3.2 misreads the parentheses in a heredoc there.
 touches_rows() {
-  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}"
+  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" "$1" "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
 }
 
 # board_pr_merge_rule — who lands a conductor's board PR: the conductor with merge = agent, the user
@@ -951,7 +952,7 @@ conduct_epic() {
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog, in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err
   if [[ "${epic}" == --backlog ]]; then
     epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
@@ -978,14 +979,13 @@ start_conductor() {
   inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
   echo "workspace ${hld} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
-  # An uncommitted board edit, as unblock's are; any other status is left as it is. The conductor is
-  # already running, so a file that cannot be written is reported, never fatal: a failed conduct
-  # would invite a second conductor.
+  # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
+  # The conductor is already running, so a state file that cannot be written is reported, never
+  # fatal: a failed conduct would invite a second conductor. set_fm dies, so it runs in a subshell.
   [[ -f "${epic_file}" && "$(get_fm "${epic_file}" status)" == later ]] || return 0
-  if set_fm "${epic_file}" status active 2>/dev/null; then
-    echo "epic ${epic}: status later -> active (uncommitted board edit)"
+  if err="$(set_fm "${epic_file}" status active 2>&1)"; then
+    echo "epic ${epic}: status later -> active (in .swarm/board-state)"
   else
-    rm -f "${epic_file}.tmp"
-    echo "epic ${epic}: could not write ${epic_file}, so it is still later; set status: active by hand" >&2
+    echo "epic ${epic}: could not write its state in ${BOARD_STATE_DIR}/epics, so it is still later; set status: active by hand (${err#swarm: })" >&2
   fi
 }

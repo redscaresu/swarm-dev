@@ -146,8 +146,13 @@ outcomes_report() {
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
     text="$(story_text "${slug}")"; prs=""; asked=""
-    kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; [[ -z "${text}" ]] || kind="${kind:-code}"
-    from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
+    # A story on the board: kind: and escalated_from: through fm, its state file first.
+    if [[ -f "${BOARD}/stories/${slug}.md" ]]; then
+      kind="$(fm "${BOARD}/stories/${slug}.md" kind)"; from="$(fm "${BOARD}/stories/${slug}.md" escalated_from)"
+    else
+      kind="$(sed -n 's/^kind: *//p' <<< "${text}" | head -1)"; from="$(sed -n 's/^escalated_from: *//p' <<< "${text}" | head -1)"
+    fi
+    [[ -z "${text}" ]] || kind="${kind:-code}"
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
     # shellcheck disable=SC2016 # $b is jq's
@@ -167,6 +172,13 @@ outcomes_report() {
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
 # per bin/lib/flow_<name>.py in name order, each under `## <name>` (flow_report.py runs them):
+#   ci_health: one TSV row over the github.com PRs of the outcomes rows dated in the window (with
+#     --epic, its own; without --since, the 30 days up to --until or today, said in a line above it):
+#     the median minutes per head SHA from its first run created to its last updated, red runs
+#     (failure, timed_out or startup_failure) per PR and flakes (a red run, then a green one of the
+#     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
+#     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
+#     10 s prints `ci health: gh failed` and no numbers.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
@@ -186,6 +198,8 @@ outcomes_report() {
 #     agents.tsv line of a `role:<role>` or `agent:<name>`, or a findings.tsv row of a
 #     `reviewer:<who>`. An `unlogged: <why>` feature (a read-only command leaves no events line)
 #     shows `-` and is judged on its metric alone.
+#   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
+#     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
