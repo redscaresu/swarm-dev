@@ -219,7 +219,8 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
 # project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
 # lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
-# poll finds that agent no longer waiting (state in .swarm/state).
+# poll finds that agent no longer waiting (state in .swarm/state). With escalate_ladder set, a story
+# whose PR's checks finish red on a second head is stepped up (ci_red_step).
 watch_prs() {
   local epic="" stories=("${BOARD}"/stories/*.md) heads="" f
   if [[ "${1:-}" == --epic || "${1:-}" == --backlog ]]; then
@@ -264,7 +265,8 @@ watch_prs() {
         read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
         if [[ "${total:-0}" -gt 0 && "${pending}" == 0 ]]; then
-          echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"; return 0
+          echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"
+          ci_red_step "${repo}" "${sha}" "${br}" "${seen}"; return 0
         fi
         if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
@@ -305,6 +307,20 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     fi
     sleep 60
   done
+}
+
+# ci_red_step <owner/repo> <sha> <branch> <seen> — with escalate_ladder set, note a finished head
+# ci_gate finds red in <seen> (`red <branch> <sha>`), and on the branch's second red head step its
+# story up (ladder_step ci-red-2); a step-up forgets the branch's red heads, so the next rung starts at none.
+ci_red_step() {
+  local rc=0 tmp
+  [[ -n "${CFG_escalate_ladder:-}" ]] || return 0
+  ci_gate head "$1" "$2" >/dev/null 2>&1 || rc=$?
+  [[ ${rc} == 1 ]] || return 0
+  echo "red $3 $2" >> "$4"
+  [[ "$(grep -c "^red $3 " "$4")" == 2 ]] && ladder_step "${3#story/}" ci-red-2 || return 0
+  tmp="$(mktemp "${STATE_DIR}/watch-seen.XXXXXX")"
+  { grep -v "^red $3 " "$4" || true; } > "${tmp}"; mv "${tmp}" "$4"
 }
 
 # ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when

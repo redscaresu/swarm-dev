@@ -693,7 +693,8 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
-# WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
+# WAIT_STALLED, after stepping the build up with escalate_ladder set (ladder_step stalled).
+# SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
 # A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
@@ -703,7 +704,11 @@ wait_agent() {
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
-    if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
+    if [[ "${status}" == stalled:* ]]; then
+      echo "${status}"
+      ladder_step "$(stall_py story "${name}")" stalled || true
+      return "${WAIT_STALLED}"
+    fi
     if [[ ${rc} -ne 0 ]]; then
       [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
@@ -779,6 +784,9 @@ is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; retu
 # read as a flag. Only an idle agent is told (read_state): it refuses one mid-turn (findings sent then
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
+# With escalate_ladder set, a builder's third findings since its build started (findings_told) are not
+# sent: the build is stepped up (ladder_step findings-3) with them in the handover brief, and the tell
+# fails, saying so; a step-up refused sends them as usual.
 # A note goes only to a live conductor of this project, and never as a prompt: it is appended to
 # .swarm/inbox/<name>.md, which the conductor reads after each wait (conduct_brief), busy or not.
 tell_agent() {
@@ -810,6 +818,9 @@ tell_agent() {
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
+  if [[ "${kind}" == findings && "$(findings_told "$1")" == 2 ]] && ladder_step "$1" findings-3 "${f}"; then
+    die "tell: ${name} was not told: these were its third findings, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
+  fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die
   trap "rm -f '${msg}' '${msg}.goal'" EXIT
@@ -823,6 +834,14 @@ tell_agent() {
   trap "rc=\$?; rm -f '${msg}' '${msg}.goal'; [[ \${rc} -eq 0 ]] || record_event tell:findings '$1'" EXIT
   findings_goal "$1" "${since}" "${msg}.goal"
   echo "told ${name}"
+}
+
+# findings_told <slug> — how many ok findings tells (a bare tell, from logs before kinds, too) <slug>
+# has had since its build started: since its last ok story or escalate line.
+findings_told() {
+  awk -F'\t' -v s="$1" '$3 != s || $5 !~ /^ok/ { next }
+    $2 == "story" || $2 == "escalate" { n = 0 } ($2 == "tell" || $2 == "tell:findings") && $5 == "ok" { n++ }
+    END { print n + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
 }
 
 # free_agent_name <name> — herdr refuses a name already in use (agent_name_taken), so a second run

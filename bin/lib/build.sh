@@ -724,6 +724,15 @@ it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a ne
 read the moved copy, act on it, and delete it. Do all this once more just before you write your report,
 so a note left after your last wait is not lost.
 EOF
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${CFG_escalate_ladder:-}" ]] || cat <<EOF
+
+swarm.sh steps a build up the escalation ladder (${CFG_escalate_ladder}) itself when its builder
+stops with no PR (close), stalls (\`wait --stall\`), is sent its third findings (tell), or its PR's
+checks finish red on a second head (watch). That command then prints \`stepped up: <slug>\`: the
+next model carries on in the same worktree and branch. Do not close, retry or tell that story for
+it; wait on its builder again.
+EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF

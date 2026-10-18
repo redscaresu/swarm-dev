@@ -1023,6 +1023,15 @@ against the base (committed or not, up to 400 lines), the review agent's finding
 `.swarm/reviews/<slug>.md`, and the open PR's failing checks. It also tells the builder to put a
 `Models:` line in the PR body naming every model that worked on the story, in order.
 
+You rarely run `step-up` yourself: with the ladder set, swarm.sh runs it on each trigger as it sees
+it. `close` steps up a builder it closes with no PR (no cause, `met` or `bound`) instead of counting
+an attempt. `wait --stall` steps up a builder it finds stalled. `tell <slug> findings` steps up a
+builder on its third findings since its build started, and does not send them: they go into the
+handover brief, and the tell fails, saying so. `watch` steps up a story whose PR's checks finish red
+on a second head. Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on
+that builder again, not to close, retry or tell it. A step-up that is refused (the top rung, a model
+off the ladder) says why, and the command carries on as it would with the ladder empty.
+
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to Fable starts
 a Fable build, so `outcomes` pairs only those (and build_story's `ok (attempt N)`) with an escalate
 build, and `dash` counts only those among today's escalations.
