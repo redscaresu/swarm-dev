@@ -325,8 +325,9 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 # or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
 # project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
 # lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
-# poll finds that agent no longer waiting (state in .swarm/state). With escalate_ladder set, a story
-# whose PR's checks finish red on STEP_UP_RED_HEADS heads of its build is stepped up (ci_red_step).
+# poll finds that agent no longer waiting (state in .swarm/state). With escalate_ladder set, a watch
+# with --epic or --backlog steps up a story of its own whose PR went red on STEP_UP_RED_HEADS heads of
+# its build (ci_red_scan); the lead's bare watch leaves that to the story's conductor.
 watch_prs() {
   local epic="" stories=("${BOARD}"/stories/*.md) heads="" f
   if [[ "${1:-}" == --epic || "${1:-}" == --backlog ]]; then
@@ -367,12 +368,14 @@ watch_prs() {
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
+        # The ladder's red heads, judged on every poll of a watch that owns these stories: a step-up
+        # tried is said, and the watch returns.
+        if [[ -n "${heads}" ]] && ci_red_scan "${repo}" "${sha}" "${br#story/}"; then return 0; fi
         grep -qx "done ${sha}" "${seen}" && continue
         read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
         if [[ "${total:-0}" -gt 0 && "${pending}" == 0 ]]; then
-          echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"
-          ci_red_step "${repo}" "${sha}" "${br#story/}"; return 0
+          echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"; return 0
         fi
         if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
@@ -415,25 +418,37 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   done
 }
 
-# RED_HEADS: `<slug> <sha> <time>` per finished head ci_red_step found red. Only appended to, one
-# short line at a time, so two watches at once lose none.
+# RED_HEADS: `<slug> <sha> <time> <seen|red|green>`: each PR head a watch saw, and ci_gate's verdict
+# on it once it gave one. Only appended to, one short line at a time, so two watches at once lose none.
 RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 
-# ci_red_step <owner/repo> <sha> <slug> — with escalate_ladder set, note a finished head ci_gate finds
-# red in RED_HEADS, and when the story's build (since its newest ok story or escalate line, so a retry
-# or a step-up starts at none) has STEP_UP_RED_HEADS distinct red heads, step it up
-# (ladder_step ci-red-<N>), if its builder is open: a PR whose builder was closed is the lead's.
-ci_red_step() {
-  local rc=0 since n
-  [[ -n "${CFG_escalate_ladder:-}" ]] || return 0
-  ci_gate head "$1" "$2" >/dev/null 2>&1 || rc=$?
-  [[ ${rc} == 1 ]] || return 0
-  mkdir -p "${RED_HEADS%/*}"; printf '%s %s %s\n' "$3" "$2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${RED_HEADS}"
-  since="$(awk -F'\t' -v s="$3" '$3 == s && ($2 == "story" || $2 == "escalate") && $5 ~ /^ok/ { t = $1 } END { print t }' "${EVENTS_LOG}" 2>/dev/null || true)"
+# ci_red_scan <owner/repo> <head> <slug> — with escalate_ladder set: note <head> as seen in this build
+# (build_started) unless an earlier build judged it, then judge with ci_gate head every head seen in
+# this build and not judged yet, the current one or one replaced since; red or green is final, and
+# pending or a failed read is judged again next poll. With STEP_UP_RED_HEADS distinct red heads or
+# more and the story's builder open (a PR whose builder was closed is the lead's), step it up
+# (ladder_step ci-red-<N>) and succeed unless that closed nothing; else fail.
+# ponytail: ci_gate reads a head still running on each poll; skip it there if watch's gh calls matter.
+ci_red_scan() {
+  local since now h rc v n
+  [[ -n "${CFG_escalate_ladder:-}" ]] || return 1
+  since="$(build_started "$3")"; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "${RED_HEADS%/*}"; touch "${RED_HEADS}"
+  # mine: heads seen this build, judged: with a verdict this build, old: with one from an earlier build.
+  awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && ($3 >= t || $4 != "seen") { f = 1 } END { exit !f }' "${RED_HEADS}" \
+    || printf '%s %s %s seen\n' "$3" "$2" "${now}" >> "${RED_HEADS}"
+  while read -r h; do
+    rc=0; ci_gate head "$1" "${h}" >/dev/null 2>&1 || rc=$?
+    case "${rc}" in 0) v=green ;; 1) v=red ;; *) continue ;; esac
+    printf '%s %s %s %s\n' "$3" "${h}" "${now}" "${v}" >> "${RED_HEADS}"
+  done < <(awk -v s="$3" -v t="${since}" '$1 != s { next } $3 < t && $4 != "seen" { old[$2] = 1 }
+      $3 >= t { if ($4 == "seen") mine[$2] = 1; else judged[$2] = 1 }
+      END { for (h in mine) if (!(h in judged) && !(h in old)) print h }' "${RED_HEADS}")
   # Distinct heads: two watches can both judge one head.
-  n="$(awk -v s="$3" -v t="${since}" '$1 == s && $3 > t && !seen[$2]++' "${RED_HEADS}" | wc -l | tr -d ' ')"
-  [[ "${n}" == "${STEP_UP_RED_HEADS}" && -n "$(agent_field "$(agent_name "$3")" pane_id)" ]] || return 0
-  ladder_step "$3" "ci-red-${STEP_UP_RED_HEADS}" || true
+  n="$(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t && $4 == "red" && !seen[$2]++' "${RED_HEADS}" | wc -l | tr -d ' ')"
+  (( n >= STEP_UP_RED_HEADS )) && [[ -n "$(agent_field "$(agent_name "$3")" pane_id)" ]] || return 1
+  rc=0; ladder_step "$3" "ci-red-${STEP_UP_RED_HEADS}" || rc=$?
+  [[ ${rc} != 1 ]]
 }
 
 # ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when

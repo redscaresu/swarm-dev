@@ -309,7 +309,7 @@ CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or 
 # the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible);
 # with escalate_ladder set, that close then steps the build up (ladder_step no-pr) instead, if it can.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -325,7 +325,10 @@ close_agent() {
     if [[ ! "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ && "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" != True ]]; then
       record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
       # With the ladder on, the next model takes the build over instead: no attempt, nothing cleared.
-      ! ladder_step "$1" no-pr || return 0
+      # A step-up that failed partway closed the builder already: nothing more is done here.
+      rc=0; ladder_step "$1" no-pr || rc=$?
+      [[ ${rc} != 0 ]] || return 0
+      [[ ${rc} == 1 ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
     fi
   fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
@@ -372,6 +375,8 @@ close_agent() {
 # STEP_UP_RED_HEADS: the red heads on its PR that do (ci_red_step). The trigger names carry them.
 STEP_UP_FINDINGS=3
 STEP_UP_RED_HEADS=2
+# STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder (a refusal is 1).
+STEP_UP_PARTWAY=4
 STEP_UP_TRIGGERS="findings-${STEP_UP_FINDINGS} ci-red-${STEP_UP_RED_HEADS} stalled no-pr"
 step_trigger() {
   case "$1" in
@@ -401,7 +406,7 @@ step_up() {
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   wt="$(worktree_for "${src}" "${slug}")"
   [[ -d "${wt}" ]] || die "step-up: ${slug} has no worktree at ${wt}, so there is no build to hand on; nothing was closed"
-  from="$(awk -F'\t' -v n="$(agent_name "${slug}")" '$3 == n { m = $5 } END { print m }' "${AGENTS_LOG}" 2>/dev/null || true)"
+  from="$(builder_model "${slug}")"
   [[ -n "${from}" && "${ladder}" == *",${from},"* ]] \
     || die "step-up: ${slug}'s builder runs on ${from:-no model agents.tsv names}, which is not on escalate_ladder (${CFG_escalate_ladder}); nothing was closed"
   to="${ladder#*,"${from}",}"; to="${to%%,*}"
@@ -413,6 +418,9 @@ step_up() {
   base="$(base_for "${src}")"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "${prompt%/*}"
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" "${3:-}" > "${prompt}"
+  # From here a failure is not a refusal: the builder is closed (step_up_failed).
+  # shellcheck disable=SC2064 # expand now: the slug and models are local
+  trap "step_up_failed '${slug}' '${trigger}: ${from} -> ${to}'" EXIT
   archive_session "${slug}"
   close_panes "${slug}"
   rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "${slug}")"
@@ -421,14 +429,46 @@ step_up() {
   record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})"
   echo "stepped up: ${slug} from ${from} to ${to} (${role}), in ${wt}"
   [[ -z "${goal}" ]] || { printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"; send_goal "${slug}" "${prompt%.md}.goal.md" brief; }
+  trap - EXIT
+}
+
+# step_up_failed <slug> <step> — step_up's exit trap once the builder is closed: on a failure, log
+# escalate `failed partway (<step>)` (which keeps ladder_step from trying this build again), say so,
+# and exit STEP_UP_PARTWAY.
+step_up_failed() {
+  local rc=$?
+  [[ ${rc} != 0 ]] || return 0
+  record_event escalate "$1" "failed partway ($2)"
+  echo "step-up failed: $1 stopped partway ($2), after its builder was closed: list it for the lead; do not close, retry or tell it"
+  exit "${STEP_UP_PARTWAY}"
+}
+
+# builder_model <slug> — the model of the newest agents.tsv line for <slug>'s builder.
+builder_model() {
+  awk -F'\t' -v n="$(agent_name "$1")" '$3 == n { m = $5 } END { print m }' "${AGENTS_LOG}" 2>/dev/null || true
+}
+
+# build_started <slug> — when <slug>'s current build started: its newest ok story or escalate line,
+# or ok agent line (a builder started by hand, whose target is the agent name); empty with none.
+build_started() {
+  awk -F'\t' -v s="$1" -v n="$(agent_name "$1")" '$5 ~ /^ok/ && ((($2 == "story" || $2 == "escalate") && $3 == s) || ($2 == "agent" && $3 == n)) { t = $1 }
+    END { print t }' "${EVENTS_LOG}" 2>/dev/null || true
 }
 
 # ladder_step <slug> <trigger> [findings] — with escalate_ladder set, step_up <slug> for a trigger
-# swarm.sh saw itself (close, wait --stall, tell, watch), and succeed only when it stepped up. A refusal
-# (its top rung, a model off the ladder) is said on stderr, and the caller carries on as before. With
-# the ladder empty it does nothing and fails.
+# swarm.sh saw itself (close, wait --stall, tell, watch): 0 when it stepped up, 1 when nothing was
+# closed (a refusal, said on stderr), and the caller carries on as before, STEP_UP_PARTWAY (or any
+# other status) when it failed partway, and the caller stops. With the ladder empty, the builder's model
+# at the ladder's top or off it, or a step-up of this build that failed partway already, it runs
+# nothing and returns 1.
 ladder_step() {
-  [[ -n "${CFG_escalate_ladder:-}" ]] || return 1
+  local from since ladder=",${CFG_escalate_ladder:-},"
+  from="$(builder_model "$1")"
+  # A model with a rung above it: with the ladder empty, none has.
+  [[ -n "${from}" && "${ladder}" == *",${from},"?* ]] || return 1
+  since="$(build_started "$1")"
+  ! awk -F'\t' -v s="$1" -v t="${since}" '$2 == "escalate" && $3 == s && $1 >= t && $5 ~ /^failed partway/ { f = 1 } END { exit !f }' \
+    "${EVENTS_LOG}" 2>/dev/null || return 1
   # A swarm.sh of its own, logged as step-up: step_up's die then ends only it, and set -e holds in it,
   # which a subshell called from a condition, as every caller does, would run without.
   "${BASH}" "${SWARM_HOME}/bin/swarm.sh" step-up "$1" "$2" ${3:+"$3"}

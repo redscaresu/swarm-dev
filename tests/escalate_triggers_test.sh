@@ -31,33 +31,38 @@ case "$1 $2" in
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"}]}}' ;;
   "tab close")    : > "$H/agents" ;;
-  "agent start")  echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
+  "agent start")  [ -e "$H/startfail" ] && { echo "start refused" >&2; exit 1; }
+                  echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
 esac
 EOF
-# gh: story/s1 has no PR for close (prs.json), one open PR whose head is the sha in head for watch,
-# and that head's one check run failed.
+# gh: story/s1 has no PR for close (prs.json), and one open PR whose head is the sha in head for
+# watch. A head's one check run failed unless runs-<sha> says otherwise, and it has a commit status
+# only when status-<sha> names its state.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/gh"
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
   "pr list"*"--state open --json number"*) echo "5 $(cat "$H/head") story/s1 MERGEABLE 10" ;;
   "repo view"*) echo o/proj ;;
-  "api --paginate"*check-runs*) echo '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"failure","html_url":"https://ci/1"}]}' ;;
-  "api --paginate"*status*) echo '{"total_count":0,"statuses":[]}' ;;
+  "api --paginate"*check-runs*) sha=$(echo "$*" | sed 's|.*/commits/\([^/]*\)/.*|\1|'); c=$(cat "$H/runs-$sha" 2>/dev/null || echo failure)
+    echo "{\"total_count\":1,\"check_runs\":[{\"name\":\"test\",\"status\":\"completed\",\"conclusion\":\"$c\",\"html_url\":\"https://ci/1\"}]}" ;;
+  "api --paginate"*status*) sha=$(echo "$*" | sed 's|.*/commits/\([^/]*\)/.*|\1|')
+    if [ -e "$H/status-$sha" ]; then echo "{\"total_count\":1,\"statuses\":[{\"context\":\"ext\",\"state\":\"$(cat "$H/status-$sha")\"}]}"
+    else echo '{"total_count":0,"statuses":[]}'; fi ;;
   "api"*check-runs*) echo "1 0" ;;
 esac
 EOF
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 
 P="${ROOT}/proj"; WT="${ROOT}/proj-wt/s1"
-# fresh <ladder> <session state> — a new project whose story s1 is built on sonnet in its worktree
-# (one commit, 2 hours old), its builder open in pane w:1, and escalate_ladder = <ladder>.
+# fresh <ladder> <session state> [model] — a new project whose story s1 is built on sonnet in its worktree
+# (one commit, 2 hours old) on [model] (sonnet), its builder open in pane w:1, and escalate_ladder = <ladder>.
 fresh() {
-  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log"
+  rm -rf "${ROOT}/origin.git" "${P}" "${ROOT}/proj-wt" "${ROOT}/herdr.log" "${ROOT}"/runs-* "${ROOT}"/status-* "${ROOT}/startfail"
   "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
   "${GIT[@]}" clone -q "${ROOT}/origin.git" "${P}" 2>/dev/null
   mkdir -p "${P}/docs/stories" "${P}/.claude/swarm" "${P}/.swarm/state"
@@ -66,7 +71,7 @@ fresh() {
   "${GIT[@]}" -C "${P}" worktree add -q -b story/s1 "${WT}" origin/main
   echo work > "${WT}/work.txt"; "${GIT[@]}" -C "${WT}" add work.txt
   GIT_COMMITTER_DATE="@${OLD}" "${GIT[@]}" -C "${WT}" commit -qm work
-  printf '2026-10-01\tcode-sonnet\ts1\tclaude\tsonnet\thigh\tsess-1\n' > "${P}/.swarm/agents.tsv"
+  printf '2026-10-01\tcode-sonnet\ts1\tclaude\t%s\thigh\tsess-1\n' "${3:-sonnet}" > "${P}/.swarm/agents.tsv"
   : > "${P}/.swarm/events.tsv"
   echo "w:1 s1" > "${P}/.swarm/state/s1"; echo "s1 w:1" > "${ROOT}/agents"
   echo "[{\"sessionId\":\"sess-1\",\"status\":\"$2\"}]" > "${CLAUDE_STUB_AGENTS}"
@@ -78,6 +83,9 @@ run() { (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w SWAR
 # stepped — the escalate lines' results, and any step-up that was refused, comma-separated.
 stepped() { awk -F'\t' '$2 == "escalate" { print $5 } $2 == "step-up" && $5 != "ok" { print "refused: " $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 findings_tells() { printf '2026-10-18T10:0%s:00Z\ttell:findings\ts1\tw:1\tok\n' 1 2 >> "${P}/.swarm/events.tsv"; echo "fix it" > "${ROOT}/f.md"; }
+heads() { local h; for h in "$@"; do echo "${h}" > "${ROOT}/head"; run watch --backlog >/dev/null || true; done; }
+attempts() { sed -n 's/^attempts: *//p' "${P}/.swarm/board-state/stories/s1" 2>/dev/null || true; }
+escalates() { awk -F'\t' '$2 == "escalate" { print $5 }' "${P}/.swarm/events.tsv" | paste -sd, -; }
 
 for ladder in sonnet,opus,fable ""; do
   want="ok (no-pr: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
@@ -86,8 +94,13 @@ for ladder in sonnet,opus,fable ""; do
 
   want="ok (stalled: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
   fresh "${ladder}" busy; out="$(SWARM_WAIT_STARTED="${OLD}" run wait --stall s1 3000)" || true
-  check "ladder '${ladder}': a stall found by wait --stall steps up only with the ladder on" "yes|${want}" \
-    "$(grep -q '^stalled:' <<< "${out}" && echo yes)|$(stepped)"
+  if [[ -n "${ladder}" ]]; then
+    check "ladder '${ladder}': a stall found by wait --stall steps up, and wait says stepped up, not stalled" "yes|no|${want}" \
+      "$(grep -q '^stepped up: s1' <<< "${out}" && echo yes)|$(grep -q '^stalled:' <<< "${out}" && echo yes || echo no)|$(stepped)"
+  else
+    check "ladder '${ladder}': a stall found by wait --stall is stalled, and steps nothing up" "yes|${want}" \
+      "$(grep -q '^stalled:' <<< "${out}" && echo yes)|$(stepped)"
+  fi
 
   fresh "${ladder}" idle; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
   if [[ -n "${ladder}" ]]; then
@@ -100,32 +113,75 @@ for ladder in sonnet,opus,fable ""; do
 
   want="ok (ci-red-2: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
   fresh "${ladder}" idle
-  echo aaaa1111 > "${ROOT}/head"; run watch >/dev/null || true
-  first="$(stepped)"
-  echo bbbb2222 > "${ROOT}/head"; run watch >/dev/null || true
+  heads aaaa1111; first="$(stepped)"; heads bbbb2222
   check "ladder '${ladder}': one red head steps nothing, a second steps up only with the ladder on" "|${want}" "${first}|$(stepped)"
+  check "ladder '${ladder}': watch keeps red heads only with the ladder on" "$([[ -n "${ladder}" ]] && echo yes || echo no)" \
+    "$([[ -s "${P}/.swarm/red-heads.tsv" ]] && echo yes || echo no)"
 
   if [[ -n "${ladder}" ]]; then
     # A red head of an earlier build (before its newest story line) counts nothing for this one.
     fresh "${ladder}" idle
-    printf 's1 old0000 2026-10-01T10:00:00Z\n' > "${P}/.swarm/red-heads.tsv"
+    printf 's1 old0000 2026-10-01T10:00:00Z red\n' > "${P}/.swarm/red-heads.tsv"
     printf '2026-10-01T11:00:00Z\tstory\ts1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
-    echo aaaa1111 > "${ROOT}/head"; run watch >/dev/null || true
+    heads aaaa1111
     check "a red head from the story's earlier build does not count toward this build's two" "" "$(stepped)"
-    # Two watches judging one head (its done line gone, as if both passed the check at once) count it once.
-    { grep -v '^done aaaa1111$' "${P}/.swarm/state/watch-seen" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${P}/.swarm/state/watch-seen"
-    run watch >/dev/null || true
+    # The PR head an earlier build left, judged red then, is not this build's red head.
+    fresh "${ladder}" idle
+    printf 's1 aaaa1111 2026-10-01T10:00:00Z red\n' > "${P}/.swarm/red-heads.tsv"
+    printf '2026-10-01T11:00:00Z\tescalate\ts1\tw:1\tok (stalled: haiku -> sonnet)\n' >> "${P}/.swarm/events.tsv"
+    heads aaaa1111 bbbb2222
+    check "the head an earlier build judged red is not counted again for this one" "ok (stalled: haiku -> sonnet)" "$(stepped)"
+    # So does one the builder started by hand (swarm.sh agent) inherits.
+    fresh "${ladder}" idle
+    printf 's1 old0000 2026-10-01T10:00:00Z red\n' > "${P}/.swarm/red-heads.tsv"
+    printf '2026-10-01T11:00:00Z\tagent\ts1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
+    heads aaaa1111
+    check "a builder started with swarm.sh agent is a new build: earlier red heads count nothing" "" "$(stepped)"
+    # Two watches that both judged one head left two red lines for it: it counts once.
+    fresh "${ladder}" idle
+    printf '%s\n' 's1 aaaa1111 2026-10-18T00:00:00Z red' 's1 aaaa1111 2026-10-18T00:00:00Z red' > "${P}/.swarm/red-heads.tsv"
+    heads aaaa1111
     check "one red head judged twice counts once" "" "$(stepped)"
     # Two red heads on a PR whose builder is closed step nothing: that PR is the lead's.
-    fresh "${ladder}" idle; : > "${ROOT}/agents"
-    for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch >/dev/null || true; done
+    fresh "${ladder}" idle; : > "${ROOT}/agents"; heads aaaa1111 bbbb2222
     check "two red heads with no builder open step nothing" "" "$(stepped)"
+    # The lead's bare watch leaves the story to its own conductor.
+    fresh "${ladder}" idle
+    for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch >/dev/null || true; done
+    check "a bare watch steps up nothing" "" "$(stepped)"
+    # A head whose checks finished with a commit status still pending is judged once the status is in.
+    fresh "${ladder}" idle; echo success > "${ROOT}/runs-aaaa1111"; echo pending > "${ROOT}/status-aaaa1111"
+    heads aaaa1111; first="$(stepped)"; echo failure > "${ROOT}/status-aaaa1111"; heads bbbb2222
+    check "a head pending at its checks' finish counts once its status goes red" "|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
+
+    # A step-up whose start fails, after the builder was closed, stops the close: no attempt counted,
+    # nothing cleared, and the escalate line says it failed partway.
+    fresh "${ladder}" idle; touch "${ROOT}/startfail"; out="$(run close s1)" && rc=0 || rc=$?
+    check "a step-up whose start fails stops the close, counting and clearing nothing" "1|yes|yes||yes" \
+      "${rc}|$(grep -q '^step-up failed: s1' <<< "${out}" && echo yes)|$(escalates | grep -q '^failed partway (no-pr: sonnet -> opus)$' && echo yes)|$(attempts)|$([[ -d "${WT}" ]] && echo yes)"
+    rm -f "${ROOT}/startfail"
+    # That build is not tried again: with its builder back, its third findings are sent as usual.
+    echo "s1 w:1" > "${ROOT}/agents"; echo "w:1 s1" > "${P}/.swarm/state/s1"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
+    check "a build whose step-up failed partway is not stepped up again" "failed partway (no-pr: sonnet -> opus)|yes" \
+      "$(escalates)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
+    # At the ladder's top rung no step-up runs: the close counts the attempt as it would with the ladder off.
+    fresh "${ladder}" idle fable; run close s1 >/dev/null || true
+    check "at the top rung no step-up is tried, and the close counts the attempt" "|1" "$(stepped)|$(attempts)"
+    # A trigger missed once still fires later in the build: three findings tells already, a fourth steps up.
+    fresh "${ladder}" idle; findings_tells; printf '2026-10-18T10:03:00Z\ttell:findings\ts1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
+    run tell s1 findings "${ROOT}/f.md" >/dev/null || true
+    check "findings past the third (the ladder turned on mid-build) still step up" "ok (findings-3: sonnet -> opus)" "$(stepped)"
+    # A builder started by hand (swarm.sh agent) is a new build: its two earlier tells count nothing.
+    fresh "${ladder}" idle; findings_tells; printf '2026-10-18T11:00:00Z\tagent\ts1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
+    out="$(run tell s1 findings "${ROOT}/f.md")" || true
+    check "tells before a swarm.sh agent start do not count toward the new build's" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
   fi
 
   # The brief is written before the conductor starts, whatever the stub makes of the start.
   run conduct --backlog >/dev/null || true
-  check "ladder '${ladder}': conduct_brief names the step-ups only with the ladder on" "$([[ -n "${ladder}" ]] && echo 1 || echo 0)" \
-    "$(grep -c 'swarm.sh steps a build up the escalation ladder' "${P}/.swarm/briefs/conduct-backlog.md" || true)"
+  check "ladder '${ladder}': conduct_brief names the step-ups, with their thresholds, only with the ladder on" \
+    "$([[ -n "${ladder}" ]] && echo 1 || echo 0)|$([[ -n "${ladder}" ]] && echo 2 || echo 0)" \
+    "$(grep -c 'swarm.sh steps a build up the escalation ladder' "${P}/.swarm/briefs/conduct-backlog.md" || true)|$(grep -cE 'findings round 3 of its build|red on 2 heads of its build' "${P}/.swarm/briefs/conduct-backlog.md" || true)"
 done
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
