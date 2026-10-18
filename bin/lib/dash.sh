@@ -211,7 +211,7 @@ dash_check() {
     done
     return "${failed}"
   fi
-  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes got want x f v err
+  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes drawn got want x f v err
   DASH_CHECK_P="${DASH_CHECK_NAME:-$(basename "${PROJECT_DIR}")}"; DASH_CHECK_BAD=0
   ! command -v herdr >/dev/null 2>&1 || herdr=1
   day="$(dash_day)"
@@ -222,15 +222,19 @@ dash_check() {
     rm -f "${err}"; return 1
   fi
   rm -f "${err}"
-  hi="$(dash_flow_cost "${day}")"
-  # status asks herdr only inside a pane; dash whenever herdr is on PATH.
+  # status asks herdr only inside a pane; dash whenever herdr is on PATH. Read next to the frame, as
+  # agents change state.
   st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status || true)"
+  hi="$(dash_flow_cost "${day}")"
 
   want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
   dash_agree "agents working" "$(dash_first '.* \([0-9][0-9]*\) agents working.*' "${frame}")" status "${want}"
   got="$(dash_first '.*running [^0-9]*\([0-9][0-9]*\) of peak.*' "${frame}")"
-  # dash leaves the gauge out only with no agent list from herdr, and then status has none either.
-  if [[ -n "${got}" || "${st}" != "Agents: not inside herdr"* ]]; then dash_agree running "${got}" status "${want}"; fi
+  # dash leaves the gauge out only with no agent list from herdr (none, or none it can read), and then
+  # status has none either.
+  if [[ -n "${got}" || ( "${st}" != "Agents: not inside herdr"* && "${st}" != *"(herdr gave no agent list)"* ) ]]; then
+    dash_agree running "${got}" status "${want}"
+  fi
 
   got="$(dash_first '.*\$\([0-9][0-9.]*\) today.*' "${frame}")"
   want="${lo}"; [[ "${hi}" == "${lo}" ]] || want="${lo} to ${hi}"
@@ -247,19 +251,24 @@ dash_check() {
       n = split($5, a, ","); for (i = 1; i <= n; i++) if (lead == "session" || a[i] !~ /^(escalated|held):/) print a[i] }' <<< "${x}" | dash_words)"
   need="$(dash_box "needs you" "${frame}")"
   boxes="${need}"$'\n'"$(dash_box "lead's queue" "${frame}")"
+  # The PRs the merge rows show, as <repo>#<n>: by that ref, or by URL when gh did not answer. A held PR
+  # that a story and its epic both list is shown once, under the first.
+  x="$(grep '^│ [^ ]* merge ' <<< "${boxes}" || true)"
+  drawn="$( { sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${x}"; dash_prs <<< "${x}"; } | dash_words)"
   got=""
   for x in ${want}; do
-    # Each kind has its own row: merge, or decide for an escalated or held story.
-    v=merge; [[ "${x%%:*}" == merge ]] || v="decide escalated story"
-    if dash_names "${x#*:}" "$(grep "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; fi
+    # Each kind has its own row: merge, or decide for an escalated or held story, which dash draws as a
+    # merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
+    v=merge; [[ "${x%%:*}" == merge ]] || v="(merge|decide escalated story)"
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi
+    [[ "${x%%:*}" == merge ]] || continue
+    for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
+      if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi
+    done
   done
   dash_agree "lead's queue" "${got# }" "flow's lead_queue" "${want}"
 
-  # By PR, as <repo>#<n>: a merge row shows one by that ref, or by its URL when gh did not answer, and
-  # a held PR that a story and its epic both list only once.
-  dash_agree "PRs waiting for a merge" "$( {
-    sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${boxes}"; grep '^│ [^ ]* merge ' <<< "${boxes}" | dash_prs; } | dash_words)" \
-    status "$(grep '^  awaiting your merge' <<< "${st}" | dash_prs | dash_words)"
+  dash_agree "PRs waiting for a merge" "${drawn}" status "$(grep '^  awaiting your merge' <<< "${st}" | dash_prs | dash_words)"
   # A `<kind>: <slug>` line under Waiting on you is a story only you or the lead can run: a run row
   # each, but for the ones behind needs you's +N more.
   n="$(grep -c '^│ [^ ]* run [^ ]* story ' <<< "${boxes}" || true)"
@@ -276,8 +285,9 @@ dash_check() {
   want="$(while IFS= read -r f; do
       if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then echo "$(basename "${f}" .md): ${x// /, }"; fi
     done < <(board epics) | sort)"
-  # Any symbol: a waiting epic is ⏸ unless an agent, a look or a PR under it gives it another.
-  got="$(sed -n 's/^│ [^ ][^ ]* \([^ ]*\) .* waits on \(.*[^ ]\) *│$/\1: \2/p' <<< "${frame}" | while IFS= read -r x; do
+  # The epics box's epic rows only (its agent rows are indented), whatever their symbol: a waiting epic
+  # is ⏸ unless an agent, a look or a PR under it gives it another.
+  got="$(dash_box epics "${frame}" rows | sed -n 's/^│ [^ ][^ ]* \([^ ]*\) .* waits on \(.*[^ ]\) *$/\1: \2/p' | while IFS= read -r x; do
       while IFS= read -r f; do x="$(dash_cut "${x}" "${f}")"; done <<< "${want}"; echo "${x}"
     done | sort | paste -sd';' -)"
   dash_agree "epics waiting on depends_on" "${got}" next "$(paste -sd';' - <<< "${want}")"
@@ -349,11 +359,12 @@ dash_words() { sort -u | paste -sd' ' -; }
 # dash_prs — the GitHub PR URLs in stdin, each as <repo>#<n> (dash's ref), one a line.
 dash_prs() { { grep -o 'https://github.com/[^/ ]*/[^/ ]*/pull/[0-9]*' || true; } | sed 's#.*/\([^/]*\)/pull/#\1\##'; }
 
-# dash_box <title> <frame> — the rows inside the frame's box of that title, each wrapped row
-# (its later lines indented) joined back onto one line, the right border gone.
+# dash_box <title> <frame> [rows] — the rows inside the frame's box of that title, the right border
+# gone, each wrapped row (its later lines indented) joined back onto one line; with rows, every line
+# as it is (the epics box indents its agent rows).
 dash_box() {
-  awk -v t="$1" '/^╭─ / { on = index($0, "╭─ " t " ") == 1; next } /^╰/ { on = 0 } !on { next }
-    { sub(/ *│$/, "") } /^│   / && n { sub(/^│ */, ""); r[n] = r[n] " " $0; next } { r[++n] = $0 }
+  awk -v t="$1" -v rows="${3:-}" '/^╭─ / { on = index($0, "╭─ " t " ") == 1; next } /^╰/ { on = 0 } !on { next }
+    { sub(/ *│$/, "") } /^│   / && n && !rows { sub(/^│ */, ""); r[n] = r[n] " " $0; next } { r[++n] = $0 }
     END { for (i = 1; i <= n; i++) print r[i] }' <<< "$2"
 }
 

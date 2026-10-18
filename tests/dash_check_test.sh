@@ -82,7 +82,19 @@ item "${B}" epics/bravo-held.md "Held" "status: review" "costs: money" "prs: htt
 item "${B}" stories/b-held.md "Held" "status: review" "kind: code" "epic: bravo-held" "costs: money" "prs: https://github.com/o/bravo/pull/97"
 item "${B}" stories/b-a-story-slug-long-enough-that-its-merge-row-wraps-at-one-hundred.md "Long" "status: review" "kind: code" \
   "prs: https://github.com/o/bravo/pull/96"
+# A lead story whose title says "waits on"; review lines for the held story and its epic, so
+# lead_queue holds both while dash draws their one PR once; a story escalated and then sent to review,
+# still escalated in lead_queue but drawn as a merge row.
+item "${B}" stories/b-wait.md "Deploy waits on DNS" "status: ready" "kind: lead"
+item "${B}" stories/b-esc2.md "Escalated" "status: review" "kind: code" "prs: https://github.com/o/bravo/pull/95"
+{ printf '%s\treview\tb-held\tw2:p1\tok\n' "$(at 40)"; printf '%s\treview\tbravo-held\tw2:p1\tok\n' "$(at 39)"
+  printf '%s\tescalated\tb-esc2\tw2:p1\tok\n' "$(at 38)"; printf '%s\treview\tb-esc2\tw2:p1\tok\n' "$(at 37)"; } >> "${B}/.swarm/events.tsv"
+q="$(sw "${B}" flow | sed -n '/^## lead_queue$/,/^## /p')"
+queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "escalated:b-esc2" "${q}"; }
+check "bravo: lead_queue holds the held story and its epic, and b-esc2 as escalated" queued
 fb="$(DASH_W=100 sw "${B}" dash)"
+check "bravo: the lead story's row says waits on" has "deploy waits on DNS" "${fb}"
+check "bravo: b-esc2 has a merge row" grep -qE '! merge .*b-esc2' <<< "${fb}"
 check "bravo: dash shows the held PR once" test "$(grep -c 'pull/97' <<< "${fb}")" -eq 1
 check "bravo: the long merge row wraps" grep -qE '^│   https://github.com/o/bravo/pull/96 ' <<< "${fb}"
 check "bravo: dash cuts the long epic's name" grep -qE '⏸ bravo-an-epic-name-too-long[^ ]*… ' <<< "${fb}"
@@ -207,6 +219,18 @@ check "when flow's lead_queue cannot be read, --check says so" unread "bravo: le
 check "mutant: flow's merges section raises" mutant nomerges lib/flow_merges.py '1s/^/raise RuntimeError("no merges") /'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 check "when flow's merges cannot be read, --check says so" unread "alpha: merges today and the 7-day rate: flow's merges could not be read"
+
+# herdr answers with an agent list nobody can read: status says so, and dash draws no running gauge.
+mkdir -p "${ROOT}/garbled"
+cat > "${ROOT}/garbled/herdr" <<STUB
+#!/bin/sh
+[ "\$1 \$2" != "agent list" ] || { echo "not json"; exit 0; }
+exec "${ROOT}/bin/herdr" "\$@"
+STUB
+chmod +x "${ROOT}/garbled/herdr"
+check "with an unreadable agent list, status says herdr gave none" has "(herdr gave no agent list)" "$(PATH="${ROOT}/garbled:${PATH}" HERDR_ENV=1 sw "${A}" status)"
+out="$(PATH="${ROOT}/garbled:${PATH}" sw "${A}" dash --check)" && rc=0 || rc=$?
+check "with an unreadable agent list, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
 
 # --check draws nothing, so it refuses the flags that change how a frame is drawn.
 out="$(sw "${A}" dash --check --watch 30 2>&1)" && rc=0 || rc=$?
