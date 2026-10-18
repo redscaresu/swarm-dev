@@ -177,7 +177,7 @@ echo c > "${q}/code.txt"
 check "the hook runs make check on any other commit, and a failing check stops it" "refused" \
   "$(cd "${q}" && "${GIT[@]}" add code.txt && "${GIT[@]}" commit -qm code >/dev/null 2>&1 && echo ok || echo refused)"
 rm "${q}/Makefile"
-out="$(cd "${q}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm code 2>&1 || true)"
+out="$( { cd "${q}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm code 2>&1; } || true)"
 check "with no check target, the hook refuses a commit that is not board-only, saying why" "yes|no" \
   "$(has "${out}" 'pre-commit: make has no check target; add one to the Makefile')|$(git -C "${q}" log --format=%s | grep -qx code && echo yes || echo no)"
 
