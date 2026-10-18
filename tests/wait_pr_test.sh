@@ -137,6 +137,31 @@ fresh; wait_pr --timeout soon
 is "a --timeout that is not seconds: exits 2" 2 "${rc}"
 check "a --timeout that is not seconds: prints usage" said "usage: swarm.sh wait-pr"
 
+# --- Seconds are base 10: a leading 0 is not octal (09 would fail in (( )), 010 would be 8).
+fresh; checks "${FX}/checks.1" "$(run test queued)"; wait_pr --timeout 09
+is "--timeout 09 with a pending read: exits 0" 0 "${rc}"
+fresh; checks "${FX}/checks.1"; wait_pr SWARM_WAIT_PR_GRACE=09
+is "SWARM_WAIT_PR_GRACE=09: exits 0" 0 "${rc}"
+fresh; wait_pr SWARM_WAIT_PR_GRACE=soon
+is "SWARM_WAIT_PR_GRACE that is not seconds: exits 2" 2 "${rc}"
+check "SWARM_WAIT_PR_GRACE that is not seconds: says so" said "SWARM_WAIT_PR_GRACE is 'soon'"
+
+# --- The deadline holds on the retry paths too: past it, no pause before another read.
+fresh; for n in 1 2 3 4; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
+is "check reads retried past --timeout: exits 2" 2 "${rc}"
+is "check reads retried past --timeout: one read" 1 "$(reads)"
+check "check reads retried past --timeout: says so" grep -qE "timed out after [0-9]+s, last error: .*rate limit" "${ROOT}/out"
+fresh; for n in 1 2 3 4; do echo "${RATE}" > "${FX}/head.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
+is "head reads retried past --timeout: exits 2" 2 "${rc}"
+is "head reads retried past --timeout: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
+
+# --- Other network blips are transient too.
+for e in "dial tcp: lookup api.github.com: no such host" "dial tcp 1.2.3.4:443: connect: network is unreachable" \
+         "stream error: stream ID 3; INTERNAL_ERROR" "gh: HTTP 408"; do
+  fresh; echo "${e}" > "${FX}/checks.1.err"; wait_pr
+  is "${e##*: } then green: exits 0" 0 "${rc}"
+done
+
 # --- Only gh's own words count as transient, not a repo path or URL in the error.
 fresh; echo "gh: Bad credentials (HTTP 401)" > "${FX}/checks.1.err"
 URL=https://github.com/o/geofabrik/pull/7 wait_pr SWARM_WAIT_PR_RETRY=30

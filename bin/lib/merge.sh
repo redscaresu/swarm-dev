@@ -8,10 +8,10 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
 WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
-# A gh error worth retrying: a dropped connection, a timeout, a rate limit, a 5xx. Matched as whole
+# A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
 # named geofabrik or timeout does not make Bad credentials transient.
-WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|HTTP (429|50[0234])'
+WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234])'
 
 # ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
 # run completed as success, skipped or neutral, and every commit status success, printing each check.
@@ -200,15 +200,19 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
 # WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
-# Past <seconds> (default MERGE_CI_SECONDS) it ends naming what is still pending: a check queued with
-# no runner never settles. It reads the head once, with the same retries: a later push is not followed.
+# Past <seconds> (default MERGE_CI_SECONDS), checked before every pause, it ends naming what it still
+# waits on: a check queued with no runner never settles. It reads the head once, with the same retries: a later push is not followed.
 wait_pr() {
-  local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" repo n head="" why err rc missed=0 last="" empty="" start=${SECONDS} errf
+  local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
+  local repo n head="" why what err rc pause missed=0 last="" empty="" start=${SECONDS} errf
   if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; shift 2 || shift; fi
   url="${1:-}"
   [[ "${limit}" =~ ^[0-9]+$ && $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
     || wait_pr_fail "usage: swarm.sh wait-pr [--timeout <seconds>] <pr-url>"
   repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  [[ "${grace}" =~ ^[0-9]+$ ]] || wait_pr_fail "SWARM_WAIT_PR_GRACE is '${grace}', not whole seconds"
+  # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
+  limit=$((10#${limit})); grace=$((10#${grace}))
   errf="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
   # shellcheck disable=SC2064 # this run's file, fixed now
   trap "rm -f $(printf %q "${errf}")" EXIT
@@ -229,19 +233,20 @@ wait_pr() {
       2) missed=0
          if [[ "; ${why}; " == *"; no check runs; "* ]]; then
            empty="${empty:-${SECONDS}}"
-           (( SECONDS - empty < ${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}} )) \
+           (( SECONDS - empty < grace )) \
              || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
          fi
-         (( SECONDS - start < limit )) || wait_pr_fail "timed out after $((SECONDS - start))s on ${head:0:7}, still pending: ${why}"
          [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
-         last="${why}"; sleep "${SWARM_MERGE_POLL:-${MERGE_POLL}}" ;;
+         last="${why}"; what="still pending: ${why}"; pause="${SWARM_MERGE_POLL:-${MERGE_POLL}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
          if ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "${err}" || ((++missed > WAIT_PR_TRIES)); then
            wait_pr_fail "${why:-ci_gate failed (exit ${rc})}"
          fi
          echo "retrying after ${why}"
-         sleep "${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" ;;
+         what="last error: ${why}"; pause="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" ;;
     esac
+    (( SECONDS - start < limit )) || wait_pr_fail "timed out after $((SECONDS - start))s, ${what}"
+    sleep "${pause}"
   done
 }
 
