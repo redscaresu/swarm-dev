@@ -35,6 +35,12 @@ has small-epic-codex 'one `swarm.sh codex-review` pass over them' "$flat"
 has chain-depth 'at most 3 stories deep' "$flat"
 has depends-on-names 'what it needs from each `depends_on`: the file or the function' "$flat"
 has report-chain 'longest chain'
+step0=$(awk '/^\*\*0\. /{on=1} /^\*\*1\. /{on=0} on' "$F" | tr '\n' ' ' | tr -s ' ')
+has large-epic-arm 'A large epic, one you judge at more than 8 stories \(too big for one full run\) whose \*\*Done when\*\* holds goals that can ship apart, becomes child epics instead of stories' "$step0"
+has large-epic-outside-board 'for a board outside the project.s repo, where it is, with no worktree and no commit' "$step0"
+has child-epic-shape '`docs/epics/<child>\.md` per goal, with front matter `status: active`, `parent: \$1`.* its own \*\*Done when\*\*' "$step0"
+has child-not-on-parent 'plus any sibling it builds on, never the parent itself' "$step0"
+has parent-split 'Set the parent.s `status: split`: nothing plans a split epic, and it counts as done once none of its children is left' "$step0"
 has critic-in-step-3 'role `critic`' "$step3"
 has risk-clause 'real-cloud, teardown, credentials and safety' "$risk"
 if [ -n "$risk" ]; then hasnt risk-hygiene 'hygiene' "$risk"; else echo "FAIL risk-hygiene"; fails=$((fails + 1)); fi
