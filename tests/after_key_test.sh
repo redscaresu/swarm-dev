@@ -12,8 +12,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
-# No real Claude config or session is read: claude's state lives under ROOT.
-export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 P="${ROOT}/proj"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
