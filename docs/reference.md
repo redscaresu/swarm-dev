@@ -334,11 +334,13 @@ Once the file's value differs from that (a board PR set the epic `later`, say), 
 read, and the next write to the item drops the old line. A write holds the item's lock, a
 `<slug>.lock` directory beside its state file, so two commands writing one item at once keep both
 changes; a command that finds the lock still there after 10 seconds stops and names it, as one
-does when a state file cannot be read or written. Deleting an item's file where it is (`reconcile`
-after its pull, or `finish` and `drop` on a board outside the repo) deletes its state file too, and
-so does `reconcile` when an item's PR took it off the board or marked it `done`. The
-escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Where an older swarm.sh
-left these keys uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
+does when a state file cannot be read or written. The
+escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Deleting an item's file
+where it is (`reconcile`, `finish` or `drop`, on a board outside the repo) deletes its state file
+and escalated block too. `reconcile` also deletes them when an item's PR marked it `done`, and, on
+a board in the repo, for each story or epic a commit deleted (its PR or a board PR), whether
+reconcile pulled that commit or you did: the file is in neither `HEAD` nor the main checkout. A file
+removed only by hand, or never committed, keeps its state.
 
 **Pick the wave.** Only `ready` stories whose `touches` do not overlap. Work that edits a shared
 file (`AGENTS.md`, root config, schemas, hygiene scripts) is done by the lead, alone.
@@ -651,7 +653,10 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
-(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
+(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
+`reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
+its pull (§ Merging), once while the same stop lasts, and one with outcome
+`key-dropped: <file> <key>: <yours> -> <theirs>` for each uncommitted `status` or `prs` its pull replaced. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
 `reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`),
@@ -959,27 +964,40 @@ be fixing that PR, so reconcile keeps its build and prints `build kept: <slug>`.
 herdr cannot list its agents, since a builder may then be open unseen. After a merge it clears the
 build even then, and prints `build cleared: <slug>`: close that builder's pane yourself with
 `swarm.sh close <slug>`. Outside herdr it treats every builder as closed and never calls herdr.
-Before it pulls the board's repo, it sets the front matter that swarm.sh wrote on each merged item
-back to what is committed (the `review` status, and a retry's `attempts:`), and puts the whole file back as it was
-if the pull fails. It also puts back any board file the main checkout
-left unstaged with content already the base's, so a hand edit that matches what merged does not
-stop it. When the pull changes a board file whose only unstaged edit is to keys swarm.sh writes
-(`status`, `prs`, `attempts`, `kind`, `escalated_from`), such as an `unblock` flip or
-another story in review, reconcile checks the file out, pulls, then sets those keys again. If the
-pull deleted the file, it stays deleted; reconcile prints its name and keeps the backup, which holds
-the edit. If the base changed one of those keys as well, to a different value, reconcile stops
-before it touches anything and names the file. It also stops when the edit changes `status` and the
-base changed `depends_on`, so a flip to `ready` never lands over a new dependency.
-Every file it puts back or checks out goes into `.swarm/state/reconcile-backup/` first, and
-reconcile prints where. If the pull still fails they are all restored, and if a key cannot be set
-again after it, the backup stays. It touches nothing, and stops naming why, when the pull cannot fast-forward or
-a file outside the board is changed; a staged edit, or an edit to anything else in the file, is left alone and still stops it. `swarm.sh unblock` then readies a
+Then it pulls the board's repo, fast-forward only. swarm.sh keeps its own keys out of tracked files
+(§ Building, Board state), so a main checkout with no edits pulls as it is. With nothing to pull (the
+main checkout already has every upstream commit), reconcile goes on and leaves every edit as it is.
+reconcile touches nothing, and stops naming why, when the main checkout cannot fast-forward (it has
+local commits), or when a tracked file the incoming commits change is changed there too, staged or
+not. A changed file the pull leaves alone, such as Obsidian's own settings, stays as it is. A story
+or epic the pull changes whose only uncommitted change is to swarm.sh's keys, as an older swarm.sh
+wrote them, does not stop it: reconcile moves the values, as the item reads them, into its state and
+checks the file out, so the item reads as it did. It stops instead, naming the file, when the incoming
+commits change that file's `depends_on` or the same keys, since the old values would read over the new
+ones (a status flipped to `ready` over a new dependency): check the file out, and once the pull is in,
+set its keys again through swarm.sh. The same value on both sides goes through. A `status` and `prs`
+the incoming commits change are the exception: the old ones give way and are dropped, so a story
+whose merged PR set `status: done` reads as done. reconcile names each uncommitted value it dropped
+that way, with the one that replaced it, so you can set it again if you meant it; an older
+swarm.sh's `review`, `building` or held status that an incoming `status: done` finishes is not named.
+An untracked board file whose bytes match the incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
+would overwrite) also stops reconcile, and reconcile puts back each of those changes first, so a
+failed pull changes nothing. On a stop for changed files, it names each of them and logs an
+`incident` line in events.tsv with the outcome `pull-failed: <files>`, once while the same stop
+lasts. For a board
+file it says to land the edit through `swarm.sh board-pr` or check the file out to drop it; for any
+other file, to commit or move the change. Then run `swarm.sh reconcile` again. On a board in the
+repo, reconcile never deletes a tracked file in the main checkout. An item whose PR merged but left
+its file on the board is marked `done` in its state after a pull, or at once when the checkout's
+branch has no upstream (there is nothing to pull), and stays on the board until
+`swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
+cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
 with `--match-head-commit`, never `--auto`, waits for CI on the base, and runs `swarm.sh reconcile`.
-That pulls the board the way it does for you, putting back a retry's `attempts:` first, and finishes
+That pulls the board the way it does for you, and finishes
 the story, closing its builder. The conductor never closes the builder before that, because closing
 a story that is still `ready` counts a failed build. It runs one `swarm.sh merge` at a time, and starts
 the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same

@@ -93,14 +93,15 @@ Every agent is a full Claude Code session on your own logins. On infrafactory, f
 (about $9 each, planning and review included), at list prices from `swarm.sh flow` and `outcomes`.
 The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
 section shows how long CI takes per push, how often it goes red and how often it flakes, and its
-`incidents` section counts, per day, the waits that timed out, the logins that expired and the
-builders that stopped with no PR. Its `lead_queue` section shows, per day, the median and longest
-time a held, escalated or ready-to-merge item waited on the lead, and names any still waiting. With
-`merge = agent`, only a PR that costs money waits on you, so only those count. Its `model_fit`
-section sets cost against results for each model and kind of story, so you can see where a cheaper
-model holds up before you move more work to it. Its `time_in_state` section shows where each epic's
-stories spent their time: held ready while a conductor ran but before their build started, building,
-CI, waiting for review, fixing findings or waiting for a merge, in hours and as a share of the whole.
+`incidents` section counts, per day, the waits that timed out, the logins that expired, the
+builders that stopped with no PR, and the board pulls that an uncommitted edit stopped. Its
+`lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
+item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
+money waits on you, so only those count. Its `model_fit` section sets cost against results for each
+model and kind of story, so you can see where a cheaper model holds up before you move more work to
+it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
+conductor ran but before their build started, building, CI, waiting for review, fixing findings or
+waiting for a merge, in hours and as a share of the whole.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. Agents start with a short list of environment variables, and a token you exported
