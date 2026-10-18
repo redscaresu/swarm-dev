@@ -388,7 +388,12 @@ project_rules() {
 # Anything else, lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
 # touches_rows.py --idle reads AGENT_KINDS as SWARM_AGENT_KINDS.
 AGENT_KINDS="code docs chore"
-agent_kind() { [[ -z "$1" || " ${AGENT_KINDS} " == *" $1 "* ]]; }
+agent_kind() {
+  local k
+  [[ -n "$1" ]] || return 0
+  for k in ${AGENT_KINDS}; do [[ "$1" == "${k}" ]] && return 0; done
+  return 1
+}
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
 # attempts: reaches escalate_after (> 0), else its kind, code-risky for code with risk: high, and with

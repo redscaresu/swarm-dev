@@ -814,7 +814,7 @@ def idle_gauge():
     if agents is None:
         return []
     mine = {r["slug"] for r in recs if r.get("slug")}
-    conducted = {r["epic"] for r in recs if r.get("role") == "conduct" and r.get("epic")}
+    conducted = {r["epic"] for r in recs if r.get("role") == "conduct" and r.get("epic") and not re.search(r"-done\d*$", r["name"])}   # a retired conductor is done, as next_step reads it
     backlog = any(r["name"] == E.get("DASH_BACKLOG") for r in recs)
     idle = 0
     for l in lines("DASH_BUILDABLE"):

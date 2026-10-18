@@ -71,17 +71,21 @@ record_finding() {
 
 # out_of_scope_findings — the findings declined as out-of-scope in the last IDLE_FINDING_DAYS days,
 # newest first, as "<date> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers. A text
-# is listed once, and only while its newest row is that decline (a later fixed row drops it) and no
-# board story carries it (it has been filed).
+# is listed once, and only while its newest row is that decline (a later fixed row drops it) and it
+# has not been filed: no board story carries it, and no commit to the board's stories since its day
+# added or removed it (a filed story that merged is deleted from the board). Filing copies the text
+# into the story (commands/swarm.md).
 IDLE_FINDING_DAYS=30
 out_of_scope_findings() {
-  local since text line
+  local since text day line
   since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
-  while IFS=$'\t' read -r text line; do
-    grep -qsF -- "${text}" "${BOARD}"/stories/*.md || printf '%s\n' "${line}"
+  while IFS=$'\t' read -r text day line; do
+    grep -qsF -- "${text}" "${BOARD}"/stories/*.md && continue
+    [[ -z "$(git -C "${BOARD}" log -1 --since="${day} 00:00" -S"${text}" --format=%h -- stories 2>/dev/null)" ]] || continue
+    printf '%s\n' "${line}"
   done < <(awk -F'\t' -v s="${since}" '{ t[NR] = $4; last[$4] = NR }
-    $5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[NR] = $1 " " $3 ": " $4 }
-    END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
+    $5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[NR] = $1 " " $3 ": " $4; d[NR] = $1 }
+    END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" d[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
 }
 
 # bin/lib/report.py: what the reports share (each python imports it), so they agree.
