@@ -54,5 +54,18 @@ echo "parent: big" >> "${dir}/docs/epics/big-a.md"
 expect "a parent: line in the body is no parent" "plan-epic after"
 epic big-a 'status: done' 'parent: big' 'depends_on: []'
 expect "a done child does not keep the parent open" "plan-epic after"
+rm "${dir}/docs/epics/big-a.md"
+
+epic big-a 'status: active' 'parent: "big"' 'depends_on: []'
+expect "a quoted parent: still names the parent" "plan-epic big-a"
+# A child that depends on its own parent is not held by it.
+epic big-a 'status: active' 'parent: big' 'depends_on: [big]'
+expect "a child's depends_on on its own parent does not hold it" "plan-epic big-a"
+# A split child keeps the parent open while it has children, and lets it go once they are gone.
+epic big-a 'status: split' 'parent: big' 'depends_on: []'
+epic big-a-x 'status: done' 'parent: big-a' 'depends_on: []'
+expect "a split child with no open children of its own leaves the parent done" "plan-epic after"
+epic big-a-x 'status: active' 'parent: big-a' 'depends_on: []'
+expect "a split child with an open child keeps the parent open" "plan-epic big-a-x"
 
 [ "${fails}" -eq 0 ]

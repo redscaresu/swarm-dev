@@ -195,11 +195,15 @@ plannable_epic() {
 
 # epic_holding_deps <epic file> — fails unless it is an active epic with no stories (the epics
 # planning waits for); else prints its depends_on slugs that still hold its planning up (dep_holds),
-# space-separated, none when it can be planned. Its deps are read only once it has no stories.
+# space-separated, none when it can be planned. Its deps are read only once it has no stories. A child
+# epic's own parent: never holds it: the split parent is open for as long as the child is.
 epic_holding_deps() {
-  local b held=""
+  local b held="" parent
   [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" || return 1
-  for b in $(story_deps "$1"); do if dep_holds "${b}"; then held+=" ${b}"; fi; done
+  parent="$(fm_list "$1" parent)"
+  for b in $(story_deps "$1"); do
+    [[ "${b}" != "${parent}" ]] && dep_holds "${b}" && held+=" ${b}"
+  done
   printf '%s' "${held# }"
 }
 
@@ -349,22 +353,24 @@ open_item() {
   esac
 }
 
-# has_child_epics <epic> — true while an epic on the board, not status: done, names <epic> as the
-# parent: in its front matter (a trailing # comment and trailing whitespace gone).
+# has_child_epics <epic> — true while an open epic on the board (open_item) names <epic> as the
+# parent: in its front matter (fm_list).
 has_child_epics() {
-  local f v
+  local f
   while IFS= read -r f; do
-    v="$(get_fm "${f}" parent)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
-    [[ "${v}" == "$1" && "$(fm "${f}" status)" != "done" ]] && return 0
+    [[ "$(fm_list "${f}" parent)" == "$1" ]] && open_item "${f}" && return 0
   done < <(board epics)
   return 1
 }
 
-# story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets,
-# quotes, a trailing # comment and trailing whitespace (a CR too) gone.
-story_deps() {
+# story_deps <story> — the depends_on slugs in its front matter (fm_list).
+story_deps() { fm_list "$1" depends_on; }
+
+# fm_list <file> <key> — <key>'s slugs in its front matter, space-separated, YAML brackets, quotes, a
+# trailing # comment and trailing whitespace (a CR too) gone.
+fm_list() {
   local v
-  v="$(get_fm "$1" depends_on)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+  v="$(get_fm "$1" "$2")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
   printf '%s' "${v//\'/}"
 }
