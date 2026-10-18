@@ -566,7 +566,7 @@ fallback_close() { archive_session "$1"; close_panes "$1" >/dev/null || true; }
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
-# <findings file> in the form codex prints them, then review_checklist for SWARM_STORY's story.
+# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set.
 fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
   local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
@@ -576,11 +576,12 @@ here, and never merge, by any route. The one file you write is $3.
 
 ${2:-${diff}}
 
+$(review_checklist "${SWARM_STORY:+${BOARD}/stories/${SWARM_STORY}.md}")
+
 You have no Edit, Write or NotebookEdit tool. When done, write your findings with Bash to $3.tmp,
 then mv it to $3 (codex-review waits until that exists): each finding as codex prints one, most severe first, \`- [P<0-3>] <title> — <file>:<line>\` with a line
 or two on why under it, or the one line \`No findings.\` when there are none.
 EOF
-  printf '\n'; review_checklist "${SWARM_STORY:+${BOARD}/stories/${SWARM_STORY}.md}"
 }
 
 # main_signal <INT|TERM|HUP> — stop the logged command at once (it runs in the background, so this

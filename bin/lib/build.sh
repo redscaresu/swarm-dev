@@ -529,25 +529,43 @@ review_stack_note() {
   printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
 }
 
+# DECISION_MAX_BYTES: the most of one user's decision a review brief carries; a longer one is cut, with "…".
+DECISION_MAX_BYTES=1500
+
+# user_decisions <file>... — each decision the files mark `(user, <date>`: its line and the lines
+# under it (wrapped text, sub-bullets), up to the next bullet or bold line at its indent or less, a
+# blank line or a heading; each cut to DECISION_MAX_BYTES.
+user_decisions() {
+  LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" '
+    function flush() { if (d != "") print (length(d) > max ? substr(d, 1, max) "…" : d); d = "" }
+    function indent(s) { match(s, /^ */); return RLENGTH }
+    FNR == 1 { flush() }
+    d != "" && (/^[[:space:]]*$/ || /^#/ || (indent($0) <= ind && /^ *([-*+]|[0-9]+\.) |^ *\*\*/)) { flush() }
+    d != "" { d = d "\n" $0; next }
+    /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = $0; ind = indent($0) }
+    END { flush() }' "$@"
+}
+
 # review_checklist [story file] — the checks the lead learned by hand, one line each, for the review
-# agent's and the fallback reviewer's briefs; then each line of the story and of its epic that marks a
-# user's decision, `(user, <date>`, so a reviewer can hold the PR to it.
+# agent's and the fallback reviewer's briefs. With a story file, also the check on the user's
+# decisions and each decision its story and its epic mark (user_decisions).
 review_checklist() {
   local epic decisions files
   cat <<'EOF'
-Hold the PR to these as well:
+Hold the PR to these as well. When one finds a gap in the PR's own code, it is a finding even where the touches and Done when do not name it; it is out of scope only when its fix is in a file outside the touches.
 - A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified.
 - An audit or test scoped to one file, when the defect class spans many, is a finding.
 - A new code path must enforce every rule the existing paths enforce.
 - A zero or empty value shown to a person must say what it means.
 - A repair path that changes something must say what it did.
-- A change that contradicts a decision marked `(user, <date>)` in the epic or story is a finding, even when it is stricter.
 EOF
   [[ -f "${1:-}" ]] || return 0
+  # shellcheck disable=SC2016 # the backticks are for the reader
+  echo '- A change that contradicts a decision marked `(user, <date>)` in the epic or story is a finding, even when it is stricter.'
   files=("$1"); epic="$(fm "$1" epic)"
   [[ -z "${epic}" || ! -f "${BOARD}/epics/${epic}.md" ]] || files+=("${BOARD}/epics/${epic}.md")
-  decisions="$(grep -hE '\(user, [0-9]{4}-[0-9]{2}-[0-9]{2}' "${files[@]}")" || return 0
-  printf '\n%s\n%s\n' "The user's decisions, from the story and its epic:" "${decisions}"
+  decisions="$(user_decisions "${files[@]}")"
+  [[ -z "${decisions}" ]] || printf '\n%s\n%s\n' "The user's decisions, from the story and its epic:" "${decisions}"
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
@@ -576,6 +594,8 @@ its findings as codex's, under that line. When the PR
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
 above, then run \`/code-review $2\`.
 
+$(review_checklist "${story}")
+
 When both are done, check that \`git rev-parse HEAD\` still prints $5 and \`git status --porcelain\`
 prints nothing. If not, the worktree moved under you: write ${4} with the Write tool holding two
 lines, \`head: $5\` and \`head moved: <what changed>\`, then stop.
@@ -588,7 +608,6 @@ so. Under a \`## Out of scope\` heading, the same for each point a reviewer rais
 story's touches and Done when, so the conductor can decline it; with none, say so. Then reply with
 ${4}, and with \`codex skipped: <why>\` when codex was.
 EOF
-  printf '\n'; review_checklist "${story}"
   rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
 }

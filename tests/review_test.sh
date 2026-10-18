@@ -400,17 +400,36 @@ check "a builder's brief says who merges: a human, or with merge = agent the con
   "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
-# --- The review agent's brief: the lead's checklist, and the user's decisions from its story's epic.
+# --- The review agent's and the fallback reviewer's briefs: the lead's checklist, and the user's
+# decisions from the story and its epic, each whole (its sub-bullets too) and cut at 1500 bytes.
 item "${b}" epics/rv.md "status: active"
-echo "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." >> "${b}/epics/rv.md"
+printf '%s\n' "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
+  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" "- **Other.** RV-NOT-A-DECISION" >> "${b}/epics/rv.md"
 start rv1 >/dev/null
+LONG="$(printf 'x%.0s' $(seq 2000))"
 printf '%s\n' --- "status: review" "kind: code" "epic: rv" "repo: svc" "touches: [x.sh]" --- "" "# rv1" "" \
-  "**Done when:**" "- one release, not three" > "${b}/stories/rv1.md"
+  "**Done when:**" "- one release, not three" "" "## Notes" "" "Keep it short (user, 2026-10-17): ${LONG}" > "${b}/stories/rv1.md"
 wt="$(git -C "${ROOT}/svc" worktree list --porcelain | sed -n 's/^worktree \(.*rv1\)$/\1/p')"
 git -C "${wt}" rev-parse HEAD > "${ROOT}/gh/head"
 (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review-agent rv1 "${U}/8" >/dev/null 2>&1) \
   || echo "FAIL review-agent rv1 did not start"
 brief="$(cat "${p}/.swarm/briefs/review-rv1.md" 2>/dev/null)"
+# fallback [story] — the fallback reviewer's brief after codex hits its usage limit in rv1's
+# worktree, for SWARM_STORY=<story> or none; a run past 30 s is KILLed.
+mkdir -p "${ROOT}/limit-bin"; printf '#!/bin/sh\necho "ERROR: You have hit your usage limit." >&2\nexit 1\n' > "${ROOT}/limit-bin/codex"
+chmod +x "${ROOT}/limit-bin/codex"
+fallback() {
+  local pid i id
+  echo "fallback_reviewer = sonnet" > "${p}/.claude/swarm/config"
+  (cd "${wt}" && exec env -u SWARM_PROJECT -u SWARM_STORY ${1:+SWARM_STORY="$1"} SWARM_PROJECT="${p}" HERDR_ENV=1 HERDR_WORKSPACE_ID=w \
+    SWARM_CODEX_SECONDS=2 SWARM_CONDUCTOR_POLL=1 PATH="${ROOT}/limit-bin:${ROOT}/bin:${PATH}" bash "${SWARM}" codex-review main >/dev/null 2>&1) &
+  pid=$!
+  for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
+  kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"; wait "${pid}" || true
+  : > "${p}/.claude/swarm/config"
+  id="${1:-${wt##*/}}"; cat "${p}/.swarm/briefs/fallback/${id:0:32}.md" 2>/dev/null
+}
+fbrief="$(fallback rv1)"; fbare="$(fallback)"
 CHECKLIST=(
   "- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified."
   "- An audit or test scoped to one file, when the defect class spans many, is a finding."
@@ -420,11 +439,24 @@ CHECKLIST=(
   "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
 )
 for l in "${CHECKLIST[@]}"; do
-  check "the review agent's brief carries: ${l:2:40}..." "yes|yes" "$(has "${l}" "${brief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
+  check "the review agent's and the fallback's briefs carry: ${l:2:40}..." "yes|yes|yes" \
+    "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
 done
-check "the review agent's brief carries the epic's (user, 2026-10-17) decision line" "yes" \
-  "$(has "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." "${brief}")"
-rm -f "${p}/.swarm/state/rv" "${b}/epics/rv.md" "${b}/stories/rv1.md"
+check "both briefs say a gap in the PR's own code is a finding, and out of scope only when its fix is outside the touches" "yes|yes" \
+  "$(has "it is out of scope only when its fix is in a file outside the touches." "${brief}")|$(has "it is out of scope only when its fix is in a file outside the touches." "${fbrief}")"
+check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
+  "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
+for l in "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
+  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO"; do
+  check "both briefs carry the epic's decision line: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
+done
+check "a decision ends at the next bullet at its indent: the epic's next bullet is not in the brief" "0" "$(grep -c RV-NOT-A-DECISION <<< "${brief}" || true)"
+check "the story's 2000-byte decision is cut to 1500 bytes and an ellipsis" "yes|0" \
+  "$(has "Keep it short (user, 2026-10-17): xxx" "${brief}")|$(grep -c "$(printf 'x%.0s' $(seq 1500))" <<< "${brief}" || true)"
+check "and ends with the ellipsis" "1" "$(grep -c 'x…$' <<< "${brief}" || true)"
+check "a fallback brief with no story has the five lines but neither the decision check nor any decision" "yes|0|0" \
+  "$(has "${CHECKLIST[0]}" "${fbare}")|$(grep -c '(user, ' <<< "${fbare}" || true)|$(grep -c RV-DECISION <<< "${fbare}" || true)"
+rm -f "${p}/.swarm/state/rv" "${p}/.swarm/state/fallback" "${b}/epics/rv.md" "${b}/stories/rv1.md"
 
 # --- Starting an agent: a taken name, a failed start, codex's update check.
 echo brief > "${ROOT}/brief.md"
