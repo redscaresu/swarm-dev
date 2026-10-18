@@ -20,8 +20,8 @@ check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 predictions() { # [flow flag...] — flow's predictions section, its heading and the blank line after it left out
-  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
-    bash "${SWARM}" flow "$@" 2>/dev/null || true) | sed -n '/^## predictions$/,/^## /p' | sed '1d;/^## /d;/^$/d'
+  (cd "${P}" && { env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
+    bash "${SWARM}" flow "$@" 2>/dev/null || true; }) | sed -n '/^## predictions$/,/^## /p' | sed '1d;/^## /d;/^$/d'
 }
 HEAD=$'planner\tstories\teasy_precision\teasy_recall\testimate_err_median\testimate_err_mean'
 
