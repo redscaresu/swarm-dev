@@ -214,6 +214,13 @@ rm "${p}/.swarm/briefs/fallback"
 MIN=default review "fallback_reviewer = sonnet"
 check "with under 2 minutes of codex's time left, no fallback starts, and codex was skipped" "1|yes|no" \
   "${rc}|$(has "codex skipped: usage limit (no time left for a fallback)" "${out}")|$(logged '^tab create')"
+# What codex used counts against it: one that hits its limit 2 s into 4 leaves under the 3 s a
+# fallback needs.
+{ printf '#!/bin/sh\nsleep 2\n'; codex_says 1 "${LIMIT_MSG}" | tail -n +2; } > "${BIN}/codex"
+SECS=4 MIN=3 review "fallback_reviewer = sonnet"
+check "codex's own time counts against a fallback's: 2 s used of 4 leaves under 3, so none starts" "1|yes|no" \
+  "${rc}|$(has "codex skipped: usage limit (no time left for a fallback)" "${out}")|$(logged '^tab create')"
+codex_says 1 "${LIMIT_MSG}" > "${BIN}/codex"
 NOHERDR=1 review "fallback_reviewer = sonnet"
 check "outside herdr the fallback does not start, and codex was skipped" "1|yes|no" \
   "${rc}|$(has "codex skipped: usage limit (fallback did not start: not in a herdr pane" "${out}")|$(logged '^agent start')"
