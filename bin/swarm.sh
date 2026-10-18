@@ -63,6 +63,13 @@ die() {
 DIE_FILE=""
 DIE_LEVEL=-1
 
+# wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
+# config line) or a set -e stop, exits 2; its temp file (WAIT_PR_TMP) goes either way.
+WAIT_PR_RED=""; WAIT_PR_TMP=""
+if [[ "${1:-}" == wait-pr ]]; then
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}"; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+fi
+
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 

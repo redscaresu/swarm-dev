@@ -6,6 +6,8 @@
 # a stub on PATH: it logs every call to gh.log, answers pr view with ${H} and the nth check-runs
 # read from ${FX}/checks.<n> (else ${FX}/checks); the nth read of either fails with ${FX}/head.<n>.err
 # or ${FX}/checks.<n>.err as its stderr. With ${FX}/notice, pr view also prints a notice on stderr;
+# with ${FX}/head.hang or ${FX}/checks.hang, that read hangs 8s before it answers, ignoring SIGALRM
+# as gh (a Go program) does with ${FX}/ignore-alrm;
 # commit statuses come from ${FX}/status, else none.
 set -euo pipefail
 
@@ -29,9 +31,10 @@ fail() {
   if [ -e "${FX}/$1.${n}.err" ]; then cat "${FX}/$1.${n}.err" >&2; exit 1; fi
 }
 case "$*" in
-  "pr view"*) fail head; [ ! -e "${FX}/notice" ] || cat "${FX}/notice" >&2; echo "${H}" ;;
+  "pr view"*) fail head; [ ! -e "${FX}/ignore-alrm" ] || trap '' ALRM; [ ! -e "${FX}/head.hang" ] || sleep 8
+              [ ! -e "${FX}/notice" ] || cat "${FX}/notice" >&2; echo "${H}" ;;
   *check-runs*)
-    fail checks
+    fail checks; [ ! -e "${FX}/checks.hang" ] || sleep 8
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
   */status*) cat "${FX}/status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -197,6 +200,24 @@ is "connection reset beside a URL: two reads" 2 "$(reads)"
 fresh; echo "A new release of gh is available: 2.80.0 → 2.81.0" > "${FX}/notice"; wait_pr
 is "a gh notice beside the head: exits 0" 0 "${rc}"
 check "a gh notice beside the head: prints the head SHA" said "head ${H}"
+
+# --- A read that hangs ends at the deadline (the stub answers green 8s on, too late).
+for k in checks head; do
+  fresh; : > "${FX}/${k}.hang"; wait_pr --timeout 2
+  is "a ${k} read hanging past --timeout: exits 2" 2 "${rc}"
+  check "a ${k} read hanging past --timeout: returns at the deadline" test "${took}" -lt 5
+  check "a ${k} read hanging past --timeout: says so" said "did not return"
+done
+
+fresh; : > "${FX}/head.hang"; : > "${FX}/ignore-alrm"; wait_pr --timeout 2
+is "a head read ignoring SIGALRM, as gh does: exits 2" 2 "${rc}"
+check "a head read ignoring SIGALRM, as gh does: returns at the deadline" test "${took}" -lt 5
+
+# --- Exit 1 is only red: a die inside wait-pr (here a bad config line) exits 2.
+fresh; echo "bogus = 1" > "${P}/.claude/swarm/config"; wait_pr
+is "a die inside wait-pr: exits 2" 2 "${rc}"
+check "a die inside wait-pr: prints its error" said "unknown key 'bogus'"
+: > "${P}/.claude/swarm/config"
 
 # --- Read-only: no events.tsv line.
 check "wait-pr logs nothing" test ! -s "${P}/.swarm/events.tsv"
