@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # dataset_test.sh — `swarm.sh dataset` against a fixture of three merged stories planned in one board
 # PR: easy-easy (easy, and was: one build, one findings round, a small diff), easy-hard (easy, but was
-# not: two rounds, a 120-line diff and a fix 3 days later naming its PR) and escalated (sonnet, a step-up
+# not: two rounds, a 120-line diff and a PR 3 days later that fixes it) and escalated (sonnet, a step-up
 # to opus, then Fable, and an escaped finding). A later commit edits easy-hard's story, so its inputs
-# must come from the commit that added it. A commit 8 days after easy-easy's merge names its PR, too
-# late to be rework. rebased (easy, and was) merged by rebase as two commits with no PR number in
+# must come from the commit that added it. A PR that fixes easy-easy 8 days after its merge is too
+# late to be rework (gh lists the merged PRs, as flow's model_fit reads them). rebased (easy, and was) merged by rebase as two commits with no PR number in
 # them, so only gh's merge commit and commit headlines find its diff; gh answers easy-easy's squash of
 # two commits too (diffed against its parent alone), and fails for the other two, which are found by their `(#N)` subjects. An env value and a transcript line planted in the session logs, and the env
 # value exported to the run, must appear nowhere in the output. gh is a stub on PATH.
@@ -35,7 +35,7 @@ lines 10 > "${P}/src/a.txt"; rm "${P}/docs/stories/easy-easy.md"; commit 2026-10
 lines 60 > "${P}/src/b.txt"; lines 60 > "${P}/src/c.txt"; rm "${P}/docs/stories/easy-hard.md"; commit 2026-10-03T12:00:00Z "hard one (#3)"
 lines 30 > "${P}/src/d.txt"; rm "${P}/docs/stories/escalated.md"; commit 2026-10-05T12:00:00Z "escalated (#4)"
 echo fixed >> "${P}/src/b.txt"; commit 2026-10-06T12:00:00Z "fix the bug from #3 (#5)"
-echo tidy >> "${P}/src/a.txt"; commit 2026-10-10T13:00:00Z "tidy after #2 (#6)"
+echo tidy >> "${P}/src/a.txt"; commit 2026-10-10T13:00:00Z "fixes #2 (#6)"
 lines 5 > "${P}/src/e.txt"; commit 2026-10-11T10:00:00Z "rebased: part one"
 lines 10 > "${P}/src/e.txt"; rm "${P}/docs/stories/rebased.md"; commit 2026-10-11T10:00:00Z "rebased: part two"
 SQUASH="$(git -C "${P}" log --format=%H --grep '^easy one (#2)$')"; REBASED="$(git -C "${P}" rev-parse HEAD)"
@@ -77,8 +77,13 @@ printf '%s\n' \
   $'2026-10-02\tmissing-check\to/r#3\ta\tfixed\tcodex' \
   $'2026-10-02\tnit-kind\to/r#3\tb\tdeclined\tcodex\tnit' \
   $'2026-10-07\tlate-bug\to/r#4\tc\tescaped\tescaped' > "${P}/.swarm/findings.tsv"
+pr() { printf '{"url":"%s/%s","mergedAt":"%s","title":"%s","body":"","files":[{"path":"src/x"}]}' "${U}" "$1" "$2" "$3"; }
+printf '[%s,%s,%s,%s,%s,%s]\n' "$(pr 2 2026-10-02T12:00:00Z "easy one")" "$(pr 3 2026-10-03T12:00:00Z "hard one")" \
+  "$(pr 4 2026-10-05T12:00:00Z escalated)" "$(pr 5 2026-10-06T12:00:00Z "fix the bug from #3")" \
+  "$(pr 6 2026-10-10T13:00:00Z "fixes #2")" "$(pr 7 2026-10-11T10:00:00Z rebased)" > "${dir}/merged.json"
 # shellcheck disable=SC2016 # the stub's own shell expands these
 printf '#!/bin/sh\ncase "$1 $2 $3 $4" in
+  "pr list -R o/r") cat "%s" ;;
   "pr list --head story/easy-easy") printf "%s/2\\tMERGED\\t2026-10-02T12:00:00Z\\t2026-10-02T11:30:00Z\\t0\\n" ;;
   "pr list --head story/easy-hard") printf "%s/3\\tMERGED\\t2026-10-03T12:00:00Z\\t2026-10-02T12:00:00Z\\t0\\n" ;;
   "pr list --head story/escalated") printf "%s/4\\tMERGED\\t2026-10-05T12:00:00Z\\t2026-10-03T12:00:00Z\\t0\\n" ;;
@@ -86,7 +91,7 @@ printf '#!/bin/sh\ncase "$1 $2 $3 $4" in
   "pr view %s/2 "*) printf "%s\\tsquashed a\\001squashed b\\n" ;;
   "pr view %s/7 "*) printf "%s\\trebased: part one\\001rebased: part two\\n" ;;
   *) exit 1 ;;
-esac\n' "${U}" "${U}" "${U}" "${U}" "${U}" "${SQUASH}" "${U}" "${REBASED}" > "${dir}/bin/gh"
+esac\n' "${dir}/merged.json" "${U}" "${U}" "${U}" "${U}" "${U}" "${SQUASH}" "${U}" "${REBASED}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
 
 fails=0
@@ -118,7 +123,7 @@ E4='rebased kind="code" risk=null touches=["src/e.txt"] depends_on=[] estimate_l
   attempts=1 cost_usd=2.0 diff_files=1 diff_lines=10 findings_rounds=0 merged_at="2026-10-11T10:00:00Z" minutes=60 models=["sonnet"] pr="https://github.com/o/r/pull/7" rework=false substantive_findings=0
   was_easy=true rule=1'
 shown="$(show "${OUT}")"
-check "easy-and-was-easy: inputs as planned, one build, one round, a 10-line diff, a fix 8 days later no rework" "$(sed -n 1,3p <<< "${shown}")" "${E1}"
+check "easy-and-was-easy: inputs as planned, one build, one round, a 10-line diff, a fix 8 days later is no rework" "$(sed -n 1,3p <<< "${shown}")" "${E1}"
 check "easy-but-was-hard: inputs from the commit that added it, two rounds, a 120-line diff, a fix 3 days later is rework" "$(sed -n 4,6p <<< "${shown}")" "${E2}"
 check "escalated: every model in build order, each escalation with its trigger, an escaped finding is rework" "$(sed -n 7,9p <<< "${shown}")" "${E3}"
 check "rebase-merged: gh's merge commit and commit headlines give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"

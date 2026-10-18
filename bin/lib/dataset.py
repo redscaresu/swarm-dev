@@ -37,16 +37,15 @@ def planner_model(epic):
     return model
 
 def diff_of(repo, slug, pr, merge_sha, heads):
-    # (lines, files, later commits as (ISO time, message)) of the PR on the default branch, from gh's
+    # (lines, files) of the PR on the default branch, from gh's
     # merge commit: a rebase (the subjects of its last commits are the PR's commit headlines, heads,
     # in order) against the commit before them, a merge or a squash against its first parent. Without gh's
     # answer, the commit whose subject is a squash's or a `Merge pull request #N ...`. The story file it
     # deletes is not counted.
     n = pr_key(pr).rpartition("#")[2]
     ref = "origin/HEAD" if git(repo, "rev-parse", "-q", "--verify", "origin/HEAD") else "HEAD"
-    log = git(repo, "log", ref, "--first-parent", "--format=%H%x00%cI%x00%s%x00%P%x00%B%x01").split("\x01")
-    for i, c in enumerate(log):
-        sha, _, subject, parents = (c.lstrip("\n").split("\x00") + ["", "", ""])[:4]
+    for c in git(repo, "log", ref, "--first-parent", "--format=%H%x00%s%x00%P").splitlines():
+        sha, subject, parents = (c.split("\x00") + ["", ""])[:3]
         named = subject.endswith(f"(#{n})") or subject.startswith(f"Merge pull request #{n} ")
         if sha != merge_sha if merge_sha else not named:
             continue
@@ -55,9 +54,8 @@ def diff_of(repo, slug, pr, merge_sha, heads):
         stat = [l.split("\t") for l in git(repo, "diff", "--numstat", f"{sha}~{len(heads)}" if rebased else f"{sha}^", sha).splitlines()]
         stat = [s for s in stat if len(s) == 3 and not s[2].endswith(f"stories/{slug}.md")]
         lines = sum(int(a) + int(d) for a, d, _ in stat if a.isdigit() and d.isdigit())
-        later = [tuple(c.lstrip("\n").split("\x00")[1:5:3]) for c in log[:i] if "\x00" in c]
-        return lines, len(stat), later
-    return None, None, []
+        return lines, len(stat)
+    return None, None
 
 def escalations(slug):
     # Each ok escalate line of the slug: `ok (attempt N)`, or step-up's `ok (<trigger>: <from> -> <to>)`.
@@ -89,20 +87,31 @@ head = lines[0].split("\t") if lines else []
 rows = [dict(zip(head, l.split("\t"))) for l in lines[1:]]
 # slug, repo, gh's merge commit and the PR's commit headlines joined by \x01 (both empty when gh did not answer).
 repos = {f[0]: f[1:3] + [f[3].split("\x01") if f[3] else []] for f in (l.split("\t") for l in os.environ.get("SWARM_REPOS", "").splitlines()) if len(f) == 4}
-escaped = finding_rows(findings, ("escaped",))
-stories = []
+finished = {}
 for slug in dict.fromkeys(r["slug"] for r in rows if r.get("story_merged") == "true"):
     builds = [r for r in rows if r["slug"] == slug]
-    merged = [r for r in builds if r.get("merged_at")]
-    if not merged:
-        continue
-    pr, merged_at = merged[-1]["pr"], merged[-1]["merged_at"]
+    if any(r.get("merged_at") for r in builds):
+        finished[slug] = builds
+# Rework is report.py's rework_of, as flow's model_fit counts it: over every PR gh lists merged in the
+# finished stories' repos from the first of their merges on. When gh fails, only escaped findings count.
+ends = {pr_key(m["pr"]): m["merged_at"] for b in finished.values() for m in [[r for r in b if r["merged_at"]][-1]]}
+merged = merged_prs({m["pr"] for b in finished.values() for m in b}, f"merged:>={min(ends.values())[:10]}") if ends else {}
+if merged is None:
+    print("dataset: gh could not list the merged PRs, so rework counts escaped findings alone", file=sys.stderr)
+merged = merged or {}
+for k, t in ends.items():
+    merged.setdefault(k, (t, "", None))
+reworked = rework_of(merged, finding_rows(findings, ("escaped",)))
+stories = []
+for slug, builds in finished.items():
+    merged_row = [r for r in builds if r["merged_at"]][-1]
+    pr, merged_at = merged_row["pr"], merged_row["merged_at"]
     text = planned(slug)
     fm = front(text)
     repo, merge_sha, heads = repos.get(slug, ("", "", []))
-    lines_n, files_n, later = diff_of(repo, slug, pr, merge_sha, heads) if repo else (None, None, [])
+    lines_n, files_n = diff_of(repo, slug, pr, merge_sha, heads) if repo else (None, None)
     rounds = sum(int(r["tells_findings"] or 0) for r in builds)
-    rework = rework_of(pr, merged_at, later, escaped)
+    rework = pr_key(pr) in reworked
     est = fm.get("estimate_lines", "")
     results = {
         "pr": pr, "merged_at": merged_at, "diff_lines": lines_n, "diff_files": files_n,

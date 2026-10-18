@@ -181,7 +181,7 @@ outcomes_report() {
 # agents.tsv lead whose session log names .swarm/<epic>/lead.json. results, from outcomes, events.tsv,
 # findings.tsv and git: the PR, merged_at, diff_lines and diff_files of what it merged into the default
 # branch (a squash, merge commit or rebase, from gh's merge commit; the story file it deletes left out), attempts (builds), findings_rounds (tells of findings),
-# substantive_findings (fixed), rework (rework_of in report.py), cost_usd (subagents included), minutes
+# substantive_findings (fixed), rework (report.py's rework_of over the PRs gh lists merged, as model_fit), cost_usd (subagents included), minutes
 # from the first build's start to the merge, models (each build's, in order) and escalations (each ok
 # escalate line: its trigger, and step-up's from and to). was_easy (was_easy_rule 1): one build, at most
 # one findings round, no rework and a diff under 100 lines. Model names, counts and the story text

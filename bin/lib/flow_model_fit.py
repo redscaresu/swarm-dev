@@ -8,14 +8,11 @@
 # repos, from gh; when gh fails, only escaped findings mark rework, and a line says so. A cell under
 # MIN_STORIES stories prints its count alone. After a blank line, a subagent row per model and effort
 # of the builds whose subagents cost more than zero: their cost and its share of build cost (own and theirs).
-import collections, datetime, json, os, re, subprocess
+import collections, datetime, os, re
 from report import *
 from touches_rows import entries as touches_entries
 MIN_STORIES = 5
-GH_SECONDS = 30
-GH_LIMIT = 1000
 project_dir = os.path.dirname(os.path.dirname(findings))
-GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
 
 def num(x):
     try:
@@ -56,27 +53,6 @@ def merged_range(first_day, last_merge):
     lo = datetime.date.fromisoformat(since) - days if since != "0000-00-00" else datetime.date.fromisoformat(first_day)
     hi = datetime.date.fromisoformat(max(until, last_merge)) + days if until != "9999-12-30" else None
     return f"merged:{lo}..{hi}" if hi else f"merged:>={lo}"
-
-def merged_prs(urls, search):
-    # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
-    # in that gh's search (merged_range) finds, or None when gh fails. A list that comes back GH_LIMIT
-    # long prints that rework may be undercounted. files is read for rework_of's release PRs.
-    # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
-    out = {}
-    for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
-        try:
-            got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
-                                  "--json", "url,mergedAt,title,body,files", "--search", search], capture_output=True, text=True, timeout=GH_SECONDS)
-            prs = json.loads(got.stdout) if got.returncode == 0 else None
-        except (subprocess.TimeoutExpired, ValueError, OSError):   # OSError: no gh on PATH
-            prs = None
-        if not isinstance(prs, list):
-            return None
-        if len(prs) >= GH_LIMIT:
-            print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework may be undercounted.")
-        out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
-                                       sorted(f.get("path", "") for f in p.get("files") or [])) for p in prs})
-    return out
 
 by_slug = collections.defaultdict(list)
 for r in rows:
