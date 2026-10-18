@@ -10,6 +10,7 @@ same() { cmp -s "$1" "$2"; }
 # Self-check: the compare must tell two files one line apart, or the real check passes vacuously.
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
+export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 cp templates/docs/stories/README.md "${tmp}/a"
 cp templates/docs/stories/README.md "${tmp}/b"
 echo "one more line" >> "${tmp}/b"
