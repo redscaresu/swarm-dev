@@ -105,6 +105,11 @@ git -C "${P}" rm -q docs/stories/built.md && commit "Merge pull request #1 from 
 git -C "${P}" rm -q docs/stories/old-check.md && commit "Merge pull request #2 from o/story/old-check"
 out="$(run next)"
 check "next: an epic whose code story finished and left the board is done" test "$(first "${out}")" = "plan-epic beta"
+# The after: story done but still on the board: alpha, built and gone, stays done, never planned again.
+item stories/check.md 'status: done' 'kind: lead' 'epic: alpha' 'after: alpha'
+out="$(run next)"
+check "next: an epic whose code left the board and whose after: story is done is not planned again" test "$(first "${out}")" = "plan-epic beta"
+item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
 out="$(run dash)"
 check "dash: a finished after: story is not counted in its epic" test "$(epic_line "${out}" alpha)" = "alpha 1/1 after: check waits on the lead"
 

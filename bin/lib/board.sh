@@ -126,8 +126,9 @@ epic_deleted_here() {
 }
 
 # epic_after_only <epic-file> — true when the epic is active, its open stories are all after_story
-# ones (at least one), and code stories were planned for it (epic_planned): it counts as done
-# (open_item), so what depends on it goes ahead, and it is not planned again. A draft or later epic,
+# ones, it has an after_story on the board (open or done: epic_has_after), and code stories were
+# planned for it (epic_planned): it counts as done (open_item), so what depends on it goes ahead,
+# and it is not planned again. A draft or later epic,
 # or one whose only story ever was an after: one, never does.
 epic_after_only() {
   local s slug list
@@ -137,15 +138,17 @@ epic_after_only() {
   while IFS= read -r s; do
     [[ -z "${s}" || "$(fm "${s}" status)" == "done" ]] || return 1
   done <<< "${list}"
-  epic_after_open "${slug}" && epic_planned "${slug}"
+  epic_has_after "${slug}" && epic_planned "${slug}"
 }
 
-# epic_after_open <epic> — true when an after_story of <epic> is open (not done).
-epic_after_open() {
-  local s
+# epic_has_after <epic> — true when an after_story of <epic> is on the board, any status. The stories
+# are taken whole first, as epic_stories says.
+epic_has_after() {
+  local s list
+  list="$(board stories)"
   while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "$1" && "$(fm "${s}" status)" != "done" ]] && after_story "${s}" && return 0
-  done < <(board stories)
+    [[ -n "${s}" && "$(fm "${s}" epic)" == "$1" ]] && after_story "${s}" && return 0
+  done <<< "${list}"
   return 1
 }
 
