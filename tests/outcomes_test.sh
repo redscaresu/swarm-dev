@@ -326,7 +326,7 @@ V="${dir}/verify"; mkdir -p "${V}/.swarm"; git -C "${V}" init -q
 printf '%s\n' $'2026-10-13\tverify\told-check\tclaude\thaiku\tmedium\t-' $'2026-10-13\tconduct\tconduct-e\tclaude\topus\thigh\t-' > "${V}/.swarm/agents.tsv"
 vrun() { (cd "${V}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/nobin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
 check "a past verify build is still a row in outcomes" "$(vrun outcomes | tail -n +2 | cut -f2,5)" $'old-check\tverify'
-check "and flow counts it as a build" "$(vrun flow | tail -1 | cut -f1,2)" $'all\t1'
+check "and flow counts it as a build" "$(vrun flow | awk '/^## / { f = $0 == "## throughput"; next } f && /^all\t/' | cut -f1,2)" $'all\t1'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
