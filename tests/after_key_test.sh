@@ -85,10 +85,10 @@ for st in draft later; do
   check "next: a ${st} epic with only an after: story is still waiting on you" has "${st} epic: alpha" "${out}"
 done
 item epics/alpha.md 'status: active'
-# An epic that never had a story is not done: it is planned first, and beta waits.
+# An epic that never had a story is not done: it is planned first, and beta waits on it.
 mv "${P}/docs/stories/check.md" "${ROOT}/check.md"
-out="$(run next)"
-check "next: an epic that never had a story is planned, not done" test "$(first "${out}")" = "plan-epic alpha"
+out="$(run dash)"
+check "dash: the epic after an epic that never had a story waits on it" has "waits on alpha" "${out}"
 mv "${ROOT}/check.md" "${P}/docs/stories/check.md"
 
 # An after: that names anything but the story's own epic is ignored: the story holds alpha open.
@@ -100,14 +100,15 @@ done
 out="$(run dash)"
 check "dash: after: tbd (not its epic) shows the epic's ready story" test "$(alpha_lines "${out}" | grep -c '1 ready')" -eq 1
 
-# kind is read state-aware, as next reads it: a board-state kind: code makes it no after: story,
-# in next and in dash alike.
-item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
-mkdir -p "${P}/.swarm/board-state/stories" && echo 'kind: code' > "${P}/.swarm/board-state/stories/check"
+# kind is read state-aware, as next reads it: a board-state kind: lead over the file's kind: code
+# makes it an after: story, in next and in dash alike.
+item stories/check.md 'status: ready' 'kind: code' 'epic: alpha' 'after: alpha'
+mkdir -p "${P}/.swarm/board-state/stories" && echo 'kind: lead' > "${P}/.swarm/board-state/stories/check"
 out="$(run next)"
-check "next: a board-state kind: code is no after: story" test "$(first "${out}")" = "conduct alpha"
+check "next: a board-state kind: lead makes it an after: story" test "$(first "${out}")" = "plan-epic beta"
 out="$(run dash)"
-check "dash: a board-state kind: code is no after: story" test "$(alpha_lines "${out}" | grep -c '1 ready')" -eq 1
+check "dash: a board-state kind: lead makes it an after: story" \
+  test "$(alpha_lines "${out}" | sed 's/^[^a-z0-9]*//; s/ *│$//')" = "2 active epics with no open story: alpha, beta"
 rm -r "${P}/.swarm/board-state"
 
 # Without after: the lead story holds alpha open, so beta waits and next stops at the gate.
