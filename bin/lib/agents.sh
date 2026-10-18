@@ -357,11 +357,13 @@ start_agent() {
       # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
       # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
       # parent's model (opusplan-spike).
-      local env="\"SWARM_AGENT\":\"${name}\""
+      local env="\"SWARM_AGENT\":\"${name}\"" deny=("Bash(gh pr merge:*)")
+      # The fallback reviewer stands in for codex's read-only sandbox: no file tools, no commit or push.
+      [[ "${role}" != review-fallback ]] || deny+=(Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)")
       [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
         --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto \
-        --disallowedTools "Bash(gh pr merge:*)" --settings "{\"env\":{${env}}}" 2>&1) && break
+        --disallowedTools "${deny[@]}" --settings "{\"env\":{${env}}}" 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then
       # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
@@ -732,13 +734,14 @@ wait_agent() {
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
 # incident in events.tsv is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
-# after it. Targets are matched through agent_name (an), as a tell logs the raw slug.
+# after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
+# --backlog through conductor_name (b).
 login_incident() {
-  awk -F'\t' -v n="$1" '
+  awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
     $2 == "incident" && $3 == n { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
-    $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && an(($2 == "conduct" ? "conduct-" : "review-") $3) == n { login = 0 }
+    $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
     || record_event incident "$1" "login: Login expired"
 }
@@ -831,10 +834,11 @@ tell_agent() {
 # naming it, so a live agent is never renamed. Names are unique across every herdr workspace, so a holder in another project is
 # refused, never retired: it is that project's agent. Runs before any pane opens.
 free_agent_name() {
-  local state
+  local state cwd
   if [[ -z "$(agent_field "$1" pane_id)" ]]; then
     [[ -z "$(agent_field "$1" agent_status any)" ]] && return 0
-    die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list); it is never retired from here. Wait for it to finish, or close its pane"
+    cwd="$(agent_field "$1" cwd any)"   # herdr's list gives where the holder runs: name that project
+    die "$1: an agent this project did not start (no tab record in .swarm/state) holds this name (herdr agent list${cwd:+; it runs in ${cwd}}); it is never retired from here. Wait for it to finish, or close its pane"
   fi
   state="$(read_state "$1")"
   case "${state}" in
