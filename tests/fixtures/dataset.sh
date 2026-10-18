@@ -66,7 +66,9 @@ printf '%s\n' \
   $'2026-10-04T15:00:00Z\tescalate\tescalated\tw:1\tok (findings-3: sonnet -> opus)' \
   $'2026-10-05T11:59:00Z\tescalate\tescalated\tw:1\tok (attempt 3)' \
   $'2026-10-05T12:30:00Z\tescalate\tescalated\tw:1\trefused '"${PLANT_ENV}" > "${P}/.swarm/events.tsv"
+# The first row's day is impossible: it is skipped, never a crash.
 printf '%s\n' \
+  $'2026-02-30\tmissing-check\to/r#5\tan impossible day\tescaped\tescaped' \
   $'2026-10-03\tvacuous-test\to/r#3\ta\tfixed\tcodex' \
   $'2026-10-03\tnaming\to/r#3\tb\tdeclined\tcodex\tnit' \
   $'2026-10-09\tmissing-check\to/r#5\tc\tescaped\tescaped' > "${P}/.swarm/findings.tsv"
@@ -86,6 +88,10 @@ cat > "${dir}/bin/gh" <<STUB
 [ -z "\${GH_FAIL:-}" ] || exit 1
 if [ "\$1 \$2" = "pr view" ]; then cat "${dir}/prs/\${3##*/}.json"; exit; fi
 [ "\$1 \$2" = "pr list" ] || exit 1
+case "\$4 \$6" in
+  "story/retried merged") [ -z "\${MERGED_FAIL:-}" ] || exit 1; printf '[{"url":"${U}/22","mergedAt":"2026-10-08T10:00:00Z"}]\n'; exit ;;
+  "story/retried all") printf '${U}/22\tMERGED\t2026-10-08T10:00:00Z\t2026-10-08T09:00:00Z\t0\n${U}/21\tCLOSED\t\t2026-10-07T09:00:00Z\t0\n'; exit ;;
+esac
 case "\$4" in
   story/easy-ok) n=2 c=2026-10-02T09:30:00Z m=2026-10-02T10:00:00Z ;;
   story/easy-hard) n=3 c=2026-10-03T08:30:00Z m=2026-10-03T10:00:00Z ;;

@@ -81,5 +81,12 @@ def rework_of(pr, merged_at, commits, escaped):
                 return True
         except ValueError:
             continue
-    return any(pr_key(p) == pr_key(pr) and 0 <= (datetime.date.fromisoformat(d) - start.date()).days <= REWORK_DAYS
-               for d, p in escaped if re.fullmatch(r"\d{4}-\d\d-\d\d", d))
+    return any(pr_key(p) == pr_key(pr) and 0 <= (day - start.date()).days <= REWORK_DAYS
+               for day, p in ((iso_day(d), p) for d, p in escaped) if day)
+
+def iso_day(s):
+    # A YYYY-MM-DD day as a date; None when it is malformed or impossible (2026-02-30).
+    try:
+        return datetime.date.fromisoformat(s) if re.fullmatch(r"\d{4}-\d\d-\d\d", s) else None
+    except ValueError:
+        return None

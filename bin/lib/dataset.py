@@ -76,12 +76,33 @@ def escalations(slug):
     return found
 
 def minutes(start, end):
-    # Whole minutes from one UTC time to another, as a string; "" when either does not parse.
+    # Whole minutes from one UTC time to a later one, as a string; "" when either does not parse, or the
+    # end comes first (a retry on a reused slug that started after the merge), as outcomes_join's.
     try:
         t = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return str(round((t(end) - t(start)).total_seconds() / 60))
+        d = (t(end) - t(start)).total_seconds()
     except ValueError:
         return ""
+    return str(round(d / 60)) if d >= 0 else ""
+
+def merged_pr(slug):
+    # The story's merged PR as (url, mergedAt) straight from gh, for a story whose builds hold none (a
+    # retry whose session logs are gone has no PR of its own); ("", "") when gh cannot say.
+    r = subprocess.run(["gh", "pr", "list", "--head", f"story/{slug}", "--state", "merged", "--json", "url,mergedAt",
+                        "--limit", "1"], capture_output=True, text=True, cwd=REPOS.get(slug) or None)
+    try:
+        p = json.loads(r.stdout)[0]
+        return p["url"], p["mergedAt"]
+    except (ValueError, TypeError, KeyError, IndexError):
+        return "", ""
+
+def previous():
+    # The lines the last run wrote, by slug: a story whose merged PR cannot be read this time keeps its own.
+    try:
+        rows = [json.loads(l) for l in open(out, encoding="utf-8")]
+    except (OSError, ValueError):
+        return {}
+    return {d["slug"]: d for d in rows if isinstance(d, dict) and d.get("slug") and d.get("merged_at")}
 
 def num(v, cast):
     try:
@@ -91,6 +112,8 @@ def num(v, cast):
 
 LEADS = leads()
 REPOS = dict(l.split("\t", 1) for l in os.environ["SWARM_REPOS"].splitlines() if "\t" in l)
+NO_REPO = set(os.environ["SWARM_NO_REPO"].split())
+PREVIOUS = previous()
 ESCAPED = [(f[0], f[2]) for f in finding_rows(findings, ("escaped",))]
 lines = os.environ["SWARM_ROWS"].splitlines()
 builds = collections.defaultdict(list)
@@ -99,14 +122,29 @@ for line in lines[1:]:
     builds[b["slug"]].append(b)
 
 # A story gh could not read (kind is known, so outcomes asked, but story_merged is empty): an expired
-# token, offline or a rate limit would read every story as unmerged, so nothing is overwritten.
-unread = sorted(s for s, bs in builds.items() if any(b["kind"] and not b["story_merged"] for b in bs))
+# token, offline or a rate limit would read every story as unmerged, so nothing is overwritten. A story
+# whose repo is not here (NO_REPO: repo_dir failed, so gh never ran) is skipped and counted instead.
+unread = sorted(s for s, bs in builds.items() if s not in NO_REPO and any(b["kind"] and not b["story_merged"] for b in bs))
+if NO_REPO & set(builds):
+    skipped = sorted(NO_REPO & set(builds))
+    print(f"skipped {len(skipped)} {'story' if len(skipped) == 1 else 'stories'} whose repo is not here: {', '.join(skipped)}", file=sys.stderr)
 stories = []
 for slug, bs in builds.items():
+    if slug in NO_REPO:
+        continue
     done = [b for b in bs if b.get("merged_at")]
-    if not done:
-        continue   # finished: one of its PRs merged
-    pr, merged_at = done[-1]["pr"], done[-1]["merged_at"]
+    if done:
+        pr, merged_at = done[-1]["pr"], done[-1]["merged_at"]
+    elif any(b["story_merged"] == "true" for b in bs):
+        pr, merged_at = merged_pr(slug)
+        if not pr:
+            kept = PREVIOUS.get(slug)
+            print(f"{slug}: merged, but gh gave no merged PR; " + ("kept its previous line" if kept else "left out"), file=sys.stderr)
+            if kept:
+                stories.append((kept["merged_at"], kept))
+            continue
+    else:
+        continue   # not finished: no PR of it merged
     text, added = planned(slug)
     fm = front(text)
     epic = fm.get("epic") or bs[-1]["epic"] or None

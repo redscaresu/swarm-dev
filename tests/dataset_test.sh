@@ -53,5 +53,27 @@ check "when gh cannot be read, it refuses, says so, and leaves the file as it wa
   "$(dataset GH_FAIL=1; cksum < "${F}")" \
   "$(printf 'gh could not read the PRs of easy-hard, easy-ok, escalated; %s is left as it was: check gh auth status and run it again\nexit 1\n%s' "${F}" "${before}")"
 
+# --- A story retried on two PRs whose builds left no session log, so no build owns a PR, and a story
+# whose repo is not cloned here.
+printf -- '---\nkind: code\neasy: true\n---\n\n# Retried\n' > "${P}/docs/stories/retried.md"
+printf -- '---\nkind: code\nrepo: elsewhere\n---\n\n# Uncloned\n' > "${P}/docs/stories/uncloned.md"
+git -C "${P}" add -A && commit 2026-10-07T08:00:00Z "Plan retried and uncloned (#20)"
+lines 5 d; git -C "${P}" rm -q docs/stories/retried.md; git -C "${P}" add -A && commit 2026-10-08T10:00:00Z "Retried (#22)"
+view 22 "Retried (#22)" src/d:5:0 docs/stories/retried.md:0:6
+printf '%s\n' \
+  $'2026-10-07\tcode\tretried\tclaude\topus\thigh\tgone1' \
+  $'2026-10-08\tcode\tretried\tclaude\topus\thigh\tgone2' \
+  $'2026-10-07\tcode\tuncloned\tclaude\topus\thigh\tgone3' >> "${P}/.swarm/agents.tsv"
+retried() { grep '"slug": "retried"' "${F}" || true; }
+check "a retried story whose builds own no PR reads its merged PR from gh; a story whose repo is not here is skipped, counted on stderr" \
+  "$(dataset; summary "${F}" | grep '^"retried"')" \
+  "$(printf '%s\n' "skipped 1 story whose repo is not here: uncloned" "wrote 4 finished stories to ${F}" "exit 0" \
+    '"retried" | "https://github.com/o/r/pull/22" | ["code", null, [], [], null, true, null, "# Retried"] | [5, 1, 2, 0, 0, false, null, null, ["opus"]] | [] | [false, 1]')"
+before="$(retried)"
+check "when gh gives no merged PR for it, the story keeps its line from the last run" \
+  "$(dataset MERGED_FAIL=1; retried)" \
+  "$(printf '%s\n' "skipped 1 story whose repo is not here: uncloned" "retried: merged, but gh gave no merged PR; kept its previous line" \
+    "wrote 4 finished stories to ${F}" "exit 0" "${before}")"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
