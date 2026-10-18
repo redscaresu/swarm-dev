@@ -174,7 +174,7 @@ except (ValueError, KeyError, TypeError):
 
 def reported(base):
     # A conductor that wrote its report, which the lead has not collected yet.
-    epic = epic_of.get(base) or (base[len("conduct-"):] if base.startswith("conduct-") else "")
+    epic = epic_of.get(base) or ("backlog" if base == E.get("DASH_BACKLOG") else base[len("conduct-"):] if base.startswith("conduct-") else "")
     return bool(epic) and os.path.exists(os.path.join(E["DASH_PROJECT"], ".swarm", f"conduct-{epic}.report.md"))
 
 def epic_for(base, slug, tab):

@@ -133,10 +133,12 @@ cost_report() {
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
 # Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
 # cause, the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
-# drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
+# drop), then its story's epic:, when its PR merged, whether any PR of the story merged (empty when
 # unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
-# its start to that and from that to the merge, the commits on the PR that merge the base into it, and
-# last its subagents' cost, in all and per model (its own cost and tokens leave them out). A finding goes to the latest build on
+# its start to that and from that to the merge, the commits on the PR that merge the base into it,
+# its subagents' cost, in all and per model (its own cost and tokens leave them out), and last its
+# start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
+# time_in_state, from its PR's review and tell:findings events and its head's checks). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -158,9 +160,11 @@ outcomes_report() {
   rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
-  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
+  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges checks commits closedAt` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
-  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`), its epic: and
+  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and checks is
+  # its head's check runs as startedAt/completedAt joined by semicolons, commits the committedDate of
+  # its commits but those base merges, joined by semicolons), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -178,16 +182,18 @@ outcomes_report() {
     # shellcheck disable=SC2016 # $b is jq's
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
-        --json url,state,mergedAt,createdAt,baseRefName,commits --jq '.[] | [.url, .state, .mergedAt // "",
-          .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
-          | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
-          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length)] | @tsv') 2>/dev/null)"; then
+        --json url,state,mergedAt,createdAt,baseRefName,commits,statusCheckRollup,closedAt --jq 'def base_merge($b): .messageHeadline | startswith("Merge ") and ((ltrimstr("Merge ")
+          | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0] | ltrimstr("\u0027") | rtrimstr("\u0027")
+          | ltrimstr("origin/")) == $b);
+        .[] | .baseRefName as $b | [.url, .state, .mergedAt // "", .createdAt, ([.commits[] | select(base_merge($b))] | length),
+          ([.statusCheckRollup[]? | select(.startedAt and .completedAt) | .startedAt + "/" + .completedAt] | join(";")),
+          ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";")), .closedAt // ""] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
@@ -253,6 +259,9 @@ outcomes_report() {
 #     tell:findings or review, which marks a review's end, so the two are never averaged together; and
 #     stacked, the stacked events for its slugs (all of them on the `all` row). A PR gh cannot read
 #     counts in neither wait.
+#   time_in_state: one TSV row per epic, then `all`, over the outcomes rows dated in the window with
+#     phase minutes (a merged PR), each PR once by its first build; with --epic, that epic's row alone:
+#     its PRs, their start-to-merge minutes, and the five phases' sums largest first as <phase>:<min>.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
