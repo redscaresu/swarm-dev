@@ -82,7 +82,11 @@ Repeat until a step below says stop:
      repo, when `gh pr list -R <owner/repo> --state all --head board/check-<kind> --json state,closedAt`
      (the project's origin, as `git remote get-url origin` names it) shows one `OPEN` (pending),
      one `MERGED` (its story is on the board, or about to be, since collect only fetches), or one
-     `CLOSED` (unmerged) in the last 90 days, which means the user declined it.
+     `CLOSED` (unmerged) in the last 90 days, which means the user declined it. A board outside the
+     repo has no PR to look up, and its merged story leaves no git deletion to fill `check`, so
+     after filing a story there append a line (the kind, a tab, today as YYYY-MM-DD) to
+     `.swarm/checks-filed.tsv` (the project's, a path relative to it), and skip
+     any kind already listed in that file.
      A kind whose check has merged (`check_merged` set) still recurs once its fixes after the merge
      reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
      `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,

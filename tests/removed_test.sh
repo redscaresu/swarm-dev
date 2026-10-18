@@ -38,7 +38,7 @@ if grep -q 'checks: <kind>' <<< "${collect}"; then
 else echo "FAIL commands/swarm.md's collect step does not name checks:"; fails=$((fails + 1)); fi
 # It reads a windowed outcomes, and skips a kind whose check-<kind> board PR, looked up in the
 # project's repo, is open, merged or declined; a board outside the repo is written in place.
-wants=('outcomes --since' 'gh pr list -R <owner/repo> --state all --head board/check-<kind>' 'MERGED' 'written where the board is')
+wants=('outcomes --since' 'gh pr list -R <owner/repo> --state all --head board/check-<kind>' 'MERGED' 'written where the board is' '.swarm/checks-filed.tsv')
 missing=""; for w in "${wants[@]}"; do grep -qF -- "${w}" <<< "$(tr -s '[:space:]' ' ' <<< "${collect}")" || missing+="[${w}] "; done
 if [[ -z "${missing}" ]]; then echo "ok   the collect step reads outcomes --since, looks up the kind's board PR in the project's repo, and writes in place outside it"
 else echo "FAIL the collect step is missing: ${missing}"; fails=$((fails + 1)); fi
