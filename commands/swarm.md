@@ -43,7 +43,8 @@ an old version still runs.
 Repeat until a step below says stop:
 
 1. Run `swarm.sh reconcile` (it takes off the board what you merged, and puts back to `ready`
-   what was closed unmerged), then `swarm.sh unblock` (it readies stories whose blockers have
+   what was closed unmerged; an item whose PR left its file on a board in the repo is marked done
+   instead, so run the `swarm.sh finish <slug>` it prints), then `swarm.sh unblock` (it readies stories whose blockers have
    merged), then `swarm.sh next`.
    Its first line is the step, the rest is why. Tell the user both in one line.
 2. Do the step:
