@@ -276,7 +276,7 @@ expect "stories before planning" "conduct e2" \
 
 # With a conductor in herdr: `wait` until it has written its report, then `collect`. A stub herdr
 # lists the agent; being idle must not count as finished. A long epic's agent name is cut at 32
-# characters, and its report is still found under the full epic name.
+# characters, and its report is still found under the full epic name. The whole output is left in out.
 expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why matches] [setup...]
   local name="$1" want="$2" epic="${4:-e1}" why="${5:-*}" dir got agent step
   dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -290,7 +290,7 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
   chmod +x "${dir}/bin/herdr"
   [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
   for step in "${@:6}"; do (cd "${dir}" && eval "${step}"); done
-  got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"
+  got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; out="${got}"
   # shellcheck disable=SC2053 # the why is a glob
   [[ "$(sed -n 2p <<< "${got}")" == ${why} ]] || got="${got%%$'\n'*} (why: $(sed -n 2p <<< "${got}"))"
   got="${got%%$'\n'*}"
@@ -311,6 +311,21 @@ expect_conductor "a working conductor's dependent epic with a blocked story left
   "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'" \
   "item stories/s2.md 'status: blocked' 'kind: code' 'epic: e1'"
+# A ready lead story that a blocked story depends on is named under the wait: the lead runs it
+# meanwhile. One nothing blocked depends on is not, nor an escalated one (wait --lead hands it on).
+expect_conductor "a working conductor's wait names a lead story that blocks one" "wait conduct-e1" no e1 "*" \
+  "item stories/l.md 'status: ready' 'kind: lead'" "item stories/l2.md 'status: ready' 'kind: lead'" \
+  "item stories/s.md 'status: blocked' 'kind: code' 'depends_on: [l]'" \
+  "item stories/t.md 'status: blocked' 'kind: code' 'depends_on: [x, l]'" \
+  "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'" \
+  "item stories/u.md 'status: blocked' 'kind: code' 'depends_on: [esc]'"
+if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t" ]]; then echo "ok   the wait is followed by also: lead l blocks s t, and nothing for l2 or the escalated esc"
+else echo "FAIL the wait's also: lines: ${out}"; fails=$((fails + 1)); fi
+expect_conductor "a working conductor's wait with no blocked dependant" "wait conduct-e1" no e1 "*" \
+  "item stories/l.md 'status: ready' 'kind: lead'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'depends_on: [l]'"
+if [[ "${out}" != *"also:"* ]]; then echo "ok   no also: line when no blocked story depends on the lead story"
+else echo "FAIL an also: line with no blocked story depending on the lead story: ${out}"; fails=$((fails + 1)); fi
 
 # release: a fixture repo whose origin/HEAD is main, plugin.json says 1.2.0 and the local tag v1.2.0
 # is on origin/main; each setup runs after the tag, then the repo is pushed and fetched. herdr=1 runs
@@ -512,6 +527,10 @@ step="$(sed -n '/^   - `wait <agent>`:/,/^     If any `wait` here/p' "$(dirname 
 if [[ "${step}" == *"swarm.sh wait --until-report <agent>"* && "${step}" != *"an hour"* ]]; then
   echo "ok   commands/swarm.md's wait step runs wait --until-report, with no hour"; else
   echo "FAIL commands/swarm.md's wait step runs wait --until-report, with no hour: got '${step}'"; fails=$((fails + 1)); fi
+# shellcheck disable=SC2016 # the backticks are the step's Markdown
+if grep -q 'For each `also: lead <slug> blocks <slugs>` line after the why, run that lead story while the' <<< "${step}"; then
+  echo "ok   commands/swarm.md's wait step runs each also: lead story while the wait runs"; else
+  echo "FAIL commands/swarm.md's wait step does not run the also: lead stories"; fails=$((fails + 1)); fi
 
 # A conductor of the same name started by another project is refused, never waited on.
 printf 'w:9 other\n' > "${dir}/.swarm/state/e1"; stub

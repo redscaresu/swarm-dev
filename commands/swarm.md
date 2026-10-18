@@ -55,6 +55,11 @@ Repeat until a step below says stop:
      nudges a conductor. When it returns, go back to 1. Never
      close a conductor that has not reported.
 
+     For each `also: lead <slug> blocks <slugs>` line after the why, run that lead story while the
+     wait runs: the stories it names stay blocked until it is done, and no conductor builds it.
+     Tell the user, as the gate does, that you will run it once they say go, with its **You:**
+     steps. Once it is done, `swarm.sh finish <slug>`, then `swarm.sh unblock`.
+
      In the same response, also run `swarm.sh wait --lead` in the background. It returns when
      something new lands in your queue while the conductor works, one line per item. For a
      `held: <slug> (<cause>)` or `escalated: <slug>` line, do the `escalated <slug>` step for that slug at once, without waiting for `next`:
