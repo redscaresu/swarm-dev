@@ -18,8 +18,8 @@ while IFS= read -r p; do
   [ -z "${p}" ] || check "llms.txt path exists: ${p}" test -e "${ROOT}/${p}"
 done <<<"${paths}"
 
-check "names swarm.sh init" grep -q 'swarm.sh init' "${ROOT}/llms.txt"
-check "names /swarm-dev:swarm" grep -q '/swarm-dev:swarm' "${ROOT}/llms.txt"
+check "names swarm.sh init" grep -qF 'swarm.sh init' "${ROOT}/llms.txt"
+check "names /swarm-dev:swarm" grep -qwF '/swarm-dev:swarm' "${ROOT}/llms.txt"
 
 desc="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["description"])' "${ROOT}/.claude-plugin/plugin.json")"
 check "plugin.json description has no HLD" [ "${desc}" = "${desc//HLD/}" ]

@@ -1,12 +1,12 @@
 # swarm-dev
 
-> A Claude Code plugin that turns a design into merged PRs: agents split it into epics, then one-PR stories, then build them in parallel, each in its own visible herdr pane. The user approves every level.
+> A Claude Code plugin that turns a design into merged PRs: agents split it into epics, then one-PR stories, then build them in parallel, each in its own visible herdr pane. The user approves each plan and, with `merge = human`, each merge.
 
-First steps: run `swarm.sh init` from a git repo's root to create the board, then `/swarm-dev:swarm` to run the chain.
+First steps: install the plugin (`claude plugin marketplace add redscaresu/swarm-dev`, `claude plugin install swarm-dev@swarm-dev`, then restart Claude Code); run `claude` once in the project folder and have the user accept the trust prompt; run `swarm.sh init` from the git repo's root to create the board; then run `/swarm-dev:swarm` to drive the chain.
 
 - [README.md](README.md): requirements, getting started, and when `/swarm-dev:swarm` stops for you
 - [AGENTS.md](AGENTS.md): how an agent uses swarm-dev in a project and works on this repo
 - [docs/method.md](docs/method.md): the method and why it is shaped this way
 - [docs/reference.md](docs/reference.md): every `swarm.sh` command and setting
 - [docs/dash.md](docs/dash.md): the read-only dashboard
-- [commands/](commands/): the slash commands the plugin loads (`/hld`, `/plan-hld`, `/plan-epic`, `/swarm`)
+- [commands/](commands/): the slash commands the plugin loads (`/swarm-dev:hld`, `/swarm-dev:plan-hld`, `/swarm-dev:plan-epic`, `/swarm-dev:swarm`)
