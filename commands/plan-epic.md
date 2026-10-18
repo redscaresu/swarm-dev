@@ -4,7 +4,7 @@ argument-hint: "<epic-slug>  e.g. firewall-end-to-end"
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
-`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+`.claude/swarm/config` says otherwise); every `docs/epics/` and `docs/stories/` below
 is inside it.
 
 Scope the epic `$1` into stories. Run it as a swarm so the user can watch every agent; do not
@@ -78,7 +78,7 @@ tell you which of the two broke something, and cannot be rolled back one half at
 **3. Verify** — in parallel, a chain at most 3 deep (a skeptic flags a longer one):
 - one `skeptic-<slug>` per story, role `skeptic`, capped at five (say which were not checked), given the `depends_on` graph.
   It tries to refute the story: a `depends_on` chain through it more than 3 stories deep, wrong about the code, too big for one PR (over the cap of one new command or one changed behaviour and about 300 lines in step 2, by its `estimate_lines`), an unstated dependency,
-  a `touches` clash inside its wave, a `done_when` that passes while the work is broken, a wrong `kind` (an agent story that needs
+  a `touches` clash inside its wave, a `depends_on` story that shares no file in `touches` with it while it has no `needs:` line naming what it uses from that story (disjoint touches: drop the dependency, or add the `needs:` line), a `done_when` that passes while the work is broken, a wrong `kind` (an agent story that needs
   real cloud, credentials or a person), or a missing or wrong `costs: money` (a story whose merge can spend money).
   Output `{sound, problems:[{why}], fix}`; unsure means `sound: false`.
 - one `codex`, role `codex` (read-only, a different model family): missing stories, stories too
@@ -96,7 +96,7 @@ merges the resulting PRs. Ask before
 writing anything. (The small path has already written and committed the stories and run codex: it asks before
 `swarm.sh board-pr open scope-$1 "<title>" <body-file>`, and runs `swarm.sh board-pr done scope-$1` once the PR
 has merged, and has no agent to close.) On approval write one `docs/stories/<slug>.md` per story (front matter `kind`, `repo`
-when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `touches`, `estimate_lines`, `easy`, `risk` when
+when set, `status: ready`, or `blocked` with `depends_on` and no other blocker line, `epic: $1`, `depends_on`, `needs` when a dependency shares no file in `touches`, `touches`, `estimate_lines`, `easy`, `risk` when
 high, `costs: money` when set; body: scope and **Done when**, with review fixes folded into each story's scope and Done when, never in a block of their own; a `lead` story also says what it needs from the user, one **You:** line per step that is theirs), open a PR with one `swarm.sh codex-review` pass, and `swarm.sh close
 scope-$1`. Once the board PR is open, log every skeptic, codex and critic finding against it:
 `swarm.sh log-finding --reviewer skeptic|codex|critic <kind> <board PR URL> '…'` when the plan adopted the finding, and

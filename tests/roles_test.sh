@@ -9,6 +9,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${REPO}/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${tmp}"' EXIT
+export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 
 roles="$(sed -n 's/^ROLE_GROUPS="\(.*\)"$/\1/p' "${SWARM}")"
 [[ -n "${roles}" ]] || { echo "FAIL no ROLE_GROUPS line in ${SWARM}"; exit 1; }
@@ -53,7 +54,7 @@ pol="$(sed -n '/^policy() {$/,/^}$/p' "${SWARM}")"
 if grep -qx epic-review <<< "${roles}" && grep -q '^ *epic-review)' <<< "${pol}"; then
   echo "ok   epic-review is in ROLE_GROUPS and policy"
 else echo "FAIL epic-review is missing from ROLE_GROUPS or policy"; fails=$((fails + 1)); fi
-for r in hld hld-review; do
+for r in hld hld-review hld-lead; do
   if grep -qx -- "${r}" <<< "${roles}" || grep -q "^ *${r})" <<< "${pol}"; then
     echo "FAIL ${r} is still in ROLE_GROUPS or policy"; fails=$((fails + 1))
   else echo "ok   ${r} is in neither ROLE_GROUPS nor policy"; fi

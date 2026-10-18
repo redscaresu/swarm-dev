@@ -109,6 +109,7 @@ gone() { LC_ALL=C comm -13 <(LC_ALL=C sort "$1") <(LC_ALL=C sort "$2"); }
 
 fails=0
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
+export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 doc_check "${REPO}" > "${tmp}/found"
 new="$(unknown "${tmp}/found" "${KNOWN}")"
 if [[ -n "${new}" ]]; then

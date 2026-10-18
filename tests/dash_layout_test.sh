@@ -11,6 +11,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 ROOT="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${ROOT}"' EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 P="${ROOT}/proj"
 # The claude stub goes first on PATH, so no run here reaches the real claude.
@@ -217,7 +218,7 @@ check "--ladder counts a role's agents, with its sessions' models" has "code    
 check "--ladder names the model a session ran on, not the policy's" has "escalate   → fable · xhigh  1 opus " "${out}"
 check "--ladder shows 0 for a role with no agents" grep -qE "docs       → sonnet · medium  0( |$)" <<< "${out}"
 check "--ladder has no verify row" lacks "verify" "${out}"
-check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +escalate" <<< "${out}"
+check "--ladder counts an agent whose log cannot be read, with no model" grep -qE "chore      → haiku · medium  1 +(│|[a-z-]+ *→)" <<< "${out}"
 check "--ladder cells are as wide as the longest row: two a row at 100 columns, every role aligned" python3 -c '
 import sys
 t = sys.stdin.read().splitlines()

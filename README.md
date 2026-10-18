@@ -67,7 +67,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents, and a count of ready stories nobody has started ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for a PR's checks: exits 0 green, 1 red, 2 when gh fails, no checks appear, or one is still pending at the timeout (30 minutes by default). |
 
@@ -94,17 +94,20 @@ Every agent is a full Claude Code session on your own logins. On infrafactory, f
 (about $9 each, planning and review included), at list prices from `swarm.sh flow` and `outcomes`.
 The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
 section shows how long CI takes per push, how often it goes red and how often it flakes, and its
-`incidents` section counts, per day, the waits that timed out, the logins that expired and the
-builders that stopped with no PR. Its `lead_queue` section shows, per day, the median and longest
-time a held, escalated or ready-to-merge item waited on the lead, and names any still waiting. With
-`merge = agent`, only a PR that costs money waits on you, so only those count. Its `model_fit`
-section sets cost against results for each model and kind of story, so you can see where a cheaper
-model holds up before you move more work to it. Its `time_in_state`
-section shows where each epic's stories spent their time between start and merge: building, CI,
-waiting for review, fixing findings or waiting for a merge.
+`incidents` section counts, per day, the waits that timed out, the logins that expired, the
+builders that stopped with no PR, and the board pulls that an uncommitted edit stopped. Its
+`lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
+item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
+money waits on you, so only those count. Its `model_fit` section sets cost against results for each
+model and kind of story, so you can see where a cheaper model holds up before you move more work to
+it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
+conductor ran but before their build started, building, CI, waiting for review, fixing findings or
+waiting for a merge, in hours and as a share of the whole.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. Agents start with a short list of environment variables, and a token you exported
+while you watch. A `lead` story whose `after:` names its own epic waits for that epic and does not
+hold it open: once its code stories are built, `next`, `status` and `dash` count the epic as done
+without it. Agents start with a short list of environment variables, and a token you exported
 reaches a builder only when its story names it under `env:`. That includes a login kept in the
 environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). Agents with no story
 of their own, such as planners and review agents, never get one, so log in through `claude`,
@@ -130,6 +133,9 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
+  There, `make test` runs every `tests/*_test.sh`, as many at once as the machine has CPUs (`make test JOBS=2` for fewer),
+  with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`). The few files whose
+  timing does not hold up beside the others (`SERIAL` in the Makefile) run one at a time after them.
 
 ## License
 

@@ -26,11 +26,12 @@ state_name() {
   STATE_PATH="${BOARD_STATE_DIR}/${d##*/}/${n%.md}"
 }
 
-# state_drop <item-file> — delete the item's state file and its lock (state_name), so a later item
-# with its slug starts with no state.
+# state_drop <item-file> — delete the item's state file and its lock (state_name), and a story's
+# escalated block (escalated_file), so a later item with its slug starts with no state.
 state_drop() {
   state_name "$1"
   [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
+  [[ "${STATE_PATH}" != "${BOARD_STATE_DIR}/stories/"* ]] || rm -f "$(escalated_file "${STATE_PATH##*/}")"
 }
 
 # state_value <item-file> <key> — print <key>'s value from the item's state file (state_path; nothing
@@ -51,27 +52,106 @@ state_value() {
     END { if (!h || (hb && t != b)) exit 1; if (v != "") print v }' "${STATE_PATH}" "$1"
 }
 
-# board <dir> — the item files in <board>/<dir>/, never the README.
+# board <dir> — the item files in <board>/<dir>/, never the README. A reader that stops early (a loop
+# that found its item) ends it quietly: with SIGPIPE ignored, as under a python parent, echo would
+# print a write error, and dash would draw it in the frame.
 board() {
   local f
   for f in "${BOARD}/$1"/*.md; do
-    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] && echo "${f}"
+    [[ -e "${f}" && "$(basename "${f}")" != README.md ]] || continue
+    echo "${f}" 2>/dev/null || return 0
   done
   return 0
 }
 
-# epic_has_stories <epic> [<slug>] — true when any story names <epic>. With <slug>, true when any
-# story but <slug> does, not counting a kind: lead story with after: (it waits on the epic, so the
-# epic goes without it): story_brief's test for the epic's last story.
-epic_has_stories() {
+# waits_on_epic <kind> <after> <epic> — the after: rule on a story's front-matter values: kind lead,
+# and after: (slug_list) names its own epic, alone or in a list. Such a story waits on the epic, so it
+# does not count in it (the epic goes, and reads as done, without it); it stays on the board and is
+# listed with the lead's stories. An after: that does not name its own epic is ignored. after_story
+# reads a story file with it, dash_finished and epic_deleted_here a deleted one.
+waits_on_epic() {
+  local a list
+  [[ -n "$3" && "$1" == lead ]] || return 1
+  read -r -a list <<< "$(slug_list "$2")" || true
+  for a in ${list[@]+"${list[@]}"}; do [[ "${a}" != "$3" ]] || return 0; done
+  return 1
+}
+
+# after_story <story-file> — true for a story waits_on_epic holds for (kind and after: state-aware).
+after_story() { waits_on_epic "$(get_fm "$1" kind)" "$(get_fm "$1" after)" "$(fm "$1" epic)"; }
+
+# epic_stories <epic> — the story files that count in <epic>, any status: those naming it, but an
+# after_story. Every test of an epic's stories reads them here, taken whole first (a loop that returns
+# while reading it would close the pipe on it: a Broken pipe where SIGPIPE is ignored).
+epic_stories() {
   local s
   while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "$1" ]] || continue
-    [[ -n "${2:-}" ]] || return 0
-    [[ "$(basename "${s}" .md)" == "$2" ]] && continue
-    [[ "$(get_fm "${s}" kind)" == lead && -n "$(get_fm "${s}" after)" ]] && continue
-    return 0
+    [[ "$(fm "${s}" epic)" == "$1" ]] && ! after_story "${s}" && echo "${s}"
   done < <(board stories)
+  return 0
+}
+
+# epic_has_stories <epic> [<slug>] — true when a story counts in <epic> (epic_stories). With <slug>,
+# one but <slug>: story_brief's test for the epic's last story.
+epic_has_stories() {
+  local s list
+  list="$(epic_stories "$1")"
+  while IFS= read -r s; do
+    [[ -z "${s}" || "$(basename "${s}" .md)" == "${2:-}" ]] || return 0
+  done <<< "${list}"
+  return 1
+}
+
+# epic_planned <epic> — true once code stories were planned for <epic>: one counts in it on the board
+# (epic_stories, done ones too), one of them finished and left the board (dash_finished, from its
+# repo's history) or was deleted and not committed yet (epic_deleted_here, as finish does on a board
+# outside the repo), or the board has no history to read (not in git, or no commit yet), which never
+# reads as unplanned.
+epic_planned() {
+  [[ -n "$(epic_stories "$1")" ]] && return 0
+  git -C "${BOARD}" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
+  dash_finished | awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' && return 0
+  epic_deleted_here "$1"
+}
+
+# epic_deleted_here <epic> — true when a story file that counted in <epic> (its committed front matter:
+# epic, and not waits_on_epic) is deleted from the board but the deletion is not committed.
+epic_deleted_here() {
+  local p text gone
+  gone="$(git -C "${BOARD}" diff --name-only --diff-filter=D HEAD -- stories/ 2>/dev/null)" || return 1
+  while IFS= read -r p; do
+    [[ "${p}" == *.md ]] || continue
+    text="$(git -C "${BOARD}" show "HEAD:${p}" 2>/dev/null)" || continue
+    [[ "$(get_fm - epic <<< "${text}")" == "$1" ]] || continue
+    waits_on_epic "$(get_fm - kind <<< "${text}")" "$(get_fm - after <<< "${text}")" "$1" || return 0
+  done <<< "${gone}"
+  return 1
+}
+
+# epic_after_only <epic-file> — true when the epic is active, its open stories are all after_story
+# ones, it has an after_story on the board (open or done: epic_has_after), and code stories were
+# planned for it (epic_planned): it counts as done (open_item), so what depends on it goes ahead,
+# and it is not planned again. A draft or later epic,
+# or one whose only story ever was an after: one, never does.
+epic_after_only() {
+  local s slug list
+  [[ "$(fm "$1" status)" == active ]] || return 1
+  slug="$(basename "$1" .md)"
+  list="$(epic_stories "${slug}")"
+  while IFS= read -r s; do
+    [[ -z "${s}" || "$(fm "${s}" status)" == "done" ]] || return 1
+  done <<< "${list}"
+  epic_has_after "${slug}" && epic_planned "${slug}"
+}
+
+# epic_has_after <epic> — true when an after_story of <epic> is on the board, any status. The stories
+# are taken whole first, as epic_stories says.
+epic_has_after() {
+  local s list
+  list="$(board stories)"
+  while IFS= read -r s; do
+    [[ -n "${s}" && "$(fm "${s}" epic)" == "$1" ]] && after_story "${s}" && return 0
+  done <<< "${list}"
   return 1
 }
 
@@ -79,14 +159,14 @@ epic_has_stories() {
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
-#                     why starts `auth:` when its login expired (wait then prints auth at once)
+#                     why starts `auth:` when its login expired (wait then prints auth at once);
+#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads)
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
 #                     works, this comes before its wait
-#   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -97,7 +177,7 @@ epic_has_stories() {
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting="" when held n tag base
+  local f slug epic story_epic buildable="" waiting="" when held n tag base
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -115,22 +195,19 @@ next_step() {
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
+        blocking_leads
       fi
       return
     fi
   fi
-  # Stories an agent can build: ready, and of a kind an agent builds. "<epic> <slug>" per line.
+  # Stories an agent can build (buildable_story). "<epic> <slug>" per line.
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready ]] || continue
-    kind=$(fm "${f}" kind)
-    agent_kind "${kind}" || continue
+    buildable_story "${f}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
-  # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
   while read -r story_epic slug; do
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
-    src="$(repo_dir "$(fm "${BOARD}/stories/${story_epic}.md" repo)")" || continue
-    [[ -d "$(worktree_for "${src}" "${story_epic}")" ]] || continue
+    one_off_started "${story_epic}" || continue
     echo "resume ${story_epic}"; echo "${story_epic} has already started: wait for its agent, then review its PR"; return
   done <<< "${buildable}"
   # An active epic's stories first: finish what is started before anything new.
@@ -145,15 +222,6 @@ next_step() {
   done <<< "${buildable}"
   epic="$(plannable_epic)"
   if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
-  while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
-    case "$(fm "${f}" status)" in
-      agreed)
-        if [[ $(awk '/^## Epics/{e=1;next} /^## /{e=0} e && /^[-*] /{n++} END{print n+0}' "${f}") -eq 0 ]]; then
-          echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has no epics yet"; return
-        fi ;;
-    esac
-  done < <(board hld)
   while IFS= read -r f; do
     is_escalated "${f}" || continue
     slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"
@@ -182,6 +250,92 @@ next_step() {
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
+# buildable_story <story file> — true for a story next_step builds: ready, of a kind an agent
+# builds (agent_kind), with no epic or in an active one. dash counts the same ones.
+buildable_story() {
+  local epic
+  [[ "$(fm "$1" status)" == ready ]] && agent_kind "$(fm "$1" kind)" || return 1
+  epic="$(fm "$1" epic)"
+  [[ -z "${epic}" || "$(fm "${BOARD}/epics/${epic}.md" status 2>/dev/null)" == active ]]
+}
+
+# one_off_started <slug> — true once a one-off's build has begun: it keeps status: ready until its PR
+# merges, so an existing worktree means it has started (next_step's resume).
+one_off_started() {
+  local src
+  src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
+}
+
+# idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
+# per blocked story whose depends_on story shares no file in touches with it (touches_rows.py
+# --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
+# finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
+# quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
+# Later stories are the user's (waiting_on_user), never offered here.
+IDLE_CANDIDATES=5
+idle_lines() {
+  local f found
+  # Advisory: a failed check warns, and never fails next.
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" \
+    || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
+  case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
+  while IFS= read -r f; do
+    if buildable_story "${f}"; then return 0; fi
+  done < <(board stories)
+  # sed, not head: head can exit before the writers finish, and the broken pipe fails under pipefail.
+  found="$(out_of_scope_findings | sed -n "1,${IDLE_CANDIDATES}p")"
+  [[ -n "${found}" ]] || return 0
+  echo "idle: \"$(basename "${PROJECT_DIR}")\""
+  printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
+}
+
+# next_report — swarm.sh next: next_step's step, then idle_lines' for it. Both are worked out first
+# and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
+# the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
+# this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
+next_report() {
+  local tmp step idle
+  tmp="$(mktemp)" || die "next: cannot make a temp file"
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'" EXIT
+  next_step > "${tmp}"
+  step="$(< "${tmp}")"; idle="$(idle_lines "${step%%[ $'\n']*}")"
+  trap '' PIPE
+  printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
+}
+
+# blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
+# (kind: lead, or a legacy or unknown kind: agent_kind fails) that a blocked
+# story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
+# An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
+# after: (it waits for its epic to finish, as epic_has_stories says). Only a blocked story an agent
+# builds counts, and neither story may sit in an epic the user holds (epic_held).
+blocking_leads() {
+  local f b slug blocks
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == ready && -z "$(get_fm "${f}" after)" ]] || continue
+    if agent_kind "$(fm "${f}" kind)"; then continue; fi
+    if is_escalated "${f}" || epic_held "${f}"; then continue; fi
+    slug=$(basename "${f}" .md); blocks=""
+    while IFS= read -r b; do
+      [[ "$(fm "${b}" status)" == blocked && " $(story_deps "${b}") " == *" ${slug} "* ]] || continue
+      agent_kind "$(fm "${b}" kind)" || continue
+      if epic_held "${b}"; then continue; fi
+      blocks+=" $(basename "${b}" .md)"
+    done < <(board stories)
+    if [[ -n "${blocks}" ]]; then echo "also: lead ${slug} blocks${blocks}"; fi
+  done < <(board stories)
+}
+
+# epic_held <story-file> — true when the story's epic is later or draft: the user has not started it.
+epic_held() {
+  local e
+  e="$(fm "$1" epic)"; [[ -n "${e}" ]] || return 1
+  case "$(fm "${BOARD}/epics/${e}.md" status 2>/dev/null)" in later|draft) return 0 ;; esac
+  return 1
+}
+
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
 # (epic_holding_deps), or nothing. A split epic (status: split) is never planned: its child epics are.
 plannable_epic() {
@@ -193,13 +347,14 @@ plannable_epic() {
   done < <(board epics)
 }
 
-# epic_holding_deps <epic file> — fails unless it is an active epic with no stories (the epics
-# planning waits for); else prints its depends_on slugs that still hold its planning up (dep_holds),
+# epic_holding_deps <epic file> — fails unless it is an active epic with no stories (epic_has_stories;
+# an after: story is none) that does not count as done (epic_after_only): the epics planning waits
+# for; else prints its depends_on slugs that still hold its planning up (dep_holds),
 # space-separated, none when it can be planned. Its deps are read only once it has no stories. A child
 # epic's own parent: never holds it: the split parent is open for as long as the child is.
 epic_holding_deps() {
   local b held="" parent
-  [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" || return 1
+  [[ "$(fm "$1" status)" == active ]] && ! epic_has_stories "$(basename "$1" .md)" && ! epic_after_only "$1" || return 1
   parent="$(fm_list "$1" parent)"
   for b in $(story_deps "$1"); do
     [[ "${b}" != "${parent}" ]] && dep_holds "${b}" && held+=" ${b}"
@@ -209,15 +364,16 @@ epic_holding_deps() {
 
 # dep_holds <slug> — true while an epic's depends_on slug holds up its planning: an open story, or an
 # open epic with no stories or with one not yet in review. Stories are scoped against the code the
-# dependency builds, and code in review is code that exists.
+# dependency builds, and code in review is code that exists. Its stories are epic_stories.
 dep_holds() {
-  local f n=0
+  local f n=0 list
   open_item "${BOARD}/stories/$1.md" && return 0
   open_item "${BOARD}/epics/$1.md" || return 1
+  list="$(epic_stories "$1")"
   while IFS= read -r f; do
-    [[ "$(fm "${f}" epic)" == "$1" ]] || continue
+    [[ -n "${f}" ]] || continue
     case "$(fm "${f}" status)" in review) n=1 ;; done) ;; *) return 0 ;; esac
-  done < <(board stories)
+  done <<< "${list}"
   [[ ${n} -eq 0 ]]
 }
 
@@ -344,14 +500,16 @@ waiting_on_user() {
 }
 
 # open_item <file> [seen] — true while a board item is still open: its file exists and is not status:
-# done, and, for an epic /plan-epic split into child epics (status: split), one of them is still open
-# (has_child_epics; [seen] is the split epics already walked, so a parent: cycle ends).
+# done, for an epic /plan-epic split into child epics (status: split), one of them is still open
+# (has_child_epics; [seen] is the split epics already walked, so a parent: cycle ends), and it is not
+# an active epic whose only open stories are after: lead stories (epic_after_only).
 open_item() {
   [[ -f "$1" ]] || return 1
   case "$(fm "$1" status)" in
     done) return 1 ;;
-    split) has_child_epics "$(basename "$1" .md)" "${2:-}" ;;
+    split) has_child_epics "$(basename "$1" .md)" "${2:-}"; return ;;
   esac
+  [[ "$1" != "${BOARD}/epics/"* ]] || ! epic_after_only "$1"
 }
 
 # has_child_epics <epic> [seen] — true while an open epic on the board (open_item) names <epic> as the
@@ -369,11 +527,14 @@ has_child_epics() {
 # story_deps <story> — the depends_on slugs in its front matter (fm_list).
 story_deps() { fm_list "$1" depends_on; }
 
-# fm_list <file> <key> — <key>'s slugs in its front matter, space-separated, YAML brackets, quotes, a
+# fm_list <file> <key> — <key>'s slugs in its front matter (slug_list).
+fm_list() { slug_list "$(get_fm "$1" "$2")"; }
+
+# slug_list <value> — a front-matter value's slugs, space-separated, YAML brackets, quotes, a
 # trailing # comment and trailing whitespace (a CR too) gone.
-fm_list() {
-  local v
-  v="$(get_fm "$1" "$2")"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+slug_list() {
+  local v="$1"
+  v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"
   printf '%s' "${v//\'/}"
 }
@@ -463,9 +624,9 @@ unblock() {
   done < <(board stories)
 }
 
-# delete_item <slug> — delete a story or epic's file where it is, and its state file (state_drop), so
-# a later item with the slug starts with none: reconcile's, after its pull.
-delete_item() { local f; f="$(item_file "$1")"; state_drop "${f}"; rm "${f}"; echo "deleted: ${f}"; }
+# delete_item <file> — delete a story or epic's file where it is, and its state file (state_drop), so
+# a later item with the slug starts with none: reconcile's, on a board outside the repo.
+delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }
 
 # finish <slug> — take a merged story or epic off the board: delete its file (remove_item).
 finish_item() { remove_item finish "$1"; }
@@ -478,7 +639,7 @@ finish_item() { remove_item finish "$1"; }
 remove_item() {
   local verb="$1" slug="$2" why="${3:-}" f rel name wt new="" body url title
   f="$(item_file "${slug}")"
-  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${slug}"; return; }
+  [[ ${BOARD_IN_REPO} == 1 ]] || { delete_item "${f}"; return; }
   rel="${f#"${PROJECT_DIR}"/}"; name="${verb}-${slug}"
   wt="$(worktree_for "${PROJECT_DIR}" "_board-${name}")"
   if [[ ! -d "${wt}" ]]; then
@@ -582,9 +743,7 @@ set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
 # too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
-# They live in BOARD_STATE_DIR, never in a tracked file. reconcile puts an older swarm.sh's edit to
-# them in a board file back as committed on an item whose PRs merged, and carries another board
-# file's over its pull, so they never stop it.
+# They live in BOARD_STATE_DIR, never in a tracked file.
 SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
 
 # set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
@@ -655,16 +814,6 @@ state_write() {
   [[ -s "$2" ]] || rm -f "$2"
 }
 
-# set_file_fm <file> <key> [value] — in <file>'s own front matter, set <key>'s line to <value>, adding
-# it at the end when there is none, or drop it when <value> is empty: only to put back what an older
-# swarm.sh wrote there, over a pull.
-set_file_fm() {
-  awk -v k="$2" -v v="${3:-}" '
-    /^---$/ && ++n == 2 && !d && v != "" { print k ": " v }
-    n == 1 && index($0, k ":") == 1 { if (!d && v != "") print k ": " v; d = 1; next }
-    { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-}
-
 # get_fm <file> <key> — <key>'s value in the item's state file (state_value), else in <file>'s front
 # matter alone (fm takes the first line for <key> anywhere, so a story's body could answer). <file>
 # may be - for stdin, which is read as it is.
@@ -715,7 +864,11 @@ builder_state() {
 # story can be built again. With no item merged, it still pulls the main checkout when that is behind
 # its upstream (a PR merged with no review item), and dies as a failed pull below does; a failed fetch
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
-# cannot be read: said on stderr, naming it.
+# cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
+# dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
+# there, so the main checkout keeps no edit: after a pull, or with no upstream to pull from, it is
+# marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
+# loses its state, however that commit was pulled (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -759,43 +912,55 @@ reconcile() {
   # A pull is due after an item merged when there is an upstream, and otherwise when the checkout is
   # behind it (a PR merged with no review item: a board PR, a one-off). It is held after an unread PR:
   # if that merged, the pull would take its file before its build is cleared.
-  local due=1 held=0
+  local due=1
   if [[ ${#merged[@]} -gt 0 ]]; then has_upstream || due=0; else behind_upstream || due=0; fi
   if [[ ${due} == 1 && -n "${unread}" ]]; then
     echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
-    due=0; held=1
+    due=0
   fi
-  if [[ ${#merged[@]} -eq 0 ]]; then
-    [[ ${due} == 0 ]] || pull_board_repo \
-      || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
-    return 0
+  if [[ ${due} == 1 ]]; then
+    pull_board_repo || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}, then run reconcile again"
   fi
-  local i k committed saved=()
-  if [[ ${BOARD_IN_REPO} == 1 && ${held} == 0 ]]; then
-    # The board is in the project repo, and a merged PR may itself have taken the item off it or
-    # changed it. An older swarm.sh's edits in the file (each SET_FM_KEYS key, such as the review
-    # status or a retry's attempts:) would block that pull, so put them back as committed first, and
-    # the whole file as it was if the pull fails. A hand edit is left alone, and still stops the pull.
-    for slug in "${merged[@]}"; do
-      f="$(item_file "${slug}")"; saved+=("$(cat "${f}"; echo .)")   # the dot keeps trailing newlines
-      if committed="$(git -C "${PROJECT_DIR}" show "HEAD:${f#"${PROJECT_DIR}"/}" 2>/dev/null)"; then
-        for k in ${SET_FM_KEYS}; do set_file_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
-      fi
-    done
-    if [[ ${due} == 1 ]] && ! pull_board_repo; then
-      for i in "${!merged[@]}"; do printf '%s' "${saved[i]%.}" > "$(item_file "${merged[i]}")"; done
-      die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
-    fi
-  fi
-  for i in "${!merged[@]}"; do
+  local i
+  for ((i = 0; i < ${#merged[@]}; i++)); do
     slug="${merged[i]}"; f="${merged_files[i]}"
+    if [[ -f "${f}" && "$(fm "${f}" status)" != "done" && ${BOARD_IN_REPO} == 1 ]] \
+      && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
+      # Its tracked file is still here: with a pull held, its PR may have deleted it on the base.
+      if [[ ${due} == 0 ]] && has_upstream; then
+        echo "merged: ${slug}, not pulled yet; it stays in review until reconcile pulls ${PROJECT_DIR}"
+        continue
+      fi
+      # Its PR left it on the board: done in its state, so the main checkout stays clean.
+      set_status "${f}" "done"; record_event reconcile "${slug}" "ok (finished)"
+      echo "merged: ${slug}, marked done; its file stays on the board until swarm.sh finish ${slug} takes it off"; continue
+    fi
     if [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]]; then
-      delete_item "${slug}"; record_event reconcile "${slug}" "ok (finished)"; continue
+      delete_item "${f}"; record_event reconcile "${slug}" "ok (finished)"; continue
     fi
     # Its PR took it off the board or marked it done: its state goes too, or a later item with the
     # slug would read it.
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
+  done
+  [[ ${BOARD_IN_REPO} == 0 ]] || drop_gone_state
+}
+
+# drop_gone_state — state_drop each story and epic, by its board-state or escalated file, whose file a
+# commit deleted (its PR or a board PR, pulled by reconcile or by hand): it is in neither HEAD nor the
+# main checkout, and was in a commit before. A later item with its slug then starts with no state. A
+# file missing only from the main checkout, or never committed, keeps its state. A board directory
+# that is not there (git removes it with its last file) counts as holding no item.
+drop_gone_state() {
+  local s n d rel=""
+  # The board's path from the root with a trailing /, or empty when the board is the root.
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
+    n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
+    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
+    ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}${d}/${n}.md" 2>/dev/null || continue
+    [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}${d}/${n}.md")" ]] || continue
+    state_drop "${BOARD}/${d}/${n}.md"
   done
 }
 

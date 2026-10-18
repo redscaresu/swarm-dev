@@ -118,6 +118,108 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
     for u in urls:
         named_reviews[pr_key(u)].append(f"review={e[0]}")
 
+def board_log(*args):
+    # git log over the board's stories on its default branch, where merges land (HEAD when there is no
+    # origin/HEAD, as dash_base_ref), so a story branch's own commits are no merge; "" when git fails.
+    # --first-parent dates a commit by the merge, and --no-renames keeps a story deleted beside a
+    # similar new one a deletion.
+    board = sys.argv[2]
+    has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
+    got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
+                          "--first-parent", "--diff-merges=first-parent", "--no-renames", *args, "--", "stories/"],
+                         capture_output=True, text=True)
+    return got.stdout if got.returncode == 0 else ""
+
+def board_commits(*args):
+    # The board's commits that add or delete a story file, newest first, as (the format's text, [the
+    # story paths]). Each commit prints as "\x01<format>\0" and then its paths (from the repo root, any
+    # characters), each ending "\0".
+    commits = [c.split("\0") for c in board_log("-z", "--name-only", *args).split("\x01")[1:]]
+    return [(c[0], [p.lstrip("\n") for p in c[1:] if p.strip("\n")]) for c in commits]
+
+# held: the minutes a story's first build waited ready under the conductor run it started in: from the
+# later of the run's start and the story's ready time to the build's start. The story was ready at its
+# last ok unblock event or board commit that set its `status: ready` (a story added ready, or readied
+# by hand) before the build, unless a board commit set it `status: blocked` after that; with none,
+# held is unknown (empty). A conductor of its epic (the backlog conductor, `conduct --backlog`, for a
+# story with no epic) runs from an ok `conduct` event until the next one, an ok close of its agent,
+# or its report, whichever comes first: the report's file time while it is there
+# (.swarm/conduct-<epic>.report.md), or the time the next conduct logged for it (a report event) as
+# it removed the file. A build that started after its run ended, or with no run, held 0. Retiring a
+# conductor is the next conduct's first step, and tidy closes only retired panes, so neither ends a
+# run sooner. An epic's conductor is conduct-<epic>; the backlog's is the per-project
+# SWARM_BACKLOG_CONDUCTOR (conductor_name), or conduct-backlog in older logs.
+# ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
+ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
+conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
+# Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
+for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
+    lines, path = commit.split("\n"), ""
+    for l in lines[1:]:
+        if l.startswith("+++ "):
+            path = l[len("+++ b/"):] if l.startswith("+++ b/") else ""
+        elif path and (m := re.fullmatch(r"\+status:\s*(ready|blocked)\s*", l)):
+            (ready_at if m.group(1) == "ready" else blocked_at)[os.path.splitext(os.path.basename(path))[0]].append(float(lines[0]))
+for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
+    e = line.rstrip("\n").split("\t")
+    t = secs(e[0]) if len(e) == 5 and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    if t is None:
+        continue
+    if e[1] == "unblock":
+        ready_at[e[2]].append(t)
+    elif e[1] == "conduct":
+        conducting[e[2]].append(t)
+    elif e[1] == "report" and secs(e[4][len("ok ("):-1]) is not None:
+        reported["--backlog" if e[2] == "backlog" else e[2]].append(secs(e[4][len("ok ("):-1]))
+    elif e[1].split(":")[0] == "close":
+        closed[agent_name(e[2])].append(t)
+
+def run_ends(epic):
+    # The times a conductor run of the epic ("" for the backlog's) could have ended: its agent's ok
+    # closes and its reports' times.
+    names = [agent_name("conduct-" + epic)] if epic else ["conduct-backlog", os.environ.get("SWARM_BACKLOG_CONDUCTOR", "")]
+    report = os.path.join(os.path.dirname(sys.argv[3]), f"conduct-{epic or 'backlog'}.report.md")
+    return ([t for n in names if n for t in closed[n]] + reported[epic or "--backlog"]
+            + ([os.path.getmtime(report)] if os.path.exists(report) else []))
+
+def held(slug, epic, start):
+    # Whole minutes, as a string; empty when start or the story's ready time is unknown.
+    s = secs(start)
+    ready = max((t for t in ready_at[slug] if t <= s), default=None) if s is not None else None
+    if ready is None or any(ready < t <= s for t in blocked_at[slug]):
+        return ""
+    run = max((t for t in conducting[epic or "--backlog"] if t <= s), default=None)
+    if run is None or any(run < t <= s for t in run_ends(epic)):
+        return "0"
+    return str(round((s - max(ready, run)) / 60))
+
+# Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
+# PRs of these builds from rework_from(SWARM_REWORK_SINCE) on (flow's --since, else outcomes' own), with
+# every PR of their repos merged from the first one's day to REWORK_DAYS after the last one's as a possible
+# fix. gh's merged: dates are UTC, so the end has a day more for a local 7th day that is the next day in
+# UTC. A mergedAt that does not parse is left out of the search, and rework_of counts it on stderr. A
+# reworked PR counts once, on the latest build on it, as findings do; a 1 is written at once, a 0 only
+# once its REWORK_DAYS have passed, as a fix may still come. Rework is unknown, and left empty, for a PR
+# merged before the window, for all when gh fails, and for a PR merged before the oldest of a gh list at
+# its limit, whose fix the list may have missed.
+lo = rework_from(os.environ.get("SWARM_REWORK_SINCE", ""))
+judged = {pr_key(r[6]): r[8] for r in rows if r[4] and r[6] and r[7] == "MERGED" and r[8]
+          and not (lo and merge_time(r[8]) and local_day(merge_time(r[8])) < lo)}
+days = sorted(t.date() for t in map(merge_time, judged.values()) if t)
+search = f"merged:{days[0]}..{days[-1] + datetime.timedelta(days=REWORK_DAYS + 1)}" if days else ""
+got = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], search) if days else ({}, {})
+gh_failed = got is None
+if gh_failed:
+    print("rework: gh failed, so rework is left empty.", file=sys.stderr)
+merged_by, oldest = got or ({}, {})
+for k, m in judged.items():
+    merged_by.setdefault(k, (m, "", None))
+cut = {k for k, m in judged.items() for t in [merge_time(m)]
+       if t and oldest.get(k.partition("#")[0]) and t < oldest[k.partition("#")[0]]}
+reworked = rework_of(merged_by, finding_rows(sys.argv[1], ("escaped",)), judged)
+settled = rework_settled()
+last = {pr_key(r[6]): i for i, r in enumerate(rows) if r[6]}
+
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
 
@@ -128,40 +230,36 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
       "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens"
-      "\t" + "\t".join(p + "_min" for p in PHASES))
-for (f, kind, risk, story_epic, asked, prs, *the_pr), c in zip(rows, found):
+      "\t" + "\t".join(p + "_min" for p in PHASES) + "\trework\theld_min")
+for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(rows, found)):
     pr, state, merged, created, main_merges = the_pr[:5]
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
     story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     merged = merged if asked and state == "MERGED" else ""
+    # 1 when a later fix reworked its merged PR, 0 when none did once REWORK_DAYS passed; empty on an
+    # unmerged PR, an earlier build on it, and where rework is unknown.
+    merged_t, k = merge_time(merged), pr_key(pr)
+    known = merged_t and last[k] == i and k in judged and k not in cut and not gh_failed
+    rework = "1" if known and k in reworked else "0" if known and local_day(merged_t).isoformat() < settled else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
-                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))))
+                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))
+                     + [rework, held(slug, story_epic, f[AS_IS]) if attempts == "1" else ""]))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
-    # finds a merged story), as (slug, day it was deleted); None when git has none. Read on the
-    # default branch, where merges land (HEAD when there is no origin/HEAD, as dash_base_ref), so a
-    # story branch deleting its own file is no merge. --first-parent dates it by the merge commit, and
-    # --no-renames keeps a story deleted beside a similar new one a deletion. Each commit prints as
-    # "\x01<day>\0" and then its deleted paths (from the repo root, any characters), each ending "\0".
-    # Without --pickaxe-all, -G lists only the files whose removed lines name the kind, so a story
-    # deleted beside it is never taken for it.
-    board = sys.argv[2]
-    has_origin = subprocess.run(["git", "-C", board, "rev-parse", "-q", "--verify", "origin/HEAD"], capture_output=True)
-    got = subprocess.run(["git", "-C", board, "log", "origin/HEAD" if has_origin.returncode == 0 else "HEAD",
-                          "--first-parent", "--diff-merges=first-parent", "--no-renames", "--diff-filter=D", "-z",
-                          "--name-only", "--format=%x01%cs", "-G", f"^checks: *{kind} *$", "--", "stories/"],
-                         capture_output=True, text=True)
-    commits = got.stdout.split("\x01")[1:] if got.returncode == 0 else []
-    if not commits:
+    # finds a merged story), as (slug, day it was deleted); None when git has none. Without
+    # --pickaxe-all, -G lists only the files whose removed lines name the kind, so a story deleted
+    # beside it is never taken for it.
+    commits = board_commits("--diff-filter=D", "--format=%x01%cs", "-G", f"^checks: *{kind} *$")
+    if not commits or not commits[0][1]:
         return None
-    deleted, path = commits[0].split("\0")[:2]
-    return os.path.splitext(os.path.basename(path.lstrip("\n")))[0], datetime.date.fromisoformat(deleted)
+    deleted, paths = commits[0]
+    return os.path.splitext(os.path.basename(paths[0]))[0], datetime.date.fromisoformat(deleted)
 
 TODAY, DAY = datetime.date.today(), datetime.timedelta(days=1)
 WINDOW = datetime.timedelta(days=RECURRING_DAYS)

@@ -101,7 +101,7 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`." "${bl}")"
 check "the backlog conductor reports to conduct-backlog.report.md" "yes" "$(has "${p}/.swarm/conduct-backlog.report.md" "${bl}")"
 nx="$(run next)"
 check "with the backlog conductor alive, next waits on it" "wait ${bn}" "${nx%%$'\n'*}"
-echo reported > "${p}/.swarm/conduct-backlog.report.md"
+echo reported > "${p}/.swarm/conduct-backlog.report.md"; TZ=UTC touch -t 202610010800 "${p}/.swarm/conduct-backlog.report.md"
 nx="$(run next)"
 check "once the backlog conductor has reported, next collects it" "collect ${bn}" "${nx%%$'\n'*}"
 run close "${bn}" >/dev/null
@@ -118,6 +118,8 @@ run close conduct-e >/dev/null
 # --- merge = agent: the conductor merges each pinned head.
 echo "merge = agent" > "${p}/.claude/swarm/config"
 run conduct --backlog >/dev/null
+check "a conduct that removes an earlier run's report logs the report's time first, for outcomes' held_min" "ok (2026-10-01T08:00:00Z)|gone" \
+  "$(awk -F'\t' '$2 == "report" && $3 == "backlog" { print $5 }' "${p}/.swarm/events.tsv")|$([[ -e "${p}/.swarm/conduct-backlog.report.md" ]] && echo there || echo gone)"
 bl="$(cat "${brief}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does, unless it costs money" "yes" \
@@ -132,6 +134,19 @@ run close "${bn}" >/dev/null
 run conduct e >/dev/null
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has '`swarm.sh finish <epic>` only on a board outside the repo' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
+
+# --- An epic conductor's workspace: the epic's parent:, read as the template writes it (a trailing
+# comment) or quoted, else the epic's own slug.
+item "${b}" epics/c1.md "status: active" "parent: big-epic            # only on a child epic of a split one"
+item "${b}" epics/c2.md "status: active" 'parent: "big-epic"'
+item "${b}" stories/c1s.md "status: ready" "kind: code" "epic: c1"
+item "${b}" stories/c2s.md "status: ready" "kind: code" "epic: c2"
+item "${b}" epics/solo.md "status: active"
+item "${b}" stories/solos.md "status: ready" "kind: code" "epic: solo"
+: > "${ROOT}/herdr.log"
+o1="$(run conduct c1 || echo "exit $?")"; o2="$(run conduct c2 || echo "exit $?")"; o3="$(run conduct solo || echo "exit $?")"
+check "conduct names the workspace for a commented or quoted parent:, else the epic" "yes|yes|yes|2|yes" \
+  "$(has "workspace big-epic (w)" "${o1}")|$(has "workspace big-epic (w)" "${o2}")|$(has "workspace solo (w)" "${o3}")|$(grep -c 'workspace create --label big-epic' "${ROOT}/herdr.log")|$(has "workspace create --label solo " "$(cat "${ROOT}/herdr.log")")"
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

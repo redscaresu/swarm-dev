@@ -57,6 +57,12 @@ When a review agent reports \`codex skipped: <why>\` (its file's second line say
 Wait for the builder, then start a new review agent on its new head. Stop at the first pass on the latest head
 with nothing substantive: one that finds only nits, edge cases outside the story, or points already
 declined is such a pass, even if it is not empty. Rebut what it found in the PR with a reason.
+A round is one review whose findings you sent to the builder (\`swarm.sh tell <slug> findings\`); a
+review started again (head moved, no \`## Findings\` section, a review agent that timed out or
+crashed) is not one. Review stops after round 3: from round 4 on, only a real bug (wrong behaviour,
+data loss, a security hole) sends the PR back. Decline anything
+smaller with a reason in the PR, and log it with \`log-finding --declined <reason> --reviewer <who>\`
+as below: nit for a nit or an edge case, out-of-scope or wrong where they apply.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
@@ -119,7 +125,7 @@ in the epic is in review and the epic's **Done when** will hold once they merge,
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
 When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
 \`swarm.sh close <slug>\`. Then run \`swarm.sh unblock\`, and start each story ${scope} it prints as
-\`ready:\` whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
+\`ready:\` that clashes with no running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again with its build kept: close its builder with a bare
 \`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, and go on.
@@ -147,7 +153,7 @@ $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the buil
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
 Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
-whose \`touches\` do not overlap a running one, with \`swarm.sh story --strict <slug>\`.
+that clashes with no running one, with \`swarm.sh story --strict <slug>\`.
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again and nothing merges: leave its builder open, unless that line
 says \`(costs money)\`. The user merges that parent, maybe days later, so close its builder with a
@@ -295,7 +301,7 @@ send_goal() {
   pre="${slug}: the brief was delivered, but"; post="; do not send it again"
   [[ "$3" != findings ]] || { pre="${slug}: the findings were delivered, but"; post="; do not send them again"; }
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
-  while state="$(session_state "${name}")"; [[ "${state}" != busy && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
+  while state="$(session_state "${name}")"; [[ "${state}" != busy && "${state}" != waiting* && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
   case "${state}" in
     busy) ;;
     waiting*) die "${pre} its builder is waiting on $(waiting_for "${state}"), so no /goal was sent; answer it (herdr agent read ${name})${post}" ;;
@@ -304,7 +310,7 @@ send_goal() {
   deliver_prompt "${name}" <(goal_message "$(cat "${goal}")") "" once   # read once, so a pipe will do
   deadline=$((SECONDS + PROMPT_TIMEOUT_MS / 1000))
   # A queued paste waits out the deadline: a goal_status may still follow it.
-  while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ ( -z "${entry}" || "${entry}" == pasted ) && ${SECONDS} -lt ${deadline} ]]; do sleep 1; done
+  while entry="$(goal_entry "${name}" "${since}" "${goal}")"; [[ ( -z "${entry}" || "${entry}" == pasted ) && ${SECONDS} -lt ${deadline} ]]; do nap 1; done
   case "${entry}" in
     pasted) die "${pre} its /goal was pasted as text, not run: its session log shows it queued as a prompt and no goal set; its builder is still open${post}" ;;
     refused:*) die "${pre} Claude Code refused its /goal (${entry#refused: }); its builder is still open${post}" ;;
@@ -377,7 +383,7 @@ EOF
 # rules_review_rule — the conductor's half of rules_check_step, while the project has tagged rules.
 rules_review_rule() {
   [[ -n "$(project_rules | rule_kinds)" ]] || return 0
-  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other."
+  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other, after round 3 too."
 }
 
 # project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
@@ -387,10 +393,15 @@ project_rules() {
   [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
-# agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
-# lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# agent_kind — true for a kind a swarm agent may build (AGENT_KINDS); an empty kind means code.
+# Anything else, lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# touches_rows.py --idle reads AGENT_KINDS as SWARM_AGENT_KINDS.
+AGENT_KINDS="code docs chore"
 agent_kind() {
-  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
+  local k
+  [[ -n "$1" ]] || return 0
+  for k in ${AGENT_KINDS}; do [[ "$1" == "${k}" ]] && return 0; done
+  return 1
 }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
@@ -858,15 +869,37 @@ leave the rest to their own conductor.
 EOF
 }
 
+# clash_rule — when two stories may build at once, and what a conflict with the base costs. Git merges
+# edits to different parts of one file, so only a shared symbol or a bare file holds a story back.
+clash_rule() {
+  cat <<EOF
+Two stories clash only when their \`touches\` name the same \`file:symbol\` in the same repo, or
+when either names the bare file (no \`:symbol\`) of a file the other also names in the same repo.
+Otherwise both build at once, even in the same file. A builder whose PR conflicts with its base
+merges the base in, resolves it, re-runs the tests and pushes. A conflict never sends a story back
+to \`ready\`: never close a builder over one. When \`swarm.sh watch\` says a PR CONFLICTS, write a
+file saying to merge origin/<base> into its branch, resolve it, re-run the tests and push, and to
+stop waiting on CI until then (a conflicting PR runs none). Send it with \`swarm.sh tell <slug> nudge
+<file>\`, never as findings, which would count as a review round. Watch reports each conflict once,
+so do not drop it: if the builder is working, run \`swarm.sh wait <slug>\` in the background and send
+it once the wait returns. If the story has no builder (closed after \`swarm.sh review\`), start one
+in its worktree with \`swarm.sh agent <tab> <slug> <worktree> <role> <brief>\`, as the Stacked rule
+below does for \`(no builder)\`, with a brief that says the same and to reply with the PR URL. If its
+worktree is gone too, list the PR in your report for the lead.
+EOF
+}
+
 # A PR per story.
 conduct_story_mode() {
   local epic="$1"
   cat <<EOF
 Drive the epic's stories (${BOARD}/stories/*.md with \`epic: ${epic}\`) to merge, as reference.md
-§ Building describes: pick waves of \`ready\` stories whose \`touches\` do not overlap,
+§ Building describes: pick waves of \`ready\` stories that do not clash,
 start each with \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --epic ${epic}\` in the background, and review each PR. Each story's base branch is in its brief,
 .swarm/briefs/<slug>.md.
+
+$(clash_rule)
 
 $(stacked_rule "${epic}")
 
@@ -896,7 +929,7 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`."
   fi
   cat <<EOF
 Drive every \`ready\` story with no \`epic:\` (${BOARD}/stories/*.md) to merge, as reference.md
-§ Building describes: pick waves of them whose \`touches\` do not overlap, start each with
+§ Building describes: pick waves of them that do not clash, start each with
 \`${SWARM_HOME}/bin/swarm.sh story --strict <slug>\`, wait with \`swarm.sh wait\` and
 \`swarm.sh watch --backlog\` in the background, and review each PR. Each story's base branch is in
 its brief, .swarm/briefs/<slug>.md.
@@ -910,6 +943,8 @@ start it, and report it as not started, with the reason \`build died\`. A held c
 
 List each ready story with no \`epic:\` that you could not start in your report, one line each:
 \`not started: <slug> (<the refusal's first line>)\`.${own}
+
+$(clash_rule)
 
 $(stacked_rule backlog)
 
@@ -925,9 +960,10 @@ $(conduct_merge_rule backlog)
 EOF
 }
 
-# hld_workspace <label> — the herdr workspace labelled <label>, created if there is none. Every epic
-# of one HLD shares it; a new workspace's placeholder tab is closed once the caller has added its own.
-hld_workspace() {
+# epic_workspace <label> — the herdr workspace labelled <label>, created if there is none. A conductor's
+# label is its epic's parent: (so the child epics of a split one share a workspace), else the epic's own
+# slug. A new workspace's placeholder tab is closed once the caller has added its own.
+epic_workspace() {
   local label="$1" ws
   ws=$(herdr workspace list | json "next((w['workspace_id'] for w in d['result']['workspaces'] if w.get('label')=='${label}'),'')")
   if [[ -z "${ws}" ]]; then
@@ -989,9 +1025,9 @@ epic_env() {
 # start_conductor <epic>|--backlog — a conductor for one epic, or with --backlog for the ready
 # stories with no epic: conduct-backlog-<project dir> (conductor_name), in a workspace named backlog, needing no epic file.
 start_conductor() {
-  local epic="$1" epic_file="${BOARD}/epics/$1.md" hld prompt ws placeholder inbox err names tab name
+  local epic="$1" epic_file="${BOARD}/epics/$1.md" label prompt ws placeholder inbox err names tab name report
   if [[ "${epic}" == --backlog ]]; then
-    epic=backlog; hld=backlog; epic_file="${BOARD}/epics/backlog.md"
+    epic=backlog; label=backlog; epic_file="${BOARD}/epics/backlog.md"
     # conduct-backlog would be both conductors' name, brief and report.
     [[ ! -e "${epic_file}" ]] || die "conduct --backlog: ${epic_file} is an epic named backlog; rename it first"
   else
@@ -1000,8 +1036,8 @@ start_conductor() {
     [[ "${epic}" != backlog && "$(conductor_name "${epic}")" != "$(conductor_name backlog)" ]] \
       || die "conduct: ${epic} would take the backlog conductor's name; run conduct --backlog, or rename ${epic_file}"
     [[ -f "${epic_file}" ]] || die "no epic ${epic_file}"
-    hld=$(sed -n 's/^hld: *//p' "${epic_file}" | head -1); hld="${hld:-${epic}}"
-    [[ "${hld}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad hld '${hld}'"
+    label="$(fm_list "${epic_file}" parent)"; label="${label:-${epic}}"
+    [[ "${label}" =~ ^[a-z0-9-]+$ ]] || die "${epic}: bad parent '${label}'"
   fi
   # Before the brief, the old report's removal and the workspace, so a refusal changes nothing.
   require_claude
@@ -1009,8 +1045,12 @@ start_conductor() {
   name="$(conductor_name "${epic}")"; free_agent_name "${name}"   # a name held elsewhere leaves the report be
   prompt="${PROJECT_DIR}/.swarm/briefs/conduct-${epic}.md"; mkdir -p "$(dirname "${prompt}")"
   conduct_brief "${epic}" > "${prompt}"
-  rm -f "${PROJECT_DIR}/.swarm/conduct-${epic}.report.md"   # a report left by an earlier run is not this one's
-  read -r ws placeholder <<< "$(hld_workspace "${hld}")"
+  report="${PROJECT_DIR}/.swarm/conduct-${epic}.report.md"
+  # A report left by an earlier run is not this one's. Its time, when that run ended, goes to
+  # events.tsv first: outcomes' held_min ends the run there.
+  [[ ! -f "${report}" ]] || record_event report "${epic}" "ok ($(date -u -r "${report}" +%Y-%m-%dT%H:%M:%SZ))"
+  rm -f "${report}"
+  read -r ws placeholder <<< "$(epic_workspace "${label}")"
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
@@ -1021,7 +1061,7 @@ start_conductor() {
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
   inbox="$(conductor_inbox "${name}")"; rm -f "${inbox}.md" "${inbox}.reading.md"
-  echo "workspace ${hld} (${ws})"
+  echo "workspace ${label} (${ws})"
   # An epic being built is active, or status and next list it as a later epic waiting on the user.
   # In BOARD_STATE_DIR, as unblock's is (set_fm), never the epic file; any other status is left as it is.
   # The conductor is already running, so a state file that cannot be written is reported, never
