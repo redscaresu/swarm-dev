@@ -404,11 +404,13 @@ rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, wh
 # decisions from the story and its epic, each whole (its sub-bullets too) and cut at 1500 bytes.
 item "${b}" epics/rv.md "status: active"
 printf '%s\n' "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
-  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" "- **Other.** RV-NOT-A-DECISION" >> "${b}/epics/rv.md"
+  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" "- **Other.** RV-NOT-A-DECISION" \
+  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB" >> "${b}/epics/rv.md"
 start rv1 >/dev/null
 LONG="$(printf 'x%.0s' $(seq 2000))"
 printf '%s\n' --- "status: review" "kind: code" "epic: rv" "repo: svc" "touches: [x.sh]" --- "" "# rv1" "" \
-  "**Done when:**" "- one release, not three" "" "## Notes" "" "Keep it short (user, 2026-10-17): ${LONG}" > "${b}/stories/rv1.md"
+  "**Done when:**" "- one release, not three" "" "## Notes" "" "Keep it short (user, 2026-10-17): ${LONG}" "" \
+  "Accents (user, 2026-10-17): x$(printf 'é%.0s' $(seq 1000))" > "${b}/stories/rv1.md"
 wt="$(git -C "${ROOT}/svc" worktree list --porcelain | sed -n 's/^worktree \(.*rv1\)$/\1/p')"
 git -C "${wt}" rev-parse HEAD > "${ROOT}/gh/head"
 (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review-agent rv1 "${U}/8" >/dev/null 2>&1) \
@@ -442,18 +444,27 @@ for l in "${CHECKLIST[@]}"; do
   check "the review agent's and the fallback's briefs carry: ${l:2:40}..." "yes|yes|yes" \
     "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
 done
-check "both briefs say a gap in the PR's own code is a finding, and out of scope only when its fix is outside the touches" "yes|yes" \
-  "$(has "it is out of scope only when its fix is in a file outside the touches." "${brief}")|$(has "it is out of scope only when its fix is in a file outside the touches." "${fbrief}")"
+SCOPE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
+check "both briefs say, in the same words, a point only a file outside the touches can fix is out of scope and a gap in the PR's own code is a finding" "yes|yes" \
+  "$(has "${SCOPE}" "${brief}")|$(has "${SCOPE}" "${fbrief}")"
+check "neither brief still says work outside the touches is not a finding" "0|0" \
+  "$(grep -ci 'outside them is not a finding' <<< "${brief}" || true)|$(grep -ci 'outside them is not a finding' <<< "${fbrief}" || true)"
+check "the review brief's Out of scope holds only what a change outside the touches can fix" "yes" \
+  "$(has "raised that only a" "${brief}")"
 check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
   "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
 for l in "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
-  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO"; do
+  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" \
+  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  - RV-WRAP-SUB"; do
   check "both briefs carry the epic's decision line: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
 check "a decision ends at the next bullet at its indent: the epic's next bullet is not in the brief" "0" "$(grep -c RV-NOT-A-DECISION <<< "${brief}" || true)"
 check "the story's 2000-byte decision is cut to 1500 bytes and an ellipsis" "yes|0" \
   "$(has "Keep it short (user, 2026-10-17): xxx" "${brief}")|$(grep -c "$(printf 'x%.0s' $(seq 1500))" <<< "${brief}" || true)"
 check "and ends with the ellipsis" "1" "$(grep -c 'x…$' <<< "${brief}" || true)"
+utf8() { python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8"); print("yes")' 2>/dev/null || echo no; }
+check "a 2000-byte decision of two-byte characters is cut on a character boundary: both briefs stay valid UTF-8" "yes|yes|yes" \
+  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" | sed 's/^1$/yes/')"
 check "a fallback brief with no story has the five lines but neither the decision check nor any decision" "yes|0|0" \
   "$(has "${CHECKLIST[0]}" "${fbare}")|$(grep -c '(user, ' <<< "${fbare}" || true)|$(grep -c RV-DECISION <<< "${fbare}" || true)"
 rm -f "${p}/.swarm/state/rv" "${p}/.swarm/state/fallback" "${b}/epics/rv.md" "${b}/stories/rv1.md"

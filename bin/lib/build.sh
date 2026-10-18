@@ -529,20 +529,36 @@ review_stack_note() {
   printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
 }
 
-# DECISION_MAX_BYTES: the most of one user's decision a review brief carries; a longer one is cut, with "…".
+# SCOPE_RULE: what a reviewer holds out of scope, in the review agent's brief and codex's story prompt
+# (so the fallback reviewer's too), the same words in each.
+SCOPE_RULE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
+
+# DECISION_MAX_BYTES: the most of one user's decision a review brief carries; a longer one is cut on a
+# character boundary, with "…".
 DECISION_MAX_BYTES=1500
 
-# user_decisions <file>... — each decision the files mark `(user, <date>`: its line and the lines
-# under it (wrapped text, sub-bullets), up to the next bullet or bold line at its indent or less, a
-# blank line or a heading; each cut to DECISION_MAX_BYTES.
+# user_decisions <file>... — each decision the files mark `(user, <date>`: the whole bullet (or
+# paragraph) that holds the mark, from its first line, with its wrapped text and sub-bullets, up to the
+# next bullet or bold line at its indent or less, a blank line or a heading; each cut to
+# DECISION_MAX_BYTES. cur is the bullet or paragraph read so far, ci its first line's indent.
 user_decisions() {
   LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" '
-    function flush() { if (d != "") print (length(d) > max ? substr(d, 1, max) "…" : d); d = "" }
+    function flush(  n) {
+      if (d == "") return
+      if (length(d) > max) {
+        # Back off while the byte after the cut is a UTF-8 continuation byte (10xxxxxx).
+        for (n = max; n > 0 && substr(d, n + 1, 1) >= "\200" && substr(d, n + 1, 1) < "\300"; n--) ;
+        d = substr(d, 1, n) "…"
+      }
+      print d; d = ""
+    }
     function indent(s) { match(s, /^ */); return RLENGTH }
-    FNR == 1 { flush() }
+    FNR == 1 { flush(); cur = "" }
     d != "" && (/^[[:space:]]*$/ || /^#/ || (indent($0) <= ind && /^ *([-*+]|[0-9]+\.) |^ *\*\*/)) { flush() }
     d != "" { d = d "\n" $0; next }
-    /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = $0; ind = indent($0) }
+    /^[[:space:]]*$/ || /^#/ { cur = ""; next }
+    { if (cur == "" || $0 ~ /^ *([-*+]|[0-9]+\.) |^ *\*\*/) { cur = $0; ci = indent($0) } else cur = cur "\n" $0 }
+    /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = cur; ind = ci }
     END { flush() }' "$@"
 }
 
@@ -552,7 +568,7 @@ user_decisions() {
 review_checklist() {
   local epic decisions files
   cat <<'EOF'
-Hold the PR to these as well. When one finds a gap in the PR's own code, it is a finding even where the touches and Done when do not name it; it is out of scope only when its fix is in a file outside the touches.
+Hold the PR to these as well:
 - A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified.
 - An audit or test scoped to one file, when the defect class spans many, is a finding.
 - A new code path must enforce every rule the existing paths enforce.
@@ -583,7 +599,7 @@ The story touches: $(fm "${story}" touches)
 Its **Done when:**
 $(story_items "${story}" 'Done when')
 
-Judge the PR against these touches and items alone: work outside them is not a finding.
+Judge the PR against these touches and items. ${SCOPE_RULE}
 $(review_stack_note "$1" "$3")
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last. If
@@ -604,8 +620,8 @@ Otherwise, write ${4} with the Write tool, in one go (the conductor's wait ends 
 Its first line is \`head: $5\`; when codex was skipped, its second is \`codex skipped: <why>\`.
 Under a \`## Findings\` heading,
 one line per finding: its reviewer (codex or code-review), file:line, and the finding; with none, say
-so. Under a \`## Out of scope\` heading, the same for each point a reviewer raised outside the
-story's touches and Done when, so the conductor can decline it; with none, say so. Then reply with
+so. Under a \`## Out of scope\` heading, the same for each point a reviewer raised that only a
+change to a file outside the touches can fix, so the conductor can decline it; with none, say so. Then reply with
 ${4}, and with \`codex skipped: <why>\` when codex was.
 EOF
   rules="$(project_rules)"
