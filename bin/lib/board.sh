@@ -100,7 +100,7 @@ epic_has_stories() {
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting="" when held n tag base
+  local f slug epic story_epic buildable="" waiting="" when held n tag base
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -124,18 +124,14 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build: ready, and of a kind an agent builds. "<epic> <slug>" per line.
+  # Stories an agent can build (buildable_story). "<epic> <slug>" per line.
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready ]] || continue
-    kind=$(fm "${f}" kind)
-    agent_kind "${kind}" || continue
+    buildable_story "${f}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
-  # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
   while read -r story_epic slug; do
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
-    src="$(repo_dir "$(fm "${BOARD}/stories/${story_epic}.md" repo)")" || continue
-    [[ -d "$(worktree_for "${src}" "${story_epic}")" ]] || continue
+    one_off_started "${story_epic}" || continue
     echo "resume ${story_epic}"; echo "${story_epic} has already started: wait for its agent, then review its PR"; return
   done <<< "${buildable}"
   # An active epic's stories first: finish what is started before anything new.
@@ -186,6 +182,61 @@ queued_lines() {
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
   ( watch_scope "${scope[@]}" && for r in "${WATCH_REPOS[@]}"; do queued_prs "${r}" "${WATCH_HEADS}"; done ) 2>/dev/null \
     | cut -d' ' -f2- || true
+}
+
+# buildable_story <story file> — true for a story next_step builds: ready, of a kind an agent
+# builds (agent_kind), with no epic or in an active one. dash counts the same ones.
+buildable_story() {
+  local epic
+  [[ "$(fm "$1" status)" == ready ]] && agent_kind "$(fm "$1" kind)" || return 1
+  epic="$(fm "$1" epic)"
+  [[ -z "${epic}" || "$(fm "${BOARD}/epics/${epic}.md" status 2>/dev/null)" == active ]]
+}
+
+# one_off_started <slug> — true once a one-off's build has begun: it keeps status: ready until its PR
+# merges, so an existing worktree means it has started (next_step's resume).
+one_off_started() {
+  local src
+  src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
+}
+
+# idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
+# per blocked story whose depends_on story shares no file in touches with it (touches_rows.py
+# --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# step, no conductor at work), no story is buildable (buildable_story) and there is an out-of-scope
+# finding to offer (out_of_scope_findings), idle: "<project>" (quoted: a slug never starts with a
+# quote, and a space stays in the name) with up to IDLE_CANDIDATES of them to file as a one-off.
+# Later stories are the user's (waiting_on_user), never offered here.
+IDLE_CANDIDATES=5
+idle_lines() {
+  local f found
+  # Advisory: a failed check warns, and never fails next.
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories" \
+    || echo "warning: the idle-dependency check failed (touches_rows.py --idle); next's step above stands" >&2
+  case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
+  while IFS= read -r f; do
+    if buildable_story "${f}"; then return 0; fi
+  done < <(board stories)
+  # sed, not head: head can exit before the writers finish, and the broken pipe fails under pipefail.
+  found="$(out_of_scope_findings | sed -n "1,${IDLE_CANDIDATES}p")"
+  [[ -n "${found}" ]] || return 0
+  echo "idle: \"$(basename "${PROJECT_DIR}")\""
+  printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
+}
+
+# next_report — swarm.sh next: next_step's step, then idle_lines' for it. Both are worked out first
+# and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
+# the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
+# this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
+next_report() {
+  local tmp step idle
+  tmp="$(mktemp)" || die "next: cannot make a temp file"
+  # shellcheck disable=SC2064 # the path is fixed now
+  trap "rm -f '${tmp}'" EXIT
+  next_step > "${tmp}"
+  step="$(< "${tmp}")"; idle="$(idle_lines "${step%%[ $'\n']*}")"
+  trap '' PIPE
+  printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
 }
 
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
