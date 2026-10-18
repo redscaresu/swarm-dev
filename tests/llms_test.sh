@@ -21,6 +21,6 @@ check "names /swarm-dev:swarm" grep -q '/swarm-dev:swarm' "${ROOT}/llms.txt"
 desc="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["description"])' "${ROOT}/.claude-plugin/plugin.json")"
 check "plugin.json description has no HLD" [ "${desc}" = "${desc//HLD/}" ]
 ver="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "${ROOT}/.claude-plugin/plugin.json")"
-check "plugin.json version is x.y.z" [[ "${ver}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+check "plugin.json version is x.y.z" grep -Eq "^[0-9]+\.[0-9]+\.[0-9]+\$" <<<"${ver}"
 
 exit $((fails > 0))
