@@ -14,7 +14,7 @@
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
-#   swarm.sh lessons                                        removed: prints that recurring kinds are in outcomes
+#   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
@@ -343,14 +343,15 @@ dispatch() {
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
-    cost)   moved cost cost "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
+    cost)   moved cost "flow's cost section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     outcomes) outcomes_report "$@" ;;
     flow)   flow_report "$@" ;;
-    review-yield) moved review-yield reviewers "[--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
+    review-yield) moved review-yield "flow's reviewers section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]" ;;
     log-finding) finding_flags "$@"; shift "${FINDING_SKIP}"
             record_finding "${1:-}" "${2:-}" "${*:3}" "${FINDING_OUTCOME}" ${FINDING_REVIEWER+"${FINDING_REVIEWER}"} ;;
-    lessons) echo "swarm.sh lessons is removed: recurring finding kinds are in swarm.sh outcomes" ;;
-    features) moved features features "[--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
+    lessons) [[ $# -eq 0 || ( $# -eq 1 && "$1" == --all ) ]] || die "usage: swarm.sh lessons [--all]"
+            moved lessons "outcomes' recurring block" "outcomes [--since YYYY-MM-DD]" ;;
+    features) moved features "flow's features section" "flow [--since YYYY-MM-DD] [--until YYYY-MM-DD]" ;;
     watch)  watch_prs "$@" ;;
     finish) finish_item "${1:?slug}" ;;
     reset)  reset_story "${1:-}" "${*:2}" ;;

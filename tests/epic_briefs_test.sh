@@ -199,6 +199,13 @@ run story g2 >/dev/null
 check "a builder gets CLAUDE.md's and .claude/CLAUDE.md's tagged rules, and only those" "yes|yes|no" \
   "$(has "Keep it. <!-- lesson: claude-kind -->" "$(cat "${p}/.swarm/briefs/g2.md")")|$(has "Name it. <!-- lesson: dot-claude-kind -->" "$(cat "${p}/.swarm/briefs/g2.md")")|$(grep -q "^Untagged.$" "${p}/.swarm/briefs/g2.md" && echo yes || echo no)"
 run close g2 >/dev/null; rm -f "${b}/stories/g2.md" "${p}/CLAUDE.md" "${p}/.claude/CLAUDE.md"
+# CLAUDE.md a symlink to AGENTS.md: each tagged rule reaches the brief once.
+printf 'Prove it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"; ln -s AGENTS.md "${p}/CLAUDE.md"
+item "${b}" stories/g3.md "status: ready" "kind: code" "repo: svc"
+run story g3 >/dev/null
+check "a rule in AGENTS.md and a CLAUDE.md that links to it reaches the brief once" "1" \
+  "$(grep -c '^Prove it. <!-- lesson: agents-kind -->$' "${p}/.swarm/briefs/g3.md")"
+run close g3 >/dev/null; rm -f "${b}/stories/g3.md" "${p}/CLAUDE.md" "${p}/AGENTS.md"
 check "base prints a repo's base" "dev" "$(run base svc)"
 rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
 : > "${p}/.claude/swarm/config"

@@ -357,7 +357,7 @@ project_rules() {
   [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
   for f in AGENTS.md CLAUDE.md .claude/CLAUDE.md; do
     grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${PROJECT_DIR}/${f}" 2>/dev/null || true
-  done
+  done | awk '!seen[$0]++'   # once each, as when CLAUDE.md links to AGENTS.md
 }
 
 # agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,

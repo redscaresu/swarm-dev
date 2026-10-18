@@ -74,8 +74,10 @@ done
 # lessons_file went with lessons: an old config that sets it still loads, with no error or output.
 project "${p}" "lessons_file = AGENTS.md" "stall_minutes = 45"
 check "a config with lessons_file loads silently" "45" "$(run "${p}" config stall_minutes)"
-check "lessons points to outcomes and exits 0" "swarm.sh lessons is removed: recurring finding kinds are in swarm.sh outcomes|0" \
-  "$(out="$(run "${p}" lessons)" && echo "${out}|0" || echo "${out}|$?")"
+check "lessons points to outcomes' recurring block and exits 0, with or without --all" \
+  "swarm.sh lessons is now outcomes' recurring block: swarm.sh outcomes [--since YYYY-MM-DD]|0|0" \
+  "$(out="$(run "${p}" lessons)" && echo "${out}|0" || echo "${out}|$?")|$(run "${p}" lessons --all >/dev/null && echo 0 || echo $?)"
+check "lessons refuses any other argument" "yes" "$(fails_with 'usage: swarm.sh lessons \[--all\]' run "${p}" lessons --bogus)"
 project "${p}" "board_dir = \$(touch ${p}/pwned)"
 check "a \$(...) value is refused" "yes" "$(fails_with 'config:1: board_dir: \$ and backticks' run "${p}" config)"
 check "a \$(...) value never runs" "no" "$([[ -e "${p}/pwned" ]] && echo yes || echo no)"

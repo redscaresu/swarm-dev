@@ -847,9 +847,11 @@ PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. When a conductor finishes,
 `/swarm-dev:swarm` files one story with `checks: <kind>` for each recurring kind that has no check
-yet. The story adds a test, lint rule, hook or review-prompt line that catches the kind, since a rule
-pasted into a prompt does not stop the mistake by itself. Once it merges, `outcomes` shows whether the kind came
-back less often. The log is `.swarm/findings.tsv`, local to
+yet, in a board PR named `check-<kind>`. The story adds a test, lint rule, hook or review-prompt line
+that catches the kind, since a rule pasted into a prompt does not stop the mistake by itself. While
+that PR is open, or for 90 days after you close it unmerged, the kind gets no new story. Once the
+check merges, `outcomes` shows whether the kind came back less often, and `/swarm-dev:swarm` tells
+you when its fixes after the merge reach 3 PRs. The log is `.swarm/findings.tsv`, local to
 the machine: date, kind, PR, the line, its outcome (`fixed`, `declined` or `escaped`; rows written before the
 outcome column count as fixed) and the reviewer (`unknown` when a row was logged without `--reviewer`
 or before that column existed). Columns added later go on the end, so readers ignore any past the sixth.

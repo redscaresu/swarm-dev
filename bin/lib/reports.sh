@@ -258,10 +258,10 @@ flow_sections() {
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
 
-# moved <command> <section> <flags> — a report folded into flow: say where its numbers went, and the
-# flags that section reads, for one release.
+# moved <command> <where> <run> — a report folded into another (flow's sections, outcomes' recurring
+# block): say where its numbers went, and the command, with the flags it reads, that prints them.
 moved() {
-  echo "swarm.sh $1 is now flow's $2 section: swarm.sh flow $3"
+  echo "swarm.sh $1 is now $2: swarm.sh $3"
 }
 
 # findings <repo> <pr> — what a green check can hide: the notes (annotations) on every check run of

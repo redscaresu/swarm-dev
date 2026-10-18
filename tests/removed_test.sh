@@ -32,9 +32,14 @@ LESSONS_GONE='LESSON_|lessons_report|rules_check_step|rules_review_rule|Rules ch
 if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands")"; then
   echo "FAIL bin/ or commands/ still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))
 else echo "ok   no lessons, rule PR or rules check in bin/ or commands/"; fi
-if sed -n '/collect <agent>/,/^   - /p' "${REPO}/commands/swarm.md" | grep -q 'checks: <kind>'; then
+collect="$(sed -n '/collect <agent>/,/^   - /p' "${REPO}/commands/swarm.md")"
+if grep -q 'checks: <kind>' <<< "${collect}"; then
   echo "ok   commands/swarm.md's collect step files a checks: story"
 else echo "FAIL commands/swarm.md's collect step does not name checks:"; fails=$((fails + 1)); fi
+# It reads a windowed outcomes, and skips a kind whose check-<kind> board PR is open or was declined.
+if grep -q 'outcomes --since' <<< "${collect}" && grep -q 'head board/check-<kind>' <<< "${collect}"; then
+  echo "ok   the collect step reads outcomes --since and checks the kind's board PR"
+else echo "FAIL the collect step does not read outcomes --since or check board/check-<kind>"; fails=$((fails + 1)); fi
 
 W="[--since YYYY-MM-DD] [--until YYYY-MM-DD]"
 for moved in "cost:cost:${W}" "features:features:${W}" "review-yield:reviewers:${W} [--epic <slug>]"; do

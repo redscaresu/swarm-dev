@@ -72,12 +72,18 @@ Repeat until a step below says stop:
      wait printed auth." and run `swarm.sh tell <agent> resume <file>` for each agent whose `wait` printed
      `auth`, then go back to 1.
    - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
-     `swarm.sh outcomes` and read its `recurring` block. For each kind there with an empty `check`
-     column, and no story on the board that already has `checks: <kind>`, file one story (through
-     `swarm.sh board-pr`, like any board edit) with `checks: <kind>` in its front matter that adds a test, lint rule, hook or
-     review-prompt line which catches that kind. A kind whose check has merged (`check_merged` set)
-     stays in the block for up to 30 days on findings from before it, so it still recurs only when
-     `since_30d` (its `<n>` while it reads `<n>/<days>d`) is above 0: then tell the user, with `before_30d` and `since_30d`. Then read its report
+     `swarm.sh outcomes --since <the day 30 days ago, YYYY-MM-DD>` (the window keeps its gh calls to
+     recent builds; the `recurring` block counts its own last 30 days either way) and read its
+     `recurring` block. For each kind there with an empty `check` column, file one story with
+     `checks: <kind>` in its front matter that adds a test, lint rule, hook or review-prompt line
+     which catches that kind, through `swarm.sh board-pr` named `check-<kind>`, like any board edit.
+     Skip the kind when a story on the board already has `checks: <kind>`, or when
+     `gh pr list --state all --head board/check-<kind> --json state,closedAt` shows one `OPEN`
+     (pending) or one `CLOSED` (unmerged) in the last 90 days, which means the user declined it.
+     A kind whose check has merged (`check_merged` set) still recurs once its fixes after the merge
+     reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
+     `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
+     so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
