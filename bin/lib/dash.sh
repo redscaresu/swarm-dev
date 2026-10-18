@@ -229,7 +229,8 @@ dash_check() {
   want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
   dash_agree "agents working" "$(dash_first '.* \([0-9][0-9]*\) agents working.*' "${frame}")" status "${want}"
   got="$(dash_first '.*running [^0-9]*\([0-9][0-9]*\) of peak.*' "${frame}")"
-  [[ -z "${got}" ]] || dash_agree running "${got}" status "${want}"
+  # dash leaves the gauge out only with no agent list from herdr, and then status has none either.
+  if [[ -n "${got}" || "${st}" != "Agents: not inside herdr"* ]]; then dash_agree running "${got}" status "${want}"; fi
 
   got="$(dash_first '.*\$\([0-9][0-9.]*\) today.*' "${frame}")"
   want="${lo}"; [[ "${hi}" == "${lo}" ]] || want="${lo} to ${hi}"
@@ -239,7 +240,8 @@ dash_check() {
       'BEGIN { exit !(g != "x" && lo != "x" && hi != "x" && g + 0 >= lo + 0 && g + 0 <= hi + 0) }'; then got="${want}"; fi
   dash_agree cost "${got}" "flow --since ${day}" "${want}"
 
-  x="$(flow_sections 0000-00-00 9999-12-30 "" "" "" lead_queue 2>/dev/null || true)"
+  # A section that fails is reported, never read as an empty one.
+  x="$(flow_sections 0000-00-00 9999-12-30 "" "" "" lead_queue 2>/dev/null)" || dash_unread "lead's queue" "flow's lead_queue"
   # shellcheck disable=SC2154 # assigned in another file
   want="$(awk -F'\t' -v lead="${CFG_lead}" 'NR > 2 && NF == 5 && $5 != "-" {
       n = split($5, a, ","); for (i = 1; i <= n; i++) if (lead == "session" || a[i] !~ /^(escalated|held):/) print a[i] }' <<< "${x}" | dash_words)"
@@ -280,10 +282,13 @@ dash_check() {
     done | sort | paste -sd';' -)"
   dash_agree "epics waiting on depends_on" "${got}" next "$(paste -sd';' - <<< "${want}")"
 
-  x="$( { flow_sections "$(dash_day 6)" "${day}" "" "" "" merges 2>/dev/null || true; } \
-    | awk -F'\t' -v d="${day}" 'NR > 2 && NF == 2 { w += $2; if ($1 == d) t = $2 } END { printf "%d %.1f\n", t, w / 7 }')"
-  dash_agree "merges today" "$(dash_first '.*  today \([0-9][0-9]*\)  7-day avg.*' "${frame}")" "flow's merges" "${x% *}"
-  dash_agree "7-day rate" "$(dash_first '^\([0-9][0-9.]*\) merged/day over 7 days.*' "${frame}")" "flow's merges" "${x#* }"
+  if x="$(flow_sections "$(dash_day 6)" "${day}" "" "" "" merges 2>/dev/null)"; then
+    x="$(awk -F'\t' -v d="${day}" 'NR > 2 && NF == 2 { w += $2; if ($1 == d) t = $2 } END { printf "%d %.1f\n", t, w / 7 }' <<< "${x}")"
+    dash_agree "merges today" "$(dash_first '.*  today \([0-9][0-9]*\)  7-day avg.*' "${frame}")" "flow's merges" "${x% *}"
+    dash_agree "7-day rate" "$(dash_first '^\([0-9][0-9.]*\) merged/day over 7 days.*' "${frame}")" "flow's merges" "${x#* }"
+  else
+    dash_unread "merges today and the 7-day rate" "flow's merges"
+  fi
 
   [[ ${DASH_CHECK_BAD} == 1 ]] || echo "${DASH_CHECK_P}: every dash figure agrees with the command that owns it"
   return "${DASH_CHECK_BAD}"
@@ -306,6 +311,12 @@ dash_check_frame() {
 dash_agree() {
   [[ "$2" != "$4" ]] || return 0
   echo "${DASH_CHECK_P}: $1: dash shows ${2:-nothing}, $3 says ${4:-nothing}"
+  DASH_CHECK_BAD=1
+}
+
+# dash_unread <field> <owner> — the owner could not be read: prints that and marks the check failed.
+dash_unread() {
+  echo "${DASH_CHECK_P}: $1: $2 could not be read"
   DASH_CHECK_BAD=1
 }
 

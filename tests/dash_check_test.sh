@@ -198,6 +198,16 @@ check "mutant: flow's cost section raises" mutant nocost lib/flow_cost.py '1s/^/
 check "when flow's cost cannot be read, --check names the cost" names "${A}" cost env SWARM_PROJECT="${A}" "${M}" dash --check
 check "when flow's cost cannot be read, --check says so" has "says nothing: its cost could not be read" "${out}"
 
+check "mutant: the running gauge is left out" mutant nogauge lib/dash_render.py 's/^    if agents is None:   # no agent list/    if True:   # no agent list/'
+check "with herdr's agent list but no running gauge, --check names running" names "${A}" running env SWARM_PROJECT="${A}" "${M}" dash --check
+check "mutant: flow's lead_queue section raises" mutant noqueue lib/flow_lead_queue.py '1s/^/raise RuntimeError("no queue") /'
+out="$(env SWARM_PROJECT="${B}" "${M}" dash --check)" && rc=0 || rc=$?
+unread() { [[ ${rc} == 1 ]] && grep -qx "$1" <<< "${out}"; }
+check "when flow's lead_queue cannot be read, --check says so" unread "bravo: lead's queue: flow's lead_queue could not be read"
+check "mutant: flow's merges section raises" mutant nomerges lib/flow_merges.py '1s/^/raise RuntimeError("no merges") /'
+out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
+check "when flow's merges cannot be read, --check says so" unread "alpha: merges today and the 7-day rate: flow's merges could not be read"
+
 # --check draws nothing, so it refuses the flags that change how a frame is drawn.
 out="$(sw "${A}" dash --check --watch 30 2>&1)" && rc=0 || rc=$?
 refused() { [[ ${rc} != 0 ]] && has "dash --check draws nothing" "${out}"; }
