@@ -124,6 +124,8 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
+  There, `make test` runs every `tests/*_test.sh`, one per CPU at a time (`make test JOBS=2` for fewer),
+  with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`).
 
 ## License
 

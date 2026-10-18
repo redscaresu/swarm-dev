@@ -61,9 +61,9 @@ jobs:
       - name: Compile bin/lib/*.py
         if: steps.gate.outputs.board_only != 'true'
         run: python3 -m py_compile bin/lib/*.py
-      - name: Run every tests/*_test.sh
+      - name: Run every tests/*_test.sh (make test)
         if: steps.gate.outputs.board_only != 'true'
-        run: for t in tests/*_test.sh; do echo "== ${t}"; bash "${t}" || exit 1; done
+        run: make test
 
   plugin-validate:
     runs-on: ubuntu-latest

@@ -296,7 +296,7 @@ clean_env() {
     for n in ${HERDR_PANE_ENV}; do line+=" ${n}=\"\$${n}\""; done
     line+=" /bin/bash $(printf '%q' "${base}.${try}")"
     if out="$(herdr pane run "${pane}" "${line}" 2>&1)"; then typed=1; break; fi
-    [[ ${try} -eq 2 ]] || sleep 3
+    [[ ${try} -eq 2 ]] || nap 3
   done
   if [[ -z "${typed}" ]] || ! out="$(herdr pane wait-output "${pane}" --match "${marker}" --timeout 30000 2>&1)"; then
     rm -f "${base}.1" "${base}.2"
@@ -368,7 +368,7 @@ start_agent() {
       herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
       die "${name}: herdr could not start the agent: ${out}"
     fi
-    sleep 3
+    nap 3
   done
   # Before the brief, so an agent whose brief is not taken up is still on record.
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session}"
@@ -506,7 +506,7 @@ deliver_prompt() {
     case "${status}" in
       working|blocked) return 0 ;;
     esac
-    sleep 5
+    nap 5
   done
   die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
 }
@@ -645,6 +645,14 @@ SETTLED='^(idle|waiting|gone)(:|$)'
 # long; nothing for zero or less.
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 1000)))"; }
+# scaled <seconds> — <seconds> times SWARM_SLEEP_SCALE (default 1; make test sets 0.01), to the
+# millisecond. A scale that is not a number above 0 fails: 0 would make a poll loop a busy one.
+scaled() {
+  awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { if (k !~ /^[0-9]*\.?[0-9]+$/ || k + 0 <= 0) exit 1; printf "%.3f\n", s * k }' \
+    || die "SWARM_SLEEP_SCALE: '${SWARM_SLEEP_SCALE}' is not a number above 0"
+}
+# nap <seconds> — sleep <seconds>, scaled.
+nap() { local s; s="$(scaled "$1")" || exit 1; sleep "${s}"; }
 
 # settle <target> <name> <timeout-ms> [<since>] [wake] — block until the agent settles and print its
 # state. A Claude agent has settled when its session says so (session_state: idle, waiting or gone);

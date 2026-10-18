@@ -9,6 +9,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWARM="${REPO}/bin/swarm.sh"
 tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${tmp}"' EXIT
+export CLAUDE_CONFIG_DIR="${tmp}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 
 roles="$(sed -n 's/^ROLE_GROUPS="\(.*\)"$/\1/p' "${SWARM}")"
 [[ -n "${roles}" ]] || { echo "FAIL no ROLE_GROUPS line in ${SWARM}"; exit 1; }

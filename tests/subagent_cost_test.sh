@@ -12,6 +12,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 P="${dir}/repo"
 mkdir -p "${P}/.swarm/sessions" "${dir}/nobin"
 gzip -c "${ROOT}/tests/fixtures/subagent/archived.jsonl" > "${P}/.swarm/sessions/2026-10-04-archived-story-s-archived.jsonl.gz"

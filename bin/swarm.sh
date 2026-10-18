@@ -420,7 +420,7 @@ stop_codex() {
   # shellcheck disable=SC2046,SC2086 # one pid per word
   {
     kill -TERM ${pids}
-    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 ${pids} || break; sleep 1; done
+    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 ${pids} || break; nap 1; done
     for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
     wait "$1"
   } 2>/dev/null || true
@@ -482,7 +482,9 @@ codex_review() {
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
-  while ((left-- > 0)) && kill -0 "${pid}" 2>/dev/null; do sleep 1; done
+  # A deadline, not a count of naps: SWARM_SLEEP_SCALE quickens the polling, never the timeout.
+  left=$((SECONDS + left))
+  while ((SECONDS < left)) && kill -0 "${pid}" 2>/dev/null; do nap 1; done
   if ! kill -0 "${pid}" 2>/dev/null; then
     wait "${pid}" || rc=$?
     return "${rc}"

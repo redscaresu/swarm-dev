@@ -245,7 +245,7 @@ dash_watch() {
           l|L) DASH_LADDER=$((1 - DASH_LADDER)); last=""; break ;;
         esac
       else
-        sleep 1
+        nap 1
       fi
       [[ ${winch} == 0 ]] || { last=""; break; }
     done

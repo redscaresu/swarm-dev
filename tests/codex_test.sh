@@ -13,6 +13,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 # BIN is in every stub process's command line and in no other's: the marker pgrep -f looks for.
 BIN="${ROOT}/bin"; P="${ROOT}/proj"; LIMIT=2; GRACE=3
 trap 'pkill -KILL -f "${BIN}/" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
 ln -s "$(command -v sleep)" "${BIN}/stubsleep"   # the stub's child, named so pgrep -f can tell it
 export PATH="${BIN}:${PATH}"
@@ -30,14 +31,14 @@ stub() {
   chmod +x "${BIN}/codex"
 }
 # review — codex-review main from the project, with text on its stdin and SWARM_STORY=$STORY if STORY
-# is set (a caller's own SWARM_STORY is dropped), timed: sets out, rc and took
+# is set (a caller's own SWARM_STORY is dropped), SWARM_SLEEP_SCALE=$SCALE if SCALE is, timed: sets out, rc and took
 # (seconds). Its output goes through a file, since a stub left running would hold a $(...) open for
 # good, and after REVIEW_CAP seconds the stubs are KILLed, so a codex-review that hangs fails the
 # timing checks instead of hanging the test.
 REVIEW_CAP=20
 review() {
   local t0=${SECONDS} spid
-  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY ${STORY:+"SWARM_STORY=${STORY}"} SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main \
+  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY ${STORY:+"SWARM_STORY=${STORY}"} ${SCALE:+"SWARM_SLEEP_SCALE=${SCALE}"} SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main \
     <<< "typed at the prompt" > "${ROOT}/out" 2>&1) &
   spid=$!; finish "${spid}"
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
@@ -82,9 +83,10 @@ check "a codex that ignores TERM is stopped within the limit plus the grace" "fa
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 1)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
 
-# --- The grace is real: a codex that exits on its own a second after TERM is not KILLed.
+# --- The grace is real: a codex that exits on its own a second after TERM is not KILLed (at full
+# scale, since make test scales the grace to a hundredth).
 stub "trap 'sleep 1; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
-review
+SCALE=1 review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
 
