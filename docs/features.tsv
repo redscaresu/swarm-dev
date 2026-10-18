@@ -49,4 +49,4 @@ wait --lead	leaner-faster-swarm	outcomes: PR-to-merge time	unavailable: outcomes
 planning during review	leaner-faster-swarm	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	role:lead
 short chains	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic, 7.7 all (infrafactory, flow --until 2026-10-16)	role:skeptic
 releases	leaner-faster-swarm	flow: stories_per_chain per epic	1.0 to 3.0 per epic (infrafactory, flow --until 2026-10-16)	unlogged: merge --release logs as merge, so a release is not told apart
-subagent-cost	safer-faster-swarm	outcomes: subagent_cost_usd share of cost_usd + subagent_cost_usd	unavailable: outcomes counted subagent turns in cost_usd before subagent-cost	unlogged: a read-only command leaves no events.tsv line
+subagent-cost	safer-faster-swarm	outcomes: subagent_cost_usd share of cost_usd + subagent_cost_usd	unavailable: before subagent-cost, outcomes' cost_usd counted inline subagent turns as the builder's and never read subagents/*.jsonl	unlogged: a read-only command leaves no events.tsv line

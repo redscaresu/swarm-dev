@@ -110,8 +110,10 @@ check "with both the live log and close's copy, the live log wins" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(live "${R2}")" "${R3}")"
 rm "${dir}/projects/p/s2.jsonl" "${dir}/projects/p/s3.jsonl"
 before="$(snap)"
+# close's copy holds no subagents/ files, so its subagent cells are empty (subagent_cost_test.sh).
+copy() { awk -F'\t' -v OFS='\t' '{ $40 = "" } 1' <<< "$1"; }
 check "with only close's copy: the same long slug, started, tokens by type and cost as the live log" \
-  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
+  "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(copy "${R2}")" "$(copy "${R3}")")"
 check "close's copy is no sign of life for the stall rule" "$(run _mtime docs-story)" ""
 check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${P}/.swarm/sessions/"*
@@ -125,7 +127,7 @@ check "with neither, the cells are empty, a slug with one PR keeps it, and nothi
 # nothing here, so no usage and no cwd; every other row is intact.
 echo 'not gzip' > "${P}/.swarm/sessions/2026-10-01-docs-story-s2.jsonl.gz"
 session s3 "${LONG}" claude-fable-5-1 1000000 0 | gzip -c | head -c 20 > "${P}/.swarm/sessions/2026-10-01-${CUT}-s3.jsonl.gz"
-zero() { awk -F'\t' -v OFS='\t' '{ $8 = $40 = "0.00"; $9 = $19 = $20 = $21 = $22 = 0; $18 = "" } 1' <<< "$1"; }
+zero() { awk -F'\t' -v OFS='\t' '{ $8 = "0.00"; $40 = ""; $9 = $19 = $20 = $21 = $22 = 0; $18 = "" } 1' <<< "$1"; }
 check "a damaged copy stops neither the report nor the other rows" \
   "$(outcomes "${dir}/bin" 2>&1; echo "exit $?")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(zero "${R2}")" "$(zero "${R3N}")" "exit 0")"
 

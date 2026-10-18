@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"id":"a-own","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"a-haiku","model":"claude-haiku-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}
