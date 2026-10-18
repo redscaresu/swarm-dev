@@ -5,10 +5,15 @@ MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL
 MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear (SWARM_MERGE_CI_GRACE)
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
+WAIT_PR_GRACE=300       # how long wait-pr gives a head with no checks for them to appear (SWARM_WAIT_PR_GRACE)
+WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
+WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
+# A gh error worth retrying: a dropped connection, a timeout, a rate limit, a 5xx.
+WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|HTTP (429|50[0234])'
 
 # ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
-# run completed as success, skipped or neutral, and every commit status success. Else print which
-# checks and fail (1 red, 2 pending). It is the
+# run completed as success, skipped or neutral, and every commit status success, printing each check.
+# Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -182,6 +187,47 @@ merge_pr() {
     }
   fi
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
+}
+
+# wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
+wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
+
+# wait-pr <pr-url> — print the PR's head SHA, then read ci_gate head on it every MERGE_POLL seconds
+# (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever that changes. Exits
+# 0 when all are green, printing each check; 1 on red; 2 on anything else, since a gh error is never
+# pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY, WAIT_PR_TRIES in a row
+# at most, any other ends it at once. A new head has no checks for a few minutes; none by
+# WAIT_PR_GRACE ends it too. It reads the head once, with the same retries: a later push is not followed.
+wait_pr() {
+  local url="${1:-}" repo n head="" why rc missed=0 last="" start=${SECONDS}
+  [[ $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
+    || wait_pr_fail "usage: swarm.sh wait-pr <pr-url>"
+  repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  while :; do
+    rc=0
+    if [[ -z "${head}" ]]; then
+      # The head read is retried like a check read: a transient error is as likely here.
+      why="$(gh pr view "${n}" --repo "${repo}" --json headRefOid -q .headRefOid 2>&1)" || rc=3
+      if [[ ${rc} -eq 0 && "${why}" =~ ^[0-9a-f]{40}$ ]]; then head="${why}"; missed=0; echo "head ${head}"; continue; fi
+      rc=3; why="gh cannot read the head of ${url}: ${why##*$'\n'}"
+    else
+      why="$(ci_gate head "${repo}" "${head}")" || rc=$?
+    fi
+    case ${rc} in
+      0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
+      1) echo "red: ${why}"; return 1 ;;
+      2) missed=0
+         [[ "${why}" != "no check runs" || $((SECONDS - start)) -lt "${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}" ]] \
+           || wait_pr_fail "no checks on ${head:0:7} after $((SECONDS - start))s"
+         [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
+         last="${why}"; sleep "${SWARM_MERGE_POLL:-${MERGE_POLL}}" ;;
+      *) if ! grep -qiE "${WAIT_PR_TRANSIENT}" <<< "${why}" || ((++missed > WAIT_PR_TRIES)); then
+           wait_pr_fail "${why:-ci_gate failed (exit ${rc})}"
+         fi
+         echo "retrying after ${why}"
+         sleep "${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" ;;
+    esac
+  done
 }
 
 # release_check <owner/repo> <base> <head> — merge --release's checks past the file list: the PR goes
