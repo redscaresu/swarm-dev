@@ -200,8 +200,8 @@ rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.
 : > "${p}/.claude/swarm/config"
 
 # --- sonnet_share: a story's role is its kind, code-risky for risk: high, and with sonnet_share = N,
-# code-sonnet for the other code stories whose slug's cksum mod N is 0 (r0-code, r4-f, r4-g, the s4-*
-# slugs; r4-a and r4-b are not). Each build's role, model and effort are read off its agents.tsv line.
+# code-sonnet for the other code stories marked easy: true whose slug's cksum mod N is 0 (r0-code, r4-f,
+# r4-g, the s4-* slugs; r4-a and r4-b are not). Each build's role, model and effort are read off its agents.tsv line.
 row() { awk -F'\t' -v n="$1" '$3 == n { r = $2 " " $5 " " $6 } END { print r }' "${p}/.swarm/agents.tsv"; }
 build() { # <slug> <front-matter line>... — build a ready story in svc, then print its agents.tsv line
   local s="$1"; shift
@@ -222,13 +222,13 @@ check "story refuses a verify story, naming code, docs and chore, and starts no 
 echo "sonnet_share = 4" >> "${p}/.claude/swarm/config"
 check "sonnet_share = 4: code stories split by cksum mod 4, and a sampled one starts on code-sonnet sonnet high" \
   "code opus high|code opus high|code-sonnet sonnet high|code-sonnet sonnet high" \
-  "$(build r4-a "kind: code")|$(build r4-b)|$(build r4-f "kind: code")|$(build r4-g "kind: code")"
+  "$(build r4-a "kind: code" "easy: true")|$(build r4-b "easy: true")|$(build r4-f "kind: code" "easy: true")|$(build r4-g "kind: code" "easy: true")"
 check "sonnet_share = 4: risk: high stays code-risky, and docs and chore are unchanged" \
   "code-risky opus xhigh|docs sonnet medium|chore haiku medium" \
   "$(build s4-risky4 "kind: code" "risk: high")|$(build s4-docs4 "kind: docs")|$(build s4-chore2 "kind: chore")"
 printf '2026-10-13\tcode-sonnet\ts4-retry2\tclaude\tsonnet\thigh\tsess-r\n' >> "${p}/.swarm/agents.tsv"
 check "only a first attempt is sampled: a slug already in agents.tsv goes back to code" "code opus high" \
-  "$(build s4-retry2 "kind: code")"
+  "$(build s4-retry2 "kind: code" "easy: true")"
 
 # --- escalate_after: a story an agent builds whose attempts: (absent is 0) reaches escalate_after
 # (default 2; 0 is off) is built as escalate, ahead of code-risky and code-sonnet. Read through _role.
@@ -242,7 +242,7 @@ ladder() { # <slug> <attempts>... -- <front-matter line>... — _role at each at
 printf '%s\n' "sonnet_share = 4" > "${p}/.claude/swarm/config"
 check "escalate_after = 2 (the default): every kind an agent builds escalates at attempts: 2" \
   "code code escalate|code-risky code-risky escalate|code-sonnet code-sonnet escalate|docs docs escalate|chore chore escalate" \
-  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")"
+  "$(ladder e4-a 0 1 2 -- "kind: code")|$(ladder e4-a 0 1 2 -- "kind: code" "risk: high")|$(ladder e4-f 0 1 2 -- "kind: code" "easy: true")|$(ladder e4-a 0 1 2 -- "kind: docs")|$(ladder e4-a 0 1 2 -- "kind: chore")"
 check "no attempts: and no kind: is a first attempt at code" "code" "$(role e4-a)"
 item "${b}" stories/e4-a.md "status: ready" "kind: code"; echo "attempts: 2" >> "${b}/stories/e4-a.md"
 check "attempts: is read from the front matter, never from a body line" "code" "$(run _role e4-a)"
@@ -255,7 +255,7 @@ check "attempts: BASH_VERSINFO[\$(touch X)] is refused and never evaluated" "yes
 check "swarm.sh story of a code story at attempts: 2 starts escalate on fable xhigh" "escalate fable xhigh" \
   "$(build e4-build "kind: code" "attempts: 2")"
 check "a slug sampled for code-sonnet at attempts: 2 starts escalate" "escalate fable xhigh" \
-  "$(build e4-g "kind: code" "attempts: 2")"
+  "$(build e4-g "kind: code" "easy: true" "attempts: 2")"
 item "${b}" stories/e4-bad.md "status: ready" "repo: svc" "kind: code" "attempts: two"; : > "${p}/.swarm/events.tsv"
 check "swarm.sh story at attempts: two fails, and its events.tsv line carries the reason" "fails|yes" \
   "$(run story e4-bad >/dev/null && echo starts || echo fails)|$(has "attempts must be a non-negative whole number, not 'two'" "$(cut -f5 "${p}/.swarm/events.tsv")")"
