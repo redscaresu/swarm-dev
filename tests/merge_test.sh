@@ -67,6 +67,7 @@ case "$1 $2" in
       */pulls/*/files*) serve files ;;
       */rules/branches/*) serve rules ;;
       */branches/*) serve branch ;;
+      */compare/*) serve compare ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
@@ -499,11 +500,12 @@ fresh "merge = agent" "merge_admin = on"; item s "status: review" "prs: ${URL}" 
 merge HERDR_ENV=1 HERDR_PANE_ID=w:c --head "${H1}" "${URL}"; refused "merge_admin = on, costs: money" "held: s costs money"
 fresh "merge_admin = on"; echo "${H2}" > "${FX}/head"
 merge --head "${H1}" "${URL}"; refused "merge_admin = on, a moved head" "is 2222222, not 1111111"
-# --admin skips GitHub's required checks too, so merge checks each one is on the head.
+# --admin skips every rule on the base, so merge checks each required check is on the head, the head
+# is up to date where the base says strict, and the base has no other rule --admin would skip.
 # protected <context>... — main's classic branch protection requires these checks, from any app.
 protected() {
   local c list=""; for c in "$@"; do list+="${list:+,}\"${c}\""; done
-  echo "{\"strict\":false,\"contexts\":[${list}],\"checks\":[]}" > "${FX}/branch"
+  echo "{\"required_status_checks\":{\"strict\":false,\"contexts\":[${list}],\"checks\":[]}}" > "${FX}/branch"
 }
 fresh "merge_admin = on"
 echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"
@@ -522,15 +524,46 @@ is "merge_admin = on, a required check its app reported: exits 0" 0 "${rc}"
 fresh "merge_admin = on"; protected test lint
 merge "${URL}"; refused "merge_admin = on, branch protection's required check absent from the head" "lint (required, absent)"
 fresh "merge_admin = on"
-echo '{"strict":false,"contexts":["test"],"checks":[{"context":"test","app_id":99}]}' > "${FX}/branch"
+echo '{"required_status_checks":{"strict":false,"contexts":["test"],"checks":[{"context":"test","app_id":99}]}}' > "${FX}/branch"
 merge "${URL}"; refused "merge_admin = on, branch protection's check bound to an app that never reported it" "test (required, absent)"
 fresh "merge_admin = on"; echo release/1.x > "${FX}/base"; merge "${URL}"
 check "merge_admin = on, base release/1.x: the rules path encodes the branch" grep -q -- "repos/o/r/rules/branches/release%2F1.x?" "${ROOT}/gh.log"
-check "merge_admin = on, base release/1.x: so does branch protection's" grep -q -- "repos/o/r/branches/release%2F1.x/protection/required_status_checks" "${ROOT}/gh.log"
+check "merge_admin = on, base release/1.x: so does branch protection's" grep -q -- "repos/o/r/branches/release%2F1.x/protection" "${ROOT}/gh.log"
 fresh "merge_admin = on"; touch "${FX}/branch.fail"
 merge "${URL}"; refused "merge_admin = on, branch protection unreadable" "HTTP 502"
 fresh; echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"build"}]}}]' > "${FX}/rules"
 merge "${URL}"; is "merge_admin off: the required checks are GitHub's, not read" 0 "${rc}"
+# Strict (up to date required), from a ruleset or classic protection: a head behind the base is refused.
+strict_rule='[{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":true,"required_status_checks":[{"context":"test"}]}}]'
+fresh "merge_admin = on"; echo "${strict_rule}" > "${FX}/rules"; echo '{"behind_by":2}' > "${FX}/compare"
+merge "${URL}"; refused "merge_admin = on, a strict ruleset and a head behind main" "it is 2 commit(s) behind main"
+check "merge_admin = on, strict: compares main with the head" grep -q -- "repos/o/r/compare/main...${H1}" "${ROOT}/gh.log"
+fresh "merge_admin = on"; echo "${strict_rule}" > "${FX}/rules"; echo '{"behind_by":0}' > "${FX}/compare"; merge "${URL}"
+is "merge_admin = on, a strict ruleset and a head up to date: exits 0" 0 "${rc}"
+fresh "merge_admin = on"; echo '{"required_status_checks":{"strict":true,"contexts":[],"checks":[]}}' > "${FX}/branch"
+echo '{"behind_by":1}' > "${FX}/compare"
+merge "${URL}"; refused "merge_admin = on, strict branch protection and a head behind main" "it is 1 commit(s) behind main"
+fresh "merge_admin = on"; touch "${FX}/compare.fail"; echo "${strict_rule}" > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, strict and the compare unreadable" "HTTP 502"
+fresh "merge_admin = on"; echo '{"behind_by":3}' > "${FX}/compare"; merge "${URL}"
+is "merge_admin = on, not strict: a head behind main merges" 0 "${rc}"
+# Any rule --admin would skip besides the review: refused, naming it. Push-only rules are not.
+fresh "merge_admin = on"; echo '[{"type":"pull_request","parameters":{}},{"type":"merge_queue","parameters":{}}]' > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, a ruleset's merge_queue rule" "ruleset rule merge_queue, which --admin would skip"
+fresh "merge_admin = on"; echo '[{"type":"workflows","parameters":{}}]' > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, a ruleset's workflows rule" "ruleset rule workflows"
+fresh "merge_admin = on"; echo '{"required_signatures":{"enabled":true},"required_linear_history":{"enabled":false}}' > "${FX}/branch"
+merge "${URL}"; refused "merge_admin = on, branch protection's required signatures" "branch protection required_signatures, which --admin would skip"
+check "merge_admin = on, required signatures: not linear history, which is off" bash -c "! grep -q required_linear_history '${ROOT}/out'"
+fresh "merge_admin = on"; echo '{"restrictions":{"users":[],"teams":[],"apps":[]}}' > "${FX}/branch"
+merge "${URL}"; refused "merge_admin = on, branch protection's push restrictions" "branch protection restrictions"
+fresh "merge_admin = on"
+echo '[{"type":"pull_request","parameters":{}},{"type":"deletion"},{"type":"non_fast_forward"},{"type":"creation"}]' > "${FX}/rules"
+echo '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_deletions":{"enabled":false},"enforce_admins":{"enabled":false}}' > "${FX}/branch"
+merge "${URL}"; is "merge_admin = on, only the review and push rules: exits 0" 0 "${rc}"
+check "merge_admin = on, only the review and push rules: --admin" grep -q -- "^pr merge 7 .*--admin" "${ROOT}/gh.log"
+fresh; echo '[{"type":"merge_queue","parameters":{}}]' > "${FX}/rules"; merge "${URL}"
+is "merge_admin off: a merge_queue rule is GitHub's, not read" 0 "${rc}"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

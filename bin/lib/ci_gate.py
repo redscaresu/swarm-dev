@@ -66,23 +66,52 @@ def checks(repo, sha, required=(), need_run=True):
              if (c not in names if app in (None, -1) else (c, app) not in have)]
     return red, wait
 
-def required(repo, base):
-    """The status checks base requires, its rulesets' and its classic branch protection's, each as
-    (context, the app that must report it or None). The branch is one path segment, / encoded."""
-    out, base = [], urllib.parse.quote(base, safe="")
-    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, base)):
+# The ruleset rule types --admin may pass: the review it stands in for, the status checks admin
+# re-checks, and rules about pushes and branches that a PR's merge never meets.
+ADMIN_RULES = ("pull_request", "required_status_checks", "deletion", "non_fast_forward", "creation")
+# Classic protection's rules that --admin skips besides the review and the status checks.
+ADMIN_SKIPS = ("required_signatures", "required_linear_history", "required_conversation_resolution", "lock_branch")
+
+def base_rules(repo, base):
+    """What base's rulesets and classic branch protection require: the status checks, each as
+    (context, the app that must report it or None); whether the head must be up to date (strict);
+    and the rules besides those and the review, which --admin would skip. The branch is one path
+    segment, / encoded."""
+    req, strict, skip, b = [], False, [], urllib.parse.quote(base, safe="")
+    for d in docs("repos/%s/rules/branches/%s?per_page=100" % (repo, b)):
         if not isinstance(d, list):
             raise Err("unreadable rules for " + base)
         for rule in d:
             if rule["type"] == "required_status_checks":
-                out += [(c["context"], c.get("integration_id")) for c in rule["parameters"]["required_status_checks"]]
+                p = rule["parameters"]
+                req += [(c["context"], c.get("integration_id")) for c in p["required_status_checks"]]
+                strict = strict or bool(p.get("strict_required_status_checks_policy"))
+            elif rule["type"] not in ADMIN_RULES:
+                skip.append("ruleset rule " + rule["type"])
     try:
-        rsc = json.loads(gh("api", "repos/%s/branches/%s/protection/required_status_checks" % (repo, base)))
+        prot = json.loads(gh("api", "repos/%s/branches/%s/protection" % (repo, b)))
     except Err as e:
-        if "HTTP 404" in str(e):   # not protected, or no required checks
-            return out
+        if "HTTP 404" in str(e):   # not protected
+            return req, strict, skip
         raise
-    return out + [(c, None) for c in rsc["contexts"]] + [(c["context"], c.get("app_id")) for c in rsc["checks"]]
+    rsc = prot.get("required_status_checks") or {}
+    req += [(c, None) for c in rsc.get("contexts", [])] + [(c["context"], c.get("app_id")) for c in rsc.get("checks", [])]
+    skip += ["branch protection " + k for k in ADMIN_SKIPS if (prot.get(k) or {}).get("enabled")]
+    if prot.get("restrictions"):
+        skip.append("branch protection restrictions")
+    return req, strict or bool(rsc.get("strict")), skip
+
+def admin(repo, base, sha):
+    """Why --admin may not merge sha into base, or nothing: it must stand in for the review only."""
+    req, strict, skip = base_rules(repo, base)
+    why = ["%s, which --admin would skip" % r for r in skip]
+    red, wait = checks(repo, sha, req)
+    why += red + wait
+    if strict:
+        behind = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha)))["behind_by"]
+        if behind:
+            why.append("%s requires the head up to date, and it is %d commit(s) behind %s" % (base, behind, base))
+    return why
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -252,10 +281,15 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
-        red, wait = checks(repo, args[0], required(repo, args[1]) if len(args) > 1 else ())
+        red, wait = checks(repo, args[0])
         if red or wait:
             print("; ".join(red + wait))
             sys.exit(1 if red else 2)
+    elif mode == "admin":
+        why = admin(repo, args[0], args[1])
+        if why:
+            print("; ".join(why))
+            sys.exit(1)
     elif mode == "files":
         files = pr_files(repo, args[0], int(args[1]))
         if not files:

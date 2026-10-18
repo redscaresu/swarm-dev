@@ -6,10 +6,9 @@ MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get t
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 
-# ci_gate head <owner/repo> <sha> [base] — succeed when <sha> is green: at least one check run, every
-# run completed as success, skipped or neutral, and every commit status success; with [base]
-# (merge_admin), also every status check the base's rulesets or branch protection require present
-# among them, since --admin skips GitHub's own check. Else print which checks and fail (1 red, 2 pending). It is the
+# ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
+# run completed as success, skipped or neutral, and every commit status success. Else print which
+# checks and fail (1 red, 2 pending). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -19,6 +18,11 @@ MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
 # .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
 # read is a missed poll; three in a row end it. Prints ok (0), red <checks> (1), timeout (<what it
 # waited on>) (2) or error <why> (3); YAML it does not read is an error, never a skipped workflow.
+# ci_gate admin <owner/repo> <base> <sha> — for merge_admin, since --admin skips every rule on <base>,
+# not just the approving review: succeed when <sha> has every status check <base>'s rulesets and
+# branch protection require, is up to date with <base> when they say strict, and <base> has no rule
+# --admin would skip besides the review (merge queue, required workflows, signatures, ...). Else
+# print why and fail (1); a read that fails is a failure too.
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them.
 ci_gate() {
@@ -81,7 +85,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin req
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -149,10 +153,13 @@ merge_pr() {
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}"
   fi
   # merge_admin = on: --admin skips GitHub's own required checks too, so ci_gate checks them first.
-  admin=(); req=""
+  why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  admin=()
   # shellcheck disable=SC2154 # assigned in another file
-  if [[ "${CFG_merge_admin}" == on ]]; then admin=(--admin); req="${base}"; fi
-  why="$(ci_gate head "${repo}" "${head}" ${req:+"${req}"})" || merge_fail "the head ${head:0:7} is not green: ${why}"
+  if [[ "${CFG_merge_admin}" == on ]]; then
+    why="$(ci_gate admin "${repo}" "${base}" "${head}")" || merge_fail "--admin may not merge ${head:0:7} into ${base}: ${why}"
+    admin=(--admin)
+  fi
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
