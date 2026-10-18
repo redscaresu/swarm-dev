@@ -3,8 +3,7 @@
 # that epic's row alone. Each PR counts once, by its build that started first (the most minutes), as a
 # retried PR repeats its phases on every build. A row gives its PRs, their start-to-merge minutes and
 # the five phases' sums as <phase>:<minutes>, largest first (a tie in outcomes' column order).
-from report import pr_key
-PHASES = ("building", "ci", "review_wait", "fixing", "merge_wait")
+from report import PHASES, pr_key
 
 def total(r):
     return sum(int(r[p + "_min"]) for p in PHASES)

@@ -2,14 +2,15 @@ import collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
-NO_PR = ("", "", "", "", "", "")
+NO_PR = ("", "", "", "", "", "", "")
 RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct PRs recurs
 RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
-    # The (url, state, mergedAt, createdAt, main_merges, checks) of each PR in the meta column; a stub
-    # may leave out the last four. checks is its head's check runs as start/end pairs joined by ";".
-    return [tuple((p.split(" ") + [""] * 5)[:6]) for p in prs.split(",") if " " in p]
+    # The (url, state, mergedAt, createdAt, main_merges, checks, commits) of each PR in the meta column;
+    # a stub may leave out the last five. checks is its head's check runs as start/end pairs joined by
+    # ";", commits its commits' committedDate joined by ";".
+    return [tuple((p.split(" ") + [""] * 6)[:7]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
     # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
@@ -36,25 +37,31 @@ def minutes(start, end):
 # The phases of a build's start-to-merge minutes, highest first: where two cover the same minute, the
 # higher takes it, and a minute none covers is building.
 PRECEDENCE = ("fixing", "ci", "review_wait", "merge_wait")
-PHASES = ("building", "ci", "review_wait", "fixing", "merge_wait")   # the order they print in
 
-def time_in_state(start, created, merged, checks, times):
+def fixed_at(t, commits, ends):
+    # Where fixing findings told at t ends: the PR's next commit, else the next check start, review
+    # event, tell:findings or the merge (ends).
+    return min([x for x in commits if x > t] or [e for e in ends if e > t])
+
+def time_in_state(start, merged, pr, times):
     # The PHASES' minutes from start to merged, as strings that sum to minutes(start, merged); all empty
     # when a time is missing. CI runs over each check's start to end; review wait from the PR's creation
-    # to its first review event (handed to the merger) or the merge; merge wait from that to the merge;
-    # fixing from each tell:findings to the next check start, review event, tell:findings or merge.
-    # ponytail: gh gives the checks of the PR's head alone, so an earlier head's CI counts as the phase
-    # under it; read every head's runs (as ci_health does) if that hides too much.
-    s, c, m = secs(start), secs(created), secs(merged)
+    # to its first review event after it (handed to the merger) or the merge; merge wait from that to the
+    # merge; fixing from each tell:findings between the PR's creation and the merge (fixed_at), so a tell
+    # on an earlier PR of the slug is not this one's.
+    # ponytail: gh gives the latest run of each check on the PR's head alone, so other CI counts as the
+    # phase under it; read every head's runs (as ci_health does) if that hides too much.
+    s, c, m = secs(start), secs(pr[3]), secs(merged)
     if None in (s, c, m) or m < s:
         return [""] * len(PHASES)
-    runs = [tuple(map(secs, r.split("/"))) for r in checks.split(";") if r.count("/") == 1]
+    runs = [tuple(map(secs, r.split("/"))) for r in pr[5].split(";") if r.count("/") == 1]
     runs = [r for r in runs if None not in r]
+    commits = [x for x in map(secs, pr[6].split(";")) if x is not None]
     events = sorted((secs(w), k) for k, _, w in (t.partition("=") for t in times) if secs(w) is not None)
     handed = min((t for t, k in events if k == "review" and t >= c), default=m)
     ends = [a for a, _ in runs] + [t for t, _ in events] + [m]
     spans = {"ci": runs, "review_wait": [(c, handed)], "merge_wait": [(handed, m)],
-             "fixing": [(t, min(e for e in ends if e > t)) for t, k in events if k == "tell:findings" and t < m]}
+             "fixing": [(t, fixed_at(t, commits, ends)) for t, k in events if k == "tell:findings" and c <= t < m]}
     # Each piece between two cuts goes to one phase; rounding where it starts and ends (from start)
     # keeps the sum the rounded whole.
     cuts = sorted({s, m} | {min(max(x, s), m) for v in spans.values() for span in v for x in span})
@@ -88,6 +95,14 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
     on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
     if on:
         found[on[-1]][(outcome, reviewer)] += 1
+# `swarm.sh review <epic> <PRs>` logs the epic as its target: its time goes to the stories of that epic
+# (their epic:), and counts for a story only once its PR is open (time_in_state's t >= c).
+epics = {r[3] for r in rows if r[3]}
+epic_reviews = collections.defaultdict(list)
+for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
+    e = line.rstrip("\n").split("\t")
+    if len(e) == 5 and e[1] == "review" and e[2] in epics and (e[4] == "ok" or e[4].startswith("ok (")):
+        epic_reviews[e[2]].append(f"review={e[0]}")
 
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
@@ -100,7 +115,8 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
       "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens"
       "\t" + "\t".join(p + "_min" for p in PHASES))
-for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges, checks), c in zip(rows, found):
+for (f, kind, risk, story_epic, asked, prs, *the_pr), c in zip(rows, found):
+    pr, state, merged, created, main_merges = the_pr[:5]
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
     story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
@@ -110,7 +126,7 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
-                     + time_in_state(f[AS_IS], created, merged, checks, f[TIMES].split())))
+                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + epic_reviews[story_epic])))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text

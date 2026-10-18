@@ -656,15 +656,18 @@ the whole build. The subagent columns are empty when there is no session log. Wh
 `close` keeps of a deleted log is left, they count the subagent turns inside that log alone: the copy
 leaves out the `subagents/` logs beside it. After them come five columns that split the minutes
 from `started` to `merged_at` into phases: `building_min`, `ci_min` (a check
-on the PR's head was running), `review_wait_min` (from `pr_created_at` to the story's first `review`
-event, which hands it to the merger, or to the merge), `fixing_min` (from each `tell:findings` to
-the next check start, `review` or `tell:findings` event, or the merge) and `merge_wait_min` (from
-that first `review` event to the merge). Where two phases cover the same minute, the higher one
-takes it: fixing, then CI, then review wait, then merge wait; a minute none covers is building.
-The five add up to the whole minutes from `started` to `merged_at`, and are empty when either is
-missing. The events are those of every build of the story, so a retry's tells count in the first
-build's minutes too, and the first build's in the retry's. `gh` gives only the checks of the PR's last head, so CI on an earlier push
-counts as whichever phase lies under it. A story the lead holds after an escalation (`kind: lead` with
+on the PR's head was running), `review_wait_min` (from `pr_created_at` to the first `review`
+event after it, which hands the PR to the merger, or to the merge), `fixing_min` (from each
+`tell:findings` logged between `pr_created_at` and the merge to the PR's next commit, or, with no
+later commit, to the next check start, `review` or `tell:findings` event, or the merge) and
+`merge_wait_min` (from that first `review` event to the merge). A `review` of the story's epic
+(`swarm.sh review <epic> <PRs>`) counts for each story of that epic. Where two phases cover the same
+minute, the higher one takes it: fixing, then CI, then review wait, then merge wait; a minute none
+covers is building. The five add up to the whole minutes from `started` to `merged_at`, and are
+empty when either is missing. The events are those of every build of the story, so a retry's tells
+count in the first build's minutes too, and the first build's in the retry's; a tell on an earlier,
+abandoned PR is not counted, as it came before this PR was created. `gh` gives only the latest run of
+each check on the PR's last head, so other CI counts as whichever phase lies under it. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
