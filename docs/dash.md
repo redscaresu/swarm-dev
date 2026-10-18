@@ -38,8 +38,10 @@ is one column, top to bottom:
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
   from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
-  (`--reviewer escaped` in `findings.tsv`). Then one summary line: epics active, agents working, PRs green and
-  waiting for you, stalled builders, and today's estimated cost (the `cost` section of `swarm.sh flow --since <today>`). After
+  (`--reviewer escaped` in `findings.tsv`). Then one summary line: epics active, agents working (as
+  `swarm.sh status` counts them, stalled ones included), PRs green and waiting for you, stalled builders, and today's
+  estimated cost of this project (the `cost` section of `swarm.sh flow --since <today>`, without the session of the
+  pane dash runs in). After
   it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
   call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
   today` too), on the same line when they fit there and on the next line when they don't. Then a
@@ -104,7 +106,8 @@ is one column, top to bottom:
   `#12 waits for the lead's merge` once its story is `status: review`, `#12 waits for review`
   while its PR is open and its story is not in review, and `no PR yet` otherwise. `--tree` shows
   the same words for it. Active
-  epics with no open story share one line. Blocked and later items are one count line under it;
+  epics with no open story share one line. An epic with no stories whose `depends_on` still holds up its
+  planning (as `swarm.sh next` decides) keeps its own row instead, which reads `waits on <depends_on>`. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar
