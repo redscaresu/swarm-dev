@@ -183,7 +183,8 @@ next_step() {
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
-# blocking_leads — "also: lead <slug> blocks <slugs>" for each ready kind: lead story that a blocked
+# blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
+# (kind: lead, or a legacy or unknown kind: agent_kind fails) that a blocked
 # story's depends_on names: the lead's own work that holds an agent's story up while a conductor works.
 # An escalated story is left out (wait --lead hands it to the escalated step), and so is one with
 # after: (it waits for its epic to finish, as epic_has_stories says). Only a blocked story an agent
@@ -191,7 +192,8 @@ next_step() {
 blocking_leads() {
   local f b slug blocks
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready && "$(fm "${f}" kind)" == lead && -z "$(get_fm "${f}" after)" ]] || continue
+    [[ "$(fm "${f}" status)" == ready && -z "$(get_fm "${f}" after)" ]] || continue
+    if agent_kind "$(fm "${f}" kind)"; then continue; fi
     if is_escalated "${f}" || epic_held "${f}"; then continue; fi
     slug=$(basename "${f}" .md); blocks=""
     while IFS= read -r b; do

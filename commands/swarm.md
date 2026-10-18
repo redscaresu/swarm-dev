@@ -70,8 +70,11 @@ Repeat until a step below says stop:
      done, and no conductor builds it. Tell the user, as the gate does, that you will run it once
      they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land
      the board PR it opens as above: `swarm.sh merge --board <url>`, or with `merge = human` hand
-     it to the user and wait until they merge it. Then run `swarm.sh reconcile` and
-     `swarm.sh unblock`, as step 1 does.
+     it to the user and wait until they merge it. Then run `swarm.sh reconcile`, and leave
+     `swarm.sh unblock` to the conductor: it runs unblock after each wait and builds only the
+     stories its own unblock readies. Act on each `also:` story once. It stays `ready`, and
+     `next` names it again, until its `finish-<slug>` board PR merges, so skip one you have
+     already asked about or run, or whose finish PR is open.
 
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and

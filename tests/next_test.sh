@@ -314,7 +314,8 @@ expect_conductor "a working conductor's dependent epic with a blocked story left
 # A ready lead story that a blocked story depends on is named under the wait: the lead runs it
 # meanwhile. One nothing blocked depends on is not, nor an escalated one (wait --lead hands it on),
 # nor one with after: (it waits for its epic to finish), nor one that only a blocked lead story
-# depends on, nor one in a later or draft epic or blocking only a story in one.
+# depends on, nor one in a later or draft epic or blocking only a story in one. A legacy kind no agent
+# builds (operator) is lead work too.
 expect_conductor "a working conductor's wait names a lead story that blocks one" "wait conduct-e1" no e1 "*" \
   "item stories/l.md 'status: ready' 'kind: lead'" "item stories/l2.md 'status: ready' 'kind: lead'" \
   "item stories/s.md 'status: blocked' 'kind: code' 'depends_on: [l]'" \
@@ -326,8 +327,9 @@ expect_conductor "a working conductor's wait names a lead story that blocks one"
   "item stories/ll.md 'status: ready' 'kind: lead'" "item stories/bl.md 'status: blocked' 'kind: lead' 'depends_on: [ll]'" \
   "item epics/el.md 'status: later'" "item epics/ed.md 'status: draft'" \
   "item stories/lat.md 'status: ready' 'kind: lead' 'epic: el'" "item stories/w.md 'status: blocked' 'kind: code' 'depends_on: [lat]'" \
-  "item stories/l3.md 'status: ready' 'kind: lead'" "item stories/x2.md 'status: blocked' 'kind: code' 'epic: ed' 'depends_on: [l3]'"
-if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t" ]]; then echo "ok   the wait is followed by also: lead l blocks s t, and nothing for l2, the escalated esc, aft with after:, ll (only a lead story waits), lat or l3 (later and draft epics)"
+  "item stories/l3.md 'status: ready' 'kind: lead'" "item stories/x2.md 'status: blocked' 'kind: code' 'epic: ed' 'depends_on: [l3]'" \
+  "item stories/op.md 'status: ready' 'kind: operator'" "item stories/y.md 'status: blocked' 'kind: code' 'depends_on: [op]'"
+if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t"$'\n'"also: lead op blocks y" ]]; then echo "ok   the wait is followed by also: lead l blocks s t and also: lead op blocks y (kind: operator), and nothing for l2, the escalated esc, aft with after:, ll (only a lead story waits), lat or l3 (later and draft epics)"
 else echo "FAIL the wait's also: lines: ${out}"; fails=$((fails + 1)); fi
 expect_conductor "a working conductor's wait with no blocked dependant" "wait conduct-e1" no e1 "*" \
   "item stories/l.md 'status: ready' 'kind: lead'" \
