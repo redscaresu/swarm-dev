@@ -1,4 +1,4 @@
-import collections, os, re, subprocess, sys
+import os, re, subprocess, sys
 board, prefix, ref, events = sys.argv[1:5]
 def git(args, data=None):
     return subprocess.run(["git", "-c", "core.quotePath=false"] + args, cwd=board, input=data,
@@ -47,7 +47,7 @@ for chunk in log.decode("utf-8", "replace").split("\0")[1:]:
             own = re.search(r"story/" + re.escape(slug) + r"(\s|$)", subject) or work or slug in finished_here
             todo.append((slug, f"{commit}^1:{path}", bool(own)))
 out = git(["cat-file", "--batch"], "".join(t[1] + "\n" for t in todo).encode()) if todo else b""
-count, done, pos = collections.Counter(), set(), 0
+done, pos = set(), 0
 for slug, _, own in todo:
     nl = out.index(b"\n", pos)
     head, pos = out[pos:nl], nl + 1
@@ -58,6 +58,6 @@ for slug, _, own in todo:
     pos += size + 1
     if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
         done.add(slug)
-        count[fm["epic"]] += 1
-for epic, n in sorted(count.items()):
-    print(f"finished\t{epic}\t{n}")
+        # One row per finished story, "-" for an empty value; dash_finished (dash.sh) leaves out an
+        # after: story by board.sh's rule and counts the rest per epic.
+        print("\t".join(["story", fm["epic"], fm.get("kind") or "-", fm.get("after") or "-"]))
