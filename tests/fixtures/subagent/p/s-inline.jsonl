@@ -4,3 +4,7 @@
 {"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"m-sub-h","model":"claude-haiku-4-5","usage":{"input_tokens":1000000,"output_tokens":0}}}
 {"type":"assistant","parent_tool_use_id":"toolu_2","message":{"id":"m-sub-o","model":"claude-opus-5-5","usage":{"input_tokens":500000,"output_tokens":0}}}
 {"type":"assistant","parent_tool_use_id":null,"message":{"id":"m-own-2","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":100000}}}
+{"type":"assistant","isSidechain":true,"message":{"id":"m-sub-side","model":"claude-haiku-4-5","usage":{"input_tokens":1000000,"output_tokens":0}}}
+{"type":"assistant","message":{"id":"m-bad-null","model":"claude-opus-5-5","usage":{"input_tokens":null,"output_tokens":1000000}}}
+{"type":"assistant","message":{"id":"m-bad-usage","model":"claude-opus-5-5","usage":[1000000]}}
+{"type":"assistant","message":{"id":"m-bad-model","model":null,"usage":{"input_tokens":1000000,"output_tokens":0}}}

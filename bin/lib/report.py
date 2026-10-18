@@ -37,20 +37,22 @@ def fixed_rows(path):
 
 def turns(path, seen):
     # Each turn of a session's log once, as (its record, model, (input, cache write, cache read, output)
-    # tokens, est. USD), skipping (and adding to seen) message ids already counted.
+    # tokens, est. USD), skipping (and adding to seen) message ids already counted. A damaged line (a
+    # usage that is no object, a token that is no number, a model that is no string) is skipped.
     for line in log_lines(path):
         try:
             d = json.loads(line)
             m = d.get("message") or {}
-        except (ValueError, AttributeError):
-            continue
-        u, mid = m.get("usage"), m.get("id")
-        if not u or not mid or mid in seen:
+            u, mid, model = m.get("usage"), m.get("id"), m.get("model", "?")
+            if not u or not mid or mid in seen:
+                continue
+            t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
+            if not all(isinstance(x, (int, float)) for x in t):
+                continue
+            price = next((v for k, v in PRICES.items() if k in model), None)
+        except (ValueError, AttributeError, TypeError):
             continue
         seen.add(mid)
-        t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
-        model = m.get("model", "?")
-        price = next((v for k, v in PRICES.items() if k in model), None)
         yield d, model, t, sum(x * p for x, p in zip(t, price)) / 1e6 if price else 0.0
 
 def session_usage(path, seen):

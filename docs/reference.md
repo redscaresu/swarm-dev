@@ -589,10 +589,11 @@ when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` descri
 build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. Last
 come `subagent_cost_usd`, the estimated cost of the builder's subagents, and `subagent_cost_by_model`,
 the same cost split by model as `<model>:<usd>` pairs joined by commas (`haiku:1.00,opus:2.00`). A
-subagent turn is one with `parent_tool_use_id` set in the builder's session log, or any turn in the
-`subagents/*.jsonl` logs in the folder named after the session, next to its log. `cost_usd` and the
-tokens columns count the builder's own turns only. With no session log both are empty. The copy
-`close` keeps of a deleted log holds only the builder's own file, so the subagent logs beside it are lost. A story the lead holds after an escalation (`kind: lead` with
+subagent turn is one with `parent_tool_use_id` or `isSidechain` set in the builder's session log, or any
+turn in the `subagents/*.jsonl` logs in the folder named after the session, next to its log. `cost_usd`
+and the tokens columns count the builder's own turns only. Both subagent columns are empty when there
+is no session log, and when only the copy `close` keeps of a deleted log is left: that copy holds the
+builder's own file without the subagent logs beside it. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
