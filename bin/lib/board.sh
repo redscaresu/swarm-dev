@@ -61,14 +61,16 @@ board() {
 }
 
 # waits_on_epic <kind> <after> <epic> — the after: rule on a story's front-matter values: kind lead,
-# and after: (slug_list) names exactly its own epic. Such a story waits on the epic, so it does not
-# count in it (the epic goes, and reads as done, without it); it stays on the board and is listed with
-# the lead's stories. An after: naming anything else is ignored. after_story reads a story file with
-# it, dash_finished a deleted one.
+# and after: (slug_list) names its own epic, alone or in a list. Such a story waits on the epic, so it
+# does not count in it (the epic goes, and reads as done, without it); it stays on the board and is
+# listed with the lead's stories. An after: that does not name its own epic is ignored. after_story
+# reads a story file with it, dash_finished and epic_deleted_here a deleted one.
 waits_on_epic() {
-  local a rest
-  read -r a rest <<< "$(slug_list "$2")" || true
-  [[ -n "$3" && "$1" == lead && -z "${rest}" && "${a}" == "$3" ]]
+  local a list
+  [[ -n "$3" && "$1" == lead ]] || return 1
+  read -r -a list <<< "$(slug_list "$2")" || true
+  for a in ${list[@]+"${list[@]}"}; do [[ "${a}" != "$3" ]] || return 0; done
+  return 1
 }
 
 # after_story <story-file> — true for a story waits_on_epic holds for (kind and after: state-aware).
@@ -97,11 +99,29 @@ epic_has_stories() {
 }
 
 # epic_planned <epic> — true once code stories were planned for <epic>: one counts in it on the board
-# (epic_stories, done ones too), or one of them finished and left the board (dash_finished, from its
-# repo's history).
+# (epic_stories, done ones too), one of them finished and left the board (dash_finished, from its
+# repo's history) or was deleted and not committed yet (epic_deleted_here, as finish does on a board
+# outside the repo), or the board has no history to read (not in git, or no commit yet), which never
+# reads as unplanned.
 epic_planned() {
   [[ -n "$(epic_stories "$1")" ]] && return 0
-  dash_finished | awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }'
+  git -C "${BOARD}" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 0
+  dash_finished | awk -F'\t' -v e="$1" '$2 == e && $3 > 0 { f = 1 } END { exit !f }' && return 0
+  epic_deleted_here "$1"
+}
+
+# epic_deleted_here <epic> — true when a story file that counted in <epic> (its committed front matter:
+# epic, and not waits_on_epic) is deleted from the board but the deletion is not committed.
+epic_deleted_here() {
+  local p text gone
+  gone="$(git -C "${BOARD}" diff --name-only --diff-filter=D HEAD -- stories/ 2>/dev/null)" || return 1
+  while IFS= read -r p; do
+    [[ "${p}" == *.md ]] || continue
+    text="$(git -C "${BOARD}" show "HEAD:${p}" 2>/dev/null)" || continue
+    [[ "$(get_fm - epic <<< "${text}")" == "$1" ]] || continue
+    waits_on_epic "$(get_fm - kind <<< "${text}")" "$(get_fm - after <<< "${text}")" "$1" || return 0
+  done <<< "${gone}"
+  return 1
 }
 
 # epic_after_only <epic-file> — true when the epic is active, its open stories are all after_story

@@ -316,7 +316,7 @@ dash_fields() {
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
 # session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" f d r x
+  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
@@ -333,6 +333,8 @@ dash_render() {
   # Each active epic with no stories whose depends_on still holds its planning up, as next reads it.
   while IFS= read -r f; do
     if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then waits+="$(basename "${f}" .md)"$'\t'"${x}"$'\n'; fi
+    # An epic that counts as done with only after: stories open, as next reads it (epic_after_only).
+    if epic_after_only "${f}"; then afterdone+="$(basename "${f}" .md)"$'\n'; fi
   done < <(board epics)
   # The last worktree commit or edit of each working builder's story (stall.py's story_for), for the stall rule.
   while IFS= read -r r; do
@@ -373,7 +375,7 @@ for a in agents:
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
+  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \

@@ -52,11 +52,14 @@ step() { sed -n '/^Next$/{n;s/^  //;p;}' <<< "$1"; }
 rows() { sed 's/^[^a-z0-9]*//; s/ *│$//; s/█//g; s/░//g; s/  */ /g' <<< "$1"; }
 epic_line() { rows "$1" | awk -v e="$2" '$1 == e' || true; }
 quiet() { rows "$1" | grep -F "with no open story" || true; }
+# mark <dash frame> <epic> — the status symbol on that epic's row (! look, ✓ done, ○ ready).
+mark() { sed -n "s/^│ \([^ ]*\) $2 .*/\1/p" <<< "$1"; }
 
 mkdir -p "${P}/docs/stories" && git -C "${P}" init -q
 echo "# Stories" > "${P}/docs/stories/README.md"   # dash reads a board only with it
 item epics/alpha.md 'status: active'
 item epics/beta.md 'status: active' 'depends_on: [alpha]'
+commit "epics"   # a history to read from the start: no history reads as planned (epic_planned)
 
 # alpha's code story is done and its after: story waits: alpha counts as done, so beta can be planned.
 item stories/built.md 'status: done' 'kind: code' 'epic: alpha'
@@ -72,9 +75,17 @@ out="$(run dash)"
 check "dash: the done epic's row names its after: story" test "$(epic_line "${out}" alpha)" = "alpha 1/1 after: check waits on the lead"
 check "dash: the epic after it is with the epics with no open story" test "$(quiet "${out}")" = "1 active epic with no open story: beta"
 check "dash: the after: story is still listed for the lead" has "run lead story check" "${out}"
+check "dash: the after: story in the lead's queue still marks its done epic for a look" test "$(mark "${out}" alpha)" = "!"
+# An epic with a ready code story sorts before alpha by name; alpha's look ranks it first.
+item epics/aardvark.md 'status: active'
+item stories/dig.md 'status: ready' 'kind: code' 'epic: aardvark'
+out="$(run dash)"
+check "dash: the done epic whose after: story needs a look is ranked above an epic with ready work" \
+  test "$(rows "${out}" | awk '$1 == "alpha" || $1 == "aardvark" { print $1 }' | head -1)" = "alpha"
+rm "${P}/docs/epics/aardvark.md" "${P}/docs/stories/dig.md"
 
 # after: is read as a slug list: brackets, quotes, a comment, trailing spaces and a CR name alpha.
-for v in '[alpha]' '"alpha"' 'alpha  # once the code is in' 'alpha   ' $'alpha\r'; do
+for v in '[alpha]' '[alpha, beta]' '"alpha"' 'alpha  # once the code is in' 'alpha   ' $'alpha\r'; do
   item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' "after: ${v}"
   out="$(run next)"
   check "next: after: ${v%$'\r'}$([[ "${v}" == *$'\r' ]] && echo ' (CRLF)') names its epic" test "$(first "${out}")" = "plan-epic beta"
@@ -85,6 +96,11 @@ item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
 # was planned, so it is still done, and dash counts only built as finished.
 item stories/old-check.md 'status: review' 'kind: lead' 'epic: alpha' 'after: alpha'
 commit "board"
+# finish on a board outside the repo deletes the file and commits nothing: alpha is still done.
+rm "${P}/docs/stories/built.md"
+out="$(run next)"
+check "next: an epic whose code story was deleted and not committed is done" test "$(first "${out}")" = "plan-epic beta"
+git -C "${P}" checkout -q -- docs/stories/built.md
 git -C "${P}" rm -q docs/stories/built.md && commit "Merge pull request #1 from o/story/built"
 git -C "${P}" rm -q docs/stories/old-check.md && commit "Merge pull request #2 from o/story/old-check"
 out="$(run next)"
@@ -110,7 +126,7 @@ done
 item epics/alpha.md 'status: active'
 
 # An after: that names anything but the story's own epic is ignored: the story holds alpha open.
-for v in beta tbd; do
+for v in beta tbd '[beta, tbd]'; do
   item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' "after: ${v}"
   out="$(run next)"
   check "next: after: ${v} (not its epic) holds its epic open" test "$(first "${out}")" = "gate"
@@ -153,11 +169,25 @@ out="$(run status)"
 check "status: an epic whose only story is an after: one is planned" test "$(step "${out}")" = "plan-epic gamma"
 out="$(run dash)"
 check "dash: the epic after an epic with only an after: story waits on it" test "$(epic_line "${out}" delta)" = "delta – waits on gamma"
+check "dash: an epic whose only story is an after: one is not planned yet" test "$(epic_line "${out}" gamma)" = "gamma – not planned yet · after: gcheck waits on the lead"
+check "dash: an epic whose only story is an after: one has no done mark" test "$(mark "${out}" gamma)" = "!"
 out="$(run unblock)"
 check "unblock: a story that depends on an epic with only an after: story stays blocked" test "$(grep -c waiter <<< "${out}")" -eq 0
 # Once gamma's code is planned and done, it is done: unblock readies the story.
 item stories/gcode.md 'status: done' 'kind: code' 'epic: gamma'
 out="$(run unblock)"
 check "unblock: a story that depends on a done epic with an after: story is readied" has "waiter" "${out}"
+
+# A board outside the repo and not in git has no history to read, which never reads as unplanned:
+# alpha, built and gone, keeps only its after: story and is done, never planned again.
+Q="${ROOT}/ext"
+mkdir -p "${Q}/proj/.claude/swarm" "${Q}/board/stories" "${Q}/board/epics" && git -C "${Q}/proj" init -q
+printf 'board_dir = ../board\n' > "${Q}/proj/.claude/swarm/config"
+echo "# Stories" > "${Q}/board/stories/README.md"
+printf -- '---\nstatus: active\n---\n\n# alpha\n' > "${Q}/board/epics/alpha.md"
+printf -- '---\nstatus: active\ndepends_on: [alpha]\n---\n\n# beta\n' > "${Q}/board/epics/beta.md"
+printf -- '---\nstatus: ready\nkind: lead\nepic: alpha\nafter: alpha\n---\n\n# check\n' > "${Q}/board/stories/check.md"
+out="$( (cd "${Q}/proj" && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" next 2>&1) || true)"
+check "next: on a board not in git, an epic with only an after: story is done, not planned again" test "$(first "${out}")" = "plan-epic beta"
 
 if [[ ${fails} -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
