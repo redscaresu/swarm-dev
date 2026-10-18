@@ -52,7 +52,7 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause"
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
-      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges")
+      "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model")
 for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_merges), c in zip(rows, found):
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
     # Unknown (empty) unless gh answered for a story it could read: then true when any PR of its head merged.
@@ -60,9 +60,9 @@ for (f, kind, risk, story_epic, asked, prs, pr, state, merged, created, main_mer
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     merged = merged if asked and state == "MERGED" else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
-                     str(fixed), pr, state, attempts] + f[13:]
+                     str(fixed), pr, state, attempts] + f[13:25]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
-                        created, minutes(f[13], created), minutes(created, merged), main_merges]))
+                        created, minutes(f[13], created), minutes(created, merged), main_merges] + f[25:27]))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text

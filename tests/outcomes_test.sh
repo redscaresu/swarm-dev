@@ -78,14 +78,15 @@ check() { # <name> <output> <exact expected output>
 HEAD=$'date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_findings\ttells_nudge\ttells_resume\tcloses\tfindings_fixed\tpr\tpr_state\tattempts'
 HEAD+=$'\tstarted\ttokens_input\ttokens_cache_write\ttokens_cache_read\ttokens_output\tclose_cause\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at'
 HEAD+=$'\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by'
-HEAD+=$'\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges'
+HEAD+=$'\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model'
 E6=$'\t\t\t\t\t\t'   # six empty columns, each after its tab: the escalation steps
 E4=$'\t\t\t\t'       # the four timing columns, empty: this gh stub gives no createdAt or commits
+S=$'\t0.00\t'         # no subagents: subagent_cost_usd 0.00 and no model split (subagent_cost_test.sh has them)
 # opus 1M input = $4; sonnet 1M output = $10; fable 1M input = $10.
-R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}	e0	2026-10-03T10:00:00Z	true	1	unknown:2	unknown:1${E4}"
-R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}			false	0	unknown:1	${E4}"
+R1="2026-10-01	${LONG}	code	high	code-risky	opus	xhigh	4.00	1000000	2	0	1	2	2	https://github.com/o/r/pull/7	MERGED	1	2026-10-01T09:00:00Z	1000000	0	0	0	stalled${E6}	e0	2026-10-03T10:00:00Z	true	1	unknown:2	unknown:1${E4}${S}"
+R2="2026-10-02	docs-story	docs		docs	sonnet	medium	10.00	1000000	0	1	0	0	1	https://github.com/o/r/pull/8	OPEN	1	2026-10-02T08:00:00Z	0	0	0	1000000	${E6}			false	0	unknown:1	${E4}${S}"
 # The retry started after every finding on #7, so it takes none of them.
-R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	0	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}	e0	2026-10-03T10:00:00Z	true	0		${E4}"
+R3="2026-10-04	${LONG}	code	high	escalate	fable	xhigh	10.00	1000000	0	0	0	0	0	https://github.com/o/r/pull/7	MERGED	2	2026-10-04T09:00:00Z	1000000	0	0	0	${E6}	e0	2026-10-03T10:00:00Z	true	0		${E4}${S}"
 check "one row per builder: full slug, kind and risk (from git once deleted), cost, tells by kind (bare as findings, refused left out), closes (close:stalled among them), findings, attempts, start to the second, tokens by type" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "${R2}" "${R3}")"
 check "--since leaves earlier rows out, and attempts still count them" \
@@ -116,15 +117,15 @@ check "reading creates no file and no events.tsv line" "$(snap)" "${before}"
 rm "${P}/.swarm/sessions/"*
 # With neither, cost, tokens and started are empty and the slug is agents.tsv's cut name, whose story
 # is unknown. The close sent to that name is still the first build's, which started before it.
-R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}				0		${E4}"
-nolog() { awk -F'\t' -v OFS='\t' '{ $8 = $9 = $18 = $19 = $20 = $21 = $22 = "" } 1' <<< "$1"; }
+R3N="2026-10-04	${CUT}			escalate	fable	xhigh			0	0	0	0	0			1						${E6}				0		${E4}		"
+nolog() { awk -F'\t' -v OFS='\t' '{ $8 = $9 = $18 = $19 = $20 = $21 = $22 = $40 = "" } 1' <<< "$1"; }
 check "with neither, the cells are empty, a slug with one PR keeps it, and nothing fails" \
   "$(outcomes "${dir}/bin")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nolog "${R2}")" "${R3N}")"
 # A damaged copy (not gzip at all for s2, cut short for s3) reads as what it held before the damage:
 # nothing here, so no usage and no cwd; every other row is intact.
 echo 'not gzip' > "${P}/.swarm/sessions/2026-10-01-docs-story-s2.jsonl.gz"
 session s3 "${LONG}" claude-fable-5-1 1000000 0 | gzip -c | head -c 20 > "${P}/.swarm/sessions/2026-10-01-${CUT}-s3.jsonl.gz"
-zero() { awk -F'\t' -v OFS='\t' '{ $8 = "0.00"; $9 = $19 = $20 = $21 = $22 = 0; $18 = "" } 1' <<< "$1"; }
+zero() { awk -F'\t' -v OFS='\t' '{ $8 = $40 = "0.00"; $9 = $19 = $20 = $21 = $22 = 0; $18 = "" } 1' <<< "$1"; }
 check "a damaged copy stops neither the report nor the other rows" \
   "$(outcomes "${dir}/bin" 2>&1; echo "exit $?")" "$(printf '%s\n' "${HEAD}" "${R1}" "$(zero "${R2}")" "$(zero "${R3N}")" "exit 0")"
 

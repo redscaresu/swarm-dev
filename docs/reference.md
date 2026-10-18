@@ -561,7 +561,12 @@ does), `pr_to_merge_min` (minutes from `pr_created_at` to `merged_at`), and `mai
 commits on the PR whose headline merges the base branch into it (`Merge origin/main into …`,
 `Merge branch 'main' into …`, `Merge remote-tracking branch 'origin/main' into …`). Each is empty
 when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` describe the PR, not the
-build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. A story the lead holds after an escalation (`kind: lead` with
+build, so they repeat on every build that shares it: count a retried PR once when you sum or average them.
+The last two columns cover the builder's subagents: `subagent_cost_usd`, and `subagent_cost_by_model`
+as `<model>:<usd>` pairs in name order, comma-joined (`haiku:1.20,opus:3.40`). A subagent turn is
+one with `parent_tool_use_id` set in the session log, or any turn in the `subagents/*.jsonl` files
+of the session's folder. `cost_usd` and the token columns count only the builder's own turns. With
+no session log, both subagent columns are empty. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes

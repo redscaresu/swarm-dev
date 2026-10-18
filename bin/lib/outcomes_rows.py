@@ -1,4 +1,4 @@
-import collections, datetime, json, os, sys
+import collections, datetime, glob, json, os, sys
 from report import *
 log, events, since, projects, roles, archive = sys.argv[1:7]
 
@@ -36,6 +36,33 @@ def started_of(path):
         if isinstance(ts, str) and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", ts):
             return ts[:19] + "Z"
     return ""
+
+TOKENS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
+def usage(path):
+    # The builder's own tokens by type and cost, and its subagents' cost by model ({model: usd}, a priced
+    # model by its PRICES name). A subagent turn is one with parent_tool_use_id set in the session log,
+    # or any turn in <session>/subagents/*.jsonl beside it. Each message id counts once, as session_usage.
+    tok, usd, sub, seen = [0, 0, 0, 0], 0.0, collections.Counter(), set()
+    logs = [path] + sorted(glob.glob(os.path.join(glob.escape(path[:-len(".jsonl")]), "subagents", "*.jsonl")))
+    for p in logs if path.endswith(".jsonl") else [path]:
+        for line in log_lines(p):
+            try:
+                d = json.loads(line)
+                m = d.get("message") or {}
+                u, mid = m.get("usage"), m.get("id")
+            except (ValueError, AttributeError):
+                continue
+            if not u or not mid or mid in seen:
+                continue
+            seen.add(mid)
+            t, model = [u.get(k, 0) for k in TOKENS], m.get("model", "?")
+            name = next((k for k in PRICES if k in model), model)
+            cost = sum(x * c for x, c in zip(t, PRICES.get(name, ()))) / 1e6
+            if p != path or d.get("parent_tool_use_id"):
+                sub[name] += cost
+            else:
+                tok, usd = [x + y for x, y in zip(tok, t)], usd + cost
+    return tok, usd, sub
 
 def midnight(day):
     # 00:00 local time on an agents.tsv day (a local date), in epoch seconds: where a build with no
@@ -127,12 +154,13 @@ for b in builds:
     day, role, _, _, model, effort, _ = b["f"]
     if day < since:
         continue
-    cost = tokens = ""
+    cost = tokens = sub_cost = sub_models = ""
     tok = ["", "", "", ""]
     if b["path"]:
-        t, usd, _ = session_usage(b["path"], set())
+        t, usd, sub = usage(b["path"])
         cost, tokens, tok = f"{usd:.2f}", str(sum(t)), [str(x) for x in t]
+        sub_cost, sub_models = f"{sum(sub.values()):.2f}", ",".join(f"{k}:{v:.2f}" for k, v in sorted(sub.items()))
     counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
     steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
     print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
-                    + tok + [b.get("cause", "")] + steps))
+                    + tok + [b.get("cause", "")] + steps + [sub_cost, sub_models]))

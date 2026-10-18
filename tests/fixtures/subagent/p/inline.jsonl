@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-10-05T09:00:00Z","parent_tool_use_id":null}
+{"type":"assistant","parent_tool_use_id":null,"message":{"id":"i-own","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"i-haiku","model":"claude-haiku-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}
+{"type":"assistant","parent_tool_use_id":"toolu_2","message":{"id":"i-opus","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":100000}}}
