@@ -59,8 +59,9 @@ check "init writes a CI that runs the gate on a PR and a push, and otherwise mak
   "$(grep -qxF 'BOARD="docs/"' "${p}/.github/swarm-board-only.sh" && echo yes)|$(grep -qxF '        run: bash .github/swarm-board-only.sh' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF '${{ github.event.pull_request.base.sha || github.event.before }}' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'if: steps.gate.outputs.board_only != '"'true'" "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qxF '          make check' "${p}/.github/workflows/ci.yml" && echo yes)|$(grep -qF 'branches: ["main"]' "${p}/.github/workflows/ci.yml" && echo yes)"
 check "init writes an executable pre-commit hook for docs/" "yes|yes" \
   "$(grep -qxF 'swarm_board="docs/"' "${p}/.git/hooks/pre-commit" && echo yes)|$([[ -x "${p}/.git/hooks/pre-commit" ]] && echo yes)"
-check "init says to commit what it wrote, naming the paths" "yes" \
-  "$(has "${out}" "Commit what init wrote, so CI runs and the config travels with the repo: .claude/swarm/config .github/swarm-board-only.sh .github/workflows/ci.yml .gitignore docs/.obsidian/app.json docs/Board.base docs/epics/README.md docs/hld/HLDs.base docs/hld/README.md docs/stories/README.md")"
+check "init says to commit what it wrote, naming each path" \
+  "Commit what init wrote, so CI runs and the config travels with the repo: .gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh docs/.obsidian/app.json docs/Board.base docs/epics/README.md docs/hld/HLDs.base docs/hld/README.md docs/stories/README.md" \
+  "$(grep '^Commit what init wrote' <<< "${out}")"
 # make_check <dir> — CI's make check step, run in <dir>: its output and exit code.
 make_check() {
   sed -n '/- name: make check/,$p' "${p}/.github/workflows/ci.yml" | sed -n '/run: |/,$p' | sed '1d; s/^          //' > "${ROOT}/make-check.sh"
@@ -116,8 +117,9 @@ q="${ROOT}/dot"; "${GIT[@]}" init -q "${q}"; origin "${q}"
 mkdir -p "${q}/.claude/swarm" && echo "board_dir = ." > "${q}/.claude/swarm/config"
 echo mine > "${q}/notes.txt"
 out="$(run "${q}" init || true)"
+line="$(grep '^Commit what init wrote' <<< "${out}" || true)"
 check "board_dir = . says to commit only what init wrote, not the repo's other files" "yes|no" \
-  "$(grep '^Commit what init wrote' <<< "${out}" | grep -qF ' stories/README.md' && echo yes || echo no)|$(grep '^Commit what init wrote' <<< "${out}" | grep -qF 'notes.txt' && echo yes || echo no)"
+  "$([[ "${line}" == *" stories/README.md"* ]] && echo yes || echo no)|$([[ "${line}" == *notes.txt* ]] && echo yes || echo no)"
 check "board_dir = . names the lines without a path" $'.swarm/\n.obsidian/*\n!.obsidian/app.json' "$(cat "${q}/.gitignore")"
 check "board_dir = . lists files relative to the root" "yes" "$(has "${out}" "copied stories/README.md")"
 check "board_dir = . gates on the board's own files at the root" "yes|board_only=true|board_only=false" \
@@ -193,7 +195,7 @@ check "the hook runs make check on any other commit, and a failing check stops i
 rm "${q}/Makefile"
 out="$( { cd "${q}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm code 2>&1; } || true)"
 check "with no check target, the hook warns and lets the commit through" "yes|yes" \
-  "$(has "${out}" 'pre-commit: make has no check target, so nothing was checked; add one to the Makefile')|$(git -C "${q}" log --format=%s | grep -qx code && echo yes || echo no)"
+  "$(has "${out}" 'pre-commit: make has no check target, so nothing was checked; add one to the Makefile')|$([[ "$(git -C "${q}" log -1 --format=%s)" == code ]] && echo yes || echo no)"
 
 # --- core.hooksPath set: no hook is written there, and the lines to add are printed.
 q="${ROOT}/hookspath"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/.githooks"

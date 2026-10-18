@@ -672,17 +672,23 @@ init_hook() {
 # init_commit_step <board> — the files init wrote that git does not track yet, with a line saying to
 # commit them: CI runs only once its workflow is committed.
 init_commit_step() {
-  local wrote untracked f
-  wrote=(.gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh)
+  local wrote=(.gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh) untracked="" f
   if [[ "$1" != / ]]; then
     while IFS= read -r f; do wrote+=("$1${f}"); done < <(board_templates)
   fi
-  untracked="$(git status --porcelain -- "${wrote[@]}" 2>/dev/null | cut -c4- | tr '\n' ' ')"
-  [[ -z "${untracked}" ]] || echo "Commit what init wrote, so CI runs and the config travels with the repo: ${untracked% }"
+  # Each path as init names it, kept when it exists and git does not track it or has it changed (read
+  # from the index and HEAD, so no status.showUntrackedFiles setting can hide it).
+  for f in "${wrote[@]}"; do
+    [[ -e "${f}" ]] || continue
+    if ! git ls-files --error-unmatch -- "${f}" >/dev/null 2>&1 || ! git diff --quiet HEAD -- "${f}" 2>/dev/null; then
+      untracked+=" ${f}"
+    fi
+  done
+  [[ -z "${untracked}" ]] || echo "Commit what init wrote, so CI runs and the config travels with the repo:${untracked}"
 }
 
 # board_templates — the board's template files, relative to the board, one per line.
-board_templates() { (cd "${SWARM_HOME}/templates/docs" && find . -type f | sed 's|^\./||' | sort); }
+board_templates() { (cd "${SWARM_HOME}/templates/docs" && find . -type f | sed 's|^\./||' | LC_ALL=C sort); }
 
 # init_config — a commented commit_trailers line in .claude/swarm/config, unless the file names the key.
 init_config() {
