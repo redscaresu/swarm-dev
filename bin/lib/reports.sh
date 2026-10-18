@@ -213,7 +213,8 @@ dataset_report() {
   while IFS=$'\t' read -r slug merged; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
     text="$(story_text "${slug}")"
-    [[ -n "${text}" ]] || continue   # no story to read: neither outcomes nor dataset knows it
+    # No story to read (neither on the board nor in its history): counted, never dropped in silence.
+    if [[ -z "${text}" ]]; then skipped=$((skipped + 1)); continue; fi
     if ! src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")"; then skipped=$((skipped + 1)); continue; fi
     if [[ -z "${merged}" ]]; then
       [[ -n "${gh_up}" ]] || { gh auth status >/dev/null 2>&1 && gh_up=yes || gh_up=no; }
@@ -232,7 +233,7 @@ dataset_report() {
       [[ -z "${line}" ]] || prs+="${slug}"$'\t'"${src}"$'\t'"${line}"$'\n'
     done <<< "${got}"
   done <<< "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "story_merged") c = i; next } { m[$2] = $c } END { for (s in m) print s "\t" m[s] }' <<< "${rows}" | sort)"
-  [[ ${skipped} -eq 0 ]] || echo "dataset: skipped ${skipped} stories whose repo or PRs could not be read; their lines from the last run stay" >&2
+  [[ ${skipped} -eq 0 ]] || echo "dataset: skipped ${skipped} stories whose story, repo or PRs could not be read; their lines from the last run stay" >&2
   mkdir -p "${PROJECT_DIR}/.swarm"
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_PRS="${prs}" python3 "${SWARM_HOME}/bin/lib/dataset.py" \
     "${BOARD}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${out}"

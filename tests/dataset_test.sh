@@ -22,6 +22,7 @@
 #   gone       its repo: cannot be found, so it is skipped and counted on stderr.
 #   moved      gh cannot list its PRs (its GitHub repo moved), and archived gh cannot list its merged
 #              PRs, while gh auth status answers: both are skipped and counted; moved keeps its line.
+#   phantom    a build whose story is neither on the board nor in its history: counted too.
 # A line from the last run (ancient) stays. An impossible escaped-finding day is skipped. An env value
 # and a transcript line planted in the session logs, and the env value exported to the run, appear
 # nowhere in the output. Then a failing gh, a failing outcomes and a run with no finished story each
@@ -132,7 +133,8 @@ printf '%s\n' \
   $'2026-10-12\tcode\tgone\tclaude\topus\txhigh\ts9' \
   $'2026-10-13\tcode-sonnet\tearly\tclaude\tsonnet\tmedium\ts10' \
   $'2026-10-13\tcode\tmoved\tclaude\topus\txhigh\ts11' \
-  $'2026-10-13\tcode\tarchived\tclaude\topus\txhigh\ts12' > "${P}/.swarm/agents.tsv"
+  $'2026-10-13\tcode\tarchived\tclaude\topus\txhigh\ts12' \
+  $'2026-10-13\tcode\tphantom\tclaude\topus\txhigh\ts13' > "${P}/.swarm/agents.tsv"
 printf '%s\n' \
   $'2026-10-02T11:00:00Z\ttell:findings\teasy-easy\tw:1\tok' \
   $'2026-10-02T13:00:00Z\ttell:findings\teasy-hard\tw:1\tok' \
@@ -204,8 +206,8 @@ run() { # <PATH prefix> — the dataset run, its stdout and stderr, then its exi
 }
 events_before="$(cat "${P}/.swarm/events.tsv")"
 OUT="${P}/.swarm/dataset.jsonl"
-check "it says where it wrote the file under .swarm/, keeps last run's lines, and counts the stories with no repo or PRs gh cannot read on stderr" "$(run "${dir}/bin")" \
-  "dataset: skipped 3 stories whose repo or PRs could not be read; their lines from the last run stay
+check "it says where it wrote the file under .swarm/, keeps last run's lines, and counts the stories with no story, no repo or PRs gh cannot read on stderr" "$(run "${dir}/bin")" \
+  "dataset: skipped 4 stories whose story, repo or PRs could not be read; their lines from the last run stay
 wrote 8 stories to $(cd "${P}" && pwd -P)/.swarm/dataset.jsonl (2 kept from the last run)
 exit 0"
 # One line per story, its inputs and results as `key=value` (JSON values), in merge order.
