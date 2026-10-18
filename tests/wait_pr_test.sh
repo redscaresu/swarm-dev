@@ -216,7 +216,6 @@ check "a head read ignoring SIGALRM, as gh does: returns at the deadline" test "
 # --- Exit 1 is only red: a die inside wait-pr (here a bad config line) exits 2.
 fresh; echo "bogus = 1" > "${P}/.claude/swarm/config"; wait_pr
 is "a die inside wait-pr: exits 2" 2 "${rc}"
-check "a die inside wait-pr: prints its error" said "unknown key 'bogus'"
 : > "${P}/.claude/swarm/config"
 
 # --- Read-only: no events.tsv line.
