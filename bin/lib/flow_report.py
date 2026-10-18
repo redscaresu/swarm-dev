@@ -4,7 +4,8 @@
 # not given), the log paths agents, events and findings, features (docs/features.tsv), roles (the
 # builder roles), projects (Claude's projects dir), archive (close's session copies), lead (the
 # calling pane's session, or "") and own (the lead's own Claude Code directory); rows, outcomes' rows
-# as dicts by column name, unfiltered; deps, each windowed slug's depends_on. A section that needs gh
+# as dicts by column name, unfiltered; deps, each windowed slug's depends_on; stories, each windowed
+# slug's (estimate_lines, touches), as its story says them ("" when it does not). A section that needs gh
 # calls it itself. So a new section is a new file, and this one never changes. A section that raises
 # prints `error: <name>: <message>` under its heading, the others still run, and flow exits 1; so does
 # one that calls sys.exit with a failing code (sys.exit() or sys.exit(0) only ends that section).
@@ -14,6 +15,7 @@ ctx = dict(zip(KEYS, sys.argv[1:len(KEYS) + 1]))
 table = [l.split("\t") for l in os.environ.get("SWARM_ROWS", "").splitlines()]
 ctx["rows"] = [dict(zip(table[0], f)) for f in table[1:] if len(f) == len(table[0])] if table else []
 ctx["deps"] = {s: d.split() for s, _, d in (l.partition("\t") for l in os.environ.get("SWARM_DEPS", "").splitlines())}
+ctx["stories"] = {f[0]: (f[1], f[2]) for f in (l.split("\t") for l in os.environ.get("SWARM_STORIES", "").splitlines()) if len(f) == 3}
 here = os.path.dirname(os.path.abspath(__file__))
 names = sys.argv[len(KEYS) + 1:] or [os.path.basename(p)[len("flow_"):-len(".py")]
                                      for p in sorted(glob.glob(os.path.join(glob.escape(here), "flow_*.py")))]

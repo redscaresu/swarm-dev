@@ -278,28 +278,32 @@ dash_reexec() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading), who
-# its step waits on, its first **You:** line's text, tab-separated, in one fork, then `after` for an
+# its step waits on, its first **You:** line's text, tab-separated, in one awk, then `after` for an
 # after_story (state-aware, as next reads it), else empty. Who is `held` for a held story (held_for: too), `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
 # else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
 # names the convention, "has no **You:** step", is no step), else empty. The text is what follows the
 # first step's **You:**, tabs as spaces. The keys are read from the front matter only (a leading ---, up to the next; CRLF
-# tolerated), by fm's rule: a key's first line wins, an empty value too. dash_finished's front()
-# reads them the same way.
+# tolerated), by fm's rule: a key's first line wins, an empty value too. Then, as state_value reads
+# them, the item's state file (state_path) wins for each of SET_FM_KEYS it has a line for, unless its
+# <key>@base: line no longer matches the file's value. dash_finished's front() reads the front matter
+# the same way; it reads deleted files only, so never a state file.
 dash_fields() {
-  awk '{ sub(/\r$/, "") }
+  state_path "$1"
+  awk -v sf="${STATE_PATH}" -v keys=" ${SET_FM_KEYS} " 'function val(l, i) { l = substr(l, i + 1); sub(/^ +/, "", l); return l }
+    { sub(/\r$/, "") }
     NR == 1 && $0 == "---" { n = 1; next }
     n == 1 && $0 == "---" { n = 2; next }
-    n == 1 && !hs && sub(/^status: */, "") { hs = 1; s = $0; next }
-    n == 1 && !hp && sub(/^prs: */, "") { hp = 1; p = $0; next }
-    n == 1 && !he && sub(/^epic: */, "") { he = 1; e = $0; next }
-    n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
-    n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
-    n == 1 && !hh && sub(/^held_for: */, "") { hh = 1; h = $0; next }
+    n == 1 && (i = index($0, ":")) > 1 { if (!((k = substr($0, 1, i - 1)) in fv)) fv[k] = val($0, i); next }
     n != 1 && !y && match($0, /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/) {
       y = 1; yt = substr($0, RSTART + RLENGTH); gsub(/\t/, " ", yt); sub(/^ +/, "", yt); sub(/ +$/, "", yt) }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")), yt }' "$1"
+    END { while (sf != "" && (getline l < sf) > 0) { sub(/\r$/, "", l)
+        if ((i = index(l, ":")) > 1 && !((k = substr(l, 1, i - 1)) in sv)) sv[k] = val(l, i) }
+      for (k in sv) if (index(keys, " " k " ") && (!((k "@base") in sv) || sv[k "@base"] == fv[k])) fv[k] = sv[k]
+      x = fv["escalated_from"]
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", fv["status"], fv["prs"], fv["epic"], fv["kind"], t,
+        (x != "" ? (fv["held_for"] != "" ? "held" : "escalated") : (y ? "you" : "")), yt }' "$1"
   if after_story "$1"; then printf '\tafter'; else printf '\t'; fi
 }
 
