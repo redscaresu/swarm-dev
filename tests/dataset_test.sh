@@ -9,8 +9,9 @@
 #   escalated  sonnet, a step-up to opus, then Fable, and an escaped finding; the board PR merged its
 #              story file as CRLF,
 #              gh's merge commit is not in the local history, and its PR deletes the epic's file too.
-#   rebased    merged by rebase as two commits, one subject with a backslash and so long gh cuts its
-#              headline with …, no PR number in either.
+#   rebased    merged by rebase as two commits, no PR number in either: one's first paragraph runs
+#              over two lines (gh's headline is the first), the other's subject has a backslash and
+#              is so long gh cuts its headline with ….
 #   retried    two builds with no session logs and two PRs, so outcomes gives no build a PR: gh's
 #              merged PR is read for the story directly. It merged on origin after the last fetch.
 #              Its first PR also merged, and an escaped finding on that one is rework of the story.
@@ -19,10 +20,14 @@
 #              Its merge commit is the root, whose diff git cannot make (as in a shallow clone), so its
 #              diff and was_easy are null; its build started after the merge, so its minutes are null.
 #   gone       its repo: cannot be found, so it is skipped and counted on stderr.
+#   moved      gh cannot list its PRs (its GitHub repo moved), and archived gh cannot list its merged
+#              PRs, while gh auth status answers: both are skipped and counted; moved keeps its line.
 # A line from the last run (ancient) stays. An impossible escaped-finding day is skipped. An env value
 # and a transcript line planted in the session logs, and the env value exported to the run, appear
 # nowhere in the output. Then a failing gh, a failing outcomes and a run with no finished story each
-# leave the file as it was. gh is a stub on PATH. The fixture's path is left as mktemp gives it
+# leave the file as it was. The rework query is bounded to the stories' merges plus 7 days, and when
+# it fails or comes back at gh's 1000-PR cap, rework it cannot rule out is null. A fetch that fails
+# says so on stderr. gh is a stub on PATH. The fixture's path is left as mktemp gives it
 # (on macOS under /var, a symlink to /private/var).
 set -euo pipefail
 export TZ=UTC
@@ -56,6 +61,8 @@ sed -i.bak 's/$/\r/' "${S}/escalated.md" && rm "${S}/escalated.md.bak"
 story rebased "kind: code" "status: ready" "epic: e1" "depends_on: []" "touches: [src/e.txt]" "easy: true" "estimate_lines: 20"
 story retried "kind: code" "status: ready" "epic: e1" "depends_on: []" "touches: [src/f.txt]" "easy: true" "estimate_lines: 10"
 story gone "kind: code" "repo: nosuch" "status: ready" "epic: e1" "easy: true"
+story moved "kind: code" "status: ready" "epic: e1" "easy: true"
+story archived "kind: code" "status: ready" "epic: e1" "easy: true"
 lines 20 > "${P}/docs/epics/e1.md"
 commit 2026-10-01T07:00:00Z "plan e1: first draft"
 sed -i.bak 's/^estimate_lines: 35$/estimate_lines: 40/' "${S}/easy-hard.md" && rm "${S}/easy-hard.md.bak"
@@ -72,7 +79,7 @@ lines 60 > "${P}/src/b.txt"; lines 60 > "${P}/src/c.txt"; rm "${S}/easy-hard.md"
 lines 30 > "${P}/src/d.txt"; rm "${S}/escalated.md" "${P}/docs/epics/e1.md"; commit 2026-10-05T12:00:00Z "escalated (#4)"
 echo fixed >> "${P}/src/b.txt"; commit 2026-10-06T12:00:00Z "fix the bug from #3 (#5)"
 echo tidy >> "${P}/src/a.txt"; commit 2026-10-10T13:00:00Z "fixes #2 (#6)"
-lines 5 > "${P}/src/e.txt"; commit 2026-10-11T10:00:00Z "rebased: part one"
+lines 5 > "${P}/src/e.txt"; commit 2026-10-11T10:00:00Z $'rebased: part one\nand a second line'
 LONG='rebased: part \ two, a subject long enough that gh cuts its headline short'
 lines 10 > "${P}/src/e.txt"; rm "${S}/rebased.md"; commit 2026-10-11T10:00:00Z "${LONG}"
 REBASED="$(git -C "${P}" rev-parse HEAD)"
@@ -123,7 +130,9 @@ printf '%s\n' \
   $'2026-10-11\tcode\tretried\tclaude\topus\txhigh\ts7' \
   $'2026-10-12\tcode\tretried\tclaude\topus\txhigh\ts8' \
   $'2026-10-12\tcode\tgone\tclaude\topus\txhigh\ts9' \
-  $'2026-10-13\tcode-sonnet\tearly\tclaude\tsonnet\tmedium\ts10' > "${P}/.swarm/agents.tsv"
+  $'2026-10-13\tcode-sonnet\tearly\tclaude\tsonnet\tmedium\ts10' \
+  $'2026-10-13\tcode\tmoved\tclaude\topus\txhigh\ts11' \
+  $'2026-10-13\tcode\tarchived\tclaude\topus\txhigh\ts12' > "${P}/.swarm/agents.tsv"
 printf '%s\n' \
   $'2026-10-02T11:00:00Z\ttell:findings\teasy-easy\tw:1\tok' \
   $'2026-10-02T13:00:00Z\ttell:findings\teasy-hard\tw:1\tok' \
@@ -138,7 +147,8 @@ printf '%s\n' \
   $'2026-10-07\tlate-bug\to/r#4\tc\tescaped\tescaped' \
   $'2026-10-13\tfirst-pr-bug\to/r#9\td\tescaped\tescaped' > "${P}/.swarm/findings.tsv"
 ANCIENT='{"results": {"merged_at": "2026-09-01T00:00:00Z"}, "slug": "ancient"}'
-echo "${ANCIENT}" > "${P}/.swarm/dataset.jsonl"
+MOVED='{"results": {"merged_at": "2026-09-02T00:00:00Z"}, "slug": "moved"}'
+printf '%s\n' "${ANCIENT}" "${MOVED}" > "${P}/.swarm/dataset.jsonl"
 
 # gh: outcomes' PR list per story; dataset's merged PRs per story (as gh's @tsv writes them: a
 # backslash doubled); model_fit's merged PRs of the repo.
@@ -163,12 +173,19 @@ case "\$1 \$2 \$3 \$4 \$5 \$6" in
   "pr list --head story/escalated --state all") printf '${U}/4\tMERGED\t2026-10-05T12:00:00Z\t2026-10-03T12:00:00Z\t0\n' ;;
   "pr list --head story/rebased --state all") printf '${U}/7\tMERGED\t2026-10-11T10:00:00Z\t2026-10-11T09:30:00Z\t0\n' ;;
   "pr list --head story/retried --state all") printf '${U}/10\tMERGED\t2026-10-12T12:00:00Z\t2026-10-12T10:00:00Z\t0\n${U}/9\tMERGED\t2026-10-11T12:00:00Z\t2026-10-11T10:00:00Z\t0\n' ;;
+  "pr list --head story/archived --state all") printf '${U}/13\tMERGED\t2026-10-13T12:00:00Z\t2026-10-13T10:00:00Z\t0\n' ;;
+  "pr list --head story/archived --state merged") exit 1 ;;
+  "auth status"*) exit 0 ;;
   "pr list --head story/early --state all") printf '${U}/11\tMERGED\t2026-10-13T00:00:00Z\t2026-10-12T23:00:00Z\t0\n' ;;
   "pr list --head story/"*" --state merged") cat "${dir}/merged-\${4#story/}.tsv" 2>/dev/null; exit 0 ;;
-  "pr list -R o/r --state merged") cat "${dir}/merged.json" ;;
+  "pr list -R o/r --state merged") echo "\$@" > "${dir}/search.txt"
+    [ ! -e "${dir}/rework-down" ] || exit 1
+    if [ -e "${dir}/rework-cap" ]; then cat "${dir}/capped.json"; else cat "${dir}/merged.json"; fi ;;
   *) exit 1 ;;
 esac
 EOF
+python3 -c 'import json; print(json.dumps([{"url": "https://github.com/o/r/pull/%d" % (1000 + i), "mergedAt": "2026-10-03T00:00:00Z",
+  "title": "other", "body": "", "files": []} for i in range(1000)]))' > "${dir}/capped.json"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/nobin/gh"
 # A python3 that fails outcomes' row reader and runs everything else.
 # shellcheck disable=SC2016 # the stub's own shell expands these
@@ -187,9 +204,9 @@ run() { # <PATH prefix> — the dataset run, its stdout and stderr, then its exi
 }
 events_before="$(cat "${P}/.swarm/events.tsv")"
 OUT="${P}/.swarm/dataset.jsonl"
-check "it says where it wrote the file under .swarm/, keeps last run's line, and counts the skipped story on stderr" "$(run "${dir}/bin")" \
-  "dataset: skipped 1 stories whose repo could not be found; their lines from the last run stay
-wrote 7 stories to $(cd "${P}" && pwd -P)/.swarm/dataset.jsonl (1 kept from the last run)
+check "it says where it wrote the file under .swarm/, keeps last run's lines, and counts the stories with no repo or PRs gh cannot read on stderr" "$(run "${dir}/bin")" \
+  "dataset: skipped 3 stories whose repo or PRs could not be read; their lines from the last run stay
+wrote 8 stories to $(cd "${P}" && pwd -P)/.swarm/dataset.jsonl (2 kept from the last run)
 exit 0"
 # One line per story, its inputs and results as `key=value` (JSON values), in merge order.
 show() { python3 -c '
@@ -224,21 +241,23 @@ shown="$(show "${OUT}")"
 check "easy-and-was-easy: inputs as planned (first key wins), one round, a 10-line diff, a stacked child and a fix 8 days later are no rework" "$(sed -n 1,3p <<< "${shown}")" "${E1}"
 check "easy-but-was-hard: inputs as the board PR merged them, touches and depends_on as touches_rows reads them, a fix 3 days later is rework" "$(sed -n 4,6p <<< "${shown}")" "${E2}"
 check "escalated: CRLF read, every model in build order, each escalation with its trigger, an escaped finding is rework, the epic file and a merge commit not fetched left out" "$(sed -n 7,9p <<< "${shown}")" "${E3}"
-check "rebase-merged: gh's merge commit and commit headlines (one with a backslash, one cut short) give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"
+check "rebase-merged: gh's merge commit and commit headlines (a two-line subject's first line, a backslash, one cut short) give the diff of both its commits" "$(sed -n 10,12p <<< "${shown}")" "${E4}"
 check "a retried story whose PR outcomes gives no build: gh's newest merged PR read directly, its merge fetched, rework on its first PR, minutes from its first build's day" "$(sed -n 13,15p <<< "${shown}")" "${E5}"
 check "a board PR merged since the last fetch read as merged; a merge git cannot diff: diff and was_easy null; a start after the merge: minutes null" "$(sed -n 16,18p <<< "${shown}")" "${E6}"
-check "each line holds the story text the board PR merged, and last run's line stays as it was" \
+check "each line holds the story text the board PR merged, and last run's lines stay as they were" \
   "$(python3 -c 'import json, sys; [print(json.loads(l).get("inputs", {}).get("text", l).splitlines()[-1]) for l in open(sys.argv[1])]' "${OUT}")" \
-  "$(printf '%s\n' "${ANCIENT}" '# easy-easy' '# easy-hard' '# escalated' '# rebased' '# retried' '# early')"
+  "$(printf '%s\n' "${ANCIENT}" "${MOVED}" '# easy-easy' '# easy-hard' '# escalated' '# rebased' '# retried' '# early')"
 check "the planted env value and transcript line appear nowhere in the output" \
   "$(grep -c -e "${ENV_SECRET}" -e "${TRANSCRIPT}" "${OUT}" || true)" 0
+check "the rework query asks gh for the stories' merges up to 7 days after the last" "$(grep -o 'merged:[^ ]*' "${dir}/search.txt")" \
+  "merged:2026-10-02..2026-10-20"
 check "git status stays clean and no events.tsv line is written" \
   "$(git -C "${P}" status --porcelain; [[ "$(cat "${P}/.swarm/events.tsv")" == "${events_before}" ]] || echo events changed)" ""
 
 written="$(cat "${OUT}")"
 same() { [[ "$(cat "${OUT}")" == "${written}" ]] && echo same || echo changed; }
 check "a failing gh dies and leaves the file as it was" \
-  "$(run "${dir}/nobin" | grep -c -e '^swarm: dataset: gh could not read the PRs of story/' -e '^exit 1$'; same)" "2
+  "$(run "${dir}/nobin" | grep -c -e '^swarm: dataset: gh is not answering (see gh auth status)' -e '^exit 1$'; same)" "2
 same"
 check "a failing outcomes dies and leaves the file as it was" \
   "$(run "${dir}/badpy:${dir}/bin" | grep -c -e 'outcomes: reading the logs failed' -e '^exit 1$'; same)" "2
@@ -247,5 +266,30 @@ cp "${P}/.swarm/agents.tsv" "${dir}/agents.tsv"; head -2 "${dir}/agents.tsv" > "
 check "a run that finds no finished story keeps every line" "$(run "${dir}/bin" | tail -1; same)" "exit 0
 same"
 cp "${dir}/agents.tsv" "${P}/.swarm/agents.tsv"
+
+# Rework when gh's list of merged PRs fails, or comes back at its cap: escaped findings still mark it,
+# and what they do not mark is null, with was_easy null where only rework could decide it.
+fit() { python3 -c '
+import json, sys
+for l in open(sys.argv[1]):
+    d = json.loads(l)
+    if "inputs" in d:
+        print(d["slug"], json.dumps(d["results"]["rework"]), json.dumps(d["was_easy"]))' "${OUT}"; }
+UNKNOWN="easy-easy null null
+easy-hard null false
+escalated true false
+rebased null null
+retried true false
+early null null"
+touch "${dir}/rework-down"
+check "a failing rework query leaves rework null unless an escaped finding marks it" "$(run "${dir}/bin" | grep -c 'only escaped findings mark rework'; fit)" "1
+${UNKNOWN}"
+rm "${dir}/rework-down"; touch "${dir}/rework-cap"
+check "a rework query at gh's cap leaves rework null unless an escaped finding marks it" "$(run "${dir}/bin" | grep -c 'only escaped findings mark rework'; fit)" "1
+${UNKNOWN}"
+rm "${dir}/rework-cap"
+git -C "${P}" remote set-url origin "${dir}/no-such-origin.git"
+check "a fetch that fails says so on stderr" "$(run "${dir}/bin" | grep -c "^dataset: git fetch origin failed in $(cd "${P}" && pwd -P), so its origin/HEAD may be stale$")" 1
+git -C "${P}" remote set-url origin "${dir}/origin.git"
 
 if [[ ${fails} -eq 0 ]]; then echo "all dataset checks passed"; else echo "${fails} dataset check(s) failed"; exit 1; fi

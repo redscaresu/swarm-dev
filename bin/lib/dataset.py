@@ -1,4 +1,4 @@
-import datetime, json, os, re, subprocess, sys
+import collections, datetime, json, os, re, subprocess, sys
 from report import *
 from touches_rows import deps, entries, front_text
 board, agents, events, findings, projects, archive, out = sys.argv[1:8]
@@ -15,18 +15,22 @@ def default_ref(repo):
 
 fetched = set()
 def fetch(repo):
-    # git fetch origin, once a run per repo: never a prompt (no stdin, ssh in batch mode), and a fetch
-    # that fails or hangs leaves the history as it was.
+    # git fetch origin, once a run per repo, never prompting: no stdin, and ssh in batch mode (the
+    # user's GIT_SSH_COMMAND or core.sshCommand with -o BatchMode=yes after it). A fetch that fails or
+    # hangs leaves the history as it was, and says so on stderr.
     top = os.path.realpath(git(repo, "rev-parse", "--show-toplevel").strip() or repo)
     if top in fetched:
         return
     fetched.add(top)
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=os.environ.get("GIT_SSH_COMMAND", "ssh") + " -o BatchMode=yes")
+    ssh = os.environ.get("GIT_SSH_COMMAND") or git(top, "config", "core.sshCommand").strip() or "ssh"
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=ssh + " -o BatchMode=yes")
     try:
-        subprocess.run(["git", "-C", top, "fetch", "-q", "origin"], stdin=subprocess.DEVNULL, capture_output=True,
-                       timeout=FETCH_SECONDS, env=env)
+        ok = subprocess.run(["git", "-C", top, "fetch", "-q", "origin"], stdin=subprocess.DEVNULL, capture_output=True,
+                            timeout=FETCH_SECONDS, env=env).returncode == 0
     except subprocess.TimeoutExpired:
-        pass
+        ok = False
+    if not ok:
+        print(f"dataset: git fetch origin failed in {top}, so its origin/HEAD may be stale", file=sys.stderr)
 
 def planned(slug):
     # The story as the board PR merged it: the oldest commit on the board's default branch (first
@@ -67,7 +71,8 @@ def diff_of(repo, slug, epic, pr, merge_sha, heads):
     if not hit:
         return None, None
     sha, _, parents = hit[0]
-    mine = git(repo, "log", "--first-parent", f"-{len(heads)}", "--format=%s", sha).splitlines()[::-1] if sha == merge_sha else []
+    # Each commit's first line, as gh's headline is: %s would join a subject that runs over two lines.
+    mine = [m.lstrip("\n").partition("\n")[0] for m in git(repo, "log", "--first-parent", f"-{len(heads)}", "--format=%B%x00", sha).split("\x00")[:-1]][::-1] if sha == merge_sha else []
     mine = [m.replace("\t", " ") for m in mine]
     rebased = len(heads) > 1 and len(parents.split()) == 1 and len(mine) == len(heads) and all(
         m == h or h.endswith("…") and m.startswith(h[:-1]) for m, h in zip(mine, heads))
@@ -108,6 +113,14 @@ def minutes(start, end):
     s, e = merge_time(start), merge_time(end)
     return round((e - s).total_seconds() / 60) if s and e and e >= s else None
 
+def was_easy(builds, rounds, rework, lines):
+    # Rule 1: one build, at most one findings round, no rework and a diff under EASY_MAX_LINES lines.
+    # False once any known part fails it; None (unknown) when the rest pass but rework or the diff is
+    # unknown.
+    if builds != 1 or rounds > 1 or rework or (lines is not None and lines >= EASY_MAX_LINES):
+        return False
+    return None if rework is None or lines is None else True
+
 def num(s):
     try:
         return float(s)
@@ -129,12 +142,16 @@ for f in (l.split("\t") for l in os.environ.get("SWARM_PRS", "").splitlines()):
         heads = [h.replace("\\\\", "\\") for h in f[5].split("\x01")] if f[5] else []
         prs.setdefault(f[0], (f[1], []))[1].append((f[2], f[3], f[4], heads))
 # Rework is report.py's rework_of, as flow's model_fit counts it: a story is reworked when any of its
-# PRs is, over every PR gh lists merged in the stories' repos from the first of their merges on. When
-# gh fails, only escaped findings count.
+# PRs is, over the PRs gh lists merged in the stories' repos from the first of their merges to
+# REWORK_DAYS after the last. When gh fails, or lists GH_LIMIT PRs of a repo (so some are missing),
+# only escaped findings can mark rework, and a story they do not mark has rework null (unknown).
 ends = {pr_key(p[0]): p[1] for _, ps in prs.values() for p in ps}
-merged = merged_prs({p[0] for _, ps in prs.values() for p in ps}, f"merged:>={min(ends.values())[:10]}") if ends else {}
-if merged is None:
-    print("dataset: gh could not list the merged PRs, so rework counts escaped findings alone", file=sys.stderr)
+days = sorted(t[:10] for t in ends.values())
+window = f"merged:{days[0]}..{datetime.date.fromisoformat(days[-1]) + datetime.timedelta(days=REWORK_DAYS)}" if days else ""
+merged = merged_prs({p[0] for _, ps in prs.values() for p in ps}, window) if ends else {}
+unknown = merged is None or max(collections.Counter(k.partition("#")[0] for k in merged).values(), default=0) >= GH_LIMIT
+if unknown:
+    print("dataset: gh could not list every merged PR, so only escaped findings mark rework; the rest is null", file=sys.stderr)
 merged = merged or {}
 for k, t in ends.items():
     merged.setdefault(k, (t, "", None))
@@ -147,7 +164,7 @@ for slug, (repo, ps) in prs.items():
     fm = {k: v.strip() for k, v in front_text(text).items()}
     lines_n, files_n = diff_of(repo, slug, fm.get("epic", ""), pr, merge_sha, heads) if repo else (None, None)
     rounds = sum(int(r["tells_findings"] or 0) for r in builds)
-    rework = any(pr_key(u) in reworked for u in [p[0] for p in ps] + [r["pr"] for r in builds if r["pr"]])
+    rework = any(pr_key(u) in reworked for u in [p[0] for p in ps] + [r["pr"] for r in builds if r["pr"]]) or (None if unknown else False)
     est = fm.get("estimate_lines", "")
     stories[slug] = {
         "slug": slug,
@@ -163,8 +180,7 @@ for slug, (repo, ps) in prs.items():
             "minutes": minutes(started(builds[0]), merged_at) if builds else None,
             "models": list(dict.fromkeys(r["model"] for r in builds)), "escalations": escalations(slug),
         },
-        # Unknown (null) without a diff to judge its size by.
-        "was_easy": None if lines_n is None else len(builds) == 1 and rounds <= 1 and not rework and lines_n < EASY_MAX_LINES,
+        "was_easy": was_easy(len(builds), rounds, rework, lines_n),
         "was_easy_rule": 1,
     }
 # A finished story stays finished: a story this run could not read (its repo gone, or its builds no
