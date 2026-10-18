@@ -5,10 +5,17 @@ MERGE_POLL=20           # seconds between its reads of that CI (SWARM_MERGE_POLL
 MERGE_CI_GRACE=60       # with no workflow expected there, how long checks get to appear (SWARM_MERGE_CI_GRACE)
 MERGE_READS=5           # reads of the PR after gh pr merge before its state counts as unconfirmed
 MERGE_READ_WAIT=3       # seconds between those reads (SWARM_MERGE_READ_WAIT)
+WAIT_PR_GRACE=300       # how long wait-pr gives a head with no check runs for them to appear (SWARM_WAIT_PR_GRACE)
+WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer than a poll (SWARM_WAIT_PR_RETRY)
+WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
+# A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
+# words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
+# named geofabrik or timeout does not make Bad credentials transient.
+WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refused|EOF|TLS handshake|no such host|network is unreachable|stream error|HTTP (408|429|50[0234])'
 
 # ci_gate head <owner/repo> <sha> — succeed when <sha> is green: at least one check run, every
-# run completed as success, skipped or neutral, and every commit status success. Else print which
-# checks and fail (1 red, 2 pending). It is the
+# run completed as success, skipped or neutral, and every commit status success, printing each check.
+# Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -194,6 +201,90 @@ merge_pr() {
     }
   fi
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
+}
+
+# within <seconds> <command>... — the command in its own process group, the group KILLed after
+# <seconds> (at least 1) with exit 142: gh, a Go program, ignores SIGALRM, and ci_gate's gh calls are
+# its children. Else the command's own status (128+N for a signal).
+within() {
+  perl -e 'my $t = shift; $t = 1 if $t < 1;
+    defined(my $p = fork) or exit 127;
+    if (!$p) { setpgrp; exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "KILL", -$p; exit 142 };
+    alarm $t; waitpid $p, 0;
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
+}
+
+# wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
+wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
+
+# wait-pr [--timeout <seconds>] <pr-url> — print the PR's head SHA, then read ci_gate head on it every
+# MERGE_POLL seconds (SWARM_MERGE_POLL) until nothing is pending, printing what it waits on whenever
+# that changes. Exits 0 when all are green, printing each check; 1 on red; 2 on anything else, since a
+# gh error is never pending: a transient one (WAIT_PR_TRANSIENT) is retried after WAIT_PR_RETRY,
+# WAIT_PR_TRIES in a row at most, any other ends it at once. A new head has no check runs for a few
+# minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
+# At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
+# it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
+# A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
+# turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
+wait_pr() {
+  local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
+  local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
+  local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS}
+  # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
+  for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
+    [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
+  done
+  if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; shift 2 || shift; fi
+  url="${1:-}"
+  [[ "${limit}" =~ ^[0-9]+$ && $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
+    || wait_pr_fail "usage: swarm.sh wait-pr [--timeout <seconds>] <pr-url>"
+  repo="${BASH_REMATCH[1]}"; n="${BASH_REMATCH[2]}"
+  # Base 10: in (( )) a leading 0 is octal, so 09 fails and 010 is 8.
+  limit=$((10#${limit})); grace=$((10#${grace})); poll=$((10#${poll})); retry=$((10#${retry}))
+  WAIT_PR_TMP="$(mktemp "${TMPDIR:-/tmp}/swarm-wait-pr.XXXXXX")" || wait_pr_fail "mktemp failed"
+  while :; do
+    rc=0; left=$((limit - (SECONDS - start)))
+    if [[ -z "${head}" ]]; then
+      # The head read is retried like a check read: a transient error is as likely here. Its stderr
+      # is only the error: a notice beside a good answer (a gh update) is not one.
+      why="$(within "${left}" gh pr view "${n}" --repo "${repo}" --json headRefOid -q .headRefOid 2> "${WAIT_PR_TMP}")" || rc=$?
+      if [[ ${rc} -eq 0 && "${why}" =~ ^[0-9a-f]{40}$ ]]; then head="${why}"; missed=0; echo "head ${head}"; continue; fi
+      [[ ${rc} -eq 142 ]] || { rc=3; why="gh cannot read the head of ${url}: $(tail -1 "${WAIT_PR_TMP}")"; }
+    else
+      why="$(within "${left}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "${repo}" "${head}")" || rc=$?
+    fi
+    case ${rc} in
+      0) echo "green:"; printf '  %s\n' "${why//; /$'\n'  }"; return 0 ;;
+      1) echo "red: ${why}"
+         # shellcheck disable=SC2034 # read by swarm.sh's EXIT trap
+         WAIT_PR_RED=1; return 1 ;;
+      2) missed=0
+         if [[ "; ${why}; " == *"; no check runs; "* ]]; then
+           empty="${empty:-${SECONDS}}"
+           (( SECONDS - empty < grace )) \
+             || wait_pr_fail "no check runs on ${head:0:7} after $((SECONDS - empty))s (${why})"
+         fi
+         [[ "${why}" == "${last}" ]] || echo "pending: ${why}"
+         last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
+      142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
+      *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
+         if ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "${err}" || ((++missed > WAIT_PR_TRIES)); then
+           wait_pr_fail "${why:-ci_gate failed (exit ${rc})}"
+         fi
+         echo "retrying after ${why}"
+         what="last error: ${why}"; pause=${retry} ;;
+    esac
+    # A pause that would reach the deadline is cut to it, and the wait ends there with no more reads:
+    # a read after it could be green and exit 0 past the deadline.
+    left=$((limit - (SECONDS - start)))
+    if (( pause >= left )); then
+      (( left <= 0 )) || sleep "${left}"
+      wait_pr_fail "timed out after $((SECONDS - start))s, ${what}"
+    fi
+    sleep "${pause}"
+  done
 }
 
 # release_check <owner/repo> <base> <head> — merge --release's checks past the file list: the PR goes

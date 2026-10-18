@@ -42,29 +42,33 @@ def pages(path, key):
         raise Err("%s: read %d of %d" % (path, len(items), total))
     return items
 
-def judge(runs, red, wait):
+def judge(runs, red, wait, ok):
     for r in runs:
         if r.get("status") != "completed":
             wait.append("%s (%s)" % (r.get("name"), r.get("status")))
         elif r.get("conclusion") not in OK:
             red.append("%s (%s) %s" % (r.get("name"), r.get("conclusion"), r.get("html_url")))
+        else:
+            ok.append("%s (%s)" % (r.get("name"), r.get("conclusion")))
 
 def checks(repo, sha, required=(), need_run=True):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
-    red, wait = [], ([] if runs or not need_run else ["no check runs"])
-    judge(runs, red, wait)
+    red, wait, ok = [], ([] if runs or not need_run else ["no check runs"]), []
+    judge(runs, red, wait, ok)
     for s in sts:
         if s.get("state") == "pending":
             wait.append("%s (pending)" % s.get("context"))
         elif s.get("state") != "success":
             red.append("%s (%s) %s" % (s.get("context"), s.get("state"), s.get("target_url")))
+        else:
+            ok.append("%s (success)" % s.get("context"))
     # A required check bound to an app (not None or -1, any source) needs a run from that app.
     have = {(r.get("name"), (r.get("app") or {}).get("id")) for r in runs}
     names = {n for n, _ in have} | {s.get("context") for s in sts}
     wait += ["%s (required, absent)" % c for c, app in required
              if (c not in names if app in (None, -1) else (c, app) not in have)]
-    return red, wait
+    return red, wait, ok
 
 # The ruleset rule types --admin may pass: the review it stands in for, the status checks admin
 # re-checks, and rules about pushes and branches that a PR's merge never meets.
@@ -105,7 +109,7 @@ def admin(repo, base, sha):
     """Why --admin may not merge sha into base, or nothing: it must stand in for the review only."""
     req, strict, skip = base_rules(repo, base)
     why = ["%s, which --admin would skip" % r for r in skip]
-    red, wait = checks(repo, sha, req)
+    red, wait, _ = checks(repo, sha, req)
     why += red + wait
     if strict:
         behind = json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, urllib.parse.quote(base, safe=""), sha)))["behind_by"]
@@ -259,7 +263,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
                 want = expected(repo, sha, base, n, changed)
             runs = [r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
                     if r.get("head_sha") == sha]
-            red, wait = checks(repo, sha, need_run=False)
+            red, wait, _ = checks(repo, sha, need_run=False)
         except Err as e:
             missed += 1
             if missed == READ_TRIES:
@@ -267,7 +271,7 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             wait = ["a read failed: %s" % e]
         else:
             missed = 0
-            judge(runs, red, wait)
+            judge(runs, red, wait, [])
             have = {(r.get("path") or "").split("@")[0] for r in runs}
             wait += ["%s (no run on %s)" % (p, sha[:7]) for p in want if p not in have]
             if red:
@@ -281,9 +285,9 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     if mode == "head":
-        red, wait = checks(repo, args[0])
+        red, wait, ok = checks(repo, args[0])
+        print("; ".join(red + wait or ok))
         if red or wait:
-            print("; ".join(red + wait))
             sys.exit(1 if red else 2)
     elif mode == "admin":
         why = admin(repo, args[0], args[1])
