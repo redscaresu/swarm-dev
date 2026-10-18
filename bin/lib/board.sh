@@ -84,7 +84,8 @@ epic_has_stories() {
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
-#                     (plannable_epic); while a conductor works, this comes before its wait
+#                     (plannable_epic), a child epic of a split one included; while a conductor
+#                     works, this comes before its wait
 #   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
@@ -182,7 +183,7 @@ next_step() {
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up
-# (epic_holding_deps), or nothing.
+# (epic_holding_deps), or nothing. A split epic (status: split) is never planned: its child epics are.
 plannable_epic() {
   local f held
   while IFS= read -r f; do
@@ -338,8 +339,22 @@ waiting_on_user() {
   printf '%s' "${waiting%$'\n'}"
 }
 
-# open_item <file> — true while a board item is still open: its file exists and is not status: done.
-open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
+# open_item <file> — true while a board item is still open: its file exists and is not status: done,
+# and, for an epic /plan-epic split into child epics (status: split), one of them is still on the board.
+open_item() {
+  [[ -f "$1" ]] || return 1
+  case "$(fm "$1" status)" in
+    done) return 1 ;;
+    split) has_child_epics "$(basename "$1" .md)" ;;
+  esac
+}
+
+# has_child_epics <epic> — true while an epic on the board names <epic> as its parent:.
+has_child_epics() {
+  local f
+  while IFS= read -r f; do [[ "$(fm "${f}" parent)" != "$1" ]] || return 0; done < <(board epics)
+  return 1
+}
 
 # story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets,
 # quotes, a trailing # comment and trailing whitespace (a CR too) gone.
