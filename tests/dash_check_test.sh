@@ -2,10 +2,13 @@
 # dash_check_test.sh — `dash --check` on the two-project fixture (tests/fixtures/dash/two_projects.sh),
 # with an active epic added to bravo that waits on its depends_on. For each field --check compares,
 # this test runs the command that owns it and checks the frame shows the same, and --check exits 0.
-# It still agrees with lead = off, and when an agent spends while the frame draws. Then each of
-# dash-three-defects' fixes reverted in a copy of bin/ (the working count, the failed workspace list,
-# the calling pane's cost, the waiting epic), a status that lists one more working agent, and a next
-# that fails, each make --check exit 1 naming the field.
+# It still agrees with lead = off, when an agent spends while the frame draws, and with a waiting
+# epic's conductor working. Then each of dash-three-defects' fixes reverted in a copy of bin/ (the
+# working count, the failed workspace list, the calling pane's cost, the waiting epic), a status that
+# lists one more working agent, a next that fails, a merge row gone while an answer row names its
+# story, and flow's cost unreadable, each make --check exit 1 naming the field; a frame dash cannot
+# draw is a frame line for each project. --check refuses --watch, and tells two projects with one
+# basename apart.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -116,7 +119,8 @@ cost() { sw "$1" flow --since 2026-10-10 | sed -n 's/^| \*\*total\*\* |.* \([0-9
 c0="$(cost "${A}")"
 out="$(PATH="${ROOT}/spend:${PATH}" sw "${A}" dash --check)" && rc=0 || rc=$?
 check "with spend while the frame draws, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
-check "with spend while the frame draws, the cost moved (\$${c0} to \$$(cost "${A}"))" test "$(cost "${A}")" != "${c0}"
+c1="$(cost "${A}")"
+check "with spend while the frame draws, the cost moved" test "${c1}" != "${c0}"
 
 # From a pane whose own session cost today, the frame still shows the project's own cost, as flow
 # with no calling session does.
@@ -181,6 +185,49 @@ out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 # shellcheck disable=SC2016 # the script's own $1 and $2
 check "with next failing, --check exits 1 naming next (exit ${rc}: ${out})" \
   bash -c '[[ $1 == 1 ]] && grep -q "^alpha: next: dash shows conduct alpha-core, next says nothing$" <<< "$2"' _ "${rc}" "${out}"
+
+check "mutant: a merge row with checks is never drawn" mutant mergerow lib/dash_render.py 's/add(rows, bang + \[(f"merge {pr_ref(u)} (",/add([], bang + [(f"merge {pr_ref(u)} (",/'
+check "with b-fix's merge row gone but its answer row kept, --check names the lead's queue" names "${B}" "lead's queue" \
+  env SWARM_PROJECT="${B}" "${M}" dash --check
+check "mutant: dash_render raises" mutant raise lib/dash_render.py '1s/^/raise RuntimeError("boom"); /'
+out="$(cd / && "${M}" dash --check --project "${A}" --project "${B}")" && rc=0 || rc=$?
+framed() { [[ ${rc} == 1 ]] && grep -qx "alpha: frame: dash could not draw it: RuntimeError: boom" <<< "${out}" \
+  && grep -qx "bravo: frame: dash could not draw it: RuntimeError: boom" <<< "${out}"; }
+check "when dash cannot draw, --check exits 1 with a frame line for each project" framed
+check "mutant: flow's cost section raises" mutant nocost lib/flow_cost.py '1s/^/raise RuntimeError("no cost") /'
+check "when flow's cost cannot be read, --check names the cost" names "${A}" cost env SWARM_PROJECT="${A}" "${M}" dash --check
+check "when flow's cost cannot be read, --check says so" has "says nothing: its cost could not be read" "${out}"
+
+# --check draws nothing, so it refuses the flags that change how a frame is drawn.
+out="$(sw "${A}" dash --check --watch 30 2>&1)" && rc=0 || rc=$?
+refused() { [[ ${rc} != 0 ]] && has "dash --check draws nothing" "${out}"; }
+check "dash --check --watch 30 is refused" refused
+
+# Two --project dirs with one basename: each is named by its path.
+mkdir -p "${ROOT}/twin" && cp -R "${A}" "${ROOT}/twin/alpha"
+out="$(cd / && "${FIXTURE_SWARM}" dash --check --project "${A}" --project "${ROOT}/twin/alpha")" || true
+apart() { grep -q "^${A}: " <<< "${out}" && grep -q "^${ROOT}/twin/alpha: " <<< "${out}" && ! grep -q "^alpha: " <<< "${out}"; }
+check "two projects named alpha are told apart by their paths" apart
+
+# A waiting epic with a working conductor is drawn ● rather than ⏸, and still names what it waits on.
+printf 'w2:p9 conductor\n' > "${B}/.swarm/state/bravo-mobile"
+printf '2026-10-10\tconduct\tconduct-bravo-mobile\tclaude\topus\thigh\tsb-9\n' >> "${B}/.swarm/agents.tsv"
+session bravo sb-9 1 claude-opus-5-5 1000 100 Bash
+sed 's/\]$/,{"sessionId":"sb-9","status":"busy"}]/' "${CLAUDE_STUB_AGENTS}" > "${ROOT}/claude3.json" && cat "${ROOT}/claude3.json" > "${CLAUDE_STUB_AGENTS}"
+mkdir -p "${ROOT}/conducting"
+cat > "${ROOT}/conducting/herdr" <<STUB
+#!/bin/sh
+case "\$1 \$2" in
+  "agent list") "${ROOT}/bin/herdr" "\$@" | sed 's/"agents":\[/"agents":[{"name":"conduct-bravo-mobile","agent_status":"working","pane_id":"w2:p9","agent_session":{"value":"sb-9"}},/' ;;
+  "pane list") "${ROOT}/bin/herdr" "\$@" | sed 's/"panes":\[/"panes":[{"pane_id":"w2:p9"},/' ;;
+  *) exec "${ROOT}/bin/herdr" "\$@" ;;
+esac
+STUB
+chmod +x "${ROOT}/conducting/herdr"
+check "bravo: the waiting epic with a working conductor is drawn ●" grep -qE '^│ ● bravo-mobile .* waits on bravo-ui, bravo-docs' \
+  <<< "$(PATH="${ROOT}/conducting:${PATH}" DASH_W=100 sw "${B}" dash)"
+out="$(PATH="${ROOT}/conducting:${PATH}" sw "${B}" dash --check)" && rc=0 || rc=$?
+check "with the waiting epic's conductor working, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

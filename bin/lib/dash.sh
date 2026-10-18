@@ -42,7 +42,10 @@ dash() {
     [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
     DASH_DIRS[i]="${d}"
   done
-  if [[ ${check} == 1 ]]; then dash_check; return; fi
+  if [[ ${check} == 1 ]]; then
+    [[ -z "${every}" && ${DASH_LADDER} == 0 && ${DASH_TREE} == 0 ]] || die "dash --check draws nothing: --watch, --tree and --ladder do not go with it"
+    dash_check; return
+  fi
   [[ ! -t 1 ]] || tty=1
   # Several projects share the height only in a watch on a terminal, or when DASH_H says so: a
   # one-shot dash, or one into a file or a pager, is never cut.
@@ -196,19 +199,29 @@ dash_day() {
 # depends_on against epic_holding_deps, the rule next plans by (next prints one step, so it cannot
 # list them); merges today and the 7-day rate against flow's merges section. flow's sections run
 # here, in this process, and ask gh nothing. Prints each mismatch as `<project>: <field>: dash shows
-# <x>, <owner> says <y>` and returns 1 on any.
+# <x>, <owner> says <y>` (a project by its basename, or by its path when two --project dirs share
+# one) and returns 1 on any; a frame dash cannot draw is one line, `<project>: frame: ...`.
 dash_check() {
-  local d failed=0
+  local d n failed=0
   if [[ ${#DASH_DIRS[@]} -gt 0 ]]; then
-    for d in "${DASH_DIRS[@]}"; do SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" dash --check || failed=1; done
+    for d in "${DASH_DIRS[@]}"; do
+      n="$(basename "${d}")"
+      [[ "$(printf '%s\n' "${DASH_DIRS[@]}" | sed 's#.*/##' | grep -cxF -- "${n}")" == 1 ]] || n="${d}"
+      DASH_CHECK_NAME="${n}" SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" dash --check || failed=1
+    done
     return "${failed}"
   fi
-  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes got want n x f
-  DASH_CHECK_P="$(basename "${PROJECT_DIR}")"; DASH_CHECK_BAD=0
+  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes got want x f v err
+  DASH_CHECK_P="${DASH_CHECK_NAME:-$(basename "${PROJECT_DIR}")}"; DASH_CHECK_BAD=0
   ! command -v herdr >/dev/null 2>&1 || herdr=1
   day="$(dash_day)"
   lo="$(dash_flow_cost "${day}")"
-  frame="$(dash_check_frame)"
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-dash.XXXXXX")" || die "dash --check: mktemp failed"
+  if ! frame="$(dash_check_frame 2> "${err}")"; then
+    echo "${DASH_CHECK_P}: frame: dash could not draw it: $(tail -n 1 "${err}")"
+    rm -f "${err}"; return 1
+  fi
+  rm -f "${err}"
   hi="$(dash_flow_cost "${day}")"
   # status asks herdr only inside a pane; dash whenever herdr is on PATH.
   st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status || true)"
@@ -220,8 +233,9 @@ dash_check() {
 
   got="$(dash_first '.*\$\([0-9][0-9.]*\) today.*' "${frame}")"
   want="${lo}"; [[ "${hi}" == "${lo}" ]] || want="${lo} to ${hi}"
+  [[ -n "${lo}" && -n "${hi}" ]] || want="nothing: its cost could not be read"
   # What the agents spent between the two reads moves flow's cost on: anything from one to the other agrees.
-  if [[ -n "${got}${lo}" ]] && awk -v g="${got:-x}" -v lo="${lo:-x}" -v hi="${hi:-x}" \
+  if [[ -n "${got}" && -n "${lo}" && -n "${hi}" ]] && awk -v g="${got:-x}" -v lo="${lo:-x}" -v hi="${hi:-x}" \
       'BEGIN { exit !(g != "x" && lo != "x" && hi != "x" && g + 0 >= lo + 0 && g + 0 <= hi + 0) }'; then got="${want}"; fi
   dash_agree cost "${got}" "flow --since ${day}" "${want}"
 
@@ -232,7 +246,11 @@ dash_check() {
   need="$(dash_box "needs you" "${frame}")"
   boxes="${need}"$'\n'"$(dash_box "lead's queue" "${frame}")"
   got=""
-  for x in ${want}; do if dash_names "${x#*:}" "${boxes}"; then got+=" ${x}"; fi; done
+  for x in ${want}; do
+    # Each kind has its own row: merge, or decide for an escalated or held story.
+    v=merge; [[ "${x%%:*}" == merge ]] || v="decide escalated story"
+    if dash_names "${x#*:}" "$(grep "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; fi
+  done
   dash_agree "lead's queue" "${got# }" "flow's lead_queue" "${want}"
 
   # By PR, as <repo>#<n>: a merge row shows one by that ref, or by its URL when gh did not answer, and
@@ -256,7 +274,8 @@ dash_check() {
   want="$(while IFS= read -r f; do
       if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then echo "$(basename "${f}" .md): ${x// /, }"; fi
     done < <(board epics) | sort)"
-  got="$(sed -n 's/^│ ⏸ \([^ ]*\) .* waits on \(.*[^ ]\) *│$/\1: \2/p' <<< "${frame}" | while IFS= read -r x; do
+  # Any symbol: a waiting epic is ⏸ unless an agent, a look or a PR under it gives it another.
+  got="$(sed -n 's/^│ [^ ][^ ]* \([^ ]*\) .* waits on \(.*[^ ]\) *│$/\1: \2/p' <<< "${frame}" | while IFS= read -r x; do
       while IFS= read -r f; do x="$(dash_cut "${x}" "${f}")"; done <<< "${want}"; echo "${x}"
     done | sort | paste -sd';' -)"
   dash_agree "epics waiting on depends_on" "${got}" next "$(paste -sd';' - <<< "${want}")"
