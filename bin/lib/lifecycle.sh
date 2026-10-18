@@ -147,7 +147,8 @@ keys_only() {
 # status or prs, those two are left out: an older swarm.sh's status write gives way to theirs (a merged
 # PR's status: done), so checking the file out drops it. With given, it prints instead each of those
 # two whose uncommitted value in the file the checkout drops for a different incoming one, as
-# <key><tab><value><tab><incoming value>, an empty one as (none).
+# <key><tab><value><tab><incoming value>, an empty one as (none); none when the incoming status is
+# done over a review, building or held status, the finish an older swarm.sh's status write waited on.
 key_moves() {
   local f="${PROJECT_DIR}/$1" head up="" k v u skip=""
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
@@ -157,6 +158,7 @@ key_moves() {
     done
   fi
   if [[ -n "${2:-}" ]]; then
+    [[ "$(get_fm - status <<< "${up}")" != "done" || " review building held " != *" $(get_fm - status < "${f}") "* ]] || return 0
     for k in ${skip}; do
       v="$(get_fm - "${k}" < "${f}")"; u="$(get_fm - "${k}" <<< "${up}")"
       [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" || "${v}" == "${u}" ]] \
@@ -235,7 +237,7 @@ put_back() {
 # before reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local incoming line p b o k v u stop="" meet="" given="" board other out keys=() undo=()
+  local incoming line p b o k v u rel stop="" meet="" given="" board other out keys=() undo=()
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   ! git -C "${PROJECT_DIR}" merge-base --is-ancestor '@{upstream}' HEAD || return 0
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
@@ -263,8 +265,10 @@ pull_board_repo() {
       record_event incident - "${o}"
       { printf '%s\n' "${o}" > "${PULL_STOP}"; } 2>/dev/null || true
     fi
-    board="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) == 1' <<< "${stop}" | paste -sd' ' -)"
-    other="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) != 1' <<< "${stop}" | paste -sd' ' -)"
+    # The board's path from the root with a trailing /, or empty when the board is the root.
+    rel=""; [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+    board="$(awk -v b="${rel}" 'substr($0, 1, length(b)) == b' <<< "${stop}" | paste -sd' ' -)"
+    other="$(awk -v b="${rel}" 'substr($0, 1, length(b)) != b' <<< "${stop}" | paste -sd' ' -)"
     PULL_WHY=""
     [[ -z "${board}" ]] || PULL_WHY="board files are changed here: ${board}; land each edit through swarm.sh board-pr, or check the file out to drop it"
     [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"

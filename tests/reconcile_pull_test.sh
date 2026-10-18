@@ -172,8 +172,8 @@ perl -pi -e 's|^status: ready$|status: done|' "${ROOT}/kc-up/docs/stories/e.md"
 "${GIT[@]}" -C "${ROOT}/kc-up" commit -q -am "e's PR" && "${GIT[@]}" -C "${ROOT}/kc-up" push -q origin main
 perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/3"'|' "${ROOT}/kc/docs/stories/e.md"
 rc=0; out="$(at kc reconcile)" || rc=$?
-check "a leftover status: review gives way to the PR's status: done, and the pull goes" "0|$(git -C "${ROOT}/kc.git" rev-parse main)||done||yes|no" \
-  "${rc}|$(git -C "${ROOT}/kc" rev-parse HEAD)|$(git -C "${ROOT}/kc" status --porcelain)|$(val "${ROOT}/kc/docs/stories/e.md" status)|$(val "${ROOT}/kc/docs/stories/e.md" prs)|$(has "merged: e" "${out}")|$(if grep -qs pull-failed "${ROOT}/kc/.swarm/events.tsv"; then echo yes; else echo no; fi)"
+check "a leftover status: review gives way to the PR's status: done, and the pull goes, with no incident" "0|$(git -C "${ROOT}/kc.git" rev-parse main)||done||yes|no|no" \
+  "${rc}|$(git -C "${ROOT}/kc" rev-parse HEAD)|$(git -C "${ROOT}/kc" status --porcelain)|$(val "${ROOT}/kc/docs/stories/e.md" status)|$(val "${ROOT}/kc/docs/stories/e.md" prs)|$(has "merged: e" "${out}")|$(if grep -qs incident "${ROOT}/kc/.swarm/events.tsv"; then echo yes; else echo no; fi)|$(if grep -q "set it again" <<< "${out}"; then echo yes; else echo no; fi)"
 
 # --- A hand-set status: later in e (uncommitted; e's state says review), and a board PR that blocks
 # e: the pull's status wins, and reconcile names both values, on stdout and in an incident.
@@ -281,6 +281,40 @@ setup nu; git -C "${ROOT}/nu" branch -q --unset-upstream
 rc=0; out="$(at nu reconcile)" || rc=$?
 check "no upstream: a merged item is marked done, not left in review" "0|done||yes" \
   "${rc}|$(val "${ROOT}/nu/docs/stories/a.md" status)|$(git -C "${ROOT}/nu" status --porcelain)|$(has "merged: a, marked done" "${out}")"
+
+# setup_root <name> — a bare origin whose board is the project root (board_dir = .), with stories e,
+# x and y, .swarm/ ignored; its main checkout <name>; and a clone <name>-up.
+setup_root() {
+  local d="${ROOT}/$1"
+  "${GIT[@]}" init -q --bare "${d}.git"
+  "${GIT[@]}" clone -q "${d}.git" "${d}" 2>/dev/null
+  mkdir -p "${d}/.claude/swarm"; echo "board_dir = ." > "${d}/.claude/swarm/config"
+  item "${d}/stories/e.md" "status: ready" "kind: code"
+  item "${d}/stories/x.md" "status: ready" "kind: code"
+  item "${d}/stories/y.md" "status: ready" "kind: code"
+  echo ".swarm/" > "${d}/.gitignore"
+  "${GIT[@]}" -C "${d}" add .gitignore .claude stories && "${GIT[@]}" -C "${d}" commit -q -m board && "${GIT[@]}" -C "${d}" push -q origin main
+  "${GIT[@]}" clone -q "${d}.git" "${d}-up"
+}
+# --- A board at the root: e's key edit (the pull changes e) moves to its state and the pull goes,
+# and y, removed by hand but still in HEAD, keeps its state.
+setup_root ra
+echo "the base's line" >> "${ROOT}/ra-up/stories/e.md"
+"${GIT[@]}" -C "${ROOT}/ra-up" commit -q -am "edit e" && "${GIT[@]}" -C "${ROOT}/ra-up" push -q origin main
+perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/ra/stories/e.md"
+mkdir -p "${ROOT}/ra/.swarm/board-state/stories"; printf '%s\n' "status: blocked" "status@base: ready" > "${ROOT}/ra/.swarm/board-state/stories/y"
+rm "${ROOT}/ra/stories/y.md"
+rc=0; at ra reconcile >/dev/null || rc=$?
+check "a root board: e's key edit moves to its state, the pull goes, and y keeps its state" "0|$(git -C "${ROOT}/ra.git" rev-parse main)| D stories/y.md|status: review|there" \
+  "${rc}|$(git -C "${ROOT}/ra" rev-parse HEAD)|$(git -C "${ROOT}/ra" status --porcelain)|$(grep -x 'status: review' "${ROOT}/ra/.swarm/board-state/stories/e")|$(state ra y)"
+# --- A root board: a hand edit to x, which the pull changes too, is named as a board file.
+setup_root rx
+echo "the base's line" >> "${ROOT}/rx-up/stories/x.md"
+"${GIT[@]}" -C "${ROOT}/rx-up" commit -q -am "edit x" && "${GIT[@]}" -C "${ROOT}/rx-up" push -q origin main
+echo "a local note" >> "${ROOT}/rx/stories/x.md"
+rc=0; out="$(at rx reconcile)" || rc=$?
+check "a root board: a hand edit the pull changes too is named as a board file" "1|yes" \
+  "${rc}|$(has "board files are changed here: stories/x.md; land each edit through swarm.sh board-pr" "${out}")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

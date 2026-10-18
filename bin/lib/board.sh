@@ -792,13 +792,14 @@ reconcile() {
 # file missing only from the main checkout, or never committed, keeps its state. A board directory
 # that is not there (git removes it with its last file) counts as holding no item.
 drop_gone_state() {
-  local s n d rel
+  local s n d rel=""
+  # The board's path from the root with a trailing /, or empty when the board is the root.
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
   for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
     n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
     [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
-    rel="${BOARD#"${PROJECT_DIR}"/}/${d}/${n}.md"
-    ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}" 2>/dev/null || continue
-    [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}")" ]] || continue
+    ! git -C "${PROJECT_DIR}" cat-file -e "HEAD:${rel}${d}/${n}.md" 2>/dev/null || continue
+    [[ -n "$(git -C "${PROJECT_DIR}" log -1 --format=%h HEAD -- "${rel}${d}/${n}.md")" ]] || continue
     state_drop "${BOARD}/${d}/${n}.md"
   done
 }

@@ -938,7 +938,8 @@ ones (a status flipped to `ready` over a new dependency): check the file out, an
 set its keys again through swarm.sh. The same value on both sides goes through. A `status` and `prs`
 the incoming commits change are the exception: the old ones give way and are dropped, so a story
 whose merged PR set `status: done` reads as done. reconcile names each uncommitted value it dropped
-that way, with the one that replaced it, so you can set it again if you meant it.
+that way, with the one that replaced it, so you can set it again if you meant it; an older
+swarm.sh's `review`, `building` or held status that an incoming `status: done` finishes is not named.
 An untracked board file whose bytes match the incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
 would overwrite) also stops reconcile, and reconcile puts back each of those changes first, so a
 failed pull changes nothing. On a stop for changed files, it names each of them and logs an
