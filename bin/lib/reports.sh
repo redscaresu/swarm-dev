@@ -141,9 +141,11 @@ cost_report() {
 # drop), then its story's epic:, when its PR merged, whether any PR of the story merged (empty when
 # unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
 # its start to that and from that to the merge, the commits on the PR that merge the base into it,
-# its subagents' cost, in all and per model (its own cost and tokens leave them out), and last its
+# its subagents' cost, in all and per model (its own cost and tokens leave them out), its
 # start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
-# time_in_state, from its PR's review and tell:findings events and its head's checks). A finding goes to the latest build on
+# time_in_state, from its PR's review and tell:findings events and its head's checks), and last rework
+# (report.py's rework_of over every merged PR of the builds' repos, from one gh list: 1 when a later fix
+# reworked its merged PR, on the latest build on it, once 7 days have passed; empty when gh failed). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -198,7 +200,9 @@ outcomes_report() {
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
+  # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
+  SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
+    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
@@ -244,9 +248,9 @@ outcomes_report() {
 #     leaving line counts only while its story or epic is on the board in review, held or escalated.
 #     --epic does not narrow it.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
-#     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
+#     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
-#     all`. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
+#     all`; rework is the PRs a line raised findings on in the window that outcomes' rework marks. Block 2, after a blank line (TSV prs rounds rounds_per_pr max_rounds): the tells_findings
 #     of every outcomes row with a PR dated in the window, summed per PR. A tell names no reviewer, so
 #     rounds are not split by one. --epic keeps only the PRs of that epic (outcomes epic column) in
 #     both blocks, and a third block lists every PR either block counted.
@@ -285,7 +289,7 @@ flow_report() {
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines, and an epic
   # PR built before since still keeps its later findings.
   # shellcheck disable=SC2119 # takes no argument here
-  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(SWARM_REWORK_SINCE="${since}" outcomes_report)"
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}"

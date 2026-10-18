@@ -42,7 +42,7 @@ check "at 120x38 the gauges still show" has "of peak" "${out}"
 out="$(cut 120 39 --ladder)"
 check "at 120x39 the sparkline shows" has "14 days" "${out}"
 check "at 120x39 the gauges show" has "of peak" "${out}"
-check "at 120x39 the ladder is still whole" has "│ review     → opus" "${out}"
+check "at 120x39 the ladder is still whole" has "review-fallback→ " "${out}"
 check "at 120x39 running now is still whole" has "│ ● a-building          up" "${out}"
 check "at 120x39 recent keeps at least 3 rows" test "$(sed -n '/─ recent/,/╰/p' <<< "${out}" | grep -c ago)" -ge 3
 # From 140 columns the left column counts too: at 160x20 it is taller than the frame already, so the

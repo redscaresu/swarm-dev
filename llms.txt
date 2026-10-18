@@ -9,4 +9,4 @@ First steps: install the plugin (`claude plugin marketplace add redscaresu/swarm
 - [docs/method.md](docs/method.md): the method and why it is shaped this way
 - [docs/reference.md](docs/reference.md): every `swarm.sh` command and setting
 - [docs/dash.md](docs/dash.md): the read-only dashboard
-- [commands/](commands/): the slash commands the plugin loads (`/swarm-dev:hld`, `/swarm-dev:plan-hld`, `/swarm-dev:plan-epic`, `/swarm-dev:swarm`)
+- [commands/](commands/): the slash commands the plugin loads (`/swarm-dev:epic`, `/swarm-dev:plan-epic`, `/swarm-dev:swarm`)
