@@ -526,12 +526,14 @@ codex-review stops codex the same way and exits only once it is gone. While it r
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
 process group, so a harness that kills that group kills codex too. Every brief says to run it in the
 background (Bash `run_in_background`) and wait for it: Claude Code stops a foreground Bash call at 2
-minutes by default and 10 at most, before the limit could apply. When codex reports a
-usage limit, or codex-review prints `codex skipped: timed out`, no one waits or runs it again: a
+minutes by default and 10 at most, before the limit could apply. Whoever runs it waits for it to
+exit and acts on what it prints last, since a usage limit printed early may be followed by a
+fallback's review. When it ends on codex's usage limit or on `codex skipped: ...`, no one runs it again: a
 builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
 its reply, and the conductor then reads the diff itself in codex's place. codex-review sends codex's
-output, stderr merged into stdout, through a temp file as well as to the screen. Once codex exits,
+output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
+700, so no other user can make or read it first), removed when it exits. Once codex exits,
 it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
 too) it stops the copy, so a child of codex left holding the output cannot hang the caller. If codex fails and its last lines hold its own limit message (`You’ve hit your usage limit`, with
 `ERROR:` or `■` before it; a review that only quotes the words does not count), codex-review logs a
@@ -545,7 +547,9 @@ codex usage limit` and then the findings, and closes the agent, findings or not;
 it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
 body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
 start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
-nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. With
+nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. A
+fallback that goes idle without writing its file ends the run at once, with `codex skipped: usage
+limit (fallback wrote no findings)`, instead of holding the builder until the time runs out. With
 under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
 (no time left for a fallback)`. The planning `codex` panes of `/plan-hld` and
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
