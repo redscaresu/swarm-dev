@@ -66,7 +66,12 @@ Repeat until a step below says stop:
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
 
-     Once both waits are running, take each `also: lead <slug> blocks <slugs>` line after the why
+     Once both waits are running, send each `queued: #<n> green <m>m with no review` line after
+     the why to the conductor: write the line to a file and run `swarm.sh tell <agent> note <file>`.
+     That PR has been green and mergeable for `queue_minutes` with no review agent on its head, and
+     the note tells the conductor to start its review now. Send each PR's line once per `next`.
+
+     Then take each `also: lead <slug> blocks <slugs>` line after the why
      and run that lead story while the wait runs: the stories it names stay blocked until it is
      done, and no conductor builds it. Tell the user, as the gate does, that you will run it once
      they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land

@@ -112,6 +112,10 @@ eb="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the backlog brief's review paragraph is the epic conductor's" "same" \
   "$([[ -n "$(para "A story is reviewed only when" "${bl}")" && "$(para "A story is reviewed only when" "${bl}")" == "$(para "A story is reviewed only when" "${eb}")" ]] && echo same || echo differs)"
 check "the epic conductor keeps its scope and drops 'or verify'" "yes|no" "$(has "Stay inside this epic" "${eb}")|$(hasnt "or verify" "${eb}")"
+flat="$(tr -s '[:space:]' ' ' <<< "${eb}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "the conductor briefs review each PR the moment it is green and merge the moment it passes, with no batch wording" "yes|yes|yes|yes|no|no|no|no" \
+  "$(has "The moment a story's PR head is green and mergeable, start one with" "${flat}")|$(has 'run one review agent for every green PR at once, with no cap below the number of green PRs.' "${flat}")|$(has '`queued: #<n> green <m>m with no review`, that PR has waited: start its review agent now.' "${flat}")|$(has "once a PR's latest head has passed, merge it (or hand it over, as below) at once, and never hold a finished review result back while other reviews run." "${flat}")|$(hasnt batch "${eb}${bl}")|$(hasnt "later round" "${eb}${bl}")|$(hasnt "wait for any" "${eb}${bl}")|$(hasnt "Do not wait for other PRs" "${eb}${bl}")"
 check "with merge = human, the epic conductor still puts the epic in review" "yes" "$(has "swarm.sh review <epic> <every PR URL still waiting>" "${eb}")"
 run close conduct-e >/dev/null
 

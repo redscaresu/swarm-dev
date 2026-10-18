@@ -98,6 +98,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live; the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`. Every brief carries the file's tagged rule lines; a brief over 4 KB with them is flagged, not cut (reference.md § The outer loop) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it (reference.md § Building) |
+| `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |

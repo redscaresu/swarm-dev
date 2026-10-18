@@ -81,7 +81,9 @@ epic_has_stories() {
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
-#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads)
+#                     otherwise a `queued: #<n> green <m>m with no review` line follows for each of
+#                     its PRs left waiting for a review (queued_lines), then an
+#                     `also: lead <slug> blocks <slugs>` line (blocking_leads)
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
@@ -116,6 +118,7 @@ next_step() {
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
+        queued_lines "${slug}"
         blocking_leads
       fi
       return
@@ -173,6 +176,16 @@ next_step() {
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
+}
+
+# queued_lines <conductor> — queued_prs's lines, without their heads, for the PRs the conductor's
+# watch covers (its epic's, or the backlog's). Nothing when gh or a repo cannot be read: next goes on.
+queued_lines() {
+  local e scope r
+  e="$(conduct_epic "$1")"
+  if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
+  ( watch_scope "${scope[@]}" && for r in "${WATCH_REPOS[@]}"; do queued_prs "${r}" "${WATCH_HEADS}"; done ) 2>/dev/null \
+    | cut -d' ' -f2- || true
 }
 
 # blocking_leads — "also: lead <slug> blocks <slugs>" for each ready story of a kind no agent builds
