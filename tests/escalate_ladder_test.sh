@@ -8,8 +8,11 @@
 # Fable build and counted as an escalation, and the rung's start taken from its step-up. herdr, gh and
 # claude (tests/claude_stub.sh) are stubs on PATH: herdr records each call, and fails tab create
 # while ${ROOT}/tabfail exists, agent start while ${ROOT}/startfail does and agent prompt (the brief,
-# after the agent is recorded) while ${ROOT}/promptfail does; gh lists an open PR on
-# every branch (story/p1's its own, none once ${ROOT}/p1-closed exists), with one failing check.
+# after the agent is recorded) while ${ROOT}/promptfail does; while ${ROOT}/startghost exists an agent
+# starts but is gone at once (never listed). gh lists an open PR on
+# every branch (story/p1's its own, none once ${ROOT}/p1-closed exists; story/p2's and story/p3's
+# merged, none open),
+# with one failing check.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -38,10 +41,10 @@ case "$1 $2" in
   "tab create")   [ ! -e "$H/tabfail" ] || { echo '{"error":{"code":"tab_failed"}}' >&2; exit 1; }
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"}]}}' ;;
+  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"}]}}' ;;
   "tab close")    : > "$H/agents" ;;
   "agent start")  [ ! -e "$H/startfail" ] || { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
-                  echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
+                  [ -e "$H/startghost" ] || echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
   "agent prompt") [ ! -e "$H/promptfail" ] || exit 1
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
@@ -53,6 +56,8 @@ EOF
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$1 $2 $*" in
   "pr list "*story/p1*) [ -e "$H/p1-closed" ] || echo "https://github.com/o/proj/pull/4" ;;
+  "pr list "*story/p[23]*"--state merged"*) echo 1 ;;
+  "pr list "*story/p[23]*) ;;
   "pr list "*)  echo "https://github.com/o/proj/pull/5" ;;
   "pr checks "*) echo "- test: https://ci/run/9" ;;
 esac
@@ -139,14 +144,15 @@ sed -i.bak 's/^kind: code$/kind: lead/' "${P}/docs/stories/s1.md"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume of a story made kind: lead since refuses, starting nothing" "1|yes|1" "${rc}|$(has "s1 is kind: lead, which no agent builds" "${out}")|$(escalates)"
 mv "${P}/docs/stories/s1.md.bak" "${P}/docs/stories/s1.md"
-rm "${ROOT}/tabfail"; touch "${ROOT}/promptfail"
+rm "${ROOT}/tabfail"; touch "${ROOT}/promptfail" "${ROOT}/startghost"
 out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
-check "a resume whose brief is not taken up keeps the rung to resume again, and takes back the agents.tsv line it wrote" "1|yes|1|code opus high" \
+check "a resume whose agent is gone before its brief is taken up keeps the rung to resume again, and takes back the agents.tsv line it wrote" "1|yes|1|code opus high" \
   "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalates)|$(newest s1)"
+rm "${ROOT}/startghost"
+out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
 rm "${ROOT}/promptfail"
-run step-up --resume s1 >/dev/null || true
-check "a resume that starts runs the fable rung in the worktree, on record once, and logs the step-up" "escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
-  "$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
+check "a resume whose agent runs though its brief was not confirmed has started: the step-up stands, on record once, and it says to look" "0|yes|escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
+  "${rc}|$(has "s1's fable builder is running, but its brief was not confirmed taken up" "${out}")|$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "with nothing to resume, --resume refuses" "1|yes" "${rc}|$(has "no step-up of 's1' waits to start" "${out}")"
 
@@ -172,6 +178,45 @@ for s in d1:docs:sonnet c1:chore:haiku; do
   run step-up "${slug}" stalled >/dev/null || true
 done
 check "a docs build steps up as docs, and a chore below the first rung as a chore on it" "docs opus medium|chore sonnet medium" "$(newest d1)|$(newest c1)"
+
+# m1 was stacked on p2, whose PR has since squash-merged into main (its change on main under another
+# commit), and main moved on. The diff is against origin/main with the branch merged in: m1's own
+# work only, and the brief says to merge main in.
+"${GIT[@]}" -C "${P}" worktree add -q -b story/p2 "${ROOT}/proj-wt/p2" origin/main
+echo "PARENT2-WORK" > "${ROOT}/proj-wt/p2/parent2.txt"
+"${GIT[@]}" -C "${ROOT}/proj-wt/p2" add parent2.txt && "${GIT[@]}" -C "${ROOT}/proj-wt/p2" commit -qm parent2 && "${GIT[@]}" -C "${ROOT}/proj-wt/p2" push -q origin story/p2
+"${GIT[@]}" -C "${P}" fetch -q origin && "${GIT[@]}" -C "${P}" worktree add -q --no-track -b story/m1 "${ROOT}/proj-wt/m1" origin/story/p2
+echo "M1-WORK" > "${ROOT}/proj-wt/m1/m1.txt"; "${GIT[@]}" -C "${ROOT}/proj-wt/m1" add m1.txt && "${GIT[@]}" -C "${ROOT}/proj-wt/m1" commit -qm m1
+"${GIT[@]}" -C "${P}" pull -q origin main
+echo "PARENT2-WORK" > "${P}/parent2.txt"; "${GIT[@]}" -C "${P}" add parent2.txt && "${GIT[@]}" -C "${P}" commit -qm "p2 (#2)"
+echo "MAIN2-ONLY" > "${P}/main2.txt"; "${GIT[@]}" -C "${P}" add main2.txt && "${GIT[@]}" -C "${P}" commit -qm main2 && "${GIT[@]}" -C "${P}" push -q origin main
+printf '%s\n' --- "status: ready" "kind: code" --- "" "# m1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/m1.md"
+printf '2026-10-01\tcode-sonnet\tm1\tclaude\tsonnet\thigh\tsess-m1\n' >> "${P}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T09:00:00Z\tstacked\tm1\tw:1\tok (on p2)' $'2026-10-01T09:00:01Z\tstory\tm1\tw:1\tok' >> "${P}/.swarm/events.tsv"
+echo "w:2 m1" > "${P}/.swarm/state/m1"; echo "m1 w:2" > "${ROOT}/agents"
+run step-up m1 no-pr >/dev/null || true
+brief="$(cat "${P}/.swarm/briefs/m1.md")"
+check "a story whose parent's PR squash-merged has a diff of its own work against origin/main with the branch merged in, and is told to merge main in" "yes|yes|yes|yes" \
+  "$(has "+M1-WORK" "${brief}")|$(lacks PARENT2-WORK "${brief}")|$(lacks MAIN2-ONLY "${brief}")|$(has "This story was stacked on p2, whose PRs have merged: merge \`origin/main\` into your branch before you push" "${brief}")"
+
+# m2 is stacked on p3, also merged since, but merging main in would conflict: main changed main.txt
+# as m2 did. The diff stays the merge-base one (no conflict markers, no main-only file), and the
+# brief says to merge main in and resolve it.
+"${GIT[@]}" -C "${P}" worktree add -q -b story/p3 "${ROOT}/proj-wt/p3" origin/main
+echo "PARENT3-WORK" > "${ROOT}/proj-wt/p3/parent3.txt"
+"${GIT[@]}" -C "${ROOT}/proj-wt/p3" add parent3.txt && "${GIT[@]}" -C "${ROOT}/proj-wt/p3" commit -qm parent3 && "${GIT[@]}" -C "${ROOT}/proj-wt/p3" push -q origin story/p3
+"${GIT[@]}" -C "${P}" fetch -q origin && "${GIT[@]}" -C "${P}" worktree add -q --no-track -b story/m2 "${ROOT}/proj-wt/m2" origin/story/p3
+echo "M2-EDIT" > "${ROOT}/proj-wt/m2/main.txt"; "${GIT[@]}" -C "${ROOT}/proj-wt/m2" commit -qam m2
+echo "PARENT3-WORK" > "${P}/parent3.txt"; echo "MAIN3-EDIT" > "${P}/main.txt"; echo "MAIN3-ONLY" > "${P}/main3.txt"
+"${GIT[@]}" -C "${P}" add parent3.txt main.txt main3.txt && "${GIT[@]}" -C "${P}" commit -qm "p3 (#3), and main moves" && "${GIT[@]}" -C "${P}" push -q origin main
+printf '%s\n' --- "status: ready" "kind: code" --- "" "# m2" "" "**Done when:**" "- it holds" > "${P}/docs/stories/m2.md"
+printf '2026-10-01\tcode-sonnet\tm2\tclaude\tsonnet\thigh\tsess-m2\n' >> "${P}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T09:00:00Z\tstacked\tm2\tw:1\tok (on p3)' $'2026-10-01T09:00:01Z\tstory\tm2\tw:1\tok' >> "${P}/.swarm/events.tsv"
+echo "w:2 m2" > "${P}/.swarm/state/m2"; echo "m2 w:2" > "${ROOT}/agents"
+run step-up m2 no-pr >/dev/null || true
+brief="$(cat "${P}/.swarm/briefs/m2.md")"
+check "when merging main in would conflict, the diff stays the merge-base one, with no markers or main-only file, and the brief says to resolve it" "yes|yes|yes|yes" \
+  "$(has "+M2-EDIT" "${brief}")|$(lacks "<<<<<<<" "${brief}")|$(lacks MAIN3-ONLY "${brief}")|$(has "This story was stacked on p3, whose PRs have merged, and merging \`origin/main\` into your branch conflicts" "${brief}")"
 
 # Refused before the builder closes: an env: name not set here, a legacy verify build (a role nothing
 # starts now), and a trigger that is two words. Each leaves the builder open and writes no marker.

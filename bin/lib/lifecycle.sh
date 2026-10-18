@@ -499,8 +499,9 @@ step_up_resume() {
 # <role> on <to> in its worktree with the brief beside the marker, then log escalate `ok (<trigger>:
 # <from> -> <to>)`, drop the marker and send the /goal its caller's goal_preflight made. start_agent
 # runs with errexit on, so a step that fails stops it with that step's own message; then the marker
-# stays, the message says to run step-up --resume, and an agents.tsv line start_agent wrote before it
-# failed (a brief not taken up) goes, so the rung is on record once, when it starts.
+# stays and the message says to run step-up --resume. When start_agent recorded the agent before it
+# failed (deliver_prompt): an agent running in its pane has started, so the step-up stands (herdr saw
+# it working late); one that is gone loses its agents.tsv line, so the rung is on record once.
 start_rung() {
   local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
@@ -512,11 +513,19 @@ start_rung() {
   (set -e; start_agent "${epic:-${slug}}" "${slug}" "$(worktree_for "${src}" "${slug}")" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
   rc=$?
   set -e
-  if [[ ${rc} -ne 0 ]]; then
-    # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
-    # an append-only "start failed" event outcomes reads would avoid that.
-    awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
-      && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
+  if [[ ${rc} -ne 0 ]] && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
+    if [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]]; then
+      # Recorded and running in its pane: only the brief's delivery was not confirmed (herdr saw it
+      # working late), so the rung has started and the step-up stands.
+      echo "step-up: ${slug}'s ${to} builder is running, but its brief was not confirmed taken up; look at it: herdr agent read $(agent_name "${slug}")" >&2
+      rc=0
+    else
+      # Recorded but gone: the rung is not on record until it starts.
+      # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
+      # an append-only "start failed" event outcomes reads would avoid that.
+      awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+        && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
+    fi
   fi
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
@@ -534,18 +543,35 @@ start_rung() {
 # any run of backticks in it), the review agent's findings when they are of this HEAD, and the story
 # PR's failing checks.
 handover_brief() {
-  local wt models from parents open="" p prs="" stack="" diff fence='```' pr checks head findings="${PROJECT_DIR}/.swarm/reviews/$1.md" reviewed found
+  local wt models from parents open="" merged="" p prs="" stack="" tree="" out rc diff fence='```' pr checks head findings="${PROJECT_DIR}/.swarm/reviews/$1.md" reviewed found
   wt="$(worktree_for "$2" "$1")"
   parents="$(stacked_parents "$1")"
-  for p in ${parents//,/ }; do if pr="$(open_pr "$2" "${p}")"; then prs+="${prs:+ }${pr}"; open+="${open:+ }${p}"; fi; done
-  [[ -z "${prs}" ]] || stack=$'\n\n'"This story is stacked on ${open}: open your PR against \`$3\` all the same, with \`Merge after ${prs}\` in its body. The diff below starts at their branches, so their commits are not in it."
+  for p in ${parents//,/ }; do
+    if pr="$(open_pr "$2" "${p}")"; then prs+="${prs:+ }${pr}"; open+="${open:+ }${p}"
+    elif merged_pr "$2" "${p}"; then merged+="${merged:+ }${p}"; fi
+  done
   from="$(handover_from "${wt}" "$2" "$3" "${open}")" || from="origin/$3"
+  if [[ -n "${prs}" ]]; then
+    stack=$'\n\n'"This story is stacked on ${open}: open your PR against \`$3\` all the same, with \`Merge after ${prs}\` in its body. The diff below starts at their branches, so their commits are not in it."
+  elif [[ -n "${merged}" ]]; then
+    # A parent's PR merged, squashed most often, so its commits are on the base under other ids: the
+    # diff is of origin/<base> to this branch as if the base were merged in (merge-tree's tree), then
+    # what is not committed. A merge that conflicts (merge-tree exits 1, its tree full of markers)
+    # keeps the merge-base diff, and says so.
+    out="$(git -C "${wt}" merge-tree --write-tree "origin/$3" HEAD 2>/dev/null)" && rc=0 || rc=$?
+    if [[ ${rc} -eq 0 && "${out%%$'\n'*}" =~ ^[0-9a-f]{40,64}$ ]]; then
+      tree="${out%%$'\n'*}"; from="origin/$3"
+      stack=$'\n\n'"This story was stacked on ${merged}, whose PRs have merged: merge \`origin/$3\` into your branch before you push, so its PR shows only this story's work. The diff below is against \`origin/$3\` as if you had."
+    else
+      stack=$'\n\n'"This story was stacked on ${merged}, whose PRs have merged, and merging \`origin/$3\` into your branch conflicts: merge it in and resolve that before you push. The diff below is from the merge-base with \`origin/$3\`, so it holds their commits too."
+    fi
+  fi
   # Every model agents.tsv has building this story, in order, then this one.
   models="$({ awk -F'\t' -v n="$(agent_name "$1")" '$3 == n { print $5 }' "${AGENTS_LOG}" 2>/dev/null; echo "$6"; } | awk '!seen[$0]++' | paste -sd, - | sed 's/,/, /g')"
   # head stops reading at the cap, so git stops too: a writer it cut off dies of SIGPIPE (128 + 13),
   # which ends the untracked loop; git diff --no-index exits 1 for every file that differs. With
   # pipefail that SIGPIPE fails the pipeline, so || true. git's warnings stay out of the diff.
-  diff="$( { git -C "${wt}" diff "${from}"
+  diff="$( { if [[ -n "${tree}" ]]; then git -C "${wt}" diff "${from}" "${tree}"; git -C "${wt}" diff HEAD; else git -C "${wt}" diff "${from}"; fi
              git -C "${wt}" ls-files -z --others --exclude-standard | while IFS= read -r -d '' p; do
                git -C "${wt}" diff --no-index -- /dev/null "${p}" || (( $? < 128 )) || break
              done
@@ -591,6 +617,13 @@ ${found}
 
 ${checks}
 EOF
+}
+
+# merged_pr <repo-dir> <slug> — true when a PR on story/<slug> in the repo's origin has merged.
+merged_pr() {
+  local url
+  url="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 1
+  [[ "$(gh pr list -R "${url}" --head "story/$2" --state merged --json number --jq length </dev/null 2>/dev/null)" =~ ^[1-9] ]]
 }
 
 # handover_from <wt> <src> <base> <parents> — where a handover diff starts: the merge-base of HEAD
