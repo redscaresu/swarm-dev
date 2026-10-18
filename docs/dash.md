@@ -16,7 +16,7 @@ screen, each with its share of the height left above the legend. Anywhere else n
 with plain `dash`. If one project's screen fails to draw, its error takes its place and the others
 still show. It checks every folder before it draws anything, and stops at the first one that has
 no `.claude/swarm/config` or no board, naming it. With `--project` it shows only the projects you
-name, so you can run it from any git repo, even one with no board of its own.
+name, so you can run it from any folder, even one outside every project and git repo.
 
 When `claude plugin update` installs a new version while `--watch` runs from the installed plugin,
 the watch switches to the new version's `swarm.sh` before its next frame and keeps your `t` and `l`
