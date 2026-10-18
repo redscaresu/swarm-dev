@@ -7,18 +7,32 @@
 # jobs still running are then stopped, and waited for, before the logs go).
 set -uo pipefail
 
-# test.sh --one <run dir> <file> — one file, as above; exit 1 when it failed, never xargs's 255. The
-# run dir in its command line is how the cleanup below finds it. A TERM stops its test too.
+# stop_group <pgid> <seconds> — TERM a process group, give it <seconds>, then KILL what is left.
+# shellcheck disable=SC2317,SC2329 # invoked by --one's TERM trap
+stop_group() {
+  local i
+  kill -TERM -- "-$1" 2>/dev/null || return 0
+  for ((i = $2 * 10; i > 0; i--)); do kill -0 -- "-$1" 2>/dev/null || return 0; sleep 0.1; done
+  kill -KILL -- "-$1" 2>/dev/null || true
+}
+
+# test.sh --one <run dir> <file> — one file, as above, in a process group of its own, which is
+# recorded in <run dir>/jobs while it runs; exit 1 when it failed, never xargs's 255. A TERM stops
+# the whole group: the test and whatever it started.
 if [[ "${1:-}" == --one ]]; then
-  run="$2" f="$3" t0=${SECONDS} rc=0
+  run="$2" f="$3" t0=${SECONDS} rc=0 pid=""
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
-  echo "run  ${f}"
   tmp="$(mktemp -d)" || exit 1
+  trap '[[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp}" "${run}/jobs/$$"; exit 1' TERM
+  echo "run  ${f}"
+  : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts
+  set -m   # the job below leads a process group of its own
   TMPDIR="${tmp}" bash "${f}" < /dev/null > "${log}" 2>&1 &
   pid=$!
-  trap 'kill -TERM "${pid}" 2>/dev/null; wait "${pid}"; rm -rf "${tmp}"; exit 1' TERM
+  set +m
+  echo "${pid}" > "${run}/jobs/$$"
   wait "${pid}" || rc=$?
-  rm -rf "${tmp}"
+  rm -rf "${tmp}" "${run}/jobs/$$"
   if [[ ${rc} -eq 0 ]]; then echo "ok   ${f} $((SECONDS - t0))s"; exit 0; fi
   : > "${log}.failed"
   echo "FAIL ${f} $((SECONDS - t0))s"
@@ -26,13 +40,24 @@ if [[ "${1:-}" == --one ]]; then
 fi
 
 run="$(mktemp -d)" || exit 1
-mkdir -p "${run}/logs"
-# On any exit, stop the jobs left (only after xargs stopped early can there be any), wait for them,
-# and only then remove their logs.
+mkdir -p "${run}/logs" "${run}/jobs"
+# On any exit, stop the jobs left (only after xargs stopped early can there be any): TERM each, which
+# stops its test's group, give them 5 s, then KILL each and its group. Only then do the logs go.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 cleanup() {
-  pkill -TERM -f -- "--one ${run} " 2>/dev/null
-  while pgrep -f -- "--one ${run} " > /dev/null; do sleep 0.1; done
+  local j i g left
+  for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -TERM "${j##*/}" 2>/dev/null; done
+  for ((i = 50; i > 0; i--)); do
+    left=""
+    for j in "${run}"/jobs/*; do [[ -e "${j}" ]] && kill -0 "${j##*/}" 2>/dev/null && left=1; done
+    [[ -n "${left}" ]] || break
+    sleep 0.1
+  done
+  for j in "${run}"/jobs/*; do
+    [[ -e "${j}" ]] || continue
+    kill -KILL "${j##*/}" 2>/dev/null
+    g="$(cat "${j}" 2>/dev/null)"; [[ -z "${g}" ]] || kill -KILL -- "-${g}" 2>/dev/null
+  done
   rm -rf "${run}"
 }
 trap cleanup EXIT
@@ -53,7 +78,7 @@ for f in "$@"; do
   case " ${SERIAL:-} " in *" ${f} "*) ser+=("${f}") ;; *) par+=("${f}") ;; esac
 done
 if [[ ${#par[@]} -gt 0 ]]; then
-  printf '%s\n' "${par[@]}" | xargs -P "${JOBS:-4}" -n 1 bash "$0" --one "${run}"
+  printf '%s\0' "${par[@]}" | xargs -0 -P "${JOBS:-4}" -n 1 bash "$0" --one "${run}"
   xrc=$?
   show "${par[@]}"
   [[ ${xrc} -eq 0 || ${xrc} -eq 123 ]] || { echo "FAIL xargs stopped (exit ${xrc}): not every file ran"; exit 1; }

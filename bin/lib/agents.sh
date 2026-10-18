@@ -648,16 +648,17 @@ SETTLED='^(idle|waiting|gone)(:|$)'
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 sleep_ms() { [[ $1 -le 0 ]] || sleep "$(($1 / 1000)).$(printf '%03d' $(($1 % 1000)))"; }
 # scaled <seconds> — <seconds> times SWARM_SLEEP_SCALE (default 1; make test sets 0.01, and swarm.sh
-# checks it at startup), to the millisecond. nap <seconds> — sleep that long, but at least a tenth of
-# a second, so a scaled poll loop never comes near a busy one.
-scaled() { awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { printf "%.3f\n", s * k }'; }
-nap() { sleep "$(awk -v s="$(scaled "$1")" 'BEGIN { print (s + 0 < 0.1 ? 0.1 : s) }')"; }
-# poll_while <seconds> <command...> — run <command> while it succeeds, every second scaled (but no
-# more often than every tenth of one), for <seconds> unscaled: the scale quickens the polling, never
-# the wait, and each step is slept in full, so it is never shorter than at scale 1.
+# checks it at startup), to the millisecond, but at least a tenth of a second, so no scaled poll (nap,
+# poll_while, merge's CI reads) comes near a busy one. nap <seconds> — sleep that long.
+scaled() { awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { t = s * k; printf "%.3f\n", (t < 0.1 ? 0.1 : t) }'; }
+nap() { sleep "$(scaled "$1")"; }
+# poll_while <seconds> <command...> — run <command> while it succeeds, every second scaled, for
+# <seconds> unscaled: the scale quickens the polling, never the wait, and each step is slept in full,
+# so it is never shorter than at scale 1.
 poll_while() {
   local step n
-  read -r step n <<< "$(awk -v s="$1" -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { t = k < 0.1 ? 0.1 : k; n = int(s / t); if (n < s / t) n++; printf "%.3f %d\n", t, n }')"
+  step="$(scaled 1)"
+  n="$(awk -v s="$1" -v t="${step}" 'BEGIN { n = int(s / t); if (n < s / t) n++; print n }')"
   shift
   while ((n-- > 0)) && "$@"; do sleep "${step}"; done
 }

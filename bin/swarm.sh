@@ -477,7 +477,7 @@ codex_story_prompt() {
 # codex-limit incident, and with fallback_reviewer set, codex_fallback reviews in its place, in what
 # is left of codex_minutes.
 codex_review() {
-  local pid tpid left rc=0 m i args story prompt="" dir log files
+  local pid tpid left t0 rc=0 m i args story prompt="" dir log files
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   if [[ -n "${SWARM_STORY:-}" ]]; then
@@ -518,7 +518,10 @@ codex_review() {
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
+  t0=${SECONDS}
   poll_while "${left}" kill -0 "${pid}" 2>/dev/null
+  # What codex used is gone: a fallback gets only the rest.
+  left=$((left - (SECONDS - t0))); ((left > 0)) || left=0
   if ! kill -0 "${pid}" 2>/dev/null; then
     wait "${pid}" || rc=$?
     for ((i = CODEX_GRACE * 5; i > 0; i--)); do kill -0 "${tpid}" 2>/dev/null || break; sleep 0.2; done

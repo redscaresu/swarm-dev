@@ -210,7 +210,7 @@ while status is None:
     done, st = os.waitpid(pid, os.WNOHANG)
     if done:
         status = st
-while True:   # what the watch wrote before it exited, still in the pty
+while select.select([fd], [], [], 0.5)[0]:   # what the watch wrote before it exited, still in the pty
     try:
         chunk = os.read(fd, 65536)
     except OSError:

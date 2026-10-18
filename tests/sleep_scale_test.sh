@@ -6,7 +6,7 @@
 # to 0 or one that is not a number is refused at startup, before any command runs. board's reader
 # stopping early prints no write error. Then make test itself: a failing file fails it and its output
 # comes whole after its phase, a SERIAL file runs after the parallel ones, and xargs stopping early
-# fails the run and leaves no job running.
+# fails the run and leaves no job (nor anything a job started) running, and a path with a space runs.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,7 +35,7 @@ check "every tests/*_test.sh exports HOME or CLAUDE_CONFIG_DIR under its own mkt
 
 # timed <case> — run one case with agents.sh sourced and its helpers stubbed, at SWARM_SLEEP_SCALE
 # 0.01; print "<herdr calls>|<under a second?>". herdr fails its first call and takes the second.
-# Case nap prints 1 when nap 1 took at least 100 ms.
+# Case nap prints 1 when nap 1 took at least 100 ms; case floor prints scaled 20 at a scale of 0.001.
 timed() (
   PROJECT_DIR="${ROOT}/p"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; export SWARM_SLEEP_SCALE=0.01
   mkdir -p "${PROJECT_DIR}"; : > "${ROOT}/calls"
@@ -61,12 +61,14 @@ timed() (
     start) deliver_prompt() { :; }; start_agent tab a "${ROOT}" builder "${ROOT}/brief" >/dev/null ;;
     deliver) deliver_prompt a "${ROOT}/brief" w:1 ;;
     nap) nap 1; echo "$(( $(now_ms) - t0 >= 100 ))"; return ;;
+    floor) SWARM_SLEEP_SCALE=0.001 scaled 20; return ;;
   esac
   echo "$(wc -l < "${ROOT}/calls" | tr -d ' ')|$( (( $(now_ms) - t0 < 1000 )) && echo yes || echo "no, $(( $(now_ms) - t0 )) ms")"
 )
 check "at SWARM_SLEEP_SCALE=0.01 a start_agent retry finishes in under a second" "2|yes" "$(timed start)"
 check "at SWARM_SLEEP_SCALE=0.01 a deliver_prompt wait finishes in under a second" "2|yes" "$(timed deliver)"
 check "at SWARM_SLEEP_SCALE=0.01 nap 1 still sleeps a tenth of a second, so no poll loop is near busy" "1" "$(timed nap)"
+check "scaled holds to a tenth of a second: merge's 20 s CI poll at a scale of 0.001 is 0.1 s" "0.100" "$(timed floor)"
 # scale <value> — taken or refused: swarm.sh run outside any project, so a scale it takes stops it next,
 # at the project lookup.
 scale() {
@@ -90,9 +92,10 @@ o="$( (trap '' PIPE; PROJECT_DIR="${ROOT}/b"; BOARD="${ROOT}/b"
   source "${REPO}/bin/lib/board.sh"; board stories | { read -r _; }) 2>&1)"
 check "board's reader stopping early, SIGPIPE ignored, prints no write error" "" "${o}"
 
-# mk <file>... — make test over these files, two at a time (SERIAL from $SERIAL): its output, then its
-# exit on the last line.
-mk() { local rc=0 o; o="$(make -s -C "${REPO}" test TESTS="$*" SERIAL="${SERIAL:-}" JOBS=2 2>&1)" || rc=$?; printf '%s\n%s\n' "${o}" "${rc}"; }
+# mk <file>... — make test over these files, $JOBS (2) at a time, SERIAL from $SERIAL: its output,
+# then its exit on the last line. ms — the time in milliseconds.
+mk() { local rc=0 o; o="$(make -s -C "${REPO}" test TESTS="$*" SERIAL="${SERIAL:-}" JOBS="${JOBS:-2}" 2>&1)" || rc=$?; printf '%s\n%s\n' "${o}" "${rc}"; }
+ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 # A failing file fails make, and its output comes whole once its phase is over: failer prints 3000
 # lines (past PIPE_BUF) at once and fails; slow passes a second later.
 printf '#!/usr/bin/env bash\nseq 1 3000; exit 1\n' > "${ROOT}/failer_test.sh"
@@ -108,14 +111,22 @@ printf '#!/usr/bin/env bash\npython3 -c "import time; print(time.time())" > "%s/
 o="$(SERIAL="${ROOT}/ser_test.sh" mk "${ROOT}/ser_test.sh" "${ROOT}/par_test.sh")"
 check "a SERIAL file runs after the parallel ones have ended" "0|yes" \
   "$(tail -1 <<< "${o}")|$(python3 -c 'import sys; print("yes" if float(open(sys.argv[1]).read()) >= float(open(sys.argv[2]).read()) else "no")' "${ROOT}/ser.start" "${ROOT}/par.end")"
-# killer kills xargs (its wrapper's parent): make fails, and the job beside it (late, which would
-# write its mark after 2 s) is stopped before make returns, not left running.
-# shellcheck disable=SC2016 # the stub's own shell expands these
+# killer kills xargs (its job's parent): make fails, and the jobs beside it are stopped with
+# everything their tests started, within a bound, before make returns. late's child would write its
+# mark after 2 s; stubborn's child ignores TERM and would write its mark after 6 s.
+# shellcheck disable=SC2016 # the stubs' own shell expands these
 printf '#!/usr/bin/env bash\nsleep 0.3; kill -KILL "$(ps -o ppid= -p "${PPID}" | tr -d " ")"\n' > "${ROOT}/killer_test.sh"
-printf '#!/usr/bin/env bash\nsleep 2; : > "%s/late.mark"\n' "${ROOT}" > "${ROOT}/late_test.sh"
-o="$(mk "${ROOT}/killer_test.sh" "${ROOT}/late_test.sh")"; sleep 3
-check "make test fails when xargs stops early, and leaves no job running" "yes|2|no mark" \
-  "$(grep -q '^FAIL xargs stopped (exit [0-9]*): not every file ran$' <<< "${o}" && echo yes || echo "no: ${o}")|$(tail -1 <<< "${o}")|$([[ -e "${ROOT}/late.mark" ]] && echo "late ran on" || echo "no mark")"
+printf '#!/usr/bin/env bash\n(sleep 2; : > "%s/late.mark") &\nwait\n' "${ROOT}" > "${ROOT}/late_test.sh"
+printf '#!/usr/bin/env bash\n(trap "" TERM; sleep 6; : > "%s/stubborn.mark") &\nwait\n' "${ROOT}" > "${ROOT}/stubborn_test.sh"
+t0="$(ms)"
+o="$(JOBS=3 mk "${ROOT}/killer_test.sh" "${ROOT}/late_test.sh" "${ROOT}/stubborn_test.sh")"; took=$(( $(ms) - t0 ))
+sleep 7
+check "make test fails when xargs stops early, stops what the jobs left started (TERM, then KILL), and returns within 5 s" "yes|2|no marks|yes" \
+  "$(grep -q '^FAIL xargs stopped (exit [0-9]*): not every file ran$' <<< "${o}" && echo yes || echo "no: ${o}")|$(tail -1 <<< "${o}")|$(compgen -G "${ROOT}/*.mark" | sed 's#.*/##' | tr '\n' ' ' | grep . || echo "no marks")|$( ((took < 5000)) && echo yes || echo "no, ${took} ms")"
+# A file whose path holds a space runs.
+printf '#!/usr/bin/env bash\nexit 0\n' > "${ROOT}/sp ace_test.sh"
+check "a test file whose path holds a space runs" "yes" \
+  "$(JOBS=2 bash "${REPO}/scripts/test.sh" "${ROOT}/sp ace_test.sh" | grep -qxF "ok   ${ROOT}/sp ace_test.sh 0s" && echo yes || echo no)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
