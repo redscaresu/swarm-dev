@@ -178,13 +178,16 @@ next_pane() {
   done
 }
 
-# AGENT_ENV: the variables every agent starts with besides its locale (LANG, LC_*), each with
-# swarm.sh's own value when it has one: the env-allowlist spike's (herdr 0.9.1), plus where claude,
-# codex, gh and git keep their logins and config, the ssh agent's socket, so a push over ssh works,
-# and SWARM_PROJECT (as PROJECT_DIR, absolute), so an agent's swarm.sh finds the project the lead
-# named. Paths, never secrets. Any other variable reaches an agent only by name, through a story's
-# env: (story_env). AGENT_SET are the ones swarm.sh sets for every agent itself (launch_file).
-AGENT_ENV="PATH HOME TERM USER LOGNAME TMPDIR LANG CLAUDE_CONFIG_DIR CODEX_HOME XDG_CONFIG_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL SSH_AUTH_SOCK SWARM_PROJECT"
+# AGENT_ENV: the variables every agent starts with besides those AGENT_PREFIXES name (the locale,
+# and swarm.sh's own SWARM_* settings, SWARM_PROJECT as PROJECT_DIR, absolute), each with swarm.sh's
+# own value when it has one: the env-allowlist spike's (herdr 0.9.1); where claude, codex, gh, git
+# and gpg keep their logins, config and logs; the ssh agent's socket and git's ssh command, so a push
+# works; and the proxy and CA settings, so an agent behind a proxy or an intercepting CA reaches
+# GitHub. Settings and paths, not secrets (a proxy URL with a password in it passes too). Any other
+# variable reaches an agent only by name, through a story's env: (story_env). AGENT_SET are the ones
+# swarm.sh sets for every agent itself (launch_file).
+AGENT_ENV="PATH HOME TERM USER LOGNAME TMPDIR LANG CLAUDE_CONFIG_DIR CLAUDE_PROJECTS_DIR CODEX_HOME XDG_CONFIG_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL GNUPGHOME SSH_AUTH_SOCK GIT_SSH_COMMAND HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy SSL_CERT_FILE NODE_EXTRA_CA_CERTS"
+AGENT_PREFIXES="LC_ SWARM_"
 AGENT_SET="SHELL ZDOTDIR"
 # HERDR_PANE_ENV: herdr's variables for a pane, which the agent's swarm.sh and herdr's hooks read.
 # Only the new pane's shell has its values, so the launch line names them and that shell expands them.
@@ -198,12 +201,12 @@ ENV_READY="swarm: agent environment ready"
 # story_env <story> — the names under its env:, a one-line [A, B] list (quotes, commas and a trailing
 # # comment gone). A story holds names, never values. Refused, with the reason printed and 1
 # returned: any other form (a block list, a list over several lines, a bare name), which would read
-# as no names or the wrong ones; a name that is not [A-Z_][A-Z0-9_]*; one every agent gets already or
-# that swarm.sh or herdr set (AGENT_ENV, AGENT_SET, LC_*, HERDR_*), which would replace the agent's
-# own; and one swarm.sh's environment does not have, without which the builder would fail later and
-# burn an attempt.
+# as no names or the wrong ones; a name that is not [A-Z_][A-Z0-9_]*; a reserved one (reserved_env);
+# and one swarm.sh's environment does not have, without which the builder would fail later and burn
+# an attempt. A conductor has only the names its stories had when it started, so that refusal says
+# how one picks up a story's new name.
 story_env() {
-  local v n words out="" exported list='^\[[^][]*\]$'
+  local v n words out="" exported list='^\[[^][]*\]$' epic
   v="$(get_fm "$1" env)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
   # An empty env: is no names, unless - items follow it (a block list, at any indent).
   if { [[ -n "${v}" ]] && [[ ! "${v}" =~ ${list} ]]; } || { [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit }
@@ -215,33 +218,47 @@ story_env() {
   exported=" $(compgen -e | tr '\n' ' ') "   # the environment only, never swarm.sh's own variables
   for n in ${words[@]+"${words[@]}"}; do
     [[ "${n}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "$1: env: '${n}' is not a variable name ([A-Z_][A-Z0-9_]*)"; return 1; }
-    [[ " ${AGENT_ENV} ${AGENT_SET} " != *" ${n} "* && "${n}" != HERDR_* && "${n}" != LC_* ]] \
-      || { echo "$1: env: ${n} is set for every agent by swarm.sh or herdr, so a story cannot name it"; return 1; }
-    [[ "${exported}" == *" ${n} "* ]] \
-      || { echo "$1: env: ${n} is not set here, so its builder would start without it; export it, then try again"; return 1; }
-    out+=" ${n}"
+    ! reserved_env "${n}" \
+      || { echo "$1: env: ${n} is reserved: every agent gets it already, herdr or the lead's own session sets it, or it loads code, so a story cannot name it"; return 1; }
+    [[ "${exported}" != *" ${n} "* ]] || { out+=" ${n}"; continue; }
+    epic="$(fm "$1" epic)"
+    echo "$1: env: ${n} is not set here, so its builder would start without it. Export it in the session that runs swarm.sh, then try again. A conductor has only the names its stories had when it started: if one runs this, the lead restarts it with \`swarm.sh conduct ${epic:---backlog}\` so it picks the name up"
+    return 1
   done
   printf '%s' "${out# }"
 }
 
-# launch_file <file> <names> <marker> — write clean_env's wrapper: it deletes itself, exports
-# AGENT_ENV, the locale and <names> with swarm.sh's values, sets AGENT_SET, prints <marker>, and execs
-# AGENT_SHELL. SHELL is AGENT_SHELL's zsh and ZDOTDIR the empty .swarm/zdotdir, so every shell the
-# agent starts later (Claude Code's Bash tool, codex's commands) is that zsh, and it reads its user
-# startup files, and Claude Code its snapshot's .zshrc, from there: never ~/.bashrc, ~/.bash_profile
-# or HOME's zsh files, which could export a secret again. 0600, made by its owner alone.
+# reserved_env <name> — true for a name a story cannot add: one every agent gets already (AGENT_ENV,
+# AGENT_SET, AGENT_PREFIXES), herdr's (HERDR_*), the lead's own Claude Code session's (CLAUDECODE,
+# CLAUDE_CODE_*, CLAUDE_PID), and one that loads code into what the agent runs (BASH_ENV, ENV, DYLD_*,
+# LD_*).
+reserved_env() {
+  local p
+  [[ " ${AGENT_ENV} ${AGENT_SET} " != *" $1 "* ]] || return 0
+  for p in ${AGENT_PREFIXES}; do [[ "$1" != "${p}"* ]] || return 0; done
+  case "$1" in HERDR_*|CLAUDECODE|CLAUDE_CODE_*|CLAUDE_PID|BASH_ENV|ENV|DYLD_*|LD_*) return 0 ;; esac
+  return 1
+}
+
+# launch_file <file> <names> <marker> <zdotdir> — write clean_env's wrapper: it deletes itself,
+# exports AGENT_ENV, AGENT_PREFIXES' variables and <names> with swarm.sh's values, sets AGENT_SET,
+# prints <marker>, and execs AGENT_SHELL. SHELL is AGENT_SHELL's zsh and ZDOTDIR <zdotdir>
+# (clean_env's, empty), so every shell the agent starts later (Claude Code's Bash tool, codex's
+# commands) is that zsh, and it reads its user startup files, and Claude Code its snapshot's .zshrc,
+# from there: never ~/.bashrc, ~/.bash_profile or HOME's zsh files, which could export a secret
+# again. 0600, made by its owner alone.
 launch_file() {
-  local zdot="${PROJECT_DIR}/.swarm/zdotdir" exported n v
+  local exported n v
   exported=" $(compgen -e | tr '\n' ' ') "
-  mkdir -p "${1%/*}" "${zdot}"; rm -f "$1"
+  mkdir -p "${1%/*}"; rm -f "$1"
   (umask 077; {
     printf '/bin/rm -f -- %q\n' "$1"
-    for n in ${AGENT_ENV} $(compgen -e | grep '^LC_' || true) $2; do
+    for n in ${AGENT_ENV} $(compgen -e | grep -E "^(${AGENT_PREFIXES// /|})" || true) $2; do
       [[ "${exported}" == *" ${n} "* ]] || continue
       v="${!n}"; [[ "${n}" != SWARM_PROJECT ]] || v="${PROJECT_DIR}"   # resolved, so a relative one holds from any cwd
       printf 'export %s=%q\n' "${n}" "${v}"
     done
-    printf 'export SHELL=%q ZDOTDIR=%q\necho %q\nexec %s\n' "${AGENT_SHELL%% *}" "${zdot}" "$3" "${AGENT_SHELL}"
+    printf 'export SHELL=%q ZDOTDIR=%q\necho %q\nexec %s\n' "${AGENT_SHELL%% *}" "$4" "$3" "${AGENT_SHELL}"
   } > "$1")
 }
 
@@ -250,13 +267,15 @@ launch_file() {
 # holds the user's whole environment. The wrapper is a 0600 file under .swarm/launch, so no value
 # reaches argv, herdr's typed line or the scrollback. story_env has checked <names>.
 clean_env() {
-  local pane="$1" base="${PROJECT_DIR}/.swarm/launch/$2" n line out try marker typed=""
+  local pane="$1" base="${PROJECT_DIR}/.swarm/launch/$2" zdot="${PROJECT_DIR}/.swarm/zdotdir/$2" n line out try marker typed=""
+  # The agent's own ZDOTDIR, made afresh and 0700, so nothing an earlier agent wrote there runs.
+  rm -rf "${zdot}"; (umask 077; mkdir -p "${zdot}")
   # A freshly split pane is not always ready (as for agent start): retry a failed run once. A failed
   # run may still have typed its line, so each try has its own wrapper and marker, and the wait is for
   # the last one's: two typed lines run both wrappers in turn, and the second leaves the clean shell.
   for try in 1 2; do
     marker="${ENV_READY} $$.${try}"
-    launch_file "${base}.${try}" "$3" "${marker}"
+    launch_file "${base}.${try}" "$3" "${marker}" "${zdot}"
     line="exec /usr/bin/env -i HERDR_ENV=1"
     for n in ${HERDR_PANE_ENV}; do line+=" ${n}=\"\$${n}\""; done
     line+=" /bin/bash $(printf '%q' "${base}.${try}")"

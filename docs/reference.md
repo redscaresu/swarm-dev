@@ -258,31 +258,39 @@ exported. Before the agent starts, swarm.sh has that shell replace itself, throu
 `zsh -f` (no rc file runs) holding only:
 
 - `PATH`, `HOME`, `TERM`, `USER`, `LOGNAME`, `TMPDIR`, `LANG` and the `LC_*` variables;
-- where logins and config live: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME`, `GH_CONFIG_DIR`
-  and `GIT_CONFIG_GLOBAL`, and the ssh agent's `SSH_AUTH_SOCK`;
-- `SWARM_PROJECT`, when you named the project with it, as the project's absolute path, so the
-  agent's own `swarm.sh` finds it from any directory;
-- `SHELL`, set to that zsh, and `ZDOTDIR`, set to `.swarm/zdotdir`, an empty directory;
+- where logins, config and logs live: `CLAUDE_CONFIG_DIR`, `CLAUDE_PROJECTS_DIR`, `CODEX_HOME`,
+  `XDG_CONFIG_HOME`, `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL` and `GNUPGHOME`;
+- for a push: the ssh agent's `SSH_AUTH_SOCK` and `GIT_SSH_COMMAND`;
+- for a proxy or an intercepting CA: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and their lowercase
+  forms, `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`;
+- swarm.sh's own `SWARM_*` settings, with `SWARM_PROJECT` as the project's absolute path, so the
+  agent's own `swarm.sh` finds the same project and settings from any directory;
+- `SHELL`, set to that zsh, and `ZDOTDIR`, set to the agent's own `.swarm/zdotdir/<agent>`, which
+  swarm.sh makes afresh, empty and 0700, at each launch;
 - `HERDR_ENV=1`, and herdr's own variables for the pane.
 
 The others take swarm.sh's value, when it has one, except herdr's, which come from the new pane. A
 story's `env: [NAME, ...]` adds those names for its builder, whether `story` starts it or a conductor
 restarts it with `swarm.sh agent`. A conductor gets the names of its epic's open (`ready`, `blocked`
 or `review`) code, docs and chore stories (for `conduct --backlog`, those with no epic), so the
-builders it starts can receive them; a `lead` story's names stay with you. Each value comes from the
-session that runs `swarm.sh`. `story`, `agent` and `conduct` refuse, before anything starts, an
-`env:` that is not a one-line `[A, B]` list, a name that is not `[A-Z_][A-Z0-9_]*`, a name from the
-list above or one starting `HERDR_` or `LC_`, and a name that session does not have. No value goes
-through a command line: swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's
-shell runs and which deletes itself, so the pane's scrollback shows the launch line with no value in
-it.
+builders it starts can receive them; a `lead` story's names stay with you. A conductor has only the
+names its stories had when it started: for a story added later with a new name, restart it with
+`swarm.sh conduct <epic>`, which its refusal names. Each value comes from the session that runs
+`swarm.sh`. `story`, `agent` and `conduct` refuse, before anything starts, an `env:` that is not a
+one-line `[A, B]` list, a name that is not `[A-Z_][A-Z0-9_]*`, a name that session does not have,
+and a reserved name: one from the list above or starting `LC_`, `SWARM_` or `HERDR_`; the lead's
+own Claude Code session's (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`); and one that loads code
+into what the agent runs (`BASH_ENV`, `ENV`, `DYLD_*`, `LD_*`). No value goes through a command line:
+swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and which
+deletes itself, so the pane's scrollback shows the launch line with no value in it.
 
 A login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
-`CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, or a `GH_TOKEN` for `gh`. A story can name one for its
-builder, but agents with no story of their own (planners and review agents, and conductors beyond
-their stories' names) never get it. If you log in that way, log in through each tool instead:
-`claude` then `/login`, `codex login`, and `gh auth login`. Provider settings (Foundry, Bedrock,
-Vertex) go under `env` in `~/.claude/settings.json`, which every Claude Code session reads.
+`CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, or a `GH_TOKEN` for `gh`. A story can name
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one), but
+agents with no story of their own (planners and review agents, and conductors beyond their stories'
+names) never get it. If you log in that way, log in through each tool instead: `claude` then
+`/login`, `codex login`, and `gh auth login`. Provider settings (Foundry, Bedrock, Vertex) go under
+`env` in `~/.claude/settings.json`, which every Claude Code session reads.
 
 Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
 Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,

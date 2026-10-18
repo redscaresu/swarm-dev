@@ -61,7 +61,11 @@ chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 
 # The lead: its own FAKE_SECRET (the value a story's env: passes on), LEAD_SECRET (a lead story's) and
 # REVIEW_SECRET (a story in review's), config paths, bash as its SHELL, and a HOME whose zsh and bash
-# startup files export ZSH_LEAK and BASH_LEAK, in the project. A stray AGENT_ENV_NAMES names nothing.
+# startup files export ZSH_LEAK and BASH_LEAK, proxy, CA, git ssh and gpg settings, and a swarm.sh
+# setting (SWARM_MERGE_CI_SECONDS), in the project. A stray AGENT_ENV_NAMES names nothing.
+NET=(HTTPS_PROXY=http://proxy:1 HTTP_PROXY=http://proxy:2 NO_PROXY=a.example https_proxy=http://proxy:3 http_proxy=http://proxy:4
+  no_proxy=b.example SSL_CERT_FILE="${ROOT}/ca.pem" NODE_EXTRA_CA_CERTS="${ROOT}/extra.pem" GIT_SSH_COMMAND="ssh -F /dev/null"
+  GNUPGHOME="${ROOT}/gnupg")
 LEAD_PATH="${STUB_BIN}:${PATH}" TEST_HOME="${ROOT}/home"
 mkdir -p "${TEST_HOME}"; : > "${ROOT}/gitconfig"
 for f in zshenv zprofile zshrc; do echo "export ZSH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
@@ -69,7 +73,7 @@ for f in bashrc bash_profile; do echo "export BASH_LEAK=${f}" > "${TEST_HOME}/.$
 run() {
   (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
-    SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET \
+    "${NET[@]}" SWARM_MERGE_CI_SECONDS=7 SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET \
     SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
@@ -116,8 +120,15 @@ check "the swarm.sh variables reach it: HERDR_ENV, and herdr's own for its pane"
 check "XDG_CONFIG_HOME, GH_CONFIG_DIR and GIT_CONFIG_GLOBAL reach it, so gh and git find their config" \
   "${ROOT}/xdg|${ROOT}/gh|${ROOT}/gitconfig" \
   "$(var conduct-plain XDG_CONFIG_HOME)|$(var conduct-plain GH_CONFIG_DIR)|$(var conduct-plain GIT_CONFIG_GLOBAL)"
-check "its ZDOTDIR is an empty directory under .swarm, so zsh reads no startup file from HOME" "${p}/.swarm/zdotdir|0" \
-  "$(var conduct-plain ZDOTDIR)|$(find "$(var conduct-plain ZDOTDIR)" -mindepth 1 2>&1 | wc -l | tr -d ' ')"
+check "the proxy, CA, git ssh and gpg settings reach it" "$(printf '%s|' "${NET[@]}")" \
+  "$(for v in "${NET[@]}"; do printf '%s=%s|' "${v%%=*}" "$(var conduct-plain "${v%%=*}")"; done)"
+check "swarm.sh's own SWARM_* settings and CLAUDE_PROJECTS_DIR reach it" "7|${ROOT}/projects" \
+  "$(var conduct-plain SWARM_MERGE_CI_SECONDS)|$(var conduct-plain CLAUDE_PROJECTS_DIR)"
+# zdot <agent> — its ZDOTDIR's mode and how many files are in it.
+# shellcheck disable=SC2012 # one directory, a path swarm.sh made; ls -ld's mode string reads the same on macOS and Linux
+zdot() { local d; d="$(var "$1" ZDOTDIR)"; printf '%s|%s' "$(ls -ld "${d}" | cut -c1-10)" "$(find "${d}" -mindepth 1 2>&1 | wc -l | tr -d ' ')"; }
+check "its ZDOTDIR is its own empty 0700 directory under .swarm, so zsh reads no startup file from HOME" \
+  "${p}/.swarm/zdotdir/conduct-plain|drwx------|0" "$(var conduct-plain ZDOTDIR)|$(zdot conduct-plain)"
 if command -v zsh >/dev/null; then
   agent_env conduct-plain
   # shellcheck disable=SC2016 # the agent's zsh expands it
@@ -146,6 +157,9 @@ check "and the builders get HERDR_ENV and their own pane" "1|$(pane_of s-env)" "
 echo "brief" > "${ROOT}/brief.md"
 as_agent conduct-e agent e s-restart "${p}" code "${ROOT}/brief.md" >/dev/null
 check "a builder the conductor restarts with swarm.sh agent gets its story's env: too" "lead-secret" "$(var s-restart FAKE_SECRET)"
+item stories/s-late.md "status: ready" "kind: code" "epic: e" "repo: svc" "env: [LATE_SECRET]"
+check "a story added after its conductor started, with a new env: name, is refused with the restart to run" "1|yes" \
+  "$(set +e; o="$(as_agent conduct-e story s-late)"; echo "$?|$(has "the lead restarts it with \`swarm.sh conduct e\` so it picks the name up" "${o}")")"
 
 # --- A pane run that fails typed nothing: retried once, then the pane is closed and nothing is left.
 echo 1 > "${ROOT}/runfail"
@@ -163,7 +177,10 @@ check "one that fails twice stops the start, closes its pane, and leaves no laun
 check "SWARM_PROJECT, when swarm.sh has it, reaches the agent, resolved from relative to absolute" "${p}" "$(var by-project SWARM_PROJECT)"
 
 echo 1 > "${ROOT}/runtypedfail"
+# A .zshenv an earlier agent left in typed-once's ZDOTDIR is gone once it starts.
+mkdir -p "${p}/.swarm/zdotdir/typed-once"; echo "export PLANTED=1" > "${p}/.swarm/zdotdir/typed-once/.zshenv"
 run agent t4 typed-once "${p}" conduct "${ROOT}/brief.md" >/dev/null
+check "an agent's ZDOTDIR is made afresh at each launch: a .zshenv left there is gone" "drwx------|0" "$(zdot typed-once)"
 scr="${ROOT}/screen-$(pane_of typed-once)"
 check "a pane run that typed its line and then failed is retried with its own marker, and the wait is for that one" "2|yes" \
   "$(grep '^swarm: agent environment ready' "${scr}" | sort -u | wc -l | tr -d ' ')|$(has "--match $(grep '^swarm: agent environment ready' "${scr}" | tail -1) --timeout" "$(cat "${ROOT}/herdr.log")")"
@@ -191,9 +208,15 @@ refused() {
 REFUSED="yes|yes|none|yes|yes|0"
 check "env: [bad-name] is refused" "${REFUSED}" "$(refused "env: [bad-name]" "env: 'bad-name' is not a variable name")"
 check "env: [HERDR_PANE_ID] is refused: it would replace the agent's own pane" "${REFUSED}" \
-  "$(refused "env: [HERDR_PANE_ID]" "env: HERDR_PANE_ID is set for every agent by swarm.sh or herdr")"
-check "env: [PATH], an allowlisted name, is refused" "${REFUSED}" "$(refused "env: [PATH]" "env: PATH is set for every agent by swarm.sh or herdr")"
-check "env: [ZDOTDIR], which swarm.sh sets, is refused" "${REFUSED}" "$(refused "env: [ZDOTDIR]" "env: ZDOTDIR is set for every agent by swarm.sh or herdr")"
+  "$(refused "env: [HERDR_PANE_ID]" "env: HERDR_PANE_ID is reserved")"
+check "env: [PATH], an allowlisted name, is refused" "${REFUSED}" "$(refused "env: [PATH]" "env: PATH is reserved")"
+check "env: [ZDOTDIR], which swarm.sh sets, is refused" "${REFUSED}" "$(refused "env: [ZDOTDIR]" "env: ZDOTDIR is reserved")"
+# reserved_all <name>... — refused for each, one line per distinct answer.
+reserved_all() { local n; for n in "$@"; do refused "env: [${n}]" "env: ${n} is reserved"; done | sort -u; }
+check "names that load code or belong to the lead's session are refused" "${REFUSED}" \
+  "$(reserved_all BASH_ENV ENV LD_PRELOAD DYLD_INSERT_LIBRARIES CLAUDECODE CLAUDE_CODE_OAUTH_TOKEN CLAUDE_PID)"
+check "and so are swarm.sh's own settings and the passed-through proxy and CA names" "${REFUSED}" \
+  "$(reserved_all SWARM_MERGE_CI_SECONDS HTTPS_PROXY SSL_CERT_FILE GIT_SSH_COMMAND CLAUDE_PROJECTS_DIR)"
 check "a name swarm.sh's environment does not have is refused, naming it" "${REFUSED}" \
   "$(refused "env: [NOT_SET_HERE]" "env: NOT_SET_HERE is not set here, so its builder would start without it")"
 check "a block-style env: list is refused, not read as no names" "${REFUSED}" \
