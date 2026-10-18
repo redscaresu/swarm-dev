@@ -96,7 +96,11 @@ section shows how long CI takes per push, how often it goes red and how often it
 builders that stopped with no PR.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the
+while you watch. Agents start with a short list of environment variables, and a token you exported
+reaches a builder only when its story names it under `env:`. That includes a login kept in the
+environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). Agents with no story
+of their own, such as planners and review agents, never get one, so log in through `claude`,
+`codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
 details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
 
@@ -104,12 +108,13 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 
 - [The method](docs/method.md): the short guide to how planning, building and merging work.
 - [Reference](docs/reference.md): every rule, setting, command and log.
-- On Foundry, Bedrock or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them
-  up (an alias won't reach them):
-
-  ```bash
-  [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
-  ```
+- On Foundry, Bedrock or Vertex, agents get the provider and model selection (`CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+  `AWS_REGION`, `AWS_PROFILE`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`) from the session that
+  runs swarm.sh, so a `claude()` wrapper in `~/.zshrc` that exports them still picks the provider.
+  Exported credentials do not reach agents. Log in through the provider's own tools instead
+  (`aws sso login` or a profile in `~/.aws`, `gcloud auth application-default login`), and put any
+  other settings under `env` in `~/.claude/settings.json`.
 
 - [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in

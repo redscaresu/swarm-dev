@@ -333,7 +333,7 @@ dispatch() {
   cmd="${1:-}"; shift || true
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
-    agent)  require_herdr; start_agent "$@" ;;
+    agent)  require_herdr; agent_cmd "$@" ;;
     story)  require_herdr; [[ $# -le 2 ]] || die "story: too many arguments: $*"
             if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict
             elif [[ "${2:-}" == --strict ]]; then build_story "$1" strict

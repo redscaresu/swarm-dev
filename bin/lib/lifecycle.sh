@@ -328,6 +328,7 @@ close_agent() {
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   close_panes "$1"
+  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"   # its ZDOTDIR (clean_env's), with the agent gone
   if [[ "${cause}" == impossible ]]; then
     # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
