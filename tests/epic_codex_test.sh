@@ -3,6 +3,10 @@
 # --declined the docs and finding_rule give names its reviewer and reason. Reads the source only.
 set -euo pipefail
 
+iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+trap 'rm -rf "${iso}"' EXIT
+export CLAUDE_CONFIG_DIR="${iso}/claude-config"   # under its own root, so parallel runs share no ~/.claude
+
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 SH=("${SWARM}" "$(dirname "${SWARM}")"/lib/*.sh)   # swarm.sh and the bin/lib/*.sh it sources
 fails=0
