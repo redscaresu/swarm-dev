@@ -662,8 +662,9 @@ event after it, which hands the PR to the merger, or to the merge), `fixing_min`
 `tell:findings` logged between `pr_created_at` and the merge to whichever comes first: the PR's
 next commit (a commit that merges the base in does not count), the next check start, `review` or
 `tell:findings` event, or the merge) and
-`merge_wait_min` (from that first `review` event to the merge). A `review` of the story's epic
-(`swarm.sh review <epic> <PRs>`) counts for each story whose PR it names in its outcome. Where two phases cover the same
+`merge_wait_min` (from that first `review` event to the merge). A `review` event, of the story or
+of its epic (`swarm.sh review <epic> <PRs>`), counts for the PRs it names in its outcome. One logged
+before reviews named their PRs (a bare `ok`) counts for its story's PR when exactly one was open then. Where two phases cover the same
 minute, the higher one takes it: fixing, then CI, then review wait, then merge wait; a minute none
 covers is building. The five add up to the whole minutes from `started` to `merged_at`, and are
 empty when either is missing. The events are those of every build of the story, so a retry's tells
@@ -778,7 +779,8 @@ row comes last, so an epic named `all` still gets its own row above it.
 The `time_in_state` section prints TSV `epic prs start_to_merge_min largest_first`, one row per
 epic and a last `all` row, over the `outcomes` rows dated in the window that have the five phase
 columns (their PR merged). With `--epic` it prints that epic's row alone. Each PR counts once, by
-its build that started first, since a retried PR repeats its phases on every build.
+its build that started first, since a retried PR repeats its phases on every build, and is in the
+window only when that build's date is.
 `largest_first` gives the five sums as `<phase>:<minutes>`, the largest first, so
 `ci:45 review_wait:15 fixing:15 merge_wait:15 building:10` says CI held the epic's stories longest.
 

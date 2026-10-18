@@ -2,15 +2,15 @@ import collections, datetime, os, re, subprocess, sys
 from report import *
 meta = {f[0]: f[1:] for f in (l.split("\t") for l in os.environ["SWARM_META"].splitlines()) if len(f) == 6}
 
-NO_PR = ("", "", "", "", "", "", "")
+NO_PR = ("", "", "", "", "", "", "", "")
 RECURRING_MIN_PRS = 3   # the rule of three: a kind fixed on this many distinct PRs recurs
 RECURRING_DAYS = 30     # within this many days
 
 def parsed(prs):
-    # The (url, state, mergedAt, createdAt, main_merges, checks, commits) of each PR in the meta column;
-    # a stub may leave out the last five. checks is its head's check runs as start/end pairs joined by
-    # ";", commits its commits' committedDate joined by ";".
-    return [tuple((p.split(" ") + [""] * 6)[:7]) for p in prs.split(",") if " " in p]
+    # The (url, state, mergedAt, createdAt, main_merges, checks, commits, closedAt) of each PR in the
+    # meta column; a stub may leave out the last six. checks is its head's check runs as start/end pairs
+    # joined by ";", commits its commits' committedDate joined by ";".
+    return [tuple((p.split(" ") + [""] * 7)[:8]) for p in prs.split(",") if " " in p]
 
 def pr_of(prs, pulls):
     # The parsed PR of a build, or NO_PR: see outcomes_report. pulls is the first python's column: "-"
@@ -97,14 +97,26 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
     on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
     if on:
         found[on[-1]][(outcome, reviewer)] += 1
-# `swarm.sh review <epic> <PRs>` logs the epic as its target and the PRs in its outcome, ok (<PRs>): its
-# time goes to the builds on each PR it names. One logged before reviews named their PRs goes to none.
+def open_at(slug, t):
+    # The URLs of the slug's PRs open at t: created by then, and not closed (or merged) by then.
+    return [p[0] for p in parsed(meta.get(slug, ("", "", ""))[2])
+            if secs(p[3]) is not None and secs(p[3]) <= t and not (secs(p[7]) is not None and secs(p[7]) <= t)]
+
+# A review (`swarm.sh review <slug or epic> <PRs>`) logs the PRs it names in its outcome, ok (<PRs>): its
+# time goes to the builds on each PR it names. One logged before reviews named their PRs (a bare ok)
+# goes to its slug's PR when the slug had exactly one open then, and to none otherwise.
 named_reviews = collections.defaultdict(list)
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
-    if len(e) == 5 and e[1] == "review" and e[4].startswith("ok ("):
-        for u in re.findall(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", e[4]):
-            named_reviews[pr_key(u)].append(f"review={e[0]}")
+    t = secs(e[0]) if len(e) == 5 and e[1] == "review" and (e[4] == "ok" or e[4].startswith("ok (")) else None
+    if t is None:
+        continue
+    urls = re.findall(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", e[4])
+    if e[4] == "ok":
+        urls = open_at(e[2], t)
+        urls = urls if len(urls) == 1 else []
+    for u in urls:
+        named_reviews[pr_key(u)].append(f"review={e[0]}")
 
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)

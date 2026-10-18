@@ -129,9 +129,9 @@ for t, f in oks:
                 m = re.fullmatch(r"ok \((accepted|dismissed)\)", f[4])
                 b["at"]["answer"] = m.group(1) if m else ""
         continue
-    if c.split(":")[0] not in ("tell", "close") and c != "review":
+    if c.split(":")[0] not in ("tell", "close"):
         continue
-    # A tell, close or review goes to the build of its target that started last at or before it.
+    # A tell or close goes to the build of its target that started last at or before it.
     b = max((b for b in reversed(of(target)) if b["t"] <= t), key=lambda b: b["t"], default=None)
     if b and c.split(":")[0] == "close":
         # Counted whatever its cause (close:<cause>); close_cause is the cause of the last close (none: empty).
@@ -139,9 +139,9 @@ for t, f in oks:
         b["cause"] = c.partition(":")[2]
     elif b:
         b["steer"][c] += 1
-        if c in ("tell:findings", "review"):
+        if c == "tell:findings":
             b["times"].append(f"{c}={when}")
-# Every build of a slug carries all its review and tell:findings times, a build before since among them:
+# Every build of a slug carries all its tell:findings times, a build before since among them:
 # a retry's minutes count the first build's tells too.
 slug_times = collections.defaultdict(list)
 for b in builds:

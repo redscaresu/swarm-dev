@@ -9,7 +9,7 @@
 # from 12:15 to 12:20, and it merges at 12:30. gh gives only the last head's latest check runs (one
 # cancelled while queued, with gh's year-1 start) and the PR's commits: main merged in at 11:32, before
 # the fix, and a docs commit at 12:25, after the hand-off. An epic review at 11:20 names another
-# story's PR alone. By precedence (fixing > CI > review wait > merge wait > building): building 10,
+# story's PR alone, and a review of tis at 11:15 names PR #9 alone (closed at 10:45). By precedence (fixing > CI > review wait > merge wait > building): building 10,
 # review wait 30 + 5 = 35, fixing 11:30 to the 11:40 commit and 11:55 to the 12:10 review = 25, CI
 # 11:45 to 11:55 and 12:15 to 12:20 = 15, merge wait 5 + 10 = 15, 100 in all; PR #9's tell, before PR #1
 # was created, is not PR #1's. A retry build on PR #1 starts at 11:35 and splits its own 55 minutes;
@@ -42,16 +42,17 @@ printf '%s\n' \
   "${D}11:47:00Z"$'\treview-agent\ttis\tw:1\tok' \
   "${D}11:50:00Z"$'\ttell:findings\ttis\tw:1\ttis is still working' \
   "${D}11:55:00Z"$'\ttell:findings\ttis\tw:1\tok' \
+  "${D}11:15:00Z"$'\treview\ttis\tw:1\tok (https://github.com/o/r/pull/9)' \
   "${D}11:20:00Z"$'\treview\te1\tw:1\tok (https://github.com/o/r/pull/5)' \
   "${D}12:10:00Z"$'\treview\te1\tw:1\tok (https://github.com/o/r/pull/5 https://github.com/o/r/pull/1)' \
   "${D}12:30:00Z"$'\tmerge\ttis\tw:1\tok' > "${P}/.swarm/events.tsv"
 commit() { printf '{"messageHeadline":"%s","committedDate":"%s%s:00Z"}' "$1" "${D}" "$2"; } # <headline> <HH:MM>
 run() { printf '{"name":"t","startedAt":"%s","completedAt":"%s%s:00Z"}' "$1" "${D}" "$2"; }  # <start> <HH:MM end>
 cat > "${dir}/prs.json" <<EOF
-[{"url":"${U}/1","state":"MERGED","mergedAt":"${D}12:30:00Z","createdAt":"${D}11:00:00Z","baseRefName":"main",
+[{"url":"${U}/1","state":"MERGED","mergedAt":"${D}12:30:00Z","createdAt":"${D}11:00:00Z","closedAt":"${D}12:30:00Z","baseRefName":"main",
   "commits":[$(commit build 10:58),$(commit "Merge origin/main into story/tis" 11:32),$(commit fix 11:40),$(commit docs 12:25)],
   "statusCheckRollup":[$(run "${D}11:45:00Z" 12:00),$(run "${D}12:15:00Z" 12:20),$(run 0001-01-01T00:00:00Z 11:20),{"context":"ci/x","state":"SUCCESS"}]},
- {"url":"${U}/9","state":"CLOSED","mergedAt":null,"createdAt":"${D}09:10:00Z","baseRefName":"main",
+ {"url":"${U}/9","state":"CLOSED","mergedAt":null,"createdAt":"${D}09:10:00Z","closedAt":"${D}10:45:00Z","baseRefName":"main",
   "commits":[$(commit build 09:20)],"statusCheckRollup":[]}]
 EOF
 # gh's own --jq over that JSON, so outcomes' jq is what reads it.
@@ -93,16 +94,27 @@ check "a fixing span with no fix commit ends at the review hand-off, not a later
 check "a check cancelled while queued (gh's year-1 start) adds no CI" "$(rebuild ci_min building_min)" "15 10"
 check "an epic's review counts only for the PRs it names" "$(rebuild review_wait_min merge_wait_min)" "35 15"
 check "a commit that merges main in ends no fixing" "$(rebuild fixing_min)" 25
+check "a review of the slug naming another of its PRs is not this PR's hand-off" "$(rebuild review_wait_min merge_wait_min)" "35 15"
+# A review logged before reviews named their PRs (a bare ok) hands over its slug's one PR open then:
+# PR #1 at 12:10, as PR #9 closed at 10:45.
+E="${P}/.swarm/events.tsv"; cp "${E}" "${dir}/events.full"
+sed 's|\treview\te1\tw:1\tok (https://github.com/o/r/pull/5 https://github.com/o/r/pull/1)$|\treview\ttis\tw:1\tok|' "${dir}/events.full" > "${E}"
+check "a review that names no PR hands over its slug's one open PR" "$(out="$(outcomes)" rebuild review_wait_min merge_wait_min)" "35 15"
+cp "${dir}/events.full" "${E}"
 check "--since keeps the tells of builds before it in the retry's fixing" "$(out="$(outcomes --since 2026-10-02)" cols)" \
   "${D}11:35:00Z"$'\t0\t15\t5\t20\t15\t55'
 
-flow() { # [epic] — the time_in_state section alone, as flow runs it, over the outcomes rows
-  SWARM_ROWS="${out}" python3 "${ROOT}/bin/lib/flow_report.py" 0000-00-00 9999-12-30 "${1:-}" x x x x x x x "" x time_in_state
+flow() { # [epic [since]] — the time_in_state section alone, as flow runs it, over the outcomes rows
+  SWARM_ROWS="${out}" python3 "${ROOT}/bin/lib/flow_report.py" "${2:-0000-00-00}" 9999-12-30 "${1:-}" x x x x x x x "" x time_in_state
 }
 check "flow's epic line counts the PR once and lists the phases largest first, a tie in column order" "$(flow)" "$(printf '%s\n' \
   "## time_in_state" $'epic\tprs\tstart_to_merge_min\tlargest_first' \
   $'e1\t1\t100\treview_wait:35 fixing:25 ci:15 merge_wait:15 building:10' \
   $'all\t1\t100\treview_wait:35 fixing:25 ci:15 merge_wait:15 building:10')"
+# The rebuild, dated 10-01, is the PR's first build: --since 2026-10-02 leaves the PR out, rather
+# than counting the retry's 55 minutes for it.
+check "a PR counts by its first build, in the window only when that build is" "$(flow "" 2026-10-02 | tail -1)" \
+  $'all\t0\t0\tbuilding:0 ci:0 review_wait:0 fixing:0 merge_wait:0'
 check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t100\treview_wait:35 fixing:25 ci:15 merge_wait:15 building:10'
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
