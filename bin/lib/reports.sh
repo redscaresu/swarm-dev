@@ -167,6 +167,13 @@ outcomes_report() {
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
 # per bin/lib/flow_<name>.py in name order, each under `## <name>` (flow_report.py runs them):
+#   ci_health: one TSV row over the github.com PRs of the outcomes rows dated in the window (with
+#     --epic, its own; without --since, the 30 days up to --until or today, said in a line above it):
+#     the median minutes per head SHA from its first run created to its last updated, red runs
+#     (failure, timed_out or startup_failure) per PR and flakes (a red run, then a green one of the
+#     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
+#     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
+#     10 s prints `ci health: gh failed` and no numbers.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
