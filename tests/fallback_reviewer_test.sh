@@ -84,6 +84,7 @@ git -c init.defaultBranch=main init -q "${p}"
 for s in s1 "${LONG}-one" "${LONG}-two"; do
   printf '%s\n' --- "status: ready" "kind: code" "touches: [x.sh]" --- "" "# ${s}" "" "**Done when:**" "- it holds" > "${p}/docs/stories/${s}.md"
 done
+printf "\n## Notes\n\nKeep one release (user, 2026-10-17). S1-DECISION\n" >> "${p}/docs/stories/s1.md"
 # review [config line] — codex-review main for $STORY (s1) with that config, codex's time $SECS
 # (60 s) and HERDR_ENV=1 unless NOHERDR is set, in the background: sets out, rc and took. A run past
 # 30 s is KILLed, failing the checks instead of hanging the test.
@@ -119,6 +120,16 @@ check "the fallback agent has no Edit, Write or NotebookEdit tool, and cannot co
 check "agents.tsv records it with role review-fallback" "review-fallback" \
   "$(awk -F'\t' '$3 == "fallback-s1" { print $2 }' "${p}/.swarm/agents.tsv")"
 check "its brief holds codex's story prompt" "yes" "$(has "Its Done when:" "$(cat "${p}/.swarm/briefs/fallback/s1.md")")"
+for l in "- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified." \
+  "- An audit or test scoped to one file, when the defect class spans many, is a finding." \
+  "- A new code path must enforce every rule the existing paths enforce." \
+  "- A zero or empty value shown to a person must say what it means." \
+  "- A repair path that changes something must say what it did." \
+  "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."; do
+  check "its brief carries: ${l:2:40}..." "yes" "$(has "${l}" "$(cat "${p}/.swarm/briefs/fallback/s1.md")")"
+done
+check "its brief carries the story's (user, <date>) decision line" "yes" \
+  "$(has "Keep one release (user, 2026-10-17). S1-DECISION" "$(cat "${p}/.swarm/briefs/fallback/s1.md")")"
 check "its findings go to .swarm/reviews/fallback/s1.md" "yes" "$([[ -f "${p}/.swarm/reviews/fallback/s1.md" ]] && echo yes || echo no)"
 check "the stub's findings appear in codex-review's stdout" "yes" "$(has "- [P1] STUB FINDING — x.sh:3" "${out}")"
 check "stdout names the fallback for the PR body" "yes" "$(has "reviewed by fallback sonnet: codex usage limit" "${out}")"

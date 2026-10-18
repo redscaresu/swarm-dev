@@ -468,7 +468,10 @@ wait for other PRs or reviews, so PRs that land together are reviewed at once. T
 straight away. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
 runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
 It judges the PR against the story's touches and **Done when** only: work outside them is not a
-finding. Its brief carries the project's own rules, as a builder's does. It writes to the absolute
+finding. Its brief carries the project's own rules, as a builder's does, and six checks the lead
+used to make by hand, which the fallback reviewer's brief carries too. After them come any lines in
+the story or its epic that record a user's decision, `(user, <date>)`: a PR that contradicts one is
+a finding, even when the PR is stricter. It writes to the absolute
 path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the
 project), and replies with that path. It writes the file in one go once both reviews are done,
 after `review-agent` has removed the one from an earlier head. The file starts with `head: <SHA>`,

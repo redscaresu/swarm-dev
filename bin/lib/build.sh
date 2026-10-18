@@ -529,6 +529,27 @@ review_stack_note() {
   printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
 }
 
+# review_checklist [story file] — the checks the lead learned by hand, one line each, for the review
+# agent's and the fallback reviewer's briefs; then each line of the story and of its epic that marks a
+# user's decision, `(user, <date>`, so a reviewer can hold the PR to it.
+review_checklist() {
+  local epic decisions files
+  cat <<'EOF'
+Hold the PR to these as well:
+- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified.
+- An audit or test scoped to one file, when the defect class spans many, is a finding.
+- A new code path must enforce every rule the existing paths enforce.
+- A zero or empty value shown to a person must say what it means.
+- A repair path that changes something must say what it did.
+- A change that contradicts a decision marked `(user, <date>)` in the epic or story is a finding, even when it is stricter.
+EOF
+  [[ -f "${1:-}" ]] || return 0
+  files=("$1"); epic="$(fm "$1" epic)"
+  [[ -z "${epic}" || ! -f "${BOARD}/epics/${epic}.md" ]] || files+=("${BOARD}/epics/${epic}.md")
+  decisions="$(grep -hE '\(user, [0-9]{4}-[0-9]{2}-[0-9]{2}' "${files[@]}")" || return 0
+  printf '\n%s\n%s\n' "The user's decisions, from the story and its epic:" "${decisions}"
+}
+
 # review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
 # story's touches and Done when, codex-review with the slug, /code-review when the PR changes code, the
 # project's rules, and each finding written to the absolute <findings file> (the agent's cwd is the
@@ -567,6 +588,7 @@ so. Under a \`## Out of scope\` heading, the same for each point a reviewer rais
 story's touches and Done when, so the conductor can decline it; with none, say so. Then reply with
 ${4}, and with \`codex skipped: <why>\` when codex was.
 EOF
+  printf '\n'; review_checklist "${story}"
   rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
 }

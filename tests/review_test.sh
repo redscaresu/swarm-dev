@@ -44,7 +44,8 @@ F="${ROOT}/gh"
 EOF
 cat >> "${ROOT}/bin/gh" <<'EOF'
 case "$1 $2" in
-  "pr view") case " $* " in *" body,url "*) echo '{"body":"","url":"https://github.com/o/svc/pull/7"}'; exit 0 ;; esac
+  "pr view") case " $* " in *" headRefOid "*) cat "$F/head"; exit 0 ;; esac
+             case " $* " in *" body,url "*) echo '{"body":"","url":"https://github.com/o/svc/pull/7"}'; exit 0 ;; esac
              st=$(awk -v u="$3" '$1 == u { print $2 }' "$F/prs"); [ -n "$st" ] || exit 1
              echo "{\"state\":\"$st\"}"; exit 0 ;;
   "pr diff") exit 0 ;;
@@ -398,6 +399,32 @@ check "a story agent's and a conductor's sessions carry SWARM_AGENT, their name,
 check "a builder's brief says who merges: a human, or with merge = agent the conductor or the lead" "yes|yes" \
   "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
+
+# --- The review agent's brief: the lead's checklist, and the user's decisions from its story's epic.
+item "${b}" epics/rv.md "status: active"
+echo "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." >> "${b}/epics/rv.md"
+start rv1 >/dev/null
+printf '%s\n' --- "status: review" "kind: code" "epic: rv" "repo: svc" "touches: [x.sh]" --- "" "# rv1" "" \
+  "**Done when:**" "- one release, not three" > "${b}/stories/rv1.md"
+wt="$(git -C "${ROOT}/svc" worktree list --porcelain | sed -n 's/^worktree \(.*rv1\)$/\1/p')"
+git -C "${wt}" rev-parse HEAD > "${ROOT}/gh/head"
+(cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" review-agent rv1 "${U}/8" >/dev/null 2>&1) \
+  || echo "FAIL review-agent rv1 did not start"
+brief="$(cat "${p}/.swarm/briefs/review-rv1.md" 2>/dev/null)"
+CHECKLIST=(
+  "- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified."
+  "- An audit or test scoped to one file, when the defect class spans many, is a finding."
+  "- A new code path must enforce every rule the existing paths enforce."
+  "- A zero or empty value shown to a person must say what it means."
+  "- A repair path that changes something must say what it did."
+  "- A change that contradicts a decision marked \`(user, <date>)\` in the epic or story is a finding, even when it is stricter."
+)
+for l in "${CHECKLIST[@]}"; do
+  check "the review agent's brief carries: ${l:2:40}..." "yes|yes" "$(has "${l}" "${brief}")|$( (( ${#l} < 200 )) && echo yes || echo "no, ${#l} bytes")"
+done
+check "the review agent's brief carries the epic's (user, 2026-10-17) decision line" "yes" \
+  "$(has "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." "${brief}")"
+rm -f "${p}/.swarm/state/rv" "${b}/epics/rv.md" "${b}/stories/rv1.md"
 
 # --- Starting an agent: a taken name, a failed start, codex's update check.
 echo brief > "${ROOT}/brief.md"
