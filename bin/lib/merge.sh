@@ -159,7 +159,8 @@ merge_pr() {
     fi
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}"
   fi
-  # merge_admin = on: --admin skips GitHub's own required checks too, so ci_gate checks them first.
+  # merge_admin = on: --admin skips every rule on the base, not only the review, so ci_gate admin
+  # checks them first.
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   admin=()
   # shellcheck disable=SC2154 # assigned in another file
