@@ -223,6 +223,10 @@ dataset_report() {
 #     agents.tsv line of a `role:<role>` or `agent:<name>`, or a findings.tsv row of a
 #     `reviewer:<who>`. An `unlogged: <why>` feature (a read-only command leaves no events line)
 #     shows `-` and is judged on its metric alone.
+#   predictions: from .swarm/dataset.jsonl (or a line saying to run swarm.sh dataset), over the
+#     stories merged in the window (with --epic, its own): one TSV row per planner model (- for none)
+#     with its stories, easy's precision and recall against was_easy, and the median and mean of
+#     diff_lines less estimate_lines; a ratio with nothing to count is empty.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
