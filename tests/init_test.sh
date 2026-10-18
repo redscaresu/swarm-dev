@@ -60,7 +60,7 @@ check "init writes a CI that runs the gate on a PR and a push, and otherwise mak
 check "init writes an executable pre-commit hook for docs/" "yes|yes" \
   "$(grep -qxF 'swarm_board="docs/"' "${p}/.git/hooks/pre-commit" && echo yes)|$([[ -x "${p}/.git/hooks/pre-commit" ]] && echo yes)"
 check "init says to commit what it wrote, naming the paths" "yes" \
-  "$(has "${out}" "Commit what init wrote, so CI runs and the config travels with the repo: .claude/swarm/config .github/swarm-board-only.sh .github/workflows/ci.yml .gitignore docs/")"
+  "$(has "${out}" "Commit what init wrote, so CI runs and the config travels with the repo: .claude/swarm/config .github/swarm-board-only.sh .github/workflows/ci.yml .gitignore docs/.obsidian/app.json docs/Board.base docs/epics/README.md docs/hld/HLDs.base docs/hld/README.md docs/stories/README.md")"
 # make_check <dir> — CI's make check step, run in <dir>: its output and exit code.
 make_check() {
   sed -n '/- name: make check/,$p' "${p}/.github/workflows/ci.yml" | sed -n '/run: |/,$p' | sed '1d; s/^          //' > "${ROOT}/make-check.sh"
@@ -71,7 +71,7 @@ check "CI's make check fails, naming the missing target, when make has no check 
   $'::error::make has no check target; add one to the Makefile for CI to run\nexit 1' "$(make_check "${ROOT}/no-make")"
 check "and runs it when there is one" $'checked\nexit 0' "$(make_check "${ROOT}/with-make")"
 check "init warns that make has no check target" "yes" \
-  "$(has "${out}" "make has no check target: add one to the Makefile; until then CI fails every change that is not board-only, and the hook refuses those commits")"
+  "$(has "${out}" "make has no check target: add one to the Makefile; until then CI fails every change that is not board-only, and the hook checks nothing")"
 check "init ends with the trust step" "yes" "$(grep -q 'run claude once in .* and accept the folder trust prompt' <<< "${out}" && echo yes || echo no)"
 before="$(cd "${p}" && find . -path ./.git -prune -o -path ./.swarm -prune -o -type f -print | sort | xargs cksum)"
 out="$(run "${p}" init || true)"
@@ -114,7 +114,10 @@ check "the .gitignore lines name board/" $'.swarm/\nboard/.obsidian/*\n!board/.o
 # --- board_dir = .: the board is the repo root, so the lines and the listing are relative to it.
 q="${ROOT}/dot"; "${GIT[@]}" init -q "${q}"; origin "${q}"
 mkdir -p "${q}/.claude/swarm" && echo "board_dir = ." > "${q}/.claude/swarm/config"
+echo mine > "${q}/notes.txt"
 out="$(run "${q}" init || true)"
+check "board_dir = . says to commit only what init wrote, not the repo's other files" "yes|no" \
+  "$(grep '^Commit what init wrote' <<< "${out}" | grep -qF ' stories/README.md' && echo yes || echo no)|$(grep '^Commit what init wrote' <<< "${out}" | grep -qF 'notes.txt' && echo yes || echo no)"
 check "board_dir = . names the lines without a path" $'.swarm/\n.obsidian/*\n!.obsidian/app.json' "$(cat "${q}/.gitignore")"
 check "board_dir = . lists files relative to the root" "yes" "$(has "${out}" "copied stories/README.md")"
 check "board_dir = . gates on the board's own files at the root" "yes|board_only=true|board_only=false" \
@@ -157,13 +160,24 @@ git -C "${q}" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/cached
 run "${q}" init >/dev/null || true
 check "a cached origin/HEAD names the push branch, and origin is not asked" "yes" \
   "$(grep -qF 'branches: ["cached"]' "${q}/.github/workflows/ci.yml" && echo yes || echo no)"
-# An origin that never answers is given up on after SWARM_ORIGIN_ASK_SECONDS.
+# An origin that never answers is given up on after SWARM_ORIGIN_ASK_SECONDS, and its transport (a
+# child of git, as ssh would be) is killed with it.
 q="${ROOT}/hangs"; "${GIT[@]}" init -q "${q}"
-git -C "${q}" config protocol.ext.allow always && git -C "${q}" remote add origin "ext::sleep 60"
+printf '#!/bin/sh\necho $$ > "%s"\nexec sleep 60\n' "${ROOT}/hang.pid" > "${ROOT}/hang.sh" && chmod +x "${ROOT}/hang.sh"
+git -C "${q}" config protocol.ext.allow always && git -C "${q}" remote add origin "ext::${ROOT}/hang.sh"
 started=${SECONDS}
 out="$(SWARM_ORIGIN_ASK_SECONDS=2 run "${q}" init || true)"
-check "an origin that hangs is given up on, and init writes no CI" "yes|fast" \
-  "$(has "${out}" "wrote no CI: cannot tell origin's default branch; set origin, or make it reachable, and run init again")|$(if (( SECONDS - started < 20 )); then echo fast; else echo slow; fi)"
+check "an origin that hangs is given up on, its transport killed too, and init writes no CI" "yes|fast|gone" \
+  "$(has "${out}" "wrote no CI: cannot tell origin's default branch; set origin, or make it reachable, and run init again")|$(if (( SECONDS - started < 20 )); then echo fast; else echo slow; fi)|$(if kill -0 "$(cat "${ROOT}/hang.pid")" 2>/dev/null; then echo alive; else echo gone; fi)"
+# ssh is asked in BatchMode, so it never prompts, unless the user names their own ssh.
+mkdir -p "${ROOT}/ssh-bin"; printf '#!/bin/sh\necho "$*" >> "%s"\nexit 1\n' "${ROOT}/ssh.args" > "${ROOT}/ssh-bin/ssh"; chmod +x "${ROOT}/ssh-bin/ssh"
+q="${ROOT}/over-ssh"; "${GIT[@]}" init -q "${q}"; git -C "${q}" remote add origin "ssh://example.invalid/x.git"
+PATH="${ROOT}/ssh-bin:${PATH}" run "${q}" init >/dev/null || true
+check "origin over ssh is asked in BatchMode" "yes" "$(grep -q -- '-o BatchMode=yes' "${ROOT}/ssh.args" 2>/dev/null && echo yes || echo no)"
+: > "${ROOT}/ssh.args"; git -C "${q}" config core.sshCommand "ssh -o Mine=1"
+PATH="${ROOT}/ssh-bin:${PATH}" run "${q}" init >/dev/null || true
+check "with core.sshCommand set, init leaves the user's ssh as it is" "yes|no" \
+  "$(grep -q -- '-o Mine=1' "${ROOT}/ssh.args" && echo yes || echo no)|$(grep -q BatchMode "${ROOT}/ssh.args" && echo yes || echo no)"
 
 # --- The hook: a board-only commit skips make check; any other commit runs it.
 q="${ROOT}/hooked"; "${GIT[@]}" init -q "${q}"
@@ -178,8 +192,8 @@ check "the hook runs make check on any other commit, and a failing check stops i
   "$(cd "${q}" && "${GIT[@]}" add code.txt && "${GIT[@]}" commit -qm code >/dev/null 2>&1 && echo ok || echo refused)"
 rm "${q}/Makefile"
 out="$( { cd "${q}" && "${GIT[@]}" add -A && "${GIT[@]}" commit -qm code 2>&1; } || true)"
-check "with no check target, the hook refuses a commit that is not board-only, saying why" "yes|no" \
-  "$(has "${out}" 'pre-commit: make has no check target; add one to the Makefile')|$(git -C "${q}" log --format=%s | grep -qx code && echo yes || echo no)"
+check "with no check target, the hook warns and lets the commit through" "yes|yes" \
+  "$(has "${out}" 'pre-commit: make has no check target, so nothing was checked; add one to the Makefile')|$(git -C "${q}" log --format=%s | grep -qx code && echo yes || echo no)"
 
 # --- core.hooksPath set: no hook is written there, and the lines to add are printed.
 q="${ROOT}/hookspath"; "${GIT[@]}" init -q "${q}"; mkdir -p "${q}/.githooks"
@@ -216,7 +230,7 @@ hook="$(cksum < "${q}/.git/hooks/pre-commit")"
 out="$(run "${q}" init || true)"
 check "an existing pre-commit hook is left byte-identical" "${hook}" "$(cksum < "${q}/.git/hooks/pre-commit")"
 check "and init prints the lines to add" "yes|yes" \
-  "$(has "${out}" "left   .git/hooks/pre-commit (it exists); add these lines to it, before any exec (a line after one never runs):")|$(has "${out}" "  make check || exit 1")"
+  "$(has "${out}" "left   .git/hooks/pre-commit (it exists); add these lines to it, before any exec (a line after one never runs):")|$(has "${out}" "  if make -n check >/dev/null 2>&1; then make check || exit 1")"
 
 # --- A CRLF .gitignore that has every line already gets none of them again.
 q="${ROOT}/crlf"; "${GIT[@]}" init -q "${q}"

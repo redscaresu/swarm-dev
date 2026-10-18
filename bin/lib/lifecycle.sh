@@ -579,20 +579,29 @@ CI_MARK="# swarm-dev wrote this file with swarm.sh init"
 ORIGIN_ASK_SECONDS="${SWARM_ORIGIN_ASK_SECONDS:-15}"   # how long init waits on origin for its default branch
 
 # origin_head — origin's default branch, as origin/<branch>: the cached origin/HEAD, else the HEAD
-# origin advertises (ls-remote --symref, which needs nothing fetched), asked once with no prompt
-# (GIT_TERMINAL_PROMPT=0, stdin from /dev/null) and stopped after ORIGIN_ASK_SECONDS. Fails when
+# origin advertises (ls-remote --symref, which needs nothing fetched), asked once and never prompting:
+# GIT_TERMINAL_PROMPT=0, ssh in BatchMode unless the user names their own ssh, and a new session with
+# no terminal to prompt on, whose whole process group is killed after ORIGIN_ASK_SECONDS. Fails when
 # there is still no telling.
 origin_head() {
-  local pid out deadline=$((SECONDS + ORIGIN_ASK_SECONDS))
+  local env=(GIT_TERMINAL_PROMPT=0)
   git symbolic-ref -q --short refs/remotes/origin/HEAD && return
-  out="$(mktemp)" || return 1
-  GIT_TERMINAL_PROMPT=0 git ls-remote --symref origin HEAD < /dev/null > "${out}" 2>/dev/null &
-  pid=$!
-  while kill -0 "${pid}" 2>/dev/null && (( SECONDS < deadline )); do sleep 0.2; done
-  kill "${pid}" 2>/dev/null || true
-  wait "${pid}" 2>/dev/null || true
-  awk '$1 == "ref:" && $3 == "HEAD" && sub("^refs/heads/", "", $2) { print "origin/" $2; f = 1 } END { exit !f }' "${out}"
-  local rc=$?; rm -f "${out}"; return "${rc}"
+  [[ -n "${GIT_SSH_COMMAND:-}" || -n "$(git config core.sshCommand || true)" ]] || env+=("GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+  env "${env[@]}" python3 -c '
+import os, signal, subprocess, sys
+p = subprocess.Popen(["git", "ls-remote", "--symref", "origin", "HEAD"], stdin=subprocess.DEVNULL,
+                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+try:
+    out = p.communicate(timeout=float(sys.argv[1]))[0]
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    sys.exit(1)
+for line in out.splitlines():
+    ref, _, name = line.partition("\t")
+    if name == "HEAD" and ref.startswith("ref: refs/heads/"):
+        print("origin/" + ref[len("ref: refs/heads/"):])
+        sys.exit(0)
+sys.exit(1)' "${ORIGIN_ASK_SECONDS}"
 }
 
 # init_ci <board> — with no .github/workflows, write templates/ci/ci.yml there, which runs make check on
@@ -657,18 +666,23 @@ init_hook() {
     echo "wrote  ${hook} (it runs make check$([[ "$1" == / ]] || echo ", unless a commit is board-only"))"
   fi
   make -n check >/dev/null 2>&1 \
-    || echo "make has no check target: add one to the Makefile; until then CI fails every change that is not board-only, and the hook refuses those commits"
+    || echo "make has no check target: add one to the Makefile; until then CI fails every change that is not board-only, and the hook checks nothing"
 }
 
 # init_commit_step <board> — the files init wrote that git does not track yet, with a line saying to
 # commit them: CI runs only once its workflow is committed.
 init_commit_step() {
-  local wrote untracked
+  local wrote untracked f
   wrote=(.gitignore .claude/swarm/config .github/workflows/ci.yml .github/swarm-board-only.sh)
-  [[ "$1" == / ]] || wrote+=("${BOARD}")
+  if [[ "$1" != / ]]; then
+    while IFS= read -r f; do wrote+=("$1${f}"); done < <(board_templates)
+  fi
   untracked="$(git status --porcelain -- "${wrote[@]}" 2>/dev/null | cut -c4- | tr '\n' ' ')"
   [[ -z "${untracked}" ]] || echo "Commit what init wrote, so CI runs and the config travels with the repo: ${untracked% }"
 }
+
+# board_templates — the board's template files, relative to the board, one per line.
+board_templates() { (cd "${SWARM_HOME}/templates/docs" && find . -type f | sed 's|^\./||' | sort); }
 
 # init_config — a commented commit_trailers line in .claude/swarm/config, unless the file names the key.
 init_config() {
@@ -691,7 +705,7 @@ init_project() {
     if [[ -e "${BOARD}/${f}" ]]; then echo "left   ${rel}${f} (it exists)"; continue; fi
     mkdir -p "$(dirname "${BOARD}/${f}")" && cp "${SWARM_HOME}/templates/docs/${f}" "${BOARD}/${f}"
     echo "copied ${rel}${f}"; n=$((n + 1))
-  done < <(cd "${SWARM_HOME}/templates/docs" && find . -type f | sed 's|^\./||' | sort)
+  done < <(board_templates)
   [[ ${n} -gt 0 ]] || echo "copied nothing: the board has every template file"
   [[ -d .claude/swarm ]] || { mkdir -p .claude/swarm; echo "created .claude/swarm/"; }
   init_config

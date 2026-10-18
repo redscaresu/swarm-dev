@@ -91,8 +91,8 @@ in `docs/` still get checked). A board outside the repo gets the workflow withou
 `ci.yml` that init wrote carries a marker line; init leaves it alone after that and only writes the
 gate again if it is missing. With other workflows already there, init leaves them, writes the gate,
 and prints the step to add to the job that runs your checks. It also writes a git pre-commit hook
-that runs `make check`, skipping a commit that changes only the board's own files and refusing the
-rest while make has no `check` target. When a hook exists, or the repo sets `core.hooksPath`, init
+that runs `make check`, skipping a commit that changes only the board's own files. While make has
+no `check` target, the hook only warns; CI is the check that fails. When a hook exists, or the repo sets `core.hooksPath`, init
 writes no hook and prints the lines to add before any `exec` in it (for husky, to
 `.husky/pre-commit`). A global `core.hooksPath` gets no hook and no lines, since a hook there runs in
 every repo. Last, init lists the files it wrote that git does not track yet, for you to commit:
