@@ -6,8 +6,8 @@
 # line leaves, so each pane's environment is recorded; SWARM_AGENT_SHELL=/bin/sh stands in for zsh to
 # read it. `agent start` gives the agent its pane's environment. The stub keeps every call's argv in
 # herdr.log, each pane's screen (the typed line and its output), the launch files' modes when the line
-# is typed, and how many are left once it has run. With a number N in runfail, the next N pane runs
-# fail before typing anything.
+# is typed, and whether the file the line names is left once it has run. With a number N in runfail,
+# the next N pane runs fail before typing anything; in runtypedfail, they fail after it.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -45,7 +45,9 @@ case "$1 $2" in
                       printf 'env > "%s"\n' "$H/env-$3" | env -i PATH=/usr/bin:/bin HOME="$H/server-home" TERM=dumb \
                         FAKE_SECRET=server-secret HERDR_ENV=1 HERDR_PANE_ID="$3" HERDR_WORKSPACE_ID=w HERDR_SOCKET_PATH="$H/sock" \
                         /bin/sh -c "$4" >> "$H/screen-$3" 2>&1
-                      ls "$P/.swarm/launch" | wc -l | tr -d ' ' >> "$H/left" ;;
+                      if [ -e "${4##* }" ]; then echo 1; else echo 0; fi >> "$H/left"
+                      k=$(cat "$H/runtypedfail" 2>/dev/null || echo 0)
+                      if [ "$k" -gt 0 ]; then echo $((k - 1)) > "$H/runtypedfail"; echo '{"error":{"code":"timeout"}}' >&2; exit 1; fi ;;
   "pane wait-output") grep -qF -- "$5" "$H/screen-$3" ;;
   "agent start")      cp "$H/env-$7" "$H/agent-env-$3"; echo "$3 $7" >> "$H/agents" ;;
   "agent prompt")     echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
@@ -57,15 +59,18 @@ EOF
 printf '#!/bin/sh\necho "[]"\n' > "${STUB_BIN}/gh"
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
 
-# The lead: its own FAKE_SECRET (the value a story's env: passes on) and LEAD_SECRET (a lead story's),
-# config paths, and a HOME whose zsh startup files export ZSH_LEAK, in the project.
+# The lead: its own FAKE_SECRET (the value a story's env: passes on), LEAD_SECRET (a lead story's) and
+# REVIEW_SECRET (a story in review's), config paths, bash as its SHELL, and a HOME whose zsh and bash
+# startup files export ZSH_LEAK and BASH_LEAK, in the project. A stray AGENT_ENV_NAMES names nothing.
 LEAD_PATH="${STUB_BIN}:${PATH}" TEST_HOME="${ROOT}/home"
 mkdir -p "${TEST_HOME}"; : > "${ROOT}/gitconfig"
 for f in zshenv zprofile zshrc; do echo "export ZSH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
+for f in bashrc bash_profile; do echo "export BASH_LEAK=${f}" > "${TEST_HOME}/.${f}"; done
 run() {
   (cd "${p}" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" TERM=xterm-test HOME="${TEST_HOME}" \
     XDG_CONFIG_HOME="${ROOT}/xdg" GH_CONFIG_DIR="${ROOT}/gh" GIT_CONFIG_GLOBAL="${ROOT}/gitconfig" \
-    FAKE_SECRET=lead-secret LEAD_SECRET=lead-only SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
+    SHELL=/bin/bash FAKE_SECRET=lead-secret LEAD_SECRET=lead-only REVIEW_SECRET=review-only AGENT_ENV_NAMES=FAKE_SECRET \
+    SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" "$@" 2>&1)
 }
 # agent_env <agent> — its recorded environment, one NAME=value per line, into the array a.
 agent_env() { local l; a=(); while IFS= read -r l; do a+=("${l}"); done < "${ROOT}/agent-env-$1"; }
@@ -97,6 +102,9 @@ item stories/s-plain.md "status: ready" "kind: code" "epic: e" "repo: svc"
 # Neither a lead story's names nor a done story's reach the conductor, and a done one's bad name stops nothing.
 item stories/l-e.md "status: ready" "kind: lead" "epic: e" "env: [LEAD_SECRET]"
 item stories/d-e.md "status: done" "kind: code" "epic: e" "env: [bad-name]"
+# A story in review may go back to ready; s-restart's builder is started again through swarm.sh agent.
+item stories/r-e.md "status: review" "kind: code" "epic: e" "repo: svc" "env: [REVIEW_SECRET]"
+item stories/s-restart.md "status: ready" "kind: code" "epic: e" "repo: svc" "env: [FAKE_SECRET]"
 
 # --- An agent whose stories name nothing: no FAKE_SECRET, from the lead or the server.
 run conduct plain >/dev/null
@@ -118,19 +126,28 @@ if command -v zsh >/dev/null; then
 else
   echo "skip a zsh -lc the agent starts sees no secret exported in HOME's .zshenv or .zprofile (no zsh here)"
 fi
+agent_env conduct-plain
+check "its SHELL is the agent shell, not the lead's bash" "/bin/sh" "$(var conduct-plain SHELL)"
+# shellcheck disable=SC2016 # the agent's shell expands them
+check "a login shell the agent starts from SHELL sees no secret exported in HOME's .bashrc or .bash_profile" "none" \
+  "$(env -i "${a[@]}" /bin/sh -c '"$SHELL" -lic "echo \${BASH_LEAK:-none}"' 2>/dev/null </dev/null | tail -1)"
+check "a stray AGENT_ENV_NAMES in swarm.sh's environment adds nothing" "" "$(var conduct-plain FAKE_SECRET)"
 
 # --- A story's env: reaches its conductor, then the builder that conductor starts, with the lead's value.
 check "conduct e starts, though a done story of its epic names a bad env:" "0" "$(set +e; run conduct e >/dev/null; echo $?)"
 check "the conductor of an epic whose story names FAKE_SECRET receives the lead's value" "lead-secret" "$(var conduct-e FAKE_SECRET)"
 check "but not the names of its epic's lead story" "" "$(var conduct-e LEAD_SECRET)"
+check "and it does get a story in review's names, for a rebuild if its PR closes" "review-only" "$(var conduct-e REVIEW_SECRET)"
 as_agent conduct-e story s-env >/dev/null
 check "a builder of a story with env: [FAKE_SECRET], started by that conductor, receives it" "lead-secret" "$(var s-env FAKE_SECRET)"
 as_agent conduct-e story s-plain >/dev/null
 check "a builder of its epic's story with no env: does not" "" "$(var s-plain FAKE_SECRET)"
 check "and the builders get HERDR_ENV and their own pane" "1|$(pane_of s-env)" "$(var s-env HERDR_ENV)|$(var s-env HERDR_PANE_ID)"
+echo "brief" > "${ROOT}/brief.md"
+as_agent conduct-e agent e s-restart "${p}" code "${ROOT}/brief.md" >/dev/null
+check "a builder the conductor restarts with swarm.sh agent gets its story's env: too" "lead-secret" "$(var s-restart FAKE_SECRET)"
 
 # --- A pane run that fails typed nothing: retried once, then the pane is closed and nothing is left.
-echo "brief" > "${ROOT}/brief.md"
 echo 1 > "${ROOT}/runfail"
 check "a pane run that fails once is retried, and the agent starts" "0|2" \
   "$(set +e; run agent t1 retry-one "${p}" conduct "${ROOT}/brief.md" >/dev/null; echo $?)|$(grep -c "^pane run $(pane_of retry-one) " "${ROOT}/herdr.log")"
@@ -141,9 +158,15 @@ check "one that fails twice stops the start, closes its pane, and leaves no laun
 
 # A board found only through SWARM_PROJECT (run from outside it): the agent keeps it, so its own
 # swarm.sh calls find the same project.
-(cd "${ROOT}" && env SWARM_PROJECT="${p}" HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" HOME="${TEST_HOME}" \
+(cd "${ROOT}" && env SWARM_PROJECT=proj HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${LEAD_PATH}" HOME="${TEST_HOME}" \
   SWARM_AGENT_SHELL=/bin/sh bash "${SWARM}" agent t3 by-project "${p}" conduct "${ROOT}/brief.md" >/dev/null 2>&1) || true
-check "SWARM_PROJECT, when swarm.sh has it, reaches the agent" "${p}" "$(var by-project SWARM_PROJECT)"
+check "SWARM_PROJECT, when swarm.sh has it, reaches the agent, resolved from relative to absolute" "${p}" "$(var by-project SWARM_PROJECT)"
+
+echo 1 > "${ROOT}/runtypedfail"
+run agent t4 typed-once "${p}" conduct "${ROOT}/brief.md" >/dev/null
+scr="${ROOT}/screen-$(pane_of typed-once)"
+check "a pane run that typed its line and then failed is retried with its own marker, and the wait is for that one" "2|yes" \
+  "$(grep '^swarm: agent environment ready' "${scr}" | sort -u | wc -l | tr -d ' ')|$(has "--match $(grep '^swarm: agent environment ready' "${scr}" | tail -1) --timeout" "$(cat "${ROOT}/herdr.log")")"
 
 # --- No value in argv, on any screen, or left on disk.
 check "neither FAKE_SECRET value appears in any recorded herdr argv" "0" "$(grep -c -e lead-secret -e server-secret "${ROOT}/herdr.log" || true)"
@@ -174,9 +197,12 @@ check "env: [ZDOTDIR], which swarm.sh sets, is refused" "${REFUSED}" "$(refused 
 check "a name swarm.sh's environment does not have is refused, naming it" "${REFUSED}" \
   "$(refused "env: [NOT_SET_HERE]" "env: NOT_SET_HERE is not set here, so its builder would start without it")"
 check "a block-style env: list is refused, not read as no names" "${REFUSED}" \
-  "$(refused "env:" "  - FAKE_SECRET" "env: is a block list, which reads as no names; write it on one line as env: [NAME, ...]")"
+  "$(refused "env:" "  - FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
 check "and so is one whose env: line has a comment" "${REFUSED}" \
-  "$(refused "env: # the token" "  - FAKE_SECRET" "env: is a block list, which reads as no names; write it on one line as env: [NAME, ...]")"
+  "$(refused "env: # the token" "  - FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
+check "and one with its items at column 0" "${REFUSED}" "$(refused "env:" "- FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
+check "and a list over several lines" "${REFUSED}" "$(refused "env: [" "  FAKE_SECRET," "]" "env: is not a one-line list; write it as env: [NAME, ...]")"
+check "and a bare name" "${REFUSED}" "$(refused "env: FAKE_SECRET" "env: is not a one-line list; write it as env: [NAME, ...]")"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

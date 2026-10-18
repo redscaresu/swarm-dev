@@ -460,7 +460,7 @@ build_story() {
   [[ -z "${goal}" ]] || printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
   # An epic's story gets a pane in the epic's tab; a one-off gets a tab of its own.
   epic="$(fm "${story}" epic)"
-  AGENT_ENV_NAMES="${names}" start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}"
+  start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}"
   # story_role has checked attempts: is a whole number. The build is attempt attempts + 1.
   [[ "${role}" != escalate ]] || record_event escalate "${slug}" "ok (attempt $(( $(get_fm "${story}" attempts) + 1 )))"
   # Once the brief is taken up, mid-turn: the goal sets at once and costs one extra short turn.
@@ -948,14 +948,15 @@ conduct_epic() {
 }
 
 # epic_env <epic> — the env: names of the stories in <epic> (empty: the stories with no epic) that a
-# builder may still get: open (ready or blocked) and of a kind an agent builds. A lead story's names
-# stay with the lead, and a done one's never stop a conductor. Each is checked as story_env does; a
-# refused one prints the reason and returns 1.
+# builder may still get: open (ready, blocked, or review, whose PR may close unmerged and send it back
+# to ready) and of a kind an agent builds. A lead story's names stay with the lead, and a done one's
+# never stop a conductor. Each is checked as story_env does; a refused one prints the reason and
+# returns 1.
 epic_env() {
   local s n out=""
   while IFS= read -r s; do
     [[ "$(fm "${s}" epic)" == "$1" ]] || continue
-    case "$(fm "${s}" status)" in ready|blocked) ;; *) continue ;; esac
+    case "$(fm "${s}" status)" in ready|blocked|review) ;; *) continue ;; esac
     agent_kind "$(fm "${s}" kind)" || continue
     n="$(story_env "${s}")" || { echo "${n}"; return 1; }
     out+=" ${n}"
@@ -988,7 +989,7 @@ start_conductor() {
   # On exit, not after start_agent: a conductor that fails to start dies, and left the tab empty.
   # shellcheck disable=SC2064 # expand now; the tab id is herdr's, [a-zA-Z0-9:]
   [[ -z "${placeholder}" ]] || trap "herdr tab close '${placeholder}' >/dev/null 2>&1 || true" EXIT
-  HERDR_WORKSPACE_ID="${ws}" AGENT_ENV_NAMES="${names}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor
+  HERDR_WORKSPACE_ID="${ws}" start_agent "${epic}" "conduct-${epic}" "${PROJECT_DIR}" conduct "${prompt}" conductor "${names}"
   # Notes left for an earlier run are not this one's. Only once it started: a refused second conduct
   # must leave a live conductor's notes; this one reads its inbox only after its first wait.
   inbox="$(conductor_inbox "$(agent_name "conduct-${epic}")")"; rm -f "${inbox}.md" "${inbox}.reading.md"
