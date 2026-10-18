@@ -61,8 +61,9 @@ printf '%s\n' \
   $'2026-10-01\tout-of-scope\to/r#7\tdeclined, not counted\tdeclined' \
   $'2026-10-02\tvacuous-test\thttps://github.com/o/r/pull/8/files\tc' \
   $'2026-10-02\tvacuous-test\to/r#9\td' > "${P}/.swarm/findings.tsv"
+# For rework, it lists no other merged PR of o/r.
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncase "$4" in\n  story/%s) printf "https://github.com/o/r/pull/7\\tMERGED\\t2026-10-03T10:00:00Z\\n" ;;\n  story/docs-story) printf "https://github.com/o/r/pull/8\\tOPEN\\t\\n" ;;\nesac\n' "${LONG}" > "${dir}/bin/gh"
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncase "$4" in\n  story/%s) printf "https://github.com/o/r/pull/7\\tMERGED\\t2026-10-03T10:00:00Z\\n" ;;\n  story/docs-story) printf "https://github.com/o/r/pull/8\\tOPEN\\t\\n" ;;\n  o/r) echo "[]" ;;\nesac\n' "${LONG}" > "${dir}/bin/gh"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/nobin/gh"
 chmod +x "${dir}/bin/gh" "${dir}/nobin/gh"
 
