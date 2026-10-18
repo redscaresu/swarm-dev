@@ -441,8 +441,8 @@ HANDOVER_DIFF_LINES=400
 # it, run as step_role picks. Refused, with nothing closed, with escalate_ladder empty, at or above its
 # top rung, and for a story that is not ready, not an agent's kind, or has no worktree.
 step_up() {
-  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to="" m rank src wt base prompt
-  [[ -n "${trigger}" && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
+  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to="" m rank role names src wt base prompt
+  [[ "${trigger}" =~ ^[a-z0-9-]+$ && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
     || die "step-up: the trigger must be one of ${STEP_UP_TRIGGERS// /, } (swarm.sh step-up <slug> <trigger>)"
   [[ -n "${CFG_escalate_ladder}" ]] || die "step-up: escalate_ladder is empty (off), so there is no next model; nothing was closed"
   step_up_story "${slug}"; src="${STEP_SRC}"; wt="$(worktree_for "${src}" "${slug}")"
@@ -454,12 +454,17 @@ step_up() {
     if (( $(model_rank "${m}") > rank )); then to="${m}"; break; fi
   done
   [[ -n "${to}" ]] || die "step-up: ${slug}'s builder is on ${from}, at or above escalate_ladder's top rung, so there is no next model; nothing was closed"
-  # What start_agent would refuse on, before the builder is closed.
+  # What start_rung and start_agent would refuse on, before the builder is closed: a role policy no
+  # longer knows (a legacy verify build), an env: name not set here, an untrusted folder, a /goal.
+  role="$(step_role "${fromrole}" "${to}")"
+  (policy "${role}") >/dev/null 2>&1 \
+    || die "step-up: ${slug}'s build is ${fromrole}, which steps up as ${role}, a role nothing starts now; nothing was closed"
+  names="$(story_env "${f}")" || die "${names}"
   require_trusted "${wt}"; goal_preflight "${slug}" "${src}"
   base="$(base_for "${src}")"
   prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "${prompt%/*}"
   handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" > "${prompt}"
-  printf '%s %s %s %s\n' "${trigger}" "${from}" "${to}" "$(step_role "${fromrole}" "${to}")" > "${prompt%.md}.step-up"
+  printf '%s %s %s %s\n' "${trigger}" "${from}" "${to}" "${role}" > "${prompt%.md}.step-up"
   # The old builder goes first: the new one takes its name.
   shut_agent "${slug}"
   start_rung "${slug}"
@@ -494,17 +499,25 @@ step_up_resume() {
 # <role> on <to> in its worktree with the brief beside the marker, then log escalate `ok (<trigger>:
 # <from> -> <to>)`, drop the marker and send the /goal its caller's goal_preflight made. start_agent
 # runs with errexit on, so a step that fails stops it with that step's own message; then the marker
-# stays and the message says to run step-up --resume.
+# stays, the message says to run step-up --resume, and an agents.tsv line start_agent wrote before it
+# failed (a brief not taken up) goes, so the rung is on record once, when it starts.
 start_rung() {
-  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic rc goal="${PREFLIGHT_GOAL}"
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
   epic="$(fm "${f}" epic)"
+  n="$(wc -l < "${AGENTS_LOG}")"; n=$((n))
   set +e
   (set -e; start_agent "${epic:-${slug}}" "${slug}" "$(worktree_for "${src}" "${slug}")" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
   rc=$?
   set -e
+  if [[ ${rc} -ne 0 ]]; then
+    # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
+    # an append-only "start failed" event outcomes reads would avoid that.
+    awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+      && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
+  fi
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
   rm -f "${prompt%.md}.step-up"

@@ -1135,12 +1135,17 @@ agents.tsv line for its builder, and the next model is the ladder's first one ab
 model, so a chore on Haiku steps to the first rung. The new builder keeps its build's role family. On
 the escalate role's model (Fable) it runs as `escalate`. Otherwise a code build runs as `code-sonnet`
 on Sonnet and as `code` on Opus, and a docs or chore build keeps its role, and that role's effort, on
-the new model. Nothing is closed when the ladder is empty, when the build is at or above the ladder's
-top rung, or when the story is not `ready`, not of a kind an agent builds, or has no worktree.
+the new model. The Fable rung is an `escalate` build like the one `escalate_after` starts, so a
+close that counts it as failed hands the story to the lead, as after any failed escalate build. The
+`escalate_after` retries are not run first: on the ladder, the step-ups below Fable take their place.
+Nothing is closed when the ladder is empty, when the build is at or above the ladder's top rung, when
+the story is not `ready`, not of a kind an agent builds, or has no worktree, when its `env:` names a
+variable not set here, or when the build's role is one nothing starts now (a past `verify` build).
 
 The old builder is closed before the new one starts, since the new one takes its name. If the start
 fails, step-up stops at the step that failed, with that step's message, and logs nothing as an
-escalation. The worktree, branch and brief are kept, and `swarm.sh step-up --resume <slug>` starts
+escalation. If start_agent had already put the new builder in agents.tsv (its brief not taken up),
+that line is removed again, so the rung is on record once, when it starts. The worktree, branch and brief are kept, and `swarm.sh step-up --resume <slug>` starts
 the rung once the cause is fixed. A resume that starts logs the step-up and sends the `/goal` as
 step-up would have.
 

@@ -7,7 +7,8 @@
 # of step-ups: one attempt each, each replaced build closed, only the step to fable paired with the
 # Fable build and counted as an escalation, and the rung's start taken from its step-up. herdr, gh and
 # claude (tests/claude_stub.sh) are stubs on PATH: herdr records each call, and fails tab create
-# while ${ROOT}/tabfail exists and agent start while ${ROOT}/startfail does; gh lists an open PR on
+# while ${ROOT}/tabfail exists, agent start while ${ROOT}/startfail does and agent prompt (the brief,
+# after the agent is recorded) while ${ROOT}/promptfail does; gh lists an open PR on
 # every branch (story/p1's its own, none once ${ROOT}/p1-closed exists), with one failing check.
 set -euo pipefail
 
@@ -41,7 +42,9 @@ case "$1 $2" in
   "tab close")    : > "$H/agents" ;;
   "agent start")  [ ! -e "$H/startfail" ] || { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
-  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
+  "agent prompt") [ ! -e "$H/promptfail" ] || exit 1
+                  echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent list")   awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                     END { print "]}}" }' "$H/agents" ;;
@@ -136,13 +139,14 @@ sed -i.bak 's/^kind: code$/kind: lead/' "${P}/docs/stories/s1.md"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume of a story made kind: lead since refuses, starting nothing" "1|yes|1" "${rc}|$(has "s1 is kind: lead, which no agent builds" "${out}")|$(escalates)"
 mv "${P}/docs/stories/s1.md.bak" "${P}/docs/stories/s1.md"
-rm "${ROOT}/tabfail"; touch "${ROOT}/startfail"
-out="$(run step-up --resume s1)" && rc=0 || rc=$?
-check "a resume whose start fails keeps the rung to resume again" "1|yes|1" "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalates)"
-rm "${ROOT}/startfail"
+rm "${ROOT}/tabfail"; touch "${ROOT}/promptfail"
+out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
+check "a resume whose brief is not taken up keeps the rung to resume again, and takes back the agents.tsv line it wrote" "1|yes|1|code opus high" \
+  "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalates)|$(newest s1)"
+rm "${ROOT}/promptfail"
 run step-up --resume s1 >/dev/null || true
-check "a resume that starts runs the fable rung in the worktree and logs the step-up" "escalate fable xhigh|2|ok (ci-red-2: opus -> fable)|gone" \
-  "$(newest s1)|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
+check "a resume that starts runs the fable rung in the worktree, on record once, and logs the step-up" "escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
+  "$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "with nothing to resume, --resume refuses" "1|yes" "${rc}|$(has "no step-up of 's1' waits to start" "${out}")"
 
@@ -168,6 +172,21 @@ for s in d1:docs:sonnet c1:chore:haiku; do
   run step-up "${slug}" stalled >/dev/null || true
 done
 check "a docs build steps up as docs, and a chore below the first rung as a chore on it" "docs opus medium|chore sonnet medium" "$(newest d1)|$(newest c1)"
+
+# Refused before the builder closes: an env: name not set here, a legacy verify build (a role nothing
+# starts now), and a trigger that is two words. Each leaves the builder open and writes no marker.
+printf '%s\n' --- "status: ready" "kind: code" "env: [LADDER_TEST_UNSET_NAME]" --- "" "# e1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/e1.md"
+printf '%s\n' --- "status: ready" "kind: code" --- "" "# v1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/v1.md"
+for s in e1:code-sonnet:sonnet v1:verify:haiku; do
+  IFS=: read -r slug role model <<< "${s}"
+  "${GIT[@]}" -C "${P}" worktree add -q -b "story/${slug}" "${ROOT}/proj-wt/${slug}" origin/main
+  printf '2026-10-01\t%s\t%s\tclaude\t%s\tmedium\tsess-%s\n' "${role}" "${slug}" "${model}" "${slug}" >> "${P}/.swarm/agents.tsv"
+done
+closes() { grep -c '^tab close' "${ROOT}/herdr.log" || true; }
+c="$(closes)"
+o1="$(run step-up e1 stalled)" || true; o2="$(run step-up v1 stalled)" || true; o3="$(run step-up s1 'stalled no-pr')" || true
+check "an unset env: name, a legacy verify build and a two-word trigger are refused before anything closes" "yes|yes|yes|${c}|none" \
+  "$(has "env: LADDER_TEST_UNSET_NAME is not set here" "${o1}")|$(has "v1's build is verify, which steps up as verify, a role nothing starts now; nothing was closed" "${o2}")|$(has "the trigger must be one of" "${o3}")|$(closes)|$(ls "${P}/.swarm/briefs/"*.step-up 2>/dev/null || echo none)"
 
 # --- A sonnet -> opus -> fable chain of step-ups on s2, today. In outcomes the three builds are one
 # attempt, the two replaced builds each have a close with cause step-up:<trigger>, and the Fable
