@@ -61,7 +61,7 @@ printf '#!/bin/sh\ncase "$1 $2 $3 $4" in\n"pr list --head story/a") printf "%s/1
 chmod +x "${dir}/bin/gh"
 
 run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" bash "${SWARM}" "$@"); }
-tp() { awk '/^## / { f = $0 == "## throughput"; next } f'; } # flow's throughput section
+tp() { awk '/^## / { f = $0 == "## throughput"; next } f && NF'; } # flow's throughput section
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi

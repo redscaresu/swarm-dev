@@ -59,11 +59,11 @@ check "one row per agents.tsv builder line" "$(($(wc -l <<< "${out}") - 1))" \
 
 
 # outcomes_join skips a row of the wrong width (a tab from a damaged log) with a warning, and prints the rest.
-good="2026-10-01$(printf '\tx%.0s' {1..10})"$'\t1\t-'"$(printf '\t%.0s' {1..15})"
+good="2026-10-01$(printf '\tx%.0s' {1..10})"$'\t1\t-'"$(printf '\t%.0s' {1..16})"
 rc=0
 joined="$(SWARM_FINDING_REVIEWERS=codex SWARM_META="" SWARM_ROWS="${good}"$'\n'"${good}"$'\textra' \
-  python3 "${ROOT}/bin/lib/outcomes_join.py" "${dir}/none.tsv" "${P}" 2> "${dir}/err" | sed '/^$/,$d')" || rc=$?
+  python3 "${ROOT}/bin/lib/outcomes_join.py" "${dir}/none.tsv" "${P}" "${dir}/none.tsv" 2> "${dir}/err" | sed '/^$/,$d')" || rc=$?
 check "a row of the wrong width is skipped with one warning, and the report goes on" \
-  "${rc} $(($(wc -l <<< "${joined}") - 1)) $(grep -c 'skipped a row of 29 columns, not 28' "${dir}/err")" "0 1 1"
+  "${rc} $(($(wc -l <<< "${joined}") - 1)) $(grep -c 'skipped a row of 30 columns, not 29' "${dir}/err")" "0 1 1"
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi
