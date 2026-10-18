@@ -106,8 +106,10 @@ lessons_report() {
 }
 
 # cost_report <YYYY-MM-DD> — flow's cost section alone, since that day, for dash's cost of the day.
+# No calling session: dash runs every project's frame from one pane, and that session is no
+# project's own (a lead's is already in its project's Claude Code directory).
 cost_report() {
-  flow_sections "$1" 9999-12-30 "" "" cost
+  flow_sections "$1" 9999-12-30 "" "" "" cost
 }
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
@@ -184,6 +186,11 @@ outcomes_report() {
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
 #     local day). Usage comes from Claude Code's own session logs (or close's copy, once Claude Code
 #     deleted one), deduplicated by session and message id; codex agents are listed but not priced.
+#   epic_totals: one TSV row per epic, then `all`, over the outcomes rows dated in the window; with
+#     --epic, that epic's row alone. builds, cost_usd and start_to_pr_min summed over its builds, and
+#     per PR (counted once): pr_to_merge_min summed, merged_prs (merged, with main_merges gh read), main_merged
+#     (main_merges above 0) and main_merged_share, then a line with leaner-faster-swarm's 55% baseline.
+#     cost_usd ends `(N not in the logs)` for builds with no cost, as cost's agents do.
 #   features: the project's own docs/features.tsv (or SWARM_FEATURES; with neither, one line saying
 #     there is no feature list) joined with this project's logs: per feature, its uses from --since
 #     (default the 30 days up to --until, or up to today) to --until, its metric and its baseline, and `delete?` for a feature with no
@@ -240,19 +247,21 @@ flow_report() {
   # PR built before since still keeps its later findings.
   # shellcheck disable=SC2119 # takes no argument here
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
-  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}"
+  local lead=""
+  [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
+  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}"
 }
 
-# flow_sections <since> <until> <epic> <outcomes rows> [section...] — run flow_report.py over the
-# window, with each windowed slug's depends_on (read with story_text, so merged stories count).
+# flow_sections <since> <until> <epic> <outcomes rows> <lead session> [section...] — run flow_report.py
+# over the window, with each windowed slug's depends_on (read with story_text, so merged stories
+# count); <lead session> (empty for none) is the calling session, counted as lead.
 flow_sections() {
-  local since="$1" until="$2" epic="$3" rows="$4" deps="" lead="" slug own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
-  shift 4
+  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" slug own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
+  shift 5
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
     deps+="${slug}"$'\t'"$(story_text "${slug}" | sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"

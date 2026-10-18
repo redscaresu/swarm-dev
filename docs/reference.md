@@ -102,9 +102,10 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
   mechanical diff, checked by the conductor.
 - **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`. To find out
-  whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories on
-  Sonnet at `high` (`code-sonnet`). The slug fixes the pick, a retry goes back to Opus, and each
-  build's agents.tsv line says which model built it. It ships off (`0`).
+  whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories
+  marked `easy: true` on Sonnet at `high` (`code-sonnet`); every other code story stays on Opus.
+  The slug fixes the pick, a retry goes back to Opus, and each build's agents.tsv line says which
+  model built it. It ships off (`0`).
 - **Codex is the cross-model check**, read-only, because a different model family shares fewer
   blind spots with the one that wrote the plan.
 - **Below the design level, Fable is escalation only**: a story that failed twice, or an epic whose
@@ -186,7 +187,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `merge` (default `human`): `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges, except a PR `swarm.sh merge` holds for you (§ Merging)
 - `lessons_file` (default `.claude/swarm/brief.md`): where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped
 - `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
-- `sonnet_share` (default `0`): `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
+- `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
@@ -562,7 +563,7 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
-(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
+(§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
 `reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
@@ -637,7 +638,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `features`, `incidents`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -657,6 +658,17 @@ conclusion from `gh api`. A run whose times do not parse adds no minutes. When a
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
 day). With `--epic` it still counts every agent in the window, and says so.
+
+The `epic_totals` section prints one TSV row per epic and a last `all` row, over the `outcomes` rows
+dated in the window. With `--epic` it prints that epic's row alone. Each row sums `cost_usd` and
+`start_to_pr_min` over its builds. It counts each PR once, however many builds share it:
+`pr_to_merge_min` is summed per PR, `merged_prs` is the merged PRs whose `main_merges` `gh` could
+read, `main_merged` is how many of those had main merged in, and `main_merged_share` is that
+percentage. An open or abandoned PR is left out of the share, as it was from leaner-faster-swarm's
+baseline of 55%, which a line after the table gives to compare against. `cost_usd` says how many
+builds have no cost (no session log, or a codex agent), as `cost` does: `4.25 (1 not in the logs)`.
+The minutes sums skip empty cells: `outcomes` leaves `start_to_pr_min` empty for a retry that started
+after its PR was created and for a build with no PR.
 
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
@@ -841,9 +853,23 @@ It guards against careless commands, not deliberate evasion: a merge reached any
 through a variable, a script run by `source` or process substitution, `awk`'s `system()` or an
 alias, passes. A command that only mentions a merge passes too: `echo`, `printf` and `grep`, a commit message, and a PR
 body given as `--body "$(cat <<'EOF' ... EOF)"`. On a refused call the hook exits 2, the session
-sees its reason, and `.swarm/events.tsv` gets an incident line. Once a call says merge the guard fails closed: if
+sees its reason, and `.swarm/events.tsv` gets an incident line. The guard reads only the command, never
+the session's folder or the call's description. Once the command says merge the guard fails closed: if
 it cannot run its check (no `python3`, input it cannot read, an error of its own), it refuses the
 call. Outside a swarm project the guard allows everything else.
+
+The hook also refuses commands that can lose work. In every session in a swarm project, yours
+included, it refuses a `cd <dir>` followed by `;` outside a `$( )`: when the `cd` fails, the rest
+runs in the folder the session was in, so write `cd <dir> || exit 1 &&`. It refuses a `git checkout`
+that would overwrite uncommitted changes: unstaged ones, and staged ones too when it checks out from
+a commit (`git checkout HEAD -- f`). Back the file up with `cp` and restore from the copy instead.
+swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook
+also refuses `git checkout`, `switch`, `restore`, `reset --hard`, `stash` and `clean` in the
+project's main checkout, whether the command runs there from the session's folder, after a `cd`, or
+through `git -C`. `git stash list`, `git stash show` and `git clean -n` change nothing, so they pass.
+Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules apply to it. These
+rules fail open: an error in them never refuses a call, even one whose command also says merge, and
+a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
@@ -885,7 +911,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 

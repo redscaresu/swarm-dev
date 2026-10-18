@@ -44,6 +44,6 @@ bravo  swarm-dev 0.0.0  next conduct bravo-ui                                   
 │ ! b-page             up 3h20m   Grep 45m ago  no PR yet                                                             │
 ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ⏸ 1 blocked · 0 later  (swarm.sh status --all lists them)
-merge human · 3 epics active · 0 agents working · 0 PRs green, waiting · 1 stalled · $2.80 today · on call: fable·xhigh · 0 escalations today
+merge human · 3 epics active · 1 agents working · 0 PRs green, waiting · 1 stalled · $2.80 today · on call: fable·xhigh · 0 escalations today
 ● working   ○ ready   ◐ review / CI running   ✓ done / green   ✗ failing   ⏸ blocked   ! needs you or the lead (session gone or unknown)   ? unknown
    q quit · t tree · l ladder · r redraw (with --watch)
