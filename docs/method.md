@@ -99,6 +99,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
+| `fallback_reviewer` | empty | a model such as `sonnet` that reviews in codex's place when codex hits its usage limit. Empty skips the review (reference.md § Building) |
 | `lead` | `off` | `session`: a lead session acts for you, so `dash` splits needs you in two: your steps, and the lead's queue (reference.md § Settings) |
 
 The project is `$SWARM_PROJECT` if set, else the nearest directory up from where you are with

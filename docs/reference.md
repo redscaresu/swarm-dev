@@ -177,6 +177,8 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 - **A review agent is Opus at `high`**, the model the conductor reviewed with before each PR got its
   own (role `review`, started by `swarm.sh review-agent`). One per green PR, so reviews run side by
   side and the conductor's own context holds only the findings files.
+- **The fallback reviewer runs on the model `fallback_reviewer` names, at `high`** (role
+  `review-fallback`). codex-review starts it only when codex hits its usage limit and the key is set.
 
 ## Settings
 
@@ -189,6 +191,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
 - `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic)
+- `fallback_reviewer` (default empty): a model such as `sonnet`. When codex reports a usage limit, `codex-review` starts a review agent on it in codex's place (role `review-fallback`), waits for its findings and prints them in codex's form. Empty keeps `codex skipped: usage limit`. § Building has the details
 - `lead` (default `off`): `session`: a lead session acts for you, so `dash` splits needs you in two. Needs you keeps only your steps: a story with a **You:** step, an expired login, a draft HLD. Every merge row (with `merge = agent`, a `costs: money` merge row stays under needs you), an agent waiting on a prompt, a `lead` story with no **You:** step, every escalated story, an empty pane, an agent whose session is gone or unknown, and a stalled agent go in a `lead's queue` box under it, left out when empty. `next` and `status` are unchanged
 
 ## Scoping an epic
@@ -232,10 +235,14 @@ that tab, named for the story; a tab holds four panes, and the fifth opens `<epi
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
 
-**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog`, which builds the
-ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
+**The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
+first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
 `story --strict`, the same review, and the same handover or merge. It runs in a workspace named
-`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. It watches only
+`backlog` and needs no epic file; a board with an `epics/backlog.md` makes it refuse. herdr's agent
+names span every project, so naming it for the project's path lets two projects each run one at once,
+even two directories with the same name. A name another project's agent holds is refused before the
+old report or brief is touched, and the refusal says where that agent runs. An epic whose
+conductor would take that name (`backlog-<dir>-<hash>` for this project) is refused too. It watches only
 its stories' PRs (`watch --backlog`), and a story whose worktree already exists has started, so it
 waits on that builder and never starts the story again. Its report,
 `.swarm/conduct-backlog.report.md`, lists each one-off it could not start as
@@ -582,11 +589,32 @@ codex-review stops codex the same way and exits only once it is gone. While it r
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
 process group, so a harness that kills that group kills codex too. Every brief says to run it in the
 background (Bash `run_in_background`) and wait for it: Claude Code stops a foreground Bash call at 2
-minutes by default and 10 at most, before the limit could apply. When codex reports a
-usage limit, or codex-review prints `codex skipped: timed out`, no one waits or runs it again: a
+minutes by default and 10 at most, before the limit could apply. Whoever runs it waits for it to
+exit and acts on what it prints last, since a usage limit printed early may be followed by a
+fallback's review. When it ends on codex's usage limit or on `codex skipped: ...`, no one runs it again: a
 builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
-its reply, and the conductor then reads the diff itself in codex's place. The planning `codex` panes of `/plan-hld` and
+its reply, and the conductor then reads the diff itself in codex's place. codex-review sends codex's
+output, stderr merged into stdout, to the screen and to a log in a temp directory of its own (mode
+700, so no other user can make or read it first), removed when it exits. Once codex exits,
+it waits a few seconds for the output to finish, and on any way out (the timeout and an interrupt
+too) it stops the copy, so a child of codex left holding the output cannot hang the caller. If codex fails and its last lines hold its own limit message (`You’ve hit your usage limit`, with
+`ERROR:` or `■` before it; a review that only quotes the words does not count), codex-review logs a
+`codex-limit` incident in events.tsv, with `codex-<story>` as its target (not the slug, which is the
+builder's own agent name). With `fallback_reviewer` empty it then exits as codex did. With
+it set, it starts `fallback-<story>` in the worktree on that model, with codex's prompt. The agent
+runs with no Edit, Write or NotebookEdit tool and cannot commit or push. It still has Bash, so
+unlike codex's read-only sandbox its brief is what keeps it from changing the worktree. It gets what is left of `codex_minutes`, its start included, so the whole run stays within it, to write its
+findings to `.swarm/reviews/fallback/<story>.md`, in a tab of its own (`fallback-<story>`). codex-review prints `reviewed by fallback <model>:
+codex usage limit` and then the findings, and closes the agent, findings or not; an interrupt closes
+it too. The builder treats the findings as codex's, logs them with `--reviewer fallback`, and the PR
+body carries that line instead of `codex skipped`. When the agent cannot start (outside herdr,
+start_agent refusing, or its name, cut to 32 characters, held by another story's fallback) or writes
+nothing in time, codex-review prints `codex skipped: usage limit (<why>)` and exits as codex did. It
+waits for the file, not for the agent to go idle: an agent idle while a subagent or a background
+call of its own runs has not finished. With
+under two minutes of `codex_minutes` left, no fallback starts: it prints `codex skipped: usage limit
+(no time left for a fallback)`. The planning `codex` panes of `/plan-hld` and
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 
@@ -623,7 +651,8 @@ the lead, each write one more line of their own (§ Model and effort). The plugi
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
-`reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
+`reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`),
+and the first line of a failed command's error.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
@@ -655,7 +684,23 @@ turn in the `subagents/*.jsonl` logs in the folder named after the session, next
 and the tokens columns count the builder's own turns only, so `cost_usd` plus `subagent_cost_usd` is
 the whole build. The subagent columns are empty when there is no session log. When only the copy
 `close` keeps of a deleted log is left, they count the subagent turns inside that log alone: the copy
-leaves out the `subagents/` logs beside it. A story the lead holds after an escalation (`kind: lead` with
+leaves out the `subagents/` logs beside it. After them come five columns that split the minutes
+from `started` to `merged_at` into phases: `building_min`, `ci_min` (a check
+on the PR's head was running), `review_wait_min` (from `pr_created_at` to the first `review`
+event after it, which hands the PR to the merger, or to the merge), `fixing_min` (from each
+`tell:findings` logged between `pr_created_at` and the merge to whichever comes first: the PR's
+next commit (a commit that merges the base in does not count), the next check start, `review` or
+`tell:findings` event, or the merge) and
+`merge_wait_min` (from that first `review` event to the merge). A `review` event, of the story or
+of its epic (`swarm.sh review <epic> <PRs>`), counts for the PRs it names in its outcome. One logged
+before reviews named their PRs (a bare `ok`) counts for its story's PR when exactly one was open then. Where two phases cover the same
+minute, the higher one takes it: fixing, then CI, then review wait, then merge wait; a minute none
+covers is building. The five add up to the whole minutes from `started` to `merged_at`, and are
+empty when either is missing. The events are those of every build of the story, so a retry's tells
+count in the first build's minutes too, and the first build's in the retry's; a tell on an earlier,
+abandoned PR is not counted, as it came before this PR was created. `gh` gives only the latest run of
+each check on the PR's last head, so other CI counts as whichever phase lies under it. A check cancelled while
+queued, which `gh` dates to the year 1, adds no CI. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
@@ -705,7 +750,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `model_fit`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -802,6 +847,14 @@ come when a review ends, so the two columns are never averaged together. `stacke
 counts the `stacked` events for the epic's slugs, or all of them on the `all` row. The project
 row comes last, so an epic named `all` still gets its own row above it.
 
+The `time_in_state` section prints TSV `epic prs start_to_merge_min largest_first`, one row per
+epic and a last `all` row, over the `outcomes` rows dated in the window that have the five phase
+columns (their PR merged). With `--epic` it prints that epic's row alone. Each PR counts once, by
+its build that started first, since a retried PR repeats its phases on every build, and is in the
+window only when that build's date is.
+`largest_first` gives the five sums as `<phase>:<minutes>`, the largest first, so
+`ci:45 review_wait:15 fixing:15 merge_wait:15 building:10` says CI held the epic's stories longest.
+
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying
 there is no feature list, so a project never sees swarm-dev's own features judged against its logs.
@@ -842,7 +895,7 @@ can check what was covered.
 
 Each finding that review fixed is logged with
 `swarm.sh log-finding --reviewer <who> <kind> <PR> "<one line>"`, where the kind names the class of mistake
-(`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `code-review`, `ci` (a
+(`vacuous-test`, `denylist`) and `<who>` is the reviewer that raised it: `codex`, `fallback` (the agent codex-review starts in codex's place on a usage limit), `code-review`, `ci` (a
 PR review bot, a check-run note or a code-scanning alert), `conductor` or `lead`, or `skeptic` and `critic` for a plan review's finding on a board PR. A defect that a later fix finds in merged work is logged against the original PR with `log-finding --reviewer escaped <kind> <original PR>`. Its outcome is `escaped`: it counts toward the `recurring` block, but `outcomes` and flow's `reviewers` leave it out, since review missed it. Each finding declined is logged with `log-finding --declined <reason> --reviewer <who>`, where the
 reason is `out-of-scope` (outside the story's touches and **Done when**), `nit` or `wrong`, and the row keeps it as a seventh field; `outcomes` counts fixed and declined apart, and its
 `recurring` block counts the fixed and escaped ones, never the declined. When a conductor finishes,
@@ -1016,9 +1069,9 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
 | `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
-| `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
+| `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (each epic's start-to-merge minutes split into building, CI, review wait, fixing and merge wait, largest first). |
 
 ## Cleanup, escalation and session logs
 
