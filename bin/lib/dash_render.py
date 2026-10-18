@@ -755,11 +755,12 @@ def json_or_none(l):
         return None
 
 def busy_peak():
-    # The most agents at once in the last 7 days: each agents.tsv session from its log's first
-    # timestamp to its last write, swept; never fewer than work now.
+    # The most agents at once on the last 7 calendar days (the speedometer's): each agents.tsv
+    # session from its log's first timestamp to its last write, swept with ends first, so a hand-off
+    # in the same second is no overlap; never fewer than work now.
     # ponytail: an idle stretch inside a session counts as busy, and only rows started in the last
     # PEAK_ROW_DAYS are read; log working spans if the peak reads high.
-    spans = []
+    spans, since = [], datetime.datetime.combine(TODAY - datetime.timedelta(days=6), datetime.time()).timestamp()
     for f in read_tsv(E["DASH_AGENTS_LOG"], 7):
         if days_ago(f[0]) not in range(PEAK_ROW_DAYS):
             continue
@@ -770,10 +771,10 @@ def busy_peak():
                 start = next((epoch(d.get("timestamp")) for d in map(json_or_none, itertools.islice(fh, 50)) if isinstance(d, dict) and d.get("timestamp")), None)
         except OSError:
             continue
-        if start is not None and start <= end and end >= NOW - 7 * 86400:
+        if start is not None and start < end and end >= since:
             spans += [(start, 1), (end, -1)]
     peak = n = 0
-    for _, step in sorted(spans, key=lambda s: (s[0], -s[1])):
+    for _, step in sorted(spans):
         n += step; peak = max(peak, n)
     return peak
 
@@ -797,9 +798,7 @@ def gauges():
     rate = [("rate ", "dim")] + bar([(last7, "█", "ok")], best) + [(f" {last7 / 7:.1f} of best {best / 7:.1f}/day", "")]
     if agents is None:   # no agent list from herdr: nothing is known to work, so no running gauge
         return rate
-    # status's working agents, and the running codex reviews (rows of shown alone) as review agents.
-    working = collections.Counter([kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled")]
-                                  + ["review" for r in shown if r.get("state") == "codex"])
+    working = collections.Counter(kind_of(r["role"]) for r in recs if r["state"] in ("working", "stalled"))   # status's count
     now = sum(working.values())
     peak = max(busy_peak(), now)
     return (rate + [(" · ", "dim"), ("running ", "dim")] + bar([(working[k], ch, s) for k, ch, s in KINDS], peak)
@@ -877,16 +876,17 @@ if WIDE:
 # A watched frame drops what does not fit, never the foot; a one-shot dash shows at least 5 rows.
 ladder = E.get("DASH_LADDER") == "1"
 
-def make_room(room):
+def make_room(room, spare=H):
     # The lines under the speedometer (under) take recent's rows; a cut frame keeps RECENT_MIN of them
-    # (or the ladder, when even those do not fit) first, dropping the sparkline's line, then the gauges.
-    while under and FIT and H and room - len(under) < RECENT_MIN:
+    # (or the ladder, when even those do not fit) and, from 140 columns, the whole left column (spare:
+    # the rows under it) first, dropping the sparkline's line, then the gauges.
+    while under and FIT and H and (room - len(under) < RECENT_MIN or spare < len(under)):
         under.pop(0)
     return room - len(under)
 
 if WIDE:
     side = ladder_box(RW) if ladder else []
-    room = make_room(H - len(out) - len(foot) - len(side) - 2) if H else max(8, len(left) - len(side) - 2)
+    room = make_room(H - len(out) - len(foot) - len(side) - 2, H - len(out) - len(foot) - len(left)) if H else max(8, len(left) - len(side) - 2)
     if not KEYS:
         room = max(5, room)
     if room > 0:

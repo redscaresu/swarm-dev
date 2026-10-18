@@ -42,13 +42,16 @@ is one column, top to bottom:
   finished on each of the last 14 days, oldest first (`▁` for none, `▇` for the busiest day), then
   today's count and the average of its last 7 days, which is the speedometer's number. From 100
   columns two gauges follow, on the sparkline's line when both fit. `rate` is that average against the best 7 days in a row
-  in `events.tsv`. `running` is the agents working now (the summary's count) plus any running codex reviews, against
-  the most agents that were busy at once in the last 7 days. dash works that peak out from each
+  in `events.tsv`. `running` is the agents working now, exactly the ones `swarm.sh status` lists as working (the
+  summary's count; codex reviews are not among them), against the most agents that were busy at once
+  on the same 7 days. dash works that peak out from each
   `agents.tsv` session's log, taking the first timestamp as the start and the last write as the end,
-  so a session that sat idle for a while counts as busy. Each kind of agent has a cell and a colour
+  so a session that sat idle for a while counts as busy; one that ends as another starts, in the same
+  second, is no overlap. Each kind of agent has a cell and a colour
   of its own: `█` builders (green), `▓` conductors (cyan), `▒` review agents (yellow), `▪` anything
   else. With no agent list from herdr the running gauge is left out. When a watched frame is too short to
-  keep the ladder and a few rows of recent, the sparkline's line goes first, then the gauges. Then one summary line: epics active, agents working (as
+  keep the ladder, a few rows of recent and (from 140 columns) the whole left column, the sparkline's
+  line goes first, then the gauges. Then one summary line: epics active, agents working (as
   `swarm.sh status` counts them, stalled ones included), PRs green and waiting for you, stalled builders, and today's
   estimated cost of this project (the `cost` section of `swarm.sh flow --since <today>`, without the session of the
   pane dash runs in). After
