@@ -252,6 +252,64 @@ deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
 
+**The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
+exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
+`zsh -f` (no rc file runs) holding only:
+
+- `PATH`, `HOME`, `TERM`, `USER`, `LOGNAME`, `TMPDIR`, `LANG` and the `LC_*` variables;
+- where logins, config and logs live: `CLAUDE_CONFIG_DIR`, `CLAUDE_PROJECTS_DIR`, `CODEX_HOME`,
+  `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`, `GNUPGHOME` and the `XDG_*` directories;
+- the session bus, `DBUS_SESSION_BUS_ADDRESS`, through which `gh`'s keyring token and
+  `git-credential-libsecret` reach the Secret Service on Linux;
+- for a push: the ssh agent's `SSH_AUTH_SOCK` and `GIT_SSH_COMMAND`;
+- for a proxy or an intercepting CA: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and their lowercase
+  forms, `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`;
+- which provider and model Claude Code uses: `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
+  `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `AWS_REGION`,
+  `AWS_PROFILE`, `CLOUD_ML_REGION` and `ANTHROPIC_VERTEX_PROJECT_ID`;
+- swarm.sh's own `SWARM_*` settings, with `SWARM_PROJECT` as the project's absolute path, so the
+  agent's own `swarm.sh` finds the same project and settings from any directory;
+- `SHELL`, set to that zsh; `ZDOTDIR`, set to the agent's own `.swarm/zdotdir/<agent>`; and
+  `GPG_TTY`, set to the agent's own terminal, so pinentry asks there and never in yours. swarm.sh
+  makes the `ZDOTDIR` afresh, 0700, at each launch, with only a `.zshenv` and a `.zprofile` that
+  put back the `PATH` a login shell was given once `/etc/zprofile` has run (on macOS, its
+  path_helper puts `/usr/bin` and `/bin` first), and removes it when `swarm.sh close` closes the
+  agent;
+- `HERDR_ENV=1`, and those of herdr's own variables for the pane that the pane has.
+
+The others take swarm.sh's value, when it has one, except herdr's, which come from the new pane. A
+story's `env: [NAME, ...]` adds those names for its builder, whether `story` starts it or a conductor
+restarts it with `swarm.sh agent`. A conductor gets the names of its epic's open (`ready`, `blocked`
+or `review`) code, docs and chore stories (for `conduct --backlog`, those with no epic), so the
+builders it starts can receive them; a `lead` story's names stay with you. A conductor has only the
+names its stories had when it started: for a story added later with a new name, restart it with
+`swarm.sh conduct <epic>`, which its refusal names. Each value comes from the session that runs
+`swarm.sh`. `story`, `agent` and `conduct` refuse, before anything starts, an `env:` that is not a
+one-line `[A, B]` list, a name that is not `[A-Z_][A-Z0-9_]*`, a name that session does not have,
+and a reserved name: one from the list above or starting `LC_`, `SWARM_`, `XDG_` or `HERDR_`; the lead's
+own Claude Code session's (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`); and one that loads code
+into what the agent runs (`BASH_ENV`, `ENV`, `DYLD_*`, `LD_*`). No value goes through a command line:
+swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and which
+deletes itself, so the pane's scrollback shows the launch line with no value in it.
+
+A login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, or a `GH_TOKEN` for `gh`. A story can name
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one), but
+agents with no story of their own (planners and review agents, and conductors beyond their stories'
+names) never get it. If you log in that way, log in through each tool instead: `claude` then
+`/login`, `codex login`, and `gh auth login`. On Foundry, Bedrock or Vertex, the provider and model
+selection above passes from the session that runs swarm.sh, or can go under `env` in
+`~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
+provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
+`gcloud auth application-default login`), never from an exported secret such as
+`AWS_SECRET_ACCESS_KEY`.
+
+Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
+Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
+`~/.zlogin`, `~/.bashrc` or `~/.bash_profile`, even when your own shell is bash. Only the system
+files in `/etc` (`zshenv`, `zprofile`, `zshrc`, `zlogin`) still run, and a login shell's `PATH` is
+put back as it was given after them.
+
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
 `escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
 `close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to
@@ -646,7 +704,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `model_fit`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `model_fit`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -951,7 +1009,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 
