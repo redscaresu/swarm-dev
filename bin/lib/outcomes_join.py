@@ -39,9 +39,10 @@ def minutes(start, end):
 PRECEDENCE = ("fixing", "ci", "review_wait", "merge_wait")
 
 def fixed_at(t, commits, ends):
-    # Where fixing findings told at t ends: the PR's next commit, else the next check start, review
-    # event, tell:findings or the merge (ends).
-    return min([x for x in commits if x > t] or [e for e in ends if e > t])
+    # Where fixing findings told at t ends: the first after it of the PR's next commit (one that merges
+    # the base in is no fix, and gh leaves it out), the next check start, review event, tell:findings
+    # or the merge (ends).
+    return min([x for x in commits if x > t] + [e for e in ends if e > t])
 
 def time_in_state(start, merged, pr, times):
     # The PHASES' minutes from start to merged, as strings that sum to minutes(start, merged); all empty
@@ -55,7 +56,8 @@ def time_in_state(start, merged, pr, times):
     if None in (s, c, m) or m < s:
         return [""] * len(PHASES)
     runs = [tuple(map(secs, r.split("/"))) for r in pr[5].split(";") if r.count("/") == 1]
-    runs = [r for r in runs if None not in r]
+    # A run cancelled while queued starts at gh's zero time (year 1): no CI.
+    runs = [r for r in runs if None not in r and 0 < r[0] <= r[1]]
     commits = [x for x in map(secs, pr[6].split(";")) if x is not None]
     events = sorted((secs(w), k) for k, _, w in (t.partition("=") for t in times) if secs(w) is not None)
     handed = min((t for t, k in events if k == "review" and t >= c), default=m)
@@ -95,14 +97,14 @@ for day, _, pr, _, outcome, reviewer in finding_rows(sys.argv[1]):
     on = [i for i, r in enumerate(rows) if r[6] and pr_key(r[6]) == pr_key(pr) and r[0][0] <= day]
     if on:
         found[on[-1]][(outcome, reviewer)] += 1
-# `swarm.sh review <epic> <PRs>` logs the epic as its target: its time goes to the stories of that epic
-# (their epic:), and counts for a story only once its PR is open (time_in_state's t >= c).
-epics = {r[3] for r in rows if r[3]}
-epic_reviews = collections.defaultdict(list)
+# `swarm.sh review <epic> <PRs>` logs the epic as its target and the PRs in its outcome, ok (<PRs>): its
+# time goes to the builds on each PR it names. One logged before reviews named their PRs goes to none.
+named_reviews = collections.defaultdict(list)
 for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) else ():
     e = line.rstrip("\n").split("\t")
-    if len(e) == 5 and e[1] == "review" and e[2] in epics and (e[4] == "ok" or e[4].startswith("ok (")):
-        epic_reviews[e[2]].append(f"review={e[0]}")
+    if len(e) == 5 and e[1] == "review" and e[4].startswith("ok ("):
+        for u in re.findall(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", e[4]):
+            named_reviews[pr_key(u)].append(f"review={e[0]}")
 
 def by(c, outcome):
     return " ".join(f"{who}:{n}" for (o, who), n in sorted(c.items()) if o == outcome)
@@ -126,7 +128,7 @@ for (f, kind, risk, story_epic, asked, prs, *the_pr), c in zip(rows, found):
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
-                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + epic_reviews[story_epic])))
+                     + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text

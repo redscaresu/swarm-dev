@@ -76,7 +76,8 @@ item stories/m1.md 'status: review' "prs: ${U}/1"
 item stories/c1.md 'status: review' "prs: ${U}/2"
 printf 'SECRET-CONTENT-123 in the findings\n' > "${P}/findings.md"
 
-appends "review" 1 review s1 ok review s1 "${U}/9"
+# A review logs the PRs it names, so outcomes can tell which an epic's review handed over.
+appends "review logs the PRs it names" 1 review s1 "ok (${U}/9)" review s1 "${U}/9"
 appends "a failed review" 1 review s1 "review: not a PR URL" review s1 "https://x"$'\t'"y"
 # A tell's kind goes with its command (tell:<kind>), so its target stays the slug, which the stall rule reads.
 appends "tell" 1 tell:findings s1 ok tell s1 findings findings.md

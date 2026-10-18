@@ -514,7 +514,8 @@ main_signal() {
 # log one line per item themselves, and merge (target !) every line it writes, so main logs none
 # for it but an interrupt. A tell's command is tell:<kind>, a close's close:<cause> and a
 # board-pr's board-pr:<step>, so the target stays the slug (a board-pr's name). A reset or drop
-# that succeeds logs ok (<reason>); a reset that lifts a hold (held_for:) logs as reset:held.
+# that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
+# epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held.
 main() {
   local rc why
   [[ "${1:-}" != init ]] || init_check
@@ -543,6 +544,7 @@ main() {
                 if [[ "${EV_CMD}" == reset && "${2:-}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/stories/$2.md" \
                       && -n "$(get_fm "${BOARD}/stories/$2.md" held_for)" ]]; then EV_CMD="reset:held"; fi ;;
     dialog) EV_TARGET="${2:-}"; EV_OK="ok (${3:-})" ;;
+    review) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
     *) EV_TARGET="${2:-}" ;;

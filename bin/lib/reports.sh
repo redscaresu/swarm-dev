@@ -148,8 +148,8 @@ outcomes_report() {
   # story/<slug> (newest first, as `url state mergedAt createdAt main_merges checks commits` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
   # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and checks is
-  # its head's check runs as startedAt/completedAt joined by semicolons, commits its commits' committedDate
-  # joined by semicolons), its epic: and
+  # its head's check runs as startedAt/completedAt joined by semicolons, commits the committedDate of
+  # its commits but those base merges, joined by semicolons), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -167,12 +167,12 @@ outcomes_report() {
     # shellcheck disable=SC2016 # $b is jq's
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
-        --json url,state,mergedAt,createdAt,baseRefName,commits,statusCheckRollup --jq '.[] | [.url, .state, .mergedAt // "",
-          .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
-          | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
-          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length),
+        --json url,state,mergedAt,createdAt,baseRefName,commits,statusCheckRollup --jq 'def base_merge($b): .messageHeadline | startswith("Merge ") and ((ltrimstr("Merge ")
+          | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0] | ltrimstr("\u0027") | rtrimstr("\u0027")
+          | ltrimstr("origin/")) == $b);
+        .[] | .baseRefName as $b | [.url, .state, .mergedAt // "", .createdAt, ([.commits[] | select(base_merge($b))] | length),
           ([.statusCheckRollup[]? | select(.startedAt and .completedAt) | .startedAt + "/" + .completedAt] | join(";")),
-          ([.commits[].committedDate] | join(";"))] | @tsv') 2>/dev/null)"; then
+          ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";"))] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"

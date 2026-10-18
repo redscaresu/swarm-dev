@@ -622,7 +622,8 @@ the lead, each write one more line of their own (§ Model and effort). The plugi
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks. The log is local to the machine and append-only,
 holds names and paths but never a brief's or a message's contents, and a write that fails never
 fails the command. The outcome field is the one place free text gets in: the reason given to a
-`reset` or `drop`, the answer given to `dialog`, and the first line of a failed command's error.
+`reset` or `drop`, the answer given to `dialog`, the PR URLs a `review` names (`ok (<PR URLs>)`),
+and the first line of a failed command's error.
 
 `swarm.sh outcomes [--since YYYY-MM-DD]` joins the logs per build. It prints one TSV row for each
 builder in `.swarm/agents.tsv` with the story's slug, kind and risk, the model and effort, the cost
@@ -658,16 +659,18 @@ leaves out the `subagents/` logs beside it. After them come five columns that sp
 from `started` to `merged_at` into phases: `building_min`, `ci_min` (a check
 on the PR's head was running), `review_wait_min` (from `pr_created_at` to the first `review`
 event after it, which hands the PR to the merger, or to the merge), `fixing_min` (from each
-`tell:findings` logged between `pr_created_at` and the merge to the PR's next commit, or, with no
-later commit, to the next check start, `review` or `tell:findings` event, or the merge) and
+`tell:findings` logged between `pr_created_at` and the merge to whichever comes first: the PR's
+next commit (a commit that merges the base in does not count), the next check start, `review` or
+`tell:findings` event, or the merge) and
 `merge_wait_min` (from that first `review` event to the merge). A `review` of the story's epic
-(`swarm.sh review <epic> <PRs>`) counts for each story of that epic. Where two phases cover the same
+(`swarm.sh review <epic> <PRs>`) counts for each story whose PR it names in its outcome. Where two phases cover the same
 minute, the higher one takes it: fixing, then CI, then review wait, then merge wait; a minute none
 covers is building. The five add up to the whole minutes from `started` to `merged_at`, and are
 empty when either is missing. The events are those of every build of the story, so a retry's tells
 count in the first build's minutes too, and the first build's in the retry's; a tell on an earlier,
 abandoned PR is not counted, as it came before this PR was created. `gh` gives only the latest run of
-each check on the PR's last head, so other CI counts as whichever phase lies under it. A story the lead holds after an escalation (`kind: lead` with
+each check on the PR's last head, so other CI counts as whichever phase lies under it. A check cancelled while
+queued, which `gh` dates to the year 1, adds no CI. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
