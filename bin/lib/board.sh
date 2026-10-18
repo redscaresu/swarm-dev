@@ -343,22 +343,25 @@ waiting_on_user() {
   printf '%s' "${waiting%$'\n'}"
 }
 
-# open_item <file> — true while a board item is still open: its file exists and is not status: done,
-# and, for an epic /plan-epic split into child epics (status: split), one of them is still on the board.
+# open_item <file> [seen] — true while a board item is still open: its file exists and is not status:
+# done, and, for an epic /plan-epic split into child epics (status: split), one of them is still open
+# (has_child_epics; [seen] is the split epics already walked, so a parent: cycle ends).
 open_item() {
   [[ -f "$1" ]] || return 1
   case "$(fm "$1" status)" in
     done) return 1 ;;
-    split) has_child_epics "$(basename "$1" .md)" ;;
+    split) has_child_epics "$(basename "$1" .md)" "${2:-}" ;;
   esac
 }
 
-# has_child_epics <epic> — true while an open epic on the board (open_item) names <epic> as the
-# parent: in its front matter (fm_list).
+# has_child_epics <epic> [seen] — true while an open epic on the board (open_item) names <epic> as the
+# parent: in its front matter (fm_list). An epic is never its own child, and one in [seen] (space-
+# separated slugs) is skipped, so epics that name each other as parent: count as having none.
 has_child_epics() {
-  local f
+  local f slug seen="${2:-} $1"
   while IFS= read -r f; do
-    [[ "$(fm_list "${f}" parent)" == "$1" ]] && open_item "${f}" && return 0
+    slug="$(basename "${f}" .md)"
+    [[ " ${seen} " != *" ${slug} "* && "$(fm_list "${f}" parent)" == "$1" ]] && open_item "${f}" "${seen}" && return 0
   done < <(board epics)
   return 1
 }

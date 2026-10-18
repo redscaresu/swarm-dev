@@ -19,7 +19,12 @@ epic() {
 # expect <name> <first line of `next`>
 expect() {
   local got
-  got="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; got="${got%%$'\n'*}"
+  # A next that never returns (a parent: cycle) is killed with its whole process group after 20 s,
+  # so the case fails instead of hanging.
+  # shellcheck disable=SC2016 # the $ are perl's
+  got="$(cd "${dir}" && env -u HERDR_ENV perl -e '$p = fork // die; if (!$p) { setpgrp; exec @ARGV }
+    $SIG{ALRM} = sub { kill "KILL", -$p }; alarm 20; waitpid $p, 0; exit $? >> 8' bash "${SWARM}" next || true)"
+  got="${got%%$'\n'*}"
   if [[ "${got}" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '${got}'"; fails=$((fails + 1)); fi
 }
 
@@ -67,5 +72,13 @@ epic big-a-x 'status: done' 'parent: big-a' 'depends_on: []'
 expect "a split child with no open children of its own leaves the parent done" "plan-epic after"
 epic big-a-x 'status: active' 'parent: big-a' 'depends_on: []'
 expect "a split child with an open child keeps the parent open" "plan-epic big-a-x"
+rm "${dir}/docs/epics/big-a.md" "${dir}/docs/epics/big-a-x.md"
+
+# parent: cycles end: an epic is never its own child, and two that name each other have none.
+epic big 'status: split' 'parent: big' 'depends_on: []'
+expect "a split epic that names itself as parent: counts as done" "plan-epic after"
+epic big 'status: split' 'parent: big-z' 'depends_on: []'
+epic big-z 'status: split' 'parent: big' 'depends_on: []'
+expect "two split epics that name each other as parent: count as done" "plan-epic after"
 
 [ "${fails}" -eq 0 ]
