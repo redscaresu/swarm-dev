@@ -70,6 +70,13 @@ if [[ "${1:-}" == wait-pr ]]; then
   trap 'rc=$?; rm -f "${WAIT_PR_TMP}"; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
 fi
 
+# SWARM_SLEEP_SCALE multiplies the fixed sleeps (nap; default 1, make test sets 0.01). It is checked
+# here, before anything runs: a bad one found at its first sleep would stop a command halfway, after a
+# merge, a started agent or a started codex. At least 0.001, so the shortest of them (1 s) still
+# sleeps a millisecond: 0, or a scale that rounds to it, would make a poll loop a busy one.
+awk -v k="${SWARM_SLEEP_SCALE:-1}" 'BEGIN { exit !(k ~ /^[0-9]*\.?[0-9]+$/ && k + 0 >= 0.001) }' \
+  || die "SWARM_SLEEP_SCALE: '${SWARM_SLEEP_SCALE}' is not a number of at least 0.001"
+
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -428,12 +435,12 @@ tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}
 # the TERM, since a child whose parent dies leaves it. Stderr is off, so bash prints no "Terminated"
 # line for the job.
 stop_codex() {
-  local pids p left
+  local pids p
   pids="$(tree_pids "$1")"
   # shellcheck disable=SC2046,SC2086 # one pid per word
   {
     kill -TERM ${pids}
-    for ((left = CODEX_GRACE; left > 0; left--)); do kill -0 ${pids} || break; sleep 1; done
+    poll_while "${CODEX_GRACE}" kill -0 ${pids}
     for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
     wait "$1"
   } 2>/dev/null || true
@@ -472,7 +479,7 @@ codex_story_prompt() {
 # codex-limit incident, and with fallback_reviewer set, codex_fallback reviews in its place, in what
 # is left of codex_minutes.
 codex_review() {
-  local pid tpid left rc=0 m i args story prompt="" dir log files
+  local pid tpid left t0 rc=0 m i args story prompt="" dir log files
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   if [[ -n "${SWARM_STORY:-}" ]]; then
@@ -513,7 +520,10 @@ codex_review() {
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
-  while ((left-- > 0)) && kill -0 "${pid}" 2>/dev/null; do sleep 1; done
+  t0=${SECONDS}
+  poll_while "${left}" kill -0 "${pid}" 2>/dev/null
+  # What codex used is gone: a fallback gets only the rest.
+  left=$((left - (SECONDS - t0))); ((left > 0)) || left=0
   if ! kill -0 "${pid}" 2>/dev/null; then
     wait "${pid}" || rc=$?
     for ((i = CODEX_GRACE * 5; i > 0; i--)); do kill -0 "${tpid}" 2>/dev/null || break; sleep 0.2; done
