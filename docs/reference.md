@@ -704,12 +704,15 @@ abandoned PR is not counted, as it came before this PR was created. `gh` gives o
 each check on the PR's last head, so other CI counts as whichever phase lies under it. A check cancelled while
 queued, which `gh` dates to the year 1, adds no CI. Last comes `rework` is 1 when a later fix
 reworked the build's merged PR and 0 when none did, as defined under `flow`'s `model_fit` section
-(below). Any PR merged in the repo can be the fix, whether or not a build made it, and whatever
-`--since` is: `outcomes` lists the repo's merged PRs once with `gh`, from the first merge day of its
-builds to 8 days after the last (`gh` dates in UTC, and a local 7th day can be the next day in UTC). It
-is empty on a PR that never merged, on an earlier build that shares the PR (so a reworked PR counts
-once), on a PR merged 7 days ago or less, since a fix can still come, and on every PR when `gh` failed,
-as rework is then unknown (a line on stderr says so). `outcomes` alone
+(below). Any PR merged in the repo can be the fix, whether or not a build made it: `outcomes` lists
+the repo's merged PRs once with `gh`, from the first merge day of the builds it judges to 8 days after
+the last (`gh` dates in UTC, and a local 7th day can be the next day in UTC). It judges the PRs merged
+from 7 days before `--since` on (`flow`'s `--since`, when `flow` runs it), so a 1 shows as soon as a fix
+merges, while a 0 waits until 7 days after the merge. The cell is empty on a PR that never merged, on an
+earlier build that shares the PR (so a reworked PR counts once), on a PR merged 7 days ago or less with
+no fix yet, and where rework is unknown: a PR merged before that window, every PR when `gh` failed, and
+a PR merged before the oldest PR of a `gh` list that came back 1000 long, whose fix the list may have
+missed. A line on stderr names each of the last two cases. `outcomes` alone
 computes rework; `flow`'s `model_fit` and `reviewers` sections read this column. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
@@ -831,9 +834,10 @@ directly before that verb (`doesn't fix`, `not fixing`, `never fixed`) cancels i
 doesn't fix #4" fixes #1 alone. A negation anywhere else, as in "Fixes #1, which was not a
 regression", leaves the fix standing. A release PR (one that changes only `.claude-plugin/plugin.json`)
 fixes nothing. The section reads `outcomes`' `rework` column, so a story merged 7 days ago or less
-is not rework yet. `outcomes` lists the merged PRs with `gh`, the last 1000 per repo. A line on stderr
-warns when a list comes back that long, since rework may then be undercounted. When `gh` fails,
-rework is unknown: it counts as none, and a line under the table says so, as under `reviewers`. A `mergedAt` that does not parse leaves its PR
+counts as rework only once its fix has merged. `outcomes` lists the merged PRs with `gh`, the last 1000 per repo. A line on stderr
+says when a list comes back that long, leaving rework unknown for the PRs merged before its oldest.
+When `gh` fails or a list is that long, unknown rework counts as none, and a line under the table says
+so, as under `reviewers`. A `mergedAt` that does not parse leaves its PR
 out, counted in one line on stderr. A cell with fewer than 5 stories prints its count and `-` in the other columns,
 as too few to judge. After a blank line, a `subagents` block gives a row per model and effort of
 the builds whose subagents cost more than zero (`outcomes` writes `0.00` for a build that ran

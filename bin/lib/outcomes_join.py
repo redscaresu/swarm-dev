@@ -119,21 +119,28 @@ for line in open(sys.argv[3], errors="ignore") if os.path.exists(sys.argv[3]) el
         named_reviews[pr_key(u)].append(f"review={e[0]}")
 
 # Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
-# PRs of these builds, with every PR of their repos merged from the first one's day to REWORK_DAYS after
-# the last one's as a possible fix, whatever --since. gh's merged: dates are UTC, so the end has a day
-# more for a local 7th day that is the next day in UTC. A reworked PR counts once, on the latest build on
-# it, as findings do, and only once its REWORK_DAYS have passed, as a fix may still come. When gh fails,
-# rework is unknown and left empty.
-judged = {pr_key(r[6]): r[8] for r in rows if r[4] and r[6] and r[7] == "MERGED" and r[8]}
-days = sorted(m[:10] for m in judged.values())
-end = (datetime.date.fromisoformat(days[-1]) + datetime.timedelta(days=REWORK_DAYS + 1)).isoformat() if days else ""
-merged_by = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], f"merged:{days[0]}..{end}") if judged else {}
-gh_failed = merged_by is None
+# PRs of these builds from rework_from(SWARM_REWORK_SINCE) on (flow's --since, else outcomes' own), with
+# every PR of their repos merged from the first one's day to REWORK_DAYS after the last one's as a possible
+# fix. gh's merged: dates are UTC, so the end has a day more for a local 7th day that is the next day in
+# UTC. A mergedAt that does not parse is left out of the search, and rework_of counts it on stderr. A
+# reworked PR counts once, on the latest build on it, as findings do; a 1 is written at once, a 0 only
+# once its REWORK_DAYS have passed, as a fix may still come. Rework is unknown, and left empty, for a PR
+# merged before the window, for all when gh fails, and for a PR merged before the oldest of a gh list at
+# its limit, whose fix the list may have missed.
+lo = rework_from(os.environ.get("SWARM_REWORK_SINCE", ""))
+judged = {pr_key(r[6]): r[8] for r in rows if r[4] and r[6] and r[7] == "MERGED" and r[8]
+          and not (lo and merge_time(r[8]) and local_day(merge_time(r[8])) < lo)}
+days = sorted(t.date() for t in map(merge_time, judged.values()) if t)
+search = f"merged:{days[0]}..{days[-1] + datetime.timedelta(days=REWORK_DAYS + 1)}" if days else ""
+got = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], search) if days else ({}, {})
+gh_failed = got is None
 if gh_failed:
     print("rework: gh failed, so rework is left empty.", file=sys.stderr)
-merged_by = merged_by or {}
+merged_by, oldest = got or ({}, {})
 for k, m in judged.items():
     merged_by.setdefault(k, (m, "", None))
+cut = {k for k, m in judged.items() for t in [merge_time(m)]
+       if t and oldest.get(k.partition("#")[0]) and t < oldest[k.partition("#")[0]]}
 reworked = rework_of(merged_by, finding_rows(sys.argv[1], ("escaped",)), judged)
 settled = rework_settled()
 last = {pr_key(r[6]): i for i, r in enumerate(rows) if r[6]}
@@ -156,10 +163,11 @@ for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(ro
     story_merged = ("true" if any(p[1] == "MERGED" for p in parsed(prs)) else "false") if asked else ""
     fixed, declined = (sum(n for (o, _), n in c.items() if o == k) for k in ("fixed", "declined"))
     merged = merged if asked and state == "MERGED" else ""
-    # 1 when a later fix reworked its merged PR, 0 when none did; empty on an unmerged PR, an earlier build
-    # on it, one merged too recently to tell, or when gh failed.
-    merged_t = merge_time(merged)
-    rework = str(int(pr_key(pr) in reworked)) if merged_t and last[pr_key(pr)] == i and local_day(merged_t).isoformat() < settled and not gh_failed else ""
+    # 1 when a later fix reworked its merged PR, 0 when none did once REWORK_DAYS passed; empty on an
+    # unmerged PR, an earlier build on it, and where rework is unknown.
+    merged_t, k = merge_time(merged), pr_key(pr)
+    known = merged_t and last[k] == i and k in judged and k not in cut and not gh_failed
+    rework = "1" if known and k in reworked else "0" if known and local_day(merged_t).isoformat() < settled else ""
     print("\t".join([day, slug, kind, risk, role, model, effort, cost, tokens, tf, tn, tr, closes,
                      str(fixed), pr, state, attempts] + f[AS_IS:SUBAGENT]
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),

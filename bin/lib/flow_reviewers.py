@@ -39,5 +39,5 @@ per = f"{round(total / len(rounds), 1):g}" if rounds else "0"
 print(f"\nprs\trounds\trounds_per_pr\tmax_rounds\n{len(rounds)}\t{total}\t{per}\t{max(rounds.values(), default=0)}")
 if epic:
     print("\n" + "\n".join(["pr"] + sorted(urls[k] for k in counted | set(rounds))))
-if rework_unknown(rows):
-    print("\nrework: gh failed when outcomes listed the merged PRs, so rework is unknown and counts as none.")
+if rework_unknown(rows, since):
+    print("\nrework: outcomes could not list every merged PR with gh (it failed or hit its limit), so some rework is unknown and counts as none.")

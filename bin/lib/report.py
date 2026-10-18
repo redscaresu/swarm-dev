@@ -150,11 +150,11 @@ GH_LIMIT = 1000
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
 
 def merged_prs(urls, search):
-    # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
-    # in that gh's search finds, or None when gh fails. A list that comes back GH_LIMIT long says on
-    # stderr that rework may be undercounted. files is read for rework_of's release PRs.
+    # (pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
+    # in that gh's search finds, and repo -> the oldest mergedAt of each list that came back GH_LIMIT long,
+    # before which a fix may be missing), or None when gh fails. files is read for rework_of's release PRs.
     # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
-    out = {}
+    out, oldest = {}, {}
     for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
         try:
             got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
@@ -165,14 +165,26 @@ def merged_prs(urls, search):
         if not isinstance(prs, list):
             return None
         if len(prs) >= GH_LIMIT:
-            print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework may be undercounted.", file=sys.stderr)
+            oldest[repo.lower()] = min((t for t in (merge_time(p.get("mergedAt") or "") for p in prs) if t), default=None)
+            print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework is unknown for its PRs merged before"
+                  f" {oldest[repo.lower()]}.", file=sys.stderr)
         out.update({pr_key(p["url"]): (p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
                                        sorted(f.get("path", "") for f in p.get("files") or [])) for p in prs})
-    return out
+    return out, oldest
 
-def rework_unknown(rows):
-    # Whether outcomes could not judge rework (gh failed): the latest build on a PR merged before
-    # rework_settled() has an empty rework cell, which outcomes leaves only then.
+def rework_from(since):
+    # The first local merge day outcomes judges rework for, given flow's or its own --since: REWORK_DAYS
+    # before it, so a fix in the window still counts. None for no --since (0000-00-00 or empty) or a bad one.
+    try:
+        return datetime.date.fromisoformat(since) - datetime.timedelta(days=REWORK_DAYS)
+    except (ValueError, OverflowError):
+        return None
+
+def rework_unknown(rows, since):
+    # Whether outcomes could not judge rework for some PR it should have (gh failed, or its list hit
+    # GH_LIMIT): the latest build on a PR merged from rework_from(since) to before rework_settled() has
+    # an empty rework cell.
     last = {pr_key(r["pr"]): r for r in rows if r.get("pr")}
-    merged = [(merge_time(r.get("merged_at", "")), r) for r in last.values()]
-    return any(t and local_day(t).isoformat() < rework_settled() and r.get("rework") == "" for t, r in merged)
+    lo = rework_from(since)
+    days = [(local_day(t), r) for r in last.values() for t in [merge_time(r.get("merged_at", ""))] if t]
+    return any((not lo or d >= lo) and d.isoformat() < rework_settled() and r.get("rework") == "" for d, r in days)

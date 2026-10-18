@@ -181,7 +181,9 @@ outcomes_report() {
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
+  # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
+  SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
+    SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
@@ -268,7 +270,7 @@ flow_report() {
   # Every row, unfiltered, so its rows line up one to one with agents.tsv's builder lines, and an epic
   # PR built before since still keeps its later findings.
   # shellcheck disable=SC2119 # takes no argument here
-  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(outcomes_report)"
+  [[ ! -f "${AGENTS_LOG}" ]] || rows="$(SWARM_REWORK_SINCE="${since}" outcomes_report)"
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
   flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}"

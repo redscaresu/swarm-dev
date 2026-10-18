@@ -101,5 +101,5 @@ print("\nsubagents\teffort\tsubagent_cost_usd\tbuild_cost_usd\tsubagent_share")
 for (model, effort), (sub, total) in sorted(subs.items()):
     print("\t".join([model, effort, f"{sub:.2f}", f"{total:.2f}", f"{100 * sub / total:.0f}%" if total else "-"]))
 print(f"\nA cell with fewer than {MIN_STORIES} stories prints its count alone: too few to judge.")
-if rework_unknown(rows):
-    print("rework: gh failed when outcomes listed the merged PRs, so rework is unknown and counts as none.")
+if rework_unknown(rows, since):
+    print("rework: outcomes could not list every merged PR with gh (it failed or hit its limit), so some rework is unknown and counts as none.")
