@@ -219,9 +219,10 @@ key_clash() {
   local k l h u head up deps=""
   up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)" || return 0
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
-  [[ "$(get_fm "${PROJECT_DIR}/$1" status)" == "$(get_fm - status <<< "${head}")" ]] || deps="depends_on"
+  # The file as it is (- reads stdin), never its state in STATE_DIR.
+  [[ "$(get_fm - status < "${PROJECT_DIR}/$1")" == "$(get_fm - status <<< "${head}")" ]] || deps="depends_on"
   for k in ${SET_FM_KEYS} ${deps}; do
-    l="$(get_fm "${PROJECT_DIR}/$1" "${k}")"; h="$(get_fm - "${k}" <<< "${head}")"; u="$(get_fm - "${k}" <<< "${up}")"
+    l="$(get_fm - "${k}" < "${PROJECT_DIR}/$1")"; h="$(get_fm - "${k}" <<< "${head}")"; u="$(get_fm - "${k}" <<< "${up}")"
     [[ "${u}" == "${h}" || "${u}" == "${l}" ]] && continue
     [[ "${l}" == "${h}" && " ${deps} " != *" ${k} "* ]] && continue
     echo "${k}"; return 0
@@ -237,7 +238,7 @@ keys_back() {
   was="$(git -C "${PROJECT_DIR}" show "$2:$1")"
   for k in ${SET_FM_KEYS}; do
     v="$(get_fm "$3" "${k}")"
-    [[ "${v}" == "$(get_fm - "${k}" <<< "${was}")" ]] || set_fm "${PROJECT_DIR}/$1" "${k}" "${v}" || bad+=" ${k}"
+    [[ "${v}" == "$(get_fm - "${k}" <<< "${was}")" ]] || set_file_fm "${PROJECT_DIR}/$1" "${k}" "${v}" || bad+=" ${k}"
   done
   [[ -z "${bad}" ]] || { echo "reconcile: cannot set${bad} again on $1 after the pull (its copy is in $3)"; return 1; }
   echo "reconcile: $1 took the pull and keeps its uncommitted front-matter edit"
@@ -303,7 +304,9 @@ CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or 
 # the story's attempts: by one, and when that build was escalate, the story becomes the lead's
 # (escalate_story). impossible, paused and cleared-on-error count nothing. impossible makes the story
 # the lead's (impossible_story) whether or not there was a build to clear; paused and cleared-on-error
-# hold it for the lead (held_story) when the close ends a build.
+# hold it for the lead (held_story) when the close ends a build. A close that ends a build with no
+# open or merged PR on story/<name> logs an idle-no-pr incident, the one place it is logged, unless
+# the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible).
 close_agent() {
   local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why
   # The message never repeats the word: main logs a die's first line.
@@ -316,7 +319,11 @@ close_agent() {
     die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
   fi
   archive_session "$1"
-  if prs="$(failed_build "$1")"; then counted=1; fi
+  if prs="$(failed_build "$1")"; then
+    counted=1
+    [[ "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ || "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" == True ]] \
+      || record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
+  fi
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
@@ -498,7 +505,7 @@ clear_build() {
   fi
   # A held child's hold goes with its build, and so does the prs: line the hold kept.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
-    set_fm "${BOARD}/stories/$1.md" held_by; set_fm "${BOARD}/stories/$1.md" prs
+    state_set "${BOARD}/stories/$1.md" held_by "" prs ""
   fi
 }
 

@@ -87,8 +87,10 @@ The other commands are tools the lead runs; they are listed in
 Every agent is a full Claude Code session on your own logins. On infrafactory, from 2026-10-09 to
 2026-10-16, a story's build averaged $5.75, and the whole swarm cost $1211.60 for 137 merged PRs
 (about $9 each, planning and review included), at list prices from `swarm.sh flow` and `outcomes`.
-The `cost` section of `swarm.sh flow` shows where your own tokens went, and its `ci_health`
-section shows how long CI takes per push, how often it goes red and how often it flakes.
+The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
+section shows how long CI takes per push, how often it goes red and how often it flakes, and its
+`incidents` section counts, per day, the waits that timed out, the logins that expired and the
+builders that stopped with no PR.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the
@@ -106,7 +108,9 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
   [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
   ```
 
-- [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status.
+- [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
+  file's committed status: what swarm.sh sets later (a review, an unblock) is kept in
+  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` reads both.
 - To update: `! claude plugin marketplace update swarm-dev`, then
   `! claude plugin update swarm-dev@swarm-dev`, and restart.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
