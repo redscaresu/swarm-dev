@@ -58,10 +58,11 @@ def agent_name(n):
     return (n if re.match(r"[a-z]", n) else "s" + n)[:32]
 
 def usage(path):
-    # A builder's own tokens and est. USD, and its subagents' est. USD per model (opus, haiku, ...). A
-    # subagent turn is one with parent_tool_use_id or isSidechain set in the builder's log, or any turn in
-    # subagents/*.jsonl in the folder named after its session beside the log: Claude Code writes either.
-    tok, usd, sub, seen = [0, 0, 0, 0], 0.0, collections.Counter(), set()
+    # A builder's own tokens and est. USD, its subagents' tokens, and their est. USD per model (opus,
+    # haiku, ...). A subagent turn is one with parent_tool_use_id or isSidechain set in the builder's log,
+    # or any turn in subagents/*.jsonl in the folder named after its session beside the log: Claude Code
+    # writes either. close's copy (.jsonl.gz) holds no subagents/ folder, so only the first shape is read.
+    tok, usd, sub, sub_tok, seen = [0, 0, 0, 0], 0.0, collections.Counter(), 0, set()
     side = glob.glob(os.path.join(glob.escape(re.sub(r"\.jsonl(\.gz)?$", "", path)), "subagents", "*.jsonl"))
     for p in [path] + sorted(side):
         for d, model, t, cost in turns(p, seen):
@@ -69,7 +70,8 @@ def usage(path):
                 tok, usd = [x + y for x, y in zip(tok, t)], usd + cost
             else:
                 sub[next((k for k in PRICES if k in model), model)] += cost
-    return tok, usd, sub
+                sub_tok += sum(t)
+    return tok, usd, sub, sub_tok
 
 builds, tries = [], collections.Counter()
 for line in open(log, errors="ignore"):
@@ -141,15 +143,13 @@ for b in builds:
     day, role, _, _, model, effort, _ = b["f"]
     if day < since:
         continue
-    cost = tokens = sub_cost = sub_models = ""
+    cost = tokens = sub_cost = sub_models = sub_tokens = ""
     tok = ["", "", "", ""]
     if b["path"]:
-        t, usd, sub = usage(b["path"])
+        t, usd, sub, sub_t = usage(b["path"])
         cost, tokens, tok = f"{usd:.2f}", str(sum(t)), [str(x) for x in t]
-        # close's copy (.jsonl.gz) never holds the subagents/ folder, so its subagent cost is unknown.
-        if not b["path"].endswith(".gz"):
-            sub_cost, sub_models = f"{sum(sub.values()):.2f}", ",".join(f"{m}:{v:.2f}" for m, v in sorted(sub.items()))
+        sub_cost, sub_models, sub_tokens = f"{sum(sub.values()):.2f}", ",".join(f"{m}:{v:.2f}" for m, v in sorted(sub.items())), str(sub_t)
     counts = [str(b["steer"][c]) for c in ("tell:findings", "tell:nudge", "tell:resume", "close")]
     steps = [b["at"].get(k, "") for k in ("escalate", "dialog", "answer", "escalated", "reset", "drop")]
     print("\t".join([day, b["slug"], role, model, effort, cost, tokens] + counts + [str(b["n"]), pulls(b["path"]), b["started"]]
-                    + tok + [b.get("cause", "")] + steps + [sub_cost, sub_models]))
+                    + tok + [b.get("cause", "")] + steps + [sub_cost, sub_models, sub_tokens]))

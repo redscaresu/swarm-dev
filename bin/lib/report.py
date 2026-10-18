@@ -47,7 +47,7 @@ def turns(path, seen):
             if not u or not mid or mid in seen:
                 continue
             t = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
-            if not all(isinstance(x, (int, float)) for x in t):
+            if not isinstance(model, str) or not all(isinstance(x, (int, float)) for x in t):
                 continue
             price = next((v for k, v in PRICES.items() if k in model), None)
         except (ValueError, AttributeError, TypeError):
