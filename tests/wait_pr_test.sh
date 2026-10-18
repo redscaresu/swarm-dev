@@ -146,12 +146,13 @@ fresh; wait_pr SWARM_WAIT_PR_GRACE=soon
 is "SWARM_WAIT_PR_GRACE that is not seconds: exits 2" 2 "${rc}"
 check "SWARM_WAIT_PR_GRACE that is not seconds: says so" said "SWARM_WAIT_PR_GRACE is 'soon'"
 
-# --- The deadline holds on the retry paths too: past it, no pause before another read.
-fresh; for n in 1 2 3 4; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
+# --- The deadline holds on the retry paths too: past it, no pause before another read. Three rate
+# limits, then green: with no deadline there, the retries would reach green.
+fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
 is "check reads retried past --timeout: exits 2" 2 "${rc}"
 is "check reads retried past --timeout: one read" 1 "$(reads)"
 check "check reads retried past --timeout: says so" grep -qE "timed out after [0-9]+s, last error: .*rate limit" "${ROOT}/out"
-fresh; for n in 1 2 3 4; do echo "${RATE}" > "${FX}/head.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
+fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/head.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
 is "head reads retried past --timeout: exits 2" 2 "${rc}"
 is "head reads retried past --timeout: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 
