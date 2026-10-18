@@ -94,7 +94,8 @@ builders that stopped with no PR.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. Agents start with a short list of environment variables, and a token you exported
-reaches a builder only when its story names it under `env:`
+reaches a builder only when its story names it under `env:`. If your shell is bash, a secret exported
+in `~/.bash_profile` or `~/.bashrc` still reaches the shells an agent runs
 ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
 details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).

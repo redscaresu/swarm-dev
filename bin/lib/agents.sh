@@ -179,10 +179,11 @@ next_pane() {
 }
 
 # AGENT_ENV: the variables every agent starts with besides its locale (LANG, LC_*), each with
-# swarm.sh's own value when it has one: the env-allowlist spike's (herdr 0.9.1), plus where claude
-# and codex keep their logins and the ssh agent's socket, so a push over ssh works. Paths, never
-# secrets. Any other variable reaches an agent only by name, through a story's env: (story_env).
-AGENT_ENV="PATH HOME TERM USER LOGNAME SHELL TMPDIR LANG CLAUDE_CONFIG_DIR CODEX_HOME SSH_AUTH_SOCK"
+# swarm.sh's own value when it has one: the env-allowlist spike's (herdr 0.9.1), plus where claude,
+# codex, gh and git keep their logins and config, the ssh agent's socket, so a push over ssh works,
+# and SWARM_PROJECT, so an agent's swarm.sh finds the project the lead named. Paths, never secrets.
+# Any other variable reaches an agent only by name, through a story's env: (story_env).
+AGENT_ENV="PATH HOME TERM USER LOGNAME SHELL TMPDIR LANG CLAUDE_CONFIG_DIR CODEX_HOME XDG_CONFIG_HOME GH_CONFIG_DIR GIT_CONFIG_GLOBAL SSH_AUTH_SOCK SWARM_PROJECT"
 # HERDR_PANE_ENV: herdr's variables for a pane, which the agent's swarm.sh and herdr's hooks read.
 # Only the new pane's shell has its values, so the launch line names them and that shell expands them.
 HERDR_PANE_ENV="HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_BIN_PATH"
@@ -193,42 +194,67 @@ AGENT_SHELL="${SWARM_AGENT_SHELL:-/bin/zsh -f}"
 ENV_READY="swarm: agent environment ready"
 
 # story_env <story> — the names under its env: ([A, B]; brackets, quotes, commas, a trailing #
-# comment and whitespace gone), each checked against [A-Z_][A-Z0-9_]*. A story holds names, never
-# values. A bad name prints the reason and returns 1.
+# comment and whitespace gone). A story holds names, never values. Refused, with the reason printed
+# and 1 returned: a block list (env: with - items under it, which would read as none); a name that is
+# not [A-Z_][A-Z0-9_]*; one every agent gets already or that swarm.sh or herdr set (AGENT_ENV, LC_*,
+# HERDR_*, ZDOTDIR), which would replace the agent's own; and one swarm.sh's environment does not
+# have, without which the builder would fail later and burn an attempt.
 story_env() {
-  local v n names out=""
+  local v n names out="" exported
   v="$(get_fm "$1" env)"; v="${v%%#*}"; v="${v%"${v##*[![:space:]]}"}"
+  if [[ -z "${v}" ]] && awk '/^---$/ && ++n == 2 { exit } n == 1 && bare && /^[ \t]+-/ { f = 1; exit }
+      n == 1 { bare = /^env:[ \t]*(#.*)?$/ } END { exit !f }' "$1"; then
+    echo "$1: env: is a block list, which reads as no names; write it on one line as env: [NAME, ...]"; return 1
+  fi
   v="${v#\[}"; v="${v%\]}"; v="${v//,/ }"; v="${v//\"/}"; v="${v//\'/}"
   read -r -a names <<< "${v}"   # read, not a bare word list, so a * is never globbed
+  exported=" $(compgen -e | tr '\n' ' ') "   # the environment only, never swarm.sh's own variables
   for n in ${names[@]+"${names[@]}"}; do
     [[ "${n}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "$1: env: '${n}' is not a variable name ([A-Z_][A-Z0-9_]*)"; return 1; }
+    [[ " ${AGENT_ENV} ZDOTDIR " != *" ${n} "* && "${n}" != HERDR_* && "${n}" != LC_* ]] \
+      || { echo "$1: env: ${n} is set for every agent by swarm.sh or herdr, so a story cannot name it"; return 1; }
+    [[ "${exported}" == *" ${n} "* ]] \
+      || { echo "$1: env: ${n} is not set here, so its builder would start without it; export it, then try again"; return 1; }
     out+=" ${n}"
   done
   printf '%s' "${out# }"
 }
 
-# clean_env <pane> <name> <names> — the pane's shell, before an agent starts in it, swaps itself
-# through env -i for a wrapper that exports AGENT_ENV, the locale and <names> from swarm.sh's own
-# environment, deletes itself, and execs AGENT_SHELL. herdr passes no env and the agent inherits the
-# pane's shell, which holds the user's whole environment. The wrapper is 0600 under .swarm/launch, so
-# no value reaches argv, herdr's typed line or the scrollback. A name swarm.sh does not have is left
-# out, and said so.
-clean_env() {
-  local pane="$1" file="${PROJECT_DIR}/.swarm/launch/$2" exported n line out
-  exported=" $(compgen -e | tr '\n' ' ') "   # only the environment: a story must not name swarm.sh's own variables
-  for n in $3; do [[ "${exported}" == *" ${n} "* ]] || echo "$2: env: ${n} is not set here, so the agent starts without it" >&2; done
-  mkdir -p "${file%/*}"; rm -f "${file}"
+# launch_file <file> <names> — write clean_env's wrapper: it deletes itself, exports AGENT_ENV, the
+# locale and <names> with swarm.sh's values, points ZDOTDIR at .swarm/zdotdir (empty), says it is
+# ready, and execs AGENT_SHELL. ZDOTDIR covers the shells the agent starts later (Claude Code's Bash
+# tool, codex's commands): zsh reads its user startup files, and Claude Code its snapshot's .zshrc,
+# from there, never from HOME, where a secret could be exported again. 0600, made by its owner alone.
+launch_file() {
+  local zdot="${PROJECT_DIR}/.swarm/zdotdir" exported n
+  exported=" $(compgen -e | tr '\n' ' ') "
+  mkdir -p "${1%/*}" "${zdot}"; rm -f "$1"
   (umask 077; {
-    printf '/bin/rm -f -- %q\n' "${file}"
-    for n in ${AGENT_ENV} $(compgen -e | grep '^LC_' || true) $3; do
+    printf '/bin/rm -f -- %q\n' "$1"
+    for n in ${AGENT_ENV} $(compgen -e | grep '^LC_' || true) $2; do
       [[ "${exported}" != *" ${n} "* ]] || printf 'export %s=%q\n' "${n}" "${!n}"
     done
-    printf 'echo %q\nexec %s\n' "${ENV_READY}" "${AGENT_SHELL}"
-  } > "${file}")
+    printf 'export ZDOTDIR=%q\necho %q\nexec %s\n' "${zdot}" "${ENV_READY}" "${AGENT_SHELL}"
+  } > "$1")
+}
+
+# clean_env <pane> <name> <names> — before an agent starts in <pane>, its shell swaps itself through
+# env -i for launch_file's wrapper. herdr passes no env and the agent inherits the pane's shell, which
+# holds the user's whole environment. The wrapper is a 0600 file under .swarm/launch, so no value
+# reaches argv, herdr's typed line or the scrollback. story_env has checked <names>.
+clean_env() {
+  local pane="$1" file="${PROJECT_DIR}/.swarm/launch/$2" n line out try typed=""
+  launch_file "${file}" "$3"
   line="exec /usr/bin/env -i HERDR_ENV=1"
   for n in ${HERDR_PANE_ENV}; do line+=" ${n}=\"\$${n}\""; done
   line+=" /bin/bash $(printf '%q' "${file}")"
-  if ! out="$(herdr pane run "${pane}" "${line}" 2>&1 && herdr pane wait-output "${pane}" --match "${ENV_READY}" --timeout 30000 2>&1)"; then
+  # A freshly split pane is not always ready (as for agent start): a run that fails typed nothing, so
+  # retry it once.
+  for try in 1 2; do
+    if out="$(herdr pane run "${pane}" "${line}" 2>&1)"; then typed=1; break; fi
+    [[ ${try} -eq 2 ]] || sleep 3
+  done
+  if [[ -z "${typed}" ]] || ! out="$(herdr pane wait-output "${pane}" --match "${ENV_READY}" --timeout 30000 2>&1)"; then
     rm -f "${file}"
     herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
     die "$2: the pane's shell did not take the agent's environment: ${out}"

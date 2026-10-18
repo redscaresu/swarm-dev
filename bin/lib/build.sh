@@ -947,12 +947,16 @@ conduct_epic() {
   echo "${want#conduct-}"
 }
 
-# epic_env <epic> — the env: names of every story on the board in <epic> (empty: the stories with no
-# epic), so the builders a conductor starts can receive them. A bad name prints the reason and returns 1.
+# epic_env <epic> — the env: names of the stories in <epic> (empty: the stories with no epic) that a
+# builder may still get: open (ready or blocked) and of a kind an agent builds. A lead story's names
+# stay with the lead, and a done one's never stop a conductor. Each is checked as story_env does; a
+# refused one prints the reason and returns 1.
 epic_env() {
   local s n out=""
   while IFS= read -r s; do
     [[ "$(fm "${s}" epic)" == "$1" ]] || continue
+    case "$(fm "${s}" status)" in ready|blocked) ;; *) continue ;; esac
+    agent_kind "$(fm "${s}" kind)" || continue
     n="$(story_env "${s}")" || { echo "${n}"; return 1; }
     out+=" ${n}"
   done < <(board stories)

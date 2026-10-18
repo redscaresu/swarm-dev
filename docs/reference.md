@@ -256,18 +256,33 @@ that turns CI on the base green, does not clear the stop either: once the cause 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
 `zsh -f` (no rc file runs) holding only:
-`PATH`, `HOME`, `TERM`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and the `LC_*` variables,
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `SSH_AUTH_SOCK` (each with swarm.sh's value, when it has one),
-`HERDR_ENV=1`, and herdr's own variables for the pane. A story's `env: [NAME, ...]` adds those names
-for its builder. A conductor gets the names of every story in its epic (or, for `conduct --backlog`,
-of every story with no epic), so the builders it starts can receive them. Each value comes from the
-session that runs `swarm.sh`, and a name it does not have is left out with a warning. A name that is
-not `[A-Z_][A-Z0-9_]*` makes `story` and `conduct` refuse before anything starts. No value goes
-through a command line: swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's
-shell runs and which deletes itself, so the pane's scrollback shows the launch line with no value in
-it. A token `gh` reads from `GH_TOKEN` reaches no agent unless a story names it, so log `gh` in with
+
+- `PATH`, `HOME`, `TERM`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` and the `LC_*` variables;
+- where logins and config live: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `XDG_CONFIG_HOME`, `GH_CONFIG_DIR`
+  and `GIT_CONFIG_GLOBAL`, and the ssh agent's `SSH_AUTH_SOCK`;
+- `SWARM_PROJECT`, when you named the project with it, so the agent's own `swarm.sh` finds it;
+- `ZDOTDIR`, set to `.swarm/zdotdir`, an empty directory;
+- `HERDR_ENV=1`, and herdr's own variables for the pane.
+
+Each takes swarm.sh's value, when it has one, except herdr's, which come from the new pane. A story's
+`env: [NAME, ...]` adds those names for its builder. A conductor gets the names of its epic's open
+(`ready` or `blocked`) code, docs and chore stories (for `conduct --backlog`, those with no epic), so
+the builders it starts can receive them; a `lead` story's names stay with you. Each value comes from
+the session that runs `swarm.sh`. `story` and `conduct` refuse, before anything starts, a block list
+(write `env:` on one line), a name that is not `[A-Z_][A-Z0-9_]*`, a name from the list above or one
+starting `HERDR_` or `LC_`, and a name that session does not have. No value goes through a command
+line: swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and
+which deletes itself, so the pane's scrollback shows the launch line with no value in it. A token
+`gh` reads from `GH_TOKEN` reaches no agent unless a story names it, so log `gh` in with
 `gh auth login`. Provider settings (Foundry, Bedrock, Vertex) go under `env` in
 `~/.claude/settings.json`, which every Claude Code session reads.
+
+`ZDOTDIR` covers the shells an agent starts later, such as Claude Code's Bash tool and codex's
+commands: zsh reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc` or `~/.zlogin`. It still reads
+the system files in `/etc` (`zshenv`, `zprofile`, `zshrc`, `zlogin`). If your `SHELL` is bash, those
+shells are bash, which `ZDOTDIR` does not reach: `~/.bash_profile` (or `~/.bash_login`, `~/.profile`)
+and `~/.bashrc` still run, and a secret exported there reaches the agent. Keep secrets out of those
+files.
 
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
 `escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
