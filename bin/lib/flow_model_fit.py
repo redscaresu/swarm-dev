@@ -12,7 +12,6 @@ import collections, datetime, json, os, re, subprocess
 from report import *
 from touches_rows import entries as touches_entries
 MIN_STORIES = 5
-AREAS = ("bin", "commands", "docs", "tests")
 GH_SECONDS = 30
 GH_LIMIT = 1000
 project_dir = os.path.dirname(os.path.dirname(findings))
@@ -32,13 +31,13 @@ def size(lines):
     return "<=100" if n <= 100 else "<=300" if n <= 300 else ">300"
 
 def area(touches):
-    # The most named top-level area, the first named on a tie; other for a file outside AREAS, none for no
-    # touches. The files are touches_rows.py's, so a bare name after a file (g in `bin/x.sh:f, g`) is
+    # The top-level folder most of its files are in (bin/, src/, ...; root for a file at the project's
+    # root), the first named on a tie; none for no touches. The files are touches_rows.py's, so a bare name after a file (g in `bin/x.sh:f, g`) is
     # a function unless the project has a file by that name (Makefile). The project is the findings
     # log's (<project>/.swarm/<log>); a file in another repo is read under no repos_dir, as a function.
     # Each file counts once, however many of its functions follow it.
     tops = [f.split("/") for f in dict.fromkeys(f for _, f, _ in touches_entries({"touches": touches}, project_dir, ""))]
-    tops = [f"{p[0]}/" if len(p) > 1 and p[0] in AREAS else "other" for p in tops]
+    tops = [f"{p[0]}/" if len(p) > 1 else "root" for p in tops]
     return collections.Counter(tops).most_common(1)[0][0] if tops else "none"
 
 def minutes(start, end):

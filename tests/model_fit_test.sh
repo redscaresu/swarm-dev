@@ -6,10 +6,10 @@
 # first attempt (s4 is still in flight, so it is left out), 6 builds over 5, 4 findings over 5 PRs, 420 minutes on average. #10, merged 3 days
 # after #1 and saying it fixes it, makes s1 rework; #11 fixes #2 8 days after it merged, which is not. An
 # escaped finding 3 days after #3 merged is rework, one 8 days after #5 is not; both count as escaped.
-# Cell sonnet/medium docs none other holds two stories, so it prints its count alone. Then the same
+# Cell sonnet/medium docs none root holds two stories, so it prints its count alone. Then the same
 # through swarm.sh flow: a story deleted in a git commit keeps its class. The s stories' touches hold
 # a parenthesised note and functions after a file (`bin/y.sh:f, g, h, i`), which are no files; t1's
-# and t2's name a bare Makefile and LICENSE the project has, which are files (other), and t2's docs file
+# and t2's name a bare Makefile and LICENSE the project has, which are files at the root (root), and t2's docs file
 # counts once whatever functions follow it. Also, a gh missing from PATH falls back to escaped findings,
 # the gh list runs from 7 days before --since (or the first counted build) to 7 after --until, a cell
 # whose merges gh could not read prints no rate, a story closed unmerged counts against the rate, a
@@ -69,7 +69,7 @@ check "the five-story cell: every column, the escalation to fable under opus, re
   "$(grep $'^opus\thigh\tcode' <<< "${out}")" $'opus\thigh\tcode\t-\t<=300\tbin/\t5\t2.25\t75%\t1.2\t0.8\t2\t2\t420'
 check "no cell for the fable build" "$(grep -c '^fable' <<< "${out}" || true)" 0
 check "the two-story cell prints its count and no verdict" \
-  "$(grep $'^sonnet\tmedium' <<< "${out}")" $'sonnet\tmedium\tdocs\t-\tnone\tother\t2\t-\t-\t-\t-\t-\t-\t-'
+  "$(grep $'^sonnet\tmedium' <<< "${out}")" $'sonnet\tmedium\tdocs\t-\tnone\troot\t2\t-\t-\t-\t-\t-\t-\t-'
 check "the gh list starts 7 days before --since" "$(cat "${dir}/gh.args")" \
   "pr list -R o/r --state merged --limit 1000 --json url,mergedAt,title,body,files --search merged:>=2026-09-24"
 SINCE=0000-00-00 UNTIL=2026-10-05 section > /dev/null
@@ -96,6 +96,12 @@ print(int("o/r#1" in rework_of({"o/r#1": ("2026-10-01T00:00:00Z", "", None), j: 
 }
 check "a fix, rework of or regression from phrase fixes a PR, in a clause of its own" \
   "$(fixes o/r#2 'Fix #1')$(fixes o/r#2 $'Docs\nThis is a rework of #1.')$(fixes o/r#2 "Regression from ${U}/1")$(fixes o/r#2 'Merge after #3. Fixes #1')" 1111
+check "fixing, hotfix, bugfix and quickfix are fix verbs" \
+  "$(fixes o/r#2 'Fixing #1')$(fixes o/r#2 'Hotfix for #1')$(fixes o/r#2 'bugfix: #1 dropped rows')$(fixes o/r#2 'Quick-fix #1')" 1111
+check "a negation elsewhere in the clause, or before another reference's fix verb, leaves the fix standing" \
+  "$(fixes o/r#2 'Fixes #1, which was not a regression')$(fixes o/r#2 'Fixes #1: retries did not fix the flake')$(fixes o/r#2 "Fixes #1 and doesn't fix #4")" 111
+check "a negation directly before the fix verb governing a reference cancels that reference alone" \
+  "$(fixes o/r#2 "Fixes #4 and doesn't fix #1")$(fixes o/r#2 'Fixes #4, not yet fixing #1')" 00
 check "a PR named on a Merge after, Depends on, Stacked on or Merged origin/main line, or with no fix phrase, is not fixed" \
   "$(fixes o/r#2 "Merge after the fix in ${U}/1")$(fixes o/r#2 'Depends on the fix in #1')$(fixes o/r#2 $'Docs\n- Stacked on the fix in #1')$(fixes o/r#2 'Merged origin/main at abc, which fixed #1')$(fixes o/r#2 'Refactors #1')" 00000
 check "a fix phrase in another clause, or a negated one, does not fix a PR" \
@@ -120,11 +126,12 @@ ROWS="${ROWS//$'\thigh\t1.00\t1\t1\t'/$'\thigh\t\t1\t1\t'}"
 check "a merged story with no merged_at adds no wait; a build with no cost is named" \
   "$(section | grep $'^opus\thigh\tcode' | cut -f7,8,14)" $'5\t2.00 (1 not in the logs)\t540'
 
-# Through swarm.sh flow: gone was planned at 400 lines in commands/, then deleted by a commit.
+# Through swarm.sh flow: gone was planned at 400 lines in skills/ and templates/ (a tie, so skills/, the
+# first named: any folder is an area), then deleted by a commit.
 P="${dir}/repo"
 mkdir -p "${P}/.swarm" "${P}/docs/stories"
 git -C "${P}" init -q
-printf -- '---\nkind: code\nstatus: ready\nestimate_lines: 400\ntouches: [commands/swarm.md, bin/x.sh]\n---\n' > "${P}/docs/stories/gone.md"
+printf -- '---\nkind: code\nstatus: ready\nestimate_lines: 400\ntouches: [skills/x/SKILL.md, templates/a.md]\n---\n' > "${P}/docs/stories/gone.md"
 git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm add
 git -C "${P}" rm -q docs/stories/gone.md && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm merged
 mkdir -p "${P}/docs/stories"   # the board is still there, without the story
@@ -132,7 +139,7 @@ printf '%s\n' $'2026-10-02\tcode\tgone\tclaude\topus\thigh\t-' > "${P}/.swarm/ag
 out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/bin:${PATH}" \
   bash "${REPO}/bin/swarm.sh" flow 2>/dev/null | awk '/^## / { f = $0 == "## model_fit"; next } f')" || true
 check "a story deleted in a git commit still lands in its class" \
-  "$(sed -n 2p <<< "${out}")" $'opus\thigh\tcode\t-\t>300\tcommands/\t1\t-\t-\t-\t-\t-\t-\t-'
+  "$(sed -n 2p <<< "${out}")" $'opus\thigh\tcode\t-\t>300\tskills/\t1\t-\t-\t-\t-\t-\t-\t-'
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

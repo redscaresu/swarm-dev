@@ -65,22 +65,31 @@ def session_usage(path, seen):
 
 REWORK_DAYS = 7
 RELEASE_FILES = [".claude-plugin/plugin.json"]   # a release PR changes these alone, and fixes nothing
-# A clause that names an earlier PR without fixing it (a stacked child's parent, a main merge note),
-# or negates the fix itself (doesn't fix, not fixing, never fixed); a negation that describes the bug
-# ("where the guard was not applied") leaves the fix standing.
-NOT_A_FIX = re.compile(r"\b(?:merge after|depends on|stacked on|merged origin/main)\b"
-                       r"|(?:\b(?:not|never|no longer)|n't)\s+(?:\w+\s+)?(?:fix|rework|regression)", re.I)
-FIX = r"\b(?:fix(?:es|ed)?|rework of|regression (?:from|in|of))\b.{0,40}?"
+# A clause that names an earlier PR without fixing it: a stacked child's parent, a main merge note.
+NOT_A_FIX = re.compile(r"\b(?:merge after|depends on|stacked on|merged origin/main)\b", re.I)
+# A fix verb (fix, fixes, fixed, fixing, and hotfix, bugfix or quickfix with or without a hyphen), rework
+# of, or regression from, in or of.
+FIX = re.compile(r"\b(?:(?:(?:hot|bug|quick)-?)?fix(?:es|ed|ing)?|rework of|regression (?:from|in|of))\b", re.I)
+NEGATED = re.compile(r"(?:\b(?:not|never|no longer)|n't)\s+(?:\w+\s+)?$", re.I)   # doesn't fix, not yet fixing
+FIX_REACH = 40   # characters from the end of a fix verb to the PR it fixes
 CLAUSE = re.compile(r"(?<=[.!?])\s+|;|\n")   # a sentence end before a space, a semicolon or a line break
 
 def fixes_pr(text, key, by):
-    # Whether the title and body of the PR whose pr_key is by say it fixes the PR whose pr_key is key:
-    # in one clause, a fix, fixes, fixed, rework of or regression from phrase, then within 40 characters
-    # its URL, owner/repo#N, or a bare #N when both are in one repo; never in a NOT_A_FIX clause.
+    # Whether the title and body of the PR whose pr_key is by say it fixes the PR whose pr_key is key: in
+    # a clause that is not NOT_A_FIX, its URL, owner/repo#N, or a bare #N when both are in one repo, whose
+    # governing fix verb (the nearest FIX ending within FIX_REACH characters before it) has no negation
+    # directly before it. "Fixes #1 and doesn't fix #4" fixes #1 and not #4.
     repo, _, n = key.partition("#")
     bare = r"|(?<![\w/#])#" if by.partition("#")[0] == repo else ""
-    ref = re.compile(rf"{FIX}(?:github\.com/{re.escape(repo)}/pull/|(?<![\w./-]){re.escape(repo)}#{bare}){n}(?!\d)", re.I)
-    return bool(n) and any(ref.search(c) and not NOT_A_FIX.search(c) for c in CLAUSE.split(text))
+    ref = re.compile(rf"(?:github\.com/{re.escape(repo)}/pull/|(?<![\w./-]){re.escape(repo)}#{bare}){n}(?!\d)", re.I)
+    for c in CLAUSE.split(text) if n else ():
+        if NOT_A_FIX.search(c):
+            continue
+        for m in ref.finditer(c):
+            verb = [v for v in FIX.finditer(c, 0, m.start()) if m.start() - v.end() <= FIX_REACH][-1:]
+            if verb and not NEGATED.search(c, 0, verb[0].start()):
+                return True
+    return False
 
 def merge_time(t):
     # gh's mergedAt as an aware time, or None when it is empty, malformed or has no offset.

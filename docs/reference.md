@@ -746,8 +746,9 @@ crossed with a story class, over the stories whose first build is dated in the w
 `--epic`, that epic's). A story counts under the model and effort of its first build, so a story
 escalated to Fable stays under the model it started on, while its cost, attempts and findings
 include every build. The class is the story's `kind`, `risk`, a size bucket from `estimate_lines`
-(`<=100`, `<=300`, `>300`, or `none`) and the area most of its `touches` files are in (`bin/`,
-`commands/`, `docs/`, `tests/` or `other`; on a tie, the first one named). Touches split as the
+(`<=100`, `<=300`, `>300`, or `none`) and the area most of its `touches` files are in: each file's
+top-level folder, such as `bin/` or `src/`, or `root` for a file at the project's root (on a tie,
+the first one named). Touches split as the
 overlap check splits them, so `bin/lib/build.sh:f, g` names one file, a bare name such as `Makefile`
 is a file when the project has one, and a note in parentheses names none. Each story is read from the board or
 from git history, so merged stories keep their class. The columns are:
@@ -764,12 +765,14 @@ from git history, so merged stories keep their class. The columns are:
 
 A PR is rework when a PR merged up to 7 days after it says it fixes it, or when a
 `log-finding --reviewer escaped` row dated up to 7 days after its merge day points at it. Saying so
-means a `fix`, `fixes`, `fixed`, `rework of` or `regression from` phrase in the title or body, then
-the PR within 40 characters in the same clause (clauses end at a sentence end, a `;` or a line
-break): its URL, `owner/repo#N`, or `#N` from the same repo. A clause with `merge after`,
-`depends on`, `stacked on` or `merged origin/main` names a PR without fixing it, as does one that
-negates the fix itself (`doesn't fix`, `not fixing`, `never fixed`). A negation that describes the
-bug, as in "Fixes #1, where the guard was not applied", leaves the fix standing. A release PR (one that changes only `.claude-plugin/plugin.json`)
+means a fix verb (`fix`, `fixes`, `fixed`, `fixing`, `hotfix`, `bugfix` or `quickfix`), `rework of`
+or `regression from` in the title or body, then the PR within 40 characters in the same clause
+(clauses end at a sentence end, a `;` or a line break): its URL, `owner/repo#N`, or `#N` from the
+same repo. A clause with `merge after`, `depends on`, `stacked on` or `merged origin/main` names a
+PR without fixing it. Each reference is judged by the nearest fix verb before it, and a negation
+directly before that verb (`doesn't fix`, `not fixing`, `never fixed`) cancels it, so "Fixes #1 and
+doesn't fix #4" fixes #1 alone. A negation anywhere else, as in "Fixes #1, which was not a
+regression", leaves the fix standing. A release PR (one that changes only `.claude-plugin/plugin.json`)
 fixes nothing. The merged PRs come from `gh`, the last 1000 per repo, merged from 7 days before
 `--since` (without it, from the first counted build's day) to 7 days after `--until` or the last
 counted merge, whichever is later (without `--until`, to now). A line warns when a list comes back that long, since rework may then be
