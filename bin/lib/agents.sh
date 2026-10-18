@@ -784,9 +784,9 @@ is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; retu
 # read as a flag. Only an idle agent is told (read_state): it refuses one mid-turn (findings sent then
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
-# With escalate_ladder set, a builder's third findings since its build started (findings_told) are not
-# sent: the build is stepped up (ladder_step findings-3) with them in the handover brief, and the tell
-# fails, saying so; a step-up refused sends them as usual.
+# With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started
+# (findings_told) are not sent: the build is stepped up (ladder_step findings-<N>) with them in the
+# handover brief, and the tell fails, saying so; a step-up refused sends them as usual.
 # A note goes only to a live conductor of this project, and never as a prompt: it is appended to
 # .swarm/inbox/<name>.md, which the conductor reads after each wait (conduct_brief), busy or not.
 tell_agent() {
@@ -818,8 +818,9 @@ tell_agent() {
     herdr:unknown) die "${name}: herdr gives no state for it (unknown); look at it (herdr agent read ${name}) before telling it" ;;
     *) die "could not reach ${name} (status '${state#herdr:}'): is its pane still open?" ;;
   esac
-  if [[ "${kind}" == findings && "$(findings_told "$1")" == 2 ]] && ladder_step "$1" findings-3 "${f}"; then
-    die "tell: ${name} was not told: these were its third findings, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
+  if [[ "${kind}" == findings && "$(findings_told "$1")" == $((STEP_UP_FINDINGS - 1)) ]] \
+     && ladder_step "$1" "findings-${STEP_UP_FINDINGS}" "${f}"; then
+    die "tell: ${name} was not told: these were findings round ${STEP_UP_FINDINGS} of its build, so it was stepped up, with them in its handover brief; wait on it, and do not tell it again"
   fi
   msg="$(mktemp "${TMPDIR:-/tmp}/swarm-tell.XXXXXX")"
   # shellcheck disable=SC2064 # expand now: msg is local, and deliver_prompt may exit through die

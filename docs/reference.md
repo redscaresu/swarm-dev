@@ -1028,7 +1028,7 @@ it. `close` steps up a builder it closes with no PR (no cause, `met` or `bound`)
 an attempt. `wait --stall` steps up a builder it finds stalled. `tell <slug> findings` steps up a
 builder on its third findings since its build started, and does not send them: they go into the
 handover brief, and the tell fails, saying so. `watch` steps up a story whose PR's checks finish red
-on a second head. Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on
+on two heads since its build started, while its builder is open. Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on
 that builder again, not to close, retry or tell it. A step-up that is refused (the top rung, a model
 off the ladder) says why, and the command carries on as it would with the ladder empty.
 

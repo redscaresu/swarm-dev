@@ -368,11 +368,15 @@ close_agent() {
 
 # STEP_UP_TRIGGERS: why a build is handed up the ladder: a third round of review findings, CI red
 # twice, a stalled builder, or a builder that stopped with no PR. step_trigger says each in prose.
-STEP_UP_TRIGGERS="findings-3 ci-red-2 stalled no-pr"
+# STEP_UP_FINDINGS: the findings tell since a build started that steps it up (tell_agent);
+# STEP_UP_RED_HEADS: the red heads on its PR that do (ci_red_step). The trigger names carry them.
+STEP_UP_FINDINGS=3
+STEP_UP_RED_HEADS=2
+STEP_UP_TRIGGERS="findings-${STEP_UP_FINDINGS} ci-red-${STEP_UP_RED_HEADS} stalled no-pr"
 step_trigger() {
   case "$1" in
-    findings-3) echo "its PR drew a third round of review findings" ;;
-    ci-red-2) echo "its PR's CI went red twice" ;;
+    "findings-${STEP_UP_FINDINGS}") echo "its builder was sent review findings ${STEP_UP_FINDINGS} times" ;;
+    "ci-red-${STEP_UP_RED_HEADS}") echo "its PR's CI went red on ${STEP_UP_RED_HEADS} heads" ;;
     stalled) echo "its builder stalled" ;;
     no-pr) echo "its builder stopped with no PR" ;;
   esac

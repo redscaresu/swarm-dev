@@ -93,7 +93,7 @@ for ladder in sonnet,opus,fable ""; do
   if [[ -n "${ladder}" ]]; then
     check "ladder '${ladder}': a third findings tell steps it up instead, the findings in its brief" \
       "ok (findings-3: sonnet -> opus)|yes|yes" \
-      "$(stepped)|$(grep -q 'was not told: these were its third findings' <<< "${out}" && echo yes)|$(grep -qx 'fix it' "${P}/.swarm/briefs/s1.md" && echo yes)"
+      "$(stepped)|$(grep -q 'was not told: these were findings round 3' <<< "${out}" && echo yes)|$(grep -qx 'fix it' "${P}/.swarm/briefs/s1.md" && echo yes)"
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
   fi
@@ -104,6 +104,23 @@ for ladder in sonnet,opus,fable ""; do
   first="$(stepped)"
   echo bbbb2222 > "${ROOT}/head"; run watch >/dev/null || true
   check "ladder '${ladder}': one red head steps nothing, a second steps up only with the ladder on" "|${want}" "${first}|$(stepped)"
+
+  if [[ -n "${ladder}" ]]; then
+    # A red head of an earlier build (before its newest story line) counts nothing for this one.
+    fresh "${ladder}" idle
+    printf 's1 old0000 2026-10-01T10:00:00Z\n' > "${P}/.swarm/red-heads.tsv"
+    printf '2026-10-01T11:00:00Z\tstory\ts1\tw:1\tok\n' >> "${P}/.swarm/events.tsv"
+    echo aaaa1111 > "${ROOT}/head"; run watch >/dev/null || true
+    check "a red head from the story's earlier build does not count toward this build's two" "" "$(stepped)"
+    # Two watches judging one head (its done line gone, as if both passed the check at once) count it once.
+    { grep -v '^done aaaa1111$' "${P}/.swarm/state/watch-seen" || true; } > "${ROOT}/seen"; cp "${ROOT}/seen" "${P}/.swarm/state/watch-seen"
+    run watch >/dev/null || true
+    check "one red head judged twice counts once" "" "$(stepped)"
+    # Two red heads on a PR whose builder is closed step nothing: that PR is the lead's.
+    fresh "${ladder}" idle; : > "${ROOT}/agents"
+    for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch >/dev/null || true; done
+    check "two red heads with no builder open step nothing" "" "$(stepped)"
+  fi
 
   # The brief is written before the conductor starts, whatever the stub makes of the start.
   run conduct --backlog >/dev/null || true
