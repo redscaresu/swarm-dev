@@ -103,7 +103,7 @@ When a fix finds a defect in work that already merged, log it as \`--reviewer es
 PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`awk -F'\\t' '\$5 != "declined" { print \$2 }' ${proj}/.swarm/${FINDINGS_LOG_NAME} 2>/dev/null | sort -u\`
+\`awk -F'\\t' 'NF < 5 || \$5 == "fixed" || \$5 == "escaped" { print \$2 }' ${proj}/.swarm/${FINDINGS_LOG_NAME} 2>/dev/null | sort -u\`
 already lists when it fits.
 EOF
 }
@@ -361,10 +361,15 @@ project_rules() {
   done | awk '!seen[$0]++'   # once each, as when CLAUDE.md links to AGENTS.md
 }
 
-# agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
-# lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# agent_kind — true for a kind a swarm agent may build (AGENT_KINDS); an empty kind means code.
+# Anything else, lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# touches_rows.py --idle reads AGENT_KINDS as SWARM_AGENT_KINDS.
+AGENT_KINDS="code docs chore"
 agent_kind() {
-  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
+  local k
+  [[ -n "$1" ]] || return 0
+  for k in ${AGENT_KINDS}; do [[ "$1" == "${k}" ]] && return 0; done
+  return 1
 }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its

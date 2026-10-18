@@ -13,7 +13,7 @@
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
-#   swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
+#   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong; or, --filed, a declined out-of-scope one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
@@ -343,7 +343,7 @@ dispatch() {
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
-    next)   next_step ;;
+    next)   next_report ;;
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;
@@ -682,10 +682,10 @@ main() {
   fi
   case "${EV_CMD}" in
     agent) [[ -z "${3:-}" ]] || EV_TARGET="$(agent_name "$3")" ;;
-    # A decline is logged as log-finding:declined, so its target stays <kind> <pr>, as for a fix; the
+    # A decline is logged as log-finding:declined (a filed one as log-finding:filed), so its target stays <kind> <pr>, as for a fix; the
     # flags are skipped as dispatch skips them (finding_flags).
     log-finding) finding_flags "${@:2}"
-                 [[ "${FINDING_OUTCOME}" == fixed ]] || EV_CMD="log-finding:declined"
+                 [[ "${FINDING_OUTCOME}" == fixed ]] || EV_CMD="log-finding:${FINDING_OUTCOME}"
                  EV_TARGET="${*:$((FINDING_SKIP + 2)):2}" ;;
     reconcile|unblock) EV_TARGET=+ ;;
     merge) EV_TARGET='!' ;;

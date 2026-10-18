@@ -234,11 +234,11 @@ cbrief="$(cat "${p}/.swarm/briefs/conduct-e.md")"
 check "the conductor's brief includes the project's brief, so the project's rules reach it" "yes" "$(has "A PROJECT RULE every agent reads." "${cbrief}")"
 check "the story-mode conductor's log-finding lines name the reviewer, and log codex's findings as codex" "${LOGS_FINDINGS}" "$(logs_findings "${cbrief}")"
 # The kinds command finding_rule gives, run as written against another log: only kinds with a fixed,
-# escaped or pre-outcome row, and no error with no log at all.
+# escaped or pre-outcome row (never one only declined or filed), and no error with no log at all.
 kinds_cmd="$(grep -B1 '^already lists when it fits' <<< "${cbrief}" | head -1 | tr -d '`')"
 kinds_log="${ROOT}/kinds/.swarm/findings.tsv"; mkdir -p "${kinds_log%/*}"
-printf '2026-01-01\tfixed-kind\to/r#1\tx\tfixed\tcodex\n2026-01-01\tdeclined-kind\to/r#2\tx\tdeclined\tcodex\tnit\n2026-01-01\told-kind\to/r#3\tx\n2026-01-01\tescaped-kind\to/r#4\tx\tescaped\tescaped\n' > "${kinds_log}"
-check "finding_rule's kinds command lists only kinds that were not only declined" "escaped-kind|fixed-kind|old-kind" \
+printf '2026-01-01\tfixed-kind\to/r#1\tx\tfixed\tcodex\n2026-01-01\tdeclined-kind\to/r#2\tx\tdeclined\tcodex\tnit\n2026-01-01\told-kind\to/r#3\tx\n2026-01-01\tescaped-kind\to/r#4\tx\tescaped\tescaped\n2026-01-01\tfiled-kind\to/r#5\tx\tfiled\tcodex\n' > "${kinds_log}"
+check "finding_rule's kinds command lists only kinds with a fixed, escaped or pre-outcome row" "escaped-kind|fixed-kind|old-kind" \
   "$(bash -c "${kinds_cmd//${p}/${ROOT}/kinds}" | paste -sd'|' -)"
 check "finding_rule's kinds command prints nothing, not an error, with no findings log" "" "$(bash -c "${kinds_cmd//${p}/${ROOT}/none}" 2>&1)"
 check "the conductor reviews with codex and /code-review, tells the builder, and closes only after" "yes|yes|yes|yes" \
