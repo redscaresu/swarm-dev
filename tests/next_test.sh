@@ -93,9 +93,28 @@ expect "a later epic whose dependency is not done waits in the gate" "gate" \
   "item epics/b.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'"
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
-if grep -qF 'its why says the epic'"'"'s dependencies are done' "$(dirname "${SWARM}")/../commands/swarm.md" \
-  && grep -qF 'run it unasked' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
+if grep -qF 'its why says a `later` epic'"'"'s dependencies are done' "$(dirname "${SWARM}")/../commands/swarm.md" \
+  && grep -qF 'unasked: planning is read-only' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
 else echo "FAIL swarm.md does not say the lead plans an unblocked epic unasked"; fails=$((fails + 1)); fi
+# shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
+if grep -qF '`status: later` when $1 is `later`' "$(dirname "${SWARM}")/../commands/plan-epic.md"; then echo "ok   plan-epic.md keeps a later epic's child epics later"
+else echo "FAIL plan-epic.md's split arm makes a later epic's children active"; fails=$((fails + 1)); fi
+# A scope board PR on board/scope-a: open (the user has the plan) or closed unmerged (declined) keeps
+# a later epic from being planned again; none, or a merged one, plans it. gh answers through a stub.
+GH_BIN="$(mktemp -d)"
+# shellcheck disable=SC2016 # the stub's own $* and ${SCOPE_STATES}, expanded when it runs
+printf '#!/bin/sh\ncase "$*" in *"--head board/scope-a "*) [ -n "${SCOPE_STATES:-}" ] && printf "%%s\\n" ${SCOPE_STATES}; exit 0 ;; esac\nexit 1\n' > "${GH_BIN}/gh"
+chmod +x "${GH_BIN}/gh"
+scope_case() {
+  SCOPE_STATES="$3" PATH="${GH_BIN}:${PATH}" expect "$1" "$2" \
+    "git remote add origin https://github.com/o/r" \
+    "item epics/a.md 'status: later' 'depends_on: [b]'" \
+    "item stories/l.md 'status: ready' 'kind: lead'"
+}
+scope_case "a later epic whose scope PR is open is not planned again" "gate" "OPEN"
+scope_case "a later epic whose scope PR closed unmerged is not planned again" "gate" "MERGED CLOSED"
+scope_case "a later epic with no scope PR is planned" "plan-epic a" ""
+rm -rf "${GH_BIN}"
 # A ready lead story: no agent builds it, so next reaches the plan-epic arm instead of conduct b.
 expect "a ready story of its dependency holds an epic's planning" "gate" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \
@@ -280,11 +299,11 @@ expect "ready story in a later epic waits" "gate" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"
 expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
-# A later epic already planned waits for the user to start it; one with no stories and no open
-# dependency is planned first (below).
-expect "only a planned later epic left is a gate" "gate" \
-  "item epics/e1.md 'status: later'" \
-  "item stories/s.md 'status: ready' 'kind: code' 'epic: e1'"
+# A later epic with no depends_on waits on nothing but the user: it is never planned unasked.
+expect "only later epics left is a gate" "gate" \
+  "item epics/e1.md 'status: later'"
+expect "a later epic with an empty depends_on is a gate" "gate" \
+  "item epics/e1.md 'status: later' 'depends_on: []'"
 # A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
 # A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
 # idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]

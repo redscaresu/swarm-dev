@@ -93,8 +93,9 @@ epic_has_stories() {
 #                     reset, or drops it
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
 #                     file outside the board (release_due): the lead cuts a release
-#   plan-epic <epic>  (again) a later or active epic with no stories whose depends_on are all done
-#                     (unblocked_epic): planning is read-only and its stories wait for approval
+#   plan-epic <epic>  (again) a later epic with no stories whose depends_on are listed and all done,
+#                     and no scope board PR the user has or declined (unblocked_epic): planning is
+#                     read-only and its stories wait for approval
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
@@ -175,7 +176,7 @@ next_step() {
   fi
   epic="$(unblocked_epic)"
   if [[ -n "${epic}" ]]; then
-    echo "plan-epic ${epic}"; echo "the epic ${epic}'s dependencies are done; planning costs nothing, the plan waits for approval"; return
+    echo "plan-epic ${epic}"; echo "the later epic ${epic}'s dependencies are done; planning is read-only, and its stories wait for approval"; return
   fi
   waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
@@ -233,16 +234,30 @@ plannable_epic() {
   done < <(board epics)
 }
 
-# unblocked_epic — the first later or active epic, in board order, with no stories whose depends_on
-# are all done or gone (open_deps), or nothing. Unlike plannable_epic, a dependency in review holds it.
+# unblocked_epic — the first later epic, in board order, with no stories, a depends_on that lists
+# something and is all done or gone (open_deps), and no scope board PR the user has or declined
+# (scope_pr_seen), or nothing. An active epic is plannable_epic's. A later epic with no depends_on
+# waits on nothing but the user, so it stays theirs to start.
 unblocked_epic() {
-  local f
+  local f slug deps
   while IFS= read -r f; do
-    case "$(fm "${f}" status)" in later|active) ;; *) continue ;; esac
-    epic_has_stories "$(basename "${f}" .md)" && continue
-    [[ -z "$(open_deps "$(story_deps "${f}")")" ]] || continue
-    basename "${f}" .md; return
+    [[ "$(fm "${f}" status)" == later ]] || continue
+    slug="$(basename "${f}" .md)"; deps="$(story_deps "${f}")"
+    epic_has_stories "${slug}" && continue
+    [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || continue
+    scope_pr_seen "${slug}" && continue
+    echo "${slug}"; return
   done < <(board epics)
+}
+
+# scope_pr_seen <epic> — true when origin has a PR on board/scope-<epic> (/plan-epic's board PR) that
+# is open (the user has the plan) or closed unmerged (they declined it), as collect's lesson check
+# reads a rule PR, or when gh cannot tell; false with no origin.
+scope_pr_seen() {
+  local url states
+  url="$(git -C "${PROJECT_DIR}" remote get-url origin 2>/dev/null)" || return 1
+  states="$(gh pr list -R "${url}" --head "board/scope-$1" --state all --json state --jq '.[].state' </dev/null 2>/dev/null)" || return 0
+  grep -qE '^(OPEN|CLOSED)$' <<< "${states}"
 }
 
 # epic_holding_deps <epic file> — fails unless it is an active epic with no stories (the epics
