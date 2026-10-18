@@ -76,6 +76,7 @@ PY
                         # Any other prompt starts a turn: the goal tests list its session as busy.
                         *) [ -e "$H/session" ] && echo "[{\"sessionId\":\"$(basename "$(cat "$H/session")" .jsonl)\",\"status\":\"busy\"}]" > "$H/started.json" ;;
                       esac
+                      [ -e "$H/resumed" ] && mv "$H/resumed" "$H/screen"   # the pane after the prompt
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent start")      sid=$(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')
@@ -84,9 +85,9 @@ PY
                       echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename")     [ -e "$H/norename" ] && exit 1
                       [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
-  "agent list")       [ -e "$H/listfail" ] && exit 1
-                      awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+  "agent list")       [ -e "$H/listfail" ] && exit 1   # each agent's status is the file hstatus's, else idle
+                      awk -v st="$(cat "$H/hstatus" 2>/dev/null || echo idle)" 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, st, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
   "agent wait")       [ -e "$H/swap" ] && mv "$H/swap" "$H/claude.json"   # the session changes while herdr waits
                       [ -e "$H/waiterr" ] && { echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; }
@@ -223,6 +224,31 @@ mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-
 check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
 rm "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 rm -rf "${wt}" "${b}/stories/a.md"; : > "${p}/.claude/swarm/config"
+# API errors: the session reads busy (background shells left open), herdr says done, and the pane's
+# last turn ended on an API Error: line. wait resumes it up to 3 times in a row, then returns
+# stalled: api error; tell delivers. A pane with a reply after the error is still working.
+api_screen() { printf '%s\n' '⏺ Waiting on the builders.' '  ⎿  API Error: Connection dropped (ECONNRESET)' '' '> ' > "$1"; }
+prompts() { grep -c "^agent prompt w:950 ${1:-}" "${ROOT}/herdr.log" || true; }
+session "${ROOT}/claude.json" sess-a2=busy; echo "done" > "${ROOT}/hstatus"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "an API-error stop, resumed 3 times, comes back a 4th time: wait returns stalled: api error with no 4th resume" \
+  "stalled: api error|exit 3|3" "${got%|*}|$(prompts "Your last turn stopped on an API error; carry on where you stopped.")"
+printf '%s\n' '  ⎿  API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
+echo "findings" > "${ROOT}/tell.txt"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "tell delivers to a busy session whose turn stopped on an API error" "told a|1" "${got}|$(prompts)"
+printf '%s\n' '⏺ Waiting on the builders.' '' '> ' > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "the same pane without the API Error: line: tell refuses" "yes|0" "$([[ "${got}" == *"still working"* ]] && echo yes || echo "no, ${got}")|$(prompts)"
+# A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
+# stalled: no output, naming the pane, and nothing sent.
+echo working > "${ROOT}/hstatus"
+got="$(SWARM_WAIT_STARTED=$(($(date +%s) - 7200)) SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 5000)"
+check "a pane unchanged past stall_minutes: wait returns stalled: no output naming the pane, and sends nothing" \
+  "stalled: no output for 120m (w:950)|exit 3|0" "${got%|*}|$(prompts)"
+rm -f "${ROOT}/hstatus" "${ROOT}/screen"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"

@@ -285,7 +285,10 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
   agent="$(cd "${dir}" && bash "${SWARM}" _name "conduct-${epic}")"; want="${want//AGENT/${agent}}"
   mkdir -p "${dir}/.swarm/state"; echo "w:7 ${agent}" > "${dir}/.swarm/state/tab"   # its pane, as next_pane records it
   # Started in this project: in a pane it recorded (herdr lists every project's agents).
-  printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\",\"pane_id\":\"w:7\"}]}}'" > "${dir}/bin/herdr"
+  # Its pane's text is the file screen, when a setup writes one.
+  # shellcheck disable=SC2016 # the stub's own shell expands these
+  printf '#!/bin/sh\n[ "$1 $2" = "agent read" ] && [ -f %s/screen ] && exec cat %s/screen\necho %s\n' "${dir}" "${dir}" \
+    "'{\"result\":{\"agents\":[{\"name\":\"${agent}\",\"agent_status\":\"idle\",\"pane_id\":\"w:7\"}]}}'" > "${dir}/bin/herdr"
   chmod +x "${dir}/bin/herdr"
   [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
   for step in "${@:6}"; do (cd "${dir}" && eval "${step}"); done
@@ -299,6 +302,11 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
 }
 expect_conductor "idle conductor without a report is still waited on" "wait conduct-e1" no
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
+# A conductor whose turn stopped on an API error (herdr idle, its pane ending on the error) is named a stall.
+expect_conductor "a conductor stopped on an API error: next names the stall" "wait conduct-e1" no e1 "stalled: *API error*" \
+  "printf '%s\n' '⏺ Waiting on the builders.' '  ⎿  API Error: Connection dropped (ECONNRESET)' > screen"
+expect_conductor "a conductor whose pane has a later reply after an API error is still working" "wait conduct-e1" no e1 "*still working*" \
+  "printf '%s\n' '  ⎿  API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > screen"
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 # While a conductor works, an epic whose dependency is all in review is planned first; the why names
 # the conductor to wait on in the background. With no such epic, next waits on the conductor.
@@ -384,7 +392,7 @@ stub() { # [api-error]
     echo 'esac'
     echo 'case "$1 $2" in'
     echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"done\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"done\",\"pane_id\":\"w:2\"}]}}' ;;"
-    if [ -n "${1:-}" ]; then echo "  \"agent read\") echo '⏺ API Error: overloaded' ;;"; fi
+    if [ -n "${1:-}" ]; then printf '%s\n' "  \"agent read\") printf '%s\\n' '⏺ API Error: overloaded' '⏺ Carrying on.' ;;"; fi
     echo '  "agent wait"|"agent prompt") case "$3" in w:1|w:2) ;; *) echo "{\"error\":\"not this project'"'"'s pane: $3\"}"; exit 1 ;; esac ;;'
     echo 'esac'
     echo 'case "$1 $2" in "agent list"|"agent read") ;; *)'
@@ -462,8 +470,8 @@ if [[ "${got}" == idle && $((SECONDS - start)) -le 10 ]]; then
   echo "ok   wait on a conductor that never reports ends at its timeout"; else
   echo "FAIL wait on a conductor that never reports ends at its timeout: got '${got}' after $((SECONDS - start))s"; fails=$((fails + 1)); fi
 
-# A conductor has no story, so it is never nudged, even with an API error on its pane: idle with no
-# report, wait polls on until the timeout.
+# A conductor has no story, so it is never nudged, even with an API error on its pane that a later
+# reply followed (its last turn did not stop on it): idle with no report, wait polls on until the timeout.
 stub api-error; rm -f "${dir}/prompts"
 start=${SECONDS}
 got="$(SWARM_CONDUCTOR_POLL=1 waitc conduct-e1 4000 2>/dev/null)"
@@ -473,7 +481,8 @@ if [[ "${got}" == idle && $((SECONDS - start)) -ge 4 && ! -e "${dir}/prompts" ]]
 
 # `wait --until-report` has no deadline: it holds past any timeout until the report lands, and
 # returns at once on waiting or auth. The no-nudge checks are regression guards: wait never prompts a
-# conductor, even with an API error on its pane (the api-error stub above).
+# conductor for an earlier API error on its pane (the api-error stub above); only a last turn that
+# stopped on one is resumed.
 quiet() { [[ ! -e "${dir}/prompts" ]] && ! grep -q nudge "${dir}/.swarm/events.tsv" 2>/dev/null; }
 rm -f "${dir}/prompts" "${dir}/.swarm/events.tsv"; start=${SECONDS}
 (sleep 4; echo report > "${dir}/.swarm/conduct-e1.report.md") &

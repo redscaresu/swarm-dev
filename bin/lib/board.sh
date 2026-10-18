@@ -111,6 +111,8 @@ next_step() {
         # As in wait, only an idle session is auth: wait returns it at once, and /swarm-dev:swarm stops there
         # for the user's /login.
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
+      elif api_stopped "${slug}" "$(agent_field "${slug}" pane_id)"; then
+        echo "wait ${slug}"; echo "stalled: the conductor ${slug} stopped on an API error; swarm.sh wait --until-report ${slug} resumes it"
       elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
