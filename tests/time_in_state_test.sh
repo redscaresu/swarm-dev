@@ -27,7 +27,8 @@ trap 'rm -rf "${dir}"' EXIT
 P="${dir}/repo"; U=https://github.com/o/r/pull; D=2026-10-01T
 mkdir -p "${P}/.swarm" "${P}/docs/stories" "${dir}/projects/p" "${dir}/bin"
 git -C "${P}" init -q
-git -C "${P}" config diff.noprefix true   # a user's diff setting must not hide the board's ready commits
+# A user's diff settings must not hide the board's ready commits.
+git -C "${P}" config diff.noprefix true; git -C "${P}" config color.ui always
 printf -- '---\nkind: code\nepic: e1\nstatus: review\n---\n' > "${P}/docs/stories/tis.md"
 session() { # <HH:MM start> <PR> — a session log in the tis worktree that names the PR
   printf '{"type":"user","cwd":"%s/repo-wt/tis","timestamp":"%s%s:00Z"}\n' "${dir}" "${D}" "$1"

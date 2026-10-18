@@ -152,8 +152,8 @@ def board_commits(*args):
 # ponytail: a retry's own wait in ready is not counted; time it from the close before it if retries wait long.
 ready_at, blocked_at = collections.defaultdict(list), collections.defaultdict(list)
 conducting, closed, reported = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
-# Explicit prefixes, whatever the user's diff.noprefix or diff.dstPrefix.
-for commit in board_log("-p", "-U0", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
+# Explicit prefixes and no colour, whatever the user's diff.noprefix, diff.dstPrefix or color.ui.
+for commit in board_log("-p", "-U0", "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "-G^status:", "--format=%x01%ct").split("\x01")[1:]:
     lines, path = commit.split("\n"), ""
     for l in lines[1:]:
         if l.startswith("+++ "):
