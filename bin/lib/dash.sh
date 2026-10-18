@@ -176,35 +176,40 @@ dash_slow() {
   DASH_HEADS="$(awk -F'\t' '$1 == "head" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
 }
 
-# dash_day — today as YYYY-MM-DD, or SWARM_DASH_NOW's day (dash_render's fixed clock).
+# dash_day [days before] — today as YYYY-MM-DD, or SWARM_DASH_NOW's day (dash_render's fixed clock),
+# or the day that many calendar days before it.
 dash_day() {
-  if [[ -z "${SWARM_DASH_NOW:-}" ]]; then date +%F; return; fi
-  python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(float(sys.argv[1])))' "${SWARM_DASH_NOW}"
+  if [[ -z "${SWARM_DASH_NOW:-}${1:-}" ]]; then date +%F; return; fi
+  python3 -c 'import datetime, sys, time; print(datetime.date.fromtimestamp(float(sys.argv[1] or time.time())) - datetime.timedelta(days=int(sys.argv[2])))' \
+    "${SWARM_DASH_NOW:-}" "${1:-0}"
 }
 
 # dash_check — dash --check: each figure in this project's frame (drawn afresh, plain, at 100
 # columns so the gauges show) against the command that owns it; with --project, each project in
 # turn, by this script run again on it. agents working and the running gauge against the agents
-# `status` lists as working; the cost against flow's cost section since today, with no calling
-# session (dash leaves it out); every item flow's lead_queue holds open, named in needs you or the
-# lead's queue; the PRs, lead stories and agents waiting on a prompt under status's Waiting on
-# you, in needs you and the lead's queue (a lead story behind +N more counts);
-# next against `next`; the epics waiting on their depends_on against epic_holding_deps, next's rule;
-# merges today and the 7-day rate against events.tsv's finishes, as flow reads its ok lines. Prints
-# each mismatch as `<project>: <field>: dash shows <x>, <owner> says <y>` and returns 1 on any. A
-# figure that moves between the frame and its command (an agent starting, a session's cost) can
-# disagree once: run it again.
+# `status` lists as working; the cost against flow's cost section since today with no calling
+# session (dash leaves it out), read just before and just after the frame, so spend in between
+# agrees; every item flow's lead_queue holds open, named in needs you or the lead's queue (an
+# escalated or held story only with lead = session, the only time dash draws it); the PRs, the
+# stories only you or the lead can run (+N more counted) and the agents waiting on a prompt that
+# status lists, in needs you and the lead's queue; next against `next`; the epics waiting on their
+# depends_on against epic_holding_deps, the rule next plans by (next prints one step, so it cannot
+# list them); merges today and the 7-day rate against flow's merges section. flow's sections run
+# here, in this process, and ask gh nothing. Prints each mismatch as `<project>: <field>: dash shows
+# <x>, <owner> says <y>` and returns 1 on any.
 dash_check() {
   local d failed=0
   if [[ ${#DASH_DIRS[@]} -gt 0 ]]; then
     for d in "${DASH_DIRS[@]}"; do SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" dash --check || failed=1; done
     return "${failed}"
   fi
-  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day frame st boxes got want n x f
+  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes got want n x f
   DASH_CHECK_P="$(basename "${PROJECT_DIR}")"; DASH_CHECK_BAD=0
   ! command -v herdr >/dev/null 2>&1 || herdr=1
   day="$(dash_day)"
+  lo="$(dash_flow_cost "${day}")"
   frame="$(dash_check_frame)"
+  hi="$(dash_flow_cost "${day}")"
   # status asks herdr only inside a pane; dash whenever herdr is on PATH.
   st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status || true)"
 
@@ -213,16 +218,21 @@ dash_check() {
   got="$(dash_first '.*running [^0-9]*\([0-9][0-9]*\) of peak.*' "${frame}")"
   [[ -z "${got}" ]] || dash_agree running "${got}" status "${want}"
 
-  x="$(HERDR_ENV="" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" flow --since "${day}" 2>/dev/null || true)"
-  want="$(sed -n '/^## cost$/,/^## /s/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' <<< "${x}")"
-  dash_agree cost "$(dash_first '.*\$\([0-9][0-9.]*\) today.*' "${frame}")" "flow --since ${day}" "${want}"
+  got="$(dash_first '.*\$\([0-9][0-9.]*\) today.*' "${frame}")"
+  want="${lo}"; [[ "${hi}" == "${lo}" ]] || want="${lo} to ${hi}"
+  # What the agents spent between the two reads moves flow's cost on: anything from one to the other agrees.
+  if [[ -n "${got}${lo}" ]] && awk -v g="${got:-x}" -v lo="${lo:-x}" -v hi="${hi:-x}" \
+      'BEGIN { exit !(g != "x" && lo != "x" && hi != "x" && g + 0 >= lo + 0 && g + 0 <= hi + 0) }'; then got="${want}"; fi
+  dash_agree cost "${got}" "flow --since ${day}" "${want}"
 
-  x="$(HERDR_ENV="" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" flow 2>/dev/null || true)"
-  want="$(sed -n '/^## lead_queue$/,/^## /p' <<< "${x}" | awk -F'\t' 'NR > 2 && NF == 5 && $5 != "-" { gsub(",", "\n", $5); print $5 }' | dash_words)"
-  # With merge = agent a costs: money merge stays under needs you, so either box will do.
-  boxes="$(dash_box "needs you" "${frame}"; dash_box "lead's queue" "${frame}")"
+  x="$(flow_sections 0000-00-00 9999-12-30 "" "" "" lead_queue 2>/dev/null || true)"
+  # shellcheck disable=SC2154 # assigned in another file
+  want="$(awk -F'\t' -v lead="${CFG_lead}" 'NR > 2 && NF == 5 && $5 != "-" {
+      n = split($5, a, ","); for (i = 1; i <= n; i++) if (lead == "session" || a[i] !~ /^(escalated|held):/) print a[i] }' <<< "${x}" | dash_words)"
+  need="$(dash_box "needs you" "${frame}")"
+  boxes="${need}"$'\n'"$(dash_box "lead's queue" "${frame}")"
   got=""
-  for x in ${want}; do if grep -qE "(^|[[:space:](])${x#*:}([[:space:]):]|$)" <<< "${boxes}"; then got+=" ${x}"; fi; done
+  for x in ${want}; do if dash_names "${x#*:}" "${boxes}"; then got+=" ${x}"; fi; done
   dash_agree "lead's queue" "${got# }" "flow's lead_queue" "${want}"
 
   # By PR, as <repo>#<n>: a merge row shows one by that ref, or by its URL when gh did not answer, and
@@ -230,13 +240,16 @@ dash_check() {
   dash_agree "PRs waiting for a merge" "$( {
     sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${boxes}"; grep '^│ [^ ]* merge ' <<< "${boxes}" | dash_prs; } | dash_words)" \
     status "$(grep '^  awaiting your merge' <<< "${st}" | dash_prs | dash_words)"
-  n="$(grep -c '^│ [^ ]* run lead story ' <<< "${boxes}" || true)"
-  got="$(dash_first '.*+\([0-9][0-9]*\) more.*' "${boxes}")"
-  dash_agree "lead stories" "$((n + ${got:-0}))" status "$(grep -c '^  lead: ' <<< "${st}" || true)"
+  # A `<kind>: <slug>` line under Waiting on you is a story only you or the lead can run: a run row
+  # each, but for the ones behind needs you's +N more.
+  n="$(grep -c '^│ [^ ]* run [^ ]* story ' <<< "${boxes}" || true)"
+  got="$(dash_first '.* +\([0-9][0-9]*\) more.*' "${need}")"
+  want="$(sed -n '/^Waiting on you$/,/^$/p' <<< "${st}" | grep -c '^  [^ :]*: [^ ]*$' || true)"
+  dash_agree "stories only you or the lead can run" "$((n + ${got:-0}))" status "${want}"
   dash_agree "agents waiting on a prompt" "$(sed -n 's/^│ [^ ]* answer \([^ :]*\)[: ].*/\1/p' <<< "${boxes}" | dash_words)" \
     status "$(sed -n 's/^  \([^ ]*\)  *WAITING .*/\1/p' <<< "${st}" | dash_words)"
 
-  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" next | sed -n 1p)"
+  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" next 2>/dev/null | sed -n 1p || true)"
   got="$(dash_first '.*  next \(.*[^ ]\)  *[0-9][0-9:]*$' "$(sed -n 1p <<< "${frame}")")"
   dash_agree next "$(dash_cut "${got}" "${want}")" next "${want}"
 
@@ -248,12 +261,18 @@ dash_check() {
     done | sort | paste -sd';' -)"
   dash_agree "epics waiting on depends_on" "${got}" next "$(paste -sd';' - <<< "${want}")"
 
-  read -r n x <<< "$(dash_finishes)"
-  dash_agree "merges today" "$(dash_first '.*  today \([0-9][0-9]*\)  7-day avg.*' "${frame}")" events.tsv "${n}"
-  dash_agree "7-day rate" "$(dash_first '^\([0-9][0-9.]*\) merged/day over 7 days.*' "${frame}")" events.tsv "${x}"
+  x="$( { flow_sections "$(dash_day 6)" "${day}" "" "" "" merges 2>/dev/null || true; } \
+    | awk -F'\t' -v d="${day}" 'NR > 2 && NF == 2 { w += $2; if ($1 == d) t = $2 } END { printf "%d %.1f\n", t, w / 7 }')"
+  dash_agree "merges today" "$(dash_first '.*  today \([0-9][0-9]*\)  7-day avg.*' "${frame}")" "flow's merges" "${x% *}"
+  dash_agree "7-day rate" "$(dash_first '^\([0-9][0-9.]*\) merged/day over 7 days.*' "${frame}")" "flow's merges" "${x#* }"
 
   [[ ${DASH_CHECK_BAD} == 1 ]] || echo "${DASH_CHECK_P}: every dash figure agrees with the command that owns it"
   return "${DASH_CHECK_BAD}"
+}
+
+# dash_flow_cost <day> — the total of flow's cost section since that day, with no calling session.
+dash_flow_cost() {
+  { flow_sections "$1" 9999-12-30 "" "" "" cost 2>/dev/null || true; } | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p'
 }
 
 # dash_check_frame — this project's frame for dash_check: the slow fields asked again, plain, at 100
@@ -275,11 +294,24 @@ dash_agree() {
 dash_first() { sed -n "\\#$1#{s##\\1#p;q;}" <<< "$2"; }
 
 # dash_cut <dash's> <owner's> — the owner's value when dash's is it cut to the width (each … standing
-# for what was cut), else dash's.
+# for what was cut, the rest matched as plain text), else dash's.
 dash_cut() {
-  # shellcheck disable=SC2053 # the right side is a glob on purpose
-  if [[ "$1" == *…* && "$2" == ${1//…/*} ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi
+  local shown="$1" rest="$2" piece
+  if [[ "${shown}" != *…* ]]; then printf '%s' "$1"; return; fi
+  piece="${shown%%…*}"; shown="${shown#*…}"
+  if [[ "${rest}" != "${piece}"* ]]; then printf '%s' "$1"; return; fi
+  rest="${rest#"${piece}"}"
+  while [[ "${shown}" == *…* ]]; do
+    piece="${shown%%…*}"; shown="${shown#*…}"
+    if [[ "${rest}" != *"${piece}"* ]]; then printf '%s' "$1"; return; fi
+    rest="${rest#*"${piece}"}"
+  done
+  if [[ "${rest}" == *"${shown}" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi
 }
+
+# dash_names <word> <text> — true when a line of <text> has <word> as a whole word (words split at
+# spaces, parentheses and colons), compared as plain text.
+dash_names() { awk -v s="$1" '{ n = split($0, w, /[ ():]+/); for (i = 1; i <= n; i++) if (w[i] == s) f = 1 } END { exit !f }' <<< "$2"; }
 
 # dash_words — stdin's lines, sorted and each once (a story's merge row per PR), on one line.
 dash_words() { sort -u | paste -sd' ' -; }
@@ -293,26 +325,6 @@ dash_box() {
   awk -v t="$1" '/^╭─ / { on = index($0, "╭─ " t " ") == 1; next } /^╰/ { on = 0 } !on { next }
     { sub(/ *│$/, "") } /^│   / && n { sub(/^│ */, ""); r[n] = r[n] " " $0; next } { r[++n] = $0 }
     END { for (i = 1; i <= n; i++) print r[i] }' <<< "$2"
-}
-
-# dash_finishes — today's finished stories and the 7-day rate, from events.tsv as flow reads it (ok
-# lines, by their local day): finish ok or reconcile's finished, each slug once, on its newest day.
-dash_finishes() {
-  python3 -I -c '
-import datetime, os, sys, time
-today = datetime.date.fromtimestamp(float(sys.argv[2] or time.time()))
-last = {}
-for line in open(sys.argv[1], errors="ignore") if os.path.exists(sys.argv[1]) else ():
-    f = line.rstrip("\n").split("\t")
-    if len(f) != 5 or not ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
-        continue
-    try:
-        t = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        continue
-    last[f[2]] = max(t, last.get(f[2], t))
-ago = [(today - datetime.date.fromtimestamp(t)).days for t in last.values()]
-print(ago.count(0), f"{sum(0 <= d < 7 for d in ago) / 7:.1f}")' "${EVENTS_LOG}" "${SWARM_DASH_NOW:-}"
 }
 
 # dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the

@@ -2,9 +2,10 @@
 # dash_check_test.sh — `dash --check` on the two-project fixture (tests/fixtures/dash/two_projects.sh),
 # with an active epic added to bravo that waits on its depends_on. For each field --check compares,
 # this test runs the command that owns it and checks the frame shows the same, and --check exits 0.
-# Then each of dash-three-defects' fixes reverted in a copy of bin/ (the working count, the failed
-# workspace list, the calling pane's cost, the waiting epic), and a status that lists one more
-# working agent, each make --check exit 1 naming the field.
+# It still agrees with lead = off, and when an agent spends while the frame draws. Then each of
+# dash-three-defects' fixes reverted in a copy of bin/ (the working count, the failed workspace list,
+# the calling pane's cost, the waiting epic), a status that lists one more working agent, and a next
+# that fails, each make --check exit 1 naming the field.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,18 +47,19 @@ for p in alpha bravo; do
   while read -r x; do
     check "${p}: status's merge of ${x} has a merge row" grep -qE "! merge .* ${x} *│" <<< "${y}"
   done < <(sed -n 's/^  awaiting your merge[^:]*: \([^ ]*\).*/\1/p' <<< "${st}")
-  n="$(grep -c '^  lead: ' <<< "${st}" || true)"
-  m="$(sed -n 's/.*+\([0-9]\) more.*/\1/p' <<< "${y}")"
-  check "${p}: status's ${n} lead stories are the rows and +N more" test "$(($(grep -c 'run lead story' <<< "${y}") + ${m:-0}))" = "${n}"
+  n="$(sed -n '/^Waiting on you$/,/^$/p' <<< "${st}" | grep -c '^  [^ :]*: [^ ]*$' || true)"
+  m="$(box "needs you" "${f}" | sed -n 's/.*+\([0-9]\) more.*/\1/p')"
+  check "${p}: status's ${n} stories for you or the lead are the run rows and +N more" \
+    test "$(($(grep -c '! run [^ ]* story ' <<< "${y}") + ${m:-0}))" = "${n}"
   while read -r x; do
     check "${p}: status's ${x} waiting on a prompt has an answer row" has "! answer ${x} " "${y}"
   done < <(sed -n 's/^  \([^ ]*\)  *WAITING .*/\1/p' <<< "${st}")
   check "${p}: the header's next is next's" has "  next $(sw "${d}" next | sed -n 1p)  " "$(sed -n 1p <<< "${f}")"
-  # events.tsv's finishes as flow reads them: ok lines, each slug on its newest day (UTC here).
-  read -r t w <<< "$(awk -F'\t' '$2 == "finish" && $5 == "ok" && substr($1, 1, 10) > last[$3] { last[$3] = substr($1, 1, 10) }
-    END { for (s in last) { t += last[s] == "2026-10-10"; w += last[s] >= "2026-10-04" }; printf "%d %.1f\n", t, w / 7 }' "${d}/.swarm/events.tsv")"
-  check "${p}: merges today are events.tsv's ${t}" has "  today ${t}  7-day avg ${w}" "${f}"
-  check "${p}: the 7-day rate is events.tsv's ${w}" has "${w} merged/day over 7 days" "$(sed -n 2p <<< "${f}")"
+  # flow's merges section over the 7 days to 2026-10-10: the stories finished each day.
+  read -r t w <<< "$(sw "${d}" flow --since 2026-10-04 --until 2026-10-10 | sed -n '/^## merges$/,/^## /p' \
+    | awk -F'\t' 'NR > 2 && NF == 2 { w += $2; if ($1 == "2026-10-10") t = $2 } END { printf "%d %.1f\n", t, w / 7 }')"
+  check "${p}: merges today are flow's ${t}" has "  today ${t}  7-day avg ${w}" "${f}"
+  check "${p}: the 7-day rate is flow's ${w}" has "${w} merged/day over 7 days" "$(sed -n 2p <<< "${f}")"
 done
 # The epics: next plans bravo-docs, so bravo-mobile, active with no stories, waits on its depends_on.
 fb="$(DASH_W=100 sw "${B}" dash)"
@@ -85,6 +87,36 @@ check "bravo: dash shows b-new's merge by its URL" has "merge b-new: https://git
 check "bravo: dash shows b-fix's prompt with no reason" has "answer b-fix: " "${fb}"
 out="$(sw "${B}" dash --check)" && rc=0 || rc=$?
 check "with a cut epic name, PRs by URL, held or wrapped, and no prompt reason, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+
+# With lead = off, an escalated lead story is in flow's lead_queue but dash draws no row for it, as
+# it draws none for status.
+sed 's/^lead = session$/lead = off/' "${A}/.claude/swarm/config" > "${ROOT}/alpha-config" && cat "${ROOT}/alpha-config" > "${A}/.claude/swarm/config"
+check "alpha is lead = off" grep -qx 'lead = off' "${A}/.claude/swarm/config"
+item "${A}" stories/a-esc.md "Escalated" "status: ready" "kind: lead" "escalated_from: code"
+printf '%s\tescalated\ta-esc\tw1:p1\tok\n' "$(at 30)" >> "${A}/.swarm/events.tsv"
+check "alpha, lead = off: flow's lead_queue holds escalated:a-esc open" grep -q 'escalated:a-esc' <<< "$(sw "${A}" flow)"
+fa="$(DASH_W=100 sw "${A}" dash)"
+# shellcheck disable=SC2016 # the script's own $1 and $2
+check "alpha, lead = off: no needs-you or lead's-queue row for a-esc" bash -c '! grep -q a-esc <<< "$1"' _ "$(box "needs you" "${fa}"; box "lead's queue" "${fa}")"
+out="$(sw "${A}" dash --check)" && rc=0 || rc=$?
+check "alpha, lead = off: dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+
+# An agent spends while the frame draws: the herdr stub logs a new turn for a-building each time dash
+# or status asks for the agent list, after dash has read its cost. flow's cost before the frame and
+# after it differ, and dash's lies between them.
+mkdir -p "${ROOT}/spend"
+cat > "${ROOT}/spend/herdr" <<STUB
+#!/bin/sh
+[ "\$1 \$2" != "agent list" ] || printf '{"type":"assistant","timestamp":"%s","message":{"id":"spend-%s","model":"claude-opus-5-5","usage":{"input_tokens":100000,"output_tokens":10000},"content":[]}}\n' \
+  "$(at 1)" "\$\$" >> "${ROOT}/projects/alpha/sa-2.jsonl"
+exec "${ROOT}/bin/herdr" "\$@"
+STUB
+chmod +x "${ROOT}/spend/herdr"
+cost() { sw "$1" flow --since 2026-10-10 | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p'; }
+c0="$(cost "${A}")"
+out="$(PATH="${ROOT}/spend:${PATH}" sw "${A}" dash --check)" && rc=0 || rc=$?
+check "with spend while the frame draws, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+check "with spend while the frame draws, the cost moved (\$${c0} to \$$(cost "${A}"))" test "$(cost "${A}")" != "${c0}"
 
 # From a pane whose own session cost today, the frame still shows the project's own cost, as flow
 # with no calling session does.
@@ -144,6 +176,11 @@ check "with the waiting epic quiet, --check names the epics waiting" names "${B}
 check "mutant: status lists one more working agent" \
   mutant status swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) status_report "${1:-}"; echo "  ghost  working  [x w9:p9]" ;;/'
 check "with that status, --check names agents working" names "${A}" "agents working" env SWARM_PROJECT="${A}" "${M}" dash --check
+check "mutant: next fails" mutant next swarm.sh 's/^    next)   next_step ;;$/    next)   exit 3 ;;/'
+out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
+# shellcheck disable=SC2016 # the script's own $1 and $2
+check "with next failing, --check exits 1 naming next (exit ${rc}: ${out})" \
+  bash -c '[[ $1 == 1 ]] && grep -q "^alpha: next: dash shows conduct alpha-core, next says nothing$" <<< "$2"' _ "${rc}" "${out}"
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

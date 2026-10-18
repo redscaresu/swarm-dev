@@ -169,7 +169,8 @@ Repeat until a step below says stop:
      owns it and exits 1 naming each one that differs. If it fails, run it once more, since a
      figure can move between the two reads; if it fails again, file a `kind: code` story naming the
      fields it printed. Remove the worktree and the branch, and go back to 1. If it is `human`,
-     tell the user the PR waits on their merge, show what `swarm.sh status` lists under Waiting on you, and stop.
+     run `swarm.sh dash --check` as above, then tell the user the PR waits on their merge, show
+     what `swarm.sh status` lists under Waiting on you, and stop.
    - `gate`: show the list `next` printed and, for each item, what the user must do (a lead
      story: that you will run it once they say go, and its **You:** steps; a story of any other
      kind: that its `kind` is wrong and must be fixed on the board; a blocked
