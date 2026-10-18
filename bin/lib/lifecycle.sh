@@ -141,17 +141,37 @@ keys_only() {
     <(awk -v keys=" ${SET_FM_KEYS} " "${rest}" "${PROJECT_DIR}/$1")
 }
 
-# keys_to_state <path> — for the story or epic <path>, whose unstaged edit is keys_only: move into its
-# state each SET_FM_KEYS value it reads now (through that state, so a value swarm.sh wrote after the
-# edit wins) that differs from HEAD's, with HEAD's value as its base, and check the file out, so fm
-# reads it as before. Fails when a step does; the caller puts the file and its state back.
-keys_to_state() {
-  local f="${PROJECT_DIR}/$1" head k v pairs=()
+# key_moves <path> — each SET_FM_KEYS key of the story or epic <path> whose value, read through its
+# state (so a value swarm.sh wrote after the edit wins), differs from HEAD's, as <key><tab><value>
+# lines: what keys_to_state moves.
+key_moves() {
+  local f="${PROJECT_DIR}/$1" head k v
   head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
   for k in ${SET_FM_KEYS}; do
     v="$(get_fm "${f}" "${k}")"
-    [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" ]] || pairs+=("${k}" "${v}")
+    [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" ]] || printf '%s\t%s\n' "${k}" "${v}"
   done
+}
+
+# keys_meet_base <path> — true when the incoming commits keep the story or epic <path> and change its
+# depends_on, or a key key_moves would move: moved to its state, the old values would read over the
+# new ones (a status flipped to ready over a new dependency).
+keys_meet_base() {
+  local k head up
+  up="$(git -C "${PROJECT_DIR}" show "@{upstream}:$1" 2>/dev/null)" || return 1
+  head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
+  for k in depends_on $(key_moves "$1" | cut -f1); do
+    [[ "$(get_fm - "${k}" <<< "${up}")" == "$(get_fm - "${k}" <<< "${head}")" ]] || return 0
+  done
+  return 1
+}
+
+# keys_to_state <path> — for the story or epic <path>, whose unstaged edit is keys_only: move each
+# key_moves value into its state, with HEAD's value as its base, and check the file out, so fm reads it
+# as before. Fails when a step does; the caller puts the file and its state back.
+keys_to_state() {
+  local f="${PROJECT_DIR}/$1" k v pairs=()
+  while IFS=$'\t' read -r k v; do pairs+=("${k}" "${v}"); done < <(key_moves "$1")
   git -C "${PROJECT_DIR}" checkout -q -- "$1" || return 1
   [[ ${#pairs[@]} -eq 0 ]] || (state_set "${f}" "${pairs[@]}") || return 1
   echo "reconcile: $1 changed only swarm.sh's own keys; they are in its board state now, and the file is checked out"
@@ -175,14 +195,15 @@ put_back() {
 # tracked file the incoming commits change is changed here too, staged or not: that stop names those
 # files and logs an incident, pull-failed: <files>. A story or epic among them whose edit is only to
 # swarm.sh's own keys does not stop it: before the merge it moves those keys into board state
-# (keys_to_state). It also removes each untracked board file whose bytes are already the incoming
+# (keys_to_state), unless the incoming commits change its depends_on or those keys (keys_meet_base),
+# which stops it as a changed file does. It also removes each untracked board file whose bytes are already the incoming
 # one's, which the pull brings back. If the merge then fails (git refuses it: another untracked file
 # it would overwrite), it puts each of those changes back (put_back), so a failed pull changes
 # nothing. A changed file the incoming commits leave alone stays as it is through the pull. On
 # failure PULL_WHY says why and what to do before reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local incoming line p b stop="" board other out keys=() undo=()
+  local incoming line p b stop="" meet="" board other out keys=() undo=()
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   ! git -C "${PROJECT_DIR}" merge-base --is-ancestor '@{upstream}' HEAD || return 0
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
@@ -195,18 +216,19 @@ pull_board_repo() {
     grep -qxF -- "${p}" <<< "${incoming}" || continue   # the pull leaves it alone
     if [[ "${line:0:2}" == " M" && ( "${PROJECT_DIR}/${p}" == "${BOARD}/stories/"* || "${PROJECT_DIR}/${p}" == "${BOARD}/epics/"* ) ]] \
       && keys_only "${p}"; then
-      keys+=("${p}")
+      if keys_meet_base "${p}"; then meet+="${meet:+ }${p}"; else keys+=("${p}"); fi
     else
       stop+="${stop:+$'\n'}${p}"
     fi
   done < <(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no)
-  if [[ -n "${stop}" ]]; then
-    record_event incident - "pull-failed: $(paste -sd' ' - <<< "${stop}")"
+  if [[ -n "${stop}${meet}" ]]; then
+    record_event incident - "pull-failed: $(paste -sd' ' - <<< "${stop}")${stop:+${meet:+ }}${meet}"
     board="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) == 1' <<< "${stop}" | paste -sd' ' -)"
     other="$(awk -v b="${BOARD#"${PROJECT_DIR}"/}/" 'index($0, b) != 1' <<< "${stop}" | paste -sd' ' -)"
     PULL_WHY=""
     [[ -z "${board}" ]] || PULL_WHY="board files are changed here: ${board}; land each edit through swarm.sh board-pr, or check the file out to drop it"
     [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"
+    [[ -z "${meet}" ]] || PULL_WHY+="${PULL_WHY:+; }swarm.sh's keys are changed here in ${meet}, and the incoming commits change its depends_on or the same keys; check each file out, and once the pull is in, set its keys again through swarm.sh"
     return 1
   fi
   # From here undo lists each file changed and the blob it was (- for none), for put_back.

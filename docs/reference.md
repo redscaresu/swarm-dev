@@ -857,7 +857,10 @@ local commits), or when a tracked file the incoming commits change is changed th
 not. A changed file the pull leaves alone, such as Obsidian's own settings, stays as it is. A story
 or epic the pull changes whose only uncommitted change is to swarm.sh's keys, as an older swarm.sh
 wrote them, does not stop it: reconcile moves the values, as the item reads them, into its state and
-checks the file out, so the item reads as it did. An untracked board file whose bytes match the
+checks the file out, so the item reads as it did. It stops instead, naming the file, when the incoming
+commits change that file's `depends_on` or the same keys, since the old values would read over the new
+ones (a status flipped to `ready` over a new dependency): check the file out, and once the pull is in,
+set its keys again through swarm.sh. An untracked board file whose bytes match the
 incoming file's is removed, and the pull brings it back. A pull git refuses (an untracked file it
 would overwrite) also stops reconcile, and reconcile puts back each of those changes first, so a
 failed pull changes nothing. On a stop for changed files, it names each of them and logs an `incident` line in

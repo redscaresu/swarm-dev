@@ -5,7 +5,8 @@
 # its state, even with its file removed by hand. An untracked copy of a story the pull brings gives way
 # to it. A story whose uncommitted edit is only to swarm.sh's own keys (an older swarm.sh's review) has
 # them moved to its state and pulls, reading as before even where its state disagrees with the file.
-# Only a file the pull changes has its keys moved; a key edit on any other stays in it. A hand edit
+# Only a file the pull changes has its keys moved; a key edit on any other stays in it, and one whose
+# file the pull gives a new dependency, or changes the same keys in, stops the pull. A hand edit
 # to a tracked story the pull also changes stops the pull, before any key is moved, names the file,
 # changes nothing, and logs one pull-failed incident; with nothing to pull it stops nothing. A merge
 # git refuses puts back every change made for it. After a pull by hand, reconcile still drops the
@@ -148,6 +149,30 @@ echo "a local note" >> "${ROOT}/k4/docs/stories/d.md"
 rc=0; out="$(at k4 reconcile)" || rc=$?
 check "a stop on another file moves no key first: e's edit stays, with no state" "1|yes|same|gone" \
   "${rc}|$(has "board files are changed here: docs/stories/d.md;" "${out}")|$(cmp -s "${ROOT}/k4-e" "${ROOT}/k4/docs/stories/e.md" && echo same)|$(state k4 e)"
+
+# --- codex's case: h committed blocked on old, an older swarm.sh's uncommitted unblock flip to ready,
+# and incoming commits that add a dependency (depends_on: [old, new]) without touching status. The
+# pull stops, naming h; h's edit stays, with no state, so h is not read as ready over the dependency.
+setup kd; git -C "${ROOT}/kd" pull -q --ff-only
+item "${ROOT}/kd-up/docs/stories/h.md" "status: blocked" "kind: code" "depends_on: [old]"
+"${GIT[@]}" -C "${ROOT}/kd-up" add docs && "${GIT[@]}" -C "${ROOT}/kd-up" commit -q -m "add h" && "${GIT[@]}" -C "${ROOT}/kd-up" push -q origin main
+git -C "${ROOT}/kd" pull -q --ff-only
+perl -pi -e 's|^status: blocked$|status: ready|' "${ROOT}/kd/docs/stories/h.md"; cp "${ROOT}/kd/docs/stories/h.md" "${ROOT}/kd-h"
+perl -pi -e 's|^depends_on: \[old\]$|depends_on: [old, new]|' "${ROOT}/kd-up/docs/stories/h.md"
+"${GIT[@]}" -C "${ROOT}/kd-up" commit -q -am "h waits on new too" && "${GIT[@]}" -C "${ROOT}/kd-up" push -q origin main
+rc=0; out="$(at kd reconcile)" || rc=$?
+check "an old ready flip under a new dependency stops the pull, naming h, and moves nothing" "1|yes|same|gone|pull-failed: docs/stories/h.md" \
+  "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/h.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kd-h" "${ROOT}/kd/docs/stories/h.md" && echo same)|$(state kd h)|$(awk -F'\t' '$2 == "incident" { print $5 }' "${ROOT}/kd/.swarm/events.tsv")"
+
+# --- e in review as an older swarm.sh wrote it (status: and prs: uncommitted, no state), and incoming
+# commits that set e's status too: the pull stops, naming e, and e's edit stays, with no state.
+setup kc; rm "${ROOT}/kc/.swarm/board-state/stories/e"
+perl -pi -e 's|^status: ready$|status: blocked|' "${ROOT}/kc-up/docs/stories/e.md"
+"${GIT[@]}" -C "${ROOT}/kc-up" commit -q -am "block e" && "${GIT[@]}" -C "${ROOT}/kc-up" push -q origin main
+perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/kc/docs/stories/e.md"; cp "${ROOT}/kc/docs/stories/e.md" "${ROOT}/kc-e"
+rc=0; out="$(at kc reconcile)" || rc=$?
+check "an old key edit the incoming commits change too stops the pull, naming e, and moves nothing" "1|yes|same|gone" \
+  "${rc}|$(has "swarm.sh's keys are changed here in docs/stories/e.md, and the incoming commits change its depends_on or the same keys" "${out}")|$(cmp -s "${ROOT}/kc-e" "${ROOT}/kc/docs/stories/e.md" && echo same)|$(state kc e)"
 
 # --- A hand edit to e's swarm.sh keys (kind: lead, the lead's own) on a file the pull leaves alone:
 # it stays in the file, and e's state is as it was.
