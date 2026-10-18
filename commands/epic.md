@@ -16,8 +16,13 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
      stands (for example "`conduct policy-correctness`: a ready story in an active epic") and that
      `/swarm-dev:swarm` continues it. Offer to start a new epic if they give a title. Then stop.
 
-1. If an epic with this title or slug exists in `docs/epics/`, resume it. Otherwise create
-   `docs/epics/<slug>.md` (slug: lowercase, words joined by `-`) with this skeleton:
+1. Make the slug from the title: lowercase it, turn every run of characters other than `a-z` and
+   `0-9` into one `-`, and trim `-` from both ends (`Add rate-limiting (v2)!` is
+   `add-rate-limiting-v2`). If the slug is empty or `backlog` (the name `conduct --backlog` uses),
+   stop and ask the user for another title. If `docs/epics/<slug>.md` exists (or an epic with this
+   title does) and is `status: draft`, resume it. If it exists with any other status, it is live
+   (active, later, review or done) and not for co-writing: stop, say so with its status, and let
+   the user pick another title. Otherwise create `docs/epics/<slug>.md` with this skeleton:
 
    ```
    ---
@@ -72,5 +77,8 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
 5. Still in the background: wait until `D/agreed` exists. Only then, on the user's agreement, set
    `status: active`; nothing plans a draft epic. Open a PR for the epic with one
-   `swarm.sh codex-review` pass, `swarm.sh close epic`, and tell the user the epic is agreed and
+   `swarm.sh codex-review` pass, close the co-author and the reviewer by name
+   (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
+   epic`, which would close every tab whose label starts `epic-`, a conductor's or a builder's
+   among them), and tell the user the epic is agreed and
    that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`).

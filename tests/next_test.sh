@@ -48,6 +48,12 @@ if [[ "${out}" == *"waits on you"* ]]; then echo "ok   a draft epic is named as 
 else echo "FAIL a draft epic is not named as waiting on the user: ${out}"; fails=$((fails + 1)); fi
 expect "draft epic once active is planned" "plan-epic e1" \
   "item epics/e1.md 'status: active'"
+expect "an escalated story comes before a draft epic" "escalated esc" \
+  "item epics/e1.md 'status: draft'" \
+  "item stories/esc.md 'status: ready' 'kind: lead' 'escalated_from: code'"
+expect "the gate comes before a draft epic" "gate" \
+  "item epics/e1.md 'status: draft'" \
+  "item stories/l.md 'status: ready' 'kind: lead'"
 expect "a draft HLD is no step" "done" \
   "item hld/2026-01-01-x.md 'status: draft'"
 expect "agreed HLD, no epics" "plan-hld 2026-01-01-x" \
