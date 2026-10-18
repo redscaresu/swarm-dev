@@ -52,41 +52,39 @@ The lead handles each line at once and starts it again. It keeps what it last sa
 `.swarm/lead/seen`, so an item that lands between two runs wakes the next one. A new run stops
 any earlier one, so only one is ever watching. It never nudges an agent and never edits the board.
 
-## Writing the HLD
+## Writing an epic
 
-Everything starts here, and it is the one stage you do by hand: the HLD decides what every epic,
-story and line of code after it is for, so it is written with you, not for you.
+Everything starts here, and it is the one stage you do by hand: the epic decides what every story
+and line of code after it is for, so you write it with a co-author.
 
-1. **Start it.** In your Claude session, inside herdr: `/hld <title>`, for example
-   `/hld Add rate limiting to the API`. This creates `docs/hld/YYYY-MM-DD-<slug>.md` from the
-   template with `status: draft`, and opens a new pane (tab `hld`) with a co-author on the most
-   capable model. Your session only supervises from here.
+1. **Start it.** In your Claude session, inside herdr: `/epic <title>`, for example
+   `/epic Add rate limiting to the API`. This creates `docs/epics/<slug>.md` with `status: draft`
+   and opens a new pane (tab `epic`) with a co-author on the most capable model. Your session only
+   supervises from here.
 2. **Write it in the co-author's pane.** Switch to that pane and talk to it there. It reads the
-   code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the design, one
-   or two at a time, and writes your answers into the file section by section, citing evidence.
-   It does not invent requirements, commit, or change `status`.
-3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the most capable model, at
-   `xhigh` effort) starts on its own and attacks the draft: goals that cannot be verified, a
-   design that contradicts an ADR or a safety rule, missing alternatives, unnamed risks, open
-   questions that would block splitting it into epics. Its findings arrive in the co-author's
-   pane; go through them there and revise until you are satisfied. You never switch tabs.
-4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: agreed`,
-   opens a PR for the HLD (reviewed like any other change), and closes the co-author's pane. Only
-   you can agree an HLD; no agent changes its status.
-5. **Hand over.** Run `/swarm-dev:swarm`. It sees an agreed HLD with no epics and starts `/plan-hld`.
+   code, the ADRs and `AGENTS.md` first, then asks you the questions that decide the epic, one or
+   two at a time, and writes your answers into the file section by section, citing evidence. It
+   does not invent requirements, commit, or change `status`.
+3. **Say it is ready**, to the co-author, in the same pane. A reviewer (the `epic-review` role, the
+   most capable model at `xhigh` effort) starts on its own and attacks the draft: a problem with no
+   evidence, goals that cannot be checked, an epic that contradicts an ADR or a safety rule, unnamed
+   risks, open questions that would block planning it into stories. Its findings arrive in the
+   co-author's pane; go through them there and revise until you are satisfied. You never switch
+   tabs.
+4. **Agree it**, to the co-author. Your session, waiting in the background, sets `status: active`,
+   opens a PR for the epic (reviewed like any other change), and closes the co-author's pane. Only
+   you can agree an epic; no agent changes its status, and `next` plans no draft epic.
+5. **Hand over.** Run `/swarm-dev:swarm`. It sees an active epic with no stories and starts
+   `/plan-epic`.
 
-**What a good HLD has.** The template's sections: Problem (with evidence), Goals, Non-goals,
-Current state, Design, Alternatives, Risks and safety, Rollout, Open questions, and Epics (filled
-in later by `/plan-hld`). The ones that matter most downstream: **Goals** that could be checked
-and fail, because each epic's **Done when** comes from them; **Non-goals**, which keep the
-decomposition from growing; **Rollout**, which becomes the order of the epics; and **Open
-questions**, which must be answered or explicitly deferred before the HLD is agreed.
+**What a good epic has.** Four sections: Problem (with evidence), Goals, Non-goals and
+Constraints, and a **Your part** line. **Goals** are its **Done when**: checks that could fail,
+because the conductor stops when they hold. **Non-goals** keep the plan from growing.
 
-**Stopping and resuming.** The HLD is a file, so nothing is lost if you stop: run `/hld` on its own
-(or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress from the
-file; if there are several, it asks which. With no draft at all, it tells you where the chain
-stands instead. To
-replace a design later, write a new HLD and set the old one `status: superseded`.
+**Stopping and resuming.** The epic is a file, so nothing is lost if you stop: run `/epic` on its
+own (or `/swarm-dev:swarm`, which sees the draft) and a new co-author picks up the draft in progress
+from the file; if there are several, it asks which. With no draft at all, it tells you where the
+chain stands instead.
 
 ## Model and effort
 
@@ -102,9 +100,10 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   lead, and docs run on Sonnet at `medium`. Chores run on Haiku at `medium`: their result is a
   mechanical diff, checked by the conductor.
 - **Building code is Opus at `high`**, and at `xhigh` for a story marked `risk: high`. To find out
-  whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories on
-  Sonnet at `high` (`code-sonnet`). The slug fixes the pick, a retry goes back to Opus, and each
-  build's agents.tsv line says which model built it. It ships off (`0`).
+  whether Sonnet would do as well, `sonnet_share = N` builds one in N of the other code stories
+  marked `easy: true` on Sonnet at `high` (`code-sonnet`); every other code story stays on Opus.
+  The slug fixes the pick, a retry goes back to Opus, and each build's agents.tsv line says which
+  model built it. It ships off (`0`).
 - **Codex is the cross-model check**, read-only, because a different model family shares fewer
   blind spots with the one that wrote the plan.
 - **Below the design level, Fable is escalation only**: a story that failed twice, or an epic whose
@@ -186,7 +185,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `merge` (default `human`): `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges, except a PR `swarm.sh merge` holds for you (§ Merging)
 - `lessons_file` (default `.claude/swarm/brief.md`): where adopted lesson rules live: the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`, the files every agent reads (any other is refused, since a rule there would retire its candidate without reaching anyone). With `AGENTS.md`, rules about writing code reach you and interactive sessions too, and the brief keeps the swarm-only rules. Every brief still gets the file's tagged rule lines (only those), since a builder in another repo's worktree reads that repo's `AGENTS.md`, not this one. The 4 KB cap measures what every prompt carries: the brief plus `lessons_file`'s tagged rule lines; the rest of `AGENTS.md` is not capped
 - `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
-- `sonnet_share` (default `0`): `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
+- `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
@@ -252,6 +251,64 @@ Otherwise clear the stop by discarding the build from its repo
 deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic, such as a code PR
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
+
+**The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
+exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
+`zsh -f` (no rc file runs) holding only:
+
+- `PATH`, `HOME`, `TERM`, `USER`, `LOGNAME`, `TMPDIR`, `LANG` and the `LC_*` variables;
+- where logins, config and logs live: `CLAUDE_CONFIG_DIR`, `CLAUDE_PROJECTS_DIR`, `CODEX_HOME`,
+  `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`, `GNUPGHOME` and the `XDG_*` directories;
+- the session bus, `DBUS_SESSION_BUS_ADDRESS`, through which `gh`'s keyring token and
+  `git-credential-libsecret` reach the Secret Service on Linux;
+- for a push: the ssh agent's `SSH_AUTH_SOCK` and `GIT_SSH_COMMAND`;
+- for a proxy or an intercepting CA: `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` and their lowercase
+  forms, `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS`;
+- which provider and model Claude Code uses: `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`,
+  `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `AWS_REGION`,
+  `AWS_PROFILE`, `CLOUD_ML_REGION` and `ANTHROPIC_VERTEX_PROJECT_ID`;
+- swarm.sh's own `SWARM_*` settings, with `SWARM_PROJECT` as the project's absolute path, so the
+  agent's own `swarm.sh` finds the same project and settings from any directory;
+- `SHELL`, set to that zsh; `ZDOTDIR`, set to the agent's own `.swarm/zdotdir/<agent>`; and
+  `GPG_TTY`, set to the agent's own terminal, so pinentry asks there and never in yours. swarm.sh
+  makes the `ZDOTDIR` afresh, 0700, at each launch, with only a `.zshenv` and a `.zprofile` that
+  put back the `PATH` a login shell was given once `/etc/zprofile` has run (on macOS, its
+  path_helper puts `/usr/bin` and `/bin` first), and removes it when `swarm.sh close` closes the
+  agent;
+- `HERDR_ENV=1`, and those of herdr's own variables for the pane that the pane has.
+
+The others take swarm.sh's value, when it has one, except herdr's, which come from the new pane. A
+story's `env: [NAME, ...]` adds those names for its builder, whether `story` starts it or a conductor
+restarts it with `swarm.sh agent`. A conductor gets the names of its epic's open (`ready`, `blocked`
+or `review`) code, docs and chore stories (for `conduct --backlog`, those with no epic), so the
+builders it starts can receive them; a `lead` story's names stay with you. A conductor has only the
+names its stories had when it started: for a story added later with a new name, restart it with
+`swarm.sh conduct <epic>`, which its refusal names. Each value comes from the session that runs
+`swarm.sh`. `story`, `agent` and `conduct` refuse, before anything starts, an `env:` that is not a
+one-line `[A, B]` list, a name that is not `[A-Z_][A-Z0-9_]*`, a name that session does not have,
+and a reserved name: one from the list above or starting `LC_`, `SWARM_`, `XDG_` or `HERDR_`; the lead's
+own Claude Code session's (`CLAUDECODE`, `CLAUDE_CODE_*`, `CLAUDE_PID`); and one that loads code
+into what the agent runs (`BASH_ENV`, `ENV`, `DYLD_*`, `LD_*`). No value goes through a command line:
+swarm.sh writes them to a 0600 file under `.swarm/launch/`, which the pane's shell runs and which
+deletes itself, so the pane's scrollback shows the launch line with no value in it.
+
+A login read from the environment does not reach an agent either: `ANTHROPIC_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, or a `GH_TOKEN` for `gh`. A story can name
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GH_TOKEN` for its builder (never a `CLAUDE_CODE_*` one), but
+agents with no story of their own (planners and review agents, and conductors beyond their stories'
+names) never get it. If you log in that way, log in through each tool instead: `claude` then
+`/login`, `codex login`, and `gh auth login`. On Foundry, Bedrock or Vertex, the provider and model
+selection above passes from the session that runs swarm.sh, or can go under `env` in
+`~/.claude/settings.json`, which every Claude Code session reads. The credentials come from the
+provider's own login or profile files (`aws sso login` or a profile in `~/.aws`,
+`gcloud auth application-default login`), never from an exported secret such as
+`AWS_SECRET_ACCESS_KEY`.
+
+Because `SHELL` is zsh and `ZDOTDIR` is empty, every shell an agent starts later, such as Claude
+Code's Bash tool and codex's commands, reads none of your `~/.zshenv`, `~/.zprofile`, `~/.zshrc`,
+`~/.zlogin`, `~/.bashrc` or `~/.bash_profile`, even when your own shell is bash. Only the system
+files in `/etc` (`zshenv`, `zprofile`, `zshrc`, `zlogin`) still run, and a login shell's `PATH` is
+put back as it was given after them.
 
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
 `escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
@@ -591,7 +648,17 @@ does), `pr_to_merge_min` (minutes from `pr_created_at` to `merged_at`), and `mai
 commits on the PR whose headline merges the base branch into it (`Merge origin/main into …`,
 `Merge branch 'main' into …`, `Merge remote-tracking branch 'origin/main' into …`). Each is empty
 when its inputs are. `pr_created_at`, `pr_to_merge_min` and `main_merges` describe the PR, not the
-build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. A story the lead holds after an escalation (`kind: lead` with
+build, so they repeat on every build that shares it: count a retried PR once when you sum or average them. Last
+come `subagent_cost_usd`, the estimated cost of the builder's subagents, `subagent_cost_by_model`,
+the same cost split by model as `<model>:<usd>` pairs joined by commas (`haiku:1.00,opus:2.00`, with
+`other` for a model that has no price), and
+`subagent_tokens`, their tokens of every type. A
+subagent turn is one with `parent_tool_use_id` or `isSidechain` set in the builder's session log, or any
+turn in the `subagents/*.jsonl` logs in the folder named after the session, next to its log. `cost_usd`
+and the tokens columns count the builder's own turns only, so `cost_usd` plus `subagent_cost_usd` is
+the whole build. The subagent columns are empty when there is no session log. When only the copy
+`close` keeps of a deleted log is left, they count the subagent turns inside that log alone: the copy
+leaves out the `subagents/` logs beside it. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
@@ -641,7 +708,7 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `features`, `incidents`, `reviewers` and `throughput`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `reviewers` and `throughput`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
 the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
@@ -661,6 +728,17 @@ conclusion from `gh api`. A run whose times do not parse adds no minutes. When a
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
 day). With `--epic` it still counts every agent in the window, and says so.
+
+The `epic_totals` section prints one TSV row per epic and a last `all` row, over the `outcomes` rows
+dated in the window. With `--epic` it prints that epic's row alone. Each row sums `cost_usd` and
+`start_to_pr_min` over its builds. It counts each PR once, however many builds share it:
+`pr_to_merge_min` is summed per PR, `merged_prs` is the merged PRs whose `main_merges` `gh` could
+read, `main_merged` is how many of those had main merged in, and `main_merged_share` is that
+percentage. An open or abandoned PR is left out of the share, as it was from leaner-faster-swarm's
+baseline of 55%, which a line after the table gives to compare against. `cost_usd` says how many
+builds have no cost (no session log, or a codex agent), as `cost` does: `4.25 (1 not in the logs)`.
+The minutes sums skip empty cells: `outcomes` leaves `start_to_pr_min` empty for a retry that started
+after its PR was created and for a build with no PR.
 
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
@@ -893,7 +971,7 @@ exist. With `merge = human` it waits on your merge.
 
 | Command | What it does |
 |---|---|
-| `/hld <title>` | Write a design with a co-author agent. |
+| `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
 | `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights. `swarm.sh dash --project <dir>` (repeatable) draws several projects. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
@@ -908,7 +986,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them) and `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic). |
 
 ## Cleanup, escalation and session logs
 

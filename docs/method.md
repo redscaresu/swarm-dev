@@ -6,19 +6,18 @@ each step is in [`reference.md`](reference.md).
 
 ## The planning chain
 
-1. **HLD**: `/hld <title>` opens a pane on the most capable model, where you write
-   `docs/hld/YYYY-MM-DD-<slug>.md` with it. A reviewer attacks the draft before it is `agreed`
-   (reference.md § Writing the HLD).
-2. **Epics**: `/plan-hld <hld>` splits the HLD into epics, each with a **Done when** that could
-   fail. Skeptics and codex check for gaps and overlaps.
-3. **Stories**: `/plan-epic <epic>` splits each epic into one-PR stories (reference.md § Scoping an
-   epic).
-4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
+1. **Epic**: `/epic <title>` opens a pane on the most capable model, where you write
+   `docs/epics/<slug>.md` with it as `status: draft`: the problem with evidence, goals that can be
+   checked, non-goals and constraints. A reviewer attacks the draft, and it becomes `active` only
+   when you agree it (reference.md § Writing an epic).
+2. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. Skeptics and
+   codex check for gaps and overlaps (reference.md § Scoping an epic).
+3. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging).
 
-`/swarm-dev:swarm` runs the chain after the HLD. `swarm.sh next` reads the board and names the next
-step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft HLD, a
+`/swarm-dev:swarm` runs the chain after the epic. `swarm.sh next` reads the board and names the next
+step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a
 `lead` story, or a `later` epic. On an empty board it explains the flow instead. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
 first (a conductor still working, then an already-started one-off with `resume <slug>`, then an active epic's ready stories with `conduct <epic>`, then new one-offs), then
@@ -96,7 +95,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `lessons_file` | `.claude/swarm/brief.md` | where adopted lesson rules live; the brief, `AGENTS.md`, `CLAUDE.md` or `.claude/CLAUDE.md`. Every brief carries the file's tagged rule lines; a brief over 4 KB with them is flagged, not cut (reference.md § The outer loop) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it (reference.md § Building) |
-| `sonnet_share` | `0` | `N`: one in N `kind: code` stories without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
+| `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |

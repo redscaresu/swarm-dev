@@ -17,10 +17,11 @@ the run stops whenever a decision is yours.
   <img alt="How the swarm builds a design: /hld, /swarm-dev:swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
-1. **Design.** You write a design with a co-author agent (`/hld`). A reviewer agent attacks it
-   before you agree it.
-2. **Plan.** Planning agents split it into epics, then into stories of one PR each, and skeptic
-   agents try to break the plan. You approve it.
+1. **Design.** You write a draft epic with a co-author agent (`/epic`): the problem with its
+   evidence, goals that can be checked, non-goals and constraints. A reviewer agent attacks it, and
+   nothing plans it until you agree it.
+2. **Plan.** Once you agree the epic, planning agents (`/plan-epic`) split it into stories of one
+   PR each, and skeptic agents try to break the plan. You approve it.
 3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
    and the builder fixes what it finds.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
@@ -53,19 +54,19 @@ anywhere and the next `/swarm-dev:swarm` picks up where it left off.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm` (type the whole name; the short form
-   completes to `/swarm-dev:hld`). The first time, it sets up the board and asks once for your rules
+   completes to another command). The first time, it sets up the board and asks once for your rules
    for builders: commit trailers, where credentials live, commands that must never run. Commit the
    `.claude/swarm/brief.md` it writes.
-4. Run `/hld Add rate limiting to the API`, agree the design, then run `/swarm-dev:swarm` again.
+4. Run `/epic Add rate limiting to the API`, agree the epic, then run `/swarm-dev:swarm` again.
    Run it each time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
 
 | Command | What it does |
 |---|---|
-| `/hld <title>` | Write a design with a co-author agent. |
+| `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
 
 The other commands are tools the lead runs; they are listed in
@@ -76,7 +77,7 @@ The other commands are tools the lead runs; they are listed in
 
 | You see | Do |
 |---|---|
-| a draft design | finish it with the co-author, then agree it |
+| a draft epic | finish it with the co-author, then agree it |
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
@@ -92,10 +93,17 @@ Every agent is a full Claude Code session on your own logins. On infrafactory, f
 The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
 section shows how long CI takes per push, how often it goes red and how often it flakes, and its
 `incidents` section counts, per day, the waits that timed out, the logins that expired, the
-builders that stopped with no PR, and the board pulls that an uncommitted edit stopped.
+builders that stopped with no PR, and the board pulls that an uncommitted edit stopped. Its
+`lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
+item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
+money waits on you, so only those count.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. By default no agent merges. A story that fails twice is rebuilt once on Fable, the
+while you watch. Agents start with a short list of environment variables, and a token you exported
+reaches a builder only when its story names it under `env:`. That includes a login kept in the
+environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). Agents with no story
+of their own, such as planners and review agents, never get one, so log in through `claude`,
+`codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
 details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
 
@@ -103,12 +111,13 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 
 - [The method](docs/method.md): the short guide to how planning, building and merging work.
 - [Reference](docs/reference.md): every rule, setting, command and log.
-- On Foundry, Bedrock or Vertex, load your provider settings in `~/.zshrc` so herdr panes pick them
-  up (an alias won't reach them):
-
-  ```bash
-  [[ -n "$HERDR_ENV" ]] && claude() { ( source ~/path/to/your-provider-env.sh && command claude "$@" ) }
-  ```
+- On Foundry, Bedrock or Vertex, agents get the provider and model selection (`CLAUDE_CODE_USE_BEDROCK`,
+  `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+  `AWS_REGION`, `AWS_PROFILE`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`) from the session that
+  runs swarm.sh, so a `claude()` wrapper in `~/.zshrc` that exports them still picks the provider.
+  Exported credentials do not reach agents. Log in through the provider's own tools instead
+  (`aws sso login` or a profile in `~/.aws`, `gcloud auth application-default login`), and put any
+  other settings under `env` in `~/.claude/settings.json`.
 
 - [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in

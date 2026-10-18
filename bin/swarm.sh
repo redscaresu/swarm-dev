@@ -145,7 +145,7 @@ CFG_repos_dir=""        # empty: the project dir's parent
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
 CFG_lessons_file=.claude/swarm/brief.md  # where adopted lesson rules live, e.g. AGENTS.md, which every agent already loads
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?
-CFG_sonnet_share=0      # N > 0: 1 in N code stories without risk: high is built on Sonnet (code-sonnet), to compare
+CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
@@ -271,7 +271,7 @@ base_for() {
 # The model and effort for each role. This is the one place the policy lives
 # (docs/reference.md § Model and effort explains the reasoning). ROLE_GROUPS lists every role policy
 # knows, by group: the usage message and `dash` read it.
-ROLE_GROUPS="design:hld,hld-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
+ROLE_GROUPS="design:epic,epic-review,hld-lead planning:survey,lead,skeptic,critic,codex building:code,code-risky,code-sonnet,docs,chore,escalate conducting:conduct,review"
 roles() { local g r=""; for g in ${ROLE_GROUPS}; do r+=" ${g#*:}"; done; r="${r//,/ }"; echo "${r# }"; }
 # BUILDER_ROLES: the building group, the roles that build a story (outcomes, builder_subagent_model),
 # plus LEGACY_BUILDER_ROLES: roles nothing starts now, kept so agents.tsv's past builds still count.
@@ -280,8 +280,8 @@ LEGACY_BUILDER_ROLES="verify"
 BUILDER_ROLES="${ROLE_GROUPS#*building:}"; BUILDER_ROLES="${BUILDER_ROLES%% *}"; BUILDER_ROLES="${BUILDER_ROLES//,/ } ${LEGACY_BUILDER_ROLES}"
 policy() {
   case "$1" in
-    hld)        echo "claude fable high" ;;    # co-writes the HLD with the user, who waits on every turn
-    hld-review) echo "claude fable xhigh" ;;   # attacks the finished draft before it is agreed
+    epic)       echo "claude fable high" ;;    # co-writes a draft epic with the user, who waits on every turn
+    epic-review) echo "claude fable xhigh" ;;  # attacks the finished draft before it is agreed
     hld-lead)   echo "claude fable xhigh" ;;   # HLD into epics: one call that shapes everything below it
     survey)     echo "claude sonnet high" ;;   # reads and cites; feeds the lead, so not low
     lead)       echo "claude opus xhigh" ;;    # one decomposition decides the whole epic
@@ -333,7 +333,7 @@ dispatch() {
   cmd="${1:-}"; shift || true
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
-    agent)  require_herdr; start_agent "$@" ;;
+    agent)  require_herdr; agent_cmd "$@" ;;
     story)  require_herdr; [[ $# -le 2 ]] || die "story: too many arguments: $*"
             if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict
             elif [[ "${2:-}" == --strict ]]; then build_story "$1" strict

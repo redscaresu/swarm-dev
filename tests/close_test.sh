@@ -19,7 +19,7 @@ git -C "${P}" init -q
 printf '#!/bin/sh\nA="%s"; CLOSED="%s"; H="%s"\n' "${ROOT}/agents" "${CLOSED}" "${ROOT}" | tee "${ROOT}/bin/gh" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "tab list") echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"}]}}' ;;
+  "tab list") echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"}]}}' ;;
   "tab close") printf '<%s>\n' "$3" >> "${CLOSED}" ;;
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
@@ -66,6 +66,16 @@ close scope-x
 check "closing it again, another day, archives nothing more" test "$(archives)" = 2
 close codex-y
 check "an agent with no session archives nothing" test "$(archives)" = 2
+
+# /epic's co-author and reviewer share the tab commands/epic.md names. Closing both closes that tab
+# and never the tab of an epic slugged epic-x, which a tab label starting epic- would glob.
+EL="$(sed -n 's/.*swarm\.sh agent \([^ ]*\) epic-<slug> .*/\1/p' "$(dirname "${SWARM}")/../commands/epic.md")"
+printf 'w:p30 epic-e\nw:p31 epic-review-e\n' > "${P}/.swarm/state/${EL}"
+echo "w:p32 conduct-epic-x" > "${P}/.swarm/state/epic-x"
+: > "${CLOSED}"; close epic-e; close epic-review-e
+check "closing /epic's co-author and reviewer (tab ${EL}) leaves an epic-x epic's tab open" \
+  test "$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/epic-x" 2>/dev/null)" = "<w:t4>|w:p32 conduct-epic-x"
+rm -f "${P}/.swarm/state/epic-x"
 
 # --- A close that ends a failed build: the story is ready, of an agent's kind, its builder is open
 # under its name and none of its PRs merged. attempts: goes up by one, and the worktree, local and

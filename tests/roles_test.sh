@@ -28,8 +28,8 @@ done
 reached+=$'\n'"$(cat "${SWARM}" "${REPO}"/bin/lib/*.sh | grep -v '^[[:space:]]*#' \
   | sed -n 's/.*start_agent \([^ ]*\) \([^ ]*\) \([^ ]*\) \([a-z-]*\)\( .*\)\{0,1\}$/\4/p')"
 
-# _role for one fixture story per arm of story_role. With sonnet_share = 4, slug e4-f lands in the
-# code-sonnet sample and slug e4-a does not. escalate_after is set too, so its default can change.
+# _role for one fixture story per arm of story_role. With sonnet_share = 4, slug e4-f marked easy: true
+# lands in the code-sonnet sample and slug e4-a does not. escalate_after is set too, so its default can change.
 mkdir -p "${tmp}/docs/stories" "${tmp}/.claude/swarm"
 printf '%s\n' "sonnet_share = 4" "escalate_after = 2" > "${tmp}/.claude/swarm/config"
 story() { # <slug> <front-matter line>... — write the story, add its _role to reached
@@ -42,12 +42,22 @@ story() { # <slug> <front-matter line>... — write the story, add its _role to 
 }
 story e4-a "kind: code"
 story e4-a "kind: code" "risk: high"
-story e4-f "kind: code"
+story e4-f "kind: code" "easy: true"
 story a "kind: docs"
 story a "kind: chore"
 story a "kind: code" "attempts: 2"
 
 fails=0
+# /epic replaced /hld: its reviewer is epic-review, and the hld roles are gone from ROLE_GROUPS and policy.
+pol="$(sed -n '/^policy() {$/,/^}$/p' "${SWARM}")"
+if grep -qx epic-review <<< "${roles}" && grep -q '^ *epic-review)' <<< "${pol}"; then
+  echo "ok   epic-review is in ROLE_GROUPS and policy"
+else echo "FAIL epic-review is missing from ROLE_GROUPS or policy"; fails=$((fails + 1)); fi
+for r in hld hld-review; do
+  if grep -qx -- "${r}" <<< "${roles}" || grep -q "^ *${r})" <<< "${pol}"; then
+    echo "FAIL ${r} is still in ROLE_GROUPS or policy"; fails=$((fails + 1))
+  else echo "ok   ${r} is in neither ROLE_GROUPS nor policy"; fi
+done
 for r in ${roles}; do
   if grep -qx -- "${r}" <<< "${reached}"; then
     echo "ok   ${r} is reached"
