@@ -26,11 +26,12 @@ state_name() {
   STATE_PATH="${BOARD_STATE_DIR}/${d##*/}/${n%.md}"
 }
 
-# state_drop <item-file> — delete the item's state file and its lock (state_name), so a later item
-# with its slug starts with no state.
+# state_drop <item-file> — delete the item's state file and its lock (state_name), and a story's
+# escalated block (escalated_file), so a later item with its slug starts with no state.
 state_drop() {
   state_name "$1"
   [[ -z "${STATE_PATH}" ]] || rm -rf "${STATE_PATH}" "${STATE_PATH}.lock"
+  [[ "${STATE_PATH}" != "${BOARD_STATE_DIR}/stories/"* ]] || rm -f "$(escalated_file "${STATE_PATH##*/}")"
 }
 
 # state_value <item-file> <key> — print <key>'s value from the item's state file (state_path; nothing
@@ -547,9 +548,7 @@ set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
 # too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
-# They live in BOARD_STATE_DIR, never in a tracked file. reconcile puts an older swarm.sh's edit to
-# them in a board file back as committed on an item whose PRs merged, and carries another board
-# file's over its pull, so they never stop it.
+# They live in BOARD_STATE_DIR, never in a tracked file.
 SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
 
 # set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
@@ -620,16 +619,6 @@ state_write() {
   [[ -s "$2" ]] || rm -f "$2"
 }
 
-# set_file_fm <file> <key> [value] — in <file>'s own front matter, set <key>'s line to <value>, adding
-# it at the end when there is none, or drop it when <value> is empty: only to put back what an older
-# swarm.sh wrote there, over a pull.
-set_file_fm() {
-  awk -v k="$2" -v v="${3:-}" '
-    /^---$/ && ++n == 2 && !d && v != "" { print k ": " v }
-    n == 1 && index($0, k ":") == 1 { if (!d && v != "") print k ": " v; d = 1; next }
-    { print }' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
-}
-
 # get_fm <file> <key> — <key>'s value in the item's state file (state_value), else in <file>'s front
 # matter alone (fm takes the first line for <key> anywhere, so a story's body could answer). <file>
 # may be - for stdin, which is read as it is.
@@ -680,7 +669,8 @@ builder_state() {
 # story can be built again. With no item merged, it still pulls the main checkout when that is behind
 # its upstream (a PR merged with no review item), and dies as a failed pull below does; a failed fetch
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
-# cannot be read: said on stderr, naming it.
+# cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
+# dies, naming why. Last, every item whose file is gone loses its state (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -724,35 +714,16 @@ reconcile() {
   # A pull is due after an item merged when there is an upstream, and otherwise when the checkout is
   # behind it (a PR merged with no review item: a board PR, a one-off). It is held after an unread PR:
   # if that merged, the pull would take its file before its build is cleared.
-  local due=1 held=0
+  local due=1
   if [[ ${#merged[@]} -gt 0 ]]; then has_upstream || due=0; else behind_upstream || due=0; fi
   if [[ ${due} == 1 && -n "${unread}" ]]; then
     echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
-    due=0; held=1
+    due=0
   fi
-  if [[ ${#merged[@]} -eq 0 ]]; then
-    [[ ${due} == 0 ]] || pull_board_repo \
-      || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
-    return 0
-  fi
-  local i k committed saved=()
-  if [[ ${BOARD_IN_REPO} == 1 && ${held} == 0 ]]; then
-    # The board is in the project repo, and a merged PR may itself have taken the item off it or
-    # changed it. An older swarm.sh's edits in the file (each SET_FM_KEYS key, such as the review
-    # status or a retry's attempts:) would block that pull, so put them back as committed first, and
-    # the whole file as it was if the pull fails. A hand edit is left alone, and still stops the pull.
-    for slug in "${merged[@]}"; do
-      f="$(item_file "${slug}")"; saved+=("$(cat "${f}"; echo .)")   # the dot keeps trailing newlines
-      if committed="$(git -C "${PROJECT_DIR}" show "HEAD:${f#"${PROJECT_DIR}"/}" 2>/dev/null)"; then
-        for k in ${SET_FM_KEYS}; do set_file_fm "${f}" "${k}" "$(get_fm - "${k}" <<< "${committed}")"; done
-      fi
-    done
-    if [[ ${due} == 1 ]] && ! pull_board_repo; then
-      for i in "${!merged[@]}"; do printf '%s' "${saved[i]%.}" > "$(item_file "${merged[i]}")"; done
-      die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
-    fi
-  fi
-  for i in "${!merged[@]}"; do
+  [[ ${due} == 0 ]] || pull_board_repo \
+    || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}; pull it by hand, then run reconcile again"
+  local i
+  for ((i = 0; i < ${#merged[@]}; i++)); do
     slug="${merged[i]}"; f="${merged_files[i]}"
     if [[ -f "${f}" && "$(fm "${f}" status)" != "done" ]]; then
       delete_item "${slug}"; record_event reconcile "${slug}" "ok (finished)"; continue
@@ -761,6 +732,19 @@ reconcile() {
     # slug would read it.
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
+  done
+  drop_gone_state
+}
+
+# drop_gone_state — state_drop each story and epic whose file is gone from the board (a PR or a
+# board PR took it off), by its board-state or escalated file, so a later item with its slug starts
+# with none. A board directory that is not there drops nothing.
+drop_gone_state() {
+  local s n d
+  for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
+    n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
+    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && -d "${BOARD}/${d}" && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
+    state_drop "${BOARD}/${d}/${n}.md"
   done
 }
 
