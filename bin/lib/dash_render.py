@@ -79,8 +79,8 @@ def read_tsv(path, n):
 def lines(key):
     return [l for l in E.get(key, "").splitlines() if l.strip()]
 
-# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text (dash_fields').
-board = [(l.split("\t") + [""] * 11)[:11] for l in lines("DASH_BOARD")]
+# The board: dir, slug, status, prs, agent name, conductor name, epic, kind, title, you, its **You:** text, after (dash_fields').
+board = [(l.split("\t") + [""] * 12)[:12] for l in lines("DASH_BOARD")]
 stories = [b for b in board if b[0] == "stories"]
 story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
@@ -368,7 +368,7 @@ for l in lines("DASH_WAITING"):
     if m:
         slug = m.group(2)
         need_slugs.add(slug)
-        b = story_by_slug.get(slug) or [""] * 11
+        b = story_by_slug.get(slug) or [""] * 12
         row = bang + [(f"run {m.group(1)} story {slug}{story_title(slug)}", ""), ("  waits for: ", "dim")]
         if b[9] != "you":
             add(lq, row + [("the lead", "")], ("stories", slug))
@@ -456,10 +456,14 @@ if WIDE:
 def epic_label(slug):
     return slug if epics[slug][2] == "active" else f"{slug} ({epics[slug][2]})"
 
+# A kind: lead story with after: waits on its epic and does not count in it (board.sh's after_story).
+def in_epic(b, slug):
+    return b[6] == slug and not (b[7] == "lead" and b[11])
+
 def epic_rows(slug, members):
     if not slug:
         return [[("  ", ""), ("no epic", "dim")]] + [agent_row(r) for r in members]
-    mine = [b for b in stories if b[6] == slug]
+    mine = [b for b in stories if in_epic(b, slug)]
     done = finished[slug] + sum(b[2] == "done" for b in mine)
     left = collections.Counter(b[2] or "?" for b in mine if b[2] != "done")
     total = done + sum(left.values())
@@ -487,13 +491,13 @@ def rank(item):
     slug, members = item
     if not slug:
         return 3
-    if any(r["look"] for r in members) or any(b[6] == slug and b[1] in need_slugs for b in stories):
+    if any(r["look"] for r in members) or any(in_epic(b, slug) and b[1] in need_slugs for b in stories):
         return 0
     return 1 if any(r["state"] == "working" for r in members) else 2
 
 # An active epic with no open story and no agent shown is one line for them all, unless its
 # depends_on holds it up (DASH_EPIC_WAITS): it keeps its own row, which names what it waits on.
-quiet = [s for s, m in groups.items() if s and not m and s not in waits and not any(b[6] == s and b[2] != "done" for b in stories)]
+quiet = [s for s, m in groups.items() if s and not m and s not in waits and not any(in_epic(b, s) and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
 epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]

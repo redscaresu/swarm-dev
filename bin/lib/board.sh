@@ -60,19 +60,36 @@ board() {
   return 0
 }
 
+# after_story <story-file> — true for a kind: lead story with an after: line: it waits on its epic, so
+# it does not count in it (the epic goes, and reads as done, without it). It stays on the board and is
+# listed with the lead's stories.
+after_story() { [[ "$(get_fm "$1" kind)" == lead && -n "$(get_fm "$1" after)" ]]; }
+
 # epic_has_stories <epic> [<slug>] — true when any story names <epic>. With <slug>, true when any
-# story but <slug> does, not counting a kind: lead story with after: (it waits on the epic, so the
-# epic goes without it): story_brief's test for the epic's last story.
+# story but <slug> does, not counting an after_story: story_brief's test for the epic's last story.
 epic_has_stories() {
   local s
   while IFS= read -r s; do
     [[ "$(fm "${s}" epic)" == "$1" ]] || continue
     [[ -n "${2:-}" ]] || return 0
     [[ "$(basename "${s}" .md)" == "$2" ]] && continue
-    [[ "$(get_fm "${s}" kind)" == lead && -n "$(get_fm "${s}" after)" ]] && continue
+    after_story "${s}" && continue
     return 0
   done < <(board stories)
   return 1
+}
+
+# epic_after_only <epic-file> — true when the epic has an after_story and every other story of it is
+# done: it counts as done (open_item), so what depends on it goes ahead.
+epic_after_only() {
+  local s slug n=0
+  slug="$(basename "$1" .md)"
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "${slug}" && "$(fm "${s}" status)" != "done" ]] || continue
+    after_story "${s}" || return 1
+    n=1
+  done < <(board stories)
+  [[ ${n} -eq 1 ]]
 }
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
@@ -204,13 +221,14 @@ epic_holding_deps() {
 
 # dep_holds <slug> — true while an epic's depends_on slug holds up its planning: an open story, or an
 # open epic with no stories or with one not yet in review. Stories are scoped against the code the
-# dependency builds, and code in review is code that exists.
+# dependency builds, and code in review is code that exists. An after_story does not count.
 dep_holds() {
   local f n=0
   open_item "${BOARD}/stories/$1.md" && return 0
   open_item "${BOARD}/epics/$1.md" || return 1
   while IFS= read -r f; do
     [[ "$(fm "${f}" epic)" == "$1" ]] || continue
+    after_story "${f}" && continue
     case "$(fm "${f}" status)" in review) n=1 ;; done) ;; *) return 0 ;; esac
   done < <(board stories)
   [[ ${n} -eq 0 ]]
@@ -338,8 +356,12 @@ waiting_on_user() {
   printf '%s' "${waiting%$'\n'}"
 }
 
-# open_item <file> — true while a board item is still open: its file exists and is not status: done.
-open_item() { [[ -f "$1" && "$(fm "$1" status)" != "done" ]]; }
+# open_item <file> — true while a board item is still open: its file exists and is not status: done,
+# and it is not an epic whose only stories are after: lead stories (epic_after_only).
+open_item() {
+  [[ -f "$1" && "$(fm "$1" status)" != "done" ]] || return 1
+  [[ "$1" != "${BOARD}/epics/"* ]] || ! epic_after_only "$1"
+}
 
 # story_deps <story> — the depends_on slugs in its front matter, space-separated, YAML brackets,
 # quotes, a trailing # comment and trailing whitespace (a CR too) gone.

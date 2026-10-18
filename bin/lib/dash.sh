@@ -278,7 +278,7 @@ dash_reexec() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading), who
-# its step waits on and its first **You:** line's text, tab-separated, in one fork. Who is `held` for a held story (held_for: too), `escalated` for an escalated story
+# its step waits on, its first **You:** line's text and its after:, tab-separated, in one fork. Who is `held` for a held story (held_for: too), `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
 # else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
 # names the convention, "has no **You:** step", is no step), else empty. The text is what follows the
@@ -295,10 +295,11 @@ dash_fields() {
     n == 1 && !hk && sub(/^kind: */, "") { hk = 1; k = $0; next }
     n == 1 && !hx && sub(/^escalated_from: */, "") { hx = 1; x = $0; next }
     n == 1 && !hh && sub(/^held_for: */, "") { hh = 1; h = $0; next }
+    n == 1 && !ha && sub(/^after: */, "") { ha = 1; a = $0; next }
     n != 1 && !y && match($0, /(^[[:space:]]*([-*] )?|[.!?] )\*\*You:\*\*/) {
       y = 1; yt = substr($0, RSTART + RLENGTH); gsub(/\t/, " ", yt); sub(/^ +/, "", yt); sub(/ +$/, "", yt) }
     n != 1 && !ht && sub(/^# /, "") { ht = 1; t = $0 }
-    END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")), yt }' "$1"
+    END { printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", s, p, e, k, t, (x != "" ? (h != "" ? "held" : "escalated") : (y ? "you" : "")), yt, a }' "$1"
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -313,7 +314,7 @@ dash_render() {
     [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
-  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text.
+  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text, after.
   for d in hld epics stories; do
     while IFS= read -r f; do
       r="$(basename "${f}" .md)"; x="$(dash_fields "${f}")"

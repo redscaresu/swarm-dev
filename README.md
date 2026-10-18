@@ -98,7 +98,8 @@ time a held, escalated or ready-to-merge item waited on the lead, and names any 
 `merge = agent`, only a PR that costs money waits on you, so only those count.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. Agents start with a short list of environment variables, and a token you exported
+while you watch. A `lead` story with `after: <epic>` waits for that epic and does not hold it open:
+`next`, `status` and `dash` count the epic as done without it. Agents start with a short list of environment variables, and a token you exported
 reaches a builder only when its story names it under `env:`. That includes a login kept in the
 environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). Agents with no story
 of their own, such as planners and review agents, never get one, so log in through `claude`,

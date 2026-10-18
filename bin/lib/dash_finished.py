@@ -55,6 +55,8 @@ for slug, _, own in todo:
     size = int(head.rsplit(b" ", 1)[1])
     fm = front(out[pos:pos + size].decode("utf-8", "replace"))
     pos += size + 1
+    if fm.get("kind") == "lead" and fm.get("after"):
+        continue  # it waited on its epic and never counted in it (board.sh's after_story)
     if slug not in done and fm.get("epic") and (own or fm.get("status") in ("done", "review") or fm.get("prs")):
         done.add(slug)
         count[fm["epic"]] += 1
