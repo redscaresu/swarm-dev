@@ -32,6 +32,9 @@ planning (an active epic with no stories, then an agreed HLD with no epics). An 
 only once every epic it `depends_on` is done or has only stories in `review` left, so its stories
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
+When `next` says to wait on a conductor, it also lists each ready `lead` story that a blocked story
+depends on (`also: lead <slug> blocks <slugs>`). The lead runs those while it waits, since no
+conductor will build them.
 
 A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
 yours is marked **You:** in it. An open question for you is a `lead` story too, so the board's
