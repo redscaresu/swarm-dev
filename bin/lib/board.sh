@@ -85,7 +85,6 @@ epic_has_stories() {
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic); while a conductor works, this comes before its wait
-#   plan-hld <hld>    an agreed HLD has no epics listed under ## Epics
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -144,15 +143,6 @@ next_step() {
   done <<< "${buildable}"
   epic="$(plannable_epic)"
   if [[ -n "${epic}" ]]; then echo "plan-epic ${epic}"; echo "the active epic ${epic} has no stories yet"; return; fi
-  while IFS= read -r f; do
-    slug=$(basename "${f}" .md)
-    case "$(fm "${f}" status)" in
-      agreed)
-        if [[ $(awk '/^## Epics/{e=1;next} /^## /{e=0} e && /^[-*] /{n++} END{print n+0}' "${f}") -eq 0 ]]; then
-          echo "plan-hld ${slug}"; echo "the agreed HLD ${slug} has no epics yet"; return
-        fi ;;
-    esac
-  done < <(board hld)
   while IFS= read -r f; do
     is_escalated "${f}" || continue
     slug=$(basename "${f}" .md); when="$(reset_at "${slug}")"; held="$(get_fm "${f}" held_for)"

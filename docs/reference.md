@@ -224,8 +224,8 @@ to `.swarm/conduct-<epic>.report.md`, and that file, not the agent going idle, i
 `/swarm-dev:swarm` knows it has finished: a conductor is idle whenever it waits on its own
 background work. When it starts, an epic still `later` is set `active` (in
 `.swarm/board-state/epics/<slug>`, which `conduct` reports in one line), so `status` and `next`
-stop listing it as waiting on you. It runs in a herdr workspace named for the epic's HLD (its `hld:` field; every epic of that HLD shares
-it), in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
+stop listing it as waiting on you. It runs in a herdr workspace named for the epic's `parent:` if it has one (epics with the same
+parent share it), or else for the epic, in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
 `watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
@@ -585,7 +585,7 @@ minutes by default and 10 at most, before the limit could apply. When codex repo
 usage limit, or codex-review prints `codex skipped: timed out`, no one waits or runs it again: a
 builder carries on, the conductor or the lead reviews the diff itself, and the PR says `codex
 skipped: usage limit` or `codex skipped: timed out`. A review agent says `codex skipped: <why>` in
-its reply, and the conductor then reads the diff itself in codex's place. The planning `codex` panes of `/plan-hld` and
+its reply, and the conductor then reads the diff itself in codex's place. The planning `codex` panes of
 `/plan-epic` are not run this way: `wait`'s timeout bounds them, and the lead closes them.
 
 

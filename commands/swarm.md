@@ -3,7 +3,7 @@ description: Start here. Runs the whole chain from wherever it stands (HLD, epic
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
-`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+`.claude/swarm/config` says otherwise); every `docs/epics/` and `docs/stories/` below
 is inside it.
 
 Drive the chain end to end, picking up wherever the board says it stands. Requires herdr
@@ -120,7 +120,6 @@ Repeat until a step below says stop:
      When `next`'s why names a conductor that is still working, start
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
-   - `plan-hld <hld>`: follow `/plan-hld <hld>` the same way; its approval is the user's too.
    - `escalated <slug>`: Fable's build of the story failed too, or its builder called it impossible
      (its block starts **Impossible.**): no Fable build failed then, the judge called its **Done
      when** impossible, and that **Done when** is what to re-scope. Or a close held it (`held_for:`,

@@ -4,7 +4,7 @@ argument-hint: "<epic-slug>  e.g. firewall-end-to-end"
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
-`.claude/swarm/config` says otherwise); every `docs/hld/`, `docs/epics/` and `docs/stories/` below
+`.claude/swarm/config` says otherwise); every `docs/epics/` and `docs/stories/` below
 is inside it.
 
 Scope the epic `$1` into stories. Run it as a swarm so the user can watch every agent; do not

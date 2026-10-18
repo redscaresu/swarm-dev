@@ -58,8 +58,12 @@ if [[ "${out}" == *"lead: l"* && "${out}" == *"draft epic: e1, run /epic e1"* ]]
 else echo "FAIL the gate does not list both the lead story and the draft epic: ${out}"; fails=$((fails + 1)); fi
 expect "a draft HLD is no step" "done" \
   "item hld/2026-01-01-x.md 'status: draft'"
-expect "agreed HLD, no epics" "plan-hld 2026-01-01-x" \
+# HLD files are plain docs now: an agreed one with no epics is no step, and an epic made from one plans.
+expect "agreed HLD, no epics" "done" \
   "item hld/2026-01-01-x.md 'status: agreed'"
+expect "an epic with an hld: key and its HLD present is planned" "plan-epic e1" \
+  "item hld/2026-01-01-x.md 'status: agreed'" \
+  "item epics/e1.md 'status: active' 'hld: 2026-01-01-x'"
 expect "agreed HLD, epics listed and done" "done" \
   "item hld/2026-01-01-x.md 'status: agreed'" \
   "printf '\n## Epics\n\n- e1 — done (#1)\n' >> docs/hld/2026-01-01-x.md"
