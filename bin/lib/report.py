@@ -66,8 +66,10 @@ def session_usage(path, seen):
 REWORK_DAYS = 7
 RELEASE_FILES = [".claude-plugin/plugin.json"]   # a release PR changes these alone, and fixes nothing
 # A clause that names an earlier PR without fixing it (a stacked child's parent, a main merge note),
-# or says it does not fix it.
-NOT_A_FIX = re.compile(r"\b(?:merge after|depends on|stacked on|merged origin/main)\b|\b(?:not|never|no longer)\b|n't\b", re.I)
+# or negates the fix itself (doesn't fix, not fixing, never fixed); a negation that describes the bug
+# ("where the guard was not applied") leaves the fix standing.
+NOT_A_FIX = re.compile(r"\b(?:merge after|depends on|stacked on|merged origin/main)\b"
+                       r"|(?:\b(?:not|never|no longer)|n't)\s+(?:\w+\s+)?(?:fix|rework|regression)", re.I)
 FIX = r"\b(?:fix(?:es|ed)?|rework of|regression (?:from|in|of))\b.{0,40}?"
 CLAUSE = re.compile(r"(?<=[.!?])\s+|;|\n")   # a sentence end before a space, a semicolon or a line break
 

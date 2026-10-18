@@ -7,7 +7,7 @@
 # merged story keeps its class. Rework is report.py's rework_of over every merged PR of the rows'
 # repos, from gh; when gh fails, only escaped findings mark rework, and a line says so. A cell under
 # MIN_STORIES stories prints its count alone. After a blank line, a subagent row per model and effort
-# of the builds that logged subagent columns: their cost and its share of build cost (own and theirs).
+# of the builds whose subagents cost more than zero: their cost and its share of build cost (own and theirs).
 import collections, datetime, json, os, re, subprocess
 from report import *
 from touches_rows import entries as touches_entries
@@ -48,19 +48,26 @@ def minutes(start, end):
     except ValueError:
         return None
 
-def merged_prs(urls):
+def merged_range(first_day, last_merge):
+    # gh's merged: qualifier for the PRs that can be counted or fix one that is: from REWORK_DAYS before
+    # --since (without it, from first_day, the earliest counted build's) to REWORK_DAYS after --until or
+    # last_merge, the latest counted merge day, whichever is later, as a story built in the window can
+    # merge after it (without --until, open-ended).
+    days = datetime.timedelta(days=REWORK_DAYS)
+    lo = datetime.date.fromisoformat(since) - days if since != "0000-00-00" else datetime.date.fromisoformat(first_day)
+    hi = datetime.date.fromisoformat(max(until, last_merge)) + days if until != "9999-12-30" else None
+    return f"merged:{lo}..{hi}" if hi else f"merged:>={lo}"
+
+def merged_prs(urls, search):
     # pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
-    # in, or None when gh fails. With --since, only those merged from REWORK_DAYS before it, as a PR merged
-    # earlier can neither be in the window nor fix one in it. A list that comes back GH_LIMIT long prints
-    # that rework may be undercounted. files is read for rework_of's release PRs.
+    # in that gh's search (merged_range) finds, or None when gh fails. A list that comes back GH_LIMIT
+    # long prints that rework may be undercounted. files is read for rework_of's release PRs.
     # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
-    out, search = {}, []
-    if since != "0000-00-00":
-        search = ["--search", f"merged:>={datetime.date.fromisoformat(since) - datetime.timedelta(days=REWORK_DAYS)}"]
+    out = {}
     for repo in sorted({m.group(1) for u in urls for m in [GITHUB.match(u)] if m}):
         try:
             got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
-                                  "--json", "url,mergedAt,title,body,files", *search], capture_output=True, text=True, timeout=GH_SECONDS)
+                                  "--json", "url,mergedAt,title,body,files", "--search", search], capture_output=True, text=True, timeout=GH_SECONDS)
             prs = json.loads(got.stdout) if got.returncode == 0 else None
         except (subprocess.TimeoutExpired, ValueError, OSError):   # OSError: no gh on PATH
             prs = None
@@ -82,7 +89,8 @@ for slug, rs in by_slug.items():
         counted[slug] = (first, rs)
 
 prs = {r["pr"] for _, rs in counted.values() for r in rs if r["pr"]}
-merged = merged_prs(prs)
+last_merge = max((r["merged_at"][:10] for _, rs in counted.values() for r in rs if re.match(r"\d{4}-\d\d-\d\d", r["merged_at"])), default="")
+merged = merged_prs(prs, merged_range(min(f["date"] for f, _ in counted.values()), last_merge)) if prs else {}
 gh_failed = merged is None
 merged = merged or {}
 for _, rs in counted.values():
@@ -104,8 +112,10 @@ def cell(entries):
         return out + ["-"] * 7
     keys = {pr_key(r["pr"]) for _, rs in entries for r in rs if r["pr"]}
     done = [(first, rs) for first, rs in entries if any(r["story_merged"] == "true" for r in rs)]
-    # story_merged is empty when outcomes could not ask gh: such a story is left out of the rate.
-    known = [rs for _, rs in entries if any(r["story_merged"] for r in rs)]
+    # story_merged is empty when outcomes could not ask gh, and a story with no merge and an open PR is
+    # still in flight: either is left out of the rate.
+    known = [rs for _, rs in entries if any(r["story_merged"] for r in rs)
+             and (any(r["story_merged"] == "true" for r in rs) or not any(r["pr_state"] == "OPEN" for r in rs))]
     cost = sum(num(r["cost_usd"]) + num(r["subagent_cost_usd"]) for _, rs in entries for r in rs)
     # A story can have merged on a PR no build of it named, so with no merged_at: it adds no wait.
     ends = [(first["started"], min(r["merged_at"] for r in rs if r["merged_at"])) for first, rs in done if any(r["merged_at"] for r in rs)]
@@ -128,7 +138,7 @@ for key in sorted(cells):
 subs = collections.defaultdict(lambda: [0.0, 0.0])
 for _, rs in counted.values():
     for r in rs:
-        if r["subagent_cost_usd"]:
+        if num(r["subagent_cost_usd"]) > 0:   # outcomes writes 0.00 for every build with a session log
             s = subs[(r["model"], r["effort"])]
             s[0] += num(r["subagent_cost_usd"])
             s[1] += num(r["subagent_cost_usd"]) + num(r["cost_usd"])
