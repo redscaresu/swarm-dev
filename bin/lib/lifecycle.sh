@@ -132,19 +132,49 @@ board_pr() {
   esac
 }
 
-# pull_board_repo — pull the main checkout fast-forward, touching no edit. It stops, touching nothing,
-# when it cannot fetch, the pull cannot fast-forward (local commits), or a tracked file is changed,
-# staged or not: that stop names the files and logs an incident, pull-failed: <files>. A pull git
-# itself refuses (an untracked file it would overwrite) also changes nothing. On failure PULL_WHY says
-# why and what to do before reconcile runs again.
+# keys_to_state <path> — when the unstaged edit to the tracked story or epic <path> changes only
+# SET_FM_KEYS lines of its front matter (an older swarm.sh wrote its keys there), move each value it
+# changes into the item's state, with HEAD's value as its base, so fm reads it as before, and check
+# the file out. Fails, touching nothing, on any other edit; a state write that fails puts the edit
+# back (it is kept in git's object store until then).
+keys_to_state() {
+  local f="${PROJECT_DIR}/$1" head k v blob pairs=()
+  # shellcheck disable=SC2016 # $0 is awk's
+  local rest='/^---$/ { n++ } n == 1 && match($0, /^[a-z_]+:/) && index(keys, " " substr($0, 1, RLENGTH - 1) " ") { next } { print }'
+  cmp -s <(git -C "${PROJECT_DIR}" show "HEAD:$1" | awk -v keys=" ${SET_FM_KEYS} " "${rest}") \
+    <(awk -v keys=" ${SET_FM_KEYS} " "${rest}" "${f}") || return 1
+  head="$(git -C "${PROJECT_DIR}" show "HEAD:$1")"
+  for k in ${SET_FM_KEYS}; do
+    v="$(get_fm - "${k}" < "${f}")"
+    [[ "${v}" == "$(get_fm - "${k}" <<< "${head}")" ]] || pairs+=("${k}" "${v}")
+  done
+  blob="$(git -C "${PROJECT_DIR}" hash-object -w -- "$1")" || return 1
+  git -C "${PROJECT_DIR}" checkout -q -- "$1" || return 1
+  if [[ ${#pairs[@]} -gt 0 ]] && ! (state_set "${f}" "${pairs[@]}"); then
+    git -C "${PROJECT_DIR}" cat-file blob "${blob}" > "${f}"; return 1
+  fi
+  echo "reconcile: $1 changed only swarm.sh's own keys; they are in its board state now, and the file is checked out"
+}
+
+# pull_board_repo — pull the main checkout fast-forward, touching no edit. Once it has fetched and
+# can fast-forward, it moves each story or epic edit that is only to swarm.sh's own keys into board
+# state (keys_to_state). It stops, touching nothing more, when it cannot fetch, the pull cannot
+# fast-forward (local commits), or any other tracked file is changed, staged or not: that stop names
+# the files and logs an incident, pull-failed: <files>. It removes each untracked board file whose
+# bytes are already the incoming one's, which the pull brings back. A pull git itself refuses (another
+# untracked file it would overwrite) changes nothing more. On failure PULL_WHY says why and what to do
+# before reconcile runs again.
 PULL_WHY=""
 pull_board_repo() {
-  local changed board other out
+  local changed board other out p
   git -C "${PROJECT_DIR}" fetch -q || { PULL_WHY="cannot fetch; pull it by hand"; return 1; }
   if ! git -C "${PROJECT_DIR}" merge-base --is-ancestor HEAD '@{upstream}'; then
     PULL_WHY="it has commits the base does not ($(git -C "${PROJECT_DIR}" log --format=%h '@{upstream}..HEAD' | paste -sd' ' -)), so it cannot fast-forward; pull it by hand"
     return 1
   fi
+  while IFS= read -r p; do
+    keys_to_state "${p}" || true
+  done < <(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no -- "${BOARD}/stories" "${BOARD}/epics" | sed -n 's/^ M //p')
   changed="$(git -C "${PROJECT_DIR}" status --porcelain --untracked-files=no | cut -c4-)"
   if [[ -n "${changed}" ]]; then
     record_event incident - "pull-failed: $(paste -sd' ' - <<< "${changed}")"
@@ -155,6 +185,12 @@ pull_board_repo() {
     [[ -z "${other}" ]] || PULL_WHY+="${PULL_WHY:+; }files outside the board are changed here: ${other}; commit or move each change"
     return 1
   fi
+  while IFS= read -r p; do
+    if git -C "${PROJECT_DIR}" cat-file -e "@{upstream}:${p}" 2>/dev/null \
+      && git -C "${PROJECT_DIR}" show "@{upstream}:${p}" | cmp -s - "${PROJECT_DIR}/${p}"; then
+      rm "${PROJECT_DIR}/${p}"
+    fi
+  done < <(git -C "${PROJECT_DIR}" ls-files --others --exclude-standard -- "${BOARD}")
   # Fast-forward to the upstream fetched above, which every check here read: a pull would fetch again.
   # shellcheck disable=SC2034 # PULL_WHY is read in another file
   out="$(git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}' 2>&1)" \

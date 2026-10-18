@@ -33,8 +33,6 @@ item() { # <board> <path> <front-matter line>... — a fresh item: its file, and
 # BOARD, in the project that holds it.
 # shellcheck source=/dev/null
 val() { local d="${1%/*}"; (export BOARD="${d%/*}"; export PROJECT_DIR="${BOARD%/*}"; . "${SWARM%/*}/lib/board.sh"; get_fm "$1" "$2"); }
-# legacy_review <story file> <url> — what an older swarm.sh's review wrote, in the file itself.
-legacy_review() { perl -pi -e 's|^status: .*$|status: review\nprs: '"$2"'|' "$1"; }
 
 # Stubs. gh answers from fixture files; herdr accepts everything and logs its arguments.
 mkdir -p "${ROOT}/bin" "${ROOT}/gh"
@@ -249,11 +247,12 @@ setup_behind bu ahead; at bu review g "${U}/99" >/dev/null
 out="$(at bu reconcile; echo "exit $?")"
 check "no item merged, a PR unread: reconcile does not pull, and names the PR" "yes|exit 0|$(git -C "${ROOT}/bu.git" rev-parse main~1)|there" \
   "$(has "reconcile: not pulling ${ROOT}/bu: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bu" rev-parse HEAD)|$([[ -e "${ROOT}/bu/docs/stories/g.md" ]] && echo there || echo gone)"
-# The same with h in review, its PR merged: h is finished, but nothing is pulled while g's PR is unread.
+# The same with h in review, its PR merged: nothing is pulled while g's PR is unread, so h, whose PR
+# may have deleted it on the base, stays in review for the reconcile that pulls.
 setup_behind bw ahead; at bw review g "${U}/99" >/dev/null; at bw review h "${U}/1" >/dev/null
 out="$(at bw reconcile; echo "exit $?")"
-check "an item merged, a PR unread: reconcile marks it done, does not pull, and names the PR" "yes|exit 0|$(git -C "${ROOT}/bw.git" rev-parse main~1)|there|done|" \
-  "$(has "reconcile: not pulling ${ROOT}/bw: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bw" rev-parse HEAD)|$(gone "${ROOT}/bw/docs/stories/g.md")|$(val "${ROOT}/bw/docs/stories/h.md" status)|$(git -C "${ROOT}/bw" status --porcelain --untracked-files=no)"
+check "an item merged, a PR unread: reconcile does not pull, names the PR, and leaves the item in review" "yes|exit 0|$(git -C "${ROOT}/bw.git" rev-parse main~1)|there|review ${U}/1|yes|" \
+  "$(has "reconcile: not pulling ${ROOT}/bw: gh cannot read ${U}/99 (g)" "${out}")|$(tail -1 <<< "${out}")|$(git -C "${ROOT}/bw" rev-parse HEAD)|$(gone "${ROOT}/bw/docs/stories/g.md")|$(val "${ROOT}/bw/docs/stories/h.md" status) $(val "${ROOT}/bw/docs/stories/h.md" prs)|$(has "merged: h, not pulled yet; it stays in review until reconcile pulls ${ROOT}/bw" "${out}")|$(git -C "${ROOT}/bw" status --porcelain --untracked-files=no)"
 # Nothing behind: no pull was due, so an unread PR holds nothing back, and reconcile says nothing of it.
 setup_behind bv; at bv review g "${U}/99" >/dev/null
 check "no pull due, a PR unread: no not-pulling note" "no" "$(if at bv reconcile | grep -q "not pulling"; then echo yes; else echo no; fi)"

@@ -678,9 +678,10 @@ builder_state() {
 # its upstream (a PR merged with no review item), and dies as a failed pull below does; a failed fetch
 # is noted on stderr and is not a failure. No pull is made, merged items or not, while a PR in review
 # cannot be read: said on stderr, naming it. A pull that fails (pull_board_repo) changes nothing and
-# dies, naming why. A merged item whose tracked file is still on a board in the repo is marked done,
-# never deleted there, so the main checkout keeps no edit. After a pull, every item a commit took off the
-# board loses its state (drop_gone_state).
+# dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
+# there, so the main checkout keeps no edit: after a pull it is marked done, and with no pull it stays in
+# review for the reconcile that pulls. Each item the pull took off the board loses its state
+# (drop_gone_state).
 reconcile() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -730,7 +731,9 @@ reconcile() {
     echo "reconcile: not pulling ${PROJECT_DIR}: gh cannot read ${unread}; fix that, then run reconcile again" >&2
     due=0
   fi
+  local from=""
   if [[ ${due} == 1 ]]; then
+    from="$(git -C "${PROJECT_DIR}" rev-parse HEAD)"
     pull_board_repo || die "reconcile: cannot pull ${PROJECT_DIR}: ${PULL_WHY}, then run reconcile again"
   fi
   local i
@@ -738,7 +741,12 @@ reconcile() {
     slug="${merged[i]}"; f="${merged_files[i]}"
     if [[ -f "${f}" && "$(fm "${f}" status)" != "done" && ${BOARD_IN_REPO} == 1 ]] \
       && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${f}" >/dev/null 2>&1; then
-      # Its PR left its tracked file on the board: done in its state, so the main checkout stays clean.
+      # Its tracked file is still here: with no pull, its PR may have deleted it on the base.
+      if [[ ${due} == 0 ]]; then
+        echo "merged: ${slug}, not pulled yet; it stays in review until reconcile pulls ${PROJECT_DIR}$(has_upstream || echo ", which needs an upstream")"
+        continue
+      fi
+      # Its PR left it on the board: done in its state, so the main checkout stays clean.
       set_status "${f}" "done"; record_event reconcile "${slug}" "ok (finished)"
       echo "merged: ${slug}, marked done; its file stays on the board until swarm.sh finish ${slug} takes it off"; continue
     fi
@@ -750,20 +758,16 @@ reconcile() {
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
-  [[ ${due} == 0 ]] || drop_gone_state
+  [[ -z "${from}" ]] || drop_gone_state "${from}"
 }
 
-# drop_gone_state — run only after a pull went through, so the main checkout has no tracked change and
-# a board file missing from it is missing from HEAD too: a commit (a PR or a board PR) took it off.
-# state_drop each such story and epic, by its board-state or escalated file, so a later item with its
-# slug starts with none. A board directory that is not there drops nothing.
+# drop_gone_state <rev> — state_drop each story and epic file the pull from <rev> deleted (its PR or a
+# board PR took it off), so a later item with its slug starts with no state. A file removed only by
+# hand keeps its state.
 drop_gone_state() {
-  local s n d
-  for s in "${BOARD_STATE_DIR}"/stories/* "${BOARD_STATE_DIR}"/epics/* "${PROJECT_DIR}"/.swarm/escalated/*; do
-    n="${s##*/}"; d="${s%/*}"; d="${d##*/}"; [[ "${d}" != escalated ]] || d=stories
-    [[ -f "${s}" && "${n}" =~ ^[a-z0-9-]+$ && -d "${BOARD}/${d}" && ! -e "${BOARD}/${d}/${n}.md" ]] || continue
-    state_drop "${BOARD}/${d}/${n}.md"
-  done
+  local p
+  while IFS= read -r p; do state_drop "${PROJECT_DIR}/${p}"; done \
+    < <(git -C "${PROJECT_DIR}" diff --name-only --no-renames --diff-filter=D "$1" HEAD -- "${BOARD}/stories" "${BOARD}/epics")
 }
 
 # has_upstream — true when the board is in the project repo and its main checkout has an upstream.

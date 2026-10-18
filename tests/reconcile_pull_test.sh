@@ -2,8 +2,10 @@
 # reconcile_pull_test.sh — reconcile pulls the main checkout with no backup, stash or restore. A story
 # in review whose merged PR deleted it pulls cleanly and loses its state files, and so does a story a
 # board PR took off the board (its state and escalated block), while a story still on the board keeps
-# its state, even with its file removed by hand. A hand edit to a tracked story stops the pull, names
-# the file, changes nothing, and logs one pull-failed incident. gh is a stub on PATH; origin is a local bare repo.
+# its state, even with its file removed by hand. An untracked copy of a story the pull brings gives way
+# to it. A story whose uncommitted edit is only to swarm.sh's own keys (an older swarm.sh's review) has
+# them moved to its state and pulls. A hand edit to a tracked story stops the pull, names the file,
+# changes nothing, and logs one pull-failed incident. gh is a stub on PATH; origin is a local bare repo.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -41,6 +43,9 @@ item() { # <file> <front-matter line>...
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
 }
 at() { local d="${ROOT}/$1"; shift; (cd "${d}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" 2>&1); }
+# val <item file> <key> — <key> as swarm.sh reads it: board.sh's own get_fm, in the project that holds it.
+# shellcheck source=/dev/null
+val() { local d="${1%/*}"; (export BOARD="${d%/*}"; export PROJECT_DIR="${BOARD%/*}"; . "${SWARM%/*}/lib/board.sh"; get_fm "$1" "$2"); }
 
 # setup <name> — a bare origin whose board has stories a, d and e, with .swarm/ ignored; its main checkout <name>, with a in
 # review (its PR merged), e in review (its PR open), and d escalated to the lead (its state and block
@@ -68,8 +73,13 @@ setup() {
 state() { gone "${ROOT}/$1/.swarm/board-state/stories/$2"; }
 
 # --- a's PR merged and deleted a: reconcile pulls with no backup, stash or error, and a's and d's
-# state files go; e, still on the board, keeps its state.
+# state files go; e, still on the board, keeps its state, and so does f, an untracked story in review
+# removed by hand. A board PR added g, and an untracked copy of it, byte for byte, is still here.
 setup ok
+item "${ROOT}/ok/docs/stories/f.md" "status: ready" "kind: code"; at ok review f "${U}/2" >/dev/null; rm "${ROOT}/ok/docs/stories/f.md"
+item "${ROOT}/ok-up/docs/stories/g.md" "status: ready" "kind: code"
+"${GIT[@]}" -C "${ROOT}/ok-up" add docs && "${GIT[@]}" -C "${ROOT}/ok-up" commit -q -m "add g" && "${GIT[@]}" -C "${ROOT}/ok-up" push -q origin main
+cp "${ROOT}/ok-up/docs/stories/g.md" "${ROOT}/ok/docs/stories/g.md"
 rc=0; out="$(at ok reconcile)" || rc=$?
 check "a story deleted by its merged PR: reconcile exits 0 and fast-forwards to the base" "0|$(git -C "${ROOT}/ok.git" rev-parse main)" \
   "${rc}|$(git -C "${ROOT}/ok" rev-parse HEAD)"
@@ -81,12 +91,34 @@ check "d, taken off by a board PR, loses its state file and its escalated block"
   "$(gone "${ROOT}/ok/docs/stories/d.md")|$(state ok d)|$(gone "${ROOT}/ok/.swarm/escalated/d")"
 check "e, still on the board and in review, keeps its state" "there|review ${U}/2" \
   "$(state ok e)|$(sed -n 's/^status: //p' "${ROOT}/ok/.swarm/board-state/stories/e") $(sed -n 's/^prs: //p' "${ROOT}/ok/.swarm/board-state/stories/e")"
+check "f, an untracked story removed by hand, keeps its state after the pull" "there" "$(state ok f)"
+check "the untracked copy of g, the same as the pull's, gives way to it" "there|" \
+  "$(gone "${ROOT}/ok/docs/stories/g.md")|$(git -C "${ROOT}/ok" status --porcelain -- docs/stories/g.md)"
 
 # --- Then e's file removed by hand, with no pull due: e keeps its state, since only a deletion a
 # pull brings drops it.
 rm "${ROOT}/ok/docs/stories/e.md"
 rc=0; at ok reconcile >/dev/null || rc=$?
 check "a story file removed by hand, no pull due: reconcile exits 0, and e keeps its state" "0|there" "${rc}|$(state ok e)"
+
+# --- e in review as an older swarm.sh wrote it, in the file: its status: and prs: lines uncommitted,
+# with no state. reconcile moves them to e's state, checks e out, and pulls.
+setup ks; rm "${ROOT}/ks/.swarm/board-state/stories/e"
+perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/ks/docs/stories/e.md"
+rc=0; out="$(at ks reconcile)" || rc=$?
+check "a story edited only in swarm.sh's keys pulls, with its file checked out" "0|$(git -C "${ROOT}/ks.git" rev-parse main)|" \
+  "${rc}|$(git -C "${ROOT}/ks" rev-parse HEAD)|$(git -C "${ROOT}/ks" status --porcelain)"
+check "and reads as it did: review, with its PR, from its state" "review|${U}/2|status@base: ready|no" \
+  "$(val "${ROOT}/ks/docs/stories/e.md" status)|$(val "${ROOT}/ks/docs/stories/e.md" prs)|$(grep -x 'status@base: ready' "${ROOT}/ks/.swarm/board-state/stories/e")|$(if grep -q incident "${ROOT}/ks/.swarm/events.tsv"; then echo yes; else echo no; fi)"
+
+# --- The same, but e's state cannot be written: e's edit is put back, and the pull stops, naming e.
+setup kf; rm "${ROOT}/kf/.swarm/board-state/stories/e"
+perl -pi -e 's|^status: .*$|status: review\nprs: '"${U}/2"'|' "${ROOT}/kf/docs/stories/e.md"; cp "${ROOT}/kf/docs/stories/e.md" "${ROOT}/kf-e"
+chmod a-w "${ROOT}/kf/.swarm/board-state/stories"
+rc=0; out="$(at kf reconcile)" || rc=$?
+chmod u+w "${ROOT}/kf/.swarm/board-state/stories"
+check "a state write that fails puts the key edit back, and the pull stops, naming the file" "1|same|yes" \
+  "${rc}|$(cmp -s "${ROOT}/kf-e" "${ROOT}/kf/docs/stories/e.md" && echo same)|$(has "board files are changed here: docs/stories/e.md" "${out}")"
 
 # --- A hand edit to e, a tracked story: the pull stops, names e, changes nothing, and logs one
 # pull-failed incident.
