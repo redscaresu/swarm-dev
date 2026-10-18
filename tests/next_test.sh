@@ -269,7 +269,7 @@ expect "only later stories left is a gate, not done" "gate" \
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
 # A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
-# A shared file (another function in it counts), or a needs: line, keeps it quiet.
+# A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
 # idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]
 idle_case() {
   local got=no
@@ -283,18 +283,57 @@ idle_case() {
 idle_case disjoint c.sh yes
 idle_case "shared file" x.sh:g no
 idle_case "needs line" c.sh no "needs: a.sh"
-# A project with nothing an agent can build: next names it idle with its later stories and the
-# finding declined as out-of-scope (not an older one, nor one declined for another reason).
-# shellcheck disable=SC2016 # the setup is eval'd inside the fixture
+idle_case "held by review" c.sh no "held_by: review"
+# A lead story's step (credentials, a person) is no code to share: depending on it is never over-broad.
+expect "idle dependency on a lead story" "gate" \
+  "item stories/a.md 'status: ready' 'kind: lead' 'touches: [x.sh]'" \
+  "item stories/b.md 'status: blocked' 'kind: code' 'depends_on: [a]' 'touches: [c.sh]'"
+if ! grep -q '^idle: b ' <<< "${out}"; then echo "ok   a dependency on a lead story is not named over-broad"
+else echo "FAIL a dependency on a lead story is named over-broad: ${out}"; fails=$((fails + 1)); fi
+
+# findings_fixture — a findings.tsv (run inside a fixture): "cache the parse" declined out-of-scope
+# twice (listed once, by its newest row), one declined as a nit, an old one, one fixed after its
+# decline, and one a story already carries (filed).
+findings_fixture() {
+  local t; t="$(date +%F)"; mkdir -p .swarm
+  {
+    printf '%s\tk\to/r#1\tcache the parse\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#2\ttoo small\tdeclined\tcodex\tnit\n2020-01-01\tk\to/r#3\tancient\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#4\tcache the parse\tdeclined\tcodex\tout-of-scope\n' "${t}"
+    printf '%s\tk\to/r#5\tsplit the lexer\tdeclined\tcodex\tout-of-scope\n%s\tk\to/r#6\tsplit the lexer\tfixed\tcodex\n' "${t}" "${t}"
+    printf '%s\tk\to/r#7\tfiled already\tdeclined\tcodex\tout-of-scope\n' "${t}"
+  } > .swarm/findings.tsv
+  echo "filed already" >> docs/stories/bl.md
+}
+# idle_project <name> <want lines> — check that next named the project idle with exactly these lines.
+idle_project() {
+  local got; got="$(sed -n '/^idle: [^ ]*$/,$p' <<< "${out}")"
+  if [[ "${got}" == "$2" ]]; then echo "ok   $1"
+  else echo "FAIL $1: want '$2', got '${got}': ${out}"; fails=$((fails + 1)); fi
+}
+# A project with nothing an agent can build: next names it idle with the out-of-scope finding still
+# to file, never its later story (the user's to start, which the gate lists).
 expect "an idle project is a gate" "gate" \
   "item stories/l1.md 'status: later' 'kind: code'" \
   "item stories/bl.md 'status: blocked' 'kind: code' 'depends_on: [l1]'" \
   "item stories/ld.md 'status: ready' 'kind: lead'" \
-  'mkdir .swarm && printf "%s\tk\to/r#1\tcache the parse\tdeclined\tcodex\tout-of-scope\n%s\tk\to/r#2\ttoo small\tdeclined\tcodex\tnit\n2020-01-01\tk\to/r#3\tancient\tdeclined\tcodex\tout-of-scope\n" "$(date +%F)" "$(date +%F)" > .swarm/findings.tsv'
-idle="$(sed -n '/^idle: [^ ]*$/,$p' <<< "${out}")"
-if [[ "$(wc -l <<< "${idle}")" -eq 3 && "${idle}" == *"  later story: l1"* && "${idle}" == *"  out-of-scope finding: $(date +%F) o/r#1: cache the parse"* ]]; then
-  echo "ok   an idle project lists its later story and its out-of-scope finding"
-else echo "FAIL an idle project does not list its later story and out-of-scope finding: ${out}"; fails=$((fails + 1)); fi
+  findings_fixture
+p="$(sed -n 's/^\(idle: [^ ]*\)$/\1/p' <<< "${out}")"
+idle_project "an idle project lists one out-of-scope finding, deduped, unfixed and unfiled, and no later story" \
+  "${p:-idle: ?}"$'\n'"  out-of-scope finding: $(date +%F) o/r#4: cache the parse"
+# A ready story in a later epic: next does not build it, so nothing is buildable and the project is idle.
+expect "a ready story in a later epic leaves the project idle" "gate" \
+  "item epics/e1.md 'status: later'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: e1'"
+if grep -q '^idle: [^ ]*$' <<< "${out}"; then echo "ok   a ready story in a later epic is no buildable story: the project is named idle"
+else echo "FAIL a ready story in a later epic keeps the project from being named idle: ${out}"; fails=$((fails + 1)); fi
+# A planning step is about to give the builders stories: no idle project beside it.
+expect "a planning step is no idle project" "plan-epic e1" \
+  "item epics/e1.md 'status: active'" \
+  "item stories/bl.md 'status: blocked' 'kind: code'" \
+  findings_fixture
+if ! grep -q '^idle: [^ ]*$' <<< "${out}"; then echo "ok   beside plan-epic the project is not named idle"
+else echo "FAIL beside plan-epic the project is named idle: ${out}"; fails=$((fails + 1)); fi
 expect "a project with a buildable story is not idle" "story r" \
   "item stories/l1.md 'status: later' 'kind: code'" \
   "item stories/r.md 'status: ready' 'kind: code'"

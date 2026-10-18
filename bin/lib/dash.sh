@@ -310,7 +310,7 @@ dash_fields() {
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
 # session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" f d r x
+  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" buildable="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
@@ -328,6 +328,13 @@ dash_render() {
   while IFS= read -r f; do
     if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then waits+="$(basename "${f}" .md)"$'\t'"${x}"$'\n'; fi
   done < <(board epics)
+  # The stories next would start (buildable_story; a one-off not started), "<slug>\t<epic>": the idle gauge's.
+  while IFS= read -r f; do
+    buildable_story "${f}" || continue
+    r="$(basename "${f}" .md)"; x="$(fm "${f}" epic)"
+    if [[ -z "${x}" ]] && one_off_started "${r}"; then continue; fi
+    buildable+="${r}"$'\t'"${x}"$'\n'
+  done < <(board stories)
   # The last worktree commit or edit of each working builder's story (stall.py's story_for), for the stall rule.
   while IFS= read -r r; do
     [[ -z "${r}" ]] || commits+="${r}"$'\t'"$(story_work_time "${r}")"$'\n'
@@ -367,7 +374,7 @@ for a in agents:
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
+  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_BUILDABLE="${buildable}" DASH_BACKLOG_CONDUCTOR="$(agent_name conduct-backlog)" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \

@@ -70,13 +70,18 @@ record_finding() {
 }
 
 # out_of_scope_findings — the findings declined as out-of-scope in the last IDLE_FINDING_DAYS days,
-# newest first, as "<date> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers.
+# newest first, as "<date> <pr>: <text>": the swarm's own follow-ups, which idle_lines offers. A text
+# is listed once, and only while its newest row is that decline (a later fixed row drops it) and no
+# board story carries it (it has been filed).
 IDLE_FINDING_DAYS=30
 out_of_scope_findings() {
-  local since
+  local since text line
   since="$(date -v-"${IDLE_FINDING_DAYS}"d +%F 2>/dev/null || date -d "${IDLE_FINDING_DAYS} days ago" +%F)"
-  awk -F'\t' -v s="${since}" '$5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[n++] = $1 " " $3 ": " $4 }
-    END { while (n) print r[--n] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true
+  while IFS=$'\t' read -r text line; do
+    grep -qsF -- "${text}" "${BOARD}"/stories/*.md || printf '%s\n' "${line}"
+  done < <(awk -F'\t' -v s="${since}" '{ t[NR] = $4; last[$4] = NR }
+    $5 == "declined" && $7 == "out-of-scope" && $1 >= s { r[NR] = $1 " " $3 ": " $4 }
+    END { for (i = NR; i > 0; i--) if ((i in r) && last[t[i]] == i) print t[i] "\t" r[i] }' "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" 2>/dev/null || true)
 }
 
 # bin/lib/report.py: what the reports share (each python imports it), so they agree.

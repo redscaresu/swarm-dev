@@ -350,7 +350,7 @@ dispatch() {
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
-    next)   next_step; idle_lines ;;
+    next)   next_out="$(next_step)"; printf '%s\n' "${next_out}"; idle_lines "${next_out%%[ $'\n']*}" ;;
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;
     tidy)   require_herdr; tidy_panes "${1:-}" ;;

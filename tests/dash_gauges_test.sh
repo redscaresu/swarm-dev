@@ -163,6 +163,10 @@ done
 check "no idle capacity while the conductor has its epic's ready stories" lacks "buildable not started" "$(frame "${A}" 100)"
 item "${A}" stories/a-loose.md "Tidy the docs" "status: ready" "kind: docs"
 check "a ready one-off with no backlog conductor is idle capacity" has "idle: 1 buildable not started" "$(frame "${A}" 100)"
+# Once its worktree exists next says resume, not a fresh start: no longer idle capacity.
+mkdir -p "${A}-wt/a-loose"
+check "a one-off whose worktree exists is not idle capacity" lacks "buildable not started" "$(frame "${A}" 100)"
+rmdir "${A}-wt/a-loose"
 rm "${A}/board/stories/a-loose.md"
 
 out="$(frame "${A}" 60)"

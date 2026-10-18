@@ -19,11 +19,12 @@ each step is in [`reference.md`](reference.md).
 `/swarm-dev:swarm` runs the chain after the epic. `swarm.sh next` reads the board and names the next
 step, `/swarm-dev:swarm` does it and loops, and it stops only at an approval, a draft epic, a
 `lead` story, or a `later` epic. On an empty board it explains the flow instead. After the step,
-`next` prints `idle:` lines for capacity nothing uses: a blocked story whose `depends_on` story shares
-no file in `touches` with it and has no `needs:` line naming what it uses (the lead drops the
-dependency or adds the line), and, when no open story is one an agent can build, the project with up
-to five candidates for a one-off: its `later` stories and the findings declined as `out-of-scope` in
-the last 30 days. Those declined findings are the swarm's own list of follow-ups. The board is the
+`next` prints `idle:` lines for capacity nothing uses: a blocked story whose `depends_on` story (one
+an agent builds) shares no file in `touches` with it and has no `needs:` line naming what it uses
+(the lead drops the dependency or adds the line). When the step leaves the builders idle and no
+story is buildable, it also prints the project with up to five candidates for a one-off: the findings
+declined as `out-of-scope` in the last 30 days that no story has filed yet. Those declined findings
+are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
 first (a conductor still working, then an already-started one-off with `resume <slug>`, then an active epic's ready stories with `conduct <epic>`, then new one-offs), then
 planning (an active epic with no stories, then an agreed HLD with no epics). An epic is planned

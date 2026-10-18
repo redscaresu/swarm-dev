@@ -384,11 +384,11 @@ project_rules() {
   [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
 }
 
-# agent_kind — true for a kind a swarm agent may build; an empty kind means code. Anything else,
-# lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
-agent_kind() {
-  case "$1" in ""|code|docs|chore) return 0 ;; *) return 1 ;; esac
-}
+# agent_kind — true for a kind a swarm agent may build (AGENT_KINDS); an empty kind means code.
+# Anything else, lead or a typo, stays with the lead, so an unknown kind can never reach an agent.
+# touches_rows.py --idle reads AGENT_KINDS as SWARM_AGENT_KINDS.
+AGENT_KINDS="code docs chore"
+agent_kind() { [[ -z "$1" || " ${AGENT_KINDS} " == *" $1 "* ]]; }
 
 # story_role <slug> — the role a story is built as: escalate for a kind an agent builds once its
 # attempts: reaches escalate_after (> 0), else its kind, code-risky for code with risk: high, and with

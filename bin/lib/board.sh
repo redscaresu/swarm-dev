@@ -96,7 +96,7 @@ epic_has_stories() {
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic kind story_epic src buildable="" waiting="" when held n tag base
+  local f slug epic story_epic buildable="" waiting="" when held n tag base
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -118,18 +118,14 @@ next_step() {
       return
     fi
   fi
-  # Stories an agent can build: ready, and of a kind an agent builds. "<epic> <slug>" per line.
+  # Stories an agent can build (buildable_story). "<epic> <slug>" per line.
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == ready ]] || continue
-    kind=$(fm "${f}" kind)
-    agent_kind "${kind}" || continue
+    buildable_story "${f}" || continue
     buildable+="$(fm "${f}" epic) $(basename "${f}" .md)"$'\n'
   done < <(board stories)
-  # A one-off keeps status: ready until its PR merges, so an existing worktree means it has started.
   while read -r story_epic slug; do
     [[ -n "${story_epic}" && -z "${slug}" ]] || continue
-    src="$(repo_dir "$(fm "${BOARD}/stories/${story_epic}.md" repo)")" || continue
-    [[ -d "$(worktree_for "${src}" "${story_epic}")" ]] || continue
+    one_off_started "${story_epic}" || continue
     echo "resume ${story_epic}"; echo "${story_epic} has already started: wait for its agent, then review its PR"; return
   done <<< "${buildable}"
   # An active epic's stories first: finish what is started before anything new.
@@ -181,24 +177,39 @@ next_step() {
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
-# idle_lines — what next prints after its step: capacity no step uses. An idle: line per blocked
-# story whose depends_on story shares no file in touches with it and that has no needs: line
-# (touches_rows.py --idle); and when no open story is one an agent can build (each is blocked, later
-# or of a kind no agent builds), idle: <project> with up to five candidates for a one-off: the later
-# stories, then the out-of-scope findings (out_of_scope_findings).
+# buildable_story <story file> — true for a story next_step builds: ready, of a kind an agent
+# builds (agent_kind), with no epic or in an active one. dash counts the same ones.
+buildable_story() {
+  local epic
+  [[ "$(fm "$1" status)" == ready ]] && agent_kind "$(fm "$1" kind)" || return 1
+  epic="$(fm "$1" epic)"
+  [[ -z "${epic}" || "$(fm "${BOARD}/epics/${epic}.md" status 2>/dev/null)" == active ]]
+}
+
+# one_off_started <slug> — true once a one-off's build has begun: it keeps status: ready until its PR
+# merges, so an existing worktree means it has started (next_step's resume).
+one_off_started() {
+  local src
+  src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" && [[ -d "$(worktree_for "${src}" "$1")" ]]
+}
+
+# idle_lines <step> — what next prints after its step <step>: capacity no step uses. An idle: line
+# per blocked story whose depends_on story shares no file in touches with it (touches_rows.py
+# --idle). And when the step leaves the builders idle (gate, done, escalated, release: no planning
+# step, no conductor at work) and no story is buildable (buildable_story), idle: <project> with up to
+# IDLE_CANDIDATES out-of-scope findings (out_of_scope_findings) to file as a one-off. Later stories
+# are the user's (waiting_on_user), never offered here.
+IDLE_CANDIDATES=5
 idle_lines() {
-  local f later=""
-  python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+  local f
+  SWARM_AGENT_KINDS="${AGENT_KINDS}" python3 "${SWARM_HOME}/bin/lib/touches_rows.py" "${BOARD}/stories" --idle "${PROJECT_DIR}" "${REPOS_DIR}" "${BOARD_STATE_DIR}/stories"
+  case "$1" in gate|done|escalated|release) ;; *) return 0 ;; esac
   while IFS= read -r f; do
-    case "$(fm "${f}" status)" in
-      done|blocked) ;;
-      later) later+="  later story: $(basename "${f}" .md)"$'\n' ;;
-      *) agent_kind "$(fm "${f}" kind)" && return 0 ;;
-    esac
+    if buildable_story "${f}"; then return 0; fi
   done < <(board stories)
   echo "idle: $(basename "${PROJECT_DIR}")"
   # sed, not head: head can exit before the writers finish, and the broken pipe fails under pipefail.
-  { printf '%s' "${later}"; out_of_scope_findings | sed 's/^/  out-of-scope finding: /'; } | sed -n 1,5p
+  out_of_scope_findings | sed 's/^/  out-of-scope finding: /' | sed -n "1,${IDLE_CANDIDATES}p"
 }
 
 # plannable_epic — the first active epic with no stories whose depends_on holds nothing up

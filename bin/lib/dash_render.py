@@ -807,14 +807,19 @@ def gauges():
             + [(f" {now} of peak {peak} in 7 days", "")])
 
 def idle_gauge():
-    # Beside the running gauge: the ready stories an agent builds (agent_kind's kinds), one-offs or in
-    # an active epic, with no agent of their own and no conductor (the epic's, or conduct-backlog) in
-    # this project's panes. Nothing when there are none, or no agent list.
+    # Beside the running gauge: the stories next would start (DASH_BUILDABLE, dash_render's) with no
+    # agent of their own in this project's panes (story_for's slug, a retired <slug>-done too) and no
+    # conductor: the epic's, or for a one-off the backlog conductor. Nothing when there are none, or
+    # no agent list.
     if agents is None:
         return []
-    names = {r["name"] for r in recs}
-    idle = sum(b[2] == "ready" and b[7] in ("", "code", "docs", "chore") and (not b[6] or epics.get(b[6], [""] * 3)[2] == "active")
-               and not {b[4], epics[b[6]][5] if b[6] in epics else "conduct-backlog"} & names for b in stories)
+    mine = {r["slug"] for r in recs if r.get("slug")}
+    conducted = {r["epic"] for r in recs if r.get("role") == "conduct" and r.get("epic")}
+    backlog = any(r["name"] == E["DASH_BACKLOG_CONDUCTOR"] for r in recs)
+    idle = 0
+    for l in lines("DASH_BUILDABLE"):
+        slug, _, epic = l.partition("\t")
+        idle += not (slug in mine or (epic in conducted if epic else backlog))
     return [(f"idle: {idle} buildable not started", "warn")] if idle else []
 
 SEP = (" · ", "dim")
