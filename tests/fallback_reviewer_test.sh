@@ -32,7 +32,8 @@ codex_says() { printf '#!/bin/sh\n'; printf 'echo "%s" >&2\n' "${@:2}"; printf '
 codex_says 1 "${LIMIT_MSG}" > "${BIN}/codex"
 # herdr: logs every call. Tab t:<n> holds pane w:<n>. agent start records "<name> <pane> <session>"
 # (failing with startfail, taking 20 s with slowstart); a tab create with panefail opens none; agent prompt writes the findings file the brief names and marks the agent
-# done, unless silent, and with promptfail leaves the agent idle, so the brief is never taken up; a
+# done, unless silent (it stays busy) or idle (it goes idle with no file; with late, it writes the
+# file 3 s later, as a background call of its own would), and with promptfail leaves the agent idle, so the brief is never taken up; a
 # pane or tab close drops its agent. agent list and wait report it idle once done.
 cat > "${BIN}/herdr" <<EOF
 #!/bin/sh
@@ -53,10 +54,16 @@ case "$1 $2" in
   "pane close")   drop "$3" ;;
   "agent start")  [ -e "$H/startfail" ] && { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
                   [ -e "$H/slowstart" ] && sleep 20
+                  rm -f "$H/done/$3"   # a new agent is busy until its brief is done
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
   "agent prompt") [ -e "$H/promptfail" ] && { echo '{"result":{"agent":{"agent_status":"idle"}}}'; exit 0; }
-                  if [ ! -e "$H/silent" ]; then
+                  [ -e "$H/idle" ] && touch "$H/done/$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")" && "$H/sessions"
+                  if [ -e "$H/late" ]; then
+                    f=$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/fallback/[a-z0-9-]*\.md' | head -1)
+                    (sleep 3; printf '%s\n' '- [P2] LATE FINDING — y.sh:1' > "$f") > /dev/null 2>&1 &
+                  fi
+                  if [ ! -e "$H/silent" ] && [ ! -e "$H/idle" ]; then
                     f=$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/fallback/[a-z0-9-]*\.md' | head -1)
                     printf '%s\n' '- [P1] STUB FINDING — x.sh:3' '  drops the error' > "$f"
                     touch "$H/done/$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")"; "$H/sessions"
@@ -119,6 +126,7 @@ check "with fallback_reviewer empty, the codex-limit incident is logged" "codex-
 review "fallback_reviewer = sonnet"
 check "with fallback_reviewer = sonnet, codex-review exits 0" "0" "${rc}"
 check "the fallback agent starts as fallback-s1 on sonnet" "yes" "$(logged '^agent start fallback-s1 .*--model sonnet ')"
+check "the fallback agent has a tab of its own, fallback-s1" "yes" "$(logged '^tab create .*--label fallback-s1 ')"
 check "the fallback agent has no Edit, Write or NotebookEdit tool, and cannot commit or push" "yes" \
   "$(logged '^agent start fallback-s1 .*--disallowedTools Bash(gh pr merge:\*) Edit Write NotebookEdit Bash(git commit:\*) Bash(git push:\*) --settings')"
 check "agents.tsv records it with role review-fallback" "review-fallback" \
@@ -134,12 +142,26 @@ check "the incident's target is codex-<slug>, never the builder's own name" "cod
 review "fallback_reviewer = sonnet"
 check "the next usage limit for the story starts its fallback again" "0|yes" "${rc}|$(logged '^agent start fallback-s1 ')"
 
-# --- A fallback that writes nothing has only what is left of codex's time, then is closed.
+# --- A fallback still working when codex's time runs out is stopped then, and closed. Its 10 s leave
+# its start room to finish first.
 touch "${ROOT}/silent"
-SECS=3 review "fallback_reviewer = sonnet"
+SECS=10 review "fallback_reviewer = sonnet"
 check "a silent fallback ends within codex's time, exiting as codex did and saying codex was skipped" "1|yes|yes" \
-  "${rc}|$([[ ${took} -le 10 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: usage limit (fallback-s1 wrote no findings in time" "${out}")"
+  "${rc}|$([[ ${took} -le 16 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: usage limit (fallback-s1 wrote no findings in time" "${out}")"
 check "a fallback that timed out is closed" "yes|" "$(closed)|$(live)"
+
+# --- A fallback is waited on for its file, not its idle: one idle while a background call of its own
+# still runs writes it later, and its findings come through.
+touch "${ROOT}/idle" "${ROOT}/late"
+review "fallback_reviewer = sonnet"
+check "a fallback that goes idle and writes its findings later is waited for, and they come through" "0|yes|yes|" \
+  "${rc}|$(has "- [P2] LATE FINDING — y.sh:1" "${out}")|$(closed)|$(live)"
+rm "${ROOT}/late"
+# One idle that never writes it ends at codex's time, closed.
+SECS=8 review "fallback_reviewer = sonnet"
+check "a fallback idle with no findings is waited on until codex's time, then closed, and codex was skipped" "1|yes|yes|yes|" \
+  "${rc}|$([[ ${took} -ge 5 && ${took} -le 14 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: usage limit (fallback-s1 wrote no findings in time" "${out}")|$(closed)|$(live)"
+rm "${ROOT}/idle"
 
 # --- An interrupt while the fallback reviews closes it at once.
 printf '%s\n' "fallback_reviewer = sonnet" > "${p}/.claude/swarm/config"; : > "${ROOT}/herdr.log"
@@ -174,13 +196,14 @@ rm "${ROOT}/promptfail"
 touch "${ROOT}/panefail"
 review "fallback_reviewer = sonnet"
 check "a fallback whose pane does not open says why, exiting as codex did, and no agent starts" "1|yes|no" \
-  "${rc}|$(has "codex skipped: usage limit (fallback did not start: herdr could not open a pane in tab fallback)" "${out}")|$(logged '^agent start')"
+  "${rc}|$(has "codex skipped: usage limit (fallback did not start: herdr could not open a pane in tab fallback-s1)" "${out}")|$(logged '^agent start')"
 rm "${ROOT}/panefail"
-# A start that outlasts codex's time is stopped at it, and its pane closed.
+# A start that outlasts codex's time is stopped at it, and its pane closed. Its 6 s let the start
+# open its pane before it stalls in agent start.
 touch "${ROOT}/slowstart"
-SECS=3 review "fallback_reviewer = sonnet"
+SECS=6 review "fallback_reviewer = sonnet"
 check "a fallback start that outlasts codex's time is stopped within it, its pane closed, and codex was skipped" "1|yes|yes|yes|" \
-  "${rc}|$([[ ${took} -le 7 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: usage limit (fallback did not start: its start ran out of codex's time)" "${out}")|$(closed)|$(live)"
+  "${rc}|$([[ ${took} -le 11 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: usage limit (fallback did not start: its start ran out of codex's time)" "${out}")|$(closed)|$(live)"
 rm "${ROOT}/slowstart"
 rm -rf "${p}/.swarm/briefs/fallback"; : > "${p}/.swarm/briefs/fallback"
 review "fallback_reviewer = sonnet"
@@ -219,6 +242,15 @@ check "a fallback still reviewing is refused and kept, its findings file too, an
   "${rc}|$(has "fallback did not start: fallback-s1: an agent with this name is still working" "${out}")|$(closed)|$(live)|$(cat "${p}/.swarm/reviews/fallback/s1.md")"
 : > "${ROOT}/agents"; rm "${p}/.swarm/state/fallback"
 
+# --- Closing a fallback closes its own tab alone, never another story's fallback tab, whose
+# fallback is still reviewing.
+echo "fallback-other w:77 sess-other" >> "${ROOT}/agents"; echo "t:77 fallback-other" >> "${ROOT}/tabs"
+echo "w:77 fallback-other" > "${p}/.swarm/state/fallback-other"
+review "fallback_reviewer = sonnet"
+check "closing a fallback leaves another story's fallback tab and the fallback there running" "0|yes|no|fallback-other |yes" \
+  "${rc}|$(logged '^tab close')|$(logged '^tab close t:77')|$(live)|$([[ -f "${p}/.swarm/state/fallback-other" ]] && echo yes || echo no)"
+: > "${ROOT}/agents"; rm "${p}/.swarm/state/fallback-other"
+
 # --- A codex that fails without its own limit message (a transcript that quotes one does not count)
 # logs no incident and starts no fallback.
 codex_says 1 "reviewing a diff about the usage limit" "+ERROR: You've hit your usage limit." "ERROR: stream disconnected" > "${BIN}/codex"
@@ -235,6 +267,8 @@ check "log-finding --reviewer fallback is accepted and recorded" "0|fallback" \
 brief="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_ENV PATH="${BIN}:${PATH}" bash "${SWARM}" _brief s1 2>&1)"
 check "the built brief's codex rule names 'reviewed by fallback' for the PR body" "yes" \
   "$(has 'the PR says "reviewed by fallback <model>: codex usage limit"' "${brief}")"
+check "the built brief's codex rule says to wait for codex-review to exit and act on what it prints last" "yes" \
+  "$(has 'Wait for codex-review to exit, and act on what it prints last' "${brief}")"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

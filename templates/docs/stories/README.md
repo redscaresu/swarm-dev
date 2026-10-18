@@ -45,6 +45,14 @@ A story may belong to an epic (`epic: <slug>`, see `docs/epics/`) and list the f
 in a sibling repo says so with `repo: <name>` (a sibling directory of this repo): its agent builds in a
 worktree of `../<name>`, and the lead deletes the story file once that PR merges.
 
+`env: [NAME, ...]` names the environment variables a story's builder needs beyond the short list
+every agent starts with (swarm-dev `docs/reference.md` § Building, The agents' environment). A story
+holds names, never values: each value comes from the session that starts the agent, and the epic's
+conductor gets the names too, so it can pass them on. The list goes on one line, in brackets. Each
+name must match `[A-Z_][A-Z0-9_]*`, must be set in the session that starts the build, and must not be
+reserved: one every agent gets already, the lead's own session's, or one that loads code. Otherwise
+`swarm.sh story` and `conduct` refuse.
+
 `estimate_lines: <n>` is the planner's guess at the PR's size in lines; a story is capped at one new
 command or one changed behaviour and about 300 lines. `easy: true` marks a story under about 100 lines
 that adds no new command and no shared helper in `bin/swarm.sh`.

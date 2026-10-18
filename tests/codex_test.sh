@@ -188,6 +188,14 @@ check "a timed-out codex whose grandchild holds its output still ends codex-revi
   "$([[ $((SECONDS - t0)) -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(has "codex skipped: timed out" "$(cat "${ROOT}/out")")"
 pkill -KILL -f "${BIN}/" || true
 
+# --- codex's log and fifo are in a directory of the run's own, mode 700, gone once it ends.
+mkdir -p "${ROOT}/tmp"
+# shellcheck disable=SC2016 # the stub's variable
+stub 'ls -ld "${TMPDIR}"/swarm-codex.* | cut -c1-10; ls "${TMPDIR}"/swarm-codex.*/ | tr "\n" " "; exit 0'
+TMPDIR="${ROOT}/tmp" review
+check "codex's log and fifo are in a private directory (drwx------), removed when the run ends" "yes|yes|" \
+  "$(has "drwx------" "${out}")|$(has "fifo log" "${out}")|$(compgen -G "${ROOT}/tmp/swarm-codex.*" || true)"
+
 # --- A run that fails before codex starts (here mktemp, with no TMPDIR to write in) leaves no marker.
 stub 'exit 0'
 (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY TMPDIR="${ROOT}/no-such-dir" bash "${SWARM}" codex-review main \

@@ -27,6 +27,7 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
+#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times), no check runs within 5 minutes, or still pending after <seconds> (default 1800)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
@@ -61,6 +62,13 @@ die() {
 # Set only by main, in the subshell a logged command runs in; never taken from the environment.
 DIE_FILE=""
 DIE_LEVEL=-1
+
+# wait-pr's exit 1 means a check is red (WAIT_PR_RED), so anything else that stops it, a die (a bad
+# config line) or a set -e stop, exits 2; its temp file (WAIT_PR_TMP) goes either way.
+WAIT_PR_RED=""; WAIT_PR_TMP=""
+if [[ "${1:-}" == wait-pr ]]; then
+  trap 'rc=$?; rm -f "${WAIT_PR_TMP}"; [[ ${rc} -eq 0 || -n "${WAIT_PR_RED}" ]] || exit 2' EXIT
+fi
 
 # The framework itself: this script's repo, whose docs/method.md the briefs point at.
 SWARM_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -335,7 +343,7 @@ dispatch() {
   cmd="${1:-}"; shift || true
   case "${cmd}" in
     policy) policy "${1:?role}" ;;
-    agent)  require_herdr; start_agent "$@" ;;
+    agent)  require_herdr; agent_cmd "$@" ;;
     story)  require_herdr; [[ $# -le 2 ]] || die "story: too many arguments: $*"
             if [[ "${1:-}" == --strict ]]; then build_story "${2:?slug}" strict
             elif [[ "${2:-}" == --strict ]]; then build_story "$1" strict
@@ -364,6 +372,7 @@ dispatch() {
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
+    wait-pr) wait_pr "$@" ;;
     board-pr) board_pr "$@" ;;
     findings) findings "${1:?repo}" "${2:?pr}" ;;
     config) show_config "${1:-}" ;;
@@ -387,11 +396,11 @@ dispatch() {
 }
 
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
-# all the time (wait, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
+# all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait watch base _base _role _name _brief _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow review-yield features lessons findings wait wait-pr watch base _base _role _name _brief _target _label _trusted _pane _mtime"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -461,7 +470,7 @@ codex_story_prompt() {
 # codex-limit incident, and with fallback_reviewer set, codex_fallback reviews in its place, in what
 # is left of codex_minutes.
 codex_review() {
-  local pid tpid left rc=0 m i args story prompt="" log files
+  local pid tpid left rc=0 m i args story prompt="" dir log files
   [[ -n "$1" ]] || die "usage: swarm.sh codex-review <base>"
   args=(--base "origin/$1")
   if [[ -n "${SWARM_STORY:-}" ]]; then
@@ -487,16 +496,18 @@ codex_review() {
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
   printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "${PWD}" > "${m}"
-  log="$(mktemp "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"
-  files+=" $(printf %q "${log}") $(printf %q "${log}.fifo")"
+  # The log and its fifo in a directory of this run's own (mktemp -d: mode 700), so no other user
+  # can make or read them first.
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/swarm-codex.XXXXXX")"; log="${dir}/log"
+  files+=" $(printf %q "${dir}")"
   # shellcheck disable=SC2064
   trap "codex_cleanup - ${files}" EXIT
-  mkfifo "${log}.fifo"
-  tee "${log}" < "${log}.fifo" &
+  mkfifo "${dir}/fifo"
+  tee "${log}" < "${dir}/fifo" &
   tpid=$!
   # shellcheck disable=SC2064
   trap "codex_cleanup ${tpid} ${files}" EXIT
-  codex exec review "${args[@]}" < /dev/null > "${log}.fifo" 2>&1 &
+  codex exec review "${args[@]}" < /dev/null > "${dir}/fifo" 2>&1 &
   pid=$!
   # shellcheck disable=SC2064 # this codex's pid, fixed now
   trap "stop_codex ${pid}; exit 143" TERM HUP
@@ -505,6 +516,10 @@ codex_review() {
     wait "${pid}" || rc=$?
     for ((i = CODEX_GRACE * 5; i > 0; i--)); do kill -0 "${tpid}" 2>/dev/null || break; sleep 0.2; done
     { kill "${tpid}"; wait "${tpid}"; } 2>/dev/null || true
+    # Both reaped: no trap may signal their pids again, which another process could have taken.
+    # shellcheck disable=SC2064
+    trap "codex_cleanup - ${files}" EXIT
+    trap "exit 143" TERM HUP
     if [[ ${rc} -ne 0 ]] && tail -n 5 "${log}" | grep -Eq "${CODEX_LIMIT_RE}"; then
       # Not the slug alone, which is also its builder's agent name: login_incident would take this
       # line for the end of that builder's login episode.
@@ -521,11 +536,12 @@ codex_review() {
 
 # codex_cleanup <tee pid, or -> <file>... — codex-review's EXIT trap, so every way out (codex done, the
 # timeout, an interrupt, a failed step) runs it: stop tee, which a child of codex left holding its
-# pipe would keep running, and the caller's stdout open with it; then remove the run's files.
+# pipe would keep running, and the caller's stdout open with it; then remove the run's files and
+# its directory.
 # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
 codex_cleanup() {
   [[ "$1" == - ]] || { kill "$1"; wait "$1"; } 2>/dev/null || true
-  shift; rm -f "$@"
+  shift; rm -rf "$@"
 }
 
 # CODEX_LIMIT_RE: codex's own usage-limit line, as `codex exec` prints it (ERROR: or ■ before it,
@@ -563,7 +579,9 @@ codex_fallback() {
   (free_agent_name "${name}") 2> "${err}" || { holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"; }
   { mkdir -p "${out%/*}" "${brief%/*}" && rm -f "${out}" && fallback_brief "$1" "$2" "${out}" > "${brief}"; } 2> "${err}" \
     || fallback_skip "$5" "fallback did not start: could not write its brief ${brief}: $(tail -1 "${err}")"
-  (start_agent fallback "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
+  # A tab of its own, fallback-<story>: a usage limit hits every builder at once, and fallbacks
+  # sharing one tab record would race on it.
+  (start_agent "${full}" "${name}" "${PWD}" review-fallback "${brief}" "${full}" > /dev/null) 2> "${err}" & wpid=$!
   # shellcheck disable=SC2064 # this start and agent, fixed now
   trap "kill_tree ${wpid}; fallback_close ${full}; exit 143" TERM HUP
   # start_agent can retry for minutes: past codex's time it is stopped, and what it opened closed.
@@ -577,12 +595,19 @@ codex_fallback() {
     fallback_close "${full}"
     holder="$(tail -1 "${err}")"; fallback_skip "$5" "fallback did not start: ${holder#swarm: }"
   fi
+  # The start is reaped: the trap names no pid again until the wait has one.
+  # shellcheck disable=SC2064 # this agent, fixed now
+  trap "fallback_close ${full}; exit 143" TERM HUP
   left=$((deadline - SECONDS))
-  # In the background, so an interrupt is handled at once, not after a poll.
+  # Until its findings file exists, within the time left: an agent idle while a subagent or a
+  # background Bash call of its own still runs has not finished. In the background, so an interrupt
+  # is handled at once, not after a poll.
   wait_conductor "${name}" $(( (left > 0 ? left : 1) * 1000 )) "${out}" > "${err}" 2>&1 & wpid=$!
   # shellcheck disable=SC2064 # this wait and agent, fixed now
   trap "kill_tree ${wpid}; fallback_close ${full}; exit 143" TERM HUP
   wait "${wpid}" || true
+  # shellcheck disable=SC2064 # this agent, fixed now
+  trap "fallback_close ${full}; exit 143" TERM HUP
   fallback_close "${full}"
   [[ -f "${out}" ]] || fallback_skip "$5" "${name} wrote no findings in time: $(tail -1 "${err}")"
   echo "reviewed by fallback ${CFG_fallback_reviewer}: codex usage limit"
@@ -597,9 +622,20 @@ pane_name_of() {
   cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' || true
 }
 
-# fallback_close <pane name> — close a fallback agent as `swarm.sh close` does a review agent: its
-# session log archived, its pane closed.
-fallback_close() { archive_session "$1" || true; close_panes "$1" > /dev/null || true; }
+# fallback_close <name> — close a fallback agent as `swarm.sh close` does a review agent: its session
+# log archived, and its tab (fallback-<story>, its own) closed by that exact label, so no other
+# fallback's tab goes with it.
+fallback_close() {
+  local state="${STATE_DIR}/$1" pane t
+  archive_session "$1" || true
+  [[ -f "${state}" ]] || return 0
+  pane="$(awk 'NF == 2 { print $1; exit }' "${state}")"
+  for t in $(herdr tab list --workspace "${pane%%:*}" 2>/dev/null \
+    | SWARM_LABEL="$1" json "' '.join(t['tab_id'] for t in d['result']['tabs'] if t.get('label') == e['SWARM_LABEL'])" 2>/dev/null); do
+    herdr tab close "${t}" > /dev/null 2>&1 || true
+  done
+  rm -f "${state}"
+}
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
@@ -644,7 +680,8 @@ main_signal() {
 # log one line per item themselves, and merge (target !) every line it writes, so main logs none
 # for it but an interrupt. A tell's command is tell:<kind>, a close's close:<cause> and a
 # board-pr's board-pr:<step>, so the target stays the slug (a board-pr's name). A reset or drop
-# that succeeds logs ok (<reason>); a reset that lifts a hold (held_for:) logs as reset:held.
+# that succeeds logs ok (<reason>), and a review ok (<PR URLs>), so outcomes can tell which PRs an
+# epic's review handed over; a reset that lifts a hold (held_for:) logs as reset:held.
 main() {
   local rc why
   [[ "${1:-}" != init ]] || init_check
@@ -673,6 +710,7 @@ main() {
                 if [[ "${EV_CMD}" == reset && "${2:-}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/stories/$2.md" \
                       && -n "$(get_fm "${BOARD}/stories/$2.md" held_for)" ]]; then EV_CMD="reset:held"; fi ;;
     dialog) EV_TARGET="${2:-}"; EV_OK="ok (${3:-})" ;;
+    review) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
     *) EV_TARGET="${2:-}" ;;

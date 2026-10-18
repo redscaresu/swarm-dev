@@ -84,6 +84,7 @@ record_finding() {
 #   reads findings passes) or unknown. Fields past the sixth (a declined row's reason) are ignored, so
 #   a column appended later drops no row. fixed_rows(path) is the first four fields of the fixed and
 #   escaped ones: both are a mistake someone fixed, so both are lessons.
+#   turns(path, seen) is each of one session's turns, once, as (record, model, tokens, est. USD).
 #   session_usage(path, seen) is one session's (input, cache write, cache read, output) tokens, est.
 #   USD and models, from Claude Code's own log, skipping (and adding to seen) message ids already counted.
 
@@ -118,9 +119,12 @@ cost_report() {
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
 # Then when it started (its session log's first timestamp, UTC), its tokens by type, its last close's
 # cause, the times of its escalation steps (escalate, dialog with its answer, escalated, reset,
-# drop), and last its story's epic:, when its PR merged, whether any PR of the story merged (empty when
+# drop), then its story's epic:, when its PR merged, whether any PR of the story merged (empty when
 # unknown), the findings declined, both counts by reviewer, when its PR was created, the minutes from
-# its start to that and from that to the merge, and the commits on the PR that merge the base into it. A finding goes to the latest build on
+# its start to that and from that to the merge, the commits on the PR that merge the base into it,
+# its subagents' cost, in all and per model (its own cost and tokens leave them out), and last its
+# start-to-merge minutes split into building, CI, review wait, fixing and merge wait (outcomes_join.py's
+# time_in_state, from its PR's review and tell:findings events and its head's checks). A finding goes to the latest build on
 # its PR that started on or before its day, so builds sharing a PR never count it twice. Each events.tsv line goes to one build: an escalation step to the escalate build whose cycle
 # was open when it was logged (by event order), any other to the build that started last at or before
 # it. A build with no session log starts at 00:00 local time on its agents.tsv day.
@@ -137,13 +141,16 @@ outcomes_report() {
   [[ -f "${AGENTS_LOG}" ]] || die "no agents recorded yet in ${AGENTS_LOG}"
   # date, slug, role, model, effort, cost_usd, tokens, tells_findings, tells_nudge, tells_resume, closes, attempts,
   # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
-  # columns the report prints after attempts as they are: started to drop_at.
+  # columns the report prints after attempts as they are: started to drop_at, then subagent_cost_usd and
+  # subagent_cost_by_model, which it prints last.
   rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
-  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges` joined by commas, where
+  # story/<slug> (newest first, as `url state mergedAt createdAt main_merges checks commits closedAt` joined by commas, where
   # main_merges counts the commits whose headline merges the base into the PR: `Merge origin/main into
-  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`), its epic: and
+  # x`, `Merge branch 'main' into x`, `Merge remote-tracking branch 'origin/main' into x`, and checks is
+  # its head's check runs as startedAt/completedAt joined by semicolons, commits the committedDate of
+  # its commits but those base merges, joined by semicolons), its epic: and
   # whether gh answered (1, or empty), from the story (on the board, or its last version in git once a
   # merge deleted it) and gh. A gh that fails leaves no PR; it never fails the run. A story that is gone (its PRs may still show) or has no repo is unknown too.
   while IFS= read -r slug; do
@@ -161,16 +168,18 @@ outcomes_report() {
     # shellcheck disable=SC2016 # $b is jq's
     if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
-        --json url,state,mergedAt,createdAt,baseRefName,commits --jq '.[] | [.url, .state, .mergedAt // "",
-          .createdAt, (.baseRefName as $b | [.commits[].messageHeadline | select(startswith("Merge "))
-          | ltrimstr("Merge ") | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0]
-          | ltrimstr("\u0027") | rtrimstr("\u0027") | ltrimstr("origin/") | select(. == $b)] | length)] | @tsv') 2>/dev/null)"; then
+        --json url,state,mergedAt,createdAt,baseRefName,commits,statusCheckRollup,closedAt --jq 'def base_merge($b): .messageHeadline | startswith("Merge ") and ((ltrimstr("Merge ")
+          | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0] | ltrimstr("\u0027") | rtrimstr("\u0027")
+          | ltrimstr("origin/")) == $b);
+        .[] | .baseRefName as $b | [.url, .state, .mergedAt // "", .createdAt, ([.commits[] | select(base_merge($b))] | length),
+          ([.statusCheckRollup[]? | select(.startedAt and .completedAt) | .startedAt + "/" + .completedAt] | join(";")),
+          ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";")), .closedAt // ""] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
   done <<< "$(cut -f2 <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}"
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] — the project's numbers, one section
@@ -208,6 +217,13 @@ outcomes_report() {
 #     shows `-` and is judged on its metric alone.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
+#   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
+#     (an ok held, escalated, close:impossible or review line in events.tsv; with merge = agent, a
+#     review only of a story whose costs: is not none, or that cannot be read) the minutes until its
+#     slug's next ok finish, reset, drop or reconcile (finished or reopened), stopping at the local
+#     midnight after --until (or now), where an item still waiting is listed under open as kind:slug. One with no
+#     leaving line counts only while its story or epic is on the board in review, held or escalated.
+#     --epic does not narrow it.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
@@ -229,6 +245,9 @@ outcomes_report() {
 #     tell:findings or review, which marks a review's end, so the two are never averaged together; and
 #     stacked, the stacked events for its slugs (all of them on the `all` row). A PR gh cannot read
 #     counts in neither wait.
+#   time_in_state: one TSV row per epic, then `all`, over the outcomes rows dated in the window with
+#     phase minutes (a merged PR), each PR once by its first build; with --epic, that epic's row alone:
+#     its PRs, their start-to-merge minutes, and the five phases' sums largest first as <phase>:<min>.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
@@ -254,16 +273,19 @@ flow_report() {
 }
 
 # flow_sections <since> <until> <epic> <outcomes rows> <lead session> [section...] — run flow_report.py
-# over the window, with each windowed slug's depends_on (read with story_text, so merged stories
-# count); <lead session> (empty for none) is the calling session, counted as lead.
+# over the window, with each windowed slug's depends_on, and its estimate_lines and touches (read with
+# story_text, so merged stories count); <lead session> (empty for none) is the calling session, counted as lead.
 flow_sections() {
-  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" slug own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
+  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" stories="" slug text own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   shift 5
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
-    deps+="${slug}"$'\t'"$(story_text "${slug}" | sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
+    text="$(story_text "${slug}")"
+    deps+="${slug}"$'\t'"$(sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
+    stories+="${slug}"$'\t'"$(sed -n 's/^estimate_lines: *//p' <<< "${text}" | head -1)"
+    stories+=$'\t'"$(sed -n 's/^touches: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr '\t' ' ')"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
