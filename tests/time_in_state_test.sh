@@ -27,6 +27,7 @@ trap 'rm -rf "${dir}"' EXIT
 P="${dir}/repo"; U=https://github.com/o/r/pull; D=2026-10-01T
 mkdir -p "${P}/.swarm" "${P}/docs/stories" "${dir}/projects/p" "${dir}/bin"
 git -C "${P}" init -q
+git -C "${P}" config diff.noprefix true   # a user's diff setting must not hide the board's ready commits
 printf -- '---\nkind: code\nepic: e1\nstatus: review\n---\n' > "${P}/docs/stories/tis.md"
 session() { # <HH:MM start> <PR> — a session log in the tis worktree that names the PR
   printf '{"type":"user","cwd":"%s/repo-wt/tis","timestamp":"%s%s:00Z"}\n' "${dir}" "${D}" "$1"
@@ -122,10 +123,19 @@ check "a build that starts after its conductor closed holds 0, and a refused con
 cp "${dir}/events.full" "${E}"; touch -t 202610010800 "${P}/.swarm/conduct-e1.report.md"
 check "a conductor's report ends its run" "$(first_held)" 0
 rm "${P}/.swarm/conduct-e1.report.md"
+# The next conduct logged the report's time as it removed the file, so the run still ends there.
+add_events "${D}10:00:00Z"$'\treport\te1\tw:1\tok ('"${D}"'08:00:00Z)'
+check "a removed report's logged time still ends its run" "$(first_held)" 0
+# A long epic's conductor name is cut to 32 characters; a close by its full name still ends its run.
+LONG=a-long-epic-whose-conductor-name-is-cut
+sed -i.bak "s/^epic: e1$/epic: ${LONG}/" "${P}/docs/stories/tis.md" && rm "${P}/docs/stories/tis.md.bak"
+add_events "${D}06:00:00Z"$'\tconduct\t'"${LONG}"$'\tw:1\tok' "${D}08:00:00Z"$'\tclose\tconduct-'"${LONG}"$'\tw:1\tok'
+check "a close by a long epic's full conductor name ends its run" "$(first_held)" 0
+sed -i.bak "s/^epic: ${LONG}$/epic: e1/" "${P}/docs/stories/tis.md" && rm "${P}/docs/stories/tis.md.bak"
 grep -v $'\tunblock\t' "${dir}/events.full" > "${E}"
 check "with no unblock or ready commit by its start, a story's held is unknown" "$(first_held)" ""
 # With no epic, tis is the backlog conductor's, whose name is this project's (conductor_name).
-crc="$(printf '%s' "$(cd "${P}" && pwd -P)" | cksum)"; BACKLOG="$(printf 'conduct-backlog-repo-%06x' $((${crc%% *} % 16777216)))"
+BACKLOG="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT bash "${ROOT}/bin/swarm.sh" _conductor backlog)"
 sed -i.bak '/^epic: /d' "${P}/docs/stories/tis.md"
 add_events "${D}07:00:00Z"$'\tconduct\t--backlog\tw:1\tok' "${D}08:00:00Z"$'\tclose\tconduct-backlog-cleanup\tw:1\tok'
 check "a story with no epic is held under the backlog conductor, which another epic's close does not end" "$(first_held)" 120
@@ -147,8 +157,10 @@ grep -v $'\tunblock\t' "${dir}/events.full" > "${E}"
 board_commit blocked 06:30
 check "a story added blocked, with no unblock or ready commit since, has no known ready time" "$(first_held)" ""
 board_commit ready 07:30
-cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
 check "a story readied by a board commit is held from that commit, not from its add" "$(first_held)" 90
+board_commit blocked 08:00
+check "a story blocked by a board commit after its last ready signal has no known ready time" "$(first_held)" ""
+cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 
 flow() { # [epic [since]] — the time_in_state section alone, as flow runs it, over the outcomes rows

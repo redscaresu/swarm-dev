@@ -707,13 +707,15 @@ in review, from `pr_created_at` to the merge, so they add up to `pr_to_merge_min
 `held_min`, is on a story's first build alone: the minutes it sat ready and unstarted under the
 conductor run the build started in, counted from the later of the run's start and the story's ready
 time. The conductor is its epic's, or the backlog conductor (`conduct --backlog`) for a story with no
-epic. The story became ready at an `ok` `unblock` event, or at a commit on the board's default branch
-that set its `status: ready` (a story added ready, or readied by hand). A run starts at an `ok`
-`conduct` event and ends at the next one, at an `ok` close of the conductor, or when it writes its
-report (`.swarm/conduct-<epic>.report.md`, or a numbered copy, by its time), whichever comes first. A
-build that started after its run ended, or with no run, held 0. `held_min` is empty when the build
-has no `started` or the story has no ready time by then, and on a retry, whose own wait is not
-counted. A story the lead holds after an escalation (`kind: lead` with
+epic. The story became ready at its last `ok` `unblock` event, or commit on the board's default branch
+that set its `status: ready` (a story added ready, or readied by hand), before the build. A commit
+that set it `status: blocked` after that leaves no ready time. A run starts at an `ok` `conduct`
+event and ends at the next one, at an `ok` close of the conductor, or when it wrote its report,
+whichever comes first. The report's time is its file's (`.swarm/conduct-<epic>.report.md`) until the
+next `conduct` removes the file; that `conduct` logs it first as a `report <epic>` line in events.tsv,
+`ok (<UTC time>)`. A build that started after its run ended, or with no run, held 0. `held_min` is
+empty when the build has no `started` or the story has no ready time by then, and on a retry, whose
+own wait is not counted. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
