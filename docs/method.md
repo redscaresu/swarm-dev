@@ -10,11 +10,9 @@ each step is in [`reference.md`](reference.md).
    `docs/epics/<slug>.md` with it as `status: draft`: the problem with evidence, goals that can be
    checked, non-goals and constraints. A reviewer attacks the draft, and it becomes `active` only
    when you agree it (reference.md § Writing an epic).
-2. **Epics**: `/plan-hld <hld>` splits the HLD into epics, each with a **Done when** that could
-   fail. Skeptics and codex check for gaps and overlaps.
-3. **Stories**: `/plan-epic <epic>` splits each epic into one-PR stories (reference.md § Scoping an
-   epic).
-4. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
+2. **Stories**: `/plan-epic <epic>` splits the agreed epic into one-PR stories. Skeptics and
+   codex check for gaps and overlaps (reference.md § Scoping an epic).
+3. **Build**: `swarm.sh conduct <epic>` hands the epic to a fresh conductor, which builds its
    `ready` stories in parallel panes and merges them, or hands them to you to merge (reference.md
    § Building, § Merging).
 

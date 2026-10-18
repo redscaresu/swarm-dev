@@ -72,7 +72,10 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    (the tab `_epic`: a leading underscore no epic, story or HLD slug can take, so closing it never
    reaches another tab), and tell the user which pane to work in: they stay there throughout.
    This session supervises; it does not co-write.
-4. In the background, without asking the user to come back: wait until `D/ready` exists. Then
+4. In the background, without asking the user to come back, watch for `D/agreed` from step 3 on,
+   whatever has or has not happened in this step: the user may agree without ever saying the
+   draft is ready, or the reviewer may never write its file. The moment `D/agreed` exists, go to
+   step 5. Meanwhile, wait until `D/ready` exists. Then
    write a reviewer brief (attack the draft, do not rewrite it: a problem with no evidence, goals
    that cannot be checked or could not fail, an epic that contradicts an ADR or a safety rule,
    non-goals that leave its edge unclear, risks not named, open questions that block planning it
@@ -81,9 +84,9 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    is written, then `swarm.sh wait epic-<slug>` (tell refuses a busy co-author) and hand it over:
    write "The reviewer has finished: read D/review.md, summarise it for the user and go through it
    together." to a file and run `swarm.sh tell epic-<slug> nudge <file>`.
-5. Still in the background: wait until `D/agreed` exists. Only then, on the user's agreement, set
+5. Once `D/agreed` exists, and only then, on the user's agreement, set
    `status: active`; nothing plans a draft epic. Open a PR for the epic with one
-   `swarm.sh codex-review` pass, close the co-author and the reviewer by name
+   `swarm.sh codex-review` pass, close the co-author and the reviewer (if it started) by name
    (`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`; never `swarm.sh close
    epic`, which would close every tab whose label starts `epic-`), and tell the user the epic is agreed and
    that `/swarm-dev:swarm` plans it next (`/plan-epic <slug>`).

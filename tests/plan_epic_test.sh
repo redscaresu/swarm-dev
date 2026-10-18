@@ -56,13 +56,14 @@ eflat=$(tr '\n' ' ' <<< "$e" | tr -s ' ')
 has epic-path 'docs/epics/<slug>\.md' "$e"
 has epic-draft '^ *status: draft$' "$e"
 for h in Problem Goals Non-goals Constraints; do has "epic-section-$h" "^ *## $h$" "$e"; done
-has epic-active-on-agreement 'Only then, on the user.s agreement, set `status: active`; nothing plans a draft epic' "$eflat"
+has epic-active-on-agreement '[Oo]nly then, on the user.s agreement, set `status: active`; nothing plans a draft epic' "$eflat"
 has epic-resume-draft-only 'is `status: draft`, resume it\. If it exists with any other status, it is live .* stop' "$eflat"
 has epic-slug-chars 'every run of characters other than `a-z` and `0-9` into one `-`' "$eflat"
 has epic-slug-backlog 'If the slug is empty or `backlog`.* stop' "$eflat"
 has epic-file-name-first 'If `docs/epics/<argument>.md` exists, that file is the epic and its name is the slug' "$eflat"
 has epic-resume-clears 'remove any old `D/ready` and `D/agreed`, on a resume too' "$eflat"
 has epic-resume-stale-review 'on a resume, move it to `D/review-stale.md`' "$eflat"
+has epic-agreed-watched-from-step-3 'watch for `D/agreed` from step 3 on, whatever has or has not happened in this step' "$eflat"
 has epic-close-by-name '`swarm.sh close epic-<slug>`, then `swarm.sh close epic-review-<slug>`' "$eflat"
 hasnt epic-no-tab-close 'swarm\.sh close epic`' "${eflat//'never `swarm.sh close epic`'/}"
 

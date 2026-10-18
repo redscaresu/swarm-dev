@@ -20,8 +20,8 @@ the run stops whenever a decision is yours.
 1. **Design.** You write a draft epic with a co-author agent (`/epic`): the problem with its
    evidence, goals that can be checked, non-goals and constraints. A reviewer agent attacks it, and
    nothing plans it until you agree it.
-2. **Plan.** Planning agents split it into epics, then into stories of one PR each, and skeptic
-   agents try to break the plan. You approve it.
+2. **Plan.** Once you agree the epic, planning agents (`/plan-epic`) split it into stories of one
+   PR each, and skeptic agents try to break the plan. You approve it.
 3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
    and the builder fixes what it finds.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
