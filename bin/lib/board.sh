@@ -107,15 +107,22 @@ epic_planned() {
 # (open_item), so what depends on it goes ahead, and it is not planned again. A draft or later epic,
 # or one whose only story ever was an after: one, never does.
 epic_after_only() {
-  local s slug n=0
+  local s slug
   [[ "$(fm "$1" status)" == active ]] || return 1
   slug="$(basename "$1" .md)"
   while IFS= read -r s; do
-    [[ "$(fm "${s}" epic)" == "${slug}" && "$(fm "${s}" status)" != "done" ]] || continue
-    after_story "${s}" || return 1
-    n=1
+    [[ "$(fm "${s}" status)" == "done" ]] || return 1
+  done < <(epic_stories "${slug}")
+  epic_after_open "${slug}" && epic_planned "${slug}"
+}
+
+# epic_after_open <epic> — true when an after_story of <epic> is open (not done).
+epic_after_open() {
+  local s
+  while IFS= read -r s; do
+    [[ "$(fm "${s}" epic)" == "$1" && "$(fm "${s}" status)" != "done" ]] && after_story "${s}" && return 0
   done < <(board stories)
-  [[ ${n} -eq 1 ]] && epic_planned "${slug}"
+  return 1
 }
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
@@ -237,7 +244,8 @@ plannable_epic() {
 }
 
 # epic_holding_deps <epic file> — fails unless it is an active epic with no stories (epic_has_stories;
-# an after: story is none) that does not count as done (epic_after_only): the epics planning waits for; else prints its depends_on slugs that still hold its planning up (dep_holds),
+# an after: story is none) that does not count as done (epic_after_only): the epics planning waits
+# for; else prints its depends_on slugs that still hold its planning up (dep_holds),
 # space-separated, none when it can be planned. Its deps are read only once it has no stories. A child
 # epic's own parent: never holds it: the split parent is open for as long as the child is.
 epic_holding_deps() {

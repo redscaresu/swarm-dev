@@ -60,6 +60,8 @@ item epics/beta.md 'status: active' 'depends_on: [alpha]'
 
 # alpha's code story is done and its after: story waits: alpha counts as done, so beta can be planned.
 item stories/built.md 'status: done' 'kind: code' 'epic: alpha'
+out="$(run next)"
+check "next: with no after: story, a done code story alone still holds the epic after it" test "$(first "${out}")" = "done"
 item stories/check.md 'status: ready' 'kind: lead' 'epic: alpha' 'after: alpha'
 out="$(run next)"
 check "next: an after: lead story leaves its epic done, so the epic after it is planned" test "$(first "${out}")" = "plan-epic beta"
