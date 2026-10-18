@@ -95,7 +95,9 @@ section shows how long CI takes per push, how often it goes red and how often it
 `incidents` section counts, per day, the waits that timed out, the logins that expired and the
 builders that stopped with no PR. Its `lead_queue` section shows, per day, the median and longest
 time a held, escalated or ready-to-merge item waited on the lead, and names any still waiting. With
-`merge = agent`, only a PR that costs money waits on you, so only those count.
+`merge = agent`, only a PR that costs money waits on you, so only those count. Its `model_fit`
+section sets cost against results for each model and kind of story, so you can see where a cheaper
+model holds up before you move more work to it.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. Agents start with a short list of environment variables, and a token you exported
