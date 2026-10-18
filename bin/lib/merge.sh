@@ -25,11 +25,13 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
 # read is a missed poll; three in a row end it. Prints ok (0), red <checks> (1), timeout (<what it
 # waited on>) (2) or error <why> (3); YAML it does not read is an error, never a skipped workflow.
-# ci_gate admin <owner/repo> <base> <sha> — for merge_admin, since --admin skips every rule on <base>,
-# not just the approving review: succeed when <sha> has every status check <base>'s rulesets and
-# branch protection require, is up to date with <base> when they say strict, and <base> has no rule
-# --admin would skip besides the review (merge queue, required workflows, signatures, ...). Else
-# print why and fail (1); a read that fails is a failure too.
+# ci_gate admin <owner/repo> <base> <sha> <method> — for merge_admin, since --admin skips every rule on
+# <base>, not just the approving review: succeed when <sha> has every status check <base>'s rulesets
+# and branch protection require, is up to date with <base> when they say strict, and <base> has no
+# rule --admin would skip besides the review (merge queue, required workflows, signatures, the
+# review's thread resolution, a merge method other than <method>, any classic field not known to be
+# safe, ...). Else print why and fail (1); a read that fails is a failure too, and a 404 from branch
+# protection is unprotected only when GitHub says "Branch not protected".
 # ci_gate files <owner/repo> <pr> <changed> — every path the PR changes, a renamed file's old path
 # too; fails (3) unless there are <changed> of them.
 ci_gate() {
@@ -159,19 +161,19 @@ merge_pr() {
     fi
     [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}"
   fi
-  # merge_admin = on: --admin skips every rule on the base, not only the review, so ci_gate admin
-  # checks them first.
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
-  admin=()
-  # shellcheck disable=SC2154 # assigned in another file
-  if [[ "${CFG_merge_admin}" == on ]]; then
-    why="$(ci_gate admin "${repo}" "${base}" "${head}")" || merge_fail "--admin may not merge ${head:0:7} into ${base}: ${why}"
-    admin=(--admin)
-  fi
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
     | json "'squash' if d['squashMergeAllowed'] else 'merge' if d['mergeCommitAllowed'] else 'rebase' if d['rebaseMergeAllowed'] else ''")" \
     || merge_fail "gh cannot read ${repo}'s merge methods"
   [[ -n "${method}" ]] || merge_fail "${repo} allows no merge method"
+  # merge_admin = on: --admin skips every rule on the base, not only the review, so ci_gate admin
+  # checks them first.
+  admin=()
+  # shellcheck disable=SC2154 # assigned in another file
+  if [[ "${CFG_merge_admin}" == on ]]; then
+    why="$(ci_gate admin "${repo}" "${base}" "${head}" "${method}")" || merge_fail "--admin may not merge ${head:0:7} into ${base}: ${why}"
+    admin=(--admin)
+  fi
   why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
   # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
   read -r state oid <<< "$(merged_state "${n}" "${repo}")"

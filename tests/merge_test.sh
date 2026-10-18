@@ -28,13 +28,14 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
 # serve <key> — the fixture <key>.<n> on the nth read of <key> when there is one, else <key>; with
 # <key>.fail, print that (a partial answer) and fail; with <key>.<n>.fail, fail the nth read only;
-# with none of them, a 404.
+# with <key>.404, a 404 with its message; with none of them, a 404 Not Found.
 serve() {
   local n; n=$(( $(cat "${FX}/$1.n" 2>/dev/null || echo 0) + 1 )); echo "${n}" > "${FX}/$1.n"
   if [ -e "${FX}/$1.fail" ]; then cat "${FX}/$1.fail"; echo "gh: HTTP 502" >&2; exit 1; fi
   if [ -e "${FX}/$1.${n}.fail" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
   if [ -e "${FX}/$1.${n}" ]; then cat "${FX}/$1.${n}"
   elif [ -e "${FX}/$1" ]; then cat "${FX}/$1"
+  elif [ -e "${FX}/$1.404" ]; then echo "gh: $(cat "${FX}/$1.404") (HTTP 404)" >&2; exit 1
   else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
 }
 case "$1 $2" in
@@ -122,7 +123,7 @@ fresh() {
   printf '%s\n' "$@" > "${P}/.claude/swarm/config"
   echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
   echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
-  echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; echo '[]' > "${FX}/rules"
+  echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; echo '[]' > "${FX}/rules"; echo 'Branch not protected' > "${FX}/branch.404"
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
   checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
@@ -564,6 +565,22 @@ merge "${URL}"; is "merge_admin = on, only the review and push rules: exits 0" 0
 check "merge_admin = on, only the review and push rules: --admin" grep -q -- "^pr merge 7 .*--admin" "${ROOT}/gh.log"
 fresh; echo '[{"type":"merge_queue","parameters":{}}]' > "${FX}/rules"; merge "${URL}"
 is "merge_admin off: a merge_queue rule is GitHub's, not read" 0 "${rc}"
+# The review rule's own settings: thread resolution, and merge methods that leave out the one used.
+fresh "merge_admin = on"; echo '[{"type":"pull_request","parameters":{"required_review_thread_resolution":true}}]' > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, the review rule's required_review_thread_resolution" "pull_request's required_review_thread_resolution"
+fresh "merge_admin = on"; echo '[{"type":"pull_request","parameters":{"required_review_thread_resolution":false,"allowed_merge_methods":["merge","rebase"]}}]' > "${FX}/rules"
+merge "${URL}"; refused "merge_admin = on, allowed_merge_methods without squash" "allowed_merge_methods (merge, rebase, not squash)"
+fresh "merge_admin = on"; echo '[{"type":"pull_request","parameters":{"allowed_merge_methods":["squash"]}}]' > "${FX}/rules"; merge "${URL}"
+is "merge_admin = on, allowed_merge_methods with squash: exits 0" 0 "${rc}"
+# Classic fields outside the known-safe set are refused, whatever their name.
+fresh "merge_admin = on"; echo '{"required_widget_review":{"enabled":true},"allow_force_pushes":{"enabled":true}}' > "${FX}/branch"
+merge "${URL}"; refused "merge_admin = on, an unknown classic field enabled" "branch protection required_widget_review, which --admin would skip"
+check "merge_admin = on, an unknown classic field: not allow_force_pushes, which is safe" bash -c "! grep -q allow_force_pushes '${ROOT}/out'"
+fresh "merge_admin = on"; echo '{"required_widget_review":{"enabled":false},"enforce_admins":{"enabled":true}}' > "${FX}/branch"; merge "${URL}"
+is "merge_admin = on, an unknown classic field disabled: exits 0" 0 "${rc}"
+# Branch protection's 404 is unprotected only when GitHub says so; Not Found (no access) refuses.
+fresh "merge_admin = on"; rm "${FX}/branch.404"
+merge "${URL}"; refused "merge_admin = on, branch protection Not Found" "Not Found (HTTP 404)"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
