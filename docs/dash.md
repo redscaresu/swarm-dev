@@ -202,6 +202,20 @@ error that stopped it, or `failed (exit N)`). Every command writes it except the
 `base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
 holds names and paths, never the contents of a brief or a message.
 
+`swarm.sh dash --check` draws nothing. It compares each figure in this project's frame (or in each
+`--project` frame) with the command that owns it, prints one line per mismatch, such as
+`bravo: cost: dash shows 31.20, flow --since 2026-10-18 says 2.80`, and exits 1 if it found any.
+It checks the working agents and the running gauge against `swarm.sh status`, the cost against
+`swarm.sh flow --since <today>` run with no calling session, the header's next against `swarm.sh
+next`, the epics waiting on their `depends_on` against the rule `next` plans by, and merges today
+and the 7-day rate against the finishes in `events.tsv`. Every item that flow's `lead_queue` holds
+open, and every PR, lead story and agent waiting on a prompt that status lists under Waiting on
+you, must show in needs you or the lead's queue (a lead story behind `+N more` counts). On a busy
+swarm a figure can change between the frame and its command, when an agent starts or a session
+spends, so run it again after a single mismatch. The release arm of `/swarm-dev:swarm` runs it after
+each release. `tests/dash_check_test.sh` shows that it agrees on the two-project fixture and fails
+when one of the fixes for the 2026-10-17 dash defects is reverted.
+
 `tests/dash_golden_test.sh` draws a fixed two-project board (`tests/fixtures/dash/two_projects.sh`)
 at 60, 100 and 200 columns and compares each frame with `tests/fixtures/dash/golden-<cols>.txt`.
 The fixture sets `SWARM_DASH_NOW`, which fixes dash's clock, so the frames come out the same on
