@@ -106,8 +106,8 @@ is one column, top to bottom:
   `#12 waits for the lead's merge` once its story is `status: review`, `#12 waits for review`
   while its PR is open and its story is not in review, and `no PR yet` otherwise. `--tree` shows
   the same words for it. Active
-  epics with no open story share one line. One whose `depends_on` still holds up its planning (as
-  `swarm.sh next` decides) gets a line of its own instead: `⏸ <epic> waits on <depends_on>`. Blocked and later items are one count line under it;
+  epics with no open story share one line. An epic with no stories whose `depends_on` still holds up its
+  planning (as `swarm.sh next` decides) keeps its own row instead, which reads `waits on <depends_on>`. Blocked and later items are one count line under it;
   `swarm.sh status --all` lists them. `--tree` (or `t` while watching) shows every agent by herdr
   workspace and tab instead.
 - **Recent**: newest first, with how long ago (`4m ago`, `2h ago`; a dated finding in calendar

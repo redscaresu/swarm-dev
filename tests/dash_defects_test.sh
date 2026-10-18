@@ -69,9 +69,29 @@ check "from a priced pane, bravo's frame shows bravo's own cost (\$${cb})" has "
 # 3. An active epic with no stories, on bravo-ui (open stories) and bravo-docs (none, so it holds too).
 item "${B}" epics/bravo-mobile.md "Bravo mobile" "status: active" "depends_on: [bravo-ui, bravo-docs]"
 fb="$(frame_of bravo "$(frames)")"
-check "the waiting epic is named as waiting on its depends_on" has "bravo-mobile waits on bravo-ui, bravo-docs" "${fb}"
+check "the waiting epic's row names its depends_on" grep -qE '⏸ bravo-mobile .* waits on bravo-ui, bravo-docs' <<< "${fb}"
 check "the waiting epic is not under 'no open story'" bash -c "! grep 'no open story' <<< \"\$1\" | grep -q bravo-mobile" _ "${fb}"
 check "the quiet epic with no depends_on is still under 'no open story'" has "1 active epic with no open story: bravo-docs" "${fb}"
+# An epic whose stories are all done is never planned, so it waits on nothing, as next reads it.
+item "${B}" epics/bravo-old.md "Bravo old" "status: active" "depends_on: [bravo-ui]"
+item "${B}" stories/b-old.md "Old work" "status: done" "kind: code" "epic: bravo-old"
+fb="$(frame_of bravo "$(frames)")"
+check "an epic whose stories are all done does not wait on its depends_on" lacks "waits on bravo-ui" "$(grep bravo-old <<< "${fb}")"
+check "an epic whose stories are all done is under 'no open story'" grep -qE 'no open story: .*bravo-old' <<< "${fb}"
+# The waiting epic's conductor is shown (reported): its row still names what it waits on.
+printf 'w2:p9 conductor\n' > "${B}/.swarm/state/bravo-mobile"
+: > "${B}/.swarm/conduct-bravo-mobile.report.md"
+cat > "${ROOT}/bin2/herdr" <<STUB
+#!/bin/sh
+case "\$1 \$2" in
+  "agent list") "${ROOT}/bin/herdr" "\$@" | sed 's/"agents":\[/"agents":[{"name":"conduct-bravo-mobile","agent_status":"idle","pane_id":"w2:p9"},/' ;;
+  "pane list") "${ROOT}/bin/herdr" "\$@" | sed 's/"panes":\[/"panes":[{"pane_id":"w2:p9"},/' ;;
+  *) exec "${ROOT}/bin/herdr" "\$@" ;;
+esac
+STUB
+fb="$(frame_of bravo "$(PATH="${ROOT}/bin2:${PATH}" frames)")"
+check "the waiting epic's conductor is shown under it" bash -c "grep -A1 '⏸ bravo-mobile ' <<< \"\$1\" | grep -q '✓ conduct-bravo-mobile .*reported'" _ "${fb}"
+check "with its conductor shown, the waiting epic's row names its depends_on" grep -qE '⏸ bravo-mobile .* waits on bravo-ui, bravo-docs' <<< "${fb}"
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

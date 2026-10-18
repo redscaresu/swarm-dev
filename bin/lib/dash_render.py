@@ -86,6 +86,8 @@ story_rows = [(b[1], b[4], b[2]) for b in stories]
 story_by_slug = {b[1]: b for b in stories}
 epics = collections.OrderedDict((b[1], b) for b in board if b[0] == "epics")
 epic_of = {b[5]: b[1] for b in epics.values()}
+# An active epic with no stories -> the depends_on slugs that hold its planning up (dash_render's DASH_EPIC_WAITS).
+waits = dict(l.split("\t", 1) for l in lines("DASH_EPIC_WAITS") if "\t" in l)
 finished = collections.Counter()
 for l in lines("DASH_FINISHED"):
     e, _, n = l.partition("\t")
@@ -463,14 +465,14 @@ def epic_rows(slug, members):
     states = [pr_state(m.group(0)) for m, _ in prs]
     k = ("look" if any(r["look"] for r in members) or any(s and s[0] == "failed" for s in states) or any(b[1] in need_slugs for b in mine)
          else "working" if any(r["state"] == "working" for r in members)
-         else "review" if prs or left["review"] else "done" if not left else "ready" if left["ready"]
+         else "review" if prs or left["review"] else "blocked" if slug in waits else "done" if not left else "ready" if left["ready"]
          else "blocked" if set(left) <= {"blocked", "later"} else "unknown")
     bar_w = 6 if NARROW else 12
     fill = round(bar_w * done / total) if total else 0
     order = ["review", "ready", "blocked", "later"]
     counts = " · ".join(f"{left[s]} {s}" for s in order + sorted(s for s in left if s not in order) if left[s])
     rows = [[sym(k), (f"{cut(epic_label(slug), epic_w):<{epic_w}}  ", "b"), ("█" * fill, "ok"), ("░" * (bar_w - fill), "dim"),
-             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or ("" if total else "no stories on the board or in git"), "dim")]]
+             (f" {done:>2}/{total:<2}  " if total else "   –   ", ""), (counts or (f"waits on {', '.join(waits[slug].split())}" if slug in waits else "" if total else "no stories on the board or in git"), "dim")]]
     rows += [agent_row(r) for r in members]
     for (m, owner), st in zip(prs, states):
         k = st[0] if st else "review"
@@ -487,17 +489,12 @@ def rank(item):
         return 0
     return 1 if any(r["state"] == "working" for r in members) else 2
 
-# An active epic with no open story and no agent shown is one line for them all, or, while its
-# depends_on holds it up (DASH_EPIC_WAITS), a line of its own naming what it waits on.
-quiet = [s for s, m in groups.items() if s and not m and not any(b[6] == s and b[2] != "done" for b in stories)]
+# An active epic with no open story and no agent shown is one line for them all, unless its
+# depends_on holds it up (DASH_EPIC_WAITS): it keeps its own row, which names what it waits on.
+quiet = [s for s, m in groups.items() if s and not m and s not in waits and not any(b[6] == s and b[2] != "done" for b in stories)]
 groups = collections.OrderedDict((s, m) for s, m in groups.items() if s not in quiet)
-waits = dict(l.split("\t", 1) for l in lines("DASH_EPIC_WAITS") if "\t" in l)
-held = [s for s in quiet if s in waits]
-quiet = [s for s in quiet if s not in waits]
 epic_w = min(max((len(epic_label(s)) for s in groups if s), default=0), LW // 3)
 epic_view = [row for item in sorted(groups.items(), key=rank) for row in epic_rows(*item)]
-for s in held:
-    epic_view.append([sym("blocked"), (f"{s} waits on {', '.join(waits[s].split())}", "dim")])
 if quiet:
     epic_view.append([sym("done"), (f"{len(quiet)} active epic{'' if len(quiet) == 1 else 's'} with no open story: {', '.join(quiet)}", "dim")])
 if agents is None:

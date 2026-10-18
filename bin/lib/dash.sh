@@ -320,12 +320,9 @@ dash_render() {
       board+="${d}"$'\t'"${r}"$'\t'"${x%%$'\t'*}"$'\t'"$(cut -f2 <<< "${x}")"$'\t'"$(agent_name "${r}")"$'\t'"$(agent_name "conduct-${r}")"$'\t'"$(cut -f3- <<< "${x}")"$'\n'
     done < <(board "${d}")
   done
-  # Each active epic's depends_on slugs that still hold its planning up (dep_holds), as next reads them.
+  # Each active epic with no stories whose depends_on still holds its planning up, as next reads it.
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == active ]] || continue
-    x=""
-    for r in $(story_deps "${f}"); do if dep_holds "${r}"; then x+=" ${r}"; fi; done
-    [[ -z "${x}" ]] || waits+="$(basename "${f}" .md)"$'\t'"${x# }"$'\n'
+    if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then waits+="$(basename "${f}" .md)"$'\t'"${x}"$'\n'; fi
   done < <(board epics)
   # The last worktree commit or edit of each working builder's story (stall.py's story_for), for the stall rule.
   while IFS= read -r r; do
