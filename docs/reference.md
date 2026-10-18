@@ -623,10 +623,11 @@ watches), read from `events.tsv`. A story enters it held on a `held` line, which
 when it really held the story, and escalated on `escalated` or `close:impossible`. It enters awaiting
 your merge on `review`; with `merge = agent` that counts only for a story whose `costs:` is not
 `none`, since the conductor merges the rest. It leaves on its next `reset`, `reset:held`, `drop`,
-`merge`, `reconcile` or `finish`. An item with no end still waits while the board shows it so
-(`held_for:`, escalated, or in review); otherwise it is left out. A waiting item counts up to now,
-or up to local midnight after the `--until` day, and `open` lists it as `<kind>: <slug>`. The
-section ignores `--epic`.
+`merge`, `reconcile` or `finish`. An item with no end still waits while its file on the board
+shows it so (`held_for:`, escalated, or in review); a story deleted from the board is left out. Each
+item counts up to its end, now, or local midnight after the `--until` day, whichever comes first.
+One still waiting at that point is listed under `open` as `<kind>: <slug>`, so a past window's
+report stays the same as later events arrive. The section ignores `--epic`.
 
 The `throughput` section prints one TSV
 row per epic and a last `all` row for the project, over the `outcomes` rows dated in the window and
