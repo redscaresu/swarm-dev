@@ -3,7 +3,7 @@ kind: code
 status: ready
 epic: safer-faster-swarm
 depends_on: []
-touches: [bin/lib/merge.sh:merge, .github/workflows/ci.yml, docs/reference.md, tests/]
+touches: [bin/lib/merge.sh:merge, bin/lib/build.sh:conductor brief, .github/workflows/ci.yml, docs/reference.md, docs/method.md:Building, tests/]
 ---
 
 # swarm.sh merge goes through GitHub's merge queue where a repo has one
@@ -18,6 +18,8 @@ merges stop waiting one main-CI run each.
   enqueues the pinned head (`gh pr merge --auto` with `--match-head-commit`) and waits for the PR to
   be merged or dequeued, instead of merging and waiting on main's CI. A dequeue prints the failing
   checks and exits non-zero. Without a queue, behaviour is unchanged.
+- A dequeued PR is handled like a red check: the conductor brief sends the failing check to the builder, which merges main in and pushes. docs/method.md § Building and docs/reference.md describe the queue path.
+- infrafactory keeps no queue: its ruleset needs an approving review and merge-admin merges with --admin, which skips a queue. Say so in docs/reference.md.
 - Turning the queue on for swarm-dev is the lead story merge-queue-on, not this PR.
 
 **Done when:**
