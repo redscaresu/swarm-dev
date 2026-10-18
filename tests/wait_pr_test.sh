@@ -156,6 +156,26 @@ fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/head.${n}.err"; done; wait_pr 
 is "head reads retried past --timeout: exits 2" 2 "${rc}"
 is "head reads retried past --timeout: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 
+# --- A pause is cut at the deadline, and the wait ends there: no read after it, even one that would
+# be green. 3s, so time is left when the first pause starts ($SECONDS ticks whole seconds).
+fresh; checks "${FX}/checks.1" "$(run test queued)"; wait_pr SWARM_MERGE_POLL=5 --timeout 3
+is "a poll past a small --timeout, then green: exits 2" 2 "${rc}"
+is "a poll past a small --timeout, then green: one read" 1 "$(reads)"
+check "a poll past a small --timeout, then green: returns at the deadline" test "${took}" -lt 5
+check "a poll past a small --timeout, then green: says timed out" grep -qE "timed out after [34]s, still pending: test \(queued\)" "${ROOT}/out"
+fresh; echo "${RATE}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=5 --timeout 3
+is "a retry past a small --timeout, then green: exits 2" 2 "${rc}"
+is "a retry past a small --timeout, then green: one read" 1 "$(reads)"
+
+# --- Pauses and the deadline must be whole seconds, refused up front (exit 2): sleep failing on 20s
+# would exit 1, which reads as red. A bad SWARM_MERGE_CI_SECONDS exited 2 as a usage error before,
+# so only its message is new.
+for v in SWARM_MERGE_POLL=20s SWARM_WAIT_PR_RETRY=1m SWARM_MERGE_CI_SECONDS=soon; do
+  fresh; checks "${FX}/checks.1" "$(run test queued)"; echo "${RATE}" > "${FX}/head.1.err"; wait_pr "${v}"
+  [[ "${v}" == SWARM_MERGE_CI_SECONDS=* ]] || is "${v}: exits 2" 2 "${rc}"
+  check "${v}: names the variable" said "${v%%=*} is '${v#*=}', not whole seconds"
+done
+
 # --- Other network blips are transient too.
 for e in "dial tcp: lookup api.github.com: no such host" "dial tcp 1.2.3.4:443: connect: network is unreachable" \
          "stream error: stream ID 3; INTERNAL_ERROR" "gh: HTTP 408"; do
