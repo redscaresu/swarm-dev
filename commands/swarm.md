@@ -23,7 +23,11 @@ stops `swarm.sh reconcile` from pulling a `lesson:` PR that adds the file.
 
 When the board is in the project's repo, make each board edit you write by hand (a re-scope, a new
 story, an unblock) in its own worktree with `swarm.sh board-pr`, never in the main checkout. A board
-outside the repo is edited where it is, since `board-pr` refuses it.
+outside the repo is edited where it is, since `board-pr` refuses it. A conductor's scope or body
+edit to a story goes through `swarm.sh board-pr` too (its brief says so). `swarm.sh finish` and
+`swarm.sh drop` open their own board PR, `finish-<slug>` or `drop-<slug>`, and print the
+`swarm.sh merge --board <url>` that lands it: run that, or with `merge = human` hand the PR to the
+user. Once it has merged, `swarm.sh board-pr done <that name>` clears its worktree away.
 
 `swarm.sh board-pr start <name>` prints the worktree's path, `<repo>-wt/_board-<name>` (beside the
 story worktrees, never one of them), on a new `board/<name>` branch from origin's base. Edit the
@@ -143,8 +147,12 @@ Repeat until a step below says stop:
        so name the board PR, show what `swarm.sh status` lists under Waiting on you, and stop.
        A story is reset at most once (`reset` refuses a second, and `next` then says to drop it),
        so after its second failed escalate build, drop it.
-     - Drop it: `swarm.sh drop <slug> <reason>` deletes it from the board; open a board PR with
-       the change.
+     - Drop it: `swarm.sh drop <slug> <reason>` deletes it from the board, in the board PR
+       `drop-<slug>` when the board is in the repo. With `merge = agent`, land that PR with the
+       `swarm.sh merge --board` line it prints. With `merge = human` you never merge: hand the PR
+       to the user. Until the PR merges, `next` names the story again: that is a wait on the
+       user's merge, so name the board PR, show what `swarm.sh status` lists under Waiting on
+       you, and stop.
 
      Then go back to 1.
    - `release`: the base has changes since the last release tag (`next`'s why names both), so cut

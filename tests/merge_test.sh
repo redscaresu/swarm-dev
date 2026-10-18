@@ -475,7 +475,7 @@ for c in e --backlog; do
     grep -qF 'refuses any other PR with' "${b}"
 done
 check "the epic conductor's brief (merge = agent) never finishes the epic under a story still in review" \
-  grep -qF 'while a story of it is still in review' "${P}/.swarm/briefs/conduct-e.md"
+  grep -qF 'Never finish the epic while a story' "${P}/.swarm/briefs/conduct-e.md"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "the epic conductor's brief (merge = agent) puts such an epic in review, so reconcile finishes it after the user's merge" \
   grep -qF 'run `swarm.sh review <epic> <every PR URL still waiting>`' "${P}/.swarm/briefs/conduct-e.md"

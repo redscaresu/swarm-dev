@@ -68,7 +68,7 @@ chmod +x "${dir}/bin/gh" "${dir}/nobin/gh"
 
 outcomes() { # <gh dir> [args] — the report, with that gh first on PATH
   local bin="$1"; shift
-  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${bin}:${PATH}" bash "${SWARM}" outcomes "$@")
+  (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${bin}:${PATH}" bash "${SWARM}" outcomes "$@" | sed '/^$/,$d')  # the rows, without the recurring kinds after them
 }
 fails=0
 check() { # <name> <output> <exact expected output>

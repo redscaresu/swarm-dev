@@ -22,8 +22,8 @@ check() { # <name> <test...>
   if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
 }
 
-item() { # <path under docs> <front-matter line>...
-  local path="${P}/docs/$1" title; shift
+item() { # <path under docs> <front-matter line>... — a fresh item: its file, and no state file
+  local path="${P}/docs/$1" title; rm -f "${P}/.swarm/board-state/${1%.md}"; shift
   title="$(basename "${path}" .md)"
   mkdir -p "$(dirname "${path}")"
   { echo ---; printf '%s\n' "$@"; echo ---; echo; echo "# ${title}"; } > "${path}"
@@ -51,6 +51,9 @@ chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/nob
 echo "w:1 s1" > "${P}/.swarm/state/t1"
 
 run() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" "$@" >/dev/null 2>&1); }
+# outside <cmd...> — run <cmd> with P and LOG on a project that is not a git repo: its board is outside
+# any repo, so finish and drop delete in place (pr_removes_story_test.sh has the board PR they open in one).
+outside() { local p="${P}" l="${LOG}" rc=0; P="${ROOT}/nogit"; LOG="${P}/.swarm/events.tsv"; mkdir -p "${P}/docs/stories" "${P}/.swarm" "${P}/.claude/swarm"; : >> "${P}/.claude/swarm/config"; "$@" || rc=$?; P="${p}"; LOG="${l}"; return "${rc}"; }
 lines() { if [[ -f "${LOG}" ]]; then wc -l < "${LOG}" | tr -d ' '; else echo 0; fi; }
 
 # appends <name> <n> <command> <target> <outcome-prefix> <swarm args...> — run it; exactly <n> new
@@ -90,7 +93,8 @@ appends "tidy without --yes logs nothing" 0 - - - tidy
 appends "unblock, one per story" 2 unblock '*' ok unblock
 appends "reconcile, one per item" 2 reconcile '*' ok reconcile
 check "reconcile says which it finished and which it reopened" bash -c "grep -q \$'reconcile\tm1\tw:me\tok (finished)' '${LOG}' && grep -q \$'reconcile\tc1\tw:me\tok (reopened)' '${LOG}'"
-appends "finish" 1 finish s1 ok finish s1
+outside item stories/s1.md 'status: ready'
+outside appends "finish" 1 finish s1 ok finish s1
 appends "log-finding" 1 log-finding "vacuous-test ${U}/9" ok log-finding vacuous-test "${U}/9" "a line"
 # The flags before the kind, in either order, leave the target <kind> <pr>; a decline goes with the command.
 appends "log-finding --reviewer then --declined" 1 log-finding:declined "k ${U}/9" ok log-finding --reviewer codex --declined nit k "${U}/9" t
@@ -139,7 +143,7 @@ check "a TERM to the pid stops a long wait at once, with exit 143" test "${code}
 
 # The read-only commands, written out here: READ_ONLY_COMMANDS must be exactly this, so a command
 # that changes state (story, say) cannot be declared read-only without this test changing too.
-RO_EXPECTED="base cost config dash flow features findings review-yield lessons next outcomes policy status wait watch _base _label _name _role _pane _target _trusted _mtime"
+RO_EXPECTED="base cost config dash flow features findings review-yield lessons next outcomes policy status wait watch _base _brief _label _name _role _pane _target _trusted _mtime"
 ro_sorted() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
 check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
   test "$(sed -n 's/^READ_ONLY_COMMANDS="\(.*\)"$/\1/p' "${SWARM}" | ro_sorted)" == "$(ro_sorted <<< "${RO_EXPECTED}")"
@@ -170,12 +174,15 @@ appends "status logs nothing" 0 - - - status
 appends "_role logs nothing" 0 - - - _role s1
 
 # An unwritable .swarm (and log): the command still succeeds, and the log is unchanged.
-item stories/s4.md 'status: ready'
-was="$(lines)"; chmod a-w "${LOG}" "${P}/.swarm"
-check "an unwritable .swarm never fails the command" run finish s4
-chmod u+w "${P}/.swarm" "${LOG}"
-check "an unwritable .swarm: the command did its work" test ! -f "${P}/docs/stories/s4.md"
-check "an unwritable .swarm: nothing logged" test "$(lines)" -eq "${was}"
+unwritable() {
+  item stories/s4.md 'status: ready'
+  was="$(lines)"; chmod a-w "${LOG}" "${P}/.swarm"
+  check "an unwritable .swarm never fails the command" run finish s4
+  chmod u+w "${P}/.swarm" "${LOG}"
+  check "an unwritable .swarm: the command did its work" test ! -f "${P}/docs/stories/s4.md"
+  check "an unwritable .swarm: nothing logged" test "$(lines)" -eq "${was}"
+}
+outside unwritable
 
 # wait is read-only, but a nudge is logged: s1's builder sits idle and story/s1 has no PR, so wait
 # nudges it IDLE_NUDGES times and appends one `nudge s1` line each, and nothing else.
@@ -233,9 +240,9 @@ appends "drop with a blank reason fails, naming it" 1 drop x1 "drop: <reason> is
 appends "reset logs the lead's reason" 1 reset x1 "ok (re-scoped to the parser alone)" reset x1 re-scoped to the parser alone
 appends "drop of a story that is not escalated fails, naming it" 1 drop x1 "drop: x1 is not an escalated story" drop x1 why
 appends "drop of a missing story fails, naming it" 1 drop nope "drop: no story ${P}/docs/stories/nope.md" drop nope why
-item stories/z1.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'
-appends "drop logs the lead's reason" 1 drop z1 "ok (failed on Fable after a reset)" drop z1 "failed on Fable after a reset"
-check "drop takes the story off the board" test ! -e "${P}/docs/stories/z1.md"
+outside item stories/z1.md 'status: ready' 'kind: lead' 'attempts: 3' 'escalated_from: code'
+outside appends "drop logs the lead's reason" 1 drop z1 "ok (failed on Fable after a reset)" drop z1 "failed on Fable after a reset"
+check "drop takes the story off the board" test ! -e "${ROOT}/nogit/docs/stories/z1.md"
 # A conductor that answers a builder's Fable consent dialog logs it, with the result as the outcome.
 appends "dialog logs the answer" 1 dialog y1 "ok (accepted)" dialog y1 accepted
 check "dialog's outcome is exactly ok (accepted), so dash counts it ok" logged dialog y1 "ok (accepted)"

@@ -153,8 +153,12 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   Then the lead runs `reset` and pulls the board in one go: `reset` puts the file back to its
   committed text, so the pull brings in the re-scope, and `story` reads its kind, repo, epic and
   risk from that. `swarm.sh drop <slug> <reason>` takes a dropped story off the board as `finish`
-  does (deleted), and the lead commits the change in a
-  board PR; it refuses any story that is not escalated. A story is reset at most once: `reset`
+  does, and it refuses any story that is not escalated. On a board in the repo, `finish` and `drop`
+  never touch the main checkout: each deletes the file in the board PR `finish-<slug>` or
+  `drop-<slug>` (titled `Drop <slug>: <reason>`) and prints the `swarm.sh merge --board <url>` that
+  lands it; a second run pushes to the same PR. A file that is not on origin's base yet (an unmerged
+  board PR adds it) is refused, and the worktree and branch the failed run started are removed. On a
+  board outside the repo they delete the file where it is. A story is reset at most once: `reset`
   refuses a slug that events.tsv already shows reset, and names when, and a story that escalates
   again after its reset is offered only drop, in its block and in `next`. An
   escalated story is the lead's, so it is not listed under waiting on you (`status`, `dash`,
@@ -262,8 +266,9 @@ Once the file's value differs from that (a board PR set the epic `later`, say), 
 read, and the next write to the item drops the old line. A write holds the item's lock, a
 `<slug>.lock` directory beside its state file, so two commands writing one item at once keep both
 changes; a command that finds the lock still there after 10 seconds stops and names it, as one
-does when a state file cannot be read or written. `finish` deletes an item's state file along with
-the item, and so does `reconcile` when an item's PR took it off the board or marked it `done`. The
+does when a state file cannot be read or written. Deleting an item's file where it is (`reconcile`
+after its pull, or `finish` and `drop` on a board outside the repo) deletes its state file too, and
+so does `reconcile` when an item's PR took it off the board or marked it `done`. The
 escalated block `close` writes for the lead is in `.swarm/escalated/<slug>`. Where an older swarm.sh
 left these keys uncommitted in a file, `reconcile` still carries them over its pull (§ Merging).
 
@@ -587,6 +592,18 @@ left the board is read from git history. If `gh` fails, the PR columns stay empt
 for one build: the latest build on its PR that started on or before the day it was logged, so a
 retry that reuses a PR doesn't count the first build's findings again. It writes nothing.
 
+After the rows and a blank line, `outcomes` lists the finding kinds that keep coming back: every kind
+fixed (or escaped) on 3 or more distinct PRs in the last 30 days, today included, most PRs first, as
+TSV with the columns `recurring prs_30d check check_merged before_30d since_30d`. A declined finding
+does not count, and neither does a row whose date is impossible or in the future. Once a story that
+names the kind in its front matter (`checks: <kind>`) has merged, which means it was deleted on the
+default branch (`origin/HEAD`, or `HEAD` when there is none) and git still has it, `check` is its
+slug and `check_merged` is the day of the commit on that branch that deleted it (the merge commit,
+for a merged branch). `before_30d` is how many PRs the kind was fixed on in the 30 days before that
+day, and `since_30d` the same for the 30 days from it, so you can see whether the check helped. Until
+30 days have passed, `since_30d` reads `<n>/<days>d`, the days it covers so far: `1/3d` three days
+after the merge is too soon to judge. With nothing recurring, the block is left out. `flow` and `review-yield` skip these lines.
+
 Each `events.tsv` line counts for one build, so a retried story's tells and closes are split among
 its builds. A line whose time does not parse counts for none. An escalation step goes by the order of the log. Each `escalate` opens a cycle for the
 story's next escalate build in agents.tsv that has none yet. A later escalate build takes the cycle
@@ -841,6 +858,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh story [--strict] <slug>` | Build one story. It warns when an open story of another epic touches the same function or file; `--strict` refuses instead, and conductors always pass it ([details](method.md)). |
 | `swarm.sh merge <PR URL>` | Merge a green PR whose story is in review, pinned to the head that passed, then wait for CI on the base branch and take the story off the board. The lead runs it when you ask it to merge. `swarm.sh merge --release <PR URL>` merges the lead's version-bump PR, which changes only `.claude-plugin/plugin.json`. |
 | `swarm.sh board-pr start\|open\|done <name>` | Make a board edit in its own worktree (`<repo>-wt/_board-<name>`) and open it as a PR. It refuses a change outside the board, and never touches the main checkout. The lead runs it for each board edit. |
+| `swarm.sh finish <slug>`, `swarm.sh drop <slug> <reason>` | Take a merged story or epic (or, with `drop`, an escalated story) off the board. On a board in the repo it deletes the file in the board PR `finish-<slug>` (or `drop-<slug>`), never in the main checkout, and prints the `swarm.sh merge --board <url>` that lands it. On a board outside the repo it deletes the file where it is. |
 | `swarm.sh log-finding [--declined <reason>] [--reviewer <who>] <kind> <PR URL> <text>` | Log a review finding by kind. `--declined <reason>` records one that was declined (`out-of-scope`, `nit` or `wrong`). The reviewer is codex, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged. |
 | `swarm.sh lessons [--all]` | List kinds of finding that recur in three or more PRs and have no rule yet. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
