@@ -1,9 +1,9 @@
 # Lead queue, a flow section (flow_report.py gives its globals): how long items wait on the lead, from
 # events.tsv's ok lines. An item enters on a held line (held_story), an escalated line or an impossible
 # close, or a review (handed over to merge; with merge = agent only a story whose costs: is not none,
-# read as costs_value reads it, from the board or its last version in the board's git history), and
-# leaves on its slug's next finish, reset, reset:held, drop, story (built again) or reconcile (finished
-# once every PR merged, or reopened when one closed unmerged); a merge line is one PR's, so it does not
+# read as costs_value reads it, from the board, its last version in the board's git history or HEAD's,
+# and money when none of them has it; never an epic), and leaves on its slug's next finish, reset,
+# reset:held, drop or reconcile (finished once every PR merged, or reopened when one closed unmerged); a merge line is one PR's, so it does not
 # end the wait. Waits stop at local midnight after --until (or now): an item that left later is open
 # there. One with no leaving line is open only while its story or epic is on the board in review, held
 # or escalated (read with board-state as fm reads it); any other is dropped, its end unknown. Per local
@@ -12,7 +12,7 @@
 import datetime, functools, os, re, statistics, subprocess, time
 
 ENTER = {"held": "held", "escalated": "escalated", "close:impossible": "escalated", "review": "merge"}
-LEAVE = {"finish", "reset", "reset:held", "drop", "story", "reconcile"}
+LEAVE = {"finish", "reset", "reset:held", "drop", "reconcile"}
 
 project = os.path.dirname(os.path.dirname(os.path.abspath(events)))
 cfg = {}
@@ -54,20 +54,32 @@ def still_waiting(slug):
     status, kind, held, esc = (fm(*found, k) for k in ("status", "kind", "held_for", "escalated_from"))
     return status == "review" or bool(held) or (status == "ready" and kind == "lead" and bool(esc))
 
+def git(*a):
+    r = subprocess.run(["git", "-C", board, *a], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else None
+
 @functools.lru_cache(maxsize=None)
 def story_text(slug):
+    # The story's text, or None when neither the board nor its git history has it.
     f = os.path.join(board, "stories", slug + ".md")
     if os.path.isfile(f):
         return open(f, errors="ignore").read()
-    git = lambda *a: subprocess.run(["git", "-C", board, *a], capture_output=True, text=True).stdout
-    c = git("log", "--diff-filter=D", "-1", "--format=%H", "--", f"stories/{slug}.md").strip()
-    return git("show", f"{c}^:./stories/{slug}.md") if c else ""
+    c = (git("log", "--diff-filter=D", "-1", "--format=%H", "--", f"./stories/{slug}.md") or "").strip()
+    return git("show", f"{c}^:./stories/{slug}.md" if c else f"HEAD:./stories/{slug}.md")
+
+def is_epic(slug):
+    f = f"./epics/{slug}.md"
+    return os.path.isfile(os.path.join(board, f)) or bool((git("log", "-1", "--format=%H", "--", f) or "").strip())
 
 def costs_money(slug):
     # As board.sh's costs_value and costs_money: a block list's lines joined, lowercased, comments,
-    # quotes, brackets, commas, dashes and spaces gone; anything but empty or none is money.
+    # quotes, brackets, commas, dashes and spaces gone; anything but empty or none is money, and so is a
+    # story that cannot be read (fails closed). An epic's costs: is ignored.
+    text = story_text(slug)
+    if text is None:
+        return not is_epic(slug)
     v, on = None, False
-    for line in front(story_text(slug)).splitlines():
+    for line in front(text).splitlines():
         if on and re.fullmatch(r"\s*(#.*)?", line):
             continue
         if on and re.match(r"[\s-]", line):

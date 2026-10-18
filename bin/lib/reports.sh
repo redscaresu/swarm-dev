@@ -209,9 +209,9 @@ outcomes_report() {
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
 #     (an ok held, escalated, close:impossible or review line in events.tsv; with merge = agent, a
-#     review only of a story whose costs: is not none) the minutes until its slug's next ok finish,
-#     reset, drop, story or reconcile (finished or reopened), stopping at the local midnight after
-#     --until (or now), where an item still waiting is listed under open as kind:slug. One with no
+#     review only of a story whose costs: is not none, or that cannot be read) the minutes until its
+#     slug's next ok finish, reset, drop or reconcile (finished or reopened), stopping at the local
+#     midnight after --until (or now), where an item still waiting is listed under open as kind:slug. One with no
 #     leaving line counts only while its story or epic is on the board in review, held or escalated.
 #     --epic does not narrow it.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed

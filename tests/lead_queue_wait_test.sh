@@ -9,7 +9,7 @@
 # though git still has it; one that left after --until is open there; an open and a closed item that
 # entered in the same second both count. With merge = agent (board_dir under ~, with a space), only a
 # review of a story whose costs: is not none (any case, brackets or quotes, a block list, or a deleted
-# story's last version) counts. held_story logs the held line.
+# story's last version, or HEAD's; an unreadable story is money, an epic never) counts. held_story logs the held line.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,7 +58,8 @@ ev 2026-10-02T09:00:00Z review d
 ev 2026-10-02T09:05:00Z merge d "the head is not green"
 ev 2026-10-02T09:45:00Z reconcile d "ok (finished by its PR)"
 ev 2026-10-02T10:00:00Z held e "ok (cleared-on-error)"
-ev 2026-10-02T11:00:00Z story e
+ev 2026-10-02T11:00:00Z reset:held e "ok (lifted)"
+ev 2026-10-02T11:05:00Z story e
 ev 2026-10-02T08:00:00Z escalated f "ok (attempts 3, 0 PRs)"
 ev 2026-10-02T08:20:00Z reset f "ok (re-scoped)"
 ev 2026-10-02T12:00:00Z close:impossible i
@@ -87,12 +88,14 @@ check "with --until, an item that left after it is open there" "$(flow "${P}" --
   $'2026-10-01\t5\t40\t120\tmerge:k'
 
 # merge = agent, the board at "~/my board": m (costs: [Money]) 30, o (deleted, a block list of money) 20,
-# held q 50; n (costs: "None") and p (no costs:) are not the lead's.
+# held q 50, u (in neither the board nor git, so money) 10; n (costs: "None"), p (no costs:), r (gone
+# from the checkout, HEAD's costs: none) and the epic ep are not the lead's.
 A="${ROOT}/agent"; B="${ROOT}/home/my board"; mkdir -p "${A}/.claude/swarm" "${A}/.swarm" "${B}"; git -C "${B}" init -q
 printf 'board_dir = ~/my board\nmerge = agent  # agents merge\n' > "${A}/.claude/swarm/config"
 story "${B}" m "costs: [Money]"; story "${B}" n 'costs: "None"'; story "${B}" p "status: ready"
-story "${B}" o "costs:" "  - money  # a cloud bill"; commit "${B}" "add"
-git -C "${B}" rm -q stories/o.md; commit "${B}" "remove o"
+story "${B}" o "costs:" "  - money  # a cloud bill"; story "${B}" r "costs: none"; commit "${B}" "add"
+git -C "${B}" rm -q stories/o.md; commit "${B}" "remove o"; rm "${B}/stories/r.md"
+mkdir -p "${B}/epics"; printf -- '---\nstatus: review\n---\n' > "${B}/epics/ep.md"
 E="${A}/.swarm/events.tsv"
 ev 2026-10-01T10:00:00Z review m
 ev 2026-10-01T10:30:00Z reconcile m "ok (finished)"
@@ -104,7 +107,13 @@ ev 2026-10-01T13:00:00Z review p
 ev 2026-10-01T13:01:00Z reconcile p "ok (finished)"
 ev 2026-10-01T14:00:00Z held q "ok (paused)"
 ev 2026-10-01T14:50:00Z reset:held q "ok (lifted)"
-check "with merge = agent only reviews that cost money count" "$(flow "${A}" --since 2026-10-01 | tail -1)" $'2026-10-01\t3\t30\t50\t-'
+ev 2026-10-01T15:00:00Z review r
+ev 2026-10-01T15:40:00Z reconcile r "ok (finished)"
+ev 2026-10-01T16:00:00Z review u
+ev 2026-10-01T16:10:00Z reconcile u "ok (finished)"
+ev 2026-10-01T17:00:00Z review ep
+ev 2026-10-01T17:05:00Z reconcile ep "ok (finished)"
+check "with merge = agent only reviews that cost money count" "$(flow "${A}" --since 2026-10-01 | tail -1)" $'2026-10-01\t4\t25\t50\t-'
 
 # held_story, its board writes stubbed, logs the held line the section reads.
 held="$(
