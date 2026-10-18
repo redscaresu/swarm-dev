@@ -48,7 +48,9 @@ case "$1 $2" in
   "pr diff") exit 0 ;;
   "repo view") case " $* " in *" -q "*) echo o/svc ;; *) echo '{"nameWithOwner":"o/svc"}' ;; esac; exit 0 ;;
   "pr list") while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
-             jq -r "$q" "$F/prlist.json"; exit 0 ;;
+             # One write, as gh makes: watch stops reading at the PR it reports, and jq writing on
+             # into the closed pipe (SIGPIPE ignored, as on CI) would print an error into its output.
+             out="$(jq -r "$q" "$F/prlist.json")"; printf '%s\n' "${out}"; exit 0 ;;
 esac
 case "$2" in
   repos/o/svc/pulls/7) echo '{"head":{"sha":"abc1234def"}}' ;;
@@ -56,7 +58,7 @@ case "$2" in
   repos/o/svc/check-runs/1/annotations*) cat "$F/annotations.json" ;;
   repos/o/svc/code-scanning/alerts*) cat "$F/alerts.json" ;;
   repos/o/svc/commits/head*/check-runs) while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
-             echo '{"check_runs":[{"status":"completed"}]}' | jq -r "$q" ;;
+             out="$(echo '{"check_runs":[{"status":"completed"}]}' | jq -r "$q")"; printf '%s\n' "${out}" ;;
   *) echo "stub gh: unexpected $*" >&2; exit 1 ;;
 esac
 EOF

@@ -181,12 +181,13 @@ check "and review-agent s4 again refuses to replace it while it has no findings 
 for s in s1 s2; do done_review "${s}"; done
 wait
 
-# fast_wait <name> — wait on <name> (3s timeout, polling each second): its state, and fast when it
-# returned within 2s.
+# fast_wait <name> — wait on <name> (10s timeout, polling each second): its state, and fast when it
+# returned within 5s, well before a wait held to the timeout would (a wait costs nearly 2s on a slow
+# machine).
 fast_wait() {
   local t0=${SECONDS} o
-  o="$(SWARM_CONDUCTOR_POLL=1 run wait "$1" 3000)"
-  echo "${o}|$( (( SECONDS - t0 < 2 )) && echo fast || echo slow)"
+  o="$(SWARM_CONDUCTOR_POLL=1 run wait "$1" 10000)"
+  echo "${o}|$( (( SECONDS - t0 < 5 )) && echo fast || echo slow)"
 }
 # --- A slug long enough that review-<slug> is cut at 32 characters: its wait still finds the file.
 sl=s5-a-long-slug-past-the-name-cut

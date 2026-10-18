@@ -12,6 +12,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 pids=()
 cleanup() { for p in "${pids[@]+"${pids[@]}"}"; do kill "${p}" 2>/dev/null || true; done; rm -rf "${ROOT}"; }
 trap cleanup EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 fails=0
 check() { # <name> <test...>
   local name="$1"; shift

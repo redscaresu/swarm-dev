@@ -13,6 +13,7 @@ ROOT="$(cd "${tmp}" && pwd -P)"
 # BIN is in every stub process's command line and in no other's: the marker pgrep -f looks for.
 BIN="${ROOT}/bin"; P="${ROOT}/proj"; LIMIT=2; GRACE=3
 trap 'pkill -KILL -f "${BIN}/" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
+export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
 ln -s "$(command -v sleep)" "${BIN}/stubsleep"   # the stub's child, named so pgrep -f can tell it
 export PATH="${BIN}:${PATH}"
@@ -76,14 +77,16 @@ check "neither the stub nor its child sleep is left" "yes" "$(gone)"
 check "a timed-out codex-review leaves no marker" "" "$(markers)"
 
 # --- One that traps TERM and sleeps on is KILLed after the grace, with whatever it started since.
+# Each nap of the limit and the grace adds a little to its length, so the bound has 3 s to spare.
 stub "trap 'echo TERM ignored' TERM; while :; do \"\${d}/stubsleep\" 60; done"
 review
 check "a codex that ignores TERM is stopped within the limit plus the grace" "fails|yes|yes" \
-  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 1)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
 
-# --- The grace is real: a codex that exits on its own a second after TERM is not KILLed.
-stub "trap 'sleep 1; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+# --- The grace is real, and never shorter than CODEX_GRACE: a codex that exits on its own 2.5 s
+# after TERM is not KILLed.
+stub "trap 'sleep 2.5; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
 review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
@@ -108,6 +111,14 @@ rm -f "${BIN}/ready"
 spid=$!; up="$(started)"
 kill -KILL -- "-${spid}"; finish "${spid}"
 check "a KILL to codex-review's process group leaves neither the stub nor its child" "yes|yes" "${up}|$(gone 2)"
+
+# --- SWARM_SLEEP_SCALE quickens the polling, never the timeout: at 0.01, a codex that takes 0.3 s
+# under the 2 s limit still finishes.
+# shellcheck disable=SC2016 # the stub's variable
+stub '"${d}/stubsleep" 0.3; echo "P2: slow but done"'
+SWARM_SLEEP_SCALE=0.01 review
+check "at SWARM_SLEEP_SCALE=0.01 a codex inside the limit is not timed out" "exit 0|P2: slow but done" \
+  "$([[ ${rc} -eq 0 ]] && echo "exit 0" || echo "exit ${rc}")|${out}"
 
 # --- A codex that finishes: its findings and exit come through, run with exactly these args. A
 # marker left by a run that was KILLed (its pid dead) goes at the start.
