@@ -168,13 +168,14 @@ CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
 CFG_fallback_reviewer="" # empty: a codex usage limit skips codex's review; else a review agent on this model reviews in its place
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
-CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin"
+CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
+CONFIG_KEYS="board_dir repos_dir merge lessons_file stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin commit_trailers"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
 # code; a `$` or backtick is refused so nobody expects it to expand. Any bad line stops the script.
 load_config() {
-  local n=0 line key value where
+  local n=0 line key value where trailer='[A-Za-z][A-Za-z0-9-]*: [^;]*[^;[:space:]]'
   [[ -f "${CONFIG_FILE}" ]] || return 0
   while IFS= read -r line || [[ -n "${line}" ]]; do
     n=$((n + 1)); where="${CONFIG_FILE}:${n}"
@@ -194,6 +195,8 @@ load_config() {
         esac ;;
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
+        # init writes board_dir into quoted strings in CI's gate and the pre-commit hook.
+        [[ "${key}" != board_dir || "${value}" != *[\"\\]* ]] || die "${where}: board_dir: \" and \\ are refused; name a plain path"
         # shellcheck disable=SC2088 # a literal ~ in the file, expanded here
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
       merge)
@@ -210,6 +213,9 @@ load_config() {
         [[ "${value}" == off || "${value}" == session ]] || die "${where}: lead must be off or session, not '${value}'" ;;
       merge_admin)
         [[ "${value}" == off || "${value}" == on ]] || die "${where}: merge_admin must be off or on, not '${value}'" ;;
+      commit_trailers)
+        [[ -z "${value}" || "${value}" =~ ^${trailer}([[:space:]]*\;[[:space:]]*${trailer})*$ ]] \
+          || die "${where}: commit_trailers must be trailers such as Co-Authored-By: Name <email>, ; between several, not '${value}' (a # starts a comment, so no trailer can hold one)" ;;
       *) die "${where}: unknown key '${key}' (known: ${CONFIG_KEYS})" ;;
     esac
     printf -v "CFG_${key}" '%s' "${value}"
