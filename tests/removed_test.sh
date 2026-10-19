@@ -4,6 +4,8 @@
 # verify only as git's --verify, or in the one LEGACY_BUILDER_ROLES line that keeps past verify
 # builds counted; no plan-hld or hld-lead is in bin/, commands/, templates/ or skills/. cost, features
 # and review-yield, folded into flow, each print the flow section that holds their numbers and exit 0.
+# lessons, its rule PRs and its rules check stay gone from bin/ and commands/, whose collect step
+# files a checks: story instead.
 set -euo pipefail
 
 iso="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
@@ -38,6 +40,20 @@ else echo "ok   no plan-hld or hld-lead in bin, commands, templates or skills"; 
 if [[ -e "${REPO}/commands/plan-hld.md" || -e "${REPO}/templates/docs/hld" ]]; then
   echo "FAIL commands/plan-hld.md or templates/docs/hld is back"; fails=$((fails + 1))
 else echo "ok   commands/plan-hld.md and templates/docs/hld are gone"; fi
+LESSONS_GONE='LESSON_|lessons_report|rules_check_step|rules_review_rule|Rules checked|lesson: <kind>|lesson: prune'
+if found="$(grep -rnE "${LESSONS_GONE}" "${REPO}/bin" "${REPO}/commands")"; then
+  echo "FAIL bin/ or commands/ still has lessons or its rule PRs:"; echo "${found}"; fails=$((fails + 1))
+else echo "ok   no lessons, rule PR or rules check in bin/ or commands/"; fi
+collect="$(sed -n '/collect <agent>/,/^   - /p' "${REPO}/commands/swarm.md")"
+if grep -q 'checks: <kind>' <<< "${collect}"; then
+  echo "ok   commands/swarm.md's collect step files a checks: story"
+else echo "FAIL commands/swarm.md's collect step does not name checks:"; fails=$((fails + 1)); fi
+# It reads a windowed outcomes, and skips a kind whose check-<kind> board PR, looked up in the
+# project's repo, is open, merged or declined; a board outside the repo is written in place.
+wants=('outcomes --since' 'gh pr list -R <owner/repo> --state all --head board/check-<kind>' 'MERGED' 'written where the board is' '.swarm/checks-filed.tsv')
+missing=""; for w in "${wants[@]}"; do grep -qF -- "${w}" <<< "$(tr -s '[:space:]' ' ' <<< "${collect}")" || missing+="[${w}] "; done
+if [[ -z "${missing}" ]]; then echo "ok   the collect step reads outcomes --since, looks up the kind's board PR in the project's repo, and writes in place outside it"
+else echo "FAIL the collect step is missing: ${missing}"; fails=$((fails + 1)); fi
 
 W="[--since YYYY-MM-DD] [--until YYYY-MM-DD]"
 for moved in "cost:cost:${W}" "features:features:${W}" "review-yield:reviewers:${W} [--epic <slug>]"; do
