@@ -359,8 +359,9 @@ plannable_epic() {
 
 # unblocked_epic — the first later epic, in board order, whose depends_on lists something and is all
 # done or gone (open_deps), with no declined unasked_plan: (plan_unasked), no parent: and no stories,
-# or nothing. One planned unasked with no stories yet is offered again: that plan may have stopped
-# (a login expired, a pane closed) before it wrote any. An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
+# or nothing. One planned unasked with no stories yet is offered again, as long as no scope board PR
+# holds them (scope_pending): that plan may have stopped (a login expired, a pane closed) before it
+# wrote any. An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
 # the user, and a split later epic's later children wait for the user to start them, so both stay
 # the user's. Board files only, no gh: dash runs it every frame.
 unblocked_epic() {
@@ -371,8 +372,17 @@ unblocked_epic() {
     [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || continue
     slug="$(basename "${f}" .md)"
     epic_has_stories "${slug}" && continue
+    scope_pending "${slug}" && continue
     echo "${slug}"; return
   done < <(board epics)
+}
+
+# scope_pending <epic> — true while a plan's stories wait in its scope board PR: the worktree or the
+# local branch that `swarm.sh board-pr start scope-<epic>` makes is there (board-pr done removes
+# both). Local only, no gh.
+scope_pending() {
+  [[ -d "$(worktree_for "${PROJECT_DIR}" "_board-scope-$1")" ]] \
+    || git -C "${PROJECT_DIR}" show-ref -q --verify "refs/heads/board/scope-$1" 2>/dev/null
 }
 
 # plan_unasked [--declined] <epic> — swarm.sh plan-unasked: the lead records, before it starts the
@@ -380,13 +390,18 @@ unblocked_epic() {
 # state), so next's why and the gate say so; with --declined, that the user declined it
 # (unasked_plan: declined <date>), so next offers it no more.
 plan_unasked() {
-  local v="" f
-  if [[ "${1:-}" == --declined ]]; then v="declined "; shift; fi
-  f="${BOARD}/epics/${1:-}.md"
-  [[ "${1:-}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "plan-unasked: no epic ${f}: swarm.sh plan-unasked [--declined] <epic>"
-  [[ "$(fm "${f}" status)" == later ]] || die "plan-unasked: $1 is not a later epic"
+  local v="" e="" a f usage="swarm.sh plan-unasked [--declined] <epic>"
+  for a in "$@"; do
+    case "${a}" in
+      --declined) v="declined " ;;
+      *) [[ -z "${e}" ]] || die "plan-unasked: one epic only: ${usage}"; e="${a}" ;;
+    esac
+  done
+  f="${BOARD}/epics/${e}.md"
+  [[ "${e}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "plan-unasked: no epic ${f}: ${usage}"
+  [[ "$(fm "${f}" status)" == later ]] || die "plan-unasked: ${e} is not a later epic"
   set_fm "${f}" unasked_plan "${v}$(date +%F)"
-  echo "plan-unasked: $1, ${v:-planned unasked }on $(date +%F)"
+  echo "plan-unasked: ${e}, ${v:-planned unasked }on $(date +%F)"
 }
 
 # unasked_note <epic> — for next's why: when the epic was planned unasked (and, being offered, has no

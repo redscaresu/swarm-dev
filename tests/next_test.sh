@@ -123,6 +123,16 @@ waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Wa
 if grep -qx '  later epic: a' <<< "${waiting}"; then echo "ok   status names a marked later epic with no stories without asking for an approval"
 else echo "FAIL status's line for a marked later epic with no stories: ${waiting}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+# While its stories wait in the scope board PR (its worktree or local branch is there), it is not
+# offered again: the gate shows what else waits on the user.
+expect "a later epic planned unasked whose scope board PR worktree is there is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked a >/dev/null" \
+  "mkdir -p \"../\$(basename \"\${PWD}\")-wt/_board-scope-a\""
+expect "a later epic planned unasked whose scope board PR branch is there is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked a >/dev/null" \
+  "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base && git branch board/scope-a"
 expect "a later epic planned unasked with stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "item stories/s.md 'status: ready' 'kind: code' 'epic: a'" \
@@ -139,6 +149,11 @@ dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 got="$(cd "${dir}" && bash "${SWARM}" plan-unasked e 2>&1; echo "exit $?")"
 if [[ "${got}" == *"plan-unasked: e is not a later epic"*"exit 1" ]]; then echo "ok   plan-unasked refuses an epic that is not later"
 else echo "FAIL plan-unasked on an active epic: ${got}"; fails=$((fails + 1)); fi
+# --declined after the slug counts too; a second slug is refused.
+(cd "${dir}" && item epics/l.md 'status: later')
+got="$(cd "${dir}" && bash "${SWARM}" plan-unasked l --declined 2>&1; bash "${SWARM}" plan-unasked l e 2>&1; echo "exit $?")"
+if [[ "${got}" == "plan-unasked: l, declined on $(date +%F)"*"plan-unasked: one epic only"*"exit 1" ]]; then echo "ok   plan-unasked takes --declined after the slug and refuses a second slug"
+else echo "FAIL plan-unasked with the flag last or two slugs: ${got}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
 # A ready lead story: no agent builds it, so next reaches the plan-epic arm instead of conduct b.
 expect "a ready story of its dependency holds an epic's planning" "gate" \
