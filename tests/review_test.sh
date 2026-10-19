@@ -295,17 +295,14 @@ check "a builder's brief says who merges: a human, or with merge = agent the con
   "$(has "Never merge, by any route (a human merges)." "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)." "$(cat "${p}/.swarm/briefs/g2.md")")"
 rm -f "${p}/.swarm/state/e" "${b}/epics/e.md"   # the conductor's tab record, which tidy below would list
 
-# --- The review agent's and the fallback reviewer's briefs: the lead's checklist, and the user's
-# decisions from the story and its epic (whose decisions sit in its Done when, as on a real board):
-# each whole (its sub-bullets too), its own bullet, cut at 1500 bytes, all of them at 2000. A mark in
-# code, or in the story's Done when, is quoted, not a decision.
+# --- The review agent's and the fallback reviewer's briefs: the lead's checklist, and each line of the
+# story and its epic (whose decisions sit in its Done when, as on a real board) that holds a user's
+# decision, verbatim with its path:line, cut at 1500 bytes, all of them at 2000. A mark in code, a
+# fence, or the story's Done when is quoted, not a decision.
 item "${b}" epics/rv.md "status: active"
 printf '%s\n' "**Done when:**" "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
-  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" "- **Other.** RV-NOT-A-DECISION" \
-  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB" \
-  "- Quotes \`(user, 2026-10-17)\` only in code RV-CODE" "" '```' "- (user, 2026-10-17) RV-FENCE" '```' \
-  "" "**Scope RV-LABEL (user, 2026-10-17):**" "- RV-LABEL-A" "- RV-LABEL-B" "" \
-  "## Release plan RV-HEAD (user, 2026-10-17)" "" "RV-HEAD-BODY" "### RV-HEAD-SUB" "RV-HEAD-SUBBODY" "## RV-NEXT-SECTION" "RV-AFTER-HEAD" >> "${b}/epics/rv.md"
+  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "- Quotes \`(user, 2026-10-17)\` only in code RV-CODE" "" \
+  '```' "- (user, 2026-10-17) RV-FENCE" '```' >> "${b}/epics/rv.md"
 start rv1 >/dev/null
 printf '%s\n' --- "status: review" "kind: code" "epic: rv" "repo: svc" "touches: [x.sh]" --- "" "# rv1" "" \
   "**Done when:**" "- one release, not three" "- it quotes (user, 2026-10-17) RV-DW-QUOTE" "" "## Notes" "" \
@@ -322,13 +319,14 @@ mkdir -p "${ROOT}/limit-bin"; printf '#!/bin/sh\necho "ERROR: You have hit your 
 chmod +x "${ROOT}/limit-bin/codex"
 fallback() {
   local pid i id
-  echo "fallback_reviewer = sonnet" > "${p}/.claude/swarm/config"
+  cp "${p}/.claude/swarm/config" "${ROOT}/config.keep"
+  { cat "${ROOT}/config.keep"; echo "fallback_reviewer = sonnet"; } > "${p}/.claude/swarm/config"
   (cd "${wt}" && exec env -u SWARM_PROJECT -u SWARM_STORY ${1:+SWARM_STORY="$1"} SWARM_PROJECT="${p}" HERDR_ENV=1 HERDR_WORKSPACE_ID=w \
     SWARM_CODEX_SECONDS=5 SWARM_FALLBACK_MIN_SECONDS=1 SWARM_CONDUCTOR_POLL=1 PATH="${ROOT}/limit-bin:${ROOT}/bin:${PATH}" bash "${SWARM}" codex-review main >/dev/null 2>&1) &
   pid=$!
   for ((i = 0; i < 150; i++)); do kill -0 "${pid}" 2>/dev/null || break; sleep 0.2; done
   kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"; wait "${pid}" || true
-  : > "${p}/.claude/swarm/config"
+  cp "${ROOT}/config.keep" "${p}/.claude/swarm/config"
   id="${1:-${wt##*/}}"; cat "${p}/.swarm/briefs/fallback/${id:0:32}.md" 2>/dev/null || echo "no fallback brief"
 }
 fbrief="$(fallback rv1)"; fbare="$(fallback)"
@@ -353,67 +351,31 @@ check "the review brief's Out of scope holds only what a change outside the touc
   "$(has "raised that only a" "${brief}")"
 check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
   "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
-for l in "- **Release in three groups (user, 2026-10-17).** RV-DECISION, which the PR reverses." \
-  "- **Fewer parts (user, 2026-10-17).**" "  - RV-SUB-ONE" "    - RV-SUB-DEEP" "  - RV-SUB-TWO" \
-  "- **Wrapped RV-WRAP-TITLE.** A decision whose mark falls on" "  its second line (user, 2026-10-17), the title on its first." "  - RV-WRAP-SUB"; do
-  check "both briefs carry the epic's decision line (from its Done when): ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
+# at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>".
+at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "$1" "${n}" "$(sed -n "${n}p" "$1")"; }
+for l in "$(at "${b}/epics/rv.md" RV-DECISION)" "$(at "${b}/epics/rv.md" "Fewer parts")"; do
+  check "both briefs carry the epic's marked line verbatim with its path:line: ${l##*.md:}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
-for l in "- **Scope RV-LABEL (user, 2026-10-17):**" "  - RV-LABEL-A" "  - RV-LABEL-B"; do
-  check "a bold-label decision keeps the list under it: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
-done
-check "a marked heading is a decision, its line alone" "yes|yes" \
-  "$(has "- Release plan RV-HEAD (user, 2026-10-17)" "${brief}")|$(has "- Release plan RV-HEAD (user, 2026-10-17)" "${fbrief}")"
-for w in RV-NOT-A-DECISION RV-CODE RV-FENCE RV-FILLER RV-HEAD-BODY RV-HEAD-SUB RV-NEXT-SECTION RV-AFTER-HEAD; do
-  check "neither brief carries ${w}: not a decision (the next bullet, code, a fence) or past the 2000 bytes" "0|0" \
+READ="Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
+check "both briefs tell the reviewer to read each decision in full at its line" "yes|yes" "$(has "${READ}" "${brief}")|$(has "${READ}" "${fbrief}")"
+for w in RV-SUB-ONE RV-CODE RV-FENCE RV-FILLER; do
+  check "neither brief carries ${w}: an unmarked line, a mark in code or a fence, or past the 2000 bytes" "0|0" \
     "$(grep -c "${w}" <<< "${brief}" || true)|$(grep -c "${w}" <<< "${fbrief}" || true)"
 done
 check "a mark in the story's Done when is not a decision: RV-DW-QUOTE is only in the Done when each brief quotes" "1|1" \
   "$(grep -c RV-DW-QUOTE <<< "${brief}" || true)|$(grep -c RV-DW-QUOTE <<< "${fbrief}" || true)"
 NOTE="1 more decision is left out of this brief (past 2000 bytes): read ${b}/stories/rv1.md."
 check "both briefs say how many decisions were left out and where they are" "yes|yes" "$(has "${NOTE}" "${brief}")|$(has "${NOTE}" "${fbrief}")"
-check "each decision is its own bullet, a blank line apart: a paragraph gets its dash" "yes|yes|yes|yes" \
-  "$(has "- Accents (user, 2026-10-17): xé" "${brief}")|$(has "- Accents (user, 2026-10-17): xé" "${fbrief}")|$(
-  for x in "${brief}" "${fbrief}"; do awk 'f { print ($0 == "" ? "yes" : "no, got: " $0); exit } /RV-DECISION, which the PR reverses\.$/ { f = 1 }' <<< "${x}"; done | paste -sd'|' -)"
 utf8() { python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8"); print("yes")' 2>/dev/null || echo no; }
-check "a 2000-byte decision of two-byte characters is cut at 1500 bytes on a character boundary, with an ellipsis: both briefs stay valid UTF-8" "yes|yes|1|0" \
-  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" || true)|$(
-  LC_ALL=C awk '/Accents/ && length($0) > 1505' <<< "${brief}" | wc -l | tr -d ' ')"
+check "a 2000-byte marked line of two-byte characters is cut at 1500 bytes on a character boundary, with an ellipsis: both briefs stay valid UTF-8" "yes|yes|yes|1|0" \
+  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(has "$(at "${b}/stories/rv1.md" Accents | cut -c1-200)" "${brief}")|$(
+  grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" || true)|$(grep -c "$(printf 'é%.0s' $(seq 1000))" <<< "${brief}" || true)"
 for l in "${CHECKLIST[@]:0:5}"; do
   check "a fallback brief with no story still carries: ${l:2:40}..." "yes" "$(has "${l}" "${fbare}")"
 done
-# The layouts a decision is written in, straight through user_decisions (after an empty story file):
-# a paragraph or a bold label ending in `:` with a list under it, one blank line before the list
-# allowed; two marked paragraphs in a row; a bullet then a marked paragraph; a paragraph with an
-# unrelated list after a blank line; and hard-wrapped paragraphs, whose wrapped lines belong to them.
-# Each ends where its lines, deeper lines (or its list) end.
-printf '%s\n' "We agreed RV-PARA (user, 2026-10-17):" "- RV-PARA-A" "- RV-PARA-B" "" "RV-PARA-END" "" \
-  "**Scope RV-LOOSE (user, 2026-10-17):**" "" "- RV-LOOSE-A" "  RV-LOOSE-CONT" "- RV-LOOSE-B" "RV-LOOSE-END" "" \
-  "RV-TWO-X first (user, 2026-10-17)." "RV-TWO-Y second (user, 2026-10-17)." "" \
-  "- **RV-BUL bullet (user, 2026-10-17).**" "  - RV-BUL-SUB" "RV-BPAR paragraph (user, 2026-10-17)." "" \
-  "RV-UNREL decided (user, 2026-10-17)." "" "- RV-UNREL-LIST" "" \
-  "- **RV-COLON bullet (user, 2026-10-17):**" "  - RV-COLON-SUB" "- RV-COLON-SIBLING" "" \
-  "**Phase RV-WRAP (user, 2026-10-13):** the lead" "sets RV-WRAP-LINE" "" "RV-WRAP-END" "" \
-  "We decided RV-REASON one release (user, 2026-10-17), because" "the lead cannot verify RV-REASON-LINE one big release." > "${ROOT}/layouts.md"
-: > "${ROOT}/empty.md"
-lay="$(bash -c '. "$1/lib/build.sh"; user_decisions "$2" "$3"' _ "${SWARM%/*}" "${ROOT}/empty.md" "${ROOT}/layouts.md")"
-for l in "- We agreed RV-PARA (user, 2026-10-17):" "  - RV-PARA-A" "  - RV-PARA-B" \
-  "- **Scope RV-LOOSE (user, 2026-10-17):**" "  - RV-LOOSE-A" "    RV-LOOSE-CONT" "  - RV-LOOSE-B" \
-  "- **RV-BUL bullet (user, 2026-10-17).**" "  - RV-BUL-SUB" "- **Phase RV-WRAP (user, 2026-10-13):** the lead" "  sets RV-WRAP-LINE" \
-  "- We decided RV-REASON one release (user, 2026-10-17), because" "  the lead cannot verify RV-REASON-LINE one big release."; do
-  check "a decision keeps what was decided: ${l}" "yes" "$(has "${l}" "${lay}")"
-done
-check "a decision ends with its list or its deeper lines: what follows is not in it" "0" \
-  "$(grep -c 'RV-PARA-END\|RV-LOOSE-END\|RV-WRAP-END' <<< "${lay}" || true)"
-check "two marked paragraphs in a row are two decisions, each once" "1|1|yes|yes" \
-  "$(grep -c RV-TWO-X <<< "${lay}")|$(grep -c RV-TWO-Y <<< "${lay}")|$(has "- RV-TWO-X first (user, 2026-10-17)." "${lay}")|$(has "- RV-TWO-Y second (user, 2026-10-17)." "${lay}")"
-check "a bullet then a marked paragraph are two decisions: the bullet once, the paragraph its own" "1|yes" \
-  "$(grep -c 'RV-BUL bullet' <<< "${lay}")|$(has "- RV-BPAR paragraph (user, 2026-10-17)." "${lay}")"
-check "a bullet ending in : keeps its sub-bullets but not its next sibling" "yes|0" \
-  "$(has "  - RV-COLON-SUB" "${lay}")|$(grep -c RV-COLON-SIBLING <<< "${lay}" || true)"
-check "a paragraph not ending in : takes no list after a blank line" "yes|0" \
-  "$(has "- RV-UNREL decided (user, 2026-10-17)." "${lay}")|$(grep -c RV-UNREL-LIST <<< "${lay}" || true)"
 check "a fallback brief with no story has neither the decision check nor any decision" "0|0" \
   "$(grep -c '(user, ' <<< "${fbare}" || true)|$(grep -c RV-DECISION <<< "${fbare}" || true)"
+check "the fallback runs leave the project's config as they found it" "merge = agent" "$(cat "${p}/.claude/swarm/config")"
 rm -f "${p}/.swarm/state/rv" "${p}/.swarm/state/fallback" "${b}/epics/rv.md" "${b}/stories/rv1.md"
 
 # --- Starting an agent: a taken name, a failed start, codex's update check.

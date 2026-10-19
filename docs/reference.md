@@ -546,12 +546,12 @@ It judges the PR against the story's touches and **Done when**. A point that onl
 outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
 touches do not name it. Its brief carries the project's own rules, as a builder's does, and six checks
 the lead used to make by hand, which the fallback reviewer's brief carries too. After them come the
-decisions the story and its epic mark `(user, <date>)`. Each is the whole bullet that holds the mark,
-from its first line, with its sub-bullets, printed as its own bullet and cut at 1500 bytes on a
-character boundary. Together they take at most 2000 bytes; past that, the brief says how many were
-left out and which files hold them. A mark inside code, or in the story's own **Done when** (which
-the brief already quotes), is not a decision. A PR that contradicts a decision is a finding, even
-when the PR is stricter. The fallback reviewer gets the decisions
+lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
+its `path:line`, cut at 1500 bytes on a character boundary, and the brief tells the reviewer to read
+each decision in full at that line. Together they take at most 2000 bytes; past that, the brief says
+how many were left out and which files hold them. A mark inside code or a fenced block, or in the
+story's own **Done when** (which the brief already quotes), is not a decision. A PR that contradicts
+a decision is a finding, even when the PR is stricter. The fallback reviewer gets the decisions
 only when codex-review knows the story (`SWARM_STORY`). It writes to the absolute
 path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the
 project), and replies with that path. It writes the file in one go once both reviews are done,

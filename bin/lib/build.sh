@@ -545,61 +545,37 @@ review_stack_note() {
 # (so the fallback reviewer's too), the same words in each.
 SCOPE_RULE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
 
-# DECISION_MAX_BYTES: the most of one user's decision a review brief carries; a longer one is cut on a
-# character boundary, with "…". DECISIONS_MAX_BYTES: the most all of them take together; a decision
-# past it is left out, and the brief says how many were and in which files they are.
+# DECISION_MAX_BYTES: the most of one marked line a review brief carries; a longer one is cut on a
+# character boundary, with "…". DECISIONS_MAX_BYTES: the most all of them take together; a line past
+# it is left out, and the brief says how many were and in which files they are.
 DECISION_MAX_BYTES=1500
 DECISIONS_MAX_BYTES=2000
 
-# user_decisions <file>... — each decision the files mark `(user, <date>`, printed as its own bullet,
-# a blank line apart, cut to DECISION_MAX_BYTES, while they fit in DECISIONS_MAX_BYTES. A decision is
-# the marked line and the lines after it indented deeper. A paragraph keeps its wrapped lines (at its
-# indent, not blank, an item, a heading, a fence or marked); a mark on a bullet's wrapped line starts
-# the decision at the bullet's first line (bul, the bullet read so far, bi its indent). A marked line
-# ending in `:` that is not a list item (a bold label, a paragraph introducing a list) also takes the
-# list items after it (one blank line before them allowed), up to the first line that is neither an
-# item nor deeper. A marked heading is its line alone. A mark in a fenced block, an inline code span or
-# the first file's (the story's) **Done when** section, which the brief already quotes, is not a
-# decision; an epic's decisions sit in its Done when.
+# user_decisions <file>... — each line of the files that holds a `(user, <date>` mark, verbatim, as
+# `- <path>:<line>: <text>`, while they fit in DECISIONS_MAX_BYTES. A mark inside a fenced block (a
+# ``` line toggles it), an inline code span or the first file's (the story's) **Done when** section,
+# which the brief already quotes, is not a decision; an epic's decisions sit in its Done when.
 user_decisions() {
   LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" -v all="${DECISIONS_MAX_BYTES}" -v story="$1" '
-    function flush(  n, b) {
-      if (d == "") return
+    function marked(s) { gsub(/`[^`]*`/, "", s); return s ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ }
+    FNR == 1 { fence = 0; dw = 0 }
+    /^ *```/ { fence = !fence; next }
+    fence { next }
+    /^\*\*|^#/ { dw = FILENAME == story && index($0, "**Done when") == 1 }
+    dw || !marked($0) { next }
+    {
+      d = $0
       if (length(d) > max) {
         # Back off while the byte after the cut is a UTF-8 continuation byte (10xxxxxx).
         for (n = max; n > 0 && substr(d, n + 1, 1) >= "\200" && substr(d, n + 1, 1) < "\300"; n--) ;
         d = substr(d, 1, n) "…"
       }
-      sub(/^ */, "", d); sub(/^#+ */, "", d)
-      if (!item(d)) { gsub(/\n/, "\n  ", d); d = "- " d }
-      b = (out == "" ? "" : "\n\n") d
-      if (length(out) + length(b) <= all) out = out b
-      else { left++; if (!(src in named)) { named[src]; where = where (where == "" ? "" : ", ") src } }
-      d = ""
+      d = (out == "" ? "" : "\n") "- " FILENAME ":" FNR ": " d
+      if (length(out) + length(d) <= all) out = out d
+      else { left++; if (!(FILENAME in named)) { named[FILENAME]; where = where (where == "" ? "" : ", ") FILENAME } }
     }
-    function indent(s) { match(s, /^ */); return RLENGTH }
-    function item(s) { return s ~ /^ *([-*+]|[0-9]+\.) / }
-    function colon(s) { return s ~ /:(\*\*|\*|__|_)?[[:space:]]*$/ }
-    function marked(s) { gsub(/`[^`]*`/, "", s); return s ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ }
-    FNR == 1 { flush(); fence = 0; dw = 0; bul = "" }
-    # Collecting: a deeper line, a list item after a `:` line (with one blank before the first), or the end.
-    d != "" && $0 !~ /[^[:space:]]/ { if (list && !items && !blank) { blank = 1; next } flush() }
-    d != "" && indent($0) > ind { d = d "\n" $0; next }
-    d != "" && list && item($0) { d = d "\n" $0; items = 1; next }
-    d != "" && !item(d) && !items && indent($0) == ind && !item($0) && !/^ *(#|```|~~~)/ && !marked($0) {
-      d = d "\n" $0; list = colon($0); next
-    }
-    d != "" { flush() }
-    /^ *(```|~~~)/ { fence = !fence; next }
-    fence { next }
-    { if (item($0)) { bul = $0; bi = indent($0) } else if (bul != "" && /[^[:space:]]/ && !/^#/ && indent($0) > bi) bul = bul "\n" $0; else bul = "" }
-    /^\*\*|^#/ { dw = FILENAME == story && index($0, "**Done when") == 1 }
-    dw || !marked($0) { next }
-    /^#/ { d = $0; src = FILENAME; flush(); next }
-    { if (!item($0) && bul != "" && indent($0) > bi) { d = bul; ind = bi } else { d = $0; ind = indent($0) }
-      src = FILENAME; list = !item(d) && colon($0); items = 0; blank = 0; bul = "" }
     END {
-      flush(); if (out != "") print out
+      if (out != "") print out
       if (left) printf "\n%d more decision%s left out of this brief (past %d bytes): read %s.\n", left, (left > 1 ? "s are" : " is"), all, where
     }' "$@"
 }
@@ -623,7 +599,8 @@ EOF
   files=("$1"); epic="$(fm "$1" epic)"
   [[ -z "${epic}" || ! -f "${BOARD}/epics/${epic}.md" ]] || files+=("${BOARD}/epics/${epic}.md")
   decisions="$(user_decisions "${files[@]}")"
-  [[ -z "${decisions}" ]] || printf '\n%s\n%s\n' "The user's decisions, from the story and its epic:" "${decisions}"
+  [[ -z "${decisions}" ]] || printf '\n%s\n%s\n%s\n' "The user's decisions, from the story and its epic:" "${decisions}" \
+    "Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
