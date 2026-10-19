@@ -191,11 +191,15 @@ dash_slow() {
 # the board, as docs/operations.md does), the swarm finished it (finish, or reconcile "finished", in events.tsv), or
 # the deleted file's last status was done or review (reconcile finishes only items in review) or it
 # listed prs. A re-scope (a board/ PR, or a commit that edits only the board and root notes such as
-# STATUS.md) has none of these, so it counts as nothing.
+# STATUS.md) has none of these, so it counts as nothing. An after: story (waits_on_epic, on the deleted
+# version's front matter) never counts in its epic.
 dash_finished() {
-  local prefix
+  local prefix tag epic kind after
   prefix="$(git -C "${BOARD}" rev-parse --show-prefix 2>/dev/null)" || return 0
-  python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true
+  { python3 "${SWARM_HOME}/bin/lib/dash_finished.py" "${BOARD}" "${prefix}" "$(dash_base_ref "${BOARD}")" "${EVENTS_LOG}" 2>/dev/null || true; } \
+    | while IFS=$'\t' read -r tag epic kind after; do
+        if [[ "${tag}" == story ]] && ! waits_on_epic "${kind}" "${after}" "${epic}"; then printf '%s\n' "${epic}"; fi
+      done | sort | uniq -c | awk '{ print "finished\t" $2 "\t" $1 }'
 }
 
 # dash_watch <seconds> <tty> — rebuild the frame every <seconds>, and repaint only when it changed;
@@ -282,7 +286,8 @@ dash_reexec() {
 }
 
 # dash_fields <file> — a board item's status, prs, epic, kind, title (its first "# " heading), who
-# its step waits on and its first **You:** line's text, tab-separated, in one fork. Who is `held` for a held story (held_for: too), `escalated` for an escalated story
+# its step waits on, its first **You:** line's text, tab-separated, in one awk, then `after` for an
+# after_story (state-aware, as next reads it), else empty. Who is `held` for a held story (held_for: too), `escalated` for an escalated story
 # (escalated_from: set; is_escalated's other tests are dash's), which is the lead's whatever it says,
 # else `you` for a **You:** step (it starts a line, after any list marker, or a sentence: prose that
 # names the convention, "has no **You:** step", is no step), else empty. The text is what follows the
@@ -307,6 +312,7 @@ dash_fields() {
       x = fv["escalated_from"]
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", fv["status"], fv["prs"], fv["epic"], fv["kind"], t,
         (x != "" ? (fv["held_for"] != "" ? "held" : "escalated") : (y ? "you" : "")), yt }' "$1"
+  if after_story "$1"; then printf '\tafter'; else printf '\t'; fi
 }
 
 # dash_render — gather what the dashboard shows (read-only), then lay it out in python at DASH_W x
@@ -314,14 +320,14 @@ dash_fields() {
 # Code's list of sessions is read once a frame (DASH_SESSIONS); with no claude, every recorded
 # session is unknown.
 dash_render() {
-  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" buildable="" f d r x
+  local agents="" panes="" workspaces="" sessions="" board="" policies="" merges="" drift="" commits="" waits="" afterdone="" buildable="" f d r x
   if command -v herdr >/dev/null 2>&1; then
     # The lists status reads; the workspace list only labels the tree, so a failed one costs no agent.
     { agents="$(herdr agent list 2>/dev/null)" && panes="$(herdr pane list 2>/dev/null)"; } || agents=""
     [[ -z "${agents}" ]] || workspaces="$(herdr workspace list 2>/dev/null)" || workspaces=""
   fi
   [[ -z "${agents}" ]] || sessions="$(claude_agents)" || sessions=""
-  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text.
+  # One line per item: dir, slug, status, prs, its agent name, (an epic) its conductor's, epic, kind, title, you, its **You:** text, after (after_story).
   for d in hld epics stories; do
     while IFS= read -r f; do
       r="$(basename "${f}" .md)"; x="$(dash_fields "${f}")"
@@ -331,6 +337,8 @@ dash_render() {
   # Each active epic with no stories whose depends_on still holds its planning up, as next reads it.
   while IFS= read -r f; do
     if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then waits+="$(basename "${f}" .md)"$'\t'"${x}"$'\n'; fi
+    # An epic that counts as done with only after: stories open, as next reads it (epic_after_only).
+    if epic_after_only "${f}"; then afterdone+="$(basename "${f}" .md)"$'\n'; fi
   done < <(board epics)
   # The stories next would start (buildable_story; a one-off not started), "<slug>\t<epic>": the idle gauge's.
   while IFS= read -r f; do
@@ -378,7 +386,7 @@ for a in agents:
   # shellcheck disable=SC2154 # assigned in another file
   DASH_PROJECT="${PROJECT_DIR}" DASH_BACKLOG="$(conductor_name backlog)" DASH_VERSION="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")" \
   DASH_MERGE="${CFG_merge}" DASH_LEAD="${CFG_lead}" DASH_NEXT="$(next_step | sed -n 1p)" DASH_BOARD="${board}" DASH_POLICY="${policies}" \
-  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
+  DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
   DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" DASH_CI="${DASH_CI:-}" \
