@@ -164,6 +164,15 @@ run story g1 >/dev/null
 gbrief="$(cat "${p}/.swarm/briefs/g1.md")"
 check "a builder walks its diff against each tagged rule, and lists both kinds in the PR body" "yes|yes|yes|yes" \
   "$(has "Before you open the PR, walk your diff against each rule tagged" "${gbrief}")|$(has "the PR body a \`Rules checked:\` section" "${gbrief}")|$(has "- agents-kind: <file:line>, or n/a: <why>" "${gbrief}")|$(has "- brief-kind: <file:line>, or n/a: <why>" "${gbrief}")"
+# commit_trailers: the brief names each trailer, one per line.
+printf '%s\n' "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>" > "${p}/.claude/swarm/config"
+item "${b}" stories/t1.md "status: ready" "kind: code" "repo: svc"
+run story t1 >/dev/null
+check "with commit_trailers set, a builder's brief names each trailer for every commit" \
+  $'End every commit message with these trailers, one per line:\nCo-Authored-By: Ann <a@x.io>\nSigned-off-by: Bo <b@x.io>' \
+  "$(grep -A2 '^End every commit message' "${p}/.swarm/briefs/t1.md")"
+check "without commit_trailers, a brief names none" "no" "$(grep -q '^End every commit message' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
+printf '%s\n' "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
   "$(has "is a finding of kind \`rules-unchecked\`: send it back like any other, after round 3 too." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")"

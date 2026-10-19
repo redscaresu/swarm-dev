@@ -12,7 +12,7 @@ and, for the sections it names, `${CLAUDE_PLUGIN_ROOT}/docs/reference.md` first 
 
 If `<board>/stories/README.md` does not exist, the project has no board yet. Offer to run
 `swarm.sh init` from the project's git root, and wait for the user's yes before you run it. It adds
-the board, `.claude/swarm/` and the `.gitignore` lines, then tells the user to run `claude` there once
+the board, `.claude/swarm/`, the `.gitignore` lines, a CI workflow and a pre-commit hook, then tells the user to run `claude` there once
 and accept the folder trust prompt. Only the user can do that, so stop after it.
 
 If `.claude/swarm/brief.md` does not exist, ask the user once, in one message, for their commit
