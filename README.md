@@ -55,9 +55,10 @@ anywhere and the next `/swarm-dev:swarm` picks up where it left off.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm` (type the whole name; the short form
-   completes to another command). The first time, it sets up the board and asks once for your rules
-   for builders: commit trailers, where credentials live, commands that must never run. Commit the
-   `.claude/swarm/brief.md` it writes.
+   completes to another command). The first time, it sets up the board with `swarm.sh init` (which also
+   writes a CI workflow and a pre-commit hook that run `make check`; CI skips a board-only PR)
+   and asks once for your rules for builders: commit trailers, where credentials live, commands that
+   must never run. Commit the `.claude/swarm/brief.md` it writes.
 4. Run `/epic Add rate limiting to the API`, agree the epic, then run `/swarm-dev:swarm` again.
    Run it each time it stops for you.
 
