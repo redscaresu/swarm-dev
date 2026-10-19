@@ -2,7 +2,7 @@
 kind: lead
 status: blocked
 epic: safer-faster-swarm
-depends_on: [release-speed, docs-review-readme, docs-review-reference, agents-md-catch-up]
+depends_on: [docs-review-readme, docs-review-reference, agents-md-catch-up, escalate-ladder-step-up, escalate-ladder-triggers]
 touches: [.claude-plugin/plugin.json]
 easy: false
 estimate_lines: 5
