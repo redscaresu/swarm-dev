@@ -74,6 +74,9 @@ done
 # lessons_file went with lessons: an old config that sets it still loads, with no error or output.
 project "${p}" "lessons_file = AGENTS.md" "stall_minutes = 45"
 check "a config with lessons_file loads silently" "45" "$(run "${p}" config stall_minutes)"
+# shellcheck disable=SC2016 # a literal $ in the file, never expanded
+project "${p}" 'lessons_file = $HOME/AGENTS.md' "stall_minutes = 45"
+check "a lessons_file whose value has a \$ loads silently too" "45" "$(run "${p}" config stall_minutes)"
 check "lessons points to outcomes' recurring block and exits 0, with or without --all" \
   "swarm.sh lessons is now outcomes' recurring block: swarm.sh outcomes [--since YYYY-MM-DD]|0|0" \
   "$(out="$(run "${p}" lessons)" && echo "${out}|0" || echo "${out}|$?")|$(run "${p}" lessons --all >/dev/null && echo 0 || echo $?)"

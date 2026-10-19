@@ -182,8 +182,8 @@ load_config() {
     [[ "${line}" =~ ^[[:space:]]*([a-z_]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])?[[:space:]]*$ ]] \
       || die "${where}: expected 'key = value'"
     key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+    [[ "${key}" != lessons_file ]] || continue   # removed with lessons; an old config still loads, whatever its value
     [[ "${value}" != *'$'* && "${value}" != *'`'* ]] || die "${where}: ${key}: \$ and backticks are not expanded; write the value out"
-    [[ "${key}" != lessons_file ]] || continue   # removed with lessons; an old config still loads
     case "${key}" in
       board_dir|repos_dir)
         [[ -n "${value}" ]] || die "${where}: ${key} is empty"
