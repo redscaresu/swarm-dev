@@ -392,6 +392,7 @@ close_agent() {
       rc=0; ladder_step "$1" no-pr || rc=$?
       [[ ${rc} != 0 ]] || return 0
       [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || die "close: $1's step-up failed partway, after its builder was closed, so nothing more was closed or counted: list it for the lead"
+      [[ ${rc} != "${STEP_UP_BUSY}" ]] || die "close: another step-up of $1 is running and may be starting its next builder, so nothing was closed or counted: wait on $1, then close it if it still needs closing"
     fi
   fi
   shut_agent "$1"
@@ -435,7 +436,10 @@ close_agent() {
 STEP_UP_FINDINGS=3
 STEP_UP_RED_HEADS=2
 # STEP_UP_PARTWAY: step-up's exit status when it failed after closing the builder, and only then.
+# STEP_UP_BUSY: ladder_step's when another step-up of the story holds its lock: it may be starting
+# the next builder, so the caller touches nothing.
 STEP_UP_PARTWAY=4
+STEP_UP_BUSY=5
 STEP_UP_TRIGGERS="findings-${STEP_UP_FINDINGS} ci-red-${STEP_UP_RED_HEADS} stalled no-pr"
 step_trigger() {
   case "$1" in
@@ -536,11 +540,19 @@ start_rung() {
   fi
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
+  # The rung runs: from here nothing is a failed step-up (step_up_failed's trap).
+  trap - EXIT
   rm -f "${prompt%.md}.step-up"
   record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})"
   echo "stepped up: ${slug} from ${from} to ${to} (${role}), in $(worktree_for "${src}" "${slug}")"
-  [[ -z "${goal}" ]] || { printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"; send_goal "${slug}" "${prompt%.md}.goal.md" brief; }
-  trap - EXIT
+  [[ -n "${goal}" ]] || return 0
+  printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"
+  # A /goal that does not set is said on its own: the step-up stands.
+  set +e
+  (set -e; send_goal "${slug}" "${prompt%.md}.goal.md" brief)
+  rc=$?
+  set -e
+  [[ ${rc} -eq 0 ]] || echo "swarm: ${slug}: stepped up, and its ${to} builder runs, but its /goal did not set (see above): send ${prompt%.md}.goal.md as its /goal by hand" >&2
 }
 
 # step_up_failed <slug> — step_up's exit trap once the old builder is closed: on a failure (start_rung
@@ -567,14 +579,15 @@ build_started() {
 
 # ladder_step <slug> <trigger> [findings] — step_up <slug> for a trigger swarm.sh saw itself (close,
 # wait --stall, tell, watch): 0 when it stepped up; STEP_UP_PARTWAY when it failed after closing the
-# builder, and the caller stops; any other status when nothing was closed (a refusal, said on stderr,
+# builder, and the caller stops; STEP_UP_BUSY when another step-up of it holds the lock, and the caller
+# touches nothing; any other status when nothing was closed (a refusal, said on stderr,
 # or a failure before the close), and the caller carries on as before. One step-up of a story at a
 # time, under its lock (step_lock); inside it step_due reads the build again, and with nothing due
 # (another step-up came first, no rung above, a partway failure this build) it runs nothing and returns 1.
 ladder_step() {
   local since lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc=1
   since="$(build_started "$1")"
-  step_lock "${lock}" || return 1
+  step_lock "${lock}" || return "${STEP_UP_BUSY}"
   if step_due "$1" "${since}"; then
     # A swarm.sh of its own: step_up's die then ends only it, and set -e holds in it, which a subshell
     # called from a condition, as every caller does, would run without. As _step-up it is not logged:

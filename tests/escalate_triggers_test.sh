@@ -149,6 +149,16 @@ for ladder in sonnet,opus,fable ""; do
     heads bbbb2222
     check "a refused step-up is noted on its head, not logged, and not tried again there" "1|0|1" \
       "$(grep -c 'step-up: s1 is not status: ready' "${ROOT}/run.log")|$(grep -c $'\tstep-up\t' "${P}/.swarm/events.tsv" || true)|$(grep -c ' bbbb2222 .* refused$' "${P}/.swarm/red-heads.tsv")"
+    # A head whose run was cancelled (a newer push, cancel-in-progress) is not red; the next red one,
+    # the PR's head, is the second.
+    fresh "${ladder}" idle; echo cancelled > "${ROOT}/runs-bbbb2222"
+    heads aaaa1111 bbbb2222; first="$(stepped)"; heads cccc3333
+    check "a cancelled head is not red: a third head red after it is the second" "|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
+    # Two red heads while the PR's head is green (or still running) leave the builder be.
+    fresh "${ladder}" idle; echo success > "${ROOT}/runs-bbbb2222"; echo pending > "${ROOT}/status-bbbb2222"
+    heads aaaa1111 bbbb2222; echo failure > "${ROOT}/status-bbbb2222"; echo success > "${ROOT}/runs-cccc3333"
+    heads cccc3333
+    check "two red heads with the PR's head green step nothing up" "" "$(stepped)"
     # So does one the builder started by hand (swarm.sh agent) inherits.
     fresh "${ladder}" idle
     printf 's1 old0000 2026-10-01T10:00:00Z red\n' > "${P}/.swarm/red-heads.tsv"
@@ -182,6 +192,12 @@ for ladder in sonnet,opus,fable ""; do
     echo "s1 w:1" > "${ROOT}/agents"; echo "w:1 s1" > "${P}/.swarm/state/s1"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" || true
     check "a build whose step-up failed partway is not stepped up again" "|yes" \
       "$(escalates)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
+    # With goal on, a /goal that does not set after the rung started is said on its own: the step-up
+    # stands, so the close is done (no attempt, the worktree kept).
+    fresh "${ladder}" idle; echo "goal = 30" >> "${P}/.claude/swarm/config"
+    out="$(SWARM_PROMPT_TIMEOUT_MS=2000 run close s1 met)" && rc=0 || rc=$?
+    check "a step-up whose /goal does not set still stands, and says so" "0|ok (no-pr: sonnet -> opus)|yes|no||yes" \
+      "${rc}|$(stepped)|$(grep -q '/goal did not set' <<< "${out}" && echo yes)|$(grep -q 'step-up failed' <<< "${out}" && echo yes || echo no)|$(attempts)|$([[ -d "${WT}" ]] && echo yes)"
     # A tell whose step-up fails after closing the builder is not sent, and says why.
     fresh "${ladder}" idle; touch "${ROOT}/startfail"; findings_tells; out="$(run tell s1 findings "${ROOT}/f.md")" && rc=0 || rc=$?
     check "a tell whose step-up fails partway is not sent, and says so" "1|yes|no" \
@@ -194,11 +210,13 @@ for ladder in sonnet,opus,fable ""; do
     out="$(run close s1)" && rc=0 || rc=$?
     check "a step-up that fails before closing the builder is a refusal: the close goes on" "0|no|1|" \
       "${rc}|$(grep -q 'step-up failed' <<< "${out}" && echo yes || echo no)|$(attempts)|$(escalates)"
-    # One step-up of a story at a time: a lock held by a live process makes a trigger skip it; one left
-    # by a process that is gone is taken over.
+    # One step-up of a story at a time: a lock held by a live process means another step-up may be
+    # starting the next builder, so the close refuses, closing and counting nothing; one left by a
+    # process that is gone is taken over.
     fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
-    run close s1 >/dev/null || true
-    check "a step-up lock held by a live process: no step-up, the close counts the attempt" "|1" "$(stepped)|$(attempts)"
+    out="$(run close s1)" && rc=0 || rc=$?
+    check "a step-up lock held by a live process: the close refuses, closing and counting nothing" "1|yes|||0|yes" \
+      "${rc}|$(grep -q 'another step-up of s1 is running' <<< "${out}" && echo yes)|$(stepped)|$(attempts)|$(grep -c '^tab close' "${ROOT}/herdr.log" 2>/dev/null || true)|$([[ -d "${WT}" ]] && echo yes)"
     fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; (exit 0) & dead=$!; wait "${dead}"; echo "${dead}" > "${P}/.swarm/locks/step-up-s1/pid"
     run close s1 >/dev/null || true
     check "a step-up lock left by a process that is gone is taken over, and released" "ok (no-pr: sonnet -> opus)|no" \
