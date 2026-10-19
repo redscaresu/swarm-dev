@@ -54,9 +54,10 @@ anywhere and the next `/swarm-dev:swarm` picks up where it left off.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
 3. Inside herdr, run `claude`, then `/swarm-dev:swarm` (type the whole name; the short form
-   completes to another command). The first time, it sets up the board and asks once for your rules
-   for builders: commit trailers, where credentials live, commands that must never run. Commit the
-   `.claude/swarm/brief.md` it writes.
+   completes to another command). The first time, it sets up the board with `swarm.sh init` (which also
+   writes a CI workflow and a pre-commit hook that run `make check`; CI skips a board-only PR)
+   and asks once for your rules for builders: commit trailers, where credentials live, commands that
+   must never run. Commit the `.claude/swarm/brief.md` it writes.
 4. Run `/epic Add rate limiting to the API`, agree the epic, then run `/swarm-dev:swarm` again.
    Run it each time it stops for you.
 
@@ -83,7 +84,6 @@ The other commands are tools the lead runs; they are listed in
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
-| a proposed rule (`lesson: <kind>`) | merge to adopt it, or close it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 
 ## Cost and safety
@@ -101,7 +101,9 @@ money waits on you, so only those count. Its `model_fit` section sets cost again
 model and kind of story, so you can see where a cheaper model holds up before you move more work to
 it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
 conductor ran but before their build started, building, CI, waiting for review, fixing findings or
-waiting for a merge, in hours and as a share of the whole.
+waiting for a merge, in hours and as a share of the whole. `swarm.sh dataset` writes `.swarm/dataset.jsonl`, one
+line per merged story, so you can compare what the planner predicted (easy or not, and the size
+estimate) with what the build took.
 
 Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
 while you watch. A `lead` story whose `after:` names its own epic waits for that epic and does not
