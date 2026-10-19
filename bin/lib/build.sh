@@ -752,13 +752,20 @@ never dismiss an alert.
 EOF
 }
 
-# auth_rule — what a conductor does when `wait` on a builder prints auth.
+# auth_rule — what a conductor does when `wait` on a builder prints auth, or a stuck: line.
 auth_rule() {
   cat <<EOF
 A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
 /login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
 login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> resume <file>\`) and wait on it
 again with \`swarm.sh wait <slug>\` in the background.
+
+A \`wait\` that prints a line starting \`stuck:\` (exit 4) is not a stall: never close the builder for
+it. \`stuck: api error\` is a turn that stopped on an API error (with goal off, after wait told it to
+carry on three times; with goal on, read the cause with the goal rule). \`stuck: no output for <N>m
+(<pane>)\` is a pane unchanged that long with no background task running. Read the pane (\`herdr
+agent read <pane>\`); if the builder only stopped, tell it to resume and wait on it again, and
+otherwise list it for the lead.
 EOF
 }
 

@@ -60,6 +60,18 @@ def login_expired(log, name, projects):
             return False
         break
     return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
+def bg_running(log, name, projects):
+    sid, live = session_id(log, name), set()
+    for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
+        try:
+            for l in open(path, encoding="utf-8", errors="replace"):
+                live.update(re.findall(r"Command running in background with ID: (\w+)", l))
+                if "<task-notification>" in l:
+                    live.difference_update(re.findall(r"<task-id>(\w+)</task-id>", l))
+        except OSError:
+            return False
+        break
+    return bool(live)
 def shown_state(a, name, s, log, projects):
     st, look = agent_state(a, name, s)
     return ("auth", True) if st == "idle" and s is not None and login_expired(log, name, projects) else (st, look)

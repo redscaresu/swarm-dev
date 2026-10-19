@@ -462,10 +462,10 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
 expect_conductor "idle conductor without a report is still waited on" "wait conduct-e1" no
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 # A conductor whose turn stopped on an API error (herdr idle, its pane ending on the error) is named a stall.
-expect_conductor "a conductor stopped on an API error: next names the stall" "wait conduct-e1" no e1 "stalled: *API error*" \
-  "printf '%s\n' '⏺ Waiting on the builders.' '  ⎿  API Error: Connection dropped (ECONNRESET)' > screen"
+expect_conductor "a conductor stopped on an API error: next names the stop" "wait conduct-e1" no e1 "stuck: *API error*" \
+  "printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error: Connection dropped (ECONNRESET)' > screen"
 expect_conductor "a conductor whose pane has a later reply after an API error is still working" "wait conduct-e1" no e1 "*still working*" \
-  "printf '%s\n' '  ⎿  API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > screen"
+  "printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > screen"
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 # While a conductor works, an epic whose dependency is all in review is planned first; the why names
 # the conductor to wait on in the background. With no such epic, next waits on the conductor.
