@@ -30,26 +30,26 @@ printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/gh"
 printf '#!/bin/sh\nR="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"'"${ERR_NAME:-s-err}"'","agent_status":"idle","pane_id":"w:1"},{"name":"s-deny","agent_status":"idle","pane_id":"w:2"},{"name":"s-ok","agent_status":"working","pane_id":"w:3"},{"name":"s-mid","agent_status":"working","pane_id":"w:4"},{"name":"s-prose","agent_status":"idle","pane_id":"w:5"},{"name":"foreign","agent_status":"idle","pane_id":"w:9"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w:1"},{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:4"},{"pane_id":"w:5"},{"pane_id":"w:9"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"'"${ERR_NAME:-s-err}"'","agent_status":"idle","pane_id":"w:1"},{"name":"s-deny","agent_status":"idle","pane_id":"w:2"},{"name":"s-ok","agent_status":"working","pane_id":"w:3"},{"name":"s-mid","agent_status":"working","pane_id":"w:4"},{"name":"s-prose","agent_status":"idle","pane_id":"w:5"},{"name":"s-again","agent_status":"idle","pane_id":"w:6"},{"name":"foreign","agent_status":"idle","pane_id":"w:9"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w:1"},{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:4"},{"pane_id":"w:5"},{"pane_id":"w:6"},{"pane_id":"w:9"}]}}' ;;
   "agent read") cat "$R/pane-$3" ;;
   "agent rename") ;;
   *) exit 1 ;;
 esac
 STUB
 chmod +x "${ROOT}/bin/"*
-printf 'w:1 s-err\nw:2 s-deny\nw:3 s-ok\nw:4 s-mid\nw:5 s-prose\n' > "${P}/.swarm/state/t"
+printf 'w:1 s-err\nw:2 s-deny\nw:3 s-ok\nw:4 s-mid\nw:5 s-prose\nw:6 s-again\n' > "${P}/.swarm/state/t"
 
 # s-err stopped on ECONNRESET; s-deny on an auto mode denial; s-ok had an API error, then carried on;
 # s-mid's pane ends on an API error while herdr says it is still working (mid-turn); s-prose's own
-# indented text mentions the classifier. foreign is another project's agent, whose pane must not be read.
+# indented text mentions the classifier and an `API Error:` line. foreign is another project's agent, whose pane must not be read.
 printf '%s\n' '⏺ Running the tests.' '  ⎿  API Error: Connection error (ECONNRESET)' '' '> ' > "${ROOT}/pane-w:1"
 deny=('⏺ Reading the story.' '  ⎿  Read 40 lines' '⏺ Applying the plan.' '⏺ Bash(terraform apply)'
   '  ⎿  Error: Permission for this action has been denied by the Claude Code auto mode classifier.' '     Reason: real cloud' '> ')
 printf '%s\n' "${deny[@]}" > "${ROOT}/pane-w:2"
 printf '%s\n' '  ⎿  API Error: 529 overloaded' '⏺ Carrying on.' > "${ROOT}/pane-w:3"
 printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: 529 overloaded' > "${ROOT}/pane-w:4"
-printf '%s\n' '⏺ Noted for the brief:' '  commands can be denied by the Claude Code auto mode classifier.' '> ' > "${ROOT}/pane-w:5"
+printf '%s\n' '⏺ Noted for the brief:' '  commands can be denied by the Claude Code auto mode classifier.' '  API Error: lines mean retry.' '> ' > "${ROOT}/pane-w:5"
 printf '%s\n' '  ⎿  API Error: foreign' > "${ROOT}/pane-w:9"
 
 status() { (cd "${P}" && SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > /dev/null 2>&1) || true; }
@@ -59,25 +59,36 @@ check "two status runs log one event per stopped pane" test "$(incidents)" = "$(
   $'incident\ts-err\tapi-error: API Error: Connection error (ECONNRESET)' \
   $'incident\ts-deny\tauto-denied: Error: Permission for this action has been denied by the Claude Code auto mode classifier.')"
 check "a pane ending on an API error mid-turn (herdr working) logs nothing" test "$(incidents | grep -c 's-mid')" = 0
-check "an agent's own text naming the classifier logs nothing" test "$(incidents | grep -c 's-prose')" = 0
+check "an agent's own text naming the classifier or an API Error: line logs nothing" test "$(incidents | grep -c 's-prose')" = 0
 check "status notes when each own pane last changed" test -s "${P}/.swarm/panes/s-ok" -a ! -e "${P}/.swarm/panes/foreign"
 # The same ECONNRESET again, after s-err carried on, is a new occurrence: one more event.
 printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: Connection error (ECONNRESET)' >> "${ROOT}/pane-w:1"
 status; status
 check "a new stop on the same line logs one more event" test "$(incidents | grep -c 's-err')" = 2
-# Retired (retire_agent renames it s-err-done), the same stopped pane logs nothing more.
-ERR_NAME=s-err-done status
-check "a retired agent's stop is not logged again" test "$(incidents | grep -c 's-err')" = 2
-# s-deny's pane scrolls a line: the top line goes, a line comes under the stop. The stop is the same.
-printf '%s\n' "${deny[@]:1}" '> carry on' > "${ROOT}/pane-w:2"
-status
-check "a line added under a stop, scrolling the pane, logs nothing more" test "$(incidents | grep -c 's-deny')" = 1
-# retire_agent moves its pane record to the retired name, so a new s-err starts with none.
+# Retired (retire_agent renames it s-err-done and moves its pane record and stops), the same stopped
+# pane logs nothing more. Then a new agent in the same pane id logs its own stop there.
 (cd "${P}" && PROJECT_DIR="${P}" STATE_DIR="${P}/.swarm/state" PATH="${ROOT}/bin:${PATH}" bash -c '
   die() { echo "$*" >&2; exit 1; }; agent_name() { printf "%s" "$1"; }
   json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
   source "$1/../bin/lib/agents.sh"; retire_agent s-err > /dev/null' _ "${HERE}")
 check "a retired agent's pane record goes with it" test -s "${P}/.swarm/panes/s-err-done" -a ! -e "${P}/.swarm/panes/s-err"
+ERR_NAME=s-err-done status
+check "a retired agent's stop is not logged again" test "$(incidents | grep -c 's-err')" = 2
+ERR_NAME=s-new status
+check "a new agent in a reused pane logs its own stop" test "$(incidents | grep -c 's-new')" = 1
+# s-again stops twice after resumes with the same lines above each stop: wait's resume (an ok nudge
+# line) between them makes the second a new stop.
+again=('> Your last turn stopped on an API error; carry on where you stopped.' '  ⎿  API Error: 529 overloaded')
+printf '%s\n' '⏺ Working.' "${again[@]}" "${again[@]}" > "${ROOT}/pane-w:6"
+status
+printf '%s\tnudge\ts-again\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
+printf '%s\n' "${again[@]}" >> "${ROOT}/pane-w:6"
+status
+check "a stop after a resume, with the same lines above it, logs again" test "$(incidents | grep -c 's-again')" = 2
+# s-deny's pane scrolls a line: the top line goes, a line comes under the stop. The stop is the same.
+printf '%s\n' "${deny[@]:1}" '> carry on' > "${ROOT}/pane-w:2"
+status
+check "a line added under a stop, scrolling the pane, logs nothing more" test "$(incidents | grep -c 's-deny')" = 1
 # Eight reads of one stopped pane at once (status and a background wait, say) log it once.
 R="${ROOT}/race"; mkdir -p "${R}"
 n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"
@@ -86,19 +97,23 @@ n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"
   wc -l < "${EVENTS_LOG}"' _ "${HERE}")"
 check "eight reads of one stop at once log one event" test "${n// /}" = 1
 
-# dash shows the minutes since a pane last changed beside its agent, and its working count still
-# agrees with status's (dash_defects_test's assertion).
+# dash shows the minutes since a pane last changed beside its agent, when status or wait read it within
+# stall_minutes (the record's mtime), and its working count still agrees with status's
+# (dash_defects_test's assertion).
 FX="${ROOT}/fx"; mkdir -p "${FX}"
 # shellcheck source=fixtures/dash/two_projects.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 source "${HERE}/fixtures/dash/two_projects.sh" "${FX}"
 A="${FIXTURE_A}"
-mkdir -p "${A}/.swarm/panes"; printf '1 2\t%s\t\n' "$((SWARM_DASH_NOW - 720))" > "${A}/.swarm/panes/a-building"
+mkdir -p "${A}/.swarm/panes"; printf '1 2\t%s\n' "$((SWARM_DASH_NOW - 720))" > "${A}/.swarm/panes/a-building"
+touch_ago 1 "${A}/.swarm/panes/a-building"
 frame() { rm -f "${TMPDIR}"/swarm-dash-*; (cd "${A}" && DASH_W=100 "${FIXTURE_SWARM}" dash); }
 out="$(frame)"
 check "dash shows 12m beside an agent whose pane last changed 12 minutes ago" grep -qE '● a-building .*  pane 12m' <<< "${out}"
 check "an agent with no pane record shows no pane age" lacks 'conduct-alpha-core .*pane' "${out}"
 n="$(HERDR_ENV=1 SWARM_PROJECT="${A}" "${FIXTURE_SWARM}" status | grep -c '^  [^ ]*  *working  \[' || true)"
 check "dash counts the ${n} agents status lists as working" grep -q " ${n} agents working" <<< "${out}"
+touch_ago 30 "${A}/.swarm/panes/a-building"
+check "a pane record no one read for stall_minutes shows no pane age" lacks 'a-building .*pane' "$(frame)"
 
 # flow counts the stops per epic: s-err is e1's builder (its outcomes row), conduct-e1 its conductor,
 # conduct-e2 a conductor that stopped before any builder of e2 started, s-err-done s-err retired.

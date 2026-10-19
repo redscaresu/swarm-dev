@@ -333,7 +333,7 @@ start_agent() {
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
   fi
   free_agent_name "${name}"
-  rm -f "${PANE_DIR}/${name}"   # the last holder's pane age (pane_check), which a retired one took along
+  rm -rf "${PANE_DIR:?}/${name}" "${PANE_DIR}/stop.${name}".*   # the last holder's pane record and stops (pane_check), which a retired one took along
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   clean_env "${pane}" "${name}" "${names}"
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -544,22 +544,23 @@ API_RESUME_MSG="Your last turn stopped on an API error; carry on where you stopp
 pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || true; }
 
 # PANE_DIR: per agent, a file kept by pane_check and read by dash (its pane's checksum, and when status
-# or wait first saw the pane so, in epoch seconds), moved with the agent when it retires and removed
-# when a new agent takes its name; per pane, a stop.<pane>.<key> directory for each stop an api-error
-# or auto-denied incident was logged for, kept by pane so a retired agent's renamed pane is not
-# logged again.
-# ponytail: stop directories are never removed (one empty directory per stop); removing them would
-# race a concurrent pane_check into logging a stop again.
+# or wait first saw the pane so, in epoch seconds), and a stop.<name>.<key> directory for each stop an
+# api-error or auto-denied incident was logged for. Both move with the agent when it retires
+# (retire_agent), so its renamed pane is not logged again, and go when a new agent takes its name.
+# ponytail: a live agent's stop directories are never removed (one empty directory per stop);
+# removing them would race a concurrent pane_check into logging a stop again.
 PANE_DIR="${PROJECT_DIR}/.swarm/panes"
 # STOP_CONTEXT: how many lines above a stop's line its key takes, so lines added below it (a resume
-# prompt, the prompt box redrawn) leave the key as it was.
+# prompt, the prompt box redrawn) leave the key as it was. The key also takes prompts_to, so a stop
+# after a resume, with the same lines above it as the last, is a new one.
 STOP_CONTEXT=3
 
 # pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<line>" for the stop its last
-# turn ended on (no assistant line, ⏺ or ●, after it): Claude Code's `API Error:` line (api-error), or
-# a tool result (⎿) saying it was "denied by the Claude Code auto mode classifier" (auto-denied).
+# turn ended on (no assistant line, ⏺ or ●, after it): Claude Code's `API Error:` line, after ⏺ or
+# ● at the margin or in a tool result (⎿) (api-error), or a tool result saying it was "denied by the
+# Claude Code auto mode classifier" (auto-denied). An agent's own indented text is neither.
 pane_stop() {
-  awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { n = NR; k = "api-error"; l = $0; next }
+  awk '/^(⏺|●)[[:space:]]*API Error:|^[[:space:]]*⎿[[:space:]]*API Error:/ { n = NR; k = "api-error"; l = $0; next }
     /^[[:space:]]*(⏺|●)/ { n = 0; next }
     /^[[:space:]]*⎿.*denied by the Claude Code auto mode classifier/ { n = NR; k = "auto-denied"; l = $0 }
     END { if (n) { sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", l); print n "\t" k "\t" l } }'
@@ -569,25 +570,34 @@ pane_stop() {
 # after a stop: background shells it left open keep it so.
 turn_ended() { [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]; }
 
+# prompts_to <name> — how many prompts swarm sent <name> that it took up: the ok nudge and tell lines
+# naming it in events.tsv (wait's resumes among them), a note aside.
+# ponytail: a resume typed into the pane by hand is not counted; a stop after it with the same lines
+# above it as the last one goes unlogged.
+prompts_to() {
+  awk -F'\t' -v n="$1" '$3 == n && $5 == "ok" && ($2 == "nudge" || ($2 ~ /^tell/ && $2 != "tell:note")) { c++ } END { print c + 0 }' "${EVENTS_LOG}" 2>/dev/null || echo 0
+}
+
 # pane_check <name> <target> — read <target>'s pane once, keep PANE_DIR/<name>, and set the caller's
 # pane_at (when the pane last changed; with no file yet, when the wait began, or now) and pane_kind
 # (the stop its turn ended on, pane_stop, once turn_ended; else empty). A stop is logged as an
-# api-error or auto-denied incident for <name> with its line, once: its key is the stop's line and
-# the STOP_CONTEXT lines above it, and only the call whose mkdir makes its directory logs it. Only
+# api-error or auto-denied incident for <name> with its line, once: its key is the stop's line, the
+# STOP_CONTEXT lines above it and prompts_to, and only the call whose mkdir makes its directory logs
+# it. The file is written through a temp file, so a concurrent reader never sees half of it. Only
 # status and wait call it. An empty read sets both empty.
 pane_check() {
-  local text f sum seen="" hit n line
+  local text f sum seen="" hit n line t
   pane_kind="" pane_at=""
   text="$(pane_text "$2")"; [[ -n "${text}" && -n "$1" ]] || return 0
   f="${PANE_DIR}/$1"; sum="$(printf '%s' "${text}" | cksum)"
   [[ ! -f "${f}" ]] || IFS=$'\t' read -r seen pane_at < "${f}" || true
   if [[ -z "${seen}" ]]; then pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
   elif [[ "${sum}" != "${seen}" || -z "${pane_at}" ]]; then pane_at="$(date +%s)"; fi
-  { mkdir -p "${PANE_DIR}" && printf '%s\t%s\n' "${sum}" "${pane_at}" > "${f}"; } 2>/dev/null || true
+  { mkdir -p "${PANE_DIR}" && t="$(mktemp "${f}.XXXXXX")" && printf '%s\t%s\n' "${sum}" "${pane_at}" > "${t}" && mv -f "${t}" "${f}"; } 2>/dev/null || true
   hit="$(pane_stop <<< "${text}")"
   if [[ -z "${hit}" ]] || ! turn_ended "$1"; then return 0; fi
   IFS=$'\t' read -r n pane_kind line <<< "${hit}"
-  f="${PANE_DIR}/stop.${2//[^A-Za-z0-9]/-}.$(sed -n "$((n > STOP_CONTEXT ? n - STOP_CONTEXT : 1)),${n}p" <<< "${text}" | cksum | tr ' ' -)"
+  f="${PANE_DIR}/stop.$1.$({ sed -n "$((n > STOP_CONTEXT ? n - STOP_CONTEXT : 1)),${n}p" <<< "${text}"; prompts_to "$1"; } | cksum | tr ' ' -)"
   mkdir "${f}" 2>/dev/null || return 0
   record_event incident "$1" "${pane_kind}: ${line}"
 }
@@ -1018,6 +1028,10 @@ retire_agent() {
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
     awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
-  mv -f "${PANE_DIR}/${name}" "${PANE_DIR}/${new}" 2>/dev/null || true   # its pane age goes with it
+  # Its pane record and stops (pane_check) go with it.
+  mv -f "${PANE_DIR}/${name}" "${PANE_DIR}/${new}" 2>/dev/null || true
+  for state in "${PANE_DIR}/stop.${name}".*; do
+    [[ ! -d "${state}" ]] || mv -f "${state}" "${PANE_DIR}/stop.${new}.${state##*.}" 2>/dev/null || true
+  done
   echo "retired $1 as ${new}"
 }

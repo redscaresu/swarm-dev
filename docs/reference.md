@@ -667,11 +667,13 @@ unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the
 none, so one stuck builder is one incident. When `status` or `wait` reads an agent's pane, herdr
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or a tool result
 saying "denied by the Claude Code auto mode classifier", it writes `api-error` or `auto-denied` with
-that line, once per stop. The stop is its line and the three lines above it, so reading the same
-stopped pane again, or after lines are added under it, adds none. `next` and `tell` only read.
-`status` and `wait` keep `.swarm/panes/<agent>`, the pane's checksum and when they last saw it
-change, which `dash` shows. A retired agent's record moves to its new name, and a new agent of the
-name starts with none. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
+that line, once per stop. An `API Error:` line counts after `⏺` or `●` at the margin or in a tool
+result (`⎿`); an agent's own indented text does not. The stop is the agent, its line, the three lines
+above it and how many prompts swarm sent the agent that it took up (`nudge` and `tell` lines), so
+reading the same stopped pane again, or after lines are added under it, adds none, while a stop after
+a resume is a new one. `next` and `tell` only read. `status` and `wait` keep `.swarm/panes/<agent>`,
+the pane's checksum and when they last saw it change, which `dash` shows. A retired agent's record
+and stops move to its new name, and a new agent of the name starts with none. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about

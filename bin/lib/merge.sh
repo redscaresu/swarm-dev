@@ -523,7 +523,8 @@ status_report() {
     sessions="$(claude_agents)" || sessions=""   # a failed call reads as unknown, as an empty one does
     # Each agent in this project's panes, read once (pane_check): when its pane last changed, and an
     # API error or auto mode denial it stopped on.
-    local own pane name; own=" $(own_panes | tr '\n' ' ') "
+    # shellcheck disable=SC2034 # pane_kind and pane_at are pane_check's, kept local here
+    local own pane name pane_kind pane_at; own=" $(own_panes | tr '\n' ' ') "
     while read -r pane name; do
       [[ "${own}" != *" ${pane} "* ]] || pane_check "${name}" "${pane}" > /dev/null
     done < <(json '"\n".join(str(a.get("pane_id")) + " " + str(a.get("name") or "") for a in d["result"]["agents"])' <<< "${agents}" 2>/dev/null || true)

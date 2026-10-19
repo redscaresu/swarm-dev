@@ -255,8 +255,9 @@ if agents is not None:
             words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle", "auth": "auth: login expired",
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
-            try:
-                pane_at = float(open(os.path.join(E["DASH_PROJECT"], ".swarm", "panes", name)).read().split("\t")[1])
+            try:   # pane_check's record, unless status or wait last read the pane stall_minutes ago or more
+                f = os.path.join(E["DASH_PROJECT"], ".swarm", "panes", name)
+                pane_at = float(open(f).read().split("\t")[1]) if NOW - os.path.getmtime(f) < 60 * int(E["DASH_STALL_MIN"]) else None
             except (OSError, ValueError, IndexError):
                 pane_at = None
             if st == "working":
@@ -440,7 +441,8 @@ def dur(s):
 def agent_cols(r):
     # Role and model, then the state (a working agent's with its age); from 140 columns the model is
     # a label in its colour, and a working agent shows how long since it started. Last, how long
-    # since its pane last changed, as status or wait last saw it (pane_check's file).
+    # since its pane last changed, as status or wait last saw it (pane_check's file), when one of them
+    # read it within stall_minutes.
     row = []
     if WIDE:
         label = f" {r['model']} "
