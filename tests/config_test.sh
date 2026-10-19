@@ -147,6 +147,25 @@ check "fallback_reviewer that is not a model name is refused, naming the key" "y
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
 
+check "commit_trailers ships empty" "" "$(project "${p}"; run "${p}" config commit_trailers)"
+project "${p}" "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>"
+check "commit_trailers is read" "Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>" "$(run "${p}" config commit_trailers)"
+check "swarm.sh config shows commit_trailers and its line" "yes" \
+  "$(grep -qxF "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>    (${p}/.claude/swarm/config:1)" <<< "$(run "${p}" config)" && echo yes || echo no)"
+for v in "Ann <a@x.io>" "Co-Authored-By: Ann <a@x.io> ;"; do
+  project "${p}" "commit_trailers = ${v}"
+  check "commit_trailers = ${v} is refused, naming file and line" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: commit_trailers must be trailers" run "${p}" config)"
+done
+
+for v in 'my"board' 'my\board'; do
+  project "${p}" "board_dir = ${v}"
+  check "board_dir = ${v} is refused, since init quotes it" "yes" "$(fails_with 'config:1: board_dir: " and \\ are refused' run "${p}" config)"
+done
+project "${p}" "commit_trailers = Refs: #123"
+check "a commit_trailers cut short by a # says a # starts a comment" "yes" \
+  "$(fails_with "commit_trailers must be trailers .*(a # starts a comment, so no trailer can hold one)" run "${p}" config)"
+
 # --- One set of keys: the method's config table, CONFIG_KEYS and load_config's case arms. A key
 # missing from any of the three is named.
 REPO="$(dirname "${SWARM}")/.."
