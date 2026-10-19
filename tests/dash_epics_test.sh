@@ -37,7 +37,8 @@ unset COLUMNS LINES
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/stty"
 printf '#!/bin/sh\nexit 1\n' > "${ROOT}/size/tput"
 chmod +x "${ROOT}/size/stty" "${ROOT}/size/tput"
-export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
+# SWARM_NO_CI_REFRESH: project D has a github.com origin, and no ci line refresh may outlive the test.
+export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp" SWARM_NO_CI_REFRESH=1
 mkdir -p "${TMPDIR}"
 # fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
 fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }

@@ -80,8 +80,9 @@ def health(urls):
 
 def ci_time(url):
     # The PR's CI time: its newest head's longest run (its last attempt, startedAt to updatedAt) and
-    # that run's slowest job (one jobs listing, all its pages), as (minutes, job, job minutes); () when
-    # it has no timed run or job, None when gh fails.
+    # that run's slowest job (one jobs listing of that same attempt, all its pages: a run's own listing
+    # keeps the jobs a rerun of failed jobs carried over), as (minutes, job, job minutes); () when it
+    # has no timed run or job, None when gh fails.
     runs = head_runs(url)
     if runs is None:
         return None
@@ -91,7 +92,7 @@ def ci_time(url):
         return ()
     newest = max(timed, key=lambda t: t[2]["createdAt"])[2]["headSha"]
     start, end, run = max((t for t in timed if t[2]["headSha"] == newest), key=lambda t: t[1] - t[0])
-    got = gh("api", "--paginate", "--slurp", f"repos/{GITHUB.match(url).group(1)}/actions/runs/{run['databaseId']}/jobs?per_page=100")
+    got = gh("api", "--paginate", "--slurp", f"repos/{GITHUB.match(url).group(1)}/actions/runs/{run['databaseId']}/attempts/{run['attempt']}/jobs?per_page=100")
     if got is None:
         return None
     jobs = [(secs(j.get("completed_at")) - secs(j.get("started_at")), CONTROL.sub("", j["name"])) for page in got for j in page["jobs"]
@@ -149,10 +150,12 @@ if __name__ == "__main__":
     else:
         print("prs\theads\tci_min_median\tred_runs_per_pr\tflakes")
         print("\t".join(got))
-    # The window before: as many days, up to the day before since. A PR gh cannot read is left out
-    # here, so the PRs that answered still count (dash's ci line reads this table).
+    # The window before: as many days, up to the day before since; a PR built in both windows counts
+    # in this one alone, by its latest build. A PR gh cannot read is left out here, so the PRs that
+    # answered still count (dash's ci line reads this table).
     start, day = datetime.date.fromisoformat(since), datetime.timedelta(days=1)
-    before = windowed((start - (end - start) - day).isoformat(), (start - day).isoformat())
+    keys = {pr_key(u) for u in now}
+    before = [u for u in windowed((start - (end - start) - day).isoformat(), (start - day).isoformat()) if pr_key(u) not in keys]
     rows, unread = trend(now, before)
     print()
     print("repo\tprs\tci_min_median\tslowest_job\tslowest_job_min_median\tprev_prs\tprev_ci_min_median"

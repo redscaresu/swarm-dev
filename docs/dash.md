@@ -64,7 +64,8 @@ is one column, top to bottom:
   time against last week, for the project's origin repo: `ci 11m (slowest: test 9m) ▼2m vs last
   week`. It is that repo's row of the ci time table in the `ci_health` section of `swarm.sh flow
   --since <6 days ago>`, which dash runs in the background at most every 6 hours (10 minutes after
-  one that failed), so the line appears a minute or so after the first dash. Then a
+  one that failed, and one at a time, stopped after 30 minutes), so the line appears a minute or so
+  after the first dash. A line older than 6 hours says so: `· 9h old`. Then a
   warning when the main checkout has board edits not committed yet, naming the files, cut to the
   width: `board: 2 uncommitted edits in the main checkout: stories/a.md, stories/b.md`. From 140
   columns the merge mode, the summary, who is on call and the ci line move to the status bar.
