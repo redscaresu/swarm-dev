@@ -1092,9 +1092,9 @@ call. Outside a swarm project the guard allows everything else.
 
 The hook also refuses commands that can lose work. In every session in a swarm project, yours
 included, it refuses a `cd <dir>` followed by `;` outside a `$( )`: when the `cd` fails, the rest
-runs in the folder the session was in, so write `cd <dir> || exit 1 &&`. A `cd` that is the whole
-condition of a `while` or `if` (`while cd <dir>; do`) passes, since nothing after it runs when it
-fails; `until cd` and `while ! cd` do not. It refuses a `git checkout`
+runs in the folder the session was in, so write `cd <dir> || exit 1 &&`. A `cd` in the condition of
+a `while`, `until` or `if` is not read as one: it passes, and the commands after it are checked
+where the call runs. It refuses a `git checkout`
 that would overwrite uncommitted changes: unstaged ones, and staged ones too when it checks out from
 a commit (`git checkout HEAD -- f`). Back the file up with `cp` and restore from the copy instead.
 swarm.sh starts every Claude agent with `SWARM_AGENT` set to its name. In an agent's session the hook

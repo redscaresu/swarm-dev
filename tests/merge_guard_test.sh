@@ -168,14 +168,15 @@ check "an agent's cd <main checkout> && git stash blocks" as agent "${W}" 2 "cd 
 check "git checkout -- f on a dirty f blocks" as lead "${W}" 2 "git checkout -- f"
 check "git checkout f on a dirty f blocks" as lead "${W}" 2 "git checkout f"
 check "cd /nope; cp a b blocks" as lead "${W}" 2 "cd /nope; cp a b"
-# A cd that is the whole condition of a while or if runs nothing after it when it fails, so the cd
-# rule skips it; until cd and while ! cd run their body exactly when the cd fails.
-check "while cd /nope; do sleep 1; done passes" as lead "${W}" 0 "while cd /nope; do sleep 1; done"
-check "if cd /nope; then cp a b; fi passes" as lead "${W}" 0 "if cd /nope; then cp a b; fi"
-check "until cd /nope; do sleep 1; done blocks" as lead "${W}" 2 "until cd /nope; do sleep 1; done"
-check "while ! cd /nope; do sleep 1; done blocks" as lead "${W}" 2 "while ! cd /nope; do sleep 1; done"
-check "while cd /nope; true; do sleep 1; done blocks" as lead "${W}" 2 "while cd /nope; true; do sleep 1; done"
+# The cd rule reads a command's own cd, never one in a while, until or if condition, and such a cd
+# never moves where later git commands run: the git rule still checks them where the call runs.
+# shellcheck disable=SC2016 # the $( ) is the hook's to see
+for c in "while cd /nope; do sleep 1; done" "until cd /nope; do sleep 1; done" "while ! cd /nope; do sleep 1; done" \
+         "if cd /nope; then cp a b; fi" "if ! cd /nope; then exit 1; fi" 'if cd "$(mktemp -d)"; then ls; fi'; do
+  check "${c} passes" as lead "${W}" 0 "${c}"
+done
 check "an agent's until cd /nope; do git reset --hard; done in the main checkout blocks" as agent "${P}" 2 "until cd /nope; do git reset --hard; done"
+check "an agent's if cd /nope; then :; fi; git reset --hard in the main checkout blocks" as agent "${P}" 2 "if cd /nope; then :; fi; git reset --hard"
 check "  ... but a cd before ; in its body still blocks" as lead "${W}" 2 "while true; do cd /nope; cp a b; done"
 check "read x; cd /nope; cp a b blocks" as lead "${W}" 2 "read x; cd /nope; cp a b"
 check "  ... and logs guard-blocked to the main checkout" test "$(tail -1 "${LOG}" | cut -f5)" == "guard-blocked: cd before ;"

@@ -6,8 +6,8 @@
 # the form, on gh pr merge, gh api .../pulls/<n>/merge, a graphql mergePullRequest, any of them in
 # code handed to a shell or an interpreter (-c, eval, a heredoc, a here-string, a pipe) or written
 # to a file, and on swarm.sh merge joined to another command. A mention in echo, printf or grep
-# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( ), and not the
-# whole condition of a while or if, whose failure skips what follows), a git
+# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( ), and not in a
+# while, until or if condition), a git
 # checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
@@ -51,8 +51,10 @@ ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 REDIRECT = re.compile(r"<<<|<<-?|&>>?|>>|>[|&]?|<[&>]?")
 QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 QUOTING = re.compile(r"[\"'\\]")
-OPENERS = {"do", "then", "else", "while", "until", "!", "if", "elif", "{"}  # words that can start a line before its command
-GUARDS = {"while": "do", "if": "then", "elif": "then"}  # a condition cd whose failure skips what follows
+OPENERS = {"do", "then", "else"}  # words that can start a line before its command
+# Words before a command in a condition or a group too; only the loop rule reads past them, so the
+# cd and git rules never see a condition's cd or git.
+LEADS = OPENERS | {"while", "until", "!", "if", "elif", "{"}
 LOOPS = {"while", "until"}  # loops that poll their condition; for and select open a loop too, closed by done
 MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
 PATTERN_KILLS = {"pkill", "killall"}
@@ -300,20 +302,19 @@ def guard(code, cwd):
     sh.parse()
     d = cwd  # where the next command runs; None once a cd goes where this cannot tell
     loops = []  # the loops open around the command, innermost last
-    for n, cmd in enumerate(sh.cmds):
-        lead = list(itertools.takewhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
-        args = cmd["words"][len(lead):]
-        opens = [w for w in lead if w in LOOPS] + args[:1] * (args[:1] in (["for"], ["select"]))
-        if opens and [w for w in lead if not ASSIGNMENT.match(w)][-1:] == opens[-1:] and args[:1] == ["read"]:
+    for cmd in sh.cmds:
+        lead = list(itertools.takewhile(lambda w: ASSIGNMENT.match(w) or w in LEADS, cmd["words"]))
+        inner = cmd["words"][len(lead):]
+        opens = [w for w in lead if w in LOOPS] + inner[:1] * (inner[:1] in (["for"], ["select"]))
+        if opens and [w for w in lead if not ASSIGNMENT.match(w)][-1:] == opens[-1:] and inner[:1] == ["read"]:
             opens[-1] = "read"  # while read: one pass per line read, not a poll
         loops += opens
-        if args[:1] == ["done"]:
+        if inner[:1] == ["done"]:
             loops = loops[:-1]
+        args = list(itertools.dropwhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
         name = os.path.basename(args[0]) if args else ""
         if name == "cd" and not cmd["nested"]:  # a cd in $( ) moves nothing outside it
-            then = sh.cmds[n + 1]["words"][:1] if n + 1 < len(sh.cmds) else []
-            # while cd d; do, if cd d; then: when the cd fails, nothing after it runs
-            if cmd["end"] == ";" and not (lead and then == [GUARDS.get(lead[-1])]):
+            if cmd["end"] == ";":
                 raise Unsafe("cd before ;", "If the cd fails, the rest runs where you were: use `cd <dir> || exit 1 &&`")
             # ponytail: no subshell scoping, so a cd inside ( ) still moves d for the commands after it.
             t = next((w for w in args[1:] if w == "-" or not w.startswith("-")), "~")
@@ -322,7 +323,7 @@ def guard(code, cwd):
             check_git(d, args[1:], home)
         elif home and (name in PATTERN_KILLS or (name == "kill" and kills_others(args[1:]))):
             raise Unsafe("pattern-kill", "A kill by name, of PID 0 or of a negative PID can hit another session's process: kill the PID you started ($!)")
-        elif home and name == "gh" and gh_words(args[1:])[:2] == ["pr", "checks"] and (LOOPS & set(loops) or any(w.startswith("--watch") for w in args)):
+        elif home and inner and os.path.basename(inner[0]) == "gh" and gh_words(inner[1:])[:2] == ["pr", "checks"] and (LOOPS & set(loops) or any(w.startswith("--watch") for w in inner)):
             raise Unsafe("gh pr checks loop", "Wait on CI with `swarm.sh wait-pr <PR URL>` in the background: it exits on red, on a conflict and at a deadline")
 
 
