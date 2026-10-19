@@ -226,7 +226,8 @@ outcomes_report() {
 #     jobs that were a PR's slowest the one with the highest median minutes and that median, the same
 #     for the window of as many days before it (a PR built in both counts in the later), and the
 #     change in minutes. A PR gh cannot read is left out, and a line says how many. dash's ci line is
-#     its origin repo's row of `flow --since <6 days ago>`.
+#     its origin repo's row of `flow --since <6 days ago>`, run with SWARM_CI_TIME_ONLY, which skips
+#     the row above.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's

@@ -20,11 +20,12 @@
 # (test's own median is 4.5). With FAILB=1 b's runs cannot be read: a and c alone, 7.0 min, and a
 # line that says 1 PR was left out. e: 4 min, test 2; f: 19 min on f1, test 16 (on its jobs
 # listing's second page; its older head f0's 40 min run is not its newest head's); g: 13 min, test
-# 10 (a job whose name carries a bell and a line break). Over the last 7 days (--since 6 days ago)
+# 10 (a job whose name carries a bell and a line break; its PR's URL spells the repo O/r, still o/r). Over the last 7 days (--since 6 days ago)
 # that is e and f, 11.5 min and test 9.0, against g's 13.0 and 10.0 the week before (f, built in
 # both weeks, counts in its latest alone): -1.5. dash's ci line is that row, its change from the
 # minutes it shows: ci 12m (slowest: test 9m) ▼1m vs last week; past 6 hours old it says its age. A
-# dash whose refresh fails writes no line and tries again after 10 minutes, not 6 hours.
+# dash whose refresh fails writes no line and tries again after 10 minutes, not 6 hours; a week
+# whose PRs gh cannot read is no failure, only no line.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -75,24 +76,28 @@ jobs 21-1 test 10:21 10:25 build 10:20 10:22
 jobs 31-1 lint 10:00 10:07 test 10:00 10:03
 echo "[$(run 51 e1 CI pull_request success 1 11:00 11:04)]" > "${G}/runs-e"
 jobs 51-1 test 11:00 11:02 lint 11:00 11:01
-echo "[$(run 61 f1 CI pull_request success 1 10:00 10:19),$(run 62 f1 zizmor pull_request success 1 10:00 10:01),
+echo "[$(run 61 f1 CI pull_request success 1 10:00 10:19),$(run 62 f1 zizmor pull_request success 2 10:00 10:01),
   $(run 63 f0 CI pull_request success 1 09:00 09:40)]" > "${G}/runs-f"
 jobs 61-1 lint 10:01 10:05 / test 10:02 10:18
+echo '{"conclusion":"success"}' > "${G}/attempt-62-1"
 echo "[$(run 71 g1 CI pull_request success 1 10:00 10:13)]" > "${G}/runs-g"
 jobs 71-1 'te\u0007s\nt' 10:01 10:11 build 10:00 10:03
-# gh: pr list answers each story's PR (d's on Enterprise), pr view its createdAt or its commits, run
-# list its branch's runs, and api a run's jobs or earlier attempt.
+# gh: pr list answers each story's PR (d's on Enterprise; g's with the repo spelled O/r), pr view its
+# createdAt or its commits (with BADPR=1, an object with neither), run list its branch's runs, and api
+# a run's jobs or earlier attempt. O/r is o/r: GitHub ignores the case.
 { echo '#!/bin/sh'; echo "G=${G} U=${U}"; cat <<'EOF'; } > "${dir}/bin/gh"
+echo "$*" >> "$G/gh.log"
 case "$*" in
 "pr list --head story/d"*) printf 'https://ghe.example.com/o/r/pull/9\tOPEN\t\t2026-10-01T10:00:00Z\t0\n' ;;
-"pr list --head story/"*) printf '%s/%s\tOPEN\t\t2026-10-01T10:00:00Z\t0\n' "$U" "$(echo "${4##*/}" | tr abcefg 123567)" ;;
-"pr view $U/"*" --json createdAt"*) echo 2026-10-01T10:00:00Z ;;
-"pr view $U/"*) [ -z "${SLOW:-}" ] || sleep 12; cat "$G/view-${3##*/}" ;;
+"pr list --head story/g"*) printf 'https://github.com/O/r/pull/7\tOPEN\t\t2026-10-01T10:00:00Z\t0\n' ;;
+"pr list --head story/"*) printf '%s/%s\tOPEN\t\t2026-10-01T10:00:00Z\t0\n' "$U" "$(echo "${4##*/}" | tr abcef 12356)" ;;
+"pr view https://github.com/"[oO]"/r/pull/"*" --json createdAt"*) echo 2026-10-01T10:00:00Z ;;
+"pr view https://github.com/"[oO]"/r/pull/"*) [ -z "${SLOW:-}" ] || sleep 12; if [ -n "${BADPR:-}" ]; then echo '{}'; else cat "$G/view-${3##*/}"; fi ;;
 "run list -R o/r --branch story/a "*) if [ -n "${RERUN:-}" ]; then cat "$G/rerun-a"; else cat "$G/runs-a"; fi ;;
 "run list -R o/r --branch story/b "*) [ -z "${FAIL:-}${FAILB:-}" ] || exit 1; cat "$G/runs-b" ;;
-"run list -R o/r --branch story/"*) [ -z "${FAIL:-}" ] || exit 1; cat "$G/runs-${6##*/}" ;;
-"api --paginate --slurp repos/o/r/actions/runs/"*"/attempts/"*"/jobs?per_page=100") cat "$G/jobs-$(echo "$4" | cut -d/ -f6,8 | tr / -)" ;;
-"api repos/o/r/actions/runs/"*) cat "$G/attempt-$(echo "$2" | cut -d/ -f6,8 | tr / -)" ;;
+"run list -R "[oO]"/r --branch story/"*) [ -z "${FAIL:-}" ] || exit 1; cat "$G/runs-${6##*/}" ;;
+"api --paginate --slurp repos/"[oO]"/r/actions/runs/"*"/attempts/"*"/jobs?per_page=100") cat "$G/jobs-$(echo "$4" | cut -d/ -f6,8 | tr / -)" ;;
+"api repos/"[oO]"/r/actions/runs/"*) cat "$G/attempt-$(echo "$2" | cut -d/ -f6,8 | tr / -)" ;;
 esac
 EOF
 chmod +x "${dir}/bin/gh"
@@ -123,9 +128,9 @@ check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, agai
   "${now}" "${H}"$'\n2\t3\t19.0\t0.00\t0\n'"${T}"$'\no/r\t2\t11.5\ttest\t9.0\t1\t13.0\ttest\t10.0\t-1.5'
 
 # dash's ci line is flow's row for the same week. A detached refresh runs flow and fills its cache,
-# then the next dash (past its one-minute cache) shows it. One that fails (gh reads no PR) writes
-# none, and the next dash starts another only once its <cache>.failed is 10 minutes old. A refresh
-# ends by removing its <cache>.run.
+# then the next dash (past its one-minute cache) shows it. One that fails (flow prints no ci time
+# table) writes none and stamps <cache>.failed, and the next dash starts another only once that is 10
+# minutes old. A refresh ends by removing its <cache>.run.
 git -C "${P}" remote add origin https://github.com/o/r.git && touch "${P}/docs/stories/README.md"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
@@ -138,24 +143,36 @@ dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so t
 }
 refreshed() { # waits up to 60 s for the refresh dash started to remove its <cache>.run
   for _ in $(seq 300); do compgen -G "${dir}/tmp/swarm-dash-ci-*.run" > /dev/null || return 0; sleep 0.2; done
-  echo "the ci refresh did not end" >&2
+  echo "FAIL the ci refresh ends and removes its <cache>.run"; fails=$((fails + 1))
 }
-FAIL=1 dash > /dev/null; refreshed
-check "a refresh where gh reads no PR writes no ci line" "$(dash)" ""
+stamped() { if compgen -G "${dir}/tmp/swarm-dash-ci-*.failed" > /dev/null; then echo failed; fi; }
+ci_cache() { compgen -G "${dir}/tmp/swarm-dash-ci-*" | grep -vE '\.(failed|run)$'; }
+aged() { python3 -c 'import os, sys, time; t = time.time() - float(sys.argv[1]); os.utime(sys.argv[2], (t, t))' "$1" "$(ci_cache)"; }
+BADPR=1 dash > /dev/null; refreshed
+check "a refresh that fails (flow prints no ci time table) writes no ci line, and stamps .failed" "$(dash)|$(stamped)" "|failed"
 dash > /dev/null; refreshed
 check "and within 10 minutes of it, with gh fine again, dash starts no other" "$(dash)" ""
 touch -t 202001010000 "${dir}"/tmp/swarm-dash-ci-*.failed
-dash > /dev/null; refreshed
+: > "${G}/gh.log"; dash > /dev/null; refreshed
+# f's zizmor run was rerun: ci health reads its first attempt, dash's refresh (ci time alone) never.
+check "dash's refresh skips ci health's per-attempt calls" "$(grep -c 'actions/runs/62/attempts/1$' "${G}/gh.log" || true)" 0
 want="$(awk -F'\t' '$1 == "o/r" { d = sprintf("%.0f", $3) - sprintf("%.0f", $7)
   printf "ci %.0fm (slowest: %s %.0fm) %s%dm vs last week", $3, $4, $5, (d < 0 ? "▼" : (d > 0 ? "▲" : "±")), (d < 0 ? -d : d) }' <<< "${now}")"
 check "after 10 minutes another refresh runs, and dash's ci line agrees with flow's figures for the last 7 days" "$(dash)" "${want}"
 check "which are this fixture's, the change from the minutes shown: ci 12m (slowest: test 9m) ▼1m vs last week" "${want}" \
   "ci 12m (slowest: test 9m) ▼1m vs last week"
 # A line 10 hours old, while its refresh keeps failing (a fresh .failed): dash says how old it is.
-touch "${dir}"/tmp/swarm-dash-ci-*.failed
-python3 -c 'import os, sys, time; t = time.time() - 36000; [os.utime(p, (t, t)) for p in sys.argv[1:]]' \
-  "$(compgen -G "${dir}/tmp/swarm-dash-ci-*" | grep -v '\.failed$')"
+touch "${dir}"/tmp/swarm-dash-ci-*.failed; aged 36000
 check "a line past 6 hours old says its age" "$(dash)" "${want} · 10h old"
+# A <cache>.run whose refresh is gone (its pid dead), however fresh, is taken over.
+rm "${dir}"/tmp/swarm-dash-ci-*.failed; sh -c 'echo $$' > "$(ci_cache).run"
+dash > /dev/null; refreshed
+check "a fresh <cache>.run whose pid is dead does not hold a refresh off" "$(dash)" "${want}"
+# A week whose PRs gh cannot read (FAIL=1: e's, f's and g's runs) has no row: no line, and no failure
+# to try again in 10 minutes.
+aged 25200
+FAIL=1 dash > /dev/null; refreshed
+check "a week whose PRs gh cannot read caches no line, and is no failed refresh" "$(dash)|$(stamped)" "|"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

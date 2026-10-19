@@ -3,7 +3,7 @@
 # days up to --until or today, as each PR costs 2 or more gh calls). gh gives each PR's commits and
 # its branch's workflow runs; a run counts when its head is one of the PR's commits. Then per repo, the
 # CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
-import datetime, functools, json, re, statistics, subprocess
+import datetime, functools, json, os, re, statistics, subprocess
 from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
@@ -114,7 +114,7 @@ def summary(times):
     return statistics.median(t[0] for t in times), job, mins
 
 def trend(now, before):
-    # One TSV row per repo of the PRs in now or before: its PRs, median CI minutes, slowest job and its
+    # One TSV row per repo (lowercased, as pr_key has it) of the PRs in now or before: its PRs, median CI minutes, slowest job and its
     # median minutes in now, the same in before, and the change in CI minutes; and how many PRs gh
     # could not read, which are left out.
     times, unread = {}, 0
@@ -123,7 +123,7 @@ def trend(now, before):
             t = ci_time(url)
             unread += t is None
             if t:
-                times.setdefault(GITHUB.match(url).group(1), ([], []))[i].append(t)
+                times.setdefault(GITHUB.match(url).group(1).lower(), ([], []))[i].append(t)
     rows = []
     for repo, (a, b) in sorted(times.items()):
         sa, sb = summary(a), summary(b)
@@ -144,12 +144,14 @@ if __name__ == "__main__":
         since = (end - datetime.timedelta(days=30)).isoformat()
         print(f"PRs from the last 30 days, {since} on; --since sets the start")
     now = windowed(since, until)
-    got = health(now)
-    if got is None:
-        print("ci health: gh failed")
-    else:
+    # SWARM_CI_TIME_ONLY (dash's ci line, which reads the ci time table alone) skips this row and its
+    # per-attempt calls.
+    got = None if os.environ.get("SWARM_CI_TIME_ONLY") else health(now)
+    if got is not None:
         print("prs\theads\tci_min_median\tred_runs_per_pr\tflakes")
         print("\t".join(got))
+    elif not os.environ.get("SWARM_CI_TIME_ONLY"):
+        print("ci health: gh failed")
     # The window before: as many days, up to the day before since; a PR built in both windows counts
     # in this one alone, by its latest build. A PR gh cannot read is left out here, so the PRs that
     # answered still count (dash's ci line reads this table).
