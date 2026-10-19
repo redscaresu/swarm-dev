@@ -359,6 +359,16 @@ watch_prs() {
     [[ " ${full[*]-} " == *" ${r} "* ]] || full+=("${r}")
   done
   repos=("${full[@]}")
+  # homes: "<slug>=<owner/repo>" for each of these stories, its own repo (repo:, or the project), so a
+  # red head on another repo's story/<slug> PR is never this <slug>'s (ci_red_scan).
+  local homes="" home
+  if [[ -n "${CFG_escalate_ladder:-}" && -n "${heads}" ]]; then
+    for f in ${stories[@]+"${stories[@]}"}; do
+      src="$(repo_dir "$(fm "${f}" repo)")" \
+        && home="$(gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner 2>/dev/null)" \
+        && homes+=" $(basename "${f}" .md)=${home}"
+    done
+  fi
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   while :; do
     for repo in "${repos[@]}"; do
@@ -368,9 +378,9 @@ watch_prs() {
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
-        # The ladder's red heads, judged on every poll of a watch that owns these stories: a step-up
-        # tried is said, and the watch returns.
-        if [[ -n "${heads}" ]] && ci_red_scan "${repo}" "${sha}" "${br#story/}"; then return 0; fi
+        # The ladder's red heads, judged on every poll of a watch that owns these stories, on a PR in
+        # the story's own repo: a step-up tried is said, and the watch returns.
+        if [[ " ${homes} " == *" ${br#story/}=${repo} "* ]] && ci_red_scan "${repo}" "${sha}" "${br#story/}"; then return 0; fi
         grep -qx "done ${sha}" "${seen}" && continue
         read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
@@ -423,7 +433,7 @@ for a in json.load(sys.stdin)["result"]["agents"]:
 # appended to, one short line at a time, so two watches at once lose none.
 RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 
-# ci_red_scan <owner/repo> <head> <slug> — with escalate_ladder set: note <head> as seen, the first
+# ci_red_scan <owner/repo> <head> <slug> — watch's, with escalate_ladder set: note <head> as seen, the first
 # time any watch sees it, then judge with ci_gate head every head first seen in this build
 # (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
 # is final, and pending or a failed read is judged again next poll. A head that was there before the
@@ -434,7 +444,6 @@ RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 # ponytail: ci_gate reads a head still running on each poll; skip it there if watch's gh calls matter.
 ci_red_scan() {
   local since now h rc v n out
-  [[ -n "${CFG_escalate_ladder:-}" ]] || return 1
   since="$(build_started "$3")"; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   mkdir -p "${RED_HEADS%/*}"; touch "${RED_HEADS}"
   # A head is noted once, the first time any watch sees it: one there before the build is never this

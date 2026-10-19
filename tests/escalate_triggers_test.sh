@@ -47,6 +47,7 @@ cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
   "pr list"*"--state open --json number"*) echo "5 $(cat "$H/head") story/s1 MERGEABLE 10" ;;
+  "repo view"*other*) echo o/other ;;
   "repo view"*) echo o/proj ;;
   "api --paginate"*check-runs*) sha=$(echo "$*" | sed 's|.*/commits/\([^/]*\)/.*|\1|'); c=$(cat "$H/runs-$sha" 2>/dev/null || echo failure)
     echo "{\"total_count\":1,\"check_runs\":[{\"name\":\"test\",\"status\":\"completed\",\"conclusion\":\"$c\",\"html_url\":\"https://ci/1\"}]}" ;;
@@ -113,6 +114,11 @@ for ladder in sonnet,opus,fable ""; do
       "$(stepped)|$(grep -q 'was not told: these were findings round 3' <<< "${out}" && echo yes)|$(grep -qx 'fix it' "${P}/.swarm/briefs/s1.md" && echo yes)"
   else
     check "ladder '${ladder}': a third findings tell is sent" "|yes" "$(stepped)|$(grep -q 'told s1' <<< "${out}" && echo yes)"
+    # With the ladder off a step-up lock means nothing: a close goes on and counts the attempt.
+    fresh "${ladder}" idle; mkdir -p "${P}/.swarm/locks/step-up-s1"; echo "$$" > "${P}/.swarm/locks/step-up-s1/pid"
+    out="$(run close s1)" && rc=0 || rc=$?
+    check "ladder '${ladder}': a held step-up lock does not stop a close" "0|no|1" \
+      "${rc}|$(grep -q 'another step-up' <<< "${out}" && echo yes || echo no)|$(attempts)"
   fi
 
   want="ok (ci-red-2: sonnet -> opus)"; [[ -n "${ladder}" ]] || want=""
@@ -173,6 +179,12 @@ for ladder in sonnet,opus,fable ""; do
     # Two red heads on a PR whose builder is closed step nothing: that PR is the lead's.
     fresh "${ladder}" idle; : > "${ROOT}/agents"; heads aaaa1111 bbbb2222
     check "two red heads with no builder open step nothing" "" "$(stepped)"
+    # A red head on another watched repo's story/s1 PR is not s1's: s1's repo is the project.
+    fresh "${ladder}" idle; mkdir -p "${ROOT}/other"; git -C "${ROOT}/other" init -q; git -C "${ROOT}/other" remote add origin "${ROOT}/other-origin.git"
+    echo "repos_dir = ${ROOT}" >> "${P}/.claude/swarm/config"
+    for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch --backlog other >/dev/null || true; done
+    rm -rf "${ROOT}/other"
+    check "two red heads on another repo's story/s1 PR step nothing up" "" "$(stepped)"
     # The lead's bare watch leaves the story to its own conductor.
     fresh "${ladder}" idle
     for h in aaaa1111 bbbb2222; do echo "${h}" > "${ROOT}/head"; run watch >/dev/null || true; done

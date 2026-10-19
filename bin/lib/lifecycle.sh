@@ -586,6 +586,8 @@ build_started() {
 # (another step-up came first, no rung above, a partway failure this build) it runs nothing and returns 1.
 ladder_step() {
   local since lock="${PROJECT_DIR}/.swarm/locks/step-up-$1" rc=1
+  # With the ladder off nothing is due, and no lock is taken: a step-up never runs.
+  [[ -n "${CFG_escalate_ladder:-}" ]] || return 1
   since="$(build_started "$1")"
   step_lock "${lock}" || return "${STEP_UP_BUSY}"
   if step_due "$1" "${since}"; then
