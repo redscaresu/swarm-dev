@@ -351,10 +351,11 @@ check "the review brief's Out of scope holds only what a change outside the touc
   "$(has "raised that only a" "${brief}")"
 check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
   "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
-# marked_at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>".
-marked_at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "$1" "${n}" "$(sed -n "${n}p" "$1")"; }
+# marked_at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>",
+# <file> relative to the project.
+marked_at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "${1#"${p}"/}" "${n}" "$(sed -n "${n}p" "$1")"; }
 for l in "$(marked_at "${b}/epics/rv.md" RV-DECISION)" "$(marked_at "${b}/epics/rv.md" "Fewer parts")"; do
-  check "both briefs carry the epic's marked line verbatim with its path:line: ${l##*.md:}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
+  check "both briefs carry the epic's marked line verbatim with its project-relative path:line: ${l}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
 READ="Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
 check "both briefs tell the reviewer to read each decision in full at its line" "yes|yes" "$(has "${READ}" "${brief}")|$(has "${READ}" "${fbrief}")"
@@ -364,7 +365,7 @@ for w in RV-SUB-ONE RV-CODE RV-FENCE RV-FILLER; do
 done
 check "a mark in the story's Done when is not a decision: RV-DW-QUOTE is only in the Done when each brief quotes" "1|1" \
   "$(grep -c RV-DW-QUOTE <<< "${brief}" || true)|$(grep -c RV-DW-QUOTE <<< "${fbrief}" || true)"
-NOTE="1 more decision is left out of this brief (past 2000 bytes): read ${b}/stories/rv1.md."
+NOTE="1 more decision is left out of this brief (past 2000 bytes): read ${b#"${p}"/}/stories/rv1.md."
 check "both briefs say how many decisions were left out and where they are" "yes|yes" "$(has "${NOTE}" "${brief}")|$(has "${NOTE}" "${fbrief}")"
 utf8() { python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8"); print("yes")' 2>/dev/null || echo no; }
 check "a 2000-byte marked line of two-byte characters is cut at 1500 bytes on a character boundary, with an ellipsis: both briefs stay valid UTF-8" "yes|yes|yes|1|0" \

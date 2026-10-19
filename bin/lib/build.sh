@@ -552,11 +552,12 @@ DECISION_MAX_BYTES=1500
 DECISIONS_MAX_BYTES=2000
 
 # user_decisions <file>... — each line of the files that holds a `(user, <date>` mark, verbatim, as
-# `- <path>:<line>: <text>`, while they fit in DECISIONS_MAX_BYTES. A mark inside a fenced block (a
+# `- <path>:<line>: <text>` (the path relative to the project), while they fit in DECISIONS_MAX_BYTES. A mark inside a fenced block (a
 # ``` line toggles it), an inline code span or the first file's (the story's) **Done when** section,
 # which the brief already quotes, is not a decision; an epic's decisions sit in its Done when.
 user_decisions() {
-  LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" -v all="${DECISIONS_MAX_BYTES}" -v story="$1" '
+  LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" -v all="${DECISIONS_MAX_BYTES}" -v story="$1" -v root="${PROJECT_DIR}/" '
+    function rel(f) { return index(f, root) == 1 ? substr(f, length(root) + 1) : f }
     function marked(s) { gsub(/`[^`]*`/, "", s); return s ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ }
     FNR == 1 { fence = 0; dw = 0 }
     /^ *```/ { fence = !fence; next }
@@ -570,9 +571,9 @@ user_decisions() {
         for (n = max; n > 0 && substr(d, n + 1, 1) >= "\200" && substr(d, n + 1, 1) < "\300"; n--) ;
         d = substr(d, 1, n) "…"
       }
-      d = (out == "" ? "" : "\n") "- " FILENAME ":" FNR ": " d
+      d = (out == "" ? "" : "\n") "- " rel(FILENAME) ":" FNR ": " d
       if (length(out) + length(d) <= all) out = out d
-      else { left++; if (!(FILENAME in named)) { named[FILENAME]; where = where (where == "" ? "" : ", ") FILENAME } }
+      else { left++; if (!(FILENAME in named)) { named[FILENAME]; where = where (where == "" ? "" : ", ") rel(FILENAME) } }
     }
     END {
       if (out != "") print out
