@@ -252,18 +252,15 @@ next_step() {
 }
 
 # queued_lines <conductor> — queued_prs's lines for the PRs the conductor's watch covers (its epic's,
-# or the backlog's), each repo on its own: one that cannot be resolved is warned of on stderr and
-# skipped. Nothing when the scope cannot be read (watch_scope dies): next goes on.
+# or the backlog's), once per repo (watch_repos warn: one that cannot be resolved is warned of and
+# skipped). Nothing when the scope cannot be read (watch_scope dies): next goes on.
 queued_lines() {
-  local e scope name r
+  local e scope r
   e="$(conduct_epic "$1")"
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
   (
-    watch_scope "${scope[@]}"
-    for name in "${WATCH_NAMES[@]}"; do
-      r="$(repo_slug "${name}" 2>/dev/null)" || { echo "warning: ${r}, so its PRs waiting for a review are unknown" >&2; continue; }
-      queued_prs "${r}" "${WATCH_HEADS}"
-    done
+    watch_scope "${scope[@]}"; watch_repos warn
+    for r in "${WATCH_REPOS[@]}"; do queued_prs "${r}" "${WATCH_HEADS}"; done
   ) || true
 }
 

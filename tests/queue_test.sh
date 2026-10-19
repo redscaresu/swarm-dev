@@ -113,7 +113,16 @@ check "with a review agent on that head, watch does not report it, and reads no 
 check "with a review agent on that head, next prints no queued line" "(none)" "$(nextq)"
 echo h0 > "${p}/.swarm/reviews/s1.head"
 check "a review agent on an earlier head does not count" "${Q31}" "$(nextq)"
+# The findings file for h1 decides once it exists: a pass counts, a head moved: or no ## Findings does not.
+echo h1 > "${p}/.swarm/reviews/s1.head"
+printf 'head: h1\nhead moved: the worktree moved\n## Findings\nNone.\n' > "${p}/.swarm/reviews/s1.md"
+check "a review that found the head moved is no review, even with a ## Findings section, so the PR is queued" "${Q31}" "$(nextq)"
+printf 'head: h1\n' > "${p}/.swarm/reviews/s1.md"
+check "a findings file with no ## Findings section is no review, so the PR is queued" "${Q31}" "$(nextq)"
 rm "${p}/.swarm/reviews/s1.head"
+printf 'head: h1\n## Findings\nNone.\n' > "${p}/.swarm/reviews/s1.md"
+check "a passing findings file for the head counts as its review, with no head file" "(none)" "$(nextq)"
+rm "${p}/.swarm/reviews/s1.md"
 
 green 29
 check "at 29 minutes, watch does not report it" "(still watching)" "$(watchrun)"
@@ -138,7 +147,15 @@ echo "{\"total_count\":2,\"check_runs\":[{\"status\":\"completed\",\"conclusion\
 {\"total_count\":2,\"check_runs\":[{\"status\":\"in_progress\",\"conclusion\":null,\"completed_at\":null}]}" > "${ROOT}/runs-h1.json"
 check "a check run still pending on a later page keeps the PR off the queue" "(none)" "$(nextq)"
 echo '{"total_count":0,"check_runs":[]}' > "${ROOT}/runs-h1.json"
-check "a head with no check runs is not green, so not queued" "(none)" "$(nextq)"
+echo '{"total_count":1,"statuses":[{"state":"success","context":"ext","updated_at":"2020-01-01T00:00:00Z"}]}' > "${ROOT}/status-h1.json"
+check "a head with no check runs is not green, so not queued, even with a green commit status" "(none)" "$(nextq)"
+
+# A story whose repo: names the project's own repo: its PRs are listed and printed once.
+green 31
+printf -- '---\nstatus: ready\nkind: code\nepic: e1\nrepo: proj\n---\n' > "${p}/docs/stories/s4.md"
+: > "${ROOT}/gh.log"
+check "a story naming the project's own repo prints each queued line once, from one PR list" "${Q31}|1" "$(nextq)|$(calls 'pr list')"
+rm "${p}/docs/stories/s4.md"
 
 # Two more repos: gone, which next cannot resolve, and zsvc after it, with a green PR #9 (head h9). The
 # bad one is warned of on stderr, and the repos on either side of it still count.

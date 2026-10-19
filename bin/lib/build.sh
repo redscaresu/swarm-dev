@@ -495,7 +495,7 @@ build_story() {
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then), so the conductor reads only this head's. Once started, the head
-# goes in .swarm/reviews/<slug>.head: watch and next count that head as having a review (queued_line).
+# goes in .swarm/reviews/<slug>.head, which review_on_head reads and review_ended clears.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
@@ -537,6 +537,31 @@ review_agent() {
   fi
   rm -f "${out}.prev"
   echo "${head}" > "${out%.md}.head"
+}
+
+# review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is
+# <sha>, and it has a ## Findings section and no head moved: line (review_rule's test).
+review_pass() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"
+}
+
+# review_on_head <slug> <sha> — true while <sha> has a review agent's review, for watch and next
+# (queued_line): its findings file for <sha> is a pass, or, with no file for <sha> yet, a review agent
+# started on it (.swarm/reviews/<slug>.head) and has not been closed with no pass (review_ended).
+review_on_head() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  if grep -qx "head: $2" "${f}" 2>/dev/null; then review_pass "$1" "$2"; return; fi
+  [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" ]]
+}
+
+# review_ended <slug> — on closing review-<slug>: its review is over, so drop the head it started on
+# unless the review passed there. A head whose review timed out, waited on a prompt, wrote no file or
+# found the head moved can then be queued.
+review_ended() {
+  local h="${PROJECT_DIR}/.swarm/reviews/$1.head"
+  [[ -f "${h}" ]] || return 0
+  review_pass "$1" "$(cat "${h}")" || rm -f "${h}"
 }
 
 # review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents), that their

@@ -358,16 +358,31 @@ repo_slug() {
     || { echo "no GitHub origin for ${src}"; return 1; }
 }
 
+# watch_repos die|warn — set WATCH_REPOS to WATCH_NAMES resolved (repo_slug), each owner/name once: a
+# story's repo: can name the project's own repo. One that cannot be resolved stops watch (die), or for
+# next (warn) is warned of on stderr and left out.
+watch_repos() {
+  local name r
+  WATCH_REPOS=()
+  for name in "${WATCH_NAMES[@]}"; do
+    if [[ "$1" == die ]]; then
+      r="$(repo_slug "${name}")" || die "${r}"
+    elif ! r="$(repo_slug "${name}" 2>/dev/null)"; then
+      echo "warning: ${r}, so its PRs waiting for a review are unknown" >&2; continue
+    fi
+    [[ " ${WATCH_REPOS[*]-} " == *" ${r} "* ]] || WATCH_REPOS+=("${r}")
+  done
+}
+
 # queued_line <owner/repo> <n> <sha> <branch> — "queued: <repo> #<n> <branch> green <m>m with no review
 # on <sha7>" for an open, mergeable PR (the caller's to check; an open PR has not merged) whose story an
-# agent builds (agent_kind: a lead story's PR is the lead's), with no review agent started on <sha>
-# (review_agent's .swarm/reviews/<slug>.head), and green by ci_gate's rule for queue_minutes or more
-# (ci_gate age). The file checks come first, so a reviewed head costs no gh call. Nothing otherwise,
-# or when gh cannot tell.
+# agent builds (agent_kind: a lead story's PR is the lead's), with no review agent's review on <sha>
+# (review_on_head), and green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
+# checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
 queued_line() {
   local slug="${4#story/}" m
   if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
-  [[ "$(cat "${PROJECT_DIR}/.swarm/reviews/${slug}.head" 2>/dev/null)" != "$3" ]] || return 0
+  if review_on_head "${slug}" "$3"; then return 0; fi
   m="$(ci_gate age "$1" "$3" 2>/dev/null)" || return 0
   # shellcheck disable=SC2154 # assigned in another file
   if [[ "${m}" =~ ^[0-9]+$ ]] && (( m >= CFG_queue_minutes )); then echo "queued: $1 #$2 $4 green ${m}m with no review on ${3:0:7}"; fi
@@ -397,13 +412,9 @@ queued_prs() {
 # lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
 # poll finds that agent no longer waiting (state in .swarm/state).
 watch_prs() {
-  local WATCH_HEADS WATCH_NAMES repos=() name repo
-  watch_scope "$@"
-  for name in "${WATCH_NAMES[@]}"; do
-    repo="$(repo_slug "${name}")" || die "${repo}"
-    [[ " ${repos[*]-} " == *" ${repo} "* ]] || repos+=("${repo}")
-  done
-  local heads="${WATCH_HEADS}" seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
+  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo
+  watch_scope "$@"; watch_repos die
+  local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   while :; do
     for repo in "${repos[@]}"; do

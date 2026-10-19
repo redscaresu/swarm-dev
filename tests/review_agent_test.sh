@@ -181,6 +181,15 @@ check "and review-agent s4 again refuses to replace it while it has no findings 
 for s in s1 s2; do done_review "${s}"; done
 wait
 
+# --- Closing a review agent ends its review: the head it started on stays reviewed for watch and next
+# only when its findings file passed there. s1 passed; s3's file has no ## Findings; s4 wrote none.
+printf 'head: %s\n## Findings\nNone.\n' "${HEAD_SHA}" > "${p}/.swarm/reviews/s1.md"
+head_file() { if [[ -f "${p}/.swarm/reviews/$1.head" ]]; then cat "${p}/.swarm/reviews/$1.head"; else echo none; fi; }
+check "before any close, each started review agent's head is recorded" "${HEAD_SHA}|${HEAD_SHA}|${HEAD_SHA}" "$(head_file s1)|$(head_file s3)|$(head_file s4)"
+for s in s1 s3 s4; do run close "review-${s}" >/dev/null; done
+check "closing a review agent keeps a passing review's head, and drops one with no ## Findings or no file" "${HEAD_SHA}|none|none" \
+  "$(head_file s1)|$(head_file s3)|$(head_file s4)"
+
 # fast_wait <name> — wait on <name> (10s timeout, polling each second): its state, and fast when it
 # returned within 5s, well before a wait held to the timeout would (a wait costs nearly 2s on a slow
 # machine).
