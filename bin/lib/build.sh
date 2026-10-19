@@ -760,12 +760,13 @@ A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, w
 login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> resume <file>\`) and wait on it
 again with \`swarm.sh wait <slug>\` in the background.
 
-A \`wait\` that prints a line starting \`stuck:\` (exit 4) is not a stall: never close the builder for
-it. \`stuck: api error\` is a turn that stopped on an API error (with goal off, after wait told it to
-carry on three times; with goal on, read the cause with the goal rule). \`stuck: no output for <N>m
-(<pane>)\` is a pane unchanged that long with no background task running. Read the pane (\`herdr
-agent read <pane>\`); if the builder only stopped, tell it to resume and wait on it again, and
-otherwise list it for the lead.
+A \`wait\` that prints a line starting \`stuck:\` (exit 4) is not a stall: never close the builder as
+stalled for it. \`stuck: no output for <N>m (<pane>)\` is a pane unchanged that long with no
+background task running. \`stuck: api error\` is a turn that stopped on an API error after wait told
+it to carry on three times. For either, read the pane (\`herdr agent read <pane>\`); if the builder
+only stopped, tell it to resume and wait on it again, and otherwise list it for the lead. With goal
+on, wait never tells a builder to carry on: its \`stuck: api error\` is the goal rule's to read, and
+the goal rule's close for it stands.
 EOF
 }
 
@@ -793,7 +794,7 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
   story for the lead (\`kind: lead\`, \`held_for: paused\`): list it for the lead, as for cleared-on-error.
 - cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
   stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
-  ends on an API error; or \`swarm.sh story\` failed on a refused goal.
+  ends on an API error (wait prints \`stuck: api error\` for it); or \`swarm.sh story\` failed on a refused goal.
   Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
   the lead, who decides whether to build it again. The close holds the story for the lead
   (\`kind: lead\`, \`held_for: cleared-on-error\`), so no wave builds it until the lead lifts the hold.

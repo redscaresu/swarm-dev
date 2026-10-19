@@ -65,9 +65,24 @@ def bg_running(log, name, projects):
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
         try:
             for l in open(path, encoding="utf-8", errors="replace"):
-                live.update(re.findall(r"Command running in background with ID: (\w+)", l))
-                if "<task-notification>" in l:
-                    live.difference_update(re.findall(r"<task-id>(\w+)</task-id>", l))
+                if not any(k in l for k in ("backgroundTaskId", "async_launched", "taskId", "<task-notification>")):
+                    continue
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                if not isinstance(d, dict) or d.get("isSidechain"):
+                    continue
+                r = d.get("toolUseResult")
+                if isinstance(r, dict):
+                    live.update(str(r[k]) for k in ("backgroundTaskId", "taskId") if isinstance(r.get(k), str))
+                    if r.get("status") == "async_launched" and isinstance(r.get("agentId"), str):
+                        live.add(r["agentId"])
+                    continue
+                text = json.dumps([(d.get("message") or {}).get("content"), (d.get("attachment") or {}).get("prompt")])
+                for n in re.findall(r"<task-notification>.*?</task-notification>", text):
+                    if "<status>" in n:   # an end; a check-in on a running shell carries none
+                        live.difference_update(re.findall(r"<task-id>([\w-]+)</task-id>", n))
         except OSError:
             return False
         break

@@ -240,8 +240,20 @@ check "a resumed agent whose turn then goes on: wait sends one resume and keeps 
 # With goal on, a builder is never resumed: wait returns stuck at once, the transcript still ending on the error.
 printf 'goal = 3\n' > "${p}/.claude/swarm/config"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
-check "with goal on, an API-error stop is not resumed: wait returns stuck: api error and sends nothing" "stuck: api error|exit 4|0" "${got%|*}|$(prompts)"
+check "with goal on, a builder's API-error stop is not resumed: wait returns stuck: api error and sends nothing" "stuck: api error|exit 4|0" "${got%|*}|$(prompts)"
+# A conductor (its newest agents.tsv line) is resumed with goal on, as with it off.
+printf '2026-10-16\tconduct\ta\tclaude\topus\thigh\tsess-a2\n' >> "${p}/.swarm/agents.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "with goal on, a conductor's API-error stop is still resumed 3 times" "stuck: api error|exit 4|3" "${got%|*}|$(prompts)"
+printf '2026-10-16\tcode\ta\tclaude\topus\thigh\tsess-a2\n' >> "${p}/.swarm/agents.tsv"
 : > "${p}/.claude/swarm/config"
+# An expired login behind the API error (its transcript's last entry): auth, never resumed.
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+printf '%s\n' '{"type":"assistant","error":"authentication_failed","message":{"content":[{"type":"text","text":"Login expired · Please run /login"}]}}' > "${tr}"
+: > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "a busy session's API-error stop on an expired login returns auth and sends nothing" "auth|exit 0|0" "${got%|*}|$(prompts)"
+rm -f "${tr}"
 echo "findings" > "${ROOT}/tell.txt"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(run tell a resume "${ROOT}/tell.txt")" || true
 check "tell delivers to a busy session whose turn stopped on an API error" "told a|1" "${got}|$(prompts)"
@@ -254,19 +266,31 @@ check "the same pane without the API Error: line: tell refuses" "yes|0" "$(refus
 check "an indented API Error: line (a reply quoting one) is no stop: tell refuses" "yes|0" \
   "$(refused '⏺ The log said:' '  API Error: Connection dropped (ECONNRESET)' '' '> ')"
 check "a prompt typed after the API error ends the stop: tell refuses" "yes|0" \
-  "$(refused '⏺ API Error: Connection dropped (ECONNRESET)' '' '> carry on' '' '> ')"
+  "$(refused '⏺ API Error: Connection dropped (ECONNRESET)' '' '> carry on' '' '────────' '> ' '────────')"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '' '────────' '> Try "carry on where you stopped"' '────────' '  ? for shortcuts' > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"; got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "a suggestion in the input box under the API error is no prompt: tell delivers" "told a|1" "${got}|$(prompts)"
 # A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
 # stuck: no output (exit 4), naming the pane, and nothing sent. Not while its transcript shows a
 # background task it has not been told the end of.
 echo working > "${ROOT}/hstatus"; printf '%s\n' '⏺ Waiting on CI.' > "${ROOT}/screen"
 mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
-printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","content":"Command running in background with ID: bx1. Output is being written to: /tmp/x"}]}}' > "${tr}"
+started() { printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":%s}\n' "$1" >> "${tr}"; }
+told() { # <task id> [status] — a task-notification for it; with no status, a check-in on a running task
+  printf '{"type":"user","message":{"content":"<task-notification>\\n<task-id>%s</task-id>\\n%s</task-notification>"}}\n' "$1" "${2:+<status>$2</status>\\n}" >> "${tr}"
+}
 quiet() { local got; got="$(SWARM_WAIT_STARTED=$(($(date +%s) - 7200)) SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"; echo "${got%|*}|$(prompts)"; }
-: > "${ROOT}/herdr.log"
-check "a quiet pane whose session runs a background task is no stop: wait times out" "busy|exit 1|0" "$(quiet)"
-printf '%s\n' '{"type":"user","message":{"content":"<task-notification>\n<task-id>bx1</task-id>\n<status>completed</status>\n</task-notification>"}}' >> "${tr}"
-check "a pane unchanged past stall_minutes, its background task done: wait returns stuck: no output naming the pane, and sends nothing" \
+: > "${tr}"; started '{"backgroundTaskId":"bx-1"}'; : > "${ROOT}/herdr.log"
+check "a quiet pane whose session runs a background shell is no stop: wait times out" "busy|exit 1|0" "$(quiet)"
+told bx-1
+check "a check-in on the running shell (no status) ends nothing: wait still times out" "busy|exit 1|0" "$(quiet)"
+told bx-1 completed
+check "a pane unchanged past stall_minutes, its background task (a hyphenated id) done: wait returns stuck: no output naming the pane, and sends nothing" \
   "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
+started '{"status":"async_launched","agentId":"a-7"}'
+check "a quiet pane whose session waits on an async subagent is no stop" "busy|exit 1|0" "$(quiet)"
+told a-7 completed; started '{"taskId":"m-3"}'
+check "a quiet pane whose session runs a monitor (a taskId) is no stop" "busy|exit 1|0" "$(quiet)"
 rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${tr}"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"

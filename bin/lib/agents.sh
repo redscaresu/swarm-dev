@@ -25,9 +25,10 @@
 #     pane and its <local-command-stdout>). A transcript that cannot be read is not
 #     expired. Never the pane.
 #   bg_running(log, name, projects) -> True when <name>'s transcript (as login_expired finds it) has a
-#     background task its Bash tool started ("Command running in background with ID: <id>") with no
-#     <task-notification> for that <task-id> since: the session waits on it, so its quiet pane is no
-#     stall. A transcript that cannot be read has none.
+#     background task it started (a tool result's backgroundTaskId or taskId, or an async_launched
+#     agentId) with no <task-notification> for that <task-id> carrying a <status> since: the session
+#     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
+#     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
 #   shown_state(a, name, s, log, projects) -> agent_state, except that an idle Claude agent whose
 #     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle.
 #     For the views (status, dash); wait reads login_expired itself.
@@ -548,10 +549,11 @@ pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || tru
 
 # api_stopped <name> <target> — succeed when herdr says <name> is done or idle and its pane's last
 # event is Claude Code's own error line, `⏺ API Error: ...` at the left margin (● on Linux): no reply
-# (⏺ or ●) and no prompt (`> text`) after it. Its session can still read busy then: background
-# shells it left open keep it so.
+# (⏺ or ●) and no submitted prompt (`> text`) after it. The input box, from its first border line
+# (─ at the margin), is not read: a suggestion or half-typed text there is no prompt. Its session
+# can still read busy then: background shells it left open keep it so.
 api_stopped() {
-  pane_text "$2" | awk '/^(⏺|●) API Error:/ { e = 1; next } /^(⏺|●)/ || /^(>|❯) +[^ ]/ { e = 0 } END { exit !e }' \
+  pane_text "$2" | awk '/^(╭|╰)?─/ { exit } /^(⏺|●) API Error:/ { e = 1; next } /^(⏺|●)/ || /^(>|❯) +[^ ]/ { e = 0 } END { exit !e }' \
     && [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]
 }
 
@@ -565,13 +567,21 @@ resume_agent() {
   rm -f "${f}"; return "${rc}"
 }
 
-# bg_running <name> — succeed when <name>'s Claude session has a background task it started and has
-# not yet been told the end of (panes.py's bg_running, over its transcript): it is waiting on it.
+# bg_running <name> — succeed when <name>'s Claude session has a background task (a shell, an async
+# subagent, a monitor) it started and has not yet been told the end of (panes.py's bg_running, over
+# its transcript): it is waiting on it.
 bg_running() {
   SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
+}
+
+# is_builder <name> — succeed when <name>'s newest agents.tsv line has a building role (BUILDER_ROLES).
+is_builder() {
+  local r
+  r="$(awk -F'\t' -v n="$1" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
+  [[ -n "${r}" && " ${BUILDER_ROLES} " == *" ${r} "* ]]
 }
 
 # pane_quiet <name> <target> — succeed when the agent's pane has not changed for stall_minutes and it
@@ -781,8 +791,10 @@ settle() {
 # An agent whose turn stopped on an API error (settle's "api error", or idle and api_stopped) is sent
 # API_RESUME_MSG and waited on again, logged as a nudge, up to API_RESUMES stops in a row (a turn that
 # ends otherwise resets the count); the next one, or a resume not taken up, returns "stuck: api error"
-# and WAIT_STUCK. With goal on it is never resumed: the conductor reads the stop from the transcript,
-# which must still end on the error (goal_rule's cleared-on-error), so it returns stuck at once.
+# and WAIT_STUCK. With goal on a builder (is_builder) is never resumed: the conductor reads the stop
+# from the transcript, which must still end on the error (goal_rule's cleared-on-error), so it returns
+# stuck at once. A conductor or review agent is resumed as with goal off. An expired login
+# (login_expired) on a busy session's API-error stop is auth, as on an idle one, and never resumed.
 # A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
@@ -798,14 +810,14 @@ wait_agent() {
       [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
-    if [[ "${status}" == idle ]] && login_expired "${name}"; then
+    if [[ "${status}" == idle || "${status}" == "api error" ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
       login_incident "${name}"
       echo auth; return 0
     fi
     if [[ "${status}" == "api error" ]] || { [[ "${status}" == idle ]] && api_stopped "${name}" "${target}"; }; then
       # shellcheck disable=SC2154 # assigned in another file
-      if [[ "${CFG_goal}" != off || ${resumes} -ge ${API_RESUMES} ]] || ! resume_agent "${name}" "${target}"; then
+      if { [[ "${CFG_goal}" != off ]] && is_builder "${name}"; } || [[ ${resumes} -ge ${API_RESUMES} ]] || ! resume_agent "${name}" "${target}"; then
         echo "stuck: api error"; return "${WAIT_STUCK}"
       fi
       resumes=$((resumes + 1)); wake=1
