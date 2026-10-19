@@ -54,8 +54,12 @@ case "$1 $2" in
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
-  # A run's failed-job log: --log-failed's "<job>\t<step>\t<timestamp> <line>" lines.
-  "run view") serve "run.$3.log" ;;
+  # A run's status (run.<id>.status, read like any fixture), or its failed-job log: --log-failed's
+  # "<job>\t<step>\t<timestamp> <line>" lines, which hang with ${FX}/run.hang.
+  "run view") case "$*" in
+                *"--json status"*) serve "run.$3.status" ;;
+                *) [ ! -e "${FX}/run.hang" ] || sleep 60; serve "run.$3.log" ;;
+              esac ;;
   # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
   "pr diff") case "$*" in *"--color never"*) cat "${FX}/diff" ;; *) sed "s/^/$(printf '\033')[1m/" "${FX}/diff" ;; esac ;;
   api*)
@@ -217,16 +221,41 @@ check "red main: prints fix-main naming the check and the commit" said "fix-main
 check "red main: main-red <sha> <checks>" logged "^main-red ${M} .*e2e (failure)"
 check "red main: writes the fix-main story, kind code and ready" grep -qx 'kind: code' "${FM}"
 check "red main with no Actions run: the story says it found no FAIL line" grep -qF "no FAIL line" "${FM}"
-# A failed Actions job: its FAIL line goes into fix-main's output and the story's body.
-fresh; checks "${FX}/${M}.checks" '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/99/job/5"}'
-printf 'test\tRun tests\t2026-10-18T10:00:00.1234567Z ok   next names a plan\ntest\tRun tests\t2026-10-18T10:00:01.1234567Z FAIL a planted failure: want x\n' > "${FX}/run.99.log"
+# A failed Actions job: once its run has completed (in progress on the first read), its FAIL line,
+# colour off, goes into fix-main's output and, indented, into the story's body with the run's URL.
+# The story carries the merged story's repo:.
+failed_job() { # [fixture lines] — main red from run 99's job, its log the given lines
+  fresh; item s "status: review" "prs: ${URL}" "repo: svc"
+  checks "${FX}/${M}.checks" '{"name":"test","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/99/job/5"}'
+  echo in_progress > "${FX}/run.99.status.1"; echo completed > "${FX}/run.99.status"
+  printf '%b' "$@" > "${FX}/run.99.log"
+}
+failed_job 'test\tRun tests\t2026-10-18T10:00:00.1234567Z ok   next names a plan\n' \
+  'test\tRun tests\t2026-10-18T10:00:01.1234567Z \033[31mFAIL\033[0m a planted failure: want x\n' \
+  'test\tRun tests\t2026-10-18T10:00:02.1234567Z FAIL ``` a fence in a log line\n'
 merge "${URL}"
-check "red main from a failed job: fix-main prints its FAIL line" said "  FAIL a planted failure: want x"
-check "red main from a failed job: the story has the FAIL line, not the passing one" \
-  bash -c "grep -qxF 'FAIL a planted failure: want x' '${FM}' && ! grep -q 'next names a plan' '${FM}'"
-check "red main from a failed job: the log was read by its run id" grep -qF "run view 99 --repo o/r --log-failed" "${ROOT}/gh.log"
+check "red main from a failed job: fix-main prints its FAIL line, colour off" said "  FAIL a planted failure: want x"
+check "red main from a failed job: the story has the FAIL lines indented, not the passing one" \
+  bash -c "grep -qxF '    FAIL a planted failure: want x' '${FM}' && grep -qxF '    FAIL \`\`\` a fence in a log line' '${FM}' && ! grep -q 'next names a plan' '${FM}'"
+check "red main from a failed job: the story names the failed run" grep -qF "https://github.com/o/r/actions/runs/99" "${FM}"
+check "red main from a failed job: the story is in the merged story's repo" grep -qx 'repo: svc' "${FM}"
+check "red main from a failed job: the log was read once the run had completed" \
+  bash -c "[ \"\$(grep -c 'run view 99 --repo o/r --json status' '${ROOT}/gh.log')\" = 2 ] && grep -qF 'run view 99 --repo o/r --log-failed' '${ROOT}/gh.log'"
 echo "lead's edit" >> "${FM}"; echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; merge "${URL}"
 check "red main again: fix-main printed, the story already there kept" bash -c "grep -q '^fix-main:' '${ROOT}/out' && grep -qx \"lead's edit\" '${FM}'"
+# A later green merge into the same repo and base clears the red main; a green one with none open logs nothing.
+echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; checks "${FX}/${M}.checks" "$(run test completed success)"; merge "${URL}"
+check "a green merge after a red main of the same repo and base: main-green" logged "^main-green ${M} o/r main$"
+# A log download that hangs is cut off, and reconcile still runs.
+failed_job 'x\ty\tz FAIL never read\n'; : > "${FX}/run.hang"; start=${SECONDS}
+merge SWARM_FIX_MAIN_LOG_SECONDS=2 "${URL}"
+check "a hanging log download: merge ends within 20 s" test $((SECONDS - start)) -lt 20
+check "a hanging log download: no FAIL line, the story still written, reconcile ran" \
+  bash -c "grep -qF 'no FAIL line' '${FM}' && grep -q '^fix-main:' '${ROOT}/out'" && logged '^reconcile s'
+# With no story written, merge never prints fix-main:, so a conductor stops instead of starting one.
+fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
+check "a fix-main story that cannot be written: no fix-main: line, says it cannot write it" \
+  bash -c "! grep -q '^fix-main:' '${ROOT}/out' && grep -qF 'main red, and no fix-main story: cannot write' '${ROOT}/out'"
 fresh; merge "${URL}"
 check "green main: no fix-main line, no main-red, no story" \
   bash -c "! grep -q fix-main '${ROOT}/out' && ! grep -q main-red '${P}/.swarm/events.tsv' && [ ! -e '${FM}' ]"

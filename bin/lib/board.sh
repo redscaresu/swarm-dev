@@ -157,8 +157,9 @@ epic_has_after() {
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
-#   fix-main <slug>   merge found the base red on a commit it merged (main_red): build the one-off
-#                     fix-main-<sha> it wrote before anything else, a conductor's wait included
+#   fix-main <slug>   merge found the base red on a commit it merged (main_red), and the one-off
+#                     fix-main-<sha> it wrote is ready with no build yet: start it before anything
+#                     else, a conductor's wait included
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
@@ -180,9 +181,11 @@ epic_has_after() {
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
   local f slug epic story_epic buildable="" waiting="" when held n tag base sha
-  # A red main comes first: every merge waits on its fix.
+  # A red main's fix comes first while no one has started it: every merge waits on it. Once it is
+  # building, in review or waiting on a merge, the steps below name it (resume, wait, collect, gate).
   read -r sha n <<< "$(main_red)"
-  if [[ -n "${sha}" ]]; then
+  if [[ -n "${sha}" && "$(fm "${BOARD}/stories/fix-main-${sha:0:7}.md" status)" == ready ]] \
+    && ! one_off_started "fix-main-${sha:0:7}"; then
     echo "fix-main fix-main-${sha:0:7}"
     echo "CI on the base is red at ${sha:0:7} (${n}): build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green"
     return

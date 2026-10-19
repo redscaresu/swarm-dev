@@ -664,7 +664,8 @@ per item they move. `merge` writes all its own lines, under the story's or epic'
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
-or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its checks), then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its repo, base and checks;
+an ok one that clears a red main of that repo and base by `main-green`), then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
@@ -1070,12 +1071,17 @@ before calling main green, for checks other apps post just after the push. A fai
 missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it also
-logs `main-red <sha> <checks>` and prints `fix-main: <checks> on <short sha>` with the FAIL lines
-(at most 20) from the logs of the failed Actions runs, and writes the one-off story
-`fix-main-<short sha>` (`kind: code`, ready, no epic, those lines in its body) into the main
+logs `main-red <sha> <owner/repo> <base> <checks>` and writes the one-off story
+`fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`) into the main
 checkout, untracked, so its builder reads it there and leaves it alone; reconcile takes it off once
-its PR merges. Until a later merge sees main green or that story leaves the board, `next` names
-`fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
+its PR merges. The story names the failed Actions runs and holds up to 20 FAIL lines from their
+logs, indented, read once each run has completed. Those reads stop after 10 minutes in all
+(`SWARM_FIX_MAIN_LOG_SECONDS`), so a slow log cannot hold up the reconcile that follows. Once the
+story is there, merge prints `fix-main: <checks> on <short sha>` with the same lines; when it cannot
+write the story it says so in a line that does not start `fix-main:`. A later merge into the same
+repo and base that sees CI green logs `main-green`, which clears it. Until then, while the story is
+ready and no build of it has started, `next` names `fix-main fix-main-<short sha>` ahead of
+everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
 
