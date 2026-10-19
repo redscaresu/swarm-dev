@@ -39,7 +39,7 @@ A story is reviewed only when its latest head has passed a review agent's review
 story's PR head is green and mergeable, start one with \`${sw} review-agent <slug> <PR URL>\`.
 Never wait for other PRs or reviews to gather first: run one review agent for every green PR at
 once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints, or the lead sends
-you, \`queued: #<n> green <m>m with no review\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
+you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
 or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
 the story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not
 only docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches
@@ -493,7 +493,7 @@ build_story() {
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
 # started (kept aside until then), so the conductor reads only this head's. Once started, the head
-# goes in .swarm/reviews/<slug>.head: watch and next count that head as having a review (queued_prs).
+# goes in .swarm/reviews/<slug>.head: watch and next count that head as having a review (queued_line).
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"

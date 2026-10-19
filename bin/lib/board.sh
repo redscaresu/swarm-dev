@@ -160,9 +160,8 @@ epic_has_after() {
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
-#                     otherwise a `queued: #<n> green <m>m with no review` line follows for each of
-#                     its PRs left waiting for a review (queued_lines), then an
-#                     `also: lead <slug> blocks <slugs>` line (blocking_leads)
+#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads),
+#                     and next_report puts its `queued:` lines (queued_lines) before them
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
@@ -197,7 +196,6 @@ next_step() {
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
-        queued_lines "${slug}"
         blocking_leads
       fi
       return
@@ -253,14 +251,20 @@ next_step() {
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
-# queued_lines <conductor> — queued_prs's lines, without their heads, for the PRs the conductor's
-# watch covers (its epic's, or the backlog's). Nothing when gh or a repo cannot be read: next goes on.
+# queued_lines <conductor> — queued_prs's lines for the PRs the conductor's watch covers (its epic's,
+# or the backlog's), each repo on its own: one that cannot be resolved is warned of on stderr and
+# skipped. Nothing when the scope cannot be read (watch_scope dies): next goes on.
 queued_lines() {
-  local e scope r
+  local e scope name r
   e="$(conduct_epic "$1")"
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
-  ( watch_scope "${scope[@]}" && for r in "${WATCH_REPOS[@]}"; do queued_prs "${r}" "${WATCH_HEADS}"; done ) 2>/dev/null \
-    | cut -d' ' -f2- || true
+  (
+    watch_scope "${scope[@]}"
+    for name in "${WATCH_NAMES[@]}"; do
+      r="$(repo_slug "${name}" 2>/dev/null)" || { echo "warning: ${r}, so its PRs waiting for a review are unknown" >&2; continue; }
+      queued_prs "${r}" "${WATCH_HEADS}"
+    done
+  ) || true
 }
 
 # buildable_story <story file> — true for a story next_step builds: ready, of a kind an agent
@@ -303,17 +307,28 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
-# next_report — swarm.sh next: next_step's step, then idle_lines' for it. Both are worked out first
+# next_report — swarm.sh next: next_step's step (with queued_lines' after a working conductor's why),
+# then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 next_report() {
-  local tmp step idle
+  local tmp step idle queued rest
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -f '${tmp}'" EXIT
   next_step > "${tmp}"
-  step="$(< "${tmp}")"; idle="$(idle_lines "${step%%[ $'\n']*}")"
+  step="$(< "${tmp}")"
+  # A working conductor's queued: lines go after the why, here alone: dash and status read next_step
+  # every frame, and these cost gh calls.
+  if [[ "${step}" == "wait "* && "$(sed -n 2p <<< "${step}")" != auth:* ]]; then
+    queued="$(queued_lines "$(sed -n '1s/^wait //p' <<< "${step}")")"
+    if [[ -n "${queued}" ]]; then
+      rest="$(sed -n '3,$p' <<< "${step}")"
+      step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
+    fi
+  fi
+  idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
 }
