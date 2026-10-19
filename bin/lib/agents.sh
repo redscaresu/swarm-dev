@@ -399,8 +399,8 @@ codex_out_dir() {
   esac
 }
 
-# CLAUDE_PROJECTS: Claude Code's per-project folders (session transcripts, memory), read by cost, outcomes,
-# lessons and wait's login_expired.
+# CLAUDE_PROJECTS: Claude Code's per-project folders (session transcripts, memory), read by cost, outcomes
+# and wait's login_expired.
 CLAUDE_PROJECTS="${CLAUDE_PROJECTS_DIR:-${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects}"
 
 # AGENTS_LOG: one line per agent started (date, role, name, kind, model, effort, session), so
