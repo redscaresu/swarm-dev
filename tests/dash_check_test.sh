@@ -159,12 +159,12 @@ check "from a priced pane, dash --check still exits 0 (exit ${rc})" test "${rc}"
 
 # 2. A fix reverted, or a status that disagrees: --check exits 1 naming the field.
 # mutant <name> <file under bin/> <sed script>: a copy of the plugin whose file has the edit, its
-# swarm.sh in M; fails when the edit changes nothing.
+# swarm.sh in M; fails when the file is missing or the edit changes nothing.
 mutant() {
   local h="${ROOT}/m-$1"
   mkdir -p "${h}/.claude-plugin"
   cp -R "${HERE}/../bin" "${h}/bin"; cp "${ROOT}/home/.claude-plugin/plugin.json" "${h}/.claude-plugin/"
-  sed "$3" "${h}/bin/$2" > "${h}/edit"
+  sed "$3" "${h}/bin/$2" > "${h}/edit" || return 1
   ! cmp -s "${h}/edit" "${h}/bin/$2" || return 1
   cat "${h}/edit" > "${h}/bin/$2"
   M="${h}/bin/swarm.sh"
@@ -199,6 +199,8 @@ check "with that status, --check names agents working" names "${A}" "agents work
 check "mutant: status fails" mutant nostatus swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) exit 3 ;;/'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 check "with status failing, --check says status could not be read" unread "alpha: agents and Waiting on you: status could not be read"
+nostatus() { ! grep -qE "^alpha: (agents working|running|PRs waiting for a merge|stories only you or the lead can run|agents waiting on a prompt): " <<< "${out}"; }
+check "with status failing, --check compares none of the fields status owns" nostatus
 check "mutant: next fails" mutant next swarm.sh 's/^    next)   next_report ;;$/    next)   exit 3 ;;/'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 # shellcheck disable=SC2016 # the script's own $1 and $2

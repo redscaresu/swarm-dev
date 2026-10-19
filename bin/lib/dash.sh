@@ -212,7 +212,7 @@ dash_check() {
     return "${failed}"
   fi
   local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes drawn got want x f v err
-  DASH_CHECK_P="${DASH_CHECK_NAME:-$(basename "${PROJECT_DIR}")}"; DASH_CHECK_BAD=0
+  DASH_CHECK_P="${DASH_CHECK_NAME:-$(basename "${PROJECT_DIR}")}"; DASH_CHECK_BAD=0; DASH_CHECK_NOSTATUS=""
   ! command -v herdr >/dev/null 2>&1 || herdr=1
   day="$(dash_day)"
   lo="$(dash_flow_cost "${day}")"
@@ -224,7 +224,8 @@ dash_check() {
   rm -f "${err}"
   # status asks herdr only inside a pane; dash whenever herdr is on PATH. Read next to the frame, as
   # agents change state.
-  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status)" || dash_unread "agents and Waiting on you" status
+  # A status that fails is said once, and the fields it owns are not compared with nothing.
+  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status)" || { dash_unread "agents and Waiting on you" status; DASH_CHECK_NOSTATUS=1; }
   hi="$(dash_flow_cost "${day}")"
 
   want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
@@ -317,9 +318,11 @@ dash_check_frame() {
   dash_slow; DASH_LEGEND=0 dash_render
 }
 
-# dash_agree <field> <dash's value> <owner> <owner's value> — prints a mismatch and marks the check failed.
+# dash_agree <field> <dash's value> <owner> <owner's value> — prints a mismatch and marks the check
+# failed; a field status owns is skipped once status could not be read (DASH_CHECK_NOSTATUS).
 dash_agree() {
   [[ "$2" != "$4" ]] || return 0
+  [[ "$3" != status || -z "${DASH_CHECK_NOSTATUS}" ]] || return 0
   echo "${DASH_CHECK_P}: $1: dash shows ${2:-nothing}, $3 says ${4:-nothing}"
   DASH_CHECK_BAD=1
 }
