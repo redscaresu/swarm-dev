@@ -243,8 +243,9 @@ printf '%s\n' '⏺ Waiting on the builders.' '' '> ' > "${ROOT}/screen"; : > "${
 got="$(run tell a resume "${ROOT}/tell.txt")" || true
 check "the same pane without the API Error: line: tell refuses" "yes|0" "$([[ "${got}" == *"still working"* ]] && echo yes || echo "no, ${got}")|$(prompts)"
 # A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
-# stalled: no output, naming the pane, and nothing sent.
-echo working > "${ROOT}/hstatus"
+# stalled: no output, naming the pane, and nothing sent. The earlier waits' pane record (pane_check)
+# saw another screen, so it goes: this pane is first seen when the wait began.
+echo working > "${ROOT}/hstatus"; rm -f "${p}/.swarm/panes/a"
 got="$(SWARM_WAIT_STARTED=$(($(date +%s) - 7200)) SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 5000)"
 check "a pane unchanged past stall_minutes: wait returns stalled: no output naming the pane, and sends nothing" \
   "stalled: no output for 120m (w:950)|exit 3|0" "${got%|*}|$(prompts)"

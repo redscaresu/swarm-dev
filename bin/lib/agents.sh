@@ -333,6 +333,7 @@ start_agent() {
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
   fi
   free_agent_name "${name}"
+  rm -f "${PANE_DIR}/${name}"   # the last holder's pane age (pane_check), which a retired one took along
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   clean_env "${pane}" "${name}" "${names}"
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -543,45 +544,57 @@ API_RESUME_MSG="Your last turn stopped on an API error; carry on where you stopp
 pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || true; }
 
 # PANE_DIR: per agent, a file kept by pane_check and read by dash (its pane's checksum, and when status
-# or wait first saw the pane so, in epoch seconds); per pane, a stop.<pane>.<key> directory for each
-# stop an api-error or auto-denied incident was logged for, kept by pane so a retired agent's renamed
-# pane (retire_agent) is not logged again.
+# or wait first saw the pane so, in epoch seconds), moved with the agent when it retires and removed
+# when a new agent takes its name; per pane, a stop.<pane>.<key> directory for each stop an api-error
+# or auto-denied incident was logged for, kept by pane so a retired agent's renamed pane is not
+# logged again.
 # ponytail: stop directories are never removed (one empty directory per stop); removing them would
 # race a concurrent pane_check into logging a stop again.
 PANE_DIR="${PROJECT_DIR}/.swarm/panes"
+# STOP_CONTEXT: how many lines above a stop's line its key takes, so lines added below it (a resume
+# prompt, the prompt box redrawn) leave the key as it was.
+STOP_CONTEXT=3
 
-# pane_check <name> <target> — print <target>'s pane text (pane_text) and keep PANE_DIR/<name>. When
-# the pane's last turn ended on Claude Code's `API Error:` line or an auto mode denial (no assistant
-# line, ⏺ or ●, after it), log an api-error or auto-denied incident for <name> with that line, once
-# per stop: the stop is the pane's text up to that line, and only the call whose mkdir makes its
-# directory logs it, so a stopped pane read again, or by status and wait at once, logs nothing more.
-pane_check() {
-  local text f sum seen="" at="" hit n kind line
-  text="$(pane_text "$2")"; [[ -n "${text}" ]] || return 0
-  printf '%s\n' "${text}"; [[ -n "$1" ]] || return 0
-  f="${PANE_DIR}/$1"; sum="$(printf '%s' "${text}" | cksum)"
-  [[ ! -f "${f}" ]] || IFS=$'\t' read -r seen at < "${f}" || true
-  [[ "${sum}" == "${seen}" && -n "${at}" ]] || at="$(date +%s)"
-  { mkdir -p "${PANE_DIR}" && printf '%s\t%s\n' "${sum}" "${at}" > "${f}"; } 2>/dev/null || return 0
-  hit="$(awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { n = NR; k = "api-error"; l = $0; next }
+# pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<line>" for the stop its last
+# turn ended on (no assistant line, ⏺ or ●, after it): Claude Code's `API Error:` line (api-error), or
+# a tool result (⎿) saying it was "denied by the Claude Code auto mode classifier" (auto-denied).
+pane_stop() {
+  awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { n = NR; k = "api-error"; l = $0; next }
     /^[[:space:]]*(⏺|●)/ { n = 0; next }
-    /denied by the Claude Code auto mode classifier/ { n = NR; k = "auto-denied"; l = $0 }
-    END { if (n) { sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", l); print n "\t" k "\t" l } }' <<< "${text}")"
-  [[ -n "${hit}" ]] || return 0
-  IFS=$'\t' read -r n kind line <<< "${hit}"
-  f="${PANE_DIR}/stop.${2//[^A-Za-z0-9]/-}"; hit="${f}.$(head -n "${n}" <<< "${text}" | cksum | tr ' ' -)"
-  mkdir "${hit}" 2>/dev/null || return 0
-  record_event incident "$1" "${kind}: ${line}"
+    /^[[:space:]]*⎿.*denied by the Claude Code auto mode classifier/ { n = NR; k = "auto-denied"; l = $0 }
+    END { if (n) { sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", l); print n "\t" k "\t" l } }'
 }
 
-# api_stopped <name> <target> — succeed when herdr says <name> is done or idle and its pane's last
-# turn ended on Claude Code's `API Error:` line (no assistant line, ⏺ or ●, after the last one). Its
-# session can still read busy then: background shells it left open keep it so. It reads the pane
-# through pane_check, so the stop is logged.
-api_stopped() {
-  pane_check "$1" "$2" | awk '/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*API Error:/ { e = 1; next } /^[[:space:]]*(⏺|●)/ { e = 0 } END { exit !e }' \
-    && [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]
+# turn_ended <name> — succeed when herdr says <name> is done or idle. Its session can still read busy
+# after a stop: background shells it left open keep it so.
+turn_ended() { [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]; }
+
+# pane_check <name> <target> — read <target>'s pane once, keep PANE_DIR/<name>, and set the caller's
+# pane_at (when the pane last changed; with no file yet, when the wait began, or now) and pane_kind
+# (the stop its turn ended on, pane_stop, once turn_ended; else empty). A stop is logged as an
+# api-error or auto-denied incident for <name> with its line, once: its key is the stop's line and
+# the STOP_CONTEXT lines above it, and only the call whose mkdir makes its directory logs it. Only
+# status and wait call it. An empty read sets both empty.
+pane_check() {
+  local text f sum seen="" hit n line
+  pane_kind="" pane_at=""
+  text="$(pane_text "$2")"; [[ -n "${text}" && -n "$1" ]] || return 0
+  f="${PANE_DIR}/$1"; sum="$(printf '%s' "${text}" | cksum)"
+  [[ ! -f "${f}" ]] || IFS=$'\t' read -r seen pane_at < "${f}" || true
+  if [[ -z "${seen}" ]]; then pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  elif [[ "${sum}" != "${seen}" || -z "${pane_at}" ]]; then pane_at="$(date +%s)"; fi
+  { mkdir -p "${PANE_DIR}" && printf '%s\t%s\n' "${sum}" "${pane_at}" > "${f}"; } 2>/dev/null || true
+  hit="$(pane_stop <<< "${text}")"
+  if [[ -z "${hit}" ]] || ! turn_ended "$1"; then return 0; fi
+  IFS=$'\t' read -r n pane_kind line <<< "${hit}"
+  f="${PANE_DIR}/stop.${2//[^A-Za-z0-9]/-}.$(sed -n "$((n > STOP_CONTEXT ? n - STOP_CONTEXT : 1)),${n}p" <<< "${text}" | cksum | tr ' ' -)"
+  mkdir "${f}" 2>/dev/null || return 0
+  record_event incident "$1" "${pane_kind}: ${line}"
 }
+
+# api_stopped <name> <target> — succeed when <name>'s turn ended (turn_ended) on an `API Error:` line
+# (pane_stop). It only reads, for next and tell; wait reads through pane_check, which logs the stop.
+api_stopped() { [[ "$(pane_text "$2" | pane_stop | cut -f2)" == api-error ]] && turn_ended "$1"; }
 
 # resume_agent <target> — send API_RESUME_MSG and succeed once herdr sees the agent take it up.
 resume_agent() {
@@ -591,16 +604,12 @@ resume_agent() {
   [[ "${s}" =~ ^(working|blocked)$ ]]
 }
 
-# pane_quiet <target> <name> — succeed when the agent's pane has not changed for stall_minutes, setting the
-# caller's state to `stalled: no output for <N>m (<target>)`. Between calls it keeps the caller's
-# pane_sum (the pane's checksum at the last read) and pane_at (when it last changed; first, the time
-# the wait began). It reads the pane through pane_check. An empty read says nothing.
+# pane_quiet <target> — after pane_check: succeed when the caller's pane_at is stall_minutes old,
+# setting the caller's state to `stalled: no output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
-  local text sum min
-  text="$(pane_check "$2" "$1")"; [[ -n "${text}" ]] || return 1
-  sum="$(printf '%s' "${text}" | cksum)"
-  [[ -z "${pane_sum}" || "${sum}" == "${pane_sum}" ]] || pane_at="$(date +%s)"
-  pane_sum="${sum}"; min=$((($(date +%s) - pane_at) / 60))
+  local min
+  [[ -n "${pane_at}" ]] || return 1
+  min=$((($(date +%s) - pane_at) / 60))
   # shellcheck disable=SC2154 # assigned in another file
   [[ ${min} -ge ${CFG_stall_minutes} ]] || return 1
   state="stalled: no output for ${min}m ($1)"
@@ -693,10 +702,10 @@ timed_out() { grep -q '"timeout"' "$1"; }
 # read (codex, or no session recorded), and the one place a wait takes herdr's own status: herdr
 # agent wait in STALL_POLL_MS steps; with <since>, between steps an agent stalled since then
 # (agent_stalled) ends the wait with "stalled: ...", and so does a pane quiet for stall_minutes
-# (pane_quiet). herdr's stderr goes to a file, read only to tell
+# (pane_check, then pane_quiet). herdr's stderr goes to a file, read only to tell
 # a step's timeout from a real failure; a real failure, and the last step, fail as one unbroken wait does.
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" out err min state pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  local target="$1" name="$2" left="$3" since="${4:-}" out err min state pane_kind="" pane_at=""
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
     if out="$(herdr agent wait "${target}" --timeout "${STALL_POLL_MS}" 2>"${err}")"; then
@@ -707,7 +716,8 @@ herdr_wait() {
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
     fi
-    if pane_quiet "${target}" "${name}"; then rm -f "${err}"; echo "${state}"; return; fi
+    pane_check "${name}" "${target}"
+    if pane_quiet "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
   done
   rm -f "${err}"
   herdr agent wait "${target}" --timeout "${left}" | json "d['result']['agent']['agent_status']"
@@ -741,8 +751,9 @@ poll_while() {
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
 # The session is read before the first wake and right after each; every decision is taken on that
 # read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
-# A busy agent whose turn stopped on an API error (api_stopped) ends it with "api error", and one
-# whose pane has not changed for stall_minutes (pane_quiet) with "stalled: no output ...".
+# Each busy read also reads the pane once (pane_check): a turn that stopped on an API error ends it
+# with "api error", and a pane that has not changed for stall_minutes (pane_quiet) with "stalled: no
+# output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
@@ -750,7 +761,7 @@ poll_while() {
 # session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
 settle() {
   local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0
-  local pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  local pane_kind="" pane_at=""
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
@@ -767,11 +778,12 @@ settle() {
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
-    if [[ "${state}" == busy ]] && api_stopped "${name}" "${target}"; then state="api error"; break; fi
+    [[ "${state}" != busy ]] || pane_check "${name}" "${target}"
+    if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
     fi
-    if [[ "${state}" == busy ]] && pane_quiet "${target}" "${name}"; then break; fi
+    if [[ "${state}" == busy ]] && pane_quiet "${target}"; then break; fi
     t0="$(now_ms)"
     if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
     sleep_ms $((end - t0))
@@ -791,14 +803,14 @@ settle() {
 # WAIT_STALLED. Any wait also returns WAIT_STALLED with "stalled: no output ..." on a busy agent's
 # pane quiet for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
-# An agent whose turn stopped on an API error (settle's "api error", or idle and api_stopped) is sent
+# An agent whose turn stopped on an API error (settle's "api error", or idle and pane_check's) is sent
 # API_RESUME_MSG and waited on again, logged as a nudge, up to API_RESUMES stops in a row (a turn that
 # ends otherwise resets the count); the next one, or a resume not taken up, returns "stalled: api error".
 # A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 pane_kind pane_at
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
@@ -813,7 +825,8 @@ wait_agent() {
       login_incident "${name}"
       echo auth; return 0
     fi
-    if [[ "${status}" == "api error" ]] || { [[ "${status}" == idle ]] && api_stopped "${name}" "${target}"; }; then
+    pane_kind=""; [[ "${status}" != idle ]] || pane_check "${name}" "${target}"
+    if [[ "${status}" == "api error" || "${pane_kind}" == api-error ]]; then
       if [[ ${resumes} -ge ${API_RESUMES} ]] || ! resume_agent "${target}"; then echo "stalled: api error"; return "${WAIT_STALLED}"; fi
       resumes=$((resumes + 1)); wake=1
       record_event nudge "${name}"
@@ -1005,5 +1018,6 @@ retire_agent() {
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
     awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
+  mv -f "${PANE_DIR}/${name}" "${PANE_DIR}/${new}" 2>/dev/null || true   # its pane age goes with it
   echo "retired $1 as ${new}"
 }

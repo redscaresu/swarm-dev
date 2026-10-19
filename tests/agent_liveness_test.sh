@@ -2,8 +2,9 @@
 # agent_liveness_test.sh — `swarm.sh status` reads each agent's pane once (pane_check): a pane whose
 # last turn ended on an `API Error:` line or an auto mode denial logs one api-error or auto-denied
 # incident, once per occurrence, and the time its pane last changed lands in .swarm/panes, which
-# dash shows beside the agent. herdr and gh are stubs on PATH: herdr lists three agents and prints
-# ${ROOT}/pane-<pane> for `agent read`. Then flow counts both kinds per epic.
+# dash shows beside the agent. herdr and gh are stubs on PATH: herdr lists this project's agents (and
+# another project's) and prints ${ROOT}/pane-<pane> for `agent read`. Then flow counts both kinds per
+# epic.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,20 +30,26 @@ printf '#!/bin/sh\nexit 1\n' > "${ROOT}/bin/gh"
 printf '#!/bin/sh\nR="%s"\n' "${ROOT}" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"'"${ERR_NAME:-s-err}"'","agent_status":"idle","pane_id":"w:1"},{"name":"s-deny","agent_status":"idle","pane_id":"w:2"},{"name":"s-ok","agent_status":"working","pane_id":"w:3"},{"name":"foreign","agent_status":"idle","pane_id":"w:9"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w:1"},{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:9"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"'"${ERR_NAME:-s-err}"'","agent_status":"idle","pane_id":"w:1"},{"name":"s-deny","agent_status":"idle","pane_id":"w:2"},{"name":"s-ok","agent_status":"working","pane_id":"w:3"},{"name":"s-mid","agent_status":"working","pane_id":"w:4"},{"name":"s-prose","agent_status":"idle","pane_id":"w:5"},{"name":"foreign","agent_status":"idle","pane_id":"w:9"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w:1"},{"pane_id":"w:2"},{"pane_id":"w:3"},{"pane_id":"w:4"},{"pane_id":"w:5"},{"pane_id":"w:9"}]}}' ;;
   "agent read") cat "$R/pane-$3" ;;
+  "agent rename") ;;
   *) exit 1 ;;
 esac
 STUB
 chmod +x "${ROOT}/bin/"*
-printf 'w:1 s-err\nw:2 s-deny\nw:3 s-ok\n' > "${P}/.swarm/state/t"
+printf 'w:1 s-err\nw:2 s-deny\nw:3 s-ok\nw:4 s-mid\nw:5 s-prose\n' > "${P}/.swarm/state/t"
 
-# s-err stopped on ECONNRESET; s-deny on an auto mode denial; s-ok had an API error, then carried on.
-# foreign is another project's agent, whose pane must not be read.
+# s-err stopped on ECONNRESET; s-deny on an auto mode denial; s-ok had an API error, then carried on;
+# s-mid's pane ends on an API error while herdr says it is still working (mid-turn); s-prose's own
+# indented text mentions the classifier. foreign is another project's agent, whose pane must not be read.
 printf '%s\n' '⏺ Running the tests.' '  ⎿  API Error: Connection error (ECONNRESET)' '' '> ' > "${ROOT}/pane-w:1"
-printf '%s\n' '⏺ Bash(terraform apply)' '  ⎿  Error: Permission for this action has been denied by the Claude Code auto mode classifier.' '     Reason: real cloud' '> ' > "${ROOT}/pane-w:2"
+deny=('⏺ Reading the story.' '  ⎿  Read 40 lines' '⏺ Applying the plan.' '⏺ Bash(terraform apply)'
+  '  ⎿  Error: Permission for this action has been denied by the Claude Code auto mode classifier.' '     Reason: real cloud' '> ')
+printf '%s\n' "${deny[@]}" > "${ROOT}/pane-w:2"
 printf '%s\n' '  ⎿  API Error: 529 overloaded' '⏺ Carrying on.' > "${ROOT}/pane-w:3"
+printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: 529 overloaded' > "${ROOT}/pane-w:4"
+printf '%s\n' '⏺ Noted for the brief:' '  commands can be denied by the Claude Code auto mode classifier.' '> ' > "${ROOT}/pane-w:5"
 printf '%s\n' '  ⎿  API Error: foreign' > "${ROOT}/pane-w:9"
 
 status() { (cd "${P}" && SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > /dev/null 2>&1) || true; }
@@ -51,6 +58,8 @@ status; status
 check "two status runs log one event per stopped pane" test "$(incidents)" = "$(printf '%s\n' \
   $'incident\ts-err\tapi-error: API Error: Connection error (ECONNRESET)' \
   $'incident\ts-deny\tauto-denied: Error: Permission for this action has been denied by the Claude Code auto mode classifier.')"
+check "a pane ending on an API error mid-turn (herdr working) logs nothing" test "$(incidents | grep -c 's-mid')" = 0
+check "an agent's own text naming the classifier logs nothing" test "$(incidents | grep -c 's-prose')" = 0
 check "status notes when each own pane last changed" test -s "${P}/.swarm/panes/s-ok" -a ! -e "${P}/.swarm/panes/foreign"
 # The same ECONNRESET again, after s-err carried on, is a new occurrence: one more event.
 printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: Connection error (ECONNRESET)' >> "${ROOT}/pane-w:1"
@@ -59,10 +68,20 @@ check "a new stop on the same line logs one more event" test "$(incidents | grep
 # Retired (retire_agent renames it s-err-done), the same stopped pane logs nothing more.
 ERR_NAME=s-err-done status
 check "a retired agent's stop is not logged again" test "$(incidents | grep -c 's-err')" = 2
+# s-deny's pane scrolls a line: the top line goes, a line comes under the stop. The stop is the same.
+printf '%s\n' "${deny[@]:1}" '> carry on' > "${ROOT}/pane-w:2"
+status
+check "a line added under a stop, scrolling the pane, logs nothing more" test "$(incidents | grep -c 's-deny')" = 1
+# retire_agent moves its pane record to the retired name, so a new s-err starts with none.
+(cd "${P}" && PROJECT_DIR="${P}" STATE_DIR="${P}/.swarm/state" PATH="${ROOT}/bin:${PATH}" bash -c '
+  die() { echo "$*" >&2; exit 1; }; agent_name() { printf "%s" "$1"; }
+  json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
+  source "$1/../bin/lib/agents.sh"; retire_agent s-err > /dev/null' _ "${HERE}")
+check "a retired agent's pane record goes with it" test -s "${P}/.swarm/panes/s-err-done" -a ! -e "${P}/.swarm/panes/s-err"
 # Eight reads of one stopped pane at once (status and a background wait, say) log it once.
 R="${ROOT}/race"; mkdir -p "${R}"
 n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"
-  pane_text() { printf "%s\n" "⎿ API Error: Connection reset"; }
+  pane_text() { printf "%s\n" "⎿ API Error: Connection reset"; }; turn_ended() { :; }
   for i in 1 2 3 4 5 6 7 8; do pane_check s-race w:1 > /dev/null & done; wait
   wc -l < "${EVENTS_LOG}"' _ "${HERE}")"
 check "eight reads of one stop at once log one event" test "${n// /}" = 1
