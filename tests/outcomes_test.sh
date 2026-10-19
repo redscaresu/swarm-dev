@@ -15,6 +15,7 @@ SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "${dir}"' EXIT
+export CLAUDE_CONFIG_DIR="${dir}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 P="${dir}/repo"; LONG="merged-story-whose-name-is-longer-than-32"; CUT="${LONG:0:32}"
 mkdir -p "${P}/.swarm" "${P}/docs/stories" "${dir}/projects/p" "${dir}/bin" "${dir}/nobin"
 git -C "${P}" init -q
