@@ -471,16 +471,28 @@ step_up() {
 }
 
 # step_up_story <slug> — die, naming why, unless <slug>'s story can be stepped up: on the board, ready,
-# of a kind an agent builds (agent_kind), with a worktree. STEP_SRC is its repo dir. Run in the
-# caller's shell, so a die is the command's own.
+# of a kind an agent builds (agent_kind), not a stacked child held for review (held_by:, which
+# build_story never starts again), with a worktree, and, as failed_build asks, no PR on story/<slug>
+# merged or set to auto-merge (its build is done, not stuck) and gh able to list them. STEP_SRC is its
+# repo dir and STEP_PR its open PR's URL, or empty when it has none. Run in the caller's shell, so a
+# die is the command's own.
 step_up_story() {
-  local f="${BOARD}/stories/$1.md"
+  local f="${BOARD}/stories/$1.md" url prs
   [[ "$1" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "step-up: no story ${f}"
   [[ "$(fm "${f}" status)" == ready ]] || die "step-up: $1 is not status: ready; nothing was closed"
   agent_kind "$(fm "${f}" kind)" || die "step-up: $1 is kind: $(fm "${f}" kind), which no agent builds; nothing was closed"
+  [[ -z "$(get_fm "${f}" held_by)" ]] \
+    || die "step-up: $1 is held until its parents merge (held_by:), and is reviewed again, never built again; nothing was closed"
   STEP_SRC="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: $1: ${STEP_SRC}"
   [[ -d "$(worktree_for "${STEP_SRC}" "$1")" ]] \
     || die "step-up: $1 has no worktree at $(worktree_for "${STEP_SRC}" "$1"), so there is no build to hand on; nothing was closed"
+  if ! url="$(git -C "${STEP_SRC}" remote get-url origin 2>/dev/null)" \
+     || ! prs="$(gh pr list -R "${url}" --head "story/$1" --state all --json state,url,autoMergeRequest </dev/null 2>/dev/null)" \
+     || ! STEP_PR="$(json "next((p['url'] for p in d if p['state'] == 'OPEN'), '')" <<< "${prs}" 2>/dev/null)"; then
+    die "step-up: could not list the PRs on story/$1 (git or gh), so nothing was closed"
+  fi
+  [[ "$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")" == False ]] \
+    || die "step-up: a PR on story/$1 has merged or is set to auto-merge, so its build is done, not stuck; nothing was closed"
 }
 
 # step_up_resume <slug> — `step-up --resume`: start the rung a step-up closed the old builder for but
@@ -582,7 +594,8 @@ handover_brief() {
   if [[ ! -f "${findings}" ]]; then found="No review findings on file."
   elif [[ "${reviewed}" == "${head}" ]]; then found="$(cat "${findings}")"
   else found="The last review (${findings}) was of ${reviewed:-an unnamed head}, not this branch's HEAD ${head}, so its findings are not pasted here: they may be fixed already. Read it, and check each one before you act on it."; fi
-  if ! pr="$(open_pr "$2" "$1")"; then
+  pr="${STEP_PR}"   # step_up_story's list: gh read it, so empty is no open PR
+  if [[ -z "${pr}" ]]; then
     checks="No open PR on story/$1."
   else
     checks="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' </dev/null 2>/dev/null)" \

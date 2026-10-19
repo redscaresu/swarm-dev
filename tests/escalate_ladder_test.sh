@@ -11,8 +11,8 @@
 # after the agent is recorded) while ${ROOT}/promptfail does; while ${ROOT}/startghost exists an agent
 # starts but is gone at once (never listed). gh lists an open PR on
 # every branch (story/p1's its own, none once ${ROOT}/p1-closed exists; story/p2's and story/p3's
-# merged, none open),
-# with one failing check.
+# merged, none open), with one failing check. A list of every PR on story/<slug> (step-up's own) is
+# ${ROOT}/prs-<slug>.json, else that open PR #5, and fails while ${ROOT}/ghfail exists.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -55,6 +55,9 @@ esac
 EOF
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$1 $2 $*" in
+  "pr list "*"--state all"*) [ ! -e "$H/ghfail" ] || exit 1
+                s="$(echo "$*" | sed 's/.*--head story\/\([^ ]*\).*/\1/')"
+                if [ -e "$H/prs-$s.json" ]; then cat "$H/prs-$s.json"; else echo '[{"state":"OPEN","url":"https://github.com/o/proj/pull/5","autoMergeRequest":null}]'; fi ;;
   "pr list "*story/p1*) [ -e "$H/p1-closed" ] || echo "https://github.com/o/proj/pull/4" ;;
   "pr list "*story/p[23]*"--state merged"*) echo 1 ;;
   "pr list "*story/p[23]*) ;;
@@ -170,6 +173,7 @@ check "an unknown trigger is refused" "1|yes" "${rc}|$(has "the trigger must be 
 # A docs build on sonnet steps up as docs on opus, and a chore build on haiku, below the ladder's
 # first rung, as a chore on sonnet: each keeps its role and its effort.
 echo "escalate_ladder = sonnet,opus,fable" > "${P}/.claude/swarm/config"
+echo '[{"state":"CLOSED","url":"https://github.com/o/proj/pull/6","autoMergeRequest":null}]' > "${ROOT}/prs-c1.json"
 for s in d1:docs:sonnet c1:chore:haiku; do
   IFS=: read -r slug role model <<< "${s}"
   "${GIT[@]}" -C "${P}" worktree add -q -b "story/${slug}" "${ROOT}/proj-wt/${slug}" origin/main
@@ -178,6 +182,7 @@ for s in d1:docs:sonnet c1:chore:haiku; do
   run step-up "${slug}" stalled >/dev/null || true
 done
 check "a docs build steps up as docs, and a chore below the first rung as a chore on it" "docs opus medium|chore sonnet medium" "$(newest d1)|$(newest c1)"
+check "a story whose only PR closed unmerged has no open PR, and its brief says so" "yes" "$(has "No open PR on story/c1." "$(cat "${P}/.swarm/briefs/c1.md")")"
 
 # m1 was stacked on p2, whose PR has since squash-merged into main (its change on main under another
 # commit), and main moved on. The diff is against origin/main with the branch merged in: m1's own
@@ -232,6 +237,22 @@ c="$(closes)"
 o1="$(run step-up e1 stalled)" || true; o2="$(run step-up v1 stalled)" || true; o3="$(run step-up s1 'stalled no-pr')" || true
 check "an unset env: name, a legacy verify build and a two-word trigger are refused before anything closes" "yes|yes|yes|${c}|none" \
   "$(has "env: LADDER_TEST_UNSET_NAME is not set here" "${o1}")|$(has "v1's build is verify, which steps up as verify, a role nothing starts now; nothing was closed" "${o2}")|$(has "the trigger must be one of" "${o3}")|$(closes)|$(ls "${P}/.swarm/briefs/"*.step-up 2>/dev/null || echo none)"
+
+# Refused before anything closes too: a stacked child held for review (held_by:), a build whose PR
+# merged or is set to auto-merge (done, not stuck), and one whose PRs gh cannot list.
+for slug in h1 a1 g1 n1; do
+  printf '%s\n' --- "status: ready" "kind: code" --- "" "# ${slug}" "" "**Done when:**" "- it holds" > "${P}/docs/stories/${slug}.md"
+  "${GIT[@]}" -C "${P}" worktree add -q -b "story/${slug}" "${ROOT}/proj-wt/${slug}" origin/main
+  printf '2026-10-01\tcode-sonnet\t%s\tclaude\tsonnet\thigh\tsess-%s\n' "${slug}" "${slug}" >> "${P}/.swarm/agents.tsv"
+done
+printf '%s\n' --- "status: ready" "kind: code" "held_by: p1" --- "" "# h1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/h1.md"
+echo '[{"state":"OPEN","url":"https://github.com/o/proj/pull/7","autoMergeRequest":{"enabledAt":"2026-10-01T00:00:00Z"}}]' > "${ROOT}/prs-a1.json"
+echo '[{"state":"MERGED","url":"https://github.com/o/proj/pull/8","autoMergeRequest":null}]' > "${ROOT}/prs-g1.json"
+c="$(closes)"
+o1="$(run step-up h1 stalled)" || true; o2="$(run step-up a1 ci-red-2)" || true; o3="$(run step-up g1 ci-red-2)" || true
+touch "${ROOT}/ghfail"; o4="$(run step-up n1 stalled)" || true; rm "${ROOT}/ghfail"
+check "a held stacked child, an auto-merging or merged PR, and PRs gh cannot list are refused before anything closes" "yes|yes|yes|yes|${c}|none" \
+  "$(has "h1 is held until its parents merge (held_by:)" "${o1}")|$(has "a PR on story/a1 has merged or is set to auto-merge" "${o2}")|$(has "a PR on story/g1 has merged or is set to auto-merge" "${o3}")|$(has "could not list the PRs on story/n1" "${o4}")|$(closes)|$(ls "${P}/.swarm/briefs/"*.step-up 2>/dev/null || echo none)"
 
 # --- A sonnet -> opus -> fable chain of step-ups on s2, today. In outcomes the three builds are one
 # attempt, the two replaced builds each have a close with cause step-up:<trigger>, and the Fable

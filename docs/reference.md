@@ -1190,7 +1190,9 @@ before, and the next `swarm.sh story` build is on Fable once `attempts:` reaches
 The Fable rung is an `escalate` build, though, so a close that counts it as failed hands the story to
 the lead, as after any failed escalate build, whatever `attempts:` says.
 Nothing is closed when the ladder is empty, when the build is at or above the ladder's top rung, when
-the story is not `ready`, not of a kind an agent builds, or has no worktree, when its `env:` names a
+the story is not `ready`, not of a kind an agent builds, held for review as a stacked child
+(`held_by:`), or has no worktree, when a PR on `story/<slug>` has merged or is set to auto-merge (the
+build is done, as `close` also judges), when gh cannot list those PRs, when its `env:` names a
 variable not set here, or when the build's role is one nothing starts now (a past `verify` build).
 
 The old builder is closed before the new one starts, since the new one takes its name. If the start
