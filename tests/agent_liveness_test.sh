@@ -95,7 +95,7 @@ F="${ROOT}/flowp"; mkdir -p "${F}/.swarm"; git -C "${F}" init -q
 } > "${F}/.swarm/events.tsv"
 printf '2026-10-02\tcode\ts-err\tclaude\topus\thigh\t-\n' > "${F}/.swarm/agents.tsv"
 mkdir -p "${F}/docs/stories"; printf -- '---\nepic: e1\n---\n' > "${F}/docs/stories/s-err.md"
-out="$(cd "${F}" && env -u HERDR_ENV -u SWARM_PROJECT TZ=UTC PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" flow 2>&1 || true)"
+out="$(cd "${F}" || exit 1; env -u HERDR_ENV -u SWARM_PROJECT TZ=UTC PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" flow 2>&1 || true)"
 check "flow counts api-error and auto-denied per epic" test "$(sed -n '/^epic	kind	stops$/,/^$/p' <<< "${out}" | sed '/^$/d')" = "$(printf '%s\n' \
   $'epic\tkind\tstops' $'-\tapi-error\t1' $'e1\tapi-error\t1' $'e1\tauto-denied\t2' $'e2\tapi-error\t1')"
 
