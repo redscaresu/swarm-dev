@@ -27,27 +27,32 @@ def secs(t):
 
 @functools.lru_cache(maxsize=None)
 def head_runs(url):
-    # The PR's completed runs on its own commits, or None when gh cannot read them; read once per PR.
+    # The PR's newest commit (the last of its commits) and its completed runs on its own commits, or
+    # None when gh cannot read them or answers without a branch or commits; read once per PR.
     repo = GITHUB.match(url).group(1)
     pr = gh("pr", "view", url, "--json", "headRefName,commits")
-    runs = pr and gh("run", "list", "-R", repo, "--branch", pr["headRefName"], "--limit", "200", "--json",
-                     "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt")
-    if runs is None:
+    pr = pr if isinstance(pr, dict) else {}
+    shas = [c.get("oid") for c in pr.get("commits") or [] if isinstance(c, dict)]
+    if not shas or not pr.get("headRefName"):
         return None
-    shas = {c["oid"] for c in pr["commits"]}
-    return [r for r in runs if r["headSha"] in shas and r["status"] == "completed"]
+    runs = gh("run", "list", "-R", repo, "--branch", pr["headRefName"], "--limit", "200", "--json",
+              "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt")
+    if not isinstance(runs, list):
+        return None
+    return shas[-1], [r for r in runs if isinstance(r, dict) and r.get("headSha") in shas and r.get("status") == "completed"]
 
 def pr_runs(url):
     # head_runs, each with its conclusions first attempt first (gh run list gives a rerun's last
     # attempt alone, so the earlier ones come from /attempts/<n>), or None when gh cannot read them.
-    repo, runs = GITHUB.match(url).group(1), head_runs(url)
-    if runs is None:
+    repo, got = GITHUB.match(url).group(1), head_runs(url)
+    if got is None:
         return None
+    runs = got[1]
     for r in runs:
         earlier = [gh("api", f"repos/{repo}/actions/runs/{r['databaseId']}/attempts/{n}") for n in range(1, r["attempt"])]
         if None in earlier:
             return None
-        r["conclusions"] = [a["conclusion"] for a in earlier] + [r["conclusion"]]
+        r["conclusions"] = [a.get("conclusion") if isinstance(a, dict) else None for a in earlier] + [r["conclusion"]]
     return runs
 
 def tally(r, seen):
@@ -79,24 +84,27 @@ def health(urls):
             f"{red / len(urls):.2f}" if urls else "", str(flakes)]
 
 def ci_time(url):
-    # The PR's CI time: its newest head's longest run (its last attempt, startedAt to updatedAt) and
-    # that run's slowest job (one jobs listing of that same attempt, all its pages: a run's own listing
-    # keeps the jobs a rerun of failed jobs carried over), as (minutes, job, job minutes); () when it
-    # has no timed run or job, None when gh fails.
-    runs = head_runs(url)
-    if runs is None:
+    # The PR's CI time: the longest run on its newest head, its last commit (not the head of the run
+    # created last: a rerun of an old head can come after it), timed over its last attempt, startedAt
+    # to updatedAt, and that run's slowest job (one jobs listing of that same attempt, all its pages:
+    # a run's own listing keeps the jobs a rerun of failed jobs carried over), as (minutes, job, job
+    # minutes); () when it has no timed run or job, None when gh fails or answers without them.
+    got = head_runs(url)
+    if got is None:
         return None
-    timed = [(secs(r["startedAt"]), secs(r["updatedAt"]), r) for r in runs]
+    newest, runs = got
+    timed = [(secs(r.get("startedAt")), secs(r.get("updatedAt")), r) for r in runs if r["headSha"] == newest]
     timed = [t for t in timed if None not in t[:2]]
     if not timed:
         return ()
-    newest = max(timed, key=lambda t: t[2]["createdAt"])[2]["headSha"]
-    start, end, run = max((t for t in timed if t[2]["headSha"] == newest), key=lambda t: t[1] - t[0])
+    start, end, run = max(timed, key=lambda t: t[1] - t[0])
     got = gh("api", "--paginate", "--slurp", f"repos/{GITHUB.match(url).group(1)}/actions/runs/{run['databaseId']}/attempts/{run['attempt']}/jobs?per_page=100")
-    if got is None:
+    if not isinstance(got, list):
         return None
-    jobs = [(secs(j.get("completed_at")) - secs(j.get("started_at")), CONTROL.sub("", j["name"])) for page in got for j in page["jobs"]
-            if secs(j.get("started_at")) is not None and secs(j.get("completed_at")) is not None]
+    jobs = [(secs(j.get("completed_at")) - secs(j.get("started_at")), CONTROL.sub("", j["name"]))
+            for page in got if isinstance(page, dict) for j in page.get("jobs") or []
+            if isinstance(j, dict) and isinstance(j.get("name"), str)
+            and secs(j.get("started_at")) is not None and secs(j.get("completed_at")) is not None]
     if not jobs:
         return ()
     job_secs, job = max(jobs)

@@ -1,4 +1,4 @@
-import datetime, json, os, re, signal, subprocess, sys, time
+import datetime, fcntl, json, os, re, signal, subprocess, sys, time
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 # The ci line runs flow's ci_health over two weeks of PRs, 3 gh calls each, so at most every 6 hours:
 # a week's median barely moves in that time. A refresh that fails is tried again after CI_RETRY, and
@@ -20,15 +20,17 @@ def origin_of(repo):
 
 def ci_line(flow, repo):
     # dash's ci line from flow's ci_health output: repo's ci time row, as `ci 11m (slowest: test 9m)
-    # ▼2m vs last week`, the change from the minutes it shows; "" with no row (no PR this week, or none
-    # gh could read), None with no table (flow failed).
+    # ▼2m vs last week`, the change from the minutes it shows; "" with no row for a quiet week, None
+    # with no table (flow failed) or no row because gh could read none of the PRs (offline, a login
+    # expired): a failed refresh, tried again soon, that keeps the line there was.
     lines = flow.splitlines()
     head = next((i for i, l in enumerate(lines) if l.startswith("repo\tprs\tci_min_median\t")), None)
     if head is None:
         return None
     row = next((l.split("\t") for l in lines[head + 1:] if l.split("\t")[0].lower() == repo.lower()), None)
     if not row or not row[2]:
-        return ""
+        unread = next((m.groups() for m in map(re.compile(r"ci time: gh could not read (\d+) of (\d+) PRs").match, lines) if m), None)
+        return None if unread and unread[0] == unread[1] else ""
     now = round(float(row[2]))
     line = f"ci {now}m (slowest: {row[3]} {float(row[4]):.0f}m)"
     if row[6]:
@@ -43,34 +45,12 @@ def age(path):
     except FileNotFoundError:
         return None
 
-def running(cache):
-    # The pid in <cache>.run, the refresh that holds it; 0 when there is none, -1 while the refresh has
-    # yet to write its pid (for a minute: after that it died before it could, which counts as none).
-    try:
-        with open(cache + ".run") as f:
-            pid = f.read().strip()
-    except FileNotFoundError:
-        return 0
-    return int(pid) if pid.isdigit() else -1 if (age(cache + ".run") or 0) < 60 else 0
-
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        pass
-    return True
-
 def ci_refresh(project, repo, cache):
     # Runs `swarm.sh flow --since <6 days ago>`'s ci time table alone in the project (its whole process
     # group stopped after CI_TIMEOUT) and writes the cache when flow printed it, else stamps
-    # <cache>.failed. It writes its pid into <cache>.run, the mark of a refresh running that start_refresh
-    # made, first, and removes it at the end if it is still its own.
+    # <cache>.failed. It holds start_refresh's lock on <cache>.run (an inherited descriptor) until it ends.
     line = None
     try:
-        with open(cache + ".run", "w") as f:
-            f.write(str(os.getpid()))
         since = (datetime.date.today() - datetime.timedelta(days=6)).isoformat()
         env = {k: v for k, v in os.environ.items() if k != "HERDR_ENV"}
         env.update(SWARM_PROJECT=project, SWARM_FLOW_SECTIONS="ci_health", SWARM_CI_TIME_ONLY="1")
@@ -90,8 +70,6 @@ def ci_refresh(project, repo, cache):
     finally:
         if line is None:
             open(cache + ".failed", "w").close()
-        if running(cache) == os.getpid():
-            os.remove(cache + ".run")
 
 if sys.argv[1:2] == ["--ci"]:
     ci_refresh(*sys.argv[2:5])
@@ -121,21 +99,20 @@ for repo, mine in slugs.items():
             if out is not None:
                 print(pr["url"] + "\t" + out.replace("\n", "").replace("\t", ""))
 def start_refresh(project, repo, cache):
-    # A detached ci_refresh, unless one runs (the pid in <cache>.run, made with O_EXCL, is alive: a
-    # clock jump cannot make it look dead) or one failed within CI_RETRY.
-    failed, pid = age(cache + ".failed"), running(cache)
-    if failed is not None and failed < CI_RETRY or pid == -1 or pid > 0 and alive(pid):
+    # A detached ci_refresh, unless one failed within CI_RETRY or one runs: it holds an flock on
+    # <cache>.run, taken here and passed to it, which the kernel drops when it ends however it ends.
+    failed = age(cache + ".failed")
+    if failed is not None and failed < CI_RETRY:
         return
+    fd = os.open(cache + ".run", os.O_CREAT | os.O_WRONLY)
     try:
-        os.remove(cache + ".run")   # a refresh that died, or none
-    except FileNotFoundError:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--ci", project, repo, cache], pass_fds=(fd,),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except BlockingIOError:
         pass
-    try:
-        os.close(os.open(cache + ".run", os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-    except FileExistsError:
-        return
-    subprocess.Popen([sys.executable, os.path.abspath(__file__), "--ci", project, repo, cache],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    finally:
+        os.close(fd)
 
 # The project's ci line from its cache (SWARM_CI_CACHE), refreshed by a detached ci_refresh once it is
 # over CI_SECONDS old (never with SWARM_NO_CI_REFRESH set, as in tests); past that age the line says

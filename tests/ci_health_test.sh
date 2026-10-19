@@ -20,12 +20,13 @@
 # (test's own median is 4.5). With FAILB=1 b's runs cannot be read: a and c alone, 7.0 min, and a
 # line that says 1 PR was left out. e: 4 min, test 2; f: 19 min on f1, test 16 (on its jobs
 # listing's second page; its older head f0's 40 min run is not its newest head's); g: 13 min, test
-# 10 (a job whose name carries a bell and a line break; its PR's URL spells the repo O/r, still o/r). Over the last 7 days (--since 6 days ago)
+# 10 (a job whose name carries a bell and a line break; its PR's URL spells the repo O/r, still o/r;
+# its older head g0's 20 min run was created after g1's, and still is not its newest head's). Over the last 7 days (--since 6 days ago)
 # that is e and f, 11.5 min and test 9.0, against g's 13.0 and 10.0 the week before (f, built in
 # both weeks, counts in its latest alone): -1.5. dash's ci line is that row, its change from the
 # minutes it shows: ci 12m (slowest: test 9m) ▼1m vs last week; past 6 hours old it says its age. A
-# dash whose refresh fails writes no line and tries again after 10 minutes, not 6 hours; a week
-# whose PRs gh cannot read is no failure, only no line.
+# dash whose refresh fails (gh reads no PR, or flow prints no table) writes no line and tries again
+# after 10 minutes, not 6 hours. A gh answer of {} leaves that PR out, never the section.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -61,7 +62,7 @@ echo '{"headRefName":"story/b","commits":[{"oid":"b1"},{"oid":"b2"}]}' > "${G}/v
 echo '{"headRefName":"story/c","commits":[{"oid":"c1"}]}' > "${G}/view-3"
 echo '{"headRefName":"story/e","commits":[{"oid":"e1"}]}' > "${G}/view-5"
 echo '{"headRefName":"story/f","commits":[{"oid":"f0"},{"oid":"f1"}]}' > "${G}/view-6"
-echo '{"headRefName":"story/g","commits":[{"oid":"g1"}]}' > "${G}/view-7"
+echo '{"headRefName":"story/g","commits":[{"oid":"g0"},{"oid":"g1"}]}' > "${G}/view-7"
 echo "[$(run 11 a1 CI pull_request success 1 10:10 10:16),$(run 10 a1 CI pull_request failure 1 10:00 10:04)]" > "${G}/runs-a"
 echo "[$(run 12 a1 CI pull_request success 2 10:00 10:16 10:10)]" > "${G}/rerun-a"
 echo '{"conclusion":"failure"}' > "${G}/attempt-12-1"
@@ -80,7 +81,7 @@ echo "[$(run 61 f1 CI pull_request success 1 10:00 10:19),$(run 62 f1 zizmor pul
   $(run 63 f0 CI pull_request success 1 09:00 09:40)]" > "${G}/runs-f"
 jobs 61-1 lint 10:01 10:05 / test 10:02 10:18
 echo '{"conclusion":"success"}' > "${G}/attempt-62-1"
-echo "[$(run 71 g1 CI pull_request success 1 10:00 10:13)]" > "${G}/runs-g"
+echo "[$(run 72 g0 CI pull_request success 1 10:30 10:50),$(run 71 g1 CI pull_request success 1 10:00 10:13)]" > "${G}/runs-g"
 jobs 71-1 'te\u0007s\nt' 10:01 10:11 build 10:00 10:03
 # gh: pr list answers each story's PR (d's on Enterprise; g's with the repo spelled O/r), pr view its
 # createdAt or its commits (with BADPR=1, an object with neither), run list its branch's runs, and api
@@ -117,20 +118,22 @@ check "a run whose failed first attempt was rerun to green is red once and a fla
   "$(RERUN=1 flow "${W[@]}" | ci)" "${H}"$'\n3\t4\t7.5\t1.33\t1\n'"${T}"$'\no/r\t3\t6.0\tlint\t7.0\t0\t\t\t\t'
 check "a failing gh prints the failure line and no numbers; ci time keeps a, whose runs it read" "$(FAIL=1 flow "${W[@]}" | ci)" \
   "ci health: gh failed"$'\n'"${T}"$'\no/r\t1\t6.0\ttest\t5.0\t0\t\t\t\t\nci time: gh could not read 2 of 3 PRs, left out'
+check "a gh answer of {} leaves that PR out of ci time, not the section" "$(BADPR=1 flow "${W[@]}" | ci)" \
+  "ci health: gh failed"$'\n'"${T}"$'\nci time: gh could not read 3 of 3 PRs, left out'
 check "a gh call over 10 seconds is a failure, and ci time has no row" "$(SLOW=1 flow "${W[@]}" | ci)" \
   "ci health: gh failed"$'\n'"${T}"$'\nci time: gh could not read 3 of 3 PRs, left out'
 check "ci time keeps the PRs gh could read: a and c, and a line for b" "$(FAILB=1 flow "${W[@]}" | ci)" \
   "ci health: gh failed"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\nci time: gh could not read 1 of 3 PRs, left out'
 check "with no --since, the PRs of the last 30 days, and a line that says so" "$(flow | ci)" \
-  "PRs from the last 30 days, ${start} on; --since sets the start"$'\n'"${H}"$'\n3\t4\t16.0\t0.00\t0\n'"${T}"$'\no/r\t3\t13.0\ttest\t10.0\t0\t\t\t\t'
+  "PRs from the last 30 days, ${start} on; --since sets the start"$'\n'"${H}"$'\n3\t5\t19.0\t0.00\t0\n'"${T}"$'\no/r\t3\t13.0\ttest\t10.0\t0\t\t\t\t'
 now="$(flow --since "${week}" | ci)"
 check "the last 7 days against the 7 before: 11.5 min, test slowest at 9.0, against 13.0 and 10.0, so -1.5" \
   "${now}" "${H}"$'\n2\t3\t19.0\t0.00\t0\n'"${T}"$'\no/r\t2\t11.5\ttest\t9.0\t1\t13.0\ttest\t10.0\t-1.5'
 
 # dash's ci line is flow's row for the same week. A detached refresh runs flow and fills its cache,
 # then the next dash (past its one-minute cache) shows it. One that fails (flow prints no ci time
-# table) writes none and stamps <cache>.failed, and the next dash starts another only once that is 10
-# minutes old. A refresh ends by removing its <cache>.run.
+# table, or gh reads none of the PRs) writes none and stamps <cache>.failed, and the next dash starts
+# another only once that is 10 minutes old. A refresh holds an flock on <cache>.run until it ends.
 git -C "${P}" remote add origin https://github.com/o/r.git && touch "${P}/docs/stories/README.md"
 printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
@@ -141,15 +144,26 @@ dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so t
   rm -f "${dir}"/tmp/swarm-dash-3-*
   grep -oE "ci [0-9].*(vs last week|h old)" <<< "${out}" || true
 }
-refreshed() { # waits up to 60 s for the refresh dash started to remove its <cache>.run
-  for _ in $(seq 300); do compgen -G "${dir}/tmp/swarm-dash-ci-*.run" > /dev/null || return 0; sleep 0.2; done
-  echo "FAIL the ci refresh ends and removes its <cache>.run"; fails=$((fails + 1))
+refreshed() { # waits up to 60 s for the refresh dash started to end, and so let go of its flock on <cache>.run
+  python3 -c '
+import fcntl, glob, sys, time
+for p in glob.glob(sys.argv[1]):
+    with open(p) as f:
+        for _ in range(300):
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(0.2)
+        else:
+            sys.exit(1)' "${dir}/tmp/swarm-dash-ci-*.run" && return
+  echo "FAIL the ci refresh ends and lets go of its <cache>.run"; fails=$((fails + 1))
 }
 stamped() { if compgen -G "${dir}/tmp/swarm-dash-ci-*.failed" > /dev/null; then echo failed; fi; }
 ci_cache() { compgen -G "${dir}/tmp/swarm-dash-ci-*" | grep -vE '\.(failed|run)$'; }
 aged() { python3 -c 'import os, sys, time; t = time.time() - float(sys.argv[1]); os.utime(sys.argv[2], (t, t))' "$1" "$(ci_cache)"; }
 BADPR=1 dash > /dev/null; refreshed
-check "a refresh that fails (flow prints no ci time table) writes no ci line, and stamps .failed" "$(dash)|$(stamped)" "|failed"
+check "a refresh where gh reads no PR (each answers {}) writes no ci line, and stamps .failed" "$(dash)|$(stamped)" "|failed"
 dash > /dev/null; refreshed
 check "and within 10 minutes of it, with gh fine again, dash starts no other" "$(dash)" ""
 touch -t 202001010000 "${dir}"/tmp/swarm-dash-ci-*.failed
@@ -164,15 +178,15 @@ check "which are this fixture's, the change from the minutes shown: ci 12m (slow
 # A line 10 hours old, while its refresh keeps failing (a fresh .failed): dash says how old it is.
 touch "${dir}"/tmp/swarm-dash-ci-*.failed; aged 36000
 check "a line past 6 hours old says its age" "$(dash)" "${want} · 10h old"
-# A <cache>.run whose refresh is gone (its pid dead), however fresh, is taken over.
-rm "${dir}"/tmp/swarm-dash-ci-*.failed; sh -c 'echo $$' > "$(ci_cache).run"
+# A <cache>.run that no refresh holds a lock on, whatever it says, holds no refresh off.
+rm "${dir}"/tmp/swarm-dash-ci-*.failed; echo 1 > "$(ci_cache).run"
 dash > /dev/null; refreshed
-check "a fresh <cache>.run whose pid is dead does not hold a refresh off" "$(dash)" "${want}"
-# A week whose PRs gh cannot read (FAIL=1: e's, f's and g's runs) has no row: no line, and no failure
-# to try again in 10 minutes.
+check "a <cache>.run no refresh holds does not hold a refresh off" "$(dash)" "${want}"
+# A refresh where gh can read none of the PRs (FAIL=1: e's, f's and g's runs; offline, say) fails: the
+# line there was stays, its age said, and the next refresh comes 10 minutes later, not 6 hours.
 aged 25200
 FAIL=1 dash > /dev/null; refreshed
-check "a week whose PRs gh cannot read caches no line, and is no failed refresh" "$(dash)|$(stamped)" "|"
+check "a refresh where gh can read none of the PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
