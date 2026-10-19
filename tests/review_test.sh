@@ -351,9 +351,9 @@ check "the review brief's Out of scope holds only what a change outside the touc
   "$(has "raised that only a" "${brief}")"
 check "the review agent's brief has the checklist among what to check, before When both are done" "yes" \
   "$(awk '/^Hold the PR to these/ { h = NR } /^When both are done/ { w = NR } END { print (h && w && h < w) ? "yes" : "no" }' <<< "${brief}")"
-# at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>".
-at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "$1" "${n}" "$(sed -n "${n}p" "$1")"; }
-for l in "$(at "${b}/epics/rv.md" RV-DECISION)" "$(at "${b}/epics/rv.md" "Fewer parts")"; do
+# marked_at <file> <text> — the line a brief should show for <file>'s line holding <text>: "- <file>:<n>: <line>".
+marked_at() { local n; n="$(grep -nF -- "$2" "$1" | head -1 | cut -d: -f1)"; printf -- '- %s:%s: %s' "$1" "${n}" "$(sed -n "${n}p" "$1")"; }
+for l in "$(marked_at "${b}/epics/rv.md" RV-DECISION)" "$(marked_at "${b}/epics/rv.md" "Fewer parts")"; do
   check "both briefs carry the epic's marked line verbatim with its path:line: ${l##*.md:}" "yes|yes" "$(has "${l}" "${brief}")|$(has "${l}" "${fbrief}")"
 done
 READ="Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
@@ -368,7 +368,7 @@ NOTE="1 more decision is left out of this brief (past 2000 bytes): read ${b}/sto
 check "both briefs say how many decisions were left out and where they are" "yes|yes" "$(has "${NOTE}" "${brief}")|$(has "${NOTE}" "${fbrief}")"
 utf8() { python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8"); print("yes")' 2>/dev/null || echo no; }
 check "a 2000-byte marked line of two-byte characters is cut at 1500 bytes on a character boundary, with an ellipsis: both briefs stay valid UTF-8" "yes|yes|yes|1|0" \
-  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(has "$(at "${b}/stories/rv1.md" Accents | cut -c1-200)" "${brief}")|$(
+  "$(utf8 <<< "${brief}")|$(utf8 <<< "${fbrief}")|$(has "$(marked_at "${b}/stories/rv1.md" Accents | cut -c1-200)" "${brief}")|$(
   grep -c 'Accents (user, 2026-10-17): x.*…$' <<< "${brief}" || true)|$(grep -c "$(printf 'é%.0s' $(seq 1000))" <<< "${brief}" || true)"
 for l in "${CHECKLIST[@]:0:5}"; do
   check "a fallback brief with no story still carries: ${l:2:40}..." "yes" "$(has "${l}" "${fbare}")"
