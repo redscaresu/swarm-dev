@@ -99,6 +99,13 @@ else echo "FAIL swarm.md does not say the lead plans an unblocked epic unasked";
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 if grep -qF '`status: later` when $1 is `later`' "$(dirname "${SWARM}")/../commands/plan-epic.md"; then echo "ok   plan-epic.md keeps a later epic's child epics later"
 else echo "FAIL plan-epic.md's split arm makes a later epic's children active"; fails=$((fails + 1)); fi
+# A later epic that has stories, or is a split epic's later child, waits for the user to start it.
+expect "a later epic with done dependencies and a story is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: a'"
+expect "a split later epic's later child is not planned unasked" "gate" \
+  "item epics/p.md 'status: split' 'depends_on: [b]'" \
+  "item epics/c.md 'status: later' 'parent: p' 'depends_on: [b]'"
 # Once the lead ran plan-unasked on it, the epic is offered no more (the plan runs, waits for
 # approval, or was declined), and the gate says it was planned unasked. Only a later epic takes it.
 expect "a later epic planned unasked is offered no more" "gate" \
@@ -498,6 +505,10 @@ expect_conductor "a plannable epic comes before a working conductor's wait" "pla
   "*conduct-e1*wait --until-report conduct-e1*" \
   "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
+expect_conductor "an unblocked later epic comes before a working conductor's wait" "plan-epic a" no e1 \
+  "*later epic a*conduct-e1*wait --until-report conduct-e1*" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" "item epics/e1.md 'status: active'" \
+  "item stories/s1.md 'status: ready' 'kind: code' 'epic: e1'"
 expect_conductor "a working conductor's dependent epic with a blocked story left: wait" "wait conduct-e1" no e1 "*" \
   "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'" \

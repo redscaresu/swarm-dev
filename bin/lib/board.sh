@@ -166,7 +166,7 @@ epic_has_after() {
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
-#                     works, this comes before its wait
+#                     works, this (then unblocked_epic's, below) comes before its wait
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
@@ -196,6 +196,9 @@ next_step() {
       elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
+      elif epic="$(unblocked_epic)" && [[ -n "${epic}" ]]; then
+        echo "plan-epic ${epic}"
+        echo "the later epic ${epic}'s dependencies are done, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
         blocking_leads
@@ -355,13 +358,14 @@ plannable_epic() {
 }
 
 # unblocked_epic — the first later epic, in board order, whose depends_on lists something and is all
-# done or gone (open_deps), with no unasked_plan: (plan_unasked) and no stories, or nothing. An active
-# epic is plannable_epic's. A later epic with no depends_on waits on nothing but the user, so it
-# stays theirs to start. Board files only, no gh: dash runs it every frame.
+# done or gone (open_deps), with no unasked_plan: (plan_unasked), no parent: and no stories, or
+# nothing. An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
+# the user, and a split later epic's later children wait for the user to start them, so both stay
+# the user's. Board files only, no gh: dash runs it every frame.
 unblocked_epic() {
   local f slug deps
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == later && -z "$(fm "${f}" unasked_plan)" ]] || continue
+    [[ "$(fm "${f}" status)" == later && -z "$(fm "${f}" unasked_plan)" && -z "$(fm_list "${f}" parent)" ]] || continue
     deps="$(story_deps "${f}")"
     [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || continue
     slug="$(basename "${f}" .md)"
