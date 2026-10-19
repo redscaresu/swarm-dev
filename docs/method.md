@@ -80,9 +80,8 @@ built: `swarm.sh` stops and names it.
 see your share of the work before you approve it. A step found during the build that needs you is a
 new `lead` story, not done quietly.
 
-**Every stop names its exit.** A `lead` story says what it needs from you in its body, and each
-**You:** step says how the lead learns it is done. A status or flag raised for you says who clears
-it and how.
+**Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how.
 
 ## The board
 
