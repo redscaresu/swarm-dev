@@ -438,9 +438,10 @@ RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 # (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
 # is final, and pending or a failed read is judged again next poll. A head that was there before the
 # build is not this build's. With STEP_UP_RED_HEADS distinct red heads or more, <head> one of them,
-# the story's builder open (a PR whose builder was closed is the lead's) and no step-up refused on
-# this head, step it up (ladder_step ci-red-<N>) and succeed unless that closed nothing, which is
-# noted (refused) so this head is not tried again; else fail.
+# the story's builder open (a PR whose builder was closed is the lead's) and idle (one mid-turn is
+# tried again next poll), and no step-up refused on this head, step it up (ladder_step ci-red-<N>)
+# and succeed unless that closed nothing, which is noted (refused) so this head is not tried again;
+# else fail.
 # ponytail: ci_gate reads a head still running on each poll; skip it there if watch's gh calls matter.
 ci_red_scan() {
   local since now h rc v n out
@@ -468,6 +469,9 @@ ci_red_scan() {
   # Only while the PR's head is one of them: a builder whose fix is green, or still running, is left be.
   awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "red" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
   ! awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "refused" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
+  # Only an idle builder, as tell needs: one mid-turn (an edit, a rebase) is left to finish, and the
+  # step-up is tried again on a later poll.
+  case "$(read_state "$(agent_name "$3")")" in idle|herdr:idle|herdr:done) ;; *) return 1 ;; esac
   rc=0; ladder_step "$3" "ci-red-${STEP_UP_RED_HEADS}" || rc=$?
   [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" ]] && return 0
   [[ ${rc} != "${STEP_UP_BUSY}" ]] || return 1   # another step-up is running: not a refusal of this head

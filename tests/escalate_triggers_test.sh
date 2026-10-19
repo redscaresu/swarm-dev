@@ -179,6 +179,11 @@ for ladder in sonnet,opus,fable ""; do
     # Two red heads on a PR whose builder is closed step nothing: that PR is the lead's.
     fresh "${ladder}" idle; : > "${ROOT}/agents"; heads aaaa1111 bbbb2222
     check "two red heads with no builder open step nothing" "" "$(stepped)"
+    # A builder mid-turn (its session busy) is not stepped up under it: once it is idle, the next poll
+    # of the same red head steps it up.
+    fresh "${ladder}" busy; heads aaaa1111 bbbb2222; first="$(stepped)"
+    echo '[{"sessionId":"sess-1","status":"idle"}]' > "${CLAUDE_STUB_AGENTS}"; heads bbbb2222
+    check "ci-red-2 waits for a busy builder to go idle, then steps it up" "|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
     # A red head on another watched repo's story/s1 PR is not s1's: s1's repo is the project.
     fresh "${ladder}" idle; mkdir -p "${ROOT}/other"; git -C "${ROOT}/other" init -q; git -C "${ROOT}/other" remote add origin "${ROOT}/other-origin.git"
     echo "repos_dir = ${ROOT}" >> "${P}/.claude/swarm/config"
