@@ -167,6 +167,8 @@ check "a builder walks its diff against each tagged rule, and lists both kinds i
 run conduct f >/dev/null || true
 check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
   "$(has "is a finding of kind \`rules-unchecked\`: send it back like any other, after round 3 too." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")"
+check "both briefs say what to do on wait-pr's other exit 2s, ending with a report, never a loop" "yes|yes|yes|yes" \
+  "$(has "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again. If it ends the same way twice, stop and" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "If it ends the same way twice, stop and say so in your reply." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "Its other exit 2s print why:" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "If it ends the same way twice, stop and report it to the lead." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 check "the conductor sends a red check or a conflict to the builder as a nudge, not findings" "yes" \
   "$(has "nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 check "the builder and conductor briefs wait on CI only with wait-pr, never a loop of their own" "yes|yes|yes" \

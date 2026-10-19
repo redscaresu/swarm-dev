@@ -109,17 +109,23 @@ check "head read fails: says why" said "Could not resolve"
 is "head read fails: no check read" 0 "$(reads)"
 
 # --- A PR that conflicts with its base runs no checks: exit 2 on the first read, naming the base.
-# UNKNOWN (GitHub still computing) is read again, then MERGEABLE goes on to the checks.
+# UNKNOWN (GitHub still computing) is read again each poll, the checks beside it, until MERGEABLE.
 fresh; echo CONFLICTING > "${FX}/mergeable.1"; wait_pr SWARM_WAIT_PR_GRACE=300
 is "conflicting: exits 2" 2 "${rc}"
 is "conflicting: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 is "conflicting: no check read" 0 "$(reads)"
 check "conflicting: prints the conflict line" said "conflicts with main: merge origin/main in, then push"
-fresh; echo UNKNOWN > "${FX}/mergeable.1"; wait_pr
+# The checks are read beside each UNKNOWN read, so a red one ends the wait at once.
+fresh; echo UNKNOWN > "${FX}/mergeable.1"; checks "${FX}/checks.1" "$(run test queued)"; wait_pr
 is "unknown then mergeable: exits 0" 0 "${rc}"
 is "unknown then mergeable: two head reads" 2 "$(grep -c "^pr view" "${ROOT}/gh.log")"
-is "unknown then mergeable: reads the checks" 1 "$(reads)"
+is "unknown then mergeable: two check reads" 2 "$(reads)"
 check "unknown then mergeable: prints the head SHA" said "head ${H}"
+check "unknown then mergeable: says it waits on the mergeable state" said "pending: test (queued); mergeable state UNKNOWN"
+fresh; for n in 1 2 3; do echo UNKNOWN > "${FX}/mergeable.${n}"; done; checks "${FX}/checks" "$(run test completed failure)"; wait_pr
+is "unknown with a red check: exits 1" 1 "${rc}"
+is "unknown with a red check: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
+check "unknown with a red check: names it" said "red: test (failure)"
 # A merged or closed PR stays UNKNOWN: its checks are read at once, not polled to the deadline.
 fresh; echo UNKNOWN > "${FX}/mergeable.1"; echo UNKNOWN > "${FX}/mergeable.2"; echo MERGED > "${FX}/state"; wait_pr --timeout 5
 is "unknown on a merged PR: exits 0" 0 "${rc}"

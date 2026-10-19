@@ -18,10 +18,13 @@ merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
-# wait_pr_rule <then> — how every agent waits on a PR's CI, and <then>, what it does on red or a
-# conflict: wait-pr exits on red, on a conflict and on a deadline, where a loop of its own can sit for hours.
+# wait_pr_rule <then> <report> — how every agent waits on a PR's CI: <then>, what it does on red or a
+# conflict, and what it does on wait-pr's other exit 2s, the last of which is <report>. wait-pr exits
+# on red, on a conflict and on a deadline, where a loop of its own can sit for hours.
 wait_pr_rule() {
-  echo "Wait on a PR's CI only with \`${SWARM_HOME}/bin/swarm.sh wait-pr <PR URL>\` (in the background), never a loop of your own: $1"
+  echo "Wait on a PR's CI only with \`${SWARM_HOME}/bin/swarm.sh wait-pr <PR URL>\` (in the background), never a loop of your own: $1" \
+    "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again." \
+    "If it ends the same way twice, stop and $2."
 }
 # stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
 # waits out every running build. The backlog conductor has no Done when: it stops once its stories
@@ -351,7 +354,7 @@ credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}"
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above.") $(mutation_rule) Record it
+the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above." "say so in your reply") $(mutation_rule) Record it
 in the PR body. $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
@@ -753,7 +756,7 @@ A PR is green only when every check on its head has passed and you have triaged 
 \`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
 conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in.")
+never dismiss an alert. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "report it to the lead")
 EOF
 }
 

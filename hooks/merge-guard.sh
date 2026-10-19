@@ -6,13 +6,14 @@
 # the form, on gh pr merge, gh api .../pulls/<n>/merge, a graphql mergePullRequest, any of them in
 # code handed to a shell or an interpreter (-c, eval, a heredoc, a here-string, a pipe) or written
 # to a file, and on swarm.sh merge joined to another command. A mention in echo, printf or grep
-# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( )), a git
+# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( ), and not the
+# whole condition of a while or if, whose failure skips what follows), a git
 # checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
 # kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
 # process, or a group): either can hit another session's process. So is its gh pr checks --watch, or a
-# gh pr checks in a while/until loop's condition or body: swarm.sh wait-pr exits on red, a conflict and a deadline.
+# gh pr checks in a while/until loop's condition or body (not a while read loop): swarm.sh wait-pr exits on red, a conflict and a deadline.
 # Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
 # <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
@@ -23,17 +24,17 @@ input="$(cat)"
 command="${input}"
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 [[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"
-# Fast path: a command that never says merge, nor git, cd, a kill or pr checks as words, not even through quotes and
+# Fast path: a command that never says merge, nor git, cd or a kill as a word, nor both gh and checks, not even through quotes and
 # backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
 plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
 word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall)([^[:alnum:]_]|$)'
-checks='(^|[^[:alnum:]_])pr[[:space:]]+checks([^[:alnum:]_]|$)'
+gh='(^|[^[:alnum:]_])gh([^[:alnum:]_]|$)'; checks='(^|[^[:alnum:]_])checks([^[:alnum:]_]|$)'
 if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
-elif [[ ${plain} =~ ${word} || ${plain} =~ ${checks} ]]; then says=other
+elif [[ ${plain} =~ ${word} ]] || [[ ${plain} =~ ${gh} && ${plain} =~ ${checks} ]]; then says=other
 else exit 0
 fi
 # A command that says merge fails closed: anything but the guard's own verdict refuses it. One that
-# only says git, cd, a kill or pr checks fails open, since those rules save work rather than enforce the merge route.
+# only says git, cd, a kill or gh and checks fails open, since those rules save work rather than enforce the merge route.
 command -v python3 >/dev/null || { [[ ${says} == merge ]] || exit 0; echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
 IFS= read -r -d '' prog <<'PY' || true
@@ -50,7 +51,8 @@ ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 REDIRECT = re.compile(r"<<<|<<-?|&>>?|>>|>[|&]?|<[&>]?")
 QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 QUOTING = re.compile(r"[\"'\\]")
-OPENERS = {"do", "then", "else", "while", "until", "!"}  # words that can start a line before its command
+OPENERS = {"do", "then", "else", "while", "until", "!", "if", "elif", "{"}  # words that can start a line before its command
+GUARDS = {"while": "do", "if": "then", "elif": "then"}  # a condition cd whose failure skips what follows
 LOOPS = {"while", "until"}  # loops that poll their condition; for and select open a loop too, closed by done
 MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
 PATTERN_KILLS = {"pkill", "killall"}
@@ -298,15 +300,20 @@ def guard(code, cwd):
     sh.parse()
     d = cwd  # where the next command runs; None once a cd goes where this cannot tell
     loops = []  # the loops open around the command, innermost last
-    for cmd in sh.cmds:
+    for n, cmd in enumerate(sh.cmds):
         lead = list(itertools.takewhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
         args = cmd["words"][len(lead):]
-        loops += [w for w in lead if w in LOOPS] + args[:1] * (args[:1] in (["for"], ["select"]))
+        opens = [w for w in lead if w in LOOPS] + args[:1] * (args[:1] in (["for"], ["select"]))
+        if opens and [w for w in lead if not ASSIGNMENT.match(w)][-1:] == opens[-1:] and args[:1] == ["read"]:
+            opens[-1] = "read"  # while read: one pass per line read, not a poll
+        loops += opens
         if args[:1] == ["done"]:
             loops = loops[:-1]
         name = os.path.basename(args[0]) if args else ""
         if name == "cd" and not cmd["nested"]:  # a cd in $( ) moves nothing outside it
-            if cmd["end"] == ";" and not LOOPS & set(lead):  # a loop's condition cd: a failure runs no body
+            then = sh.cmds[n + 1]["words"][:1] if n + 1 < len(sh.cmds) else []
+            # while cd d; do, if cd d; then: when the cd fails, nothing after it runs
+            if cmd["end"] == ";" and not (lead and then == [GUARDS.get(lead[-1])]):
                 raise Unsafe("cd before ;", "If the cd fails, the rest runs where you were: use `cd <dir> || exit 1 &&`")
             # ponytail: no subshell scoping, so a cd inside ( ) still moves d for the commands after it.
             t = next((w for w in args[1:] if w == "-" or not w.startswith("-")), "~")

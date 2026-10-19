@@ -168,10 +168,16 @@ check "an agent's cd <main checkout> && git stash blocks" as agent "${W}" 2 "cd 
 check "git checkout -- f on a dirty f blocks" as lead "${W}" 2 "git checkout -- f"
 check "git checkout f on a dirty f blocks" as lead "${W}" 2 "git checkout f"
 check "cd /nope; cp a b blocks" as lead "${W}" 2 "cd /nope; cp a b"
-# A cd that is a loop's condition runs no body when it fails, so the cd rule skips it.
-check "until cd /nope; do sleep 1; done passes" as lead "${W}" 0 "until cd /nope; do sleep 1; done"
-check "while ! cd /nope; do sleep 1; done passes" as lead "${W}" 0 "while ! cd /nope; do sleep 1; done"
+# A cd that is the whole condition of a while or if runs nothing after it when it fails, so the cd
+# rule skips it; until cd and while ! cd run their body exactly when the cd fails.
+check "while cd /nope; do sleep 1; done passes" as lead "${W}" 0 "while cd /nope; do sleep 1; done"
+check "if cd /nope; then cp a b; fi passes" as lead "${W}" 0 "if cd /nope; then cp a b; fi"
+check "until cd /nope; do sleep 1; done blocks" as lead "${W}" 2 "until cd /nope; do sleep 1; done"
+check "while ! cd /nope; do sleep 1; done blocks" as lead "${W}" 2 "while ! cd /nope; do sleep 1; done"
+check "while cd /nope; true; do sleep 1; done blocks" as lead "${W}" 2 "while cd /nope; true; do sleep 1; done"
+check "an agent's until cd /nope; do git reset --hard; done in the main checkout blocks" as agent "${P}" 2 "until cd /nope; do git reset --hard; done"
 check "  ... but a cd before ; in its body still blocks" as lead "${W}" 2 "while true; do cd /nope; cp a b; done"
+check "read x; cd /nope; cp a b blocks" as lead "${W}" 2 "read x; cd /nope; cp a b"
 check "  ... and logs guard-blocked to the main checkout" test "$(tail -1 "${LOG}" | cut -f5)" == "guard-blocked: cd before ;"
 check "an agent's git checkout main in a story worktree passes" as agent "${W}" 0 "git checkout main"
 check "an agent's git -C <story worktree> restore x passes" as agent "${P}" 0 "git -C ${W} restore x"
@@ -223,6 +229,13 @@ check "the lead's gh pr checks 271 passes" as lead "${W}" 0 "gh pr checks 271"
 check "an agent's until gh pr checks inside a for loop blocks" as agent "${W}" 2 "for i in 1 2; do until gh pr checks 271; do sleep 30; done; done"
 check "an agent's gh pr checks after a for loop inside a while loop blocks" as agent "${W}" 2 "while true; do for i in 1; do :; done; gh pr checks 271; done"
 check "an agent's gh pr checks inside a while loop's body blocks" as agent "${W}" 2 "while true; do gh pr checks 271; sleep 30; done"
+check "an agent's gh pr checks behind an if in a while loop blocks" as agent "${W}" 2 "while true; do if gh pr checks 271; then break; fi; sleep 30; done"
+check "an agent's gh pr checks in a { } group in a while loop blocks" as agent "${W}" 2 "while true; do { gh pr checks 271; }; sleep 30; done"
+check "an agent's gh pr -R o/r checks 271 --watch blocks" as agent "${W}" 2 "gh pr -R o/r checks 271 --watch"
+# shellcheck disable=SC2016 # $pr is the loop's own
+check "an agent's while read loop over PRs passes" as agent "${W}" 0 'while read pr; do gh pr checks "$pr"; done < prs.txt'
+# shellcheck disable=SC2016 # $pr is the loop's own
+check "an agent's while IFS= read -r loop over PRs passes" as agent "${W}" 0 'while IFS= read -r pr; do gh pr checks "$pr"; done < prs.txt'
 # shellcheck disable=SC2016 # $l is the loop's own
 check "an agent's single gh pr checks piped into a while loop passes" as agent "${W}" 0 'gh pr checks 271 | while read -r l; do echo "$l"; done'
 check "an agent's gh pr checks after a finished while loop passes" as agent "${W}" 0 "while false; do :; done; gh pr checks 271"
