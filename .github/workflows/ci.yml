@@ -29,7 +29,7 @@ jobs:
       - name: Gate a board-only or version-only PR
         id: gate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GH_TOKEN: ${{ github.token }}
         # The base's copy when it has one: a PR is never judged by a gate it changed.
         run: |
@@ -55,7 +55,7 @@ jobs:
       - name: Gate a board-only or version-only PR
         id: gate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GH_TOKEN: ${{ github.token }}
         # The base's copy when it has one: a PR is never judged by a gate it changed.
         run: |
@@ -83,7 +83,7 @@ jobs:
       - name: Gate a board-only or version-only PR
         id: gate
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           GH_TOKEN: ${{ github.token }}
         # The base's copy when it has one: a PR is never judged by a gate it changed.
         run: |
