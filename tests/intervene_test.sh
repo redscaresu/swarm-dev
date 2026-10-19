@@ -32,6 +32,7 @@ lines() { if [[ -f "${EV}" ]]; then wc -l < "${EV}" | tr -d ' '; else echo 0; fi
 KINDS="$(sed -n 's/^INTERVENE_KINDS="\(.*\)"$/\1/p' "${REPO}/bin/swarm.sh")"
 check "swarm.sh names the two kinds" "${KINDS}" "lead-hand user-caught"
 
+check "with no intervention dash shows no interventions light" "$(COLUMNS=200 sw dash 2>&1 | grep -c intervention)" 0
 rc=0; sw intervene lead-typo "typed into a pane" >/dev/null 2>&1 || rc=$?
 check "intervene with an unknown kind fails" "${rc}" 1
 check "intervene with an unknown kind logs nothing" "$(lines)" 0
@@ -65,6 +66,14 @@ flow="$(sw flow --since "${since}" | sed -n '/^## incidents$/,/^$/p' | awk -F'\t
 dash="$(COLUMNS=200 SWARM_DASH_NOW="${NOW}" sw dash 2>&1 | sed -n 2p | grep -oE '[0-9]+ interventions? in 7 days' | cut -d' ' -f1)"
 check "flow counts 4 interventions in the last 7 days" "${flow}" 4
 check "dash shows the same 7-day count as flow" "${dash}" "${flow}"
+# Where it does not fit beside the speedometer (80 columns) it takes the next line; a cut frame drops
+# the sparkline's line before it (80x18), and it goes too once the frame is shorter (80x17).
+dsh() { SWARM_DASH_NOW="${NOW}" sw dash 2>&1; }
+check "at 80 columns the lit light is the line under the speedometer" "$(DASH_W=80 dsh | sed -n 3p)" "! 4 interventions in 7 days"
+out="$(DASH_KEYS=1 DASH_W=80 DASH_H=18 dsh)"
+check "at 80x18 the sparkline's line gives way before the light's" "$(grep -c '14 days' <<< "${out}") $(grep -c 'interventions in 7 days' <<< "${out}")" "0 1"
+out="$(DASH_KEYS=1 DASH_W=80 DASH_H=17 dsh)"
+check "at 80x17 the light's line gives way too, and needs you still shows" "$(grep -c 'interventions in 7 days' <<< "${out}") $(grep -c 'nothing needs you' <<< "${out}") $(wc -l <<< "${out}" | tr -d ' ')" "0 1 17"
 
 # commands/swarm.md tells the lead to log each kind with intervene.
 for kind in ${KINDS}; do

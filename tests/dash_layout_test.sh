@@ -157,10 +157,9 @@ for panel in "needs you" "epics" "recent"; do
 done
 check "the header is one line: project, version, merge, next, clock" grep -qE '^proj  swarm-dev [0-9.]+  merge human  next wait conduct-e1 +[0-9]{2}:[0-9]{2}:[0-9]{2}$' <<< "$(head -1 <<< "${out}")"
 check "the speedometer is the line under the header" grep -qE '^0[.]0 merged/day over 7 days · ! [0-9]+ waiting on you, oldest [0-9hmd]+ · ✓ 0 escaped in 7 days$' <<< "$(sed -n 2p <<< "${out}")"
-check "at 100 columns the interventions light that does not fit goes to the next line" test "$(sed -n 3p <<< "${out}")" == "✓ 0 interventions in 7 days"
-check "the summary line counts epics, working agents, green PRs, stalls and cost" test "$(sed -n 6p <<< "${out}")" == "1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · \$24.00 today"
-check "below 140 columns, on call and today's escalations follow the summary, on a line of their own when it is full" test "$(sed -n 7p <<< "${out}")" == "on call: fable·xhigh · 0 escalations today"
-check "uncommitted board edits are one line under the summary, naming each file" test "$(sed -n 8p <<< "${out}")" == "board: 2 uncommitted edits in the main checkout: stories/s-three.md, stories/s-two.md"
+check "the summary line counts epics, working agents, green PRs, stalls and cost" test "$(sed -n 5p <<< "${out}")" == "1 epics active · 3 agents working · 1 PRs green, waiting · 0 stalled · \$24.00 today"
+check "below 140 columns, on call and today's escalations follow the summary, on a line of their own when it is full" test "$(sed -n 6p <<< "${out}")" == "on call: fable·xhigh · 0 escalations today"
+check "uncommitted board edits are one line under the summary, naming each file" test "$(sed -n 7p <<< "${out}")" == "board: 2 uncommitted edits in the main checkout: stories/s-three.md, stories/s-two.md"
 check "needs you is the first panel" grep -q '^╭─ needs you ─' <<< "$(grep -m1 '^╭─' <<< "${out}")"
 needs="$(sed -n '/^╭─ needs you/,/^╰/p' <<< "${out}")"
 check "needs you lists a green PR as a merge" grep -qE '^│ ! merge r#7 \(✓ green · behind\)  s-one +│$' <<< "${needs}"

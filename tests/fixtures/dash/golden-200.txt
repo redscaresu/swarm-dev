@@ -1,5 +1,5 @@
 alpha  swarm-dev 0.0.0  next conduct alpha-core                                                                                                                                                 12:00:00
-0.6 merged/day over 7 days · ! 3 waiting on you or the lead, oldest 3d · ✓ 0 escaped in 7 days · ✓ 0 interventions in 7 days
+0.6 merged/day over 7 days · ! 3 waiting on you or the lead, oldest 3d · ✓ 0 escaped in 7 days
 14 days ▁▁▁▁▁▁▁▁▇▁▁▇▇▇  today 1  7-day avg 0.6 · rate ████████████ 0.6 of best 0.6/day · running ██████▓▓▓▓▓▓ 2 of peak 2 in 7 days
 ╭─ needs you ─────────────────────────────────────────────────────────────────────────────────────────────────────────╮ ╭─ recent ─────────────────────────────────────────────────────────────────────╮
 │ ! run lead story a-key: create the deploy key  waits for: you: create the deploy key in the vault                   │ │ 11:00  ▶ story a-building                                                    │
@@ -21,7 +21,7 @@ alpha  swarm-dev 0.0.0  next conduct alpha-core                                 
 ⏸ 1 blocked · 1 later  (swarm.sh status --all lists them)
 merge agent · 1 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $14.60 today · on call: fable·xhigh · 0 escalations today
 bravo  swarm-dev 0.0.0  next conduct bravo-ui                                                                                                                                                   12:00:00
-0.9 merged/day over 7 days · ! 5 waiting on you or the lead, oldest 4d · ✓ 0 escaped in 7 days · ✓ 0 interventions in 7 days
+0.9 merged/day over 7 days · ! 5 waiting on you or the lead, oldest 4d · ✓ 0 escaped in 7 days
 14 days ▁▁▁▁▁▁▁▁▁▁▃▇▃▇  today 2  7-day avg 0.9 · rate ████████████ 0.9 of best 0.9/day · running ████████████ 1 of peak 1 in 7 days
 ╭─ needs you ─────────────────────────────────────────────────────────────────────────────────────────────────────────╮ ╭─ recent ─────────────────────────────────────────────────────────────────────╮
 │ ! run lead story b-cert: renew the cert  waits for: you: approve the renewal email  +1 more                         │ │ today  ✎ retry never backed off (#21)                                        │

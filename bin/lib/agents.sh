@@ -467,10 +467,14 @@ EVENTS_LOG="${PROJECT_DIR}/.swarm/events.tsv"
 
 # record_event <command> <target> [outcome] — append one line. A log that cannot be written never
 # fails the command it records.
-record_event() {
+record_event() { append_event "$@" || true; }
+
+# append_event <command> <target> [outcome] — record_event's append, failing when the line was not
+# written, for a command whose only output is that line (intervene).
+append_event() {
   local x fields=()
   for x in "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${2:--}" "${HERDR_PANE_ID:--}" "${3:-ok}"; do fields+=("${x//[$'\t\n\r']/ }"); done
-  { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null || true
+  { mkdir -p "${EVENTS_LOG%/*}" && printf '%s\t%s\t%s\t%s\t%s\n' "${fields[@]}" >> "${EVENTS_LOG}"; } 2>/dev/null
 }
 
 # story_text <slug> — the story file on the board or, once a merge deleted it, its last version in
