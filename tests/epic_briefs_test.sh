@@ -173,6 +173,12 @@ check "with commit_trailers set, a builder's brief names each trailer for every 
 check "without commit_trailers, a brief names none" "no" "$(grep -q '^End every commit message' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 : > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
+check "both briefs say what to do on wait-pr's other exit 2s, ending with a report, never a loop" "yes|yes|yes|yes" \
+  "$(has "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again. If it ends the same way twice, stop and" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "If it ends the same way twice, stop and say so in your reply." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "Its other exit 2s print why:" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "If it ends the same way twice, stop and report it to the lead." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the conductor sends a red check or a conflict to the builder as a nudge, not findings" "yes" \
+  "$(has "nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the builder and conductor briefs wait on CI only with wait-pr, never a loop of their own" "yes|yes|yes" \
+  "$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 fix the red check; on a conflict, do as above." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 or a conflict, send the story's builder a nudge with" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own" "$(cat "${p}/.swarm/briefs/g1.md")")"
 # clash_brief <brief> — the clash rule (per repo), the merge-base-in rule (a nudge; a busy builder waited
 # on, a closed one started again), the round-3 cap (a round defined, decline reasons kept), then the
 # old file-level wording.
