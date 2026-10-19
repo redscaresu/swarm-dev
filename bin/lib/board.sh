@@ -174,7 +174,7 @@ epic_has_after() {
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
 #                     file outside the board (release_due): the lead cuts a release
 #   plan-epic <epic>  (again) a later epic whose depends_on are listed and all done, with no stories
-#                     and no unasked plan yet (unblocked_epic): planning is read-only and its stories
+#                     and no declined unasked plan (unblocked_epic): planning is read-only and its stories
 #                     wait for approval
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
@@ -198,7 +198,7 @@ next_step() {
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       elif epic="$(unblocked_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
-        echo "the later epic ${epic}'s dependencies are done, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
+        echo "the later epic ${epic}'s dependencies are done$(unasked_note "${epic}"), and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
         blocking_leads
@@ -251,7 +251,7 @@ next_step() {
   fi
   epic="$(unblocked_epic)"
   if [[ -n "${epic}" ]]; then
-    echo "plan-epic ${epic}"; echo "the later epic ${epic}'s dependencies are done; planning is read-only, and its stories wait for approval"; return
+    echo "plan-epic ${epic}"; echo "the later epic ${epic}'s dependencies are done$(unasked_note "${epic}"); planning is read-only, and its stories wait for approval"; return
   fi
   waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
@@ -358,14 +358,15 @@ plannable_epic() {
 }
 
 # unblocked_epic — the first later epic, in board order, whose depends_on lists something and is all
-# done or gone (open_deps), with no unasked_plan: (plan_unasked), no parent: and no stories, or
-# nothing. An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
+# done or gone (open_deps), with no declined unasked_plan: (plan_unasked), no parent: and no stories,
+# or nothing. One planned unasked with no stories yet is offered again: that plan may have stopped
+# (a login expired, a pane closed) before it wrote any. An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
 # the user, and a split later epic's later children wait for the user to start them, so both stay
 # the user's. Board files only, no gh: dash runs it every frame.
 unblocked_epic() {
   local f slug deps
   while IFS= read -r f; do
-    [[ "$(fm "${f}" status)" == later && -z "$(fm "${f}" unasked_plan)" && -z "$(fm_list "${f}" parent)" ]] || continue
+    [[ "$(fm "${f}" status)" == later && "$(fm "${f}" unasked_plan)" != declined* && -z "$(fm_list "${f}" parent)" ]] || continue
     deps="$(story_deps "${f}")"
     [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || continue
     slug="$(basename "${f}" .md)"
@@ -374,16 +375,26 @@ unblocked_epic() {
   done < <(board epics)
 }
 
-# plan_unasked <epic> — swarm.sh plan-unasked: the lead records, before it starts the /plan-epic next
-# offered unasked, that the later epic has had its plan (unasked_plan: <date>, in board state). next
-# offers it no more, while the plan runs or waits for approval and after the user declines it, and
-# the gate says so.
+# plan_unasked [--declined] <epic> — swarm.sh plan-unasked: the lead records, before it starts the
+# /plan-epic next offered unasked, that the later epic has had its plan (unasked_plan: <date>, in board
+# state), so next's why and the gate say so; with --declined, that the user declined it
+# (unasked_plan: declined <date>), so next offers it no more.
 plan_unasked() {
-  local f="${BOARD}/epics/$1.md"
-  [[ "$1" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "plan-unasked: no epic ${f}: swarm.sh plan-unasked <epic>"
+  local v="" f
+  if [[ "${1:-}" == --declined ]]; then v="declined "; shift; fi
+  f="${BOARD}/epics/${1:-}.md"
+  [[ "${1:-}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "plan-unasked: no epic ${f}: swarm.sh plan-unasked [--declined] <epic>"
   [[ "$(fm "${f}" status)" == later ]] || die "plan-unasked: $1 is not a later epic"
-  set_fm "${f}" unasked_plan "$(date +%F)"
-  echo "plan-unasked: $1, planned unasked on $(date +%F); next offers it no more"
+  set_fm "${f}" unasked_plan "${v}$(date +%F)"
+  echo "plan-unasked: $1, ${v:-planned unasked }on $(date +%F)"
+}
+
+# unasked_note <epic> — for next's why: when the epic was planned unasked (and, being offered, has no
+# stories and was not declined), that the plan may have stopped; else nothing.
+unasked_note() {
+  local when
+  when="$(fm "${BOARD}/epics/$1.md" unasked_plan)"
+  [[ -z "${when}" ]] || printf '%s' " (it was planned unasked on ${when} and has no stories yet: plan it again if that plan stopped)"
 }
 
 # epic_holding_deps <epic file> — fails unless it is an active epic with no stories (epic_has_stories;
@@ -530,8 +541,12 @@ waiting_on_user() {
   done < <(board stories)
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
-      later) when="$(fm "${f}" unasked_plan)"
-        waiting+="  later epic: $(basename "${f}" .md)${when:+ (planned unasked on ${when}: approve its stories, or start it yourself)}"$'\n' ;;
+      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md)
+        case "${when}" in
+          declined*) when=" (its unasked plan was ${when})" ;;
+          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}: approve its stories, or start it yourself)"; else when=""; fi ;;
+        esac
+        waiting+="  later epic: ${slug}${when}"$'\n' ;;
       draft) waiting+="  draft epic: $(basename "${f}" .md), run /epic $(basename "${f}" .md)"$'\n' ;;
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac

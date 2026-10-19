@@ -94,7 +94,8 @@ expect "a later epic whose dependency is not done waits in the gate" "gate" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'"
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 if grep -qF 'its why says a `later` epic'"'"'s dependencies are done' "$(dirname "${SWARM}")/../commands/swarm.md" \
-  && grep -qF 'unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
+  && grep -qF 'unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`' "$(dirname "${SWARM}")/../commands/swarm.md" \
+  && grep -qF 'run `swarm.sh plan-unasked --declined <epic>`' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
 else echo "FAIL swarm.md does not say the lead plans an unblocked epic unasked"; fails=$((fails + 1)); fi
 # shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
 if grep -qF '`status: later` when $1 is `later`' "$(dirname "${SWARM}")/../commands/plan-epic.md"; then echo "ok   plan-epic.md keeps a later epic's child epics later"
@@ -106,13 +107,33 @@ expect "a later epic with done dependencies and a story is a gate" "gate" \
 expect "a split later epic's later child is not planned unasked" "gate" \
   "item epics/p.md 'status: split' 'depends_on: [b]'" \
   "item epics/c.md 'status: later' 'parent: p' 'depends_on: [b]'"
-# Once the lead ran plan-unasked on it, the epic is offered no more (the plan runs, waits for
-# approval, or was declined), and the gate says it was planned unasked. Only a later epic takes it.
-expect "a later epic planned unasked is offered no more" "gate" \
+# A later epic planned unasked (plan-unasked) with no stories yet is offered again, its why saying so:
+# that plan may have stopped before it wrote any. Once it has stories, the gate says it was planned
+# unasked; once the user declined it (--declined), next offers it no more and the gate says that.
+expect "a later epic planned unasked with no stories is offered again" "plan-epic a" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked a >/dev/null"
+if [[ "${out}" == *"(it was planned unasked on $(date +%F) and has no stories yet: plan it again if that plan stopped)"* ]]; then echo "ok   its why says it was planned unasked and may have stopped"
+else echo "FAIL the why does not say the epic was planned unasked: ${out}"; fails=$((fails + 1)); fi
+# status lists it under Waiting on you while it is offered: with no stories, no "planned unasked" (no
+# stories to approve).
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item epics/a.md 'status: later' 'depends_on: [b]' && bash "${SWARM}" plan-unasked a >/dev/null)
+waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Waiting on you$/,/^$/p')"
+if grep -qx '  later epic: a' <<< "${waiting}"; then echo "ok   status names a marked later epic with no stories without asking for an approval"
+else echo "FAIL status's line for a marked later epic with no stories: ${waiting}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
+expect "a later epic planned unasked with stories is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: a'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
 if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F): approve its stories, or start it yourself)"* ]]; then echo "ok   the gate lists a later epic planned unasked, with its date"
 else echo "FAIL the gate does not say the later epic a was planned unasked: ${out}"; fails=$((fails + 1)); fi
+expect "a later epic whose unasked plan was declined is offered no more" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked --declined a >/dev/null"
+if [[ "${out}" == *"later epic: a (its unasked plan was declined $(date +%F))"* ]]; then echo "ok   the gate says the later epic's unasked plan was declined"
+else echo "FAIL the gate does not say a's unasked plan was declined: ${out}"; fails=$((fails + 1)); fi
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p docs/stories && item epics/e.md 'status: active')
 got="$(cd "${dir}" && bash "${SWARM}" plan-unasked e 2>&1; echo "exit $?")"
