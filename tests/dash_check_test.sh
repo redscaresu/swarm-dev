@@ -23,6 +23,8 @@ check() { # <name> <test...>
   if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi
 }
 has() { grep -qF -- "$1" <<< "$2"; }
+# unread <line>: the last --check exited 1 and printed that line.
+unread() { [[ ${rc} == 1 ]] && grep -qx "$1" <<< "${out}"; }
 
 # shellcheck source=fixtures/dash/two_projects.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 source "${HERE}/fixtures/dash/two_projects.sh" "${ROOT}"
@@ -193,6 +195,10 @@ check "with the waiting epic quiet, --check names the epics waiting" names "${B}
 check "mutant: status lists one more working agent" \
   mutant status swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) status_report "${1:-}"; echo "  ghost  working  [x w9:p9]" ;;/'
 check "with that status, --check names agents working" names "${A}" "agents working" env SWARM_PROJECT="${A}" "${M}" dash --check
+# shellcheck disable=SC2016
+check "mutant: status fails" mutant nostatus swarm.sh 's/^    status) status_report "${1:-}" ;;$/    status) exit 3 ;;/'
+out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
+check "with status failing, --check says status could not be read" unread "alpha: agents and Waiting on you: status could not be read"
 check "mutant: next fails" mutant next swarm.sh 's/^    next)   next_report ;;$/    next)   exit 3 ;;/'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 # shellcheck disable=SC2016 # the script's own $1 and $2
@@ -215,7 +221,6 @@ check "mutant: the running gauge is left out" mutant nogauge lib/dash_render.py 
 check "with herdr's agent list but no running gauge, --check names running" names "${A}" running env SWARM_PROJECT="${A}" "${M}" dash --check
 check "mutant: flow's lead_queue section raises" mutant noqueue lib/flow_lead_queue.py '1s/^/raise RuntimeError("no queue") /'
 out="$(env SWARM_PROJECT="${B}" "${M}" dash --check)" && rc=0 || rc=$?
-unread() { [[ ${rc} == 1 ]] && grep -qx "$1" <<< "${out}"; }
 check "when flow's lead_queue cannot be read, --check says so" unread "bravo: lead's queue: flow's lead_queue could not be read"
 check "mutant: flow's merges section raises" mutant nomerges lib/flow_merges.py '1s/^/raise RuntimeError("no merges") /'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?

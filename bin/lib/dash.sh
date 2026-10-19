@@ -224,7 +224,7 @@ dash_check() {
   rm -f "${err}"
   # status asks herdr only inside a pane; dash whenever herdr is on PATH. Read next to the frame, as
   # agents change state.
-  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status || true)"
+  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status)" || dash_unread "agents and Waiting on you" status
   hi="$(dash_flow_cost "${day}")"
 
   want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
