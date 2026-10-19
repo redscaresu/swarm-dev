@@ -234,6 +234,10 @@ session "${ROOT}/claude.json" sess-a2=busy; echo "done" > "${ROOT}/hstatus"; api
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
 check "an API-error stop, resumed 3 times, comes back a 4th time: wait returns stuck: api error with no 4th resume" \
   "stuck: api error|exit 4|3" "${got%|*}|$(prompts "Your last turn stopped on an API error; carry on where you stopped.")"
+# A resumed turn that errors before herdr shows it working: each stop still gets one resume, never two.
+touch "${ROOT}/idle"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; rm -f "${ROOT}/idle"
+check "a resume herdr never sees taken up is sent once per stop: 3 resumes, then stuck: api error" "stuck: api error|exit 4|3" "${got%|*}|$(prompts)"
 printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
 check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
@@ -270,6 +274,9 @@ check "a prompt typed after the API error ends the stop: tell refuses" "yes|0" \
 printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '' '────────' '> Try "carry on where you stopped"' '────────' '  ? for shortcuts' > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"; got="$(run tell a resume "${ROOT}/tell.txt")" || true
 check "a suggestion in the input box under the API error is no prompt: tell delivers" "told a|1" "${got}|$(prompts)"
+printf '%s\n' '╭────────╮' '│ Welcome │' '╰────────╯' '⏺ API Error: Connection dropped (ECONNRESET)' '' '────────' '> ' '────────' > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"; got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "a box above the API error (a banner) is read past: tell delivers" "told a|1" "${got}|$(prompts)"
 # A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
 # stuck: no output (exit 4), naming the pane, and nothing sent. Not while its transcript shows a
 # background task it has not been told the end of.
@@ -289,8 +296,14 @@ check "a pane unchanged past stall_minutes, its background task (a hyphenated id
   "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
 started '{"status":"async_launched","agentId":"a-7"}'
 check "a quiet pane whose session waits on an async subagent is no stop" "busy|exit 1|0" "$(quiet)"
-told a-7 completed; started '{"taskId":"m-3"}'
-check "a quiet pane whose session runs a monitor (a taskId) is no stop" "busy|exit 1|0" "$(quiet)"
+call() { # <tool name> <tool_use id> <toolUseResult> — a tool call and its result
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"%s","name":"%s","input":{}}]}}\n' "$2" "$1" >> "${tr}"
+  printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"%s","content":"ok"}]},"toolUseResult":%s}\n' "$2" "$3" >> "${tr}"
+}
+told a-7 completed; call TaskUpdate tu-t '{"success":true,"taskId":"7"}'
+check "a task-list tool's taskId is no background task: the quiet pane is stuck" "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
+call Monitor tu-m '{"taskId":"m-3"}'
+check "a quiet pane whose session runs a monitor (a Monitor call's taskId) is no stop" "busy|exit 1|0" "$(quiet)"
 rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${tr}"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"

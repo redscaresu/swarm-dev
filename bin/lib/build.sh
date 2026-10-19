@@ -761,12 +761,13 @@ login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> resum
 again with \`swarm.sh wait <slug>\` in the background.
 
 A \`wait\` that prints a line starting \`stuck:\` (exit 4) is not a stall: never close the builder as
-stalled for it. \`stuck: no output for <N>m (<pane>)\` is a pane unchanged that long with no
-background task running. \`stuck: api error\` is a turn that stopped on an API error after wait told
-it to carry on three times. For either, read the pane (\`herdr agent read <pane>\`); if the builder
-only stopped, tell it to resume and wait on it again, and otherwise list it for the lead. With goal
-on, wait never tells a builder to carry on: its \`stuck: api error\` is the goal rule's to read, and
-the goal rule's close for it stands.
+stalled for it. \`stuck: api error\` is a turn that stopped on an API error after wait told it to carry
+on three times: read the pane (\`herdr agent read <pane>\`), then tell it to resume once more and
+wait on it again, or list it for the lead. \`stuck: no output for <N>m (<pane>)\` is a busy session
+whose pane has not changed that long with no background task running; \`tell\` refuses a busy
+session, so do not tell it: read the pane and list it for the lead. With goal on, wait never tells a
+builder to carry on: its \`stuck: api error\` is the goal rule's to read, and the goal rule's close
+for it stands.
 EOF
 }
 

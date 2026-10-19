@@ -186,9 +186,9 @@ next_step() {
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
-      elif [[ "$(session_state "${slug}")" == idle ]] && login_expired "${slug}"; then
-        # As in wait, only an idle session is auth: wait returns it at once, and /swarm-dev:swarm stops there
-        # for the user's /login.
+      elif { [[ "$(session_state "${slug}")" == idle ]] || api_stopped "${slug}" "$(agent_field "${slug}" pane_id)"; } && login_expired "${slug}"; then
+        # As in wait, only an idle session, or a busy one stopped on an API error, is auth: wait returns
+        # it at once, and /swarm-dev:swarm stops there for the user's /login.
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
       elif api_stopped "${slug}" "$(agent_field "${slug}" pane_id)"; then
         echo "wait ${slug}"; echo "stuck: the conductor ${slug} stopped on an API error; swarm.sh wait --until-report ${slug} resumes it"

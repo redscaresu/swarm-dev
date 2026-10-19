@@ -25,8 +25,9 @@
 #     pane and its <local-command-stdout>). A transcript that cannot be read is not
 #     expired. Never the pane.
 #   bg_running(log, name, projects) -> True when <name>'s transcript (as login_expired finds it) has a
-#     background task it started (a tool result's backgroundTaskId or taskId, or an async_launched
-#     agentId) with no <task-notification> for that <task-id> carrying a <status> since: the session
+#     background task it started (a tool result's backgroundTaskId, an async_launched agentId, or a
+#     Monitor call's taskId; a task-list tool's taskId is none) with no <task-notification> for that
+#     <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
 #   shown_state(a, name, s, log, projects) -> agent_state, except that an idle Claude agent whose
@@ -549,21 +550,33 @@ pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || tru
 
 # api_stopped <name> <target> — succeed when herdr says <name> is done or idle and its pane's last
 # event is Claude Code's own error line, `⏺ API Error: ...` at the left margin (● on Linux): no reply
-# (⏺ or ●) and no submitted prompt (`> text`) after it. The input box, from its first border line
-# (─ at the margin), is not read: a suggestion or half-typed text there is no prompt. Its session
-# can still read busy then: background shells it left open keep it so.
+# (⏺ or ●) and no submitted prompt (`> text`) after it. The input box at the bottom is not read: a
+# suggestion or half-typed text there is no prompt. It is the last two border lines (─ at the margin)
+# with no reply from the upper one down; a box higher up (a banner, a dialog) is read as any line.
+# Its session can still read busy then: background shells it left open keep it so.
 api_stopped() {
-  pane_text "$2" | awk '/^(╭|╰)?─/ { exit } /^(⏺|●) API Error:/ { e = 1; next } /^(⏺|●)/ || /^(>|❯) +[^ ]/ { e = 0 } END { exit !e }' \
+  pane_text "$2" | awk '{ l[NR] = $0 } /^(╭|╰)?─/ { t = b; b = NR }
+    END {
+      n = NR; if (!t) t = b
+      if (t) { n = t - 1; for (i = t; i <= NR; i++) if (l[i] ~ /^(⏺|●)/) n = NR }
+      for (i = 1; i <= n; i++) {
+        if (l[i] ~ /^(⏺|●) API Error:/) e = 1
+        else if (l[i] ~ /^(⏺|●)/ || l[i] ~ /^(>|❯) +[^ ]/) e = 0
+      }
+      exit !e
+    }' \
     && [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]
 }
 
-# resume_agent <name> <target> — send API_RESUME_MSG through deliver_prompt (its taken-up gate and
-# retry); succeed once the agent took it up. deliver_prompt's die ends only the subshell here.
+# resume_agent <name> <target> — send API_RESUME_MSG once through deliver_prompt (once: no retry,
+# which would send it twice when the resumed turn errors before herdr shows it working); succeed when
+# herdr took it. Its line then stands in the pane after the error, so api_stopped no longer holds
+# until a new error. deliver_prompt's die ends only the subshell here.
 resume_agent() {
   local f rc=0
   f="$(mktemp "${TMPDIR:-/tmp}/swarm-resume.XXXXXX")" || return 1
   printf '%s\n' "${API_RESUME_MSG}" > "${f}"
-  (deliver_prompt "$1" "${f}" "$2") >/dev/null 2>&1 || rc=$?
+  (deliver_prompt "$1" "${f}" "$2" once) >/dev/null 2>&1 || rc=$?
   rm -f "${f}"; return "${rc}"
 }
 

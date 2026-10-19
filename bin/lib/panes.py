@@ -61,11 +61,11 @@ def login_expired(log, name, projects):
         break
     return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
 def bg_running(log, name, projects):
-    sid, live = session_id(log, name), set()
+    sid, live, monitors = session_id(log, name), set(), set()
     for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
         try:
             for l in open(path, encoding="utf-8", errors="replace"):
-                if not any(k in l for k in ("backgroundTaskId", "async_launched", "taskId", "<task-notification>")):
+                if not any(k in l for k in ("backgroundTaskId", "async_launched", "taskId", "<task-notification>", '"Monitor"')):
                     continue
                 try:
                     d = json.loads(l)
@@ -73,11 +73,20 @@ def bg_running(log, name, projects):
                     continue
                 if not isinstance(d, dict) or d.get("isSidechain"):
                     continue
+                content = (d.get("message") or {}).get("content")
+                items = [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
+                if d.get("type") == "assistant":   # which tool_use ids are Monitor calls
+                    monitors.update(c.get("id") for c in items if c.get("type") == "tool_use" and c.get("name") == "Monitor")
+                    continue
                 r = d.get("toolUseResult")
                 if isinstance(r, dict):
-                    live.update(str(r[k]) for k in ("backgroundTaskId", "taskId") if isinstance(r.get(k), str))
+                    if isinstance(r.get("backgroundTaskId"), str):
+                        live.add(r["backgroundTaskId"])
                     if r.get("status") == "async_launched" and isinstance(r.get("agentId"), str):
                         live.add(r["agentId"])
+                    # A Monitor's taskId only: a task-list tool's (TaskUpdate) gets no notification.
+                    if isinstance(r.get("taskId"), str) and any(c.get("tool_use_id") in monitors for c in items):
+                        live.add(r["taskId"])
                     continue
                 text = json.dumps([(d.get("message") or {}).get("content"), (d.get("attachment") or {}).get("prompt")])
                 for n in re.findall(r"<task-notification>.*?</task-notification>", text):
