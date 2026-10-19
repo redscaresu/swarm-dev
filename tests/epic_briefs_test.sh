@@ -163,6 +163,15 @@ item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
 run story g1 >/dev/null
 gbrief="$(cat "${p}/.swarm/briefs/g1.md")"
 check "with tagged rules, a builder gets no rules check step" "no" "$(grep -q "Rules checked:" <<< "${gbrief}" && echo yes || echo no)"
+# commit_trailers: the brief names each trailer, one per line.
+printf '%s\n' "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>" > "${p}/.claude/swarm/config"
+item "${b}" stories/t1.md "status: ready" "kind: code" "repo: svc"
+run story t1 >/dev/null
+check "with commit_trailers set, a builder's brief names each trailer for every commit" \
+  $'End every commit message with these trailers, one per line:\nCo-Authored-By: Ann <a@x.io>\nSigned-off-by: Bo <b@x.io>' \
+  "$(grep -A2 '^End every commit message' "${p}/.swarm/briefs/t1.md")"
+check "without commit_trailers, a brief names none" "no" "$(grep -q '^End every commit message' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
+: > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
 # clash_brief <brief> — the clash rule (per repo), the merge-base-in rule (a nudge; a busy builder waited
 # on, a closed one started again), the round-3 cap (a round defined, decline reasons kept), then the
