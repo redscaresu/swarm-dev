@@ -17,9 +17,9 @@ and accept the folder trust prompt. Only the user can do that, so stop after it.
 
 If `.claude/swarm/brief.md` does not exist, ask the user once, in one message, for their commit
 trailers, where credentials live, and commands that must never run. Write only what they said to
-`.claude/swarm/brief.md`, under 4 KB (`BRIEF_MAX_BYTES`). If they decline, write an empty file so they
+`.claude/swarm/brief.md`, under 4 KB. If they decline, write an empty file so they
 are not asked again. Do not commit it. Tell the user to commit it, even empty: an untracked brief
-stops `swarm.sh reconcile` from pulling a `lesson:` PR that adds the file.
+stops `swarm.sh reconcile` from pulling a PR that adds the file.
 
 When the board is in the project's repo, make each board edit you write by hand (a re-scope, a new
 story, an unblock) in its own worktree with `swarm.sh board-pr`, never in the main checkout. A board
@@ -110,20 +110,25 @@ Repeat until a step below says stop:
      wait printed auth." and run `swarm.sh tell <agent> resume <file>` for each agent whose `wait` printed
      `auth`, then go back to 1.
    - `collect <agent>`: the conductor has finished. Fetch the project's repo (`git fetch`), then run
-     `swarm.sh lessons`. For each `candidate`, look for an earlier rule PR first
-     (from the project's repo, `gh pr list --state all --limit 200 --search 'in:title "lesson: <kind>"'
-     --json title,state,closedAt`, keeping only a title exactly `lesson: <kind>`): an open one is pending, and one closed
-     unmerged (its `closedAt`) in the last 90 days means the user declined it; in either case propose
-     nothing. A merged one does not block: `lessons` lists a kind only while neither the brief nor `lessons_file` has a rule
-     for it, so the rule was since removed. Otherwise
-     draft one rule (under 300 bytes, on a single line, ending in `<!-- lesson: <kind> -->`: the briefs
-     paste only the tagged line; for a candidate from the
-     lead's memory, from that memory, generalised, with nothing private from it; if the user closes
-     that PR, remove the memory's `lesson:` line, or it is proposed again after 90 days) for the file
-     `swarm.sh config lessons_file` prints (the brief unless the project chose, say, `AGENTS.md`) and open it as a PR titled `lesson: <kind>`, never committed silently.
-     For a `long brief` (the brief, plus `lessons_file`'s tagged rules when it says so), propose merging or
-     retiring rules in whichever file holds them as a PR titled exactly `lesson: prune brief`,
-     unless one is open or was closed (its `closedAt`) in the last 90 days; for a `recurring` kind, say so to the user. Then read its report
+     `swarm.sh outcomes --since <the day 30 days ago, YYYY-MM-DD>` (the window keeps its gh calls to
+     recent builds; the `recurring` block counts its own last 30 days either way) and read its
+     `recurring` block. For each kind there with an empty `check` column, file one story with
+     `checks: <kind>` in its front matter that adds a test, lint rule, hook or review-prompt line
+     which catches that kind, like any board edit: through `swarm.sh board-pr` named `check-<kind>`
+     when the board is in the project's repo, or written where the board is when it is outside.
+     Skip the kind when a story on the board already has `checks: <kind>`, or, with the board in the
+     repo, when `gh pr list -R <owner/repo> --state all --head board/check-<kind> --json state,closedAt`
+     (the project's origin, as `git remote get-url origin` names it) shows one `OPEN` (pending),
+     one `MERGED` (its story is on the board, or about to be, since collect only fetches), or one
+     `CLOSED` (unmerged) in the last 90 days, which means the user declined it. A board outside the
+     repo has no PR to look up, and its merged story leaves no git deletion to fill `check`, so
+     after filing a story there append a line (the kind, a tab, today as YYYY-MM-DD) to
+     `.swarm/checks-filed.tsv` (the project's, a path relative to it), and skip
+     any kind already listed in that file.
+     A kind whose check has merged (`check_merged` set) still recurs once its fixes after the merge
+     reach 3 PRs: while the check is under 30 days old that is `since_30d`'s `<n>` (it reads
+     `<n>/<days>d`); from 30 days on, every PR in the block's rolling `prs_30d` came after the merge,
+     so being listed is enough. Then tell the user, with `before_30d` and that count. Then read its report
      (`.swarm/conduct-<epic>.report.md`), relay what merged, what
      is left and what waits on the user, then `swarm.sh close <agent>`.
    - `conduct <epic>`: `swarm.sh conduct <epic>`, then handle it as `wait conduct-<epic>`.
