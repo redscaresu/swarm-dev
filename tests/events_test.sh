@@ -151,8 +151,7 @@ check "READ_ONLY_COMMANDS is exactly the expected read-only set" \
 
 # Every dispatch arm, read off the case statement, is read-only (logs nothing) or logged (one line),
 # so a new command can never slip past the log. reconcile and unblock log per item (above); init
-# refuses outside a git root before logging, so a refusal writes nothing (init_test.sh checks both);
-# intervene writes its own incident line, and none for a refusal (intervene_test.sh).
+# refuses outside a git root before logging, so a refusal writes nothing (init_test.sh checks both).
 # A bare project, no herdr: every arm stops at once.
 Q="${ROOT}/bare"; mkdir -p "${Q}/.claude/swarm" "${Q}/docs/stories" "${Q}/docs/epics" "${Q}/docs/hld"; : > "${Q}/.claude/swarm/config"
 ro=" ${RO_EXPECTED} "
@@ -162,8 +161,8 @@ for arm in ${RO_EXPECTED}; do
   check "read-only ${arm} is a command" grep -qx -- "${arm}" <<< "${arms}"
 done
 for arm in ${arms}; do
-  [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init || "${arm}" == intervene ]] && continue
-  args=(); [[ "${arm}" == tidy ]] && args=(--yes)
+  [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
+  args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand x)
   n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
   before="$(LOG="${Q}/.swarm/events.tsv" lines)"
   (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "${arm}" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1) || true

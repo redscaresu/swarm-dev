@@ -715,7 +715,7 @@ def running_view():
 # rescope writes neither), and three lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
 # needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
 # waited, the escaped defects logged in the last 7 days, and the times a person stepped in on them
-# (`swarm.sh intervene`'s incident lines, of either kind it takes). A light that does not
+# (`swarm.sh intervene`'s incident lines, of the kinds swarm.sh passes). A light that does not
 # fit on the line goes to the next. A board item waits from its newest
 # review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
@@ -725,7 +725,7 @@ def waited_from(item):
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
-INTERVENE_KINDS = ("lead-hand", "user-caught")
+INTERVENE_KINDS = E.get("DASH_INTERVENE_KINDS", "").split()   # swarm.sh's INTERVENE_KINDS
 SEP = (" · ", "dim")
 moved, done_at, stepped_in = {}, {}, 0   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):

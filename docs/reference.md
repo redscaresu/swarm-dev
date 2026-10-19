@@ -656,7 +656,7 @@ unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the
 none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one line>"` writes one with
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
-first. Any other kind, or an empty line, fails and writes nothing. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
+first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about

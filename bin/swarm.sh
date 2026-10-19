@@ -345,14 +345,21 @@ source "${SWARM_HOME}/bin/lib/merge.sh"
 source "${SWARM_HOME}/bin/lib/lifecycle.sh"
 # shellcheck source=bin/lib/dash.sh
 source "${SWARM_HOME}/bin/lib/dash.sh"
+# INTERVENE_KINDS: the times a person stepped in that intervene logs, and the kinds dash's speedometer
+# counts (dash passes them as DASH_INTERVENE_KINDS).
+INTERVENE_KINDS="lead-hand user-caught"
+
 # intervene <kind> <line> — log one time a person had to step in: an incident line, target -, outcome
-# `<kind>: <line>`, which flow's incidents section counts per day and kind. The kinds are lead-hand and
-# user-caught, the two dash_render.py's speedometer counts. Its only line: main logs none for it
-# (target !), so an unknown kind or an empty line logs nothing.
+# `<kind>: <line>`, which flow's incidents section counts per day and kind. Its only line: main logs
+# none for it (target !), so an unknown kind or an empty line logs nothing. record_event never fails,
+# so a log that did not grow (unwritable, disk full) fails here, not with a logged: that counts nothing.
 intervene() {
-  case "$1" in lead-hand|user-caught) ;; *) die "intervene: the kind must be lead-hand or user-caught, not '$1'" ;; esac
+  local size
+  [[ "$1" =~ ^[a-z-]+$ && " ${INTERVENE_KINDS} " == *" $1 "* ]] || die "intervene: the kind must be one of ${INTERVENE_KINDS}, not '$1'"
   [[ -n "${2//[[:space:]]/}" ]] || die "intervene: say in one line what happened: swarm.sh intervene $1 \"<one line>\""
+  size="$({ wc -c < "${EVENTS_LOG}"; } 2>/dev/null || echo 0)"
   record_event incident - "$1: $2"
+  [[ "$({ wc -c < "${EVENTS_LOG}"; } 2>/dev/null || echo 0)" -gt "${size}" ]] || die "intervene: could not write ${EVENTS_LOG}; nothing was logged"
   echo "logged: $1: $2"
 }
 
