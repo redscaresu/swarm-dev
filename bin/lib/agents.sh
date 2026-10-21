@@ -360,28 +360,34 @@ resume_refusal() {
   return 1
 }
 
-# resume_file <dir> <name> <names> <arg>... — what herdr runs to resume agent <name> after a restart:
-# <dir>/<name>.argv, its resume command <arg>... one argument a line, which the plugin's SessionStart
-# hook reports again with a new session id; and <dir>/<name>.sh, the wrapper that command starts
-# with (bash <wrapper> claude --resume ...). A restored pane's shell holds the user's whole
-# environment, so the wrapper unsets every variable but those clean_env's agent starts with
-# (AGENT_ENV, AGENT_PREFIXES', herdr's and <names>), which keep the restored pane's own values, so no
-# value is written down or put on a command line; sets AGENT_SET and SWARM_PROJECT as launch_file
-# does; and execs its arguments. Both 0600.
+# RESUME_DIR: resume_file's files, one pair per Claude session. Outside the project, so its path,
+# which may hold an apostrophe herdr refuses, is never in a resume command.
+RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
+
+# resume_file <name> <session> <names> <arg>... — what herdr runs to resume agent <name> (Claude
+# session <session>) after a restart, in RESUME_DIR: <session>.argv, its resume command <arg>... one
+# argument a line, which the plugin's hooks attach to each report with the session's current id
+# (SWARM_RESUME); and <session>.sh, the wrapper that command starts with (bash <wrapper> claude
+# --resume ...). A restored pane's shell holds the user's whole environment, so the wrapper unsets
+# every variable but those clean_env's agent starts with (AGENT_ENV, AGENT_PREFIXES', herdr's and
+# <names>), which keep the restored pane's own values, so no value is written down or put on a
+# command line; sets AGENT_SET as launch_file does, with SWARM_PROJECT and SWARM_RESUME; and execs
+# its arguments. Both 0600, and a session's own, so a later agent of the same name never changes them.
 resume_file() {
-  local dir="$1" name="$2" names="$3"
+  local name="$1" session="$2" names="$3"
   shift 3
-  mkdir -p "${dir}"
+  mkdir -p "${RESUME_DIR}"
   (umask 077
-    printf '%s\n' "$@" > "${dir}/${name}.argv"
+    printf '%s\n' "$@" > "${RESUME_DIR}/${session}.argv"
     # shellcheck disable=SC2016 # the wrapper's bash expands them
     { printf 'keep=%q\n' " HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names} "
       printf '%s\n' 'for n in $(compgen -e); do' \
         "  [[ \"\${keep}\" == *\" \${n} \"* || \"\${n}\" =~ ^(${AGENT_PREFIXES// /|}) ]] || unset \"\${n}\"" 'done'
-      printf 'export SWARM_PROJECT=%q SHELL=%q ZDOTDIR=%q\n' "${PROJECT_DIR}" "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}"
+      printf 'export SWARM_PROJECT=%q SWARM_RESUME=%q SHELL=%q ZDOTDIR=%q\n' "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" \
+        "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}"
       printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
         "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done" 'exec "$@"'
-    } > "${dir}/${name}.sh")
+    } > "${RESUME_DIR}/${session}.sh")
 }
 
 # agent_cmd <tab> <name> <cwd> <role> <prompt-file> [pane-name] — `swarm.sh agent`: start_agent, with
@@ -405,35 +411,39 @@ start_agent() {
   model="${8:-${model}}"   # a step-up's rung: the role's family on another model
   # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
   # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
-  local session=- flags=() resume=()
+  local session=- flags=() resume=() seq
+  # SWARM_RESUME: where the plugin's hooks find a Claude agent's resume command (resume_file).
+  # clean_env passes it on with every SWARM_ variable, so it is never on a command line; empty for codex.
+  local -x SWARM_RESUME=""
   if [[ "${kind}" == claude ]]; then
     require_trusted "${cwd}"
     # shellcheck disable=SC2119 # takes no argument here
     require_claude
     require_herdr_version
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
+    SWARM_RESUME="${RESUME_DIR}/${session}.argv"
     # No agent can run `gh pr merge`, a conductor with merge = agent included: it merges through
     # swarm.sh merge, whose gh the guard never reaches. `gh api` could still merge, so the briefs say it too.
     # The session's env goes through --settings, since herdr passes no env. SWARM_AGENT tells the
     # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
     # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
     # parent's model (opusplan-spike).
-    # SWARM_RESUME: the agent's resume command (resume_file), which the plugin's SessionStart hook
-    # reports again when the session changes.
-    # ponytail: a project path holding a " or \ breaks this JSON; quote it if one ever does.
-    local rdir="${PROJECT_DIR}/.swarm/resume" why
-    local env="\"SWARM_AGENT\":\"${name}\",\"SWARM_RESUME\":\"${rdir}/${name}.argv\"" deny=("Bash(gh pr merge:*)")
+    local env=(SWARM_AGENT "${name}") deny=("Bash(gh pr merge:*)") settings why
     # The fallback reviewer stands in for codex's read-only sandbox: no file tools, no commit or push.
     [[ "${role}" != review-fallback ]] || deny+=(Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)")
-    [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
-    flags=(--model "${model}" --effort "${effort}" --permission-mode auto --disallowedTools "${deny[@]}" --settings "{\"env\":{${env}}}")
+    [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] \
+      && env+=(CLAUDE_CODE_SUBAGENT_MODEL "${CFG_builder_subagent_model}" CLAUDE_CODE_SUBAGENT_MODEL_FORCE 1)
+    settings="$(python3 -c 'import json, sys; a = sys.argv[1:]; print(json.dumps({"env": dict(zip(a[::2], a[1::2]))}, separators=(",", ":")))' "${env[@]}")" \
+      || die "${name}: could not write its --settings (python3)"
+    flags=(--model "${model}" --effort "${effort}" --permission-mode auto --disallowedTools "${deny[@]}" --settings "${settings}")
     # What herdr runs to resume the agent after a restart: resume_file's wrapper, then claude as it started.
-    resume=(bash "${rdir}/${name}.sh" claude --resume "${session}" "${flags[@]}")
+    resume=(bash "${RESUME_DIR}/${session}.sh" claude --resume "${session}" "${flags[@]}")
     why="$(resume_refusal "${resume[@]}")" \
       && die "${name}: herdr would refuse the command that resumes the agent after a restart: ${why}"
-    resume_file "${rdir}" "${name}" "${names}" "${resume[@]}"
   fi
   free_agent_name "${name}"
+  # Once the name is free, so a start refused there leaves no resume files behind.
+  [[ "${kind}" != claude ]] || resume_file "${name}" "${session}" "${names}" "${resume[@]}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   clean_env "${pane}" "${name}" "${names}"
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -462,14 +472,6 @@ start_agent() {
     fi
     nap 3
   done
-  # herdr resumes a Claude pane with `claude --resume <id>` alone, which drops every flag above, the
-  # guards included, in the pane's whole environment. Reporting the whole command makes a restart
-  # resume the agent as it started; the plugin's hooks report its state from then on (hooks/agent-state.sh).
-  if [[ "${kind}" == claude ]] && ! out=$(herdr pane report-agent "${pane}" --source swarm --agent claude --state idle \
-      --agent-session-id "${session}" -- "${resume[@]}" 2>&1); then
-    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
-    die "${name}: herdr did not take the command that resumes the agent, so a restart would drop its guards: ${out}"
-  fi
   # Before the brief, so an agent whose brief is not taken up is still on record.
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session}"
   if [[ "${kind}" == codex && -n "$(codex_out_dir "${tab}")" ]]; then
@@ -479,7 +481,18 @@ start_agent() {
     { echo "The project is ${PROJECT_DIR}; every relative path below is relative to it. You can write only in $(codex_out_dir "${tab}")."; echo; cat "${prompt_file}"; } > "${brief}"
     prompt_file="${brief}"
   fi
+  [[ "${kind}" != claude ]] || seq="$(python3 -c 'import time; print(time.time_ns())')" || die "${name}: could not read the clock (python3)"
   deliver_prompt "${name}" "${prompt_file}" "${pane}"
+  # herdr resumes a Claude pane with `claude --resume <id>` alone, which drops every flag above, the
+  # guards included, in the pane's whole environment. Reporting the whole command makes a restart
+  # resume the agent as it started. Only once the brief is taken up, so no state of swarm's stands in
+  # for the one deliver_prompt waits on; as working, at the time the brief was sent, so a later report
+  # of the plugin's hooks (hooks/agent-state.sh, which attach the same command) wins over it.
+  if [[ "${kind}" == claude ]] && ! out=$(herdr pane report-agent "${pane}" --source swarm --agent claude --state working \
+      --seq "${seq}" --agent-session-id "${session}" -- "${resume[@]}" 2>&1); then
+    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+    die "${name}: herdr did not take the command that resumes the agent, so a restart would drop its guards: ${out}"
+  fi
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
 
