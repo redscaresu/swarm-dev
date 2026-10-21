@@ -4,6 +4,7 @@
 # 40 days old flags only the first two. Once a story with `checks:` for a kind merged (deleted on
 # origin/HEAD, as story_text finds a merged story), its PRs in the 30 days before and since that day
 # print, since marked with the days it covers while fewer than 30 have passed.
+# Rows of 4, 6 and 7 fields count, a bogus reviewer's row does not, and a non-UTF-8 byte breaks nothing.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -91,6 +92,16 @@ check "a check story deleted beside a similar new one still counts, dated by the
   "$(block | grep '^vacuous-test' | cut -f3,4)" "vacuous-check"$'\t'"$(ago 10)"
 git -C "${P}" symbolic-ref --delete refs/remotes/origin/HEAD
 check "with no origin/HEAD (a clone that never set it), HEAD is read" "$(block | grep '^vacuous-test')" "${VACUOUS}"
+
+# fixed_rows reads rows of any width from four fields up: a later column drops no row, an unknown
+# reviewer is read, and a bad one drops the row. A stray non-UTF-8 byte breaks nothing.
+for w in 'o/r#101\tx' 'o/r#102\tx\tfixed\tcodex' 'o/r#103\tx\tfixed\tunknown\ta later column'; do
+  printf '%s\twide\t%b\n' "$(ago 1)" "${w}" >> "${P}/.swarm/findings.tsv"
+  printf '%s\twide-bogus\t%b\n' "$(ago 1)" "${w/codex/bogus}" >> "${P}/.swarm/findings.tsv"
+done
+for n in 1 2 3; do printf '%s\tbytes\to/r#11%s\tbad \xff byte\n' "$(ago 1)" "${n}" >> "${P}/.swarm/findings.tsv"; done
+check "4-, 6- and 7-field rows all count, a bogus reviewer drops its row, and a non-UTF-8 byte breaks nothing" \
+  "$(block | grep -E $'^(wide|wide-bogus|bytes)\t')" "$(printf '%s\n' $'bytes\t3\t\t\t\t' $'wide\t3\t\t\t\t')"
 
 echo "${fails} failure(s)"
 [[ "${fails}" -eq 0 ]]

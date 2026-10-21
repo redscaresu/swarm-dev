@@ -71,6 +71,16 @@ for k in pr''_per base''_branches sign''_commits review''_bot keep''_panes finis
   project "${p}" "${k} = true"
   check "${k} is an unknown key" "yes" "$(fails_with "config:1: unknown key '${k}'" run "${p}" config)"
 done
+# lessons_file went with lessons: an old config that sets it still loads, with no error or output.
+project "${p}" "lessons_file = AGENTS.md" "stall_minutes = 45"
+check "a config with lessons_file loads silently" "45" "$(run "${p}" config stall_minutes)"
+# shellcheck disable=SC2016 # a literal $ in the file, never expanded
+project "${p}" 'lessons_file = $HOME/AGENTS.md' "stall_minutes = 45"
+check "a lessons_file whose value has a \$ loads silently too" "45" "$(run "${p}" config stall_minutes)"
+check "lessons points to outcomes' recurring block and exits 0, with or without --all" \
+  "swarm.sh lessons is now outcomes' recurring block: swarm.sh outcomes [--since YYYY-MM-DD]|0|0" \
+  "$(out="$(run "${p}" lessons)" && echo "${out}|0" || echo "${out}|$?")|$(run "${p}" lessons --all >/dev/null && echo 0 || echo $?)"
+check "lessons refuses any other argument" "yes" "$(fails_with 'usage: swarm.sh lessons \[--all\]' run "${p}" lessons --bogus)"
 project "${p}" "board_dir = \$(touch ${p}/pwned)"
 check "a \$(...) value is refused" "yes" "$(fails_with 'config:1: board_dir: \$ and backticks' run "${p}" config)"
 check "a \$(...) value never runs" "no" "$([[ -e "${p}/pwned" ]] && echo yes || echo no)"
@@ -130,6 +140,25 @@ check "fallback_reviewer that is not a model name is refused, naming the key" "y
   "$(fails_with "config:1: fallback_reviewer must be a model name such as haiku, not 'son net'" run "${p}" config)"
 project "${p}" "" "repos_dir = ~/code   # trailing comment"
 check "~ expands to HOME" "${HOME}/code" "$(run "${p}" config repos_dir)"
+
+check "commit_trailers ships empty" "" "$(project "${p}"; run "${p}" config commit_trailers)"
+project "${p}" "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>"
+check "commit_trailers is read" "Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>" "$(run "${p}" config commit_trailers)"
+check "swarm.sh config shows commit_trailers and its line" "yes" \
+  "$(grep -qxF "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>    (${p}/.claude/swarm/config:1)" <<< "$(run "${p}" config)" && echo yes || echo no)"
+for v in "Ann <a@x.io>" "Co-Authored-By: Ann <a@x.io> ;"; do
+  project "${p}" "commit_trailers = ${v}"
+  check "commit_trailers = ${v} is refused, naming file and line" "yes" \
+    "$(fails_with "${p}/.claude/swarm/config:1: commit_trailers must be trailers" run "${p}" config)"
+done
+
+for v in 'my"board' 'my\board'; do
+  project "${p}" "board_dir = ${v}"
+  check "board_dir = ${v} is refused, since init quotes it" "yes" "$(fails_with 'config:1: board_dir: " and \\ are refused' run "${p}" config)"
+done
+project "${p}" "commit_trailers = Refs: #123"
+check "a commit_trailers cut short by a # says a # starts a comment" "yes" \
+  "$(fails_with "commit_trailers must be trailers .*(a # starts a comment, so no trailer can hold one)" run "${p}" config)"
 
 # --- One set of keys: the method's config table, CONFIG_KEYS and load_config's case arms. A key
 # missing from any of the three is named.

@@ -18,6 +18,14 @@ merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then echo "Never merge, by any route (a human merges)."
   else echo "Never merge, by any route (the conductor or the lead merges, with swarm.sh merge)."; fi
 }
+# wait_pr_rule <then> <report> — how every agent waits on a PR's CI: <then>, what it does on red or a
+# conflict, and what it does on wait-pr's other exit 2s, the last of which is <report>. wait-pr exits
+# on red, on a conflict and on a deadline, where a loop of its own can sit for hours.
+wait_pr_rule() {
+  echo "Wait on a PR's CI only with \`${SWARM_HOME}/bin/swarm.sh wait-pr <PR URL>\` (in the background), never a loop of your own: $1" \
+    "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again." \
+    "If it ends the same way twice, stop and $2."
+}
 # stop_rule <epic> — when a conductor stops. With merge = agent it merges its own PRs, so it also
 # waits out every running build. The backlog conductor has no Done when: it stops once its stories
 # are all started and finished.
@@ -68,7 +76,7 @@ as below: nit for a nit or an edge case, out-of-scope or wrong where they apply.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
-its latest head has passed.$(rules_review_rule)
+its latest head has passed.
 
 $(finding_rule)
 EOF
@@ -90,8 +98,8 @@ codex_rule() {
   printf '%s' 'Wait for codex-review to exit, and act on what it prints last: a usage limit it prints early may be followed by a fallback'"'"'s review. If it ends on codex'"'"'s usage limit or on "codex skipped: ...", do not run it again: a builder carries on without it, a conductor or the lead reviews the diff itself, and the PR (or a reply, where there is none) says "codex skipped: usage limit" or "codex skipped: timed out".'
   printf ' %s' 'When codex-review prints "reviewed by fallback <model>: codex usage limit", a fallback agent reviewed in codex'"'"'s place: its findings are codex'"'"'s to act on, logged with --reviewer fallback, and the PR says "reviewed by fallback <model>: codex usage limit" in place of codex skipped.'
 }
-# finding_rule — every fixed finding feeds the outer loop (swarm.sh lessons); declined ones are
-# logged too, with their reason, and never count as lessons.
+# finding_rule — every fixed finding feeds the outer loop (outcomes' recurring block); declined ones
+# are logged too, with their reason, and never count toward it.
 finding_rule() {
   local proj sw
   proj="$(printf '%q' "${PROJECT_DIR}")"; sw="$(printf '%q' "${SWARM_HOME}/bin/swarm.sh")"
@@ -111,7 +119,8 @@ When a fix finds a defect in work that already merged, log it as \`--reviewer es
 PR that merged it, not the PR that fixes it.
 The kind is a short kebab-case name for the class of mistake, not this instance (vacuous-test,
 denylist, docs-misstate-code, fails-open); reuse one that
-\`SWARM_PROJECT=${proj} ${sw} lessons --all\` already lists when it fits.
+\`awk -F'\\t' 'NF < 5 || \$5 == "fixed" || \$5 == "escaped" { print \$2 }' ${proj}/.swarm/${FINDINGS_LOG_NAME} 2>/dev/null | sort -u\`
+already lists when it fits.
 EOF
 }
 # conduct_merge_rule [backlog] — how a conductor hands over or merges a reviewed PR: an epic's, or
@@ -337,7 +346,7 @@ send_goal() {
 
 # The brief every story builder gets. The story file is the task; these are the rules.
 story_brief() {
-  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules
+  local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules trailers
   story_ref="$(story_path "${slug}" "${src}")"
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
   if [[ "${story_ref}" != /* ]]; then
@@ -364,49 +373,26 @@ credentials. Open the PR against \`${base}\`. Run \`$(codex_review_cmd "${base}"
 committing; fix real findings, decline nits with a reason, converge on one clean pass, and record the
 loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
-the tests and push: a conflicted PR runs no checks and waits forever. $(mutation_rule) Record it
+the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above." "say so in your reply") $(mutation_rule) Record it
 in the PR body. $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
+  trailers="$(config_trailers)"
+  [[ -z "${trailers}" ]] || printf '%s\n%s\n' "End every commit message with these trailers, one per line:" "${trailers}"
   rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\n%s\n' "${rules}"
-  rules_check_step "open the PR" "${rules}"
 }
 
-# rule_kinds — the kinds of the tagged rules (<!-- lesson: <kind> -->) on stdin, one per line.
-rule_kinds() {
-  grep -oE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' | sed -E 's/.*lesson:[[:space:]]*([a-z0-9-]+).*/\1/' | sort -u || true
-}
-
-# rules_check_step <before> <rules> — a rule pasted into the brief does not stop the mistake, so a
-# builder walks its diff against each tagged rule and says what it checked. Nothing without one.
-rules_check_step() {
-  local kinds where="the PR body"; kinds="$(rule_kinds <<< "$2")"
-  [[ -n "${kinds}" ]] || return 0
-  [[ "$1" == "open the PR" ]] || where="your reply"
-  cat <<EOF
-
-Before you $1, walk your diff against each rule tagged \`<!-- lesson: <kind> -->\` above. Then give
-${where} a \`Rules checked:\` section with one line per kind: what in the diff you checked (file:line),
-or \`n/a: <why>\`:
-
-Rules checked:
-EOF
-  sed 's/^/- /; s/$/: <file:line>, or n\/a: <why>/' <<< "${kinds}"
-}
-
-# rules_review_rule — the conductor's half of rules_check_step, while the project has tagged rules.
-rules_review_rule() {
-  [[ -n "$(project_rules | rule_kinds)" ]] || return 0
-  printf '\n\n%s' "A builder's PR body (its reply, when it opens no PR) must carry a \`Rules checked:\` section with a line per tagged rule's kind, each naming what it checked (file:line) or \`n/a: <why>\`. A missing section, a missing kind, or a line that names nothing is a finding of kind \`rules-unchecked\`: send it back like any other, after round 3 too."
-}
-
-# project_rules — the brief, then, when lessons_file is another file, only its tagged rule lines: a
-# builder in another repo's worktree never reads this project's AGENTS.md.
+# project_rules — the brief, then only the tagged rule lines (the grep below) of the project's
+# AGENTS.md, CLAUDE.md and .claude/CLAUDE.md, those it has: a builder in another repo's worktree
+# never reads them. These are the files the removed lessons_file could name, so its rules still land.
 project_rules() {
+  local f
   [[ ! -f "${PROJECT_BRIEF}" ]] || { cat "${PROJECT_BRIEF}"; echo; }   # a brief may lack its final newline
-  [[ "${LESSONS_FILE}" == "${PROJECT_BRIEF}" ]] || grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${LESSONS_FILE}" 2>/dev/null || true
+  for f in AGENTS.md CLAUDE.md .claude/CLAUDE.md; do
+    grep -hE -- '<!--[[:space:]]*lesson:[[:space:]]*[a-z0-9-]+[[:space:]]*-->' "${PROJECT_DIR}/${f}" 2>/dev/null || true
+  done | awk '!seen[$0]++'   # once each, as when CLAUDE.md links to AGENTS.md
 }
 
 # agent_kind — true for a kind a swarm agent may build (AGENT_KINDS); an empty kind means code.
@@ -766,7 +752,7 @@ A PR is green only when every check on its head has passed and you have triaged 
 \`${SWARM_HOME}/bin/swarm.sh findings <repo> <pr>\`: the notes on every check run, whatever its
 conclusion, and open code-scanning alerts. Fix each real one; rebut the rest with a reason in the
 PR (scanners often flag a name, not a value). Never change code only to silence a scanner, and
-never dismiss an alert.
+never dismiss an alert. $(wait_pr_rule "on exit 1 or a conflict, send the story's builder a nudge with \`${SWARM_HOME}/bin/swarm.sh tell <slug> nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "report it to the lead")
 EOF
 }
 
