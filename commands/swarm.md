@@ -1,5 +1,5 @@
 ---
-description: Start here. Runs the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
+description: Start here. Runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
@@ -218,13 +218,21 @@ Repeat until a step below says stop:
      opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. Stop.
-   - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories
+   - `done`: say so and stop. If this finds no file (`find <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
      about five lines (an epic written with you, split into stories, built by
      agents in panes, and where it stops for you: approvals, `lead` stories, merges) and suggest
      `/epic <title>`. Otherwise suggest `/epic <title>` for the next piece of work.
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.
+
+Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
+count it:
+
+- `swarm.sh intervene lead-hand "<what you did>"` when you acted by hand where a command should
+  have (you typed into a stalled agent's pane, merged or edited something yourself).
+- `swarm.sh intervene user-caught "<what they found>"` when the user found a problem before the
+  swarm did (held stories or a slow CI run they found by asking).
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` unless the user asks you to merge a PR, and then only with `swarm.sh merge <PR URL>`
