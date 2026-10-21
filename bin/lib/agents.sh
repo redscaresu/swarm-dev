@@ -30,8 +30,13 @@
 #     <task-id> carrying a <status> since: the session
 #     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
 #     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
+#   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), is
+#     Claude Code's usage-limit dialog ("Stop and wait for limit to reset" / "<option>. Wait here, then
+#     continue automatically"); ("waiting", "") when it waits after that choice ("Usage limit reached"
+#     with "Continuing shortly" or "limit resets"); else None. pane_text(pane) is herdr's agent read.
 #   shown_state(a, name, s, log, projects) -> agent_state, except that an idle Claude agent whose
-#     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle.
+#     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle;
+#     and a working, idle or waiting agent whose pane is on the usage limit is (usage-limit, False).
 #     For the views (status, dash); wait reads login_expired itself.
 
 # bin/lib/stall.py: the one stall rule and agent-to-story mapping, shared by dash and `wait --stall` (each
@@ -44,7 +49,7 @@
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
 #     line is the lead's board edit, whose name may be a story's slug, so it is never one either, and
-#     nor is an `incident` line, which wait and close write about the agent, not the agent itself.
+#     nor is a `usage-limit` line (wait's, about the agent) or an `incident` line, which wait and close write about the agent, not the agent itself.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
@@ -590,6 +595,24 @@ sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
 sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
 }
 
+# usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on
+# Claude Code's usage limit (panes.py's usage_limit); fail otherwise.
+usage_state() {
+  pane_text "$1" | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import usage_limit
+u = usage_limit(sys.stdin.read())
+sys.exit(1) if u is None else print(" ".join(u).strip())'
+}
+
+# usage_event <name> — log a usage-limit event for <name>, unless its newest events.tsv line is one.
+# ponytail: one wait logs once per limit (its own flag); a new limit with no other event for <name>
+# since the last is not logged again. A reset time in the event would tell them apart.
+usage_event() {
+  awk -F'\t' -v n="$1" '$3 == n { k = $2 } END { exit k == "usage-limit" ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
+    || record_event usage-limit "$1"
+}
+
 # is_builder <name> — succeed when <name>'s newest agents.tsv line has a building role (BUILDER_ROLES).
 is_builder() {
   local r
@@ -751,7 +774,8 @@ poll_while() {
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
 # The session is read before the first wake and right after each; every decision is taken on that
 # read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
-# A busy agent whose turn stopped on an API error (api_stopped) ends it with "api error", and one
+# A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit", before any
+# other pane check. A busy agent whose turn stopped on an API error (api_stopped) ends it with "api error", and one
 # whose pane has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
@@ -777,6 +801,7 @@ settle() {
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
+    if [[ "${state}" == busy ]] && usage_state "${target}" >/dev/null; then state=usage-limit; break; fi
     if [[ "${state}" == busy ]] && api_stopped "${name}" "${target}"; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
@@ -808,11 +833,18 @@ settle() {
 # from the transcript, which must still end on the error (goal_rule's cleared-on-error), so it returns
 # stuck at once. A conductor or review agent is resumed as with goal off. An expired login
 # (login_expired) on a busy session's API-error stop is auth, as on an idle one, and never resumed.
+# An agent whose pane is on Claude Code's usage limit (settle's "usage-limit", or idle or waiting and
+# usage_state) is neither a stop nor a stall: on its dialog wait sends the option "Wait here, then
+# continue automatically" (the user's standing choice), logs one usage-limit event for that limit
+# (usage_event), counts no nudge or resume, and waits on, a slice at a time, never past its timeout,
+# where it prints usage-limit and fails. A pane that already waits after that choice is the same,
+# with nothing sent; pane_quiet never sees it, so it is never stuck however long it sits.
 # A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline
+  deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
@@ -823,6 +855,17 @@ wait_agent() {
       [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
+    if [[ "${status}" =~ ^(usage-limit|idle|waiting) ]] && lim="$(usage_state "${target}")"; then
+      if [[ "${lim}" == dialog* ]]; then
+        herdr pane send-keys "${target}" "${lim#dialog }" >/dev/null 2>&1 \
+          || echo "swarm: ${name}: could not answer its usage-limit dialog" >&2
+      fi
+      [[ -n "${limited}" ]] || { usage_event "${name}"; echo "swarm: ${name}: on the usage limit; it continues by itself once the limit resets" >&2; }
+      limited=1; t0=$((deadline - $(now_ms)))
+      if [[ ${t0} -le 0 ]]; then echo usage-limit; return 1; fi
+      sleep_ms $((t0 < STALL_POLL_MS ? t0 : STALL_POLL_MS)); continue
+    fi
+    limited=""
     if [[ "${status}" == idle || "${status}" == "api error" ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
       login_incident "${name}"
@@ -879,7 +922,7 @@ login_incident() {
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 # <timeout-ms> 0 (`wait --until-report`) has no deadline: each wait_agent slice is
 # SWARM_CONDUCTOR_SLICE_MS (an hour), and a slice that ran out with the session still busy (or
-# unknown) waits again. Such a return before the slice ran out is herdr's wait failing, and ends it.
+# unknown, or on the usage limit) waits again. Such a return before the slice ran out is herdr's wait failing, and ends it.
 wait_conductor() {
   local name="$1" report="${3:-}" forever="" status deadline=$((SECONDS + $2 / 1000)) poll rc ms t0
   [[ $2 -ne 0 ]] || forever=1
@@ -887,7 +930,7 @@ wait_conductor() {
     ms=$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))
     [[ -z "${forever}" ]] || ms="${SWARM_CONDUCTOR_SLICE_MS:-3600000}"
     t0="$(now_ms)"; rc=0; status="$(SWARM_WAIT_SLICE="${forever}" wait_agent "${name}" "${ms}")" || rc=$?
-    [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
+    [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown|usage-limit)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
     [[ "${status}" =~ ^(idle|done)$ && ! -f "${report:-$(conductor_report "${name}")}" ]] || break
     [[ -n "${forever}" || ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; [[ -n "${forever}" ]] || (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))

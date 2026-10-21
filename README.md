@@ -85,6 +85,7 @@ The other commands are tools the lead runs; they are listed in
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
+| an agent on `usage-limit` | nothing: `wait` chose "Wait here, then continue automatically", and it carries on when the limit resets |
 | an agent stuck (`stuck: api error` after three resumes, or `stuck: no output` for `stall_minutes`) | read its pane (`herdr agent read <agent>`), then type into it or close it |
 
 ## Cost and safety

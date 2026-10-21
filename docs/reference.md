@@ -448,7 +448,14 @@ prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its s
 herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
 transcript shows no background task still running (a shell, an async subagent or a monitor it
 started, with no `<task-notification>` carrying a `<status>` for it since). It sends nothing then: read the pane. `stuck` is
-not a stall, and no close follows from it. `wait --stall
+not a stall, and no close follows from it. An agent whose pane shows Claude Code's usage-limit dialog
+("Stop and wait for limit to reset" / "Wait here, then continue automatically") is neither a stop
+nor a stall: `wait` picks "Wait here, then continue automatically" for it (the user's standing
+choice), logs one `usage-limit` event for that agent in events.tsv, and waits on. A pane already
+waiting after that choice ("Usage limit reached" with "limit resets" or "Continuing shortly") is
+the same, with nothing sent. Neither counts as a nudge or a resume, and neither is ever `stuck: no
+output`, however long it sits; at its timeout `wait` prints `usage-limit` and exits 1. `status` and
+`dash` show `usage-limit` for that agent in place of working or idle until the pane moves on. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, session-log write or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
 worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began.
