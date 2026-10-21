@@ -6,12 +6,14 @@
 # the form, on gh pr merge, gh api .../pulls/<n>/merge, a graphql mergePullRequest, any of them in
 # code handed to a shell or an interpreter (-c, eval, a heredoc, a here-string, a pipe) or written
 # to a file, and on swarm.sh merge joined to another command. A mention in echo, printf or grep
-# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( )), a git
+# passes. It also exits 2 on commands that lose work: a cd followed by ; (outside $( ), and not in a
+# while, until or if condition), a git
 # checkout that overwrites uncommitted changes and, in a swarm agent's session (SWARM_AGENT set), git
 # checkout, switch, restore, reset --hard, stash or clean run in the project's main checkout (the
 # call's cwd, a cd or a -C); stash list and show and clean -n pass. A swarm agent's pkill, killall or
 # kill $(pgrep ...) / $(pidof ...) is refused too, as is a kill of PID 0 or a negative one (every
-# process, or a group): either can hit another session's process.
+# process, or a group): either can hit another session's process. So is its gh pr checks --watch, or a
+# gh pr checks in a while/until loop's condition or body (not a while read loop): swarm.sh wait-pr exits on red, a conflict and a deadline.
 # Those rules fail open on an error of their own. Each block appends an incident line, `merge-blocked: <form>` or `guard-blocked:
 # <form>`, to the project's .swarm/events.tsv. Outside a swarm project it allows all.
 set -uo pipefail
@@ -22,16 +24,17 @@ input="$(cat)"
 command="${input}"
 re='"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
 [[ ${input} =~ ${re} ]] && command="${BASH_REMATCH[1]}"
-# Fast path: a command that never says merge, nor git, cd or a kill as a word, not even through quotes and
+# Fast path: a command that never says merge, nor git, cd or a kill as a word, nor both gh and checks, not even through quotes and
 # backslashes (mer"ge, me''rge, mer\ge; JSON's \n and \t split words), has nothing to block.
 plain="$(printf '%s' "${command}" | sed 's/\\[nrt]/ /g' | tr -d "\"'\\\\")"
 word='(^|[^[:alnum:]_])(git|cd|kill|pkill|killall)([^[:alnum:]_]|$)'
+gh='(^|[^[:alnum:]_])gh([^[:alnum:]_]|$)'; checks='(^|[^[:alnum:]_])checks([^[:alnum:]_]|$)'
 if [[ ${plain} == *[Mm][Ee][Rr][Gg][Ee]* ]]; then says=merge
-elif [[ ${plain} =~ ${word} ]]; then says=other
+elif [[ ${plain} =~ ${word} ]] || [[ ${plain} =~ ${gh} && ${plain} =~ ${checks} ]]; then says=other
 else exit 0
 fi
 # A command that says merge fails closed: anything but the guard's own verdict refuses it. One that
-# only says git, cd or a kill fails open, since those rules save work rather than enforce the merge route.
+# only says git, cd, a kill or gh and checks fails open, since those rules save work rather than enforce the merge route.
 command -v python3 >/dev/null || { [[ ${says} == merge ]] || exit 0; echo "merge-guard: python3 is missing, so a call that says merge is refused" >&2; exit 2; }
 
 IFS= read -r -d '' prog <<'PY' || true
@@ -49,6 +52,10 @@ REDIRECT = re.compile(r"<<<|<<-?|&>>?|>>|>[|&]?|<[&>]?")
 QUIET = {"/dev/null", "/dev/stdout", "/dev/stderr"}
 QUOTING = re.compile(r"[\"'\\]")
 OPENERS = {"do", "then", "else"}  # words that can start a line before its command
+# Words before a command in a condition or a group too; only the loop rule reads past them, so the
+# cd and git rules never see a condition's cd or git.
+LEADS = OPENERS | {"while", "until", "!", "if", "elif", "{"}
+LOOPS = {"while", "until"}  # loops that poll their condition; for and select open a loop too, closed by done
 MOVES = {"checkout", "switch", "restore", "stash", "clean"}  # git subcommands that move or reset a checkout
 PATTERN_KILLS = {"pkill", "killall"}
 BY_NAME = re.compile(r"(\$\(|`)\s*(pgrep|pidof)\b")  # kill $(pgrep ...): PIDs found by a pattern
@@ -253,16 +260,22 @@ def check_cmd(cmd, fed, via, joined):
 
 
 def check_gh(rest, fed, via):
+    """gh pr merge, or gh api with a merge in its words or in what is fed to it."""
+    args = gh_words(rest)
+    if args[:2] == ["pr", "merge"]:
+        raise Blocked("gh pr merge" + via)
+    if args[:1] == ["api"] and raw(" ".join(rest + fed)):
+        raise Blocked("gh api merge" + via)
+
+
+def gh_words(rest):
     """gh's words with its flags dropped, and the value of a separate -R or --repo (-Ro/r is one flag)."""
     args, value = [], False
     for w in rest:
         if not value and not w.startswith("-"):
             args.append(w)
         value = not value and w in ("-R", "--repo")
-    if args[:2] == ["pr", "merge"]:
-        raise Blocked("gh pr merge" + via)
-    if args[:1] == ["api"] and raw(" ".join(rest + fed)):
-        raise Blocked("gh api merge" + via)
+    return args
 
 
 def check_code(b, rest, fed):
@@ -283,12 +296,21 @@ def check_code(b, rest, fed):
 def guard(code, cwd):
     """Raise Unsafe on a command that can lose work: a cd before ;, git checkout over a file with
     uncommitted changes and, in a swarm agent's session, git moving or resetting the main checkout
-    and a kill by pattern."""
+    and a kill by pattern or a CI wait of its own."""
     home = cwd if os.environ.get("SWARM_AGENT") else None
     sh = Shell(code.strip())
     sh.parse()
     d = cwd  # where the next command runs; None once a cd goes where this cannot tell
+    loops = []  # the loops open around the command, innermost last
     for cmd in sh.cmds:
+        lead = list(itertools.takewhile(lambda w: ASSIGNMENT.match(w) or w in LEADS, cmd["words"]))
+        inner = cmd["words"][len(lead):]
+        opens = [w for w in lead if w in LOOPS] + inner[:1] * (inner[:1] in (["for"], ["select"]))
+        if opens and [w for w in lead if not ASSIGNMENT.match(w)][-1:] == opens[-1:] and inner[:1] == ["read"]:
+            opens[-1] = "read"  # while read: one pass per line read, not a poll
+        loops += opens
+        if inner[:1] == ["done"]:
+            loops = loops[:-1]
         args = list(itertools.dropwhile(lambda w: ASSIGNMENT.match(w) or w in OPENERS, cmd["words"]))
         name = os.path.basename(args[0]) if args else ""
         if name == "cd" and not cmd["nested"]:  # a cd in $( ) moves nothing outside it
@@ -301,6 +323,8 @@ def guard(code, cwd):
             check_git(d, args[1:], home)
         elif home and (name in PATTERN_KILLS or (name == "kill" and kills_others(args[1:]))):
             raise Unsafe("pattern-kill", "A kill by name, of PID 0 or of a negative PID can hit another session's process: kill the PID you started ($!)")
+        elif home and inner and os.path.basename(inner[0]) == "gh" and gh_words(inner[1:])[:2] == ["pr", "checks"] and (LOOPS & set(loops) or any(w.startswith("--watch") for w in inner)):
+            raise Unsafe("gh pr checks loop", "Wait on CI with `swarm.sh wait-pr <PR URL>` in the background: it exits on red, on a conflict and at a deadline")
 
 
 def kills_others(words):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# epic_briefs_test.sh — an epic's check:, lessons_file's rules and merge = agent in the briefs,
+# epic_briefs_test.sh — an epic's check:, AGENTS.md's tagged rules and merge = agent in the briefs,
 # the role a build gets (sonnet_share, escalate_after) and builder_subagent_model.
 # herdr is a stub on PATH that hands out pane ids in order and remembers tab labels; the repo is a
 # local bare remote. gh is a stub too, so a close's PR lookup never reaches the real gh.
@@ -155,15 +155,14 @@ check "with goal on, a /goal message over GOAL_SEND_MAX fails naming the story, 
   "yes|nothing sent|no|no|no" \
   "$(has "${gx}: its /goal message is" "${out}")|$(grep -qE '^agent (start|prompt) ' "${ROOT}/herdr.log" && echo sent || echo "nothing sent")|$([[ -e "${ROOT}/svc-wt/${gx}" ]] && echo yes || echo no)|$(git -C "${ROOT}/svc" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)|$(git -C "${ROOT}/svc.git" show-ref -q --verify "refs/heads/story/${gx}" && echo yes || echo no)"
 rm -f "${b}/stories/${gx}.md"
-# lessons_file elsewhere: its tagged rules (only those) reach a builder in another repo's worktree.
-printf '%s\n' "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
+# The project's AGENTS.md: its tagged rules (only those) reach a builder in another repo's worktree.
+: > "${p}/.claude/swarm/config"
 printf 'Untagged guidance.\nTag rules with <!-- lesson: <kind> -->.\nProve it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"
 printf 'A PROJECT RULE every agent reads. <!-- lesson: brief-kind -->' > "${p}/.claude/swarm/brief.md"   # no final newline
 item "${b}" stories/g1.md "status: ready" "kind: code" "repo: svc"
 run story g1 >/dev/null
 gbrief="$(cat "${p}/.swarm/briefs/g1.md")"
-check "a builder walks its diff against each tagged rule, and lists both kinds in the PR body" "yes|yes|yes|yes" \
-  "$(has "Before you open the PR, walk your diff against each rule tagged" "${gbrief}")|$(has "the PR body a \`Rules checked:\` section" "${gbrief}")|$(has "- agents-kind: <file:line>, or n/a: <why>" "${gbrief}")|$(has "- brief-kind: <file:line>, or n/a: <why>" "${gbrief}")"
+check "with tagged rules, a builder gets no rules check step" "no" "$(grep -q "Rules checked:" <<< "${gbrief}" && echo yes || echo no)"
 # commit_trailers: the brief names each trailer, one per line.
 printf '%s\n' "commit_trailers = Co-Authored-By: Ann <a@x.io> ; Signed-off-by: Bo <b@x.io>" > "${p}/.claude/swarm/config"
 item "${b}" stories/t1.md "status: ready" "kind: code" "repo: svc"
@@ -172,10 +171,14 @@ check "with commit_trailers set, a builder's brief names each trailer for every 
   $'End every commit message with these trailers, one per line:\nCo-Authored-By: Ann <a@x.io>\nSigned-off-by: Bo <b@x.io>' \
   "$(grep -A2 '^End every commit message' "${p}/.swarm/briefs/t1.md")"
 check "without commit_trailers, a brief names none" "no" "$(grep -q '^End every commit message' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
-printf '%s\n' "lessons_file = AGENTS.md" > "${p}/.claude/swarm/config"
+: > "${p}/.claude/swarm/config"
 run conduct f >/dev/null || true
-check "with tagged rules, the story-mode conductor treats an unchecked rule as a rules-unchecked finding" "yes" \
-  "$(has "is a finding of kind \`rules-unchecked\`: send it back like any other, after round 3 too." "$(tr -s '[:space:]' ' ' < "${p}/.swarm/briefs/conduct-f.md")")"
+check "both briefs say what to do on wait-pr's other exit 2s, ending with a report, never a loop" "yes|yes|yes|yes" \
+  "$(has "Its other exit 2s print why: on a timeout or no check runs, read the checks once (\`gh pr checks <PR URL>\`), fix a workflow that never started, else run wait-pr again; on a gh error, run it again. If it ends the same way twice, stop and" "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "If it ends the same way twice, stop and say so in your reply." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "Its other exit 2s print why:" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "If it ends the same way twice, stop and report it to the lead." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the conductor sends a red check or a conflict to the builder as a nudge, not findings" "yes" \
+  "$(has "nudge <file>\` (never findings, which count as a review round) naming the red check, or the base to merge in." "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+check "the builder and conductor briefs wait on CI only with wait-pr, never a loop of their own" "yes|yes|yes" \
+  "$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 fix the red check; on a conflict, do as above." "$(cat "${p}/.swarm/briefs/f1.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own: on exit 1 or a conflict, send the story's builder a nudge with" "$(cat "${p}/.swarm/briefs/conduct-f.md")")|$(has "wait-pr <PR URL>\` (in the background), never a loop of your own" "$(cat "${p}/.swarm/briefs/g1.md")")"
 # clash_brief <brief> — the clash rule (per repo), the merge-base-in rule (a nudge; a busy builder waited
 # on, a closed one started again), the round-3 cap (a round defined, decline reasons kept), then the
 # old file-level wording.
@@ -214,11 +217,26 @@ brief="$(cat "${p}/.swarm/briefs/conduct-f.md")"
 check "with escalate_after = 0, the conductor stops retrying a story that failed twice and reports it to the lead" "yes|yes|no" \
   "$(has "model: escalation is off (escalate_after = 0), so once a story has failed twice" "${brief}")|$(has "do not start it again: report it to the lead." "${brief}")|$(grep -q "picks Fable for build" <<< "${brief}" && echo yes || echo no)"
 printf '%s\n' "${cfg}" > "${p}/.claude/swarm/config"
-check "a builder gets lessons_file's tagged rules, and only those" "yes|yes|no" \
+check "a builder gets AGENTS.md's tagged rules, and only those" "yes|yes|no" \
   "$(has "<!-- lesson: agents-kind -->" "$(cat "${p}/.swarm/briefs/g1.md")")|$(has "A PROJECT RULE every agent reads." "$(cat "${p}/.swarm/briefs/g1.md")")|$(grep -q "Untagged guidance\|Tag rules with" "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 check "a brief without a final newline keeps its rules apart" "yes" "$(grep -q '^Prove it. <!-- lesson: agents-kind -->' "${p}/.swarm/briefs/g1.md" && echo yes || echo no)"
 run close g1 >/dev/null; rm -f "${b}/stories/g1.md" "${p}/AGENTS.md"
-grep -v '^lessons_file' "${p}/.claude/swarm/config" > "${p}/cfg.tmp" || true; mv "${p}/cfg.tmp" "${p}/.claude/swarm/config"
+# A project that set lessons_file = CLAUDE.md (or .claude/CLAUDE.md) keeps those files' tagged rules.
+printf '%s\n' "lessons_file = CLAUDE.md" > "${p}/.claude/swarm/config"
+printf 'Untagged.\nKeep it. <!-- lesson: claude-kind -->\n' > "${p}/CLAUDE.md"
+printf 'Name it. <!-- lesson: dot-claude-kind -->\n' > "${p}/.claude/CLAUDE.md"
+item "${b}" stories/g2.md "status: ready" "kind: code" "repo: svc"
+run story g2 >/dev/null
+check "a builder gets CLAUDE.md's and .claude/CLAUDE.md's tagged rules, and only those" "yes|yes|no" \
+  "$(has "Keep it. <!-- lesson: claude-kind -->" "$(cat "${p}/.swarm/briefs/g2.md")")|$(has "Name it. <!-- lesson: dot-claude-kind -->" "$(cat "${p}/.swarm/briefs/g2.md")")|$(grep -q "^Untagged.$" "${p}/.swarm/briefs/g2.md" && echo yes || echo no)"
+run close g2 >/dev/null; rm -f "${b}/stories/g2.md" "${p}/CLAUDE.md" "${p}/.claude/CLAUDE.md"
+# CLAUDE.md a symlink to AGENTS.md: each tagged rule reaches the brief once.
+printf 'Prove it. <!-- lesson: agents-kind -->\n' > "${p}/AGENTS.md"; ln -s AGENTS.md "${p}/CLAUDE.md"
+item "${b}" stories/g3.md "status: ready" "kind: code" "repo: svc"
+run story g3 >/dev/null
+check "a rule in AGENTS.md and a CLAUDE.md that links to it reaches the brief once" "1" \
+  "$(grep -c '^Prove it. <!-- lesson: agents-kind -->$' "${p}/.swarm/briefs/g3.md")"
+run close g3 >/dev/null; rm -f "${b}/stories/g3.md" "${p}/CLAUDE.md" "${p}/AGENTS.md"
 check "base prints a repo's base" "dev" "$(run base svc)"
 rm -f "${b}"/epics/e.md "${b}"/epics/f.md "${b}"/stories/s*.md "${b}/stories/o1.md" "${b}/stories/f1.md"
 : > "${p}/.claude/swarm/config"
