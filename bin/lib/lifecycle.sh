@@ -630,7 +630,8 @@ close_lists() {
 # agent, or a story whose repo has no origin, has nothing to keep.
 live_agents() {
   local panes pane st who name s f src rc
-  panes="$(awk -v t=" $1 " 'index(t, " " $2 " ") { print $1 }' <<< "${CLOSE_PANES}")"
+  # The ids one per line (two tabs can share a label), matched as " <id> ".
+  panes="$(awk -v t=" $(tr '\n' ' ' <<< "$1") " 'index(t, " " $2 " ") { print $1 }' <<< "${CLOSE_PANES}")"
   [[ -n "${panes}" ]] || panes="$(awk '{ print $1 }' "$2")"
   while read -r pane; do
     [[ -n "${pane}" && "${pane}" != "${3:-}" ]] || continue

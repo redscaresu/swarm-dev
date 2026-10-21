@@ -458,6 +458,13 @@ printf '%s\n' "w:p93 w:t7" "w:p91 w:t8" > "${ROOT}/panes"
 cs cb3 >/dev/null
 is "closing cb3, the last pane of tab ce, leaves ce-2 and its builder with an open PR" "<w:t7>|w:p91 cb1" \
   "$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)"
+# Two tabs share the label scope-x (herdr's w:t1 and w:t2): sxb, working, is in w:t2 and in no record,
+# so both tabs are checked and neither closes.
+echo "w:p80 sxa" > "${P}/.swarm/state/scope-x"; printf '%s\n' "sxa w:p80" "sxb w:p81 working" > "${ROOT}/agents"
+printf '%s\n' "w:p80 w:t1" "w:p81 w:t2" > "${ROOT}/panes"; : > "${CLOSED}"; out="$(cs scope-x)"
+is "two tabs labelled scope-x: sxb working in the second keeps them, and awk reads both ids" "|1|0" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept sxb (working) in tab scope-x' <<< "${out}")|$(grep -c 'newline' <<< "${out}")"
+rm -f "${P}/.swarm/state/scope-x"
 # The same close (reconcile's path) with herdr's agent list failing keeps ce-2, its state unknown, and
 # carries on: it exits 0, never dies.
 conductor_fixture idle idle; echo "w:p93 cb3" > "${P}/.swarm/state/ce"; echo "cb3 w:p93" >> "${ROOT}/agents"
