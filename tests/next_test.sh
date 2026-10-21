@@ -107,38 +107,20 @@ expect "a later epic with done dependencies and a story is a gate" "gate" \
 expect "a split later epic's later child is not planned unasked" "gate" \
   "item epics/p.md 'status: split' 'depends_on: [b]'" \
   "item epics/c.md 'status: later' 'parent: p' 'depends_on: [b]'"
-# A later epic planned unasked (plan-unasked) with no stories yet is offered again, its why saying so:
-# that plan may have stopped before it wrote any. Once it has stories, the gate says it was planned
-# unasked; once the user declined it (--declined), next offers it no more and the gate says that.
-expect "a later epic planned unasked with no stories is offered again" "plan-epic a" \
+# Once planned unasked (plan-unasked), a later epic is never offered again: the gate says what to do
+# with it. With no stories yet, plan it again if that plan stopped; with stories (they reach the board
+# only once approved), set it active. Declined (--declined), the gate says that instead.
+expect "a later epic planned unasked with no stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
-if [[ "${out}" == *"(it was planned unasked on $(date +%F) and has no stories yet: plan it again if that plan stopped)"* ]]; then echo "ok   its why says it was planned unasked and may have stopped"
-else echo "FAIL the why does not say the epic was planned unasked: ${out}"; fails=$((fails + 1)); fi
-# status lists it under Waiting on you while it is offered: with no stories, no "planned unasked" (no
-# stories to approve).
-dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
-(cd "${dir}" && git init -q && mkdir -p docs/stories && item epics/a.md 'status: later' 'depends_on: [b]' && bash "${SWARM}" plan-unasked a >/dev/null)
-waiting="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" status | sed -n '/^Waiting on you$/,/^$/p')"
-if grep -qx '  later epic: a' <<< "${waiting}"; then echo "ok   status names a marked later epic with no stories without asking for an approval"
-else echo "FAIL status's line for a marked later epic with no stories: ${waiting}"; fails=$((fails + 1)); fi
-rm -rf "${dir}"
-# While its stories wait in the scope board PR (its worktree or local branch is there), it is not
-# offered again: the gate shows what else waits on the user.
-expect "a later epic planned unasked whose scope board PR worktree is there is a gate" "gate" \
-  "item epics/a.md 'status: later' 'depends_on: [b]'" \
-  "bash \"\${SWARM}\" plan-unasked a >/dev/null" \
-  "mkdir -p \"../\$(basename \"\${PWD}\")-wt/_board-scope-a\""
-expect "a later epic planned unasked whose scope board PR branch is there is a gate" "gate" \
-  "item epics/a.md 'status: later' 'depends_on: [b]'" \
-  "bash \"\${SWARM}\" plan-unasked a >/dev/null" \
-  "git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base && git branch board/scope-a"
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F), no stories yet; run /plan-epic a again if that plan stopped)"* ]]; then echo "ok   the gate says a later epic planned unasked with no stories can be planned again"
+else echo "FAIL the gate's line for a later epic planned unasked with no stories: ${out}"; fails=$((fails + 1)); fi
 expect "a later epic planned unasked with stories is a gate" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "item stories/s.md 'status: ready' 'kind: code' 'epic: a'" \
   "bash \"\${SWARM}\" plan-unasked a >/dev/null"
-if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F): approve its stories, or start it yourself)"* ]]; then echo "ok   the gate lists a later epic planned unasked, with its date"
-else echo "FAIL the gate does not say the later epic a was planned unasked: ${out}"; fails=$((fails + 1)); fi
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F); set it active to start it)"* ]]; then echo "ok   the gate says to set a later epic planned unasked with stories active"
+else echo "FAIL the gate's line for a later epic planned unasked with stories: ${out}"; fails=$((fails + 1)); fi
 expect "a later epic whose unasked plan was declined is offered no more" "gate" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" \
   "bash \"\${SWARM}\" plan-unasked --declined a >/dev/null"
@@ -545,6 +527,9 @@ expect_conductor "an unblocked later epic comes before a working conductor's wai
   "*later epic a*conduct-e1*wait --until-report conduct-e1*" \
   "item epics/a.md 'status: later' 'depends_on: [b]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: ready' 'kind: code' 'epic: e1'"
+expect_conductor "a later epic planned unasked does not replace a working conductor's wait" "wait conduct-e1" no e1 "*" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" "item epics/e1.md 'status: active'" \
+  "item stories/s1.md 'status: ready' 'kind: code' 'epic: e1'" "bash \"\${SWARM}\" plan-unasked a >/dev/null"
 expect_conductor "a working conductor's dependent epic with a blocked story left: wait" "wait conduct-e1" no e1 "*" \
   "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'" \
