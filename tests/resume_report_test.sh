@@ -17,7 +17,8 @@
 # PostToolUse, idle on Stop, StopFailure and a cleared or resumed SessionStart, blocked on a
 # permission Notification, and release on a quit, each with a --seq taken before it forks, the
 # session's id and its resume command, from the pane's own session only (its input's top-level
-# session_id, the one after --resume, which a clear moves), never a nested session's, printing
+# session_id, the one after --resume, which only the pane's own clear moves), never a nested
+# session's, read by python3 -I so a json.py in the agent's folder stands in for nothing, printing
 # nothing, with herdr in the background so one that hangs holds no prompt. start_agent runs sourced
 # with its helpers stubbed; herdr is a stub that logs each call's argv, %q-quoted.
 set -euo pipefail
@@ -44,7 +45,8 @@ now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 # call's argv to herdr.log and fails a report-agent while reportfail exists, and deliver_prompt logs
 # "brief" and writes the time it ran to brief-at. Sets start_out (stdout and stderr) and start_rc.
 # started refusal <n> prints resume_refusal's word on <n> arguments, or "passes"; started refusal-args
-# <arg>... its word on those.
+# <arg>... its word on those; started version <text> <min> says ok or refused, as version_at_least
+# does, and started version-herdr <text> <min> as require_herdr_version does for a herdr saying <text>.
 start() { : > "${LOG}"; start_rc=0; start_out="$(started "$1" "${2:-}" 2>&1)" || start_rc=$?; }
 started() (
     local PROJECT_DIR="${PROJ:-${ROOT}/p}" SWARM_HOME="${REPO}" STATE_DIR="${ROOT}/p/.swarm/state"
@@ -68,6 +70,8 @@ started() (
     # shellcheck disable=SC2046 # one argument per number
     if [[ "$1" == refusal ]]; then resume_refusal $(seq "$2") || echo passes; return; fi
     if [[ "$1" == refusal-args ]]; then shift; resume_refusal "$@" || echo passes; return; fi
+    if [[ "$1" == version ]]; then if version_at_least "$2" "$3"; then echo ok; else echo refused; fi; return; fi
+    if [[ "$1" == version-herdr ]]; then HERDR_VERSION="${2#herdr }"; if (require_herdr_version) > /dev/null 2>&1; then echo ok; else echo refused; fi; return; fi
     start_agent t a1 "${ROOT}" "$1" "${ROOT}/brief.md" a1 "$2"
 )
 # line <first words> — herdr's logged call, its --seq shown as N; seq_of — the report's --seq.
@@ -126,11 +130,17 @@ check "SWARM_RESUME reaches the agent through clean_env, exported, never on a co
 cp "${RDIR}/${S1}.argv" "${ROOT}/a1.argv"   # the builder's resume command, for the hooks below
 
 # --- The builder restored: claude with its flags, in the allowlist alone, and no value written down.
+# A .zshrc planted in its ZDOTDIR during the session is gone: the wrapper makes it afresh.
+ZD="${ROOT}/p/.swarm/zdotdir/a1"; mkdir -p "${ZD}"; echo "touch '${ROOT}/zshrc-ran'" > "${ZD}/.zshrc"; chmod 755 "${ZD}"
 restore
 check "restored, the wrapper starts claude with --resume and every launch flag" "$(tail -n +5 "${ROOT}/a1.argv")" "$(cat "${ROOT}/claude.argv")"
 check "restored, the agent keeps the allowlist and its story's name, with the restored pane's values" \
   "${ROOT}/home|restored-value|1|w:5|${ROOT}/p|${RDIR}/${S1}.argv|/bin/zsh|${ROOT}/p/.swarm/zdotdir/a1" \
   "$(var HOME)|$(var FAKE_SECRET)|$(var SWARM_X)|$(var HERDR_PANE_ID)|$(var SWARM_PROJECT)|$(var SWARM_RESUME)|$(var SHELL)|$(var ZDOTDIR)"
+check "restored, its ZDOTDIR is made afresh at 0700 with clean_env's two files, the planted .zshrc gone" \
+  "a1|.zprofile .zshenv|__swarm_path=\"\${PATH}\"|[[ -z \"\${__swarm_path}\" ]] || export PATH=\"\${__swarm_path}\"" \
+  "$(find "${ROOT}/p/.swarm/zdotdir" -name a1 -type d -perm 700 -exec basename {} \;)|$(cd "${ZD}" && find . -type f | sed 's|^\./||' | sort | paste -sd' ' -)|$(
+  cat "${ZD}/.zshenv")|$(cat "${ZD}/.zprofile")"
 check "restored, the agent gets no other variable, and herdr's empty ones are unset" "" \
   "$(grep -E '^(LEAK_TOKEN|AWS_SECRET_ACCESS_KEY|HERDR_TAB_ID)=' "${ROOT}/claude.env" || true)"
 check "no value is on the resume command or in the files it reads" "no|no" \
@@ -181,6 +191,12 @@ check "a herdr older than 0.9.2 fails the start, saying so, before a pane opens"
 HERDR_VERSION=unknown start code
 check "a herdr that names no version fails the start too" "1|yes|" "${start_rc}|$(has "herdr --version says 'herdr unknown'" "${start_out}")|$(order)"
 
+# --- claude's version must lead its --version output: a warning that names another version first is
+# no version, and herdr's own name before its version is allowed.
+check "a --version whose first line is a warning naming a newer version does not pass for the version" "refused|ok|ok|refused" \
+  "$(started version $'(node:42) DeprecationWarning: x 9.9.9 is deprecated\n2.1.100 (Claude Code)' 2.1.145)|$(
+  started version '2.1.300 (Claude Code)' 2.1.145)|$(started version-herdr 'herdr 0.9.5' 0.9.2)|$(started version-herdr 'herdr 0.9.1' 0.9.2)"
+
 # --- A resume command herdr would refuse: refused before any pane opens, naming why.
 REFUSE="swarm: a1: herdr would refuse the command that resumes the agent after a restart:"
 POLICY="claude o'pus high" start code
@@ -207,7 +223,7 @@ check "a refused report keeps the agent at work, its pane open, and says the com
 # whose matcher finds <subject> (or that has none), as Claude Code would: through sh, with <input> on
 # stdin (@S1@ in it the builder's session), CLAUDE_PLUGIN_ROOT this repo, in agent a1's session
 # (SWARM_AGENT, and SWARM_RESUME a copy of the builder's resume command, fresh unless KEEP is set) in
-# herdr pane w:9 (HERDR_PANE_ID), less the variable <unset> names; with SLOWPY set, the hook's first
+# herdr pane w:9 (HERDR_PANE_ID), from HOOK_CWD (ROOT), less the variable <unset> names; with SLOWPY set, the hook's first
 # python3 takes a second. run_hooks does the same without clearing hook.log or waiting. The herdr stub
 # logs its argv to hook.log, prints a result, fails while hookfail exists and sleeps 5 s while
 # hookslow does. A hook's herdr runs in the background, so its line is waited for, up to a second.
@@ -235,7 +251,7 @@ run_hooks() {
     [[ "${v%%=*}" == "${4:-}" ]] || vars+=("${v}")
   done
   while IFS= read -r cmd; do
-    printed+="$(printf '%s' "${3//@S1@/${S1}}" | env -u SWARM_AGENT -u HERDR_PANE_ID -u SWARM_RESUME "${vars[@]}" sh -c "${cmd}")" || rc=$?
+    printed+="$(cd "${HOOK_CWD:-${ROOT}}" && printf '%s' "${3//@S1@/${S1}}" | env -u SWARM_AGENT -u HERDR_PANE_ID -u SWARM_RESUME "${vars[@]}" sh -c "${cmd}")" || rc=$?
   done < <(python3 -c '
 import json, re, sys
 for entry in json.load(open(sys.argv[1]))["hooks"].get(sys.argv[2], []):
@@ -283,8 +299,14 @@ for ((i = 0; i < 30; i++)); do [[ $(grep -c . "${HOOK_LOG}") -lt 2 ]] || break; 
 sw="$(sed -nE 's/.*--state working --seq ([0-9]+).*/\1/p' "${HOOK_LOG}")"; sb="$(sed -nE 's/.*--state blocked --seq ([0-9]+).*/\1/p' "${HOOK_LOG}")"
 check "a working report then a blocked one keep that order: the seq is taken before the call forks" "yes" \
   "$([[ -n "${sw}" && -n "${sb}" ]] && ((sb > sw)) && echo yes || echo "no: working ${sw:-none}, blocked ${sb:-none}")"
-hook SessionStart clear '{"hook_event_name":"SessionStart","source":"clear","session_id":"s-new"}'
-check "SessionStart on a cleared session moves the resume command to the new id and reports idle" "s-new|$(as idle s-new)||0" "$(resumes)|${got}"
+hook SessionEnd clear '{"hook_event_name":"SessionEnd","session_id":"child-1","reason":"clear"}'
+KEEP=1 hook SessionStart clear '{"hook_event_name":"SessionStart","source":"clear","session_id":"child-2"}'
+check "a nested session's /clear (its SessionEnd, then SessionStart) moves nothing and reports nothing" "${S1}|||0" "$(resumes)|${got}"
+hook SessionEnd clear '{"hook_event_name":"SessionEnd","session_id":"@S1@","reason":"clear"}'
+check "the pane's own SessionEnd on a clear reports nothing and leaves a marker" "||0|${S1}" "${got}|$(cat "${ROOT}/a1.clearing")"
+KEEP=1 hook SessionStart clear '{"hook_event_name":"SessionStart","source":"clear","session_id":"s-new"}'
+check "SessionStart on a cleared session moves the resume command to the new id and reports idle" "s-new|$(as idle s-new)||0|gone" \
+  "$(resumes)|${got}|$([[ -e "${ROOT}/a1.clearing" ]] && echo left || echo gone)"
 KEEP=1 hook Stop "" '{"hook_event_name":"Stop","session_id":"@S1@"}'
 check "after a clear, the old session reports nothing: it is no longer the pane's" "||0" "${got}"
 KEEP=1 hook Stop "" '{"hook_event_name":"Stop","session_id":"s-new"}'
@@ -308,6 +330,10 @@ hook SessionEnd prompt_input_exit '{"hook_event_name":"SessionEnd","session_id":
 check "SessionEnd on a quit releases the pane" "pane release-agent --source swarm --agent claude --seq N w:9||0" "${got}"
 hook SessionEnd other '{"hook_event_name":"SessionEnd","session_id":"@S1@","reason":"other"}'
 check "SessionEnd as the pane dies (a herdr restart) releases nothing, keeping the resume command" "||0" "${got}"
+mkdir -p "${ROOT}/evil"; printf '%s\n' "open('${ROOT}/json-py-ran', 'w').close()" "raise ImportError('planted')" > "${ROOT}/evil/json.py"
+HOOK_CWD="${ROOT}/evil" hook Stop "" '{"hook_event_name":"Stop","session_id":"@S1@"}'
+check "a json.py in the agent's folder never stands in for the stdlib's: the hook reports, and it never ran" "$(as idle "${S1}")||0|no" \
+  "${got}|$([[ -e "${ROOT}/json-py-ran" ]] && echo yes || echo no)"
 hook Stop "" '{"hook_event_name":"Stop"}'
 check "a report with no session id reports nothing: it cannot be told from a nested session's" "||0" "${got}"
 hook Stop "" '{"hook_event_name":"Stop","session_id":"@S1@"}' SWARM_RESUME

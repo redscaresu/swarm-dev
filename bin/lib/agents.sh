@@ -124,12 +124,13 @@ require_claude() {
   CLAUDE_CHECKED=1
 }
 
-# version_at_least <text> <min> — succeed when the first x.y.z in <text> is <min> or later; fail when
-# it is older or <text> holds none.
+# version_at_least <text> <min> — succeed when <text> starts (after any blanks) with an x.y.z that is
+# <min> or later; fail when it is older or <text> starts with anything else, such as a warning that
+# names another version.
 version_at_least() {
   python3 -c '
 import re, sys
-m = re.search(r"(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+m = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", sys.argv[1])
 sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "$1" "$2"
 }
 
@@ -145,7 +146,7 @@ require_herdr_version() {
   local have
   [[ -z "${HERDR_CHECKED}" ]] || return 0
   have="$(herdr --version 2>/dev/null)" || have=""
-  version_at_least "${have}" "${MIN_HERDR}" \
+  version_at_least "${have#herdr }" "${MIN_HERDR}" \
     || die "swarm.sh needs herdr ${MIN_HERDR} or later, or a restart brings agents back without their guards, and herdr --version says '${have%%$'\n'*}'. Update it (herdr update), then try again."
   HERDR_CHECKED=1
 }
@@ -309,6 +310,11 @@ launch_file() {
   } > "$1")
 }
 
+# ZDOT_ENV, ZDOT_PROFILE: the .zshenv and .zprofile in an agent's own ZDOTDIR (clean_env), written
+# again whenever a restart restores the agent (resume_file's wrapper).
+# shellcheck disable=SC2016 # the agent's zsh expands them
+ZDOT_ENV='__swarm_path="${PATH}"' ZDOT_PROFILE='[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"'
+
 # clean_env <pane> <name> <names> — before an agent starts in <pane>, its shell swaps itself through
 # env -i for launch_file's wrapper. herdr passes no env and the agent inherits the pane's shell, which
 # holds the user's whole environment. The wrapper is a 0600 file under .swarm/launch, so no value
@@ -321,9 +327,7 @@ clean_env() {
   # was given, and .zprofile puts it back. Neither holds a value, and a shell that is not a login one
   # keeps its PATH as it came.
   rm -rf "${zdot}"
-  # shellcheck disable=SC2016 # the agent's zsh expands them
-  (umask 077; mkdir -p "${zdot}"; printf '%s\n' '__swarm_path="${PATH}"' > "${zdot}/.zshenv"
-    printf '%s\n' '[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"' > "${zdot}/.zprofile")
+  (umask 077; mkdir -p "${zdot}"; printf '%s\n' "${ZDOT_ENV}" > "${zdot}/.zshenv"; printf '%s\n' "${ZDOT_PROFILE}" > "${zdot}/.zprofile")
   # A freshly split pane is not always ready (as for agent start): retry a failed run once. A failed
   # run may still have typed its line, so each try has its own wrapper and marker, and the wait is for
   # the last one's: two typed lines run both wrappers in turn, and the second leaves the clean shell.
@@ -374,8 +378,10 @@ RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
 # and <names>), with the restored pane's own values, so no value is written down or put on a command
 # line; sets AGENT_SET as launch_file does, with SWARM_PROJECT and SWARM_RESUME; and execs its
 # arguments. Python, not bash, so neither a BASH_ENV nor an exported function in that environment
-# runs before the scrub or changes it, as none can on a first start through env -i. Both 0600, and a
-# session's own, so a later agent of the same name never changes them.
+# runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
+# agent's ZDOTDIR afresh at 0700 with clean_env's two files, so nothing written there since runs in
+# the restored agent's shells. Both 0600, and a session's own, so a later agent of the same name
+# never changes them.
 resume_file() {
   local name="$1" session="$2" names="$3"
   shift 3
@@ -383,11 +389,20 @@ resume_file() {
   (umask 077
     printf '%s\n' "$@" > "${RESUME_DIR}/${session}.argv"
     python3 - "${RESUME_DIR}/${session}.py" "HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names}" "${AGENT_PREFIXES}" \
-      "${HERDR_PANE_ENV}" "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}" <<'PY'
+      "${HERDR_PANE_ENV}" "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}" \
+      "${ZDOT_ENV}" "${ZDOT_PROFILE}" <<'PY'
 import sys
-path, keep, prefixes, pane, project, resume, shell, zdotdir = sys.argv[1:]
-open(path, "w").write(f"""# swarm.sh's restore wrapper (resume_file): the agent's allowlisted environment, then its arguments.
-import os, sys
+path, keep, prefixes, pane, project, resume, shell, zdotdir, zshenv, zprofile = sys.argv[1:]
+open(path, "w").write(f"""# swarm.sh's restore wrapper (resume_file): the agent's ZDOTDIR made afresh, as clean_env makes it,
+# and its allowlisted environment, then its arguments.
+import os, shutil, sys
+old = os.umask(0o077)
+shutil.rmtree({zdotdir!r}, ignore_errors=True)
+os.makedirs({zdotdir!r})
+for f, text in ((".zshenv", {zshenv!r}), (".zprofile", {zprofile!r})):
+    with open(os.path.join({zdotdir!r}, f), "w") as out:
+        out.write(text + "\\n")
+os.umask(old)
 keep = {sorted(set(keep.split()))!r}
 env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(prefixes.split())!r})}}
 env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r})

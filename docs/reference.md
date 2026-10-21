@@ -1242,7 +1242,8 @@ so the project's path is never in the command and a later agent of the same name
 them. The wrapper keeps only the allowlist the agent started with (§ Building, **The agents'
 environment**) and its story's `env:` names, with the restored pane's own values, so no value is
 written to disk or put on a command line. It is Python, not bash, so a `BASH_ENV` or an exported
-shell function in that pane never runs. herdr refuses a resume command over 64 arguments or 8 KiB
+shell function in that pane never runs. It also makes the agent's own `ZDOTDIR` afresh, as the
+first start does, so nothing written there during the session runs in the restored agent's shells. herdr refuses a resume command over 64 arguments or 8 KiB
 (joined), or with an apostrophe or a control character in it, so swarm.sh checks those before a pane
 opens and stops the start, saying which. It also stops on a herdr older than 0.9.2, which takes the
 command and drops it. If herdr refuses the report itself, the agent is already at work on its brief,
@@ -1253,7 +1254,8 @@ runs (so an answered permission prompt no longer reads as blocked), idle when a 
 on an API error, blocked on a permission prompt. Each report carries the resume command again. Only
 the pane's own session reports, the one the command resumes. A `claude -p` that an agent runs from
 Bash inherits the agent's variables, but its session is a different one, so it reports nothing and
-never changes the command. A `/clear` moves the command to the new session. Each report has a
+never changes the command. The agent's own `/clear` moves the command to the new session; a nested
+session's moves nothing. Each report has a
 `--seq` of the time the event happened, taken before herdr is called, and herdr keeps the newest,
 whatever order the calls arrive in. When you quit an agent's session yourself, the hooks hand the
 pane back to herdr (`release-agent`). A session that ends because herdr restarts keeps its resume

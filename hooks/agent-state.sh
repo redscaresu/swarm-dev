@@ -8,9 +8,11 @@
 # resumes the session the agent is in.
 # Only the pane's own session reports: the one after --resume in that argv. A `claude -p` an agent
 # runs from Bash inherits SWARM_AGENT, HERDR_PANE_ID and SWARM_RESUME, so without that check it would
-# report its own state and session into the agent's pane. A SessionStart that clears the session
-# (source clear) moves the argv to the new id first; a nested session starts with source startup.
-# The hook input is read as JSON, so the top-level session_id counts, never one in a tool's input or
+# report its own state and session into the agent's pane. A /clear moves the argv to the new id, but
+# only the pane's own: its SessionEnd (reason clear, the pane's session) leaves a marker, and only the
+# SessionStart (source clear) that finds it within a minute moves the argv; a nested session's clear
+# leaves none. The hook input is read as JSON by python3 -I (so no json.py in the agent's folder
+# stands in for the stdlib's), and the top-level session_id counts, never one in a tool's input or
 # output. Every report has a --seq of the time in nanoseconds, taken before the call is forked, so
 # herdr keeps the newest event's report whatever order the calls arrive in. release hands the pane
 # back only when the user quits (SessionEnd's reason prompt_input_exit or logout): a herdr restart
@@ -21,7 +23,7 @@
 input="$(cat)"
 [ -n "${SWARM_AGENT:-}" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ -f "${SWARM_RESUME:-}" ] || exit 0
 h="${HERDR_BIN_PATH:-herdr}" state="$1"
-out="$(printf '%s' "${input}" | python3 -c '
+out="$(printf '%s' "${input}" | python3 -I -c '
 import json, sys, time
 print(time.time_ns())
 try:
@@ -36,14 +38,21 @@ for k in ("session_id", "hook_event_name", "source", "reason"):
 ${out}
 EOF
 [ -n "${id}" ] || exit 0
-if [ "${event}" = SessionStart ] && [ "${source}" = clear ]; then
+pane="$(sed -n '/^--resume$/{n;p;q;}' "${SWARM_RESUME}")" clearing="${SWARM_RESUME%.argv}.clearing"
+if [ "${event}" = SessionEnd ] && [ "${reason}" = clear ]; then
+  [ "${id}" != "${pane}" ] || (umask 077; printf '%s\n' "${id}" > "${clearing}")
+  exit 0
+fi
+if [ "${event}" = SessionStart ] && [ "${source}" = clear ] && [ -n "$(find "${clearing}" -mmin -1 2>/dev/null)" ]; then
+  rm -f "${clearing}"
   tmp="${SWARM_RESUME}.$$"
   if ! { (umask 077; awk -v id="${id}" 'p == "--resume" { $0 = id } { p = $0; print }' "${SWARM_RESUME}" > "${tmp}") \
       && mv -f "${tmp}" "${SWARM_RESUME}"; }; then
     rm -f "${tmp}"; exit 0
   fi
+  pane="${id}"
 fi
-[ "${id}" = "$(sed -n '/^--resume$/{n;p;q;}' "${SWARM_RESUME}")" ] || exit 0
+[ "${id}" = "${pane}" ] || exit 0
 case "${state}" in
   release) [ "${reason}" = prompt_input_exit ] || [ "${reason}" = logout ] || exit 0
            set -- release-agent --source swarm --agent claude --seq "${seq}" "${HERDR_PANE_ID}" ;;
