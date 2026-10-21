@@ -458,8 +458,14 @@ sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLA
 # record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
 # '-' for codex.
 record_agent() {
+  local rc=0
   mkdir -p "$(dirname "${AGENTS_LOG}")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}"
+  # Under the log's lock, so start_rung's drop of an unstarted rung (a read, then a replace) never
+  # loses this line.
+  state_lock "${AGENTS_LOG}.lock"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}" || rc=$?
+  rmdir "${AGENTS_LOG}.lock"
+  return "${rc}"
 }
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,

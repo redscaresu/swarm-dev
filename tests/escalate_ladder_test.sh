@@ -72,7 +72,19 @@ case "$1 $2 $*" in
   "pr checks "*) echo "- test: https://ci/run/9"; exit 1 ;;
 esac
 EOF
-chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
+# awk: the real one. While ${ROOT}/race names agents.tsv, once start_rung's drop of an unstarted
+# rung has read it, another conductor's record_agent appends a line there: at once when the log's
+# lock is free (the drop would then replace the file without it), else once the lock is let go.
+printf '#!/bin/sh\nH="%s"\nA="%s"\n' "${ROOT}" "$(command -v awk)" > "${STUB_BIN}/awk"
+cat >> "${STUB_BIN}/awk" <<'EOF'
+"$A" "$@" || exit $?
+case "$*" in *"NR <= n"*) [ -e "$H/race" ] || exit 0 ;; *) exit 0 ;; esac
+log="$(cat "$H/race")"; rm "$H/race"
+add() { printf '2026-10-01\tcode\tother-epic\tclaude\topus\thigh\tsess-other\n' >> "$log"; rmdir "$log.lock"; touch "$H/raced"; }
+if mkdir "$log.lock" 2>/dev/null; then add; exit 0; fi
+( i=0; until mkdir "$log.lock" 2>/dev/null; do i=$((i + 1)); [ "$i" -lt 100 ] || exit 1; sleep 0.1; done; add ) </dev/null >/dev/null 2>&1 &
+EOF
+chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh" "${STUB_BIN}/awk"
 
 # A project whose board is in its repo, with story s1 stacked on p1 (whose PR is open) and started
 # on sonnet: its worktree holds a commit (with a Markdown file holding a ``` fence), an untracked
@@ -163,9 +175,13 @@ check "a resume whose agent is gone before its brief is taken up keeps the rung 
   "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalates)|$(newest s1)"
 rm "${ROOT}/startghost"
 c="$(grep -c '^tab close' "${ROOT}/herdr.log")"
+echo "${P}/.swarm/agents.tsv" > "${ROOT}/race"
 out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
+for _ in $(seq 50); do [[ ! -e "${ROOT}/raced" ]] || break; sleep 0.1; done
 check "a resume whose agent runs but never took up its brief has not started: it is closed, off agents.tsv, and the rung waits to resume" "1|yes|$((c + 1))|code opus high|1|kept" \
   "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(grep -c '^tab close' "${ROOT}/herdr.log")|$(newest s1)|$(escalates)|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] && echo kept)"
+check "a line another conductor records while that drop runs is kept" "1|none" \
+  "$(grep -c $'\tother-epic\t' "${P}/.swarm/agents.tsv")|$(ls -d "${P}/.swarm/agents.tsv.lock" 2>/dev/null || echo none)"
 rm "${ROOT}/promptfail"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume whose brief is taken up has started: the step-up stands, on record once" "0|escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
