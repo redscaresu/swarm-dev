@@ -3,7 +3,7 @@
 #
 #   swarm.sh agent <tab> <name> <cwd> <role> <prompt-file>   start one agent in its own pane
 #   swarm.sh story [--strict] <slug>                        build one <board>/stories/<slug>.md; warn when another epic's open story touches the same function or file, and with --strict refuse
-#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its HLD; --backlog: for the ready stories with no epic, in a workspace named backlog
+#   swarm.sh conduct <epic>|--backlog                       a fresh conductor for one epic, in a workspace named for its parent: epic, else the epic; --backlog: for the ready stories with no epic, in a workspace named backlog
 #   swarm.sh wait [--stall] <name> [timeout-ms]             block until the agent settles (a review agent: until its findings file exists too); exit 1 at the timeout; exit 4 with "stuck: api error" (an API-error stop wait's resumes did not clear) or "stuck: no output for <N>m (<pane>)"; on the usage limit it picks "continue automatically" and waits on; --stall: also exit 3 when a builder stalls
 #   swarm.sh wait --until-report conduct-<epic>             block, with no timeout, until the conductor reports, waits on a prompt, is gone or needs a login; exit 4 when stuck, as wait
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or a green PR in review that waits on the user (merge = human, or merge holds it); print each new one
@@ -26,6 +26,7 @@
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
 #   swarm.sh dialog <slug> <accepted|dismissed>             log how a builder's Fable usage-credits consent dialog was answered
+#   swarm.sh plan-unasked [--declined] <epic>               record that a later epic next offered has had its unasked plan, so next offers it no more; --declined: that the user declined it
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
@@ -34,7 +35,7 @@
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
 #   swarm.sh findings <repo> <pr>                           every check-run note on a PR's head, its open code-scanning alerts, and each new test with no FAIL line in its body
-#   swarm.sh watch [repo...]                                wait until a story PR needs the lead, print why, and exit
+#   swarm.sh watch [repo...]                                wait until a story PR needs the lead (or waits queue_minutes, green, for a review), print why, and exit
 #   swarm.sh config [key]                                   the project's settings and where each came from, or one value
 #   swarm.sh init                                           from a git repo's root: add the board, .claude/swarm/ and the .gitignore lines
 #   swarm.sh base <repo>                                    the base branch a repo's stories start from and its PRs go into
@@ -161,6 +162,7 @@ CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
 CFG_merge=human         # human: no agent merges; a PR that is ready waits on the board for you
 CFG_stall_minutes=30    # an agent working this long with no sign of life (a builder: commit, PR update or swarm action) is stalled?; a busy one whose pane has not changed, stuck
+CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next)
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
@@ -170,7 +172,7 @@ CFG_fallback_reviewer="" # empty: a codex usage limit skips codex's review; else
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
-CONFIG_KEYS="board_dir repos_dir merge stall_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin commit_trailers"
+CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin commit_trailers"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -196,7 +198,7 @@ load_config() {
         [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value:1}" ;;
       merge)
         [[ "${value}" == human || "${value}" == agent ]] || die "${where}: merge must be human or agent, not '${value}'" ;;
-      stall_minutes|codex_minutes)
+      stall_minutes|queue_minutes|codex_minutes)
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: ${key} must be a positive whole number, not '${value}'" ;;
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
@@ -393,6 +395,7 @@ dispatch() {
     reset)  reset_story "${1:-}" "${*:2}" ;;
     drop)   drop_story "${1:-}" "${*:2}" ;;
     dialog) dialog_answered "${1:-}" "${2:-}" ;;
+    plan-unasked) plan_unasked "$@" ;;
     review) mark_review "$@" ;;
     reconcile) reconcile ;;
     merge)  merge_pr "$@" ;;
@@ -470,7 +473,7 @@ story_items() {
 }
 # codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
 # the story's touches, its **Done when** and **From review** items (the builder's acceptance, as in
-# goal_condition), and that work outside them is not a finding. Fails with no Done when item.
+# goal_condition), and SCOPE_RULE. Fails with no Done when item.
 codex_story_prompt() {
   local done_when from_review
   done_when="$(story_items "$2" 'Done when')"
@@ -478,8 +481,8 @@ codex_story_prompt() {
   from_review="$(story_items "$2" 'From review')"
   [[ -z "${from_review}" ]] || from_review=$'\n\nIts From review:\n'"${from_review}"
   # shellcheck disable=SC2016 # the $(...) is for codex to run
-  printf 'Review the changes on this branch against origin/%s, committed or not: git diff $(git merge-base origin/%s HEAD) for tracked files, and each untracked file git status --porcelain lists. They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. Work outside them is not a finding.' \
-    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}"
+  printf 'Review the changes on this branch against origin/%s, committed or not: git diff $(git merge-base origin/%s HEAD) for tracked files, and each untracked file git status --porcelain lists. They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. %s' \
+    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}" "${SCOPE_RULE}"
 }
 
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
@@ -667,7 +670,7 @@ fallback_close() {
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
-# <findings file> in the form codex prints them.
+# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set.
 fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
   local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
@@ -676,6 +679,8 @@ codex hit its usage limit, so you review in its place. You are read-only: never 
 here, and never merge, by any route. The one file you write is $3.
 
 ${2:-${diff}}
+
+$(review_checklist "${SWARM_STORY:+${BOARD}/stories/${SWARM_STORY}.md}")
 
 You have no Edit, Write or NotebookEdit tool. When done, write your findings with Bash to $3.tmp,
 then mv it to $3 (codex-review waits until that exists): each finding as codex prints one, most severe first, \`- [P<0-3>] <title> — <file>:<line>\` with a line

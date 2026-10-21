@@ -14,7 +14,7 @@ the run stops whenever a decision is yours.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swarm-flow-dark.png">
-  <img alt="How the swarm builds a design: /hld, /swarm-dev:swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
+  <img alt="How the swarm builds a design: /epic, /swarm-dev:swarm, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
 1. **Design.** You write a draft epic with a co-author agent (`/epic`): the problem with its
@@ -22,14 +22,15 @@ the run stops whenever a decision is yours.
    nothing plans it until you agree it.
 2. **Plan.** Once you agree the epic, planning agents (`/plan-epic`) split it into stories of one
    PR each, and skeptic agents try to break the plan. You approve it.
-3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
-   and the builder fixes what it finds.
+3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent
+   as soon as it is green, and the builder fixes what it finds. A green PR left without a review
+   for 30 minutes (`queue_minutes`) is flagged to the lead, who passes it to the conductor.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
    `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
    session, so merges go through `swarm.sh merge`. It also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
-   `reset --hard` in the main checkout.
+   `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
@@ -83,7 +84,7 @@ The other commands are tools the lead runs; they are listed in
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (a `later` epic whose dependencies are done gets its stories planned first, for you to approve) |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 | an agent on `usage-limit` | nothing: `wait` chose "Wait here, then continue automatically", and it carries on when the limit resets |
 | an agent stuck (`stuck: api error` after three resumes, or `stuck: no output` for `stall_minutes`) | read its pane (`herdr agent read <agent>`), then type into it or close it |

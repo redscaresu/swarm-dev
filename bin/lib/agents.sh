@@ -1028,6 +1028,7 @@ tell_agent() {
     # take the note into a copy it has already read.
     msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
     printf '%s\n\n' "${msg}" >> "${inbox}"
+    queued_sent "${f}"   # a queued: line sent is one watch and next send no more
     echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
