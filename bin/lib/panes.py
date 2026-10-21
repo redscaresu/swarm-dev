@@ -1,4 +1,4 @@
-import glob, json, os, re
+import glob, json, os, re, subprocess
 WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
@@ -96,9 +96,27 @@ def bg_running(log, name, projects):
             return False
         break
     return bool(live)
+def usage_limit(text):
+    lines = (text or "").splitlines()
+    tail = "\n".join(lines[max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1]) + 1:])
+    m = re.search(r"(\d+)\.\s*Wait here, then continue automatically", tail)
+    if m and "Stop and wait for limit to reset" in tail:
+        return "dialog", m.group(1)
+    if "Usage limit reached" in tail and re.search("Continuing shortly|limit resets", tail):
+        return "waiting", ""
+    return None
+def pane_text(pane):
+    try:
+        return subprocess.run(["herdr", "agent", "read", pane, "--source", "recent-unwrapped"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 def shown_state(a, name, s, log, projects):
     st, look = agent_state(a, name, s)
-    return ("auth", True) if st == "idle" and s is not None and login_expired(log, name, projects) else (st, look)
+    if st == "idle" and s is not None and login_expired(log, name, projects):
+        return "auth", True
+    if st in ("working", "idle", "done", "WAITING") and a and a.get("pane_id") and usage_limit(pane_text(a["pane_id"])):
+        return "usage-limit", False
+    return st, look
 def session_state(log, name, listing):
     sid = session_id(log, name)
     if sid is None:

@@ -93,6 +93,7 @@ PY
                       [ -e "$H/waiterr" ] && { echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; }
                       echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
   "agent read")       cat "$H/screen" 2>/dev/null ;;
+  "pane send-keys")   [ -e "$H/after-keys" ] && mv "$H/after-keys" "$H/screen" ;;   # the pane once the dialog is answered
   # A closed pane takes its agent with it; a tab t<n> closes its first pane, w:<n>.
   "pane close"|"tab close") p=$3; [ "$2" = close ] && [ "$1" = tab ] && p="w:${3#t}"
                       [ -e "$H/agents" ] && awk -v p="$p" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
@@ -306,6 +307,25 @@ check "a task-list tool's taskId is no background task: the quiet pane is stuck"
 call Monitor tu-m '{"taskId":"m-3"}'
 check "a quiet pane whose session runs a monitor (a Monitor call's taskId) is no stop" "busy|exit 1|0" "$(quiet)"
 rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${tr}"
+# Usage limit: the pane shows Claude Code's dialog. wait answers "Wait here, then continue
+# automatically" (option 2) once, logs one usage-limit event, and waits on to its timeout: no stop,
+# no stall, no stuck, no resume. Then a pane already waiting after that choice, unchanged for 2 hours.
+limit_dialog() { printf '%s\n' '⏺ Working on it.' '' "You've hit your usage limit · resets 3pm" '' '❯ 1. Stop and wait for limit to reset' '  2. Wait here, then continue automatically' > "$1"; }
+limit_waiting() { printf '%s\n' '⏺ Working on it.' '' '⚠ Usage limit reached · limit resets 3pm' '  Continuing shortly' > "$1"; }
+keys() { grep -c "^pane send-keys w:950 ${1:-}" "${ROOT}/herdr.log" || true; }
+limits() { grep -c $'\tusage-limit\ta\t' "${p}/.swarm/events.tsv" || true; }
+session "${ROOT}/claude.json" sess-a2=busy; echo working > "${ROOT}/hstatus"
+limit_dialog "${ROOT}/screen"; limit_waiting "${ROOT}/after-keys"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 4000)"
+check "a usage-limit dialog: wait sends 'continue automatically' once, logs one event, and keeps waiting" \
+  "usage-limit|exit 1|1|1|0" "${got%|*}|$(keys 2)|$(limits)|$(prompts)"
+limit_waiting "${ROOT}/screen"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_WAIT_STARTED=$(($(date +%s) - 7200)) SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 4000)"
+check "a pane waiting on the usage limit for 2 hours: no keys, one event, never stuck" "usage-limit|exit 1|0|1|0" "${got%|*}|$(keys)|$(limits)|$(prompts)"
+session "${ROOT}/claude.json" sess-a2=idle; : > "${p}/.swarm/events.tsv"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "an idle session on the usage limit is waited on too, not returned idle" "usage-limit|exit 1|1" "${got%|*}|$(limits)"
+rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${ROOT}/after-keys"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"
