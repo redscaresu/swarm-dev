@@ -161,17 +161,17 @@ for p in glob.glob(sys.argv[1]):
             except BlockingIOError:
                 time.sleep(0.2)
         else:
-            sys.exit(1)' "${dir}/tmp/swarm-dash-ci-*.run" && return
+            sys.exit(1)' "${dir}/tmp/swarm-dash-ci-*/*.run" && return
   echo "FAIL the ci refresh ends and lets go of its <cache>.run"; fails=$((fails + 1))
 }
-stamped() { if compgen -G "${dir}/tmp/swarm-dash-ci-*.failed" > /dev/null; then echo failed; fi; }
-ci_cache() { compgen -G "${dir}/tmp/swarm-dash-ci-*" | grep -vE '\.(failed|run)$'; }
+stamped() { if compgen -G "${dir}/tmp/swarm-dash-ci-*/*.failed" > /dev/null; then echo failed; fi; }
+ci_cache() { compgen -G "${dir}/tmp/swarm-dash-ci-*/*" | grep -vE '\.(failed|run)$'; }
 aged() { python3 -c 'import os, sys, time; t = time.time() - float(sys.argv[1]); os.utime(sys.argv[2], (t, t))' "$1" "$(ci_cache)"; }
 BADPR=1 dash > /dev/null; refreshed
 check "a refresh where gh reads no PR (each answers {}) writes no ci line, and stamps .failed" "$(dash)|$(stamped)" "|failed"
 dash > /dev/null; refreshed
 check "and within 10 minutes of it, with gh fine again, dash starts no other" "$(dash)" ""
-touch -t 202001010000 "${dir}"/tmp/swarm-dash-ci-*.failed
+touch -t 202001010000 "${dir}"/tmp/swarm-dash-ci-*/*.failed
 : > "${G}/gh.log"; dash > /dev/null; refreshed
 # f's zizmor run was rerun: ci health reads its first attempt, dash's refresh (ci time alone) never.
 check "dash's refresh skips ci health's per-attempt calls" "$(grep -c 'actions/runs/62/attempts/1$' "${G}/gh.log" || true)" 0
@@ -181,10 +181,10 @@ check "after 10 minutes another refresh runs, and dash's ci line agrees with flo
 check "which are this fixture's, the change from the minutes shown: ci 12m (slowest: test 9m) ▼1m vs last week" "${want}" \
   "ci 12m (slowest: test 9m) ▼1m vs last week"
 # A line 10 hours old, while its refresh keeps failing (a fresh .failed): dash says how old it is.
-touch "${dir}"/tmp/swarm-dash-ci-*.failed; aged 36000
+touch "${dir}"/tmp/swarm-dash-ci-*/*.failed; aged 36000
 check "a line past 6 hours old says its age" "$(dash)" "${want} · 10h old"
 # A <cache>.run that no refresh holds a lock on, whatever it says, holds no refresh off.
-rm "${dir}"/tmp/swarm-dash-ci-*.failed; echo 1 > "$(ci_cache).run"
+rm "${dir}"/tmp/swarm-dash-ci-*/*.failed; echo 1 > "$(ci_cache).run"
 dash > /dev/null; refreshed
 check "a <cache>.run no refresh holds does not hold a refresh off" "$(dash)" "${want}"
 # A refresh where gh can read none of the PRs (FAIL=1: e's, f's and g's runs; offline, say) fails: the
@@ -194,7 +194,7 @@ FAIL=1 dash > /dev/null; refreshed
 check "a refresh where gh can read none of the PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
 # One where gh cannot read this week's PRs (FAILWEEK=1: e's and f's), though it reads last week's g,
 # fails too: no blank line for a quiet week, and another refresh in 10 minutes.
-rm "${dir}"/tmp/swarm-dash-ci-*.failed
+rm "${dir}"/tmp/swarm-dash-ci-*/*.failed
 FAILWEEK=1 dash > /dev/null; refreshed
 check "a refresh where gh cannot read this week's PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
 # The ci cache's files have names anyone can guess under TMPDIR: a planted link is never followed.
@@ -205,6 +205,12 @@ FAIL=1 dash > /dev/null; refreshed
 check "a refresh never writes through a link planted at <cache>.failed" "$(cat "${dir}/victim")" keep
 rm "$(ci_cache).failed"; printf 'ci 1m\033[2J (slowest: x\n1m) vs last week' > "$(ci_cache)"
 check "a cached line is printed without its control characters" "$(SWARM_NO_CI_REFRESH=1 dash)" "ci 1m[2J (slowest: x1m) vs last week"
+# Its files live in a directory dash made 0700; one anyone else could write to (or a link, or not
+# this user's) is not trusted: no line from it.
+mode() { python3 -c 'import glob, os, sys; print(oct(os.lstat(glob.glob(sys.argv[1])[0]).st_mode & 0o777))' "${dir}/tmp/swarm-dash-ci-*"; }
+check "dash keeps the ci cache in a directory only this user can open" "$(mode)" 0o700
+chmod 777 "${dir}"/tmp/swarm-dash-ci-*
+check "a ci cache directory others can write to is not trusted" "$(SWARM_NO_CI_REFRESH=1 dash)" ""
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

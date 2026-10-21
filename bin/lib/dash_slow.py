@@ -1,4 +1,4 @@
-import datetime, fcntl, json, os, re, signal, subprocess, sys, time
+import datetime, fcntl, json, os, re, signal, stat, subprocess, sys, time
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 # The ci line runs flow's ci_health over two weeks of PRs, 3 gh calls each, so at most every 6 hours:
 # a week's median barely moves in that time. A refresh that fails is tried again after CI_RETRY, and
@@ -7,9 +7,21 @@ FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 CI_SECONDS, CI_RETRY, CI_TIMEOUT = 6 * 3600, 600, 1800
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # flow_ci_health.py's: the cache is text to print, not escapes
 def private(path, flags):
-    # os.open that never follows a symlink, as an opener for open(): the ci cache's files have names
-    # anyone can guess under a TMPDIR other users may write to (/tmp), so a planted link is refused.
+    # os.open that never follows a symlink, as an opener for open(): a second guard, after own_dir.
     return os.open(path, flags | os.O_NOFOLLOW, 0o600)
+
+def own_dir(path):
+    # path's directory, made 0700 if it is not there; PermissionError unless it is a directory (not a
+    # link) this user owns that no one else can write to. The ci cache's names are easy to guess under
+    # a TMPDIR other users may write to (/tmp), so no one else may plant, rewrite or lock a file in it.
+    d = os.path.dirname(path)
+    try:
+        os.mkdir(d, 0o700)
+    except FileExistsError:
+        pass
+    st = os.lstat(d)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise PermissionError(d)
 def gh(args):
     p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
@@ -66,7 +78,7 @@ def ci_refresh(project, repo, cache):
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL); p.communicate()
         if line is not None:
-            with open(f"{cache}.{os.getpid()}", "w", encoding="utf-8", opener=private) as f:
+            with open(f"{cache}.{os.getpid()}", "x", encoding="utf-8", opener=private) as f:
                 f.write(line)
             os.replace(f"{cache}.{os.getpid()}", cache)
     except Exception:
@@ -125,6 +137,7 @@ try:
     cache, project = os.environ.get("SWARM_CI_CACHE"), os.environ.get("SWARM_CI_PROJECT", ".")
     m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$", origin_of(project))
     if cache and m:
+        own_dir(cache)
         old = age(cache)
         if (old is None or old > CI_SECONDS) and not os.environ.get("SWARM_NO_CI_REFRESH"):
             start_refresh(project, m.group(1), cache)
