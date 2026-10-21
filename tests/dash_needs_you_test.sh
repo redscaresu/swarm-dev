@@ -34,7 +34,7 @@ REALPATH="${PATH}"
 export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
 mkdir -p "${TMPDIR}"
 # fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
-fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }
+fresh() { rm -rf "${TMPDIR}"/swarm-dash-*; }
 # Claude Code's sessions: the conductor (sess-1) and s-three's builder (sess-today) are busy, and
 # s-one's builder waits on a permission prompt.
 printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"waiting","waitingFor":"input"},{"sessionId":"sess-today","status":"busy"}]' > "${ROOT}/claude.json"

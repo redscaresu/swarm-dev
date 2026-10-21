@@ -64,10 +64,15 @@ is one column, top to bottom:
   pane dash runs in). After
   it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
   call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
-  today` too), on the same line when they fit there and on the next line when they don't. Then a
+  today` too), on the same line when they fit there and on the next line when they don't. Then CI
+  time against last week, for the project's origin repo: `ci 11m (slowest: test 9m) ▼2m vs last
+  week`. It is that repo's row of the ci time table in the `ci_health` section of `swarm.sh flow
+  --since <6 days ago>`, which dash runs in the background at most every 6 hours (10 minutes after
+  one that failed or could not read one of this week's PRs, which keeps the line there was, and one
+  at a time, stopped after 30 minutes), so the line appears a minute or so after the first dash. A line older than 6 hours says so: `· 9h old`. Then a
   warning when the main checkout has board edits not committed yet, naming the files, cut to the
   width: `board: 2 uncommitted edits in the main checkout: stories/a.md, stories/b.md`. From 140
-  columns the merge mode, the summary and who is on call move to the status bar.
+  columns the merge mode, the summary, who is on call and the ci line move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
@@ -152,7 +157,7 @@ is one column, top to bottom:
   or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown, or whose login expired), and ?
   for a herdr state dash does not know (with herdr's word for it).
 - **Status bar**, from 140 columns, on the last lines: the merge mode, the summary's counts, today's
-  cost, who is on call and today's escalations, and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
+  cost, who is on call and today's escalations, the ci line, and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
 
 It fits the terminal: it truncates with … rather than wraps, except that a needs-you action wraps
 onto an indented line so it is never cut. Under 100 columns it drops the role, model and actor
