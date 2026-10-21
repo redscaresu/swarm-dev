@@ -2,7 +2,7 @@
 kind: lead
 status: blocked
 epic: safer-faster-swarm
-depends_on: [release-final, remove-lessons, fallback-reviewer, escalate-ladder-triggers]
+depends_on: [release-epic-close, remove-lessons, fallback-reviewer, escalate-ladder-triggers]
 touches: [.claude/swarm/config]
 costs: money
 after: safer-faster-swarm
