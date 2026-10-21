@@ -143,28 +143,31 @@ def pr_ref(m):
 commit_of = dict(l.split("\t", 1) for l in E.get("DASH_COMMITS", "").splitlines() if "\t" in l)
 seen = last_seen(E["DASH_EVENTS"])
 STARTS = ("agent", "conduct", "story")
-started = {}   # target -> when its newest start (agent, conduct or story) in events.tsv ran
+started = {}   # target -> when its newest start (agent, conduct, story, or a step-up's escalate) in events.tsv ran
 ran = {}       # pane -> when the newest sign of life it ran (STALL_PY's sign_time) was written
 for f in read_tsv(E["DASH_EVENTS"], 5):
     t = sign_time(f)
     if t is not None and t > ran.get(f[3], 0):
         ran[f[3]] = t
-    t = epoch(f[0]) if f[1] in STARTS and f[4] == "ok" else None
+    t = epoch(f[0]) if (f[1] in STARTS and f[4] == "ok") or (f[1] == "escalate" and STEP_UP.fullmatch(f[4])) else None
     if t is not None and t > started.get(f[2], 0):
         started[f[2]] = t
-# Escalation: today's ok escalate builds, and each slug's newest one (its attempt and when).
+# Escalation: today's escalate builds (escalate_build, on the escalate role's model: a step-up to a
+# lower rung is none), and each slug's newest one: when, and its attempt, or for a step-up the model it
+# came from.
+ESCALATE_MODEL = next((p[2] for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "escalate" and len(p) > 3), "")
 ESCALATION = ("escalate", "dialog", "escalated", "reset", "reset:held", "drop")
 escalations, escalated_at, was_reset = 0, {}, set()   # was_reset: slugs with an ok reset (reset_at's rule)
 for f in read_tsv(E["DASH_EVENTS"], 5):
     if f[1] == "reset" and f[4].startswith("ok"):
         was_reset.add(f[2])
     t = epoch(f[0]) if f[1] == "escalate" else None
-    m = re.match(r"ok \(attempt (\d+)\)", f[4])
-    if t is None or not f[4].startswith("ok"):
+    if t is None or not escalate_build(f[4], ESCALATE_MODEL):
         continue
     escalations += datetime.date.fromtimestamp(t) == TODAY
-    if m and t > escalated_at.get(f[2], (0,))[0]:
-        escalated_at[f[2]] = (t, m.group(1))
+    m = STEP_UP.fullmatch(f[4])
+    if t > escalated_at.get(f[2], (0,))[0]:
+        escalated_at[f[2]] = (t, f"from {m.group(2)}" if m else f"attempt {f[4][len('ok (attempt '):-1]}")
 recs, stalled = [], []
 try:
     agents = {a.get("pane_id"): a for a in json.loads(E["DASH_AGENTS"])["result"]["agents"]}
@@ -457,7 +460,7 @@ def agent_cols(r):
         row.append((f"  pane {dur(NOW - r['pane'])}", "dim"))
     if r.get("escalated"):
         t, n = r["escalated"]
-        row.append((f"  attempt {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
+        row.append((f"  {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
     return row
 
 def agent_row(r):

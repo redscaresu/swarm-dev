@@ -330,14 +330,16 @@ agent_cmd() {
   start_agent "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-${2:-}}" "${names}"
 }
 
-# start_agent <tab> <name> <cwd> <role> <prompt-file> [pane-name] [env-names] — an agent in a fresh
-# pane with a clean environment (clean_env), plus the variables <env-names> names, which its caller
-# has checked with story_env. Never read from the environment, where any value could stand in.
+# start_agent <tab> <name> <cwd> <role> <prompt-file> [pane-name] [env-names] [model] — an agent in a
+# fresh pane with a clean environment (clean_env), plus the variables <env-names> names, which its
+# caller has checked with story_env. Never read from the environment, where any value could stand in.
+# [model] runs <role> on another model than its policy's, at its policy's effort (step_up's rung).
 start_agent() {
   local tab="$1" name cwd="$3" role="$4" prompt_file="$5" pane_name="${6:-$2}" names="${7:-}" kind model effort pane
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
+  model="${8:-${model}}"   # a step-up's rung: the role's family on another model
   # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
   # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
   local session=-
@@ -472,8 +474,14 @@ sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLA
 # record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
 # '-' for codex.
 record_agent() {
+  local rc=0
   mkdir -p "$(dirname "${AGENTS_LOG}")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}"
+  # Under the log's lock, so start_rung's drop of an unstarted rung (a read, then a replace) never
+  # loses this line.
+  state_lock "${AGENTS_LOG}.lock"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}" || rc=$?
+  rmdir "${AGENTS_LOG}.lock"
+  return "${rc}"
 }
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,
