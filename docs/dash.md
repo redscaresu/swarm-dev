@@ -116,7 +116,9 @@ is one column, top to bottom:
   still on the board here is open, and a re-scope counts as nothing. The row's symbol is ○
   when stories are ready and nothing runs, and ⏸ only when every remaining story is blocked or later. Under it, its live agents (role, model and effort, status) and its open PRs. A working
   agent's status carries how long since its last sign of life (`working 12m`), and past
-  `stall_minutes` it reads `stalled 40m`, marked `!`. From
+  `stall_minutes` it reads `stalled 40m`, marked `!`. Every agent's row ends with how long since
+  its pane last changed (`pane 12m`), as `status` or `wait` last saw it. An agent neither of them
+  has read within `stall_minutes` shows none. From
   140 columns each agent is a card: the model and effort sit on a label in the model's colour, and
   a working agent also shows how long ago it started (its `story`, `conduct` or `agent` line in
   `events.tsv`). An escalate agent also shows which attempt its Fable build is and when it

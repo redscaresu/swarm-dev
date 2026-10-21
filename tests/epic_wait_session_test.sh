@@ -261,6 +261,10 @@ check "an idle pane unchanged since its resume: one resume, then stuck: api erro
 printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
 check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
+# A tool the agent ran printed an API error (its result, ⎿, ends the turn): no stop, so no resume.
+printf '%s\n' '⏺ Bash(curl -s localhost:8080/health)' '  ⎿  API Error: 500 upstream' '' '> ' > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "a turn ending on a tool result reading API Error: is no stop: wait sends no resume" "busy|exit 1|0" "${got%|*}|$(prompts)"
 # With goal on, a builder is never resumed: wait returns stuck at once, the transcript still ending on the error.
 printf 'goal = 3\n' > "${p}/.claude/swarm/config"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
@@ -299,8 +303,9 @@ printf '%s\n' '╭────────╮' '│ Welcome │' '╰───�
 check "a box above the API error (a banner) is read past: tell delivers" "told a|1" "${got}|$(prompts)"
 # A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
 # stuck: no output (exit 4), naming the pane, and nothing sent. Not while its transcript shows a
-# background task it has not been told the end of.
-echo working > "${ROOT}/hstatus"; printf '%s\n' '⏺ Waiting on CI.' > "${ROOT}/screen"
+# background task it has not been told the end of. The earlier waits' pane record (pane_check) saw
+# another screen, so it goes: this pane is first seen when the wait began.
+echo working > "${ROOT}/hstatus"; rm -f "${p}/.swarm/panes/a"; printf '%s\n' '⏺ Waiting on CI.' > "${ROOT}/screen"
 mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 started() { printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":%s}\n' "$1" >> "${tr}"; }
 told() { # <task id> [status] — a task-notification for it; with no status, a check-in on a running task

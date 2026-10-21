@@ -124,12 +124,13 @@ require_claude() {
   CLAUDE_CHECKED=1
 }
 
-# version_at_least <text> <min> — succeed when the first x.y.z in <text> is <min> or later; fail when
-# it is older or <text> holds none.
+# version_at_least <text> <min> — succeed when <text> starts (after any blanks) with an x.y.z that is
+# <min> or later; fail when it is older or <text> starts with anything else, such as a warning that
+# names another version.
 version_at_least() {
-  python3 -c '
+  python3 -I -c '
 import re, sys
-m = re.search(r"(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+m = re.match(r"\s*(\d+)\.(\d+)\.(\d+)", sys.argv[1])
 sys.exit(0 if m and tuple(map(int, m.groups())) >= tuple(map(int, sys.argv[2].split("."))) else 1)' "$1" "$2"
 }
 
@@ -145,7 +146,7 @@ require_herdr_version() {
   local have
   [[ -z "${HERDR_CHECKED}" ]] || return 0
   have="$(herdr --version 2>/dev/null)" || have=""
-  version_at_least "${have}" "${MIN_HERDR}" \
+  version_at_least "${have#herdr }" "${MIN_HERDR}" \
     || die "swarm.sh needs herdr ${MIN_HERDR} or later, or a restart brings agents back without their guards, and herdr --version says '${have%%$'\n'*}'. Update it (herdr update), then try again."
   HERDR_CHECKED=1
 }
@@ -309,6 +310,11 @@ launch_file() {
   } > "$1")
 }
 
+# ZDOT_ENV, ZDOT_PROFILE: the .zshenv and .zprofile in an agent's own ZDOTDIR (clean_env), written
+# again whenever a restart restores the agent (resume_file's wrapper).
+# shellcheck disable=SC2016 # the agent's zsh expands them
+ZDOT_ENV='__swarm_path="${PATH}"' ZDOT_PROFILE='[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"'
+
 # clean_env <pane> <name> <names> — before an agent starts in <pane>, its shell swaps itself through
 # env -i for launch_file's wrapper. herdr passes no env and the agent inherits the pane's shell, which
 # holds the user's whole environment. The wrapper is a 0600 file under .swarm/launch, so no value
@@ -321,9 +327,7 @@ clean_env() {
   # was given, and .zprofile puts it back. Neither holds a value, and a shell that is not a login one
   # keeps its PATH as it came.
   rm -rf "${zdot}"
-  # shellcheck disable=SC2016 # the agent's zsh expands them
-  (umask 077; mkdir -p "${zdot}"; printf '%s\n' '__swarm_path="${PATH}"' > "${zdot}/.zshenv"
-    printf '%s\n' '[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"' > "${zdot}/.zprofile")
+  (umask 077; mkdir -p "${zdot}"; printf '%s\n' "${ZDOT_ENV}" > "${zdot}/.zshenv"; printf '%s\n' "${ZDOT_PROFILE}" > "${zdot}/.zprofile")
   # A freshly split pane is not always ready (as for agent start): retry a failed run once. A failed
   # run may still have typed its line, so each try has its own wrapper and marker, and the wait is for
   # the last one's: two typed lines run both wrappers in turn, and the second leaves the clean shell.
@@ -345,12 +349,13 @@ clean_env() {
 }
 
 # resume_refusal <arg>... — when herdr would refuse <arg>... as a resume command, print why and
-# succeed: more than 64 arguments or 8 KiB, or an argument with an apostrophe or a control character
-# (herdr's rules; its first word, bash, is a plain command name).
+# succeed: more than 64 arguments or 8 KiB (the command joined, a separator between arguments), or
+# an argument with an apostrophe or a control character (herdr's rules; its first word, python3, is a
+# plain command name).
 resume_refusal() {
   local a opt="" bytes
   [[ $# -le 64 ]] || { echo "$# arguments, more than 64"; return 0; }
-  bytes="$(printf '%s' "$@" | LC_ALL=C wc -c | tr -d ' ')"
+  bytes="$(printf '%s' "$*" | LC_ALL=C wc -c | tr -d ' ')"
   [[ ${bytes} -le 8192 ]] || { echo "${bytes} bytes, more than 8 KiB"; return 0; }
   for a in "$@"; do
     [[ "${a}" != --* ]] || opt="${a}"
@@ -360,28 +365,79 @@ resume_refusal() {
   return 1
 }
 
-# resume_file <dir> <name> <names> <arg>... — what herdr runs to resume agent <name> after a restart:
-# <dir>/<name>.argv, its resume command <arg>... one argument a line, which the plugin's SessionStart
-# hook reports again with a new session id; and <dir>/<name>.sh, the wrapper that command starts
-# with (bash <wrapper> claude --resume ...). A restored pane's shell holds the user's whole
-# environment, so the wrapper unsets every variable but those clean_env's agent starts with
-# (AGENT_ENV, AGENT_PREFIXES', herdr's and <names>), which keep the restored pane's own values, so no
-# value is written down or put on a command line; sets AGENT_SET and SWARM_PROJECT as launch_file
-# does; and execs its arguments. Both 0600.
+# RESUME_DIR: resume_file's files, one pair per Claude session. Outside the project, so its path,
+# which may hold an apostrophe herdr refuses, is never in a resume command.
+RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
+
+# resume_file <name> <session> <names> <arg>... — what herdr runs to resume agent <name> (Claude
+# session <session>) after a restart, in RESUME_DIR: <session>.argv, its resume command <arg>... one
+# argument a line, whose --resume the plugin's hooks keep at the pane's own session and attach to
+# each report (SWARM_RESUME); and <session>.py, the wrapper that command starts with (python3 -I
+# <wrapper> claude --resume ...). A restored pane's shell holds the user's whole environment, so the
+# wrapper keeps only the variables clean_env's agent starts with (AGENT_ENV, AGENT_PREFIXES', herdr's
+# and <names>), with the restored pane's own values, so no value is written down or put on a command
+# line; sets AGENT_SET as launch_file does, with SWARM_PROJECT and SWARM_RESUME; and execs its
+# arguments. Python, not bash, so neither a BASH_ENV nor an exported function in that environment
+# runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
+# session's own ZDOTDIR (<session>.zdotdir) afresh at 0700 with clean_env's two files, so nothing
+# written there since runs in the restored agent's shells; it empties the folder rather than
+# removing it, so two restores at once both finish, and a folder that is not this user's, or holds
+# anything else once made, stops the restore before claude starts. Both files 0600,
+# and like that folder a session's own, so a later agent of the same name, or its restore, never
+# changes them.
 resume_file() {
-  local dir="$1" name="$2" names="$3"
+  local name="$1" session="$2" names="$3"
   shift 3
-  mkdir -p "${dir}"
+  mkdir -p "${RESUME_DIR}"
   (umask 077
-    printf '%s\n' "$@" > "${dir}/${name}.argv"
-    # shellcheck disable=SC2016 # the wrapper's bash expands them
-    { printf 'keep=%q\n' " HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names} "
-      printf '%s\n' 'for n in $(compgen -e); do' \
-        "  [[ \"\${keep}\" == *\" \${n} \"* || \"\${n}\" =~ ^(${AGENT_PREFIXES// /|}) ]] || unset \"\${n}\"" 'done'
-      printf 'export SWARM_PROJECT=%q SHELL=%q ZDOTDIR=%q\n' "${PROJECT_DIR}" "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}"
-      printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
-        "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done" 'exec "$@"'
-    } > "${dir}/${name}.sh")
+    printf '%s\n' "$@" > "${RESUME_DIR}/${session}.argv"
+    python3 -I - "${RESUME_DIR}/${session}.py" "HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names}" "${AGENT_PREFIXES}" \
+      "${HERDR_PANE_ENV}" "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" "${AGENT_SHELL%% *}" "${RESUME_DIR}/${session}.zdotdir" \
+      "${ZDOT_ENV}" "${ZDOT_PROFILE}" <<'PY'
+import sys
+path, keep, prefixes, pane, project, resume, shell, zdotdir, zshenv, zprofile = sys.argv[1:]
+open(path, "w").write(f"""# swarm.sh's restore wrapper (resume_file): the session's ZDOTDIR made afresh, as clean_env makes an
+# agent's, and its allowlisted environment, then its arguments.
+import os, shutil, stat, sys
+z = {zdotdir!r}
+old = os.umask(0o077)
+try:
+    os.mkdir(z, 0o700)
+except FileExistsError:
+    pass
+st = os.lstat(z)
+if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+    sys.exit("swarm: " + z + " is not a folder of this user's, so the agent is not restored")
+os.chmod(z, 0o700)
+for e in os.listdir(z):
+    p = os.path.join(z, e)
+    if os.path.isdir(p) and not os.path.islink(p):
+        shutil.rmtree(p, ignore_errors=True)
+    else:
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            pass
+for f, text in ((".zshenv", {zshenv!r}), (".zprofile", {zprofile!r})):
+    with os.fdopen(os.open(os.path.join(z, f), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "w") as out:
+        out.write(text + "\\n")
+if set(os.listdir(z)) - {{".zprofile", ".zshenv"}}:
+    sys.exit("swarm: " + z + " holds more than its two files, so the agent is not restored")
+os.umask(old)
+keep = {sorted(set(keep.split()))!r}
+env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(prefixes.split())!r})}}
+env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r})
+try:
+    env["GPG_TTY"] = os.ttyname(0)
+except OSError:
+    pass
+for n in {pane.split()!r}:
+    if not env.get(n):
+        env.pop(n, None)
+os.execvpe(sys.argv[1], sys.argv[1:], env)
+""")
+PY
+  ) || die "${name}: could not write its restore wrapper in ${RESUME_DIR}"
 }
 
 # agent_cmd <tab> <name> <cwd> <role> <prompt-file> [pane-name] — `swarm.sh agent`: start_agent, with
@@ -406,34 +462,39 @@ start_agent() {
   # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
   # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
   local session=- flags=() resume=()
+  # SWARM_RESUME: where the plugin's hooks find a Claude agent's resume command (resume_file).
+  # clean_env passes it on with every SWARM_ variable, so it is never on a command line; empty for codex.
+  local -x SWARM_RESUME=""
   if [[ "${kind}" == claude ]]; then
     require_trusted "${cwd}"
     # shellcheck disable=SC2119 # takes no argument here
     require_claude
     require_herdr_version
-    session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
+    session="$(python3 -I -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
+    SWARM_RESUME="${RESUME_DIR}/${session}.argv"
     # No agent can run `gh pr merge`, a conductor with merge = agent included: it merges through
     # swarm.sh merge, whose gh the guard never reaches. `gh api` could still merge, so the briefs say it too.
     # The session's env goes through --settings, since herdr passes no env. SWARM_AGENT tells the
     # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
     # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
     # parent's model (opusplan-spike).
-    # SWARM_RESUME: the agent's resume command (resume_file), which the plugin's SessionStart hook
-    # reports again when the session changes.
-    # ponytail: a project path holding a " or \ breaks this JSON; quote it if one ever does.
-    local rdir="${PROJECT_DIR}/.swarm/resume" why
-    local env="\"SWARM_AGENT\":\"${name}\",\"SWARM_RESUME\":\"${rdir}/${name}.argv\"" deny=("Bash(gh pr merge:*)")
+    local env=(SWARM_AGENT "${name}") deny=("Bash(gh pr merge:*)") settings why
     # The fallback reviewer stands in for codex's read-only sandbox: no file tools, no commit or push.
     [[ "${role}" != review-fallback ]] || deny+=(Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)")
-    [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
-    flags=(--model "${model}" --effort "${effort}" --permission-mode auto --disallowedTools "${deny[@]}" --settings "{\"env\":{${env}}}")
+    [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] \
+      && env+=(CLAUDE_CODE_SUBAGENT_MODEL "${CFG_builder_subagent_model}" CLAUDE_CODE_SUBAGENT_MODEL_FORCE 1)
+    settings="$(python3 -I -c 'import json, sys; a = sys.argv[1:]; print(json.dumps({"env": dict(zip(a[::2], a[1::2]))}, separators=(",", ":")))' "${env[@]}")" \
+      || die "${name}: could not write its --settings (python3)"
+    flags=(--model "${model}" --effort "${effort}" --permission-mode auto --disallowedTools "${deny[@]}" --settings "${settings}")
     # What herdr runs to resume the agent after a restart: resume_file's wrapper, then claude as it started.
-    resume=(bash "${rdir}/${name}.sh" claude --resume "${session}" "${flags[@]}")
+    resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" "${flags[@]}")
     why="$(resume_refusal "${resume[@]}")" \
       && die "${name}: herdr would refuse the command that resumes the agent after a restart: ${why}"
-    resume_file "${rdir}" "${name}" "${names}" "${resume[@]}"
   fi
   free_agent_name "${name}"
+  rm -f "${PANE_DIR:?}/${name}"   # the last holder's pane record (pane_check), which a retired one took along
+  # Once the name is free, so a start refused there leaves no resume files behind.
+  [[ "${kind}" != claude ]] || resume_file "${name}" "${session}" "${names}" "${resume[@]}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
   clean_env "${pane}" "${name}" "${names}"
   # A freshly split pane is not always an available shell yet (agent_pane_busy): retry once.
@@ -464,11 +525,18 @@ start_agent() {
   done
   # herdr resumes a Claude pane with `claude --resume <id>` alone, which drops every flag above, the
   # guards included, in the pane's whole environment. Reporting the whole command makes a restart
-  # resume the agent as it started; the plugin's hooks report its state from then on (hooks/agent-state.sh).
-  if [[ "${kind}" == claude ]] && ! out=$(herdr pane report-agent "${pane}" --source swarm --agent claude --state idle \
-      --agent-session-id "${session}" -- "${resume[@]}" 2>&1); then
-    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
-    die "${name}: herdr did not take the command that resumes the agent, so a restart would drop its guards: ${out}"
+  # resume the agent as it started. As soon as herdr has started it, before the brief, so a pane
+  # whose brief is never taken up still has it; as idle, which it is, with the time as its --seq, so
+  # the plugin's hooks (hooks/agent-state.sh, which attach the same command) report over it from the
+  # brief on. The agent has done nothing yet, so a refusal closes its pane and stops the start.
+  local seq
+  if [[ "${kind}" == claude ]]; then
+    seq="$(python3 -I -c 'import time; print(time.time_ns())')" || seq=""
+    if [[ -z "${seq}" ]] || ! out=$(herdr pane report-agent "${pane}" --source swarm --agent claude --state idle \
+        --seq "${seq}" --agent-session-id "${session}" -- "${resume[@]}" 2>&1); then
+      herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+      die "${name}: herdr did not take the command that resumes the agent, so a restart would drop its guards: ${out:-could not read the clock (python3)}"
+    fi
   fi
   # Before the brief, so an agent whose brief is not taken up is still on record.
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session}"
@@ -650,33 +718,92 @@ API_RESUME_MSG="Your last turn stopped on an API error; carry on where you stopp
 # pane_text <target> — the recent text of the agent's pane, or nothing when herdr cannot read it.
 pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || true; }
 
-# pane_sum <target> — the checksum of pane_text, as api_stopped takes it.
+# pane_sum <target> — the checksum of pane_text, as pane_check takes it.
 pane_sum() { printf '%s' "$(pane_text "$1")" | cksum; }
 
-# api_stopped <name> <target> — succeed when herdr says <name> is done or idle and its pane's last
-# event is Claude Code's own error line, `⏺ API Error: ...` at the left margin (● on Linux): no reply
-# (⏺ or ●) and no submitted prompt (`> text`) after it. The input box at the bottom is not read: a
-# suggestion or half-typed text there is no prompt. It is the last two border lines (─ at the margin)
-# with no reply from the upper one down; a box higher up (a banner, a dialog) is read as any line.
-# Its session can still read busy then: background shells it left open keep it so. With <sum> (the
-# pane's checksum when wait last resumed it), a pane still that same text is no new stop: the resume
-# has not shown yet.
-api_stopped() {
-  local text
-  text="$(pane_text "$2")"
-  [[ -z "${3:-}" || "$(printf '%s' "${text}" | cksum)" != "$3" ]] || return 1
-  printf '%s\n' "${text}" | awk '{ l[NR] = $0 } /^(╭|╰)?─/ { t = b; b = NR }
+# PANE_DIR: per agent, a file kept by pane_check and read by dash: its pane's checksum, when status or
+# wait first saw the pane so (epoch seconds), and the id of the logged stop its turn ended on (stop_id). It
+# moves with the agent when it retires (retire_agent), so its renamed pane logs nothing again, and goes
+# when a new agent takes its name.
+PANE_DIR="${PROJECT_DIR}/.swarm/panes"
+
+# pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<prompt>\t<line>" for the stop
+# its last turn ended on: no reply (⏺ or ●) and no submitted prompt (`> text`) after it. <prompt> is
+# the line number of the last submitted prompt above it, 0 for none. The stop is Claude Code's own
+# `API Error:` line, after ⏺ or ● at the margin (api-error), or the tool result Claude Code gives for a
+# denial, `Error: Permission for this action was denied by the Claude Code auto mode classifier.`
+# (auto-denied). An agent's own indented text, or a tool's output (⎿) that prints `API Error:` or
+# quotes the denial, is neither. The input box at the bottom is not read: a suggestion or half-typed text
+# there is no prompt. It is the last two border lines (─ at the margin) with no reply from the upper
+# one down; a box higher up (a banner, a dialog) is read as any line.
+pane_stop() {
+  awk '{ l[NR] = $0 } /^(╭|╰)?─/ { t = b; b = NR }
     END {
       n = NR; if (!t) t = b
       if (t) { n = t - 1; for (i = t; i <= NR; i++) if (l[i] ~ /^(⏺|●)/) n = NR }
       for (i = 1; i <= n; i++) {
-        if (l[i] ~ /^(⏺|●) API Error:/) e = 1
-        else if (l[i] ~ /^(⏺|●)/ || l[i] ~ /^(>|❯) +[^ ]/) e = 0
+        if (l[i] ~ /^(⏺|●)[[:space:]]*API Error:/) { s = i; k = "api-error" }
+        else if (l[i] ~ /^[[:space:]]*(⏺|●)/) s = 0
+        else if (l[i] ~ /^(>|❯) +[^ ]/) { s = 0; q = i }
+        else if (l[i] ~ /^[[:space:]]*⎿[[:space:]]*Error: Permission for this action was denied by the Claude Code auto mode classifier/) { s = i; k = "auto-denied" }
+        if (s == i) p = q + 0
       }
-      exit !e
-    }' \
-    && [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]
+      if (s) { x = l[s]; sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", x); print s "\t" k "\t" p "\t" x }
+    }'
 }
+
+# turn_ended <name> — succeed when herdr says <name> is done or idle. Its session can still read busy
+# after a stop: background shells it left open keep it so.
+turn_ended() { [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]; }
+
+# stop_id <text> <n> <prompt> <line> — a stop's id, <turn>/<line>: the checksum of <text>'s lines from
+# the prompt above the stop to the stop (n), `-` with no prompt (0), and the checksum of its line.
+stop_id() {
+  local turn=-
+  [[ "$3" -eq 0 ]] || turn="$(sed -n "$3,$2p" <<< "$1" | cksum | tr ' ' -)"
+  printf '%s/%s\n' "${turn}" "$(printf '%s' "$4" | cksum | tr ' ' -)"
+}
+
+# pane_check <name> <target> [<sum>] — read <target>'s pane once, keep PANE_DIR/<name>, and set the
+# caller's pane_at (when the pane last changed; with no file yet, when the wait began, or now) and
+# pane_kind (the stop its turn ended on, pane_stop, once turn_ended; else empty). With <sum> (the pane's
+# checksum when wait last resumed it, pane_sum), a pane still that same text is no new stop: the resume
+# has not shown yet. A stop is logged as an api-error or auto-denied incident for <name> with its line
+# unless the record holds it already: the record keeps the stop's id (stop_id) until a read finds no
+# stop. It is the same stop when its turn is, or, with no prompt above it left in the window (the
+# window scrolled), when its line is. So a stop after a new prompt (a resume) is logged even with no
+# stop-free read between. The read and the write are under PANE_DIR/<name>.lock (mkdir), so of
+# concurrent readers one logs and the rest only read. Only status and wait call it. An empty read sets
+# both empty.
+# ponytail: a lock a killed reader left is broken after a minute.
+pane_check() {
+  local f="${PANE_DIR}/$1" lock="${PANE_DIR}/$1.lock" text sum seen="" logged="" hit n p line now t new=""
+  pane_kind="" pane_at=""
+  [[ -n "$1" ]] || return 0
+  mkdir -p "${PANE_DIR}" 2>/dev/null || true
+  mkdir "${lock}" 2>/dev/null || { find "${lock}" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null; mkdir "${lock}" 2>/dev/null; } || lock=""
+  text="$(pane_text "$2")"
+  if [[ -n "${text}" ]]; then
+    sum="$(printf '%s' "${text}" | cksum)"
+    [[ ! -f "${f}" ]] || IFS=$'\t' read -r seen pane_at logged < "${f}" || true
+    if [[ -z "${seen}" ]]; then pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
+    elif [[ "${sum}" != "${seen}" || -z "${pane_at}" ]]; then pane_at="$(date +%s)"; fi
+    hit="$(pane_stop <<< "${text}")"; now="${logged}"; [[ -n "${hit}" ]] || now=""
+    if [[ -n "${hit}" ]] && turn_ended "$1" && [[ -z "${3:-}" || "${sum}" != "$3" ]]; then
+      IFS=$'\t' read -r n pane_kind p line <<< "${hit}"; now="$(stop_id "${text}" "${n}" "${p}" "${line}")"
+      [[ -n "${logged}" && ( ( "${now%/*}" != - && "${now%/*}" == "${logged%/*}" ) || ( "${now%/*}" == - && "${now#*/}" == "${logged#*/}" ) ) ]] || new=1
+    fi
+    if [[ -n "${lock}" ]]; then
+      { t="$(mktemp "${f}.XXXXXX")" && printf '%s\t%s\t%s\n' "${sum}" "${pane_at}" "${now}" > "${t}" && mv -f "${t}" "${f}"; } 2>/dev/null || true
+      [[ -z "${new}" ]] || record_event incident "$1" "${pane_kind}: ${line}"
+    fi
+  fi
+  [[ -z "${lock}" ]] || rmdir "${lock}" 2>/dev/null || true
+}
+
+# api_stopped <name> <target> — succeed when <name>'s turn ended (turn_ended) on an `API Error:` line
+# (pane_stop). It only reads, for next and tell; wait reads through pane_check, which logs the stop.
+api_stopped() { [[ "$(pane_text "$2" | pane_stop | cut -f2)" == api-error ]] && turn_ended "$1"; }
 
 # resume_agent <name> <target> — send API_RESUME_MSG once through deliver_prompt (once: no retry,
 # which would send it twice when the resumed turn errors before herdr shows it working); succeed when
@@ -725,16 +852,13 @@ is_builder() {
   [[ -n "${r}" && " ${BUILDER_ROLES} " == *" ${r} "* ]]
 }
 
-# pane_quiet <name> <target> — succeed when the agent's pane has not changed for stall_minutes and it
-# runs no background task (bg_running), setting the caller's state to `stuck: no output for <N>m
-# (<target>)`. Between calls it keeps the caller's pane_sum (the pane's checksum at the last read) and
-# pane_at (when it last changed; first, the time the wait began). An empty read says nothing.
+# pane_quiet <name> <target> — after pane_check: succeed when the caller's pane_at is stall_minutes
+# old and the agent runs no background task (bg_running), setting the caller's state to `stuck: no
+# output for <N>m (<target>)`. An empty read says nothing.
 pane_quiet() {
-  local text sum min
-  text="$(pane_text "$2")"; [[ -n "${text}" ]] || return 1
-  sum="$(printf '%s' "${text}" | cksum)"
-  [[ -z "${pane_sum}" || "${sum}" == "${pane_sum}" ]] || pane_at="$(date +%s)"
-  pane_sum="${sum}"; min=$((($(date +%s) - pane_at) / 60))
+  local min
+  [[ -n "${pane_at}" ]] || return 1
+  min=$((($(date +%s) - pane_at) / 60))
   # shellcheck disable=SC2154 # assigned in another file
   [[ ${min} -ge ${CFG_stall_minutes} ]] || return 1
   ! bg_running "$1" || return 1
@@ -840,10 +964,10 @@ herdr_events() {
 # event stream (herdr_events), or with none herdr agent wait for what is left of the step, in
 # STALL_POLL_MS steps; a pane closed or exited is gone. With <since>, between steps an agent stalled since then
 # (agent_stalled) ends the wait with "stalled: ...", and so does a pane quiet for stall_minutes
-# (pane_quiet). herdr's stderr goes to a file, read only to tell
+# (pane_check, then pane_quiet). herdr's stderr goes to a file, read only to tell
 # a step's timeout from a real failure; a real failure, and the last step, fail as one unbroken wait does.
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" out err min state rc t0 pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  local target="$1" name="$2" left="$3" since="${4:-}" out err min state rc t0 pane_kind="" pane_at=""
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
     t0="$(now_ms)"; rc=0; out="$(herdr_events "${target}" "${STALL_POLL_MS}")" || rc=$?
@@ -859,6 +983,7 @@ herdr_wait() {
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
     fi
+    pane_check "${name}" "${target}"
     if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
   done
   rm -f "${err}"
@@ -896,9 +1021,10 @@ poll_while() {
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
 # The session is read before the first wake and right after each; every decision is taken on that
 # read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
-# A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit <usage_state>", before any
-# other pane check. A busy agent whose turn stopped on an API error (api_stopped, past the caller's resumed_sum) ends it with "api error", and one
-# whose pane has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
+# A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit <usage_state>",
+# before any other pane check. Each other busy read also reads the pane once (pane_check, past the
+# caller's resumed_sum): a turn that stopped on an API error ends it with "api error", and a pane that
+# has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
@@ -906,7 +1032,7 @@ poll_while() {
 # session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
 settle() {
   local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0 lim
-  local pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
+  local pane_kind="" pane_at=""
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
@@ -924,7 +1050,8 @@ settle() {
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
     if [[ "${state}" == busy ]] && lim="$(usage_state "${target}")"; then state="usage-limit ${lim}"; break; fi
-    if [[ "${state}" == busy ]] && api_stopped "${name}" "${target}" "${resumed_sum:-}"; then state="api error"; break; fi
+    [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
+    if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
     fi
@@ -949,7 +1076,7 @@ settle() {
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
-# An agent whose turn stopped on an API error (settle's "api error", or idle and api_stopped) is sent
+# An agent whose turn stopped on an API error (settle's "api error", or idle and pane_check's) is sent
 # API_RESUME_MSG and waited on again, logged as a nudge, up to API_RESUMES stops in a row (a turn that
 # ends otherwise resets the count); the next one, or a resume not taken up, returns "stuck: api error"
 # (wait keeps the pane's checksum from each resume, resumed_sum: until the pane moves past it, the old
@@ -971,7 +1098,7 @@ settle() {
 # (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum=""
+  local answered="" resumed_sum="" pane_kind pane_at
   deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
@@ -1010,7 +1137,8 @@ wait_agent() {
       login_incident "${name}"
       echo auth; return 0
     fi
-    if [[ "${status}" == "api error" ]] || { [[ "${status}" == idle ]] && api_stopped "${name}" "${target}"; }; then
+    pane_kind=""; [[ "${status}" != idle ]] || pane_check "${name}" "${target}"
+    if [[ "${status}" == "api error" || "${pane_kind}" == api-error ]]; then
       # Idle on the very pane it was resumed from (settle held a slice): the resume was not taken up.
       [[ -z "${resumed_sum}" || "$(pane_sum "${target}")" != "${resumed_sum}" ]] || { echo "stuck: api error"; return "${WAIT_STUCK}"; }
       resumed_sum="$(pane_sum "${target}")"
@@ -1042,14 +1170,14 @@ wait_agent() {
 }
 
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
-# incident in events.tsv is one already and no ok tell that sends a prompt (findings, nudge, resume,
+# incident in events.tsv (an api-error or auto-denied one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
 # after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
 # --backlog through conductor_name (b).
 login_incident() {
   awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
-    $2 == "incident" && $3 == n { login = $5 ~ /^login:/ }
+    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied):/ { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
     $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
@@ -1225,5 +1353,7 @@ retire_agent() {
     # That pane's tab record only: STATE_DIR also holds codex briefs, whose prose must not change.
     awk -v p="${pane}" -v n="${new}" 'NF == 2 && $1 == p { $2 = n } { print }' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
   done
+  # Its pane record (pane_check) goes with it, its logged stop with it.
+  mv -f "${PANE_DIR}/${name}" "${PANE_DIR}/${new}" 2>/dev/null || true
   echo "retired $1 as ${new}"
 }
