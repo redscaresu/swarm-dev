@@ -21,7 +21,7 @@ git -C "${P}" init -q
 git init -q --bare "${ROOT}/origin.git"; git -C "${P}" remote add origin "${ROOT}/origin.git"
 
 # gh: pr view, pr merge (fails unless --match-head-commit is ${FX}/head; marks the PR merged with
-# merge commit ${M}, and then fails the next ${FX}/readback-fails pr views) and repo view (the merge
+# merge commit ${FX}/oid, else ${M}, and then fails the next ${FX}/readback-fails pr views) and repo view (the merge
 # methods, or with nameWithOwner ${FX}/origin) from ${FX}; each api path from serve's fixture.
 printf '#!/usr/bin/env bash\nFX="%s"; LOG="%s"; M="%s"\n' "${FX}" "${ROOT}/gh.log" "${M}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
@@ -49,7 +49,7 @@ case "$1 $2" in
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
-    [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit"
+    [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "$(cat "${FX}/oid" 2>/dev/null || echo "${M}")" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
@@ -57,7 +57,7 @@ case "$1 $2" in
   # A run's status (run.<id>.status, read like any fixture), or its failed-job log: --log-failed's
   # "<job>\t<step>\t<timestamp> <line>" lines, which hang with ${FX}/run.hang.
   "run view") case "$*" in
-                *"--json status"*) serve "run.$3.status" ;;
+                *"--json status"*) [ ! -e "${FX}/run.$3.statushang" ] || sleep 60; serve "run.$3.status" ;;
                 *) [ ! -e "${FX}/run.hang" ] || sleep 60; serve "run.$3.log" ;;
               esac ;;
   # Coloured, as with CLICOLOR_FORCE or GH_FORCE_TTY, unless asked for --color never.
@@ -79,6 +79,8 @@ case "$1 $2" in
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
+      # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>.
+      */commits/*) serve "commit.${sha}" ;;
       *) echo "stub: no fixture for ${path}" >&2; exit 1 ;;
     esac ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -243,9 +245,45 @@ check "red main from a failed job: the log was read once the run had completed" 
   bash -c "[ \"\$(grep -c 'run view 99 --repo o/r --json status' '${ROOT}/gh.log')\" = 2 ] && grep -qF 'run view 99 --repo o/r --log-failed' '${ROOT}/gh.log'"
 echo "lead's edit" >> "${FM}"; echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; merge "${URL}"
 check "red main again: fix-main printed, the story already there kept" bash -c "grep -q '^fix-main:' '${ROOT}/out' && grep -qx \"lead's edit\" '${FM}'"
-# A later green merge into the same repo and base clears the red main; a green one with none open logs nothing.
+# A later green merge into the same repo and base clears the red main and retires its unstarted fix.
 echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; checks "${FX}/${M}.checks" "$(run test completed success)"; merge "${URL}"
 check "a green merge after a red main of the same repo and base: main-green" logged "^main-green ${M} o/r main$"
+check "a green merge after a red main: its unstarted fix-main story is retired" \
+  bash -c "[ ! -e '${FM}' ] && grep -q '^retired: fix-main-${M:0:7}' '${ROOT}/out'"
+# red_main <key> — a main-red for <key> (repo and base) logged before this merge, its story ready.
+red_main() { printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\t%s e2e (failure)\n' "${H2}" "$1" >> "${P}/.swarm/events.tsv"; item "fix-main-${H2:0:7}" "status: ready" "kind: code"; }
+# Keys ignore the repo's case, and match as text: o/r.x is not o/rxx.
+fresh; red_main "o/r main"; item s "status: review" "prs: https://github.com/O/R/pull/7"; merge "https://github.com/O/R/pull/7"
+check "a green merge from O/R clears o/r's red main" logged "^main-green ${M} o/r main$"
+fresh; red_main "o/rxx main"; item s "status: review" "prs: https://github.com/o/r.x/pull/7"; merge "https://github.com/o/r.x/pull/7"
+check "a green merge into o/r.x leaves o/rxx's red main" bash -c "! grep -q main-green '${P}/.swarm/events.tsv' && [ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ]"
+# A second red merge before the fix: the older unstarted fix-main story gives way to the newer.
+failed_job 'x\ty\tz FAIL one\n'; red_main "o/r main"; echo "${M2:=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" > "${FX}/oid"
+cp "${FX}/${M}.checks" "${FX}/${M2}.checks"; statuses "${FX}/${M2}.status"; wfruns "${FX}/${M2}.runs" "$(run ci completed success "${M2}")"
+merge "${URL}"
+check "a second red main: the older unstarted fix-main story is retired, the newer written" \
+  bash -c "[ ! -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && [ -e '${P}/docs/stories/fix-main-${M2:0:7}.md' ]" && logged "^fix-main fix-main-${H2:0:7} retired: superseded by fix-main-${M2:0:7}$"
+# Main gone green another way: reconcile reads the base's head and, green, clears it.
+failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
+echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
+check "a base gone green another way: reconcile logs main-green and retires the fix" \
+  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main$"
+# One deadline for every run: run 98's status read hangs, so run 99 is never read; a gh error on a
+# run's status stops at once. Each is named as not read.
+failed_job 'x\ty\tz FAIL never read\n'
+checks "${FX}/${M}.checks" "$(run e2e completed failure)" '{"name":"a","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/98/job/1"}' \
+  '{"name":"c","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/97/job/3"}' \
+  '{"name":"b","status":"completed","conclusion":"failure","html_url":"https://github.com/o/r/actions/runs/99/job/2"}'
+echo completed > "${FX}/run.97.status"; printf 'x\ty\t2026-10-18T10:00:00.1Z FAIL from run 97\n' > "${FX}/run.97.log"
+: > "${FX}/run.98.statushang"; merge SWARM_FIX_MAIN_LOG_SECONDS=2 "${URL}"
+check "one deadline for every run: run 99 is never read once run 98 used it up" bash -c "! grep -q 'run view 99' '${ROOT}/gh.log'"
+check "one deadline for every run: the story names both as not read" \
+  bash -c "grep -qF 'runs/98 (not finished or read within 2s)' '${FM}' && grep -qF 'runs/99 (not finished or read within 2s)' '${FM}'"
+check "one deadline for every run: run 97, read before it, gives its FAIL line" grep -qxF '    FAIL from run 97' "${FM}"
+failed_job 'x\ty\tz FAIL never read\n'; rm "${FX}/run.99.status" "${FX}/run.99.status.1"; merge SWARM_FIX_MAIN_LOG_SECONDS=3 "${URL}"
+check "a gh error on a run's status: read once, and named as one gh could not read" \
+  bash -c "[ \"\$(grep -c 'run view 99 --repo o/r --json status' '${ROOT}/gh.log')\" = 1 ] && grep -qF 'runs/99 (gh could not read it)' '${FM}'"
 # A log download that hangs is cut off, and reconcile still runs.
 failed_job 'x\ty\tz FAIL never read\n'; : > "${FX}/run.hang"; start=${SECONDS}
 merge SWARM_FIX_MAIN_LOG_SECONDS=2 "${URL}"

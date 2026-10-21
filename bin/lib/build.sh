@@ -233,7 +233,10 @@ On a red base \`swarm.sh merge\` prints \`fix-main: <checks> on <short sha>\` wi
 FAIL lines, and writes the one-off story fix-main-<short sha> (kind code, no epic, those lines in
 its body). On \`fix-main\`, start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`,
 ahead of every other story and whatever your scope, and review and merge its PR as any story's: it
-is the one merge allowed while the base is red. Never wait on an unrelated PR to fix it.
+is the one merge allowed while the base is red. Never wait on an unrelated PR to fix it. With no
+\`fix-main:\` line (CI on the base timed out, or merge says it could not write the story), find the
+PR pair that broke it (this PR and one merged before it, each green alone), open the fix or list it
+for the lead, and say so in your report.
 EOF
 }
 

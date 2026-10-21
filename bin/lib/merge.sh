@@ -195,10 +195,10 @@ merge_pr() {
   fi
   record_event main-ci "${MERGE_TARGET}" "${why}"
   echo "main-ci: ${why}"
-  # main-green only clears a red main of this repo and base. fix_main's every gh call is bounded and
+  # A green main clears a red one of this repo and base only. fix_main's every gh call is bounded and
   # cannot fail merge, so reconcile below runs whatever it does.
-  if [[ ${rc} -eq 0 ]] && grep -q "^[0-9a-f]* ${repo} ${base} " <<< "$(red_mains)"; then
-    record_event main-green "${oid}" "${repo} ${base}"
+  if [[ ${rc} -eq 0 ]]; then
+    clear_red_main "$(main_key "${repo}" "${base}")" "${oid}" "CI on ${base} is green at ${oid:0:7}"
   elif [[ ${rc} -eq 1 ]]; then
     fix_main "${repo}" "${oid}" "${base}" "${why#red }" || echo "main red, and fix_main failed (exit $?)"
   fi
@@ -215,38 +215,56 @@ merge_pr() {
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: ${why}"
 }
 
-# run_fail_lines <owner/repo> <run id> — the FAIL lines of a run's failed jobs, ANSI colour and
+# run_fail_lines <owner/repo> <run id> <end> — the FAIL lines of a run's failed jobs, ANSI colour and
 # timestamps taken off, once the run has completed: gh gives no log for a run in progress. Every gh
-# call runs within what is left of FIX_MAIN_LOG_SECONDS, so a stalled one cannot hang merge; a run
-# still going at the deadline gives nothing.
+# call runs within what is left before <end> (in SECONDS), so a stalled one cannot hang merge.
+# Returns 1 when gh fails (no actions:read scope, a run it cannot find), 2 at <end>.
 run_fail_lines() {
-  local limit="${SWARM_FIX_MAIN_LOG_SECONDS:-${FIX_MAIN_LOG_SECONDS}}" start=${SECONDS} left status="" esc
+  local status="" esc left log rc
   esc="$(printf '\033')"
-  while left=$((limit - (SECONDS - start))); (( left > 0 )); do
-    status="$(within "${left}" gh run view "$2" --repo "$1" --json status --jq .status 2>/dev/null)" || status=""
+  while left=$(($3 - SECONDS)); (( left > 0 )); do
+    rc=0; status="$(within "${left}" gh run view "$2" --repo "$1" --json status --jq .status 2>/dev/null)" || rc=$?
+    if (( rc == 142 )); then return 2; elif (( rc != 0 )); then return 1; fi
     [[ "${status}" != completed ]] || break
-    sleep "${SWARM_MERGE_POLL:-${MERGE_POLL}}"
+    sleep "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}"
   done
-  [[ "${status}" == completed ]] || return 0
-  left=$((limit - (SECONDS - start)))
-  within "$((left > 0 ? left : 1))" gh run view "$2" --repo "$1" --log-failed 2>/dev/null | cut -f3- \
-    | sed -E "s/${esc}\[[0-9;]*[A-Za-z]//g; s/^[0-9]{4}-[0-9-]+T[0-9:.]+Z //" | grep -wF FAIL || true
+  left=$(($3 - SECONDS))
+  [[ "${status}" == completed ]] && (( left > 0 )) || return 2
+  rc=0; log="$(within "${left}" gh run view "$2" --repo "$1" --log-failed 2>/dev/null)" || rc=$?
+  if (( rc == 142 )); then return 2; elif (( rc != 0 )); then return 1; fi
+  cut -f3- <<< "${log}" | sed -E "s/${esc}\[[0-9;]*[A-Za-z]//g; s/^[0-9]{4}-[0-9-]+T[0-9:.]+Z //" | grep -wF FAIL || true
 }
 
+# main_key <owner/repo> <base> — what a red main is logged and cleared under: the repo lowercased
+# (GitHub's names ignore case, and a PR URL may not), then the base.
+main_key() { printf '%s %s\n' "$(tr '[:upper:]' '[:lower:]' <<< "$1")" "$2"; }
+
 # fix_main <owner/repo> <sha> <base> <red checks> — CI on <base> is red at <sha>, a commit merge
-# merged: record main-red <sha> "<owner/repo> <base> <checks>", and write the one-off story
-# fix-main-<short sha> (unless it is on the board already) with the failed Actions runs' URLs and
-# their FAIL lines (FIX_MAIN_LINES at most), indented, in its body, in the merged story's repo:.
+# merged: record main-red <sha> "<main_key> <checks>", retire the older fix-main stories of that repo
+# and base that no one has started (retire_fixes), and write the one-off story fix-main-<short sha>
+# (unless it is on the board already) in the merged story's repo:. It names the failed Actions runs,
+# the runs whose log could not be read and why, and their FAIL lines (FIX_MAIN_LINES at most),
+# indented. Reading the logs stops FIX_MAIN_LOG_SECONDS after it starts, however many runs failed.
 # Only once the story is there does it print fix-main: <checks> on <short sha>, then those lines.
 fix_main() {
-  local repo="$1" sha="$2" base="$3" checks runs id fails="" none="no FAIL line in the failed runs' logs" rname="" nl=$'\n' item="${BOARD}/stories/${MERGE_TARGET}.md" f="${BOARD}/stories/fix-main-${2:0:7}.md"
+  local repo="$1" sha="$2" base="$3" key checks runs id out rc fails="" unread="" rname="" nl=$'\n' end
+  local none="no FAIL line in the failed runs' logs" item="${BOARD}/stories/${MERGE_TARGET}.md" f="${BOARD}/stories/fix-main-${2:0:7}.md"
+  key="$(main_key "${repo}" "${base}")"; end=$((SECONDS + ${SWARM_FIX_MAIN_LOG_SECONDS:-${FIX_MAIN_LOG_SECONDS}}))
   checks="$(sed -E 's# (https?://[^;]*|None)(;|$)#\2#g' <<< "$4")"
-  runs="$(grep -oE 'https://github\.com/[^ ;]+/actions/runs/[0-9]+' <<< "$4" | sort -u || true)"
-  for id in ${runs}; do fails+="$(run_fail_lines "${repo}" "${id##*/}")${nl}"; done
+  runs="$(grep -oE 'https://github\.com/[^ ;]+/actions/runs/[0-9]+' <<< "$4" | sort -u | paste -sd' ' - || true)"
+  for id in ${runs}; do
+    rc=0; out="$(run_fail_lines "${repo}" "${id##*/}" "${end}")" || rc=$?
+    case ${rc} in
+      0) fails+="${out}${nl}" ;;
+      1) unread+="${unread:+, }${id} (gh could not read it)" ;;
+      *) unread+="${unread:+, }${id} (not finished or read within ${SWARM_FIX_MAIN_LOG_SECONDS:-${FIX_MAIN_LOG_SECONDS}}s)" ;;
+    esac
+  done
   fails="$(grep -v '^$' <<< "${fails}" | sed -n "1,${FIX_MAIN_LINES}p" || true)"
-  fails="${fails:-${none}}"
-  runs="${runs:-none, as no red check is a GitHub Actions run}"
-  record_event main-red "${sha}" "${repo} ${base} ${checks}"
+  [[ -z "${unread}" ]] || none="no FAIL line read; logs not read: ${unread}"
+  fails="${fails:-${none}}"; runs="${runs:-none, as no red check is a GitHub Actions run}"
+  record_event main-red "${sha}" "${key} ${checks}"
+  retire_fixes "${key}" "${sha}" "superseded by fix-main-${sha:0:7}"
   [[ ! -f "${item}" ]] || rname="$(fm "${item}" repo)"
   [[ -e "${f}" || ! -d "${BOARD}/stories" ]] || {
     echo ---; echo "kind: code"; echo "status: ready"; [[ -z "${rname}" ]] || echo "repo: ${rname}"
@@ -260,7 +278,7 @@ was green alone, so this merge and one before it break each other. Fix ${base}: 
 until it is green.
 
 The failed runs: ${runs}. \`gh run view <id> --repo ${repo} --log-failed\`
-prints a run's failed jobs. Their FAIL lines:
+prints a run's failed jobs. The logs not read: ${unread:-none}. Their FAIL lines:
 
     ${fails//${nl}/${nl}    }
 
@@ -274,7 +292,20 @@ EOF
   [[ ! -e "${f}" ]] || echo "story: ${f}"
 }
 
-# red_mains — "<sha> <owner/repo> <base> <checks>" for each repo and base whose last main-red in
+# retire_fixes <key> <sha> <why> — take off the board each fix-main story that a main-red of <key>
+# other than <sha>'s wrote and that is still ready with no build: a newer red main's story, or a
+# green main, replaces it. One already building or in review is left to its builder.
+retire_fixes() {
+  local s f
+  while read -r s; do
+    f="${BOARD}/stories/fix-main-${s}.md"
+    if [[ -z "${s}" || ! -f "${f}" || "$(fm "${f}" status)" != ready ]] || one_off_started "fix-main-${s}"; then continue; fi
+    delete_item "${f}" > /dev/null; record_event fix-main "fix-main-${s}" "retired: $3"; echo "retired: fix-main-${s} ($3)"
+  done <<< "$(awk -F'\t' -v k="$1 " -v keep="$2" '$2 == "main-red" && $3 != keep && index($5, k) == 1 { print substr($3, 1, 7) }' \
+    "${EVENTS_LOG}" 2>/dev/null | sort -u)"
+}
+
+# red_mains — "<sha> <owner/repo> <base> <checks>" for each main_key whose last main-red in
 # events.tsv has no main-green after it, oldest first.
 red_mains() {
   awk -F'\t' '$2 == "main-red" { split($5, w, " "); k = w[1] " " w[2]; red[k] = $3 " " $5; ord[k] = NR }
@@ -282,13 +313,40 @@ red_mains() {
     END { for (k in red) print ord[k] "\t" red[k] }' "${EVENTS_LOG}" 2>/dev/null | sort -n | cut -f2- || true
 }
 
-# main_red — "<sha> <checks>" for the newest red main (red_mains) while its fix-main story is on the
-# board; nothing once a merge into that repo and base saw it green, or the story left the board.
+# clear_red_main <key> <sha> <why> — main is green at <sha> for <key>: when red_mains holds that key
+# (matched as text, never a pattern), log main-green <sha> <key> and retire its unstarted fixes.
+clear_red_main() {
+  red_mains | awk -v k="$1" '$2 " " $3 == k { found = 1 } END { exit !found }' || return 0
+  record_event main-green "$2" "$1"
+  retire_fixes "$1" - "$3"
+}
+
+# base_green <owner/repo> <base> — print the base's head and succeed when CI there is green now
+# (ci_gate head), however it got green: a revert, a re-run, a merge swarm.sh did not make. Each gh
+# read is bounded, and any failure reads as not green.
+base_green() {
+  local head
+  head="$(within 30 gh api --jq .sha "repos/$1/commits/$2" 2>/dev/null </dev/null)" || return 1
+  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] && within 60 python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "$1" "${head}" >/dev/null 2>&1 </dev/null || return 1
+  echo "${head}"
+}
+
+# green_mains — reconcile's: clear each red main whose base is green now (base_green).
+green_mains() {
+  local sha repo base checks head
+  while read -r sha repo base checks; do
+    [[ -n "${sha}" ]] || continue
+    head="$(base_green "${repo}" "${base}")" || continue
+    clear_red_main "${repo} ${base}" "${head}" "CI on ${base} is green at ${head:0:7}"
+  done <<< "$(red_mains)"
+}
+
+# main_red — "<sha> <owner/repo> <base> <checks>" for the newest red main (red_mains) while its
+# fix-main story is on the board; nothing once main is green or the story left the board.
 main_red() {
-  local sha repo base checks
-  read -r sha repo base checks <<< "$(red_mains | tail -1)"
-  [[ -n "${sha}" && -f "${BOARD}/stories/fix-main-${sha:0:7}.md" ]] || return 0
-  echo "${sha} ${checks}"
+  local line; line="$(red_mains | tail -1)"
+  [[ -n "${line}" && -f "${BOARD}/stories/fix-main-${line:0:7}.md" ]] || return 0
+  echo "${line}"
 }
 
 # within <seconds> <command>... — the command in its own process group, the group KILLed after

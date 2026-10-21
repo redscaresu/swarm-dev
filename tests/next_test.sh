@@ -534,22 +534,39 @@ expect_release "a working conductor's wait comes before release" "wait conduct-e
 # comes before everything, a working conductor's wait too. A later main-green of the same repo and
 # base clears it, one of another base does not; once the fix has started or is in review, the usual
 # steps name it.
+# gh stubs for base_green: GH_RED's fails every call (the base's CI unknown, so still red); GH_GREEN's
+# reads the base's head as cccc... with one green check run and no status.
+GH_RED="${STUB_BIN}/gh-red"; GH_GREEN="${STUB_BIN}/gh-green"; mkdir -p "${GH_RED}" "${GH_GREEN}"
+printf '#!/bin/sh\nexit 1\n' > "${GH_RED}/gh"
+cat > "${GH_GREEN}/gh" <<'STUB'
+#!/bin/sh
+for a in "$@"; do p="${a}"; done
+case "${p}" in
+  *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"t","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
+  */status*) echo '{"total_count":0,"statuses":[]}' ;;
+  */commits/*) echo cccccccccccccccccccccccccccccccccccccccc ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "${GH_RED}/gh" "${GH_GREEN}/gh"
 RED="mkdir -p .swarm && printf '2026-10-18T10:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\to/r main e2e (failure)\n' >> .swarm/events.tsv"
 green() { printf '2026-10-18T11:00:00Z\tmain-green\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\t-\t%s\n' "$1" >> .swarm/events.tsv; }
 FIXER="item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: code'"
-expect "a recorded red main comes first" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+PATH="${GH_RED}:${PATH}" expect "a recorded red main comes first" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
   "item epics/e1.md 'status: active'" "item stories/s.md 'status: ready' 'epic: e1'"
 if [[ "${out}" == *"red at aaaaaaa (e2e (failure))"* ]]; then echo "ok   the red main's why names the commit and the check"
 else echo "FAIL the red main's why does not name the commit and the check: ${out}"; fails=$((fails + 1)); fi
-expect_release "a recorded red main comes before a working conductor's wait" "fix-main fix-main-aaaaaaa" 1 \
+PATH="${GH_RED}:${PATH}" expect_release "a recorded red main comes before a working conductor's wait" "fix-main fix-main-aaaaaaa" 1 \
   "mkdir -p docs/stories && printf -- '---\nstatus: ready\nkind: code\n---\n' > docs/stories/fix-main-aaaaaaa.md" "${RED}"
-expect "a main-green of the same repo and base clears it" "story fix-main-aaaaaaa" "${RED}" "${FIXER}" "green 'o/r main'"
-expect "a main-green of another base does not" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" "green 'o/r dev'"
-expect "a red main whose fix-main story has left the board is not named" "done" "${RED}"
+PATH="${GH_RED}:${PATH}" expect "a main-green of the same repo and base clears it" "story fix-main-aaaaaaa" "${RED}" "${FIXER}" "green 'o/r main'"
+PATH="${GH_RED}:${PATH}" expect "a main-green of another base does not" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" "green 'o/r dev'"
+PATH="${GH_GREEN}:${PATH}" expect "a red main whose base is green now (a revert, a re-run) holds nothing" "story fix-main-aaaaaaa" \
+  "${RED}" "${FIXER}"
+PATH="${GH_RED}:${PATH}" expect "a red main whose fix-main story has left the board is not named" "done" "${RED}"
 # shellcheck disable=SC2016 # expanded by expect's eval, in the board's directory
-expect "a red main whose fix has started is resumed, not started again" "resume fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+PATH="${GH_RED}:${PATH}" expect "a red main whose fix has started is resumed, not started again" "resume fix-main-aaaaaaa" "${RED}" "${FIXER}" \
   'mkdir -p "../$(basename "${PWD}")-wt/fix-main-aaaaaaa"'
-expect "a red main whose fix is in review is not named" "gate" "${RED}" \
+PATH="${GH_RED}:${PATH}" expect "a red main whose fix is in review is not named" "gate" "${RED}" \
   "item stories/fix-main-aaaaaaa.md 'status: review' 'kind: code' 'prs: https://github.com/o/r/pull/9'"
 
 # The stub lists this project's conductor (and its retired name) in panes the state records, as
