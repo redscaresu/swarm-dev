@@ -529,6 +529,7 @@ import re, sys
 src = open(sys.argv[1]).read()
 for fn in ("close_panes", "own_pane", "close_pane", "record_kept", "close_heads", "close_stories", "live_agents", "close_tabs", "close_tab", "tab_ids"):
     body = re.search(r"^%s\(\) \{\n(.*?)^\}" % fn, src, re.S | re.M).group(1)
+    body = re.sub(r"^\s*#.*$", "", body, flags=re.M)
     declared = {w.split("=")[0] for m in re.findall(r"\blocal ([^;\n]*)", body) for w in m.split()}
     assigned = set(re.findall(r"(?:^|[;&|]|\bdo|\bthen)\s*for ([a-z_][a-z0-9_]*) in\b", body, re.M))
     for m in re.findall(r"\bread ([^<;\n]*)", body):
@@ -546,13 +547,14 @@ printf '%s\n' "w:p91 w:t8" "w:p70 w:t10" > "${ROOT}/panes"; cs conduct-ce >/dev/
 is "with ce's conductor pane gone, close conduct-ce leaves epic ce-foo's live conductor, its pane and its tab" "0|0|w:p70 conductor" \
   "$(count 'w:p70' "${ROOT}/panes-closed")|$(grep -c '<w:t10>' "${CLOSED}" || true)|$(cat "${P}/.swarm/state/ce-foo" 2>/dev/null || true)"
 rm -f "${P}/.swarm/state/ce-foo"
-# A state not known to be idle keeps the pane: herdr's starting and done, with no session.
+# A state not known to be idle keeps the pane (herdr's starting, with no session); herdr's done is
+# finished, as tell reads it.
 got=""
 for st in starting 'done'; do
   conductor_fixture "${st}" idle; out="$(cs conduct-ce)"
-  got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept cb1 (state ${st}) in tab ce-2" <<< "${out}" || true) "
+  got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept cb1" <<< "${out}" || true) "
 done
-is "cb1 starting, then done (herdr's word, no session): each keeps ce-2" "<w:t7>|1 <w:t7>|1 " "${got}"
+is "cb1 starting (herdr's word, no session) keeps ce-2; cb1 done lets it close" "<w:t7>|1 <w:t7><w:t8>|0 " "${got}"
 # cb1's recorded session gone from Claude Code's list (exited, or a new session): herdr's status
 # answers, so working keeps ce-2 and idle lets it close.
 built cb1 code; got=""
@@ -577,6 +579,35 @@ is "with herdr's tab list failing, close conduct-ce keeps ce and ce-2, says so, 
 conductor_fixture idle idle "w:p92 cb2"; touch "${ROOT}/paneclosefail"; rc=0; out="$(cs conduct-ce)" || rc=$?; rm "${ROOT}/paneclosefail"
 is "with herdr's pane close failing, close conduct-ce says the pane is still open, keeps its record line, and fails" "1|1|1|0" \
   "${rc}|$(grep -c 'could not close pane conduct-ce (w:p90)' <<< "${out}")|$(count '^w:p90 conductor$' "${P}/.swarm/state/ce")|$(grep -c '^closed pane conduct-ce' <<< "${out}")"
+# An epic whose only pane left beside the conductor is a retired builder (cb1-done, retire_agent's
+# rename, no agents.tsv line): herdr's done, or any word for a retired name, is finished, so every tab
+# closes.
+echo '[]' > "${ROOT}/prs.json"; got=""
+for st in 'done' unknown; do
+  conductor_fixture idle idle; echo "w:p91 cb1-done" > "${P}/.swarm/state/ce-2"
+  awk -v s="${st}" '$1 == "cb1" { $1 = "cb1-done"; $3 = s } { print }' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
+  out="$(cs conduct-ce)"; got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept' <<< "${out}" || true) "
+done
+is "the retired cb1-done (herdr's done, then unknown) is finished: close conduct-ce closes every tab" "<w:t7><w:t8>|0 <w:t7><w:t8>|0 " "${got}"
+# The sweep takes a label's own record and its numbered overflow only: epic ce-foo's idle conductor
+# and its tab are never close conduct-ce's.
+conductor_fixture idle idle; echo "w:p70 conductor" > "${P}/.swarm/state/ce-foo"; echo "conduct-ce-foo w:p70" >> "${ROOT}/agents"; echo "w:p70 w:t10" >> "${ROOT}/panes"
+cs conduct-ce >/dev/null
+is "close conduct-ce leaves epic ce-foo's idle conductor, its tab and its record" "<w:t7><w:t8>|0|w:p70 conductor" \
+  "$(tr -d '\n' < "${CLOSED}")|$(count 'w:p70' "${ROOT}/panes-closed")|$(cat "${P}/.swarm/state/ce-foo" 2>/dev/null || true)"
+rm -f "${P}/.swarm/state/ce-foo"
+# A record's last pane whose label herdr has no tab for (tab cz): the pane closes by itself, and only
+# then does the record go.
+: > "${CLOSED}"; : > "${ROOT}/panes-closed"; echo "w:p93 cb3" > "${P}/.swarm/state/cz"; echo "cb3 w:p93" > "${ROOT}/agents"; echo "w:p93 w:t11" > "${ROOT}/panes"
+out="$(cs cb3)"
+is "closing cb3, the last pane of cz, which herdr has no tab for, closes its pane and then drops the record" "w:p93|gone|1|0" \
+  "$(cat "${ROOT}/panes-closed")|$([[ -e "${P}/.swarm/state/cz" ]] && echo kept || echo gone)|$(grep -c '^closed pane cb3$' <<< "${out}")|$(grep -c '^closed cz$' <<< "${out}" || true)"
+# With herdr's tab list failing, closing a record's last pane keeps the pane and the record, says so,
+# and fails, as the message says.
+: > "${CLOSED}"; : > "${ROOT}/panes-closed"; echo "w:p93 cb3" > "${P}/.swarm/state/ce"; echo "cb3 w:p93" > "${ROOT}/agents"; echo "w:p93 w:t7" > "${ROOT}/panes"
+touch "${ROOT}/tablistfail"; rc=0; out="$(cs cb3)" || rc=$?; rm "${ROOT}/tablistfail"
+is "with herdr's tab list failing, closing cb3, ce's last pane, keeps the pane and its record, says so, and fails" "nonzero||w:p93 cb3|1" \
+  "$([[ ${rc} -ne 0 ]] && echo nonzero || echo zero)|$(cat "${ROOT}/panes-closed")|$(cat "${P}/.swarm/state/ce" 2>/dev/null || true)|$(grep -c "^kept pane cb3 (w:p93) in tab ce: herdr could not list" <<< "${out}")"
 # Two tabs share the label scope-x (herdr's w:t1 and w:t2): sxb, working, is in w:t2 and in no record,
 # so both tabs are checked and neither closes.
 echo "w:p80 sxa" > "${P}/.swarm/state/scope-x"; printf '%s\n' "sxa w:p80" "sxb w:p81 working" > "${ROOT}/agents"

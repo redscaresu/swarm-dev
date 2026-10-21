@@ -969,16 +969,13 @@ close_panes() {
 # when herdr gave one, so a line a gone pane left is passed over; anything else's is herdr's
 # (CLOSE_AGENTS), on a pane a tab record has.
 own_pane() {
-  local want p n s e r
+  local want p n s e
   want="$(agent_name "$1")"
   if [[ "${want}" == conduct-* ]]; then
     e="$(tab_label "$(conduct_epic "$1")")"
     for s in "${STATE_DIR}/${e}" "${STATE_DIR}/${e}"-* "${STATE_DIR}/$(tab_label "$1")"; do
       [[ -f "${s}" ]] || continue
-      # The epic's own record and its numbered overflow (<epic>-2 ...), never a longer label: epic
-      # ce-foo's conductor is not ce's.
-      r="${s#"${STATE_DIR}/${e}"}"
-      [[ -z "${r}" || "${r}" =~ ^-[0-9]+$ || "${s##*/}" == "$(tab_label "$1")" ]] || continue
+      label_record "${s}" "${e}" || [[ "${s##*/}" == "$(tab_label "$1")" ]] || continue
       while read -r p n; do
         [[ "${n}" == conductor ]] || continue
         [[ -z "${CLOSE_PANES}" ]] || awk -v p="${p}" '$1 == p { f = 1 } END { exit !f }' <<< "${CLOSE_PANES}" || continue
@@ -994,8 +991,9 @@ own_pane() {
 # close_pane <pane> <name> [tab-record] [alone] — close <pane> and drop it from its tab record (found
 # when not given), or close that record's own tab (close_tab, never close_tabs' label sweep, which
 # takes sibling and overflow tabs) when it is the record's last pane, unless alone is given; when that
-# tab is kept for a live agent herdr has in it besides, <pane> closes alone. Fails (1) when no tab
-# record has it, and (2) when herdr could not close the pane: it is said, and its record keeps it.
+# tab is kept for a live agent herdr has in it besides, or herdr has no tab of that label, <pane>
+# closes alone. Fails (1) when no tab record has it, and (2) when herdr could not list that tab or
+# close the pane: it is said, and its record keeps it.
 close_pane() {
   local state="${3:-}" id
   if [[ -z "${state}" ]]; then
@@ -1006,7 +1004,12 @@ close_pane() {
   fi
   [[ -n "${state}" ]] || return 1
   if [[ -z "${4:-}" && $(wc -l < "${state}") -le 1 ]]; then
-    if id="$(tab_ids "${state}")"; then close_tab "${state}" "${id}" "$1"; else kept_unlisted "${state}"; fi
+    if ! id="$(tab_ids "${state}")"; then
+      echo "kept pane $2 ($1) in tab ${state##*/}: herdr could not list its workspace's tabs, so neither was checked nor closed"
+      return 2
+    fi
+    # With no herdr tab of that label there is none to close: the pane closes by itself below.
+    [[ -z "${id}" ]] || close_tab "${state}" "${id}" "$1"
   fi
   [[ -f "${state}" ]] || return 0
   # Checked, not left to errexit: a caller's `|| true` turns that off here.
@@ -1016,6 +1019,14 @@ close_pane() {
   fi
   record_drop "${state}" "$1"
   echo "closed pane $2"
+}
+
+# label_record <tab-record> <label> — succeed when the record is <label>'s own or its numbered
+# overflow's (<label>-2 ...), never a longer label's: epic ce-foo's, or a story backlog-x's, is not
+# ce's or the backlog's.
+label_record() {
+  local r="${1#"${STATE_DIR}/$2"}"
+  [[ "${1}" == "${STATE_DIR}/$2"* && ( -z "${r}" || "${r}" =~ ^-[0-9]+$ ) ]]
 }
 
 # record_has <tab-record> <pane> — succeed when the record has a line for <pane>.
@@ -1098,7 +1109,7 @@ close_stories() {
 # live_agents <tab-ids> <tab-record> [pane] — set LIVE to each agent in a pane of those tabs, <pane>'s
 # aside, that a tab close must not take, as "<pane>\t<name>\t<why>\t<herdr's name or ->" lines:
 # working or waiting (session_state, else herdr's status), its state unknown (herdr gave no agent
-# list too) or any other not known to be idle, its story's PR open on story/<name> (close_heads) or gh could not say, or, for a name
+# list too) or any other not known to be idle or finished, its story's PR open on story/<name> (close_heads) or gh could not say, or, for a name
 # agent_name may have cut, no story found. The panes are herdr's (close_lists), since a pane moved in
 # by hand closes with the tab and one moved out does not; the record's stand in when herdr lists none
 # in those tabs. <name> is the record's (record_name), else the story of herdr's name (close_stories),
@@ -1130,10 +1141,14 @@ live_agents() {
     case "${s}" in
       busy|herdr:working) live_line "${pane}" "${name}" working "${who:--}"; continue ;;
       waiting*|herdr:blocked) live_line "${pane}" "${name}" waiting "${who:--}"; continue ;;
-      unknown|herdr:unknown) live_line "${pane}" "${name}" "its state could not be read" "${who:--}"; continue ;;
-      idle|herdr:idle) ;;
-      # Any other (herdr's starting, done or error) is not known to be idle: kept.
-      *) live_line "${pane}" "${name}" "state ${s#herdr:}" "${who:--}"; continue ;;
+      # Finished, as tell and free_agent_name read it.
+      idle|herdr:idle|herdr:done) ;;
+      *)
+        # A retired builder (retire_agent's <slug>-done) is finished too; any other state (herdr's
+        # starting or error, or one that could not be read) is not known to be idle: kept.
+        if [[ "${who}" =~ -done[0-9]*$ ]]; then :
+        elif [[ "${s}" == unknown || "${s}" == herdr:unknown ]]; then live_line "${pane}" "${name}" "its state could not be read" "${who:--}"; continue
+        else live_line "${pane}" "${name}" "state ${s#herdr:}" "${who:--}"; continue; fi ;;
     esac
     f="${BOARD}/stories/${name}.md"
     [[ "${name}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || continue
@@ -1344,8 +1359,8 @@ init_project() {
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
-# close_tabs <label> [pane] — close every tab this script opened under <label> and its overflow
-# (close_tab each), <pane>'s agent aside from the check. Every tab, with its herdr ids (tab_ids), is
+# close_tabs <label> [pane] — close every tab this script opened under <label> and its numbered
+# overflow (label_record; close_tab each), <pane>'s agent aside from the check. Every tab, with its herdr ids (tab_ids), is
 # listed before any is kept or closed: keeping one can move a later one's last line out of its
 # record, which then goes, and that tab is visited all the same. A tab whose ids herdr could not list
 # is kept and said (kept_unlisted), and the rest go on.
@@ -1355,6 +1370,7 @@ close_tabs() {
   label="$(tab_label "$1")"
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
+    label_record "${state}" "${label}" || continue
     if id="$(tab_ids "${state}")"; then tabs+="${state}"$'\t'"${id}"$'\n'; else kept_unlisted "${state}"; fi
   done
   while IFS=$'\t' read -r -u 3 state id; do
