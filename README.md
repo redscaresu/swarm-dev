@@ -125,7 +125,8 @@ most capable model, and then comes to the lead. Failed attempts clean up after t
 details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs). With
 `escalate_ladder = sonnet,opus,fable` in the config (it ships off), `swarm.sh step-up <slug> <trigger>`
 hands a build that is struggling to the next model up, on the same branch, without counting a failed
-attempt ([reference.md](docs/reference.md#the-escalation-ladder)).
+attempt. swarm.sh runs it itself when a builder stops with no PR, stalls, gets a third round of
+findings or has CI fail on two heads ([reference.md](docs/reference.md#the-escalation-ladder)).
 
 ## More
 
