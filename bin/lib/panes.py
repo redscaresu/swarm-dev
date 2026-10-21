@@ -96,13 +96,22 @@ def bg_running(log, name, projects):
             return False
         break
     return bool(live)
+# USAGE_TAIL: how many of the pane's last non-empty lines the live usage-limit dialog's options sit in.
+USAGE_TAIL = 8
+USAGE_OPTION = r"[\s│]*(?:❯\s*)?(\d+)\.\s*"
+USAGE_PROMPT = re.compile(r"[\s│]*(>|❯)(\s|$)(?!\s*\d+\.)")
 def usage_limit(text):
-    lines = (text or "").splitlines()
-    tail = "\n".join(lines[max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1]) + 1:])
-    m = re.search(r"(\d+)\.\s*Wait here, then continue automatically", tail)
-    if m and "Stop and wait for limit to reset" in tail:
-        return "dialog", m.group(1)
-    if "Usage limit reached" in tail and re.search("Continuing shortly|limit resets", tail):
+    lines = [l for l in (text or "").splitlines() if l.strip()]
+    tail = lines[max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1]) + 1:]
+    # The live dialog: both options among the last lines, and no prompt line (an input box) under the
+    # second, which a submitted prompt quoting the dialog always has.
+    last = tail[-USAGE_TAIL:]
+    stop = [i for i, l in enumerate(last) if re.match(USAGE_OPTION + "Stop and wait for limit to reset", l)]
+    go = [(i, m.group(1)) for i, l in enumerate(last) for m in [re.match(USAGE_OPTION + "Wait here, then continue automatically", l)] if m]
+    if stop and go and not any(USAGE_PROMPT.match(l) for l in last[go[-1][0] + 1:]):
+        return "dialog", go[-1][1]
+    joined = "\n".join(tail)
+    if "Usage limit reached" in joined and re.search("Continuing shortly|limit resets", joined):
         return "waiting", ""
     return None
 def pane_text(pane):
@@ -114,7 +123,9 @@ def shown_state(a, name, s, log, projects):
     st, look = agent_state(a, name, s)
     if st == "idle" and s is not None and login_expired(log, name, projects):
         return "auth", True
-    if st in ("working", "idle", "done", "WAITING") and a and a.get("pane_id") and usage_limit(pane_text(a["pane_id"])):
+    u = usage_limit(pane_text(a["pane_id"])) if st in ("working", "idle", "done", "WAITING") and a and a.get("pane_id") else None
+    # The waiting line counts only while the turn runs: an idle session under it is idle.
+    if u and (u[0] == "dialog" or st in ("working", "WAITING")):
         return "usage-limit", False
     return st, look
 def session_state(log, name, listing):
