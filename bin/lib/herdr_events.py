@@ -2,9 +2,11 @@
 
 Subscribes (events.subscribe) to the pane's pane.agent_status_changed and to pane.closed and
 pane.exited, then reads its agent (agent.get), so a state it already holds counts. Prints the first
-of idle, blocked or done, or gone when the pane closes, exits or is not found, and exits 0. Exits 1
-at the timeout. On anything else (no socket, a refused request, the stream ended, a reply it cannot
-read) it prints the milliseconds left of <timeout-ms> and exits 2: the caller polls for that long.
+of idle, blocked or done, or gone when the pane closes, exits or is not found, and exits 0. Exits 3
+at the timeout (TIMED_OUT, a code Python never exits with by itself). On anything else (no socket, a
+refused request, the stream ended, a reply it cannot read) it prints the milliseconds left of
+<timeout-ms> and exits 2; any other exit, such as 1 for an uncaught error, means the same: the
+caller polls.
 """
 import json, socket, sys, time
 from contextlib import closing
@@ -12,8 +14,12 @@ from contextlib import closing
 SETTLED = ("idle", "blocked", "done")
 # REPLY_S: how long herdr has to accept the connection and answer a request.
 REPLY_S = 5
-# GONE: the error codes herdr answers for a pane it cannot find (agent.get's, events.subscribe's).
-GONE = ("agent_not_found", "pane_not_found")
+# GONE: agent.get's error for a pane herdr cannot find.
+GONE = "agent_not_found"
+# RECHECK_S: how long after a settle event that agent.get does not yet show it is read again.
+RECHECK_S = 0.5
+# TIMED_OUT: the exit code at the timeout.
+TIMED_OUT = 3
 
 
 def left(end):
@@ -21,8 +27,8 @@ def left(end):
 
 
 class Conn:
-    """A connection to herdr's socket, read a JSON line at a time; each read ends by its end time,
-    however slowly herdr sends the line."""
+    """A connection to herdr's socket, read a line at a time; each read ends by its end time, however
+    slowly herdr sends the line."""
 
     def __init__(self, path, end):
         self.s, self.buf = socket.socket(socket.AF_UNIX), b""
@@ -44,7 +50,7 @@ class Conn:
                 raise EOFError("herdr closed the connection")
             self.buf += chunk
         line, self.buf = self.buf.split(b"\n", 1)
-        return json.loads(line)
+        return line
 
 
 def request(path, req, deadline):
@@ -54,7 +60,7 @@ def request(path, req, deadline):
     try:
         c.s.settimeout(left(end))
         c.s.sendall((json.dumps(req) + "\n").encode())
-        return c, c.read(end)
+        return c, json.loads(c.read(end))
     except BaseException:
         c.close()
         raise
@@ -64,9 +70,26 @@ def status(path, pane, deadline):
     """The agent's status now (agent.get), or gone when herdr finds no pane."""
     c, reply = request(path, {"id": "swarm-get", "method": "agent.get", "params": {"target": pane}}, deadline)
     c.close()
-    if reply.get("error", {}).get("code") in GONE:
+    if reply.get("error", {}).get("code") == GONE:
         return "gone"
     return reply["result"]["agent"]["agent_status"]
+
+
+def recheck(path, pane, deadline, said):
+    """The agent's status after an event said <said>: agent.get, and once more after RECHECK_S when it
+    does not agree, since agent.get can lag the event. An event queued before an earlier read may be
+    stale (idle, then working again), so a read that still disagrees wins. A read cut off by the
+    deadline leaves the event's word."""
+    try:
+        now = status(path, pane, deadline)
+        if now not in SETTLED + ("gone",):
+            time.sleep(min(RECHECK_S, left(deadline)))
+            now = status(path, pane, deadline)
+        return now
+    except socket.timeout:
+        if time.monotonic() < deadline:
+            raise
+        return said
 
 
 def watch(path, pane, deadline):
@@ -79,7 +102,10 @@ def watch(path, pane, deadline):
         # Other panes' close and exit events keep the stream busy, so the deadline is checked, not only
         # the read's timeout.
         while now not in SETTLED + ("gone",) and time.monotonic() < deadline:
-            ev = stream.read(deadline)
+            try:
+                ev = json.loads(stream.read(deadline))
+            except ValueError:
+                continue   # a blank line (herdr's keepalive) or one that is not JSON
             data = ev.get("data") if isinstance(ev, dict) else None
             if not isinstance(data, dict) or data.get("pane_id") != pane:
                 continue   # another pane's event, or a line that is none (a keepalive, a late reply)
@@ -87,10 +113,8 @@ def watch(path, pane, deadline):
             kind = "pane." + kind[5:] if kind.startswith("pane_") else kind
             if kind in ("pane.closed", "pane.exited"):
                 return "gone"
-            # An event queued before the read above may be stale (idle, then working again), so it only
-            # sends the wait to read the agent again.
             if kind == "pane.agent_status_changed" and data.get("agent_status") in SETTLED:
-                now = status(path, pane, deadline)
+                now = recheck(path, pane, deadline, data["agent_status"])
         return now if now in SETTLED + ("gone",) else None
 
 
@@ -111,5 +135,5 @@ if __name__ == "__main__":
         print(int(left(deadline) * 1000))
         sys.exit(2)
     if got is None:
-        sys.exit(1)
+        sys.exit(TIMED_OUT)
     print(got)

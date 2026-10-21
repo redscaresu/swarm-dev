@@ -953,8 +953,8 @@ timed_out() { grep -q '"timeout"' "$1"; }
 
 # herdr_events <target> <timeout-ms> — herdr_events.py on herdr's event stream at HERDR_SOCKET_PATH
 # (herdr sets it in every pane): print idle, blocked, done or gone the moment the agent reaches it, or
-# fail with 1 at the timeout; 2, with no socket or no stream, sends the caller to herdr agent wait
-# (herdr_events.py prints how much of <timeout-ms> is left for it).
+# fail with 3 at the timeout; any other failure (2 with no socket or no stream, when herdr_events.py
+# prints how much of <timeout-ms> is left) sends the caller to herdr agent wait.
 herdr_events() {
   [[ -S "${HERDR_SOCKET_PATH:-}" ]] || return 2
   python3 "${SWARM_HOME}/bin/lib/herdr_events.py" "${HERDR_SOCKET_PATH}" "$1" "$2"
@@ -962,21 +962,21 @@ herdr_events() {
 
 # herdr_step <target> <ms> <err> — one step of herdr_wait: herdr's event stream (herdr_events) for
 # <ms>, or, when it has no stream or fails any other way, herdr agent wait for what is left of the
-# step, its stderr in <err>. Prints the agent's state, gone for an agent herdr no longer finds, and
-# succeeds; fails with 1 when the step timed out, and 2 when herdr failed.
+# step, its stderr in <err>. Prints the agent's state and succeeds; fails with 1 when the step timed
+# out, and 2 when herdr failed or answered with no agent status.
 herdr_step() {
   local target="$1" ms="$2" err="$3" out rc=0
   : > "${err}"
-  out="$(herdr_events "${target}" "${ms}")" || rc=$?
+  out="$(herdr_events "${target}" "$((ms > 1 ? ms : 1))")" || rc=$?
   case "${rc}" in
     0) echo "${out}"; return 0 ;;
-    1) return 1 ;;
+    3) return 1 ;;
   esac
   [[ ! "${out}" =~ ^[0-9]+$ ]] || ms="${out}"   # what herdr_events.py left of the step
   if out="$(herdr agent wait "${target}" --timeout "$((ms > 1 ? ms : 1))" 2>"${err}")"; then
-    json "d['result']['agent']['agent_status']" <<< "${out}"; return 0
+    json "d['result']['agent']['agent_status']" <<< "${out}" && return 0
+    return 2
   fi
-  if grep -q '"agent_not_found"' "${err}"; then echo gone; return 0; fi
   timed_out "${err}" && return 1
   return 2
 }
@@ -985,15 +985,16 @@ herdr_step() {
 # read (codex, or no session recorded), and the one place a wait takes herdr's own status: herdr_step
 # in STALL_POLL_MS steps. With <since>, between steps an agent stalled since then (agent_stalled)
 # ends the wait with "stalled: ...", and so does a pane quiet for stall_minutes (pane_check, then
-# pane_quiet). A step that fails other than by timing out ends the stepping, and the last step then
-# fails as one unbroken wait does: 1, with herdr's stderr.
+# pane_quiet). A step that fails other than by timing out ends the stepping, and the last step, for
+# what is left of <timeout-ms>, then fails as one unbroken wait does: 1, with herdr's stderr.
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc pane_kind="" pane_at=""
+  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end pane_kind="" pane_at=""
+  end=$(($(now_ms) + left))
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
     rc=0; herdr_step "${target}" "${STALL_POLL_MS}" "${err}" || rc=$?
     [[ ${rc} -ne 0 ]] || { rm -f "${err}"; return 0; }
-    [[ ${rc} -eq 1 ]] || break
+    [[ ${rc} -eq 1 ]] || { left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
