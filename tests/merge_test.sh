@@ -67,6 +67,7 @@ case "$1 $2" in
     sha="${path#*/commits/}"; sha="${sha%%/*}"
     case "${path}" in
       # The merge queue's read of the PR (api graphql); a read that says merged marks the PR so.
+      *"entries("*) serve mqfirst ;;       # the PR first in the base's merge queue
       *"mergeQueue(branch"*) serve mq ;;   # whether the base has a merge queue
       # Turning auto-merge off and dequeuing: they succeed, unless ${FX}/mutation.fail.
       *"mutation("*) [ ! -e "${FX}/mutation.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"data":{}}' ;;
@@ -633,6 +634,11 @@ is "a removal before the first read: one dequeue line naming GitHub's reason" "m
 qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue" OPEN false null - - "AN_OLD_REASON" 2020-01-01T00:00:00Z
 merge "${URL}"
 check "an earlier enqueue's removal: not its reason" said "dequeued (no reason given): ${LINT}"
+# Dropped from the queue while auto-merge still reads on: a dequeue at once, and auto-merge turned off.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue" OPEN false "${WAITING}" - - "MERGE_QUEUE_STATUS_CHECK_FAILED"
+merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+is "dropped from the queue with auto-merge still on: a dequeue naming the check, auto-merge off" \
+  "merge s dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}; auto-merge is off" "$(events)"
 # An earlier run's dequeue (its stop(), seconds before this enqueue) is not this one's.
 qfresh; qread "${FX}/queue.1" OPEN false null - - "MANUAL" "$(ago)"; qread "${FX}/queue.2" OPEN true null "${G}" -
 qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
@@ -711,6 +717,16 @@ term_merge() {
   for _ in $(seq 100); do grep -qF -- "$1" "${ROOT}/gh.log" && break; sleep 0.1; done
   kill -TERM "${mpid}"; rc=0; wait "${mpid}" || rc=$?
 }
+# Three failed reads after one that showed auto-merge only: both undone, as GitHub may have queued it since.
+qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; touch "${FX}/queue.2.fail" "${FX}/queue.3.fail" "${FX}/queue.4.fail"
+merge "${URL}"
+check "three failed reads after one with auto-merge only: auto-merge off and out of the queue" \
+  logged "^merge s unconfirmed (error .*): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+# queue_rc: a merge ci_gate printed stands, whatever status a signal left; nothing else is changed.
+# shellcheck source=/dev/null
+qrc() { (. "${REPO}/bin/lib/merge.sh"; queue_rc "$@"); }
+is "a printed merge stands over a signal's status, and nothing else does" "0|0|143|7" \
+  "$(qrc 143 "merged ${M}")|$(qrc 3 "merged ")|$(qrc 143 "merged at head 2222222, not 1111111, the head that was checked (merge commit none)")|$(qrc 7 "stopped by SIGTERM")"
 # A TERM while it waits on the queue, or during the enqueue: auto-merge off and out of the queue
 # before it exits.
 qfresh; qread "${FX}/queue" OPEN true null "${G}" -; term_merge isInMergeQueue
@@ -722,6 +738,24 @@ check "a TERM during the enqueue: auto-merge off and out of the queue, logged as
 # A null repository on the queue read is a failed read, tried again, not a crash.
 fresh; echo '{"data":{"repository":null}}' > "${FX}/mq.1"; merge "${URL}"
 is "a null repository on the queue read: read again, then merges" "0|2" "${rc}|$(grep -c mergeQueue "${ROOT}/gh.log")"
+# --release on a base with a merge queue goes through only alone: refused while the queue holds a PR,
+# and taken out if another is first in it while the release is queued.
+rqfresh() {
+  release_pr; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"
+  checks "${FX}/${G}.checks" "$(run test completed success)"; statuses "${FX}/${G}.status"
+}
+mqfirst() { # <file> [pr] — the merge queue's first entry: <pr>, or none
+  local e=""; [[ -z "${2:-}" ]] || e="{\"pullRequest\":{\"number\":$2}}"
+  printf '{"data":{"repository":{"mergeQueue":{"entries":{"nodes":[%s]}}}}}\n' "${e}" > "$1"
+}
+rqfresh; mqfirst "${FX}/mqfirst" 9; merge --release "${URL}"
+refused "--release while the queue holds another PR" "#9 is in main's merge queue; merge the release once the queue is empty"
+rqfresh; mqfirst "${FX}/mqfirst.1"; mqfirst "${FX}/mqfirst" 9; qread "${FX}/queue" OPEN true null "${G}" -; merge --release "${URL}"
+check "--release with another PR first in the queue while queued: taken out, and fails" \
+  logged "^merge ${URL} --release: #9 is ahead of it in the merge queue; auto-merge is off and it is out of the merge queue: merge the release once the queue is empty$"
+rqfresh; mqfirst "${FX}/mqfirst.1"; mqfirst "${FX}/mqfirst" 7; qread "${FX}/queue.1" OPEN true null "${G}" -
+qread "${FX}/queue.2" MERGED false null - "${M}"; merge --release "${URL}"
+is "--release first in the queue: merges, no reconcile" "0|merge ${URL} ok" "${rc}|$(events | paste -sd'|' -)"
 # A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
 fresh; touch "${FX}/mq.fail"; merge "${URL}"
 refused "a queue that cannot be read" "could not read whether main has a merge queue"

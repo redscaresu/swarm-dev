@@ -157,6 +157,14 @@ def has_queue(repo, base, wait):
                 raise
             time.sleep(wait)
 
+def first_in_queue(repo, base):
+    """The number of the PR first in base's merge queue, or 0 when it is empty. A failed read raises."""
+    owner, name = repo.split("/")
+    q = graphql("query($o: String!, $r: String!, $b: String!) { repository(owner: $o, name: $r) { mergeQueue(branch: $b) "
+                "{ entries(first: 1) { nodes { pullRequest { number } } } } } }", o=owner, r=name, b=base)["mergeQueue"]
+    nodes = ((q or {}).get("entries") or {}).get("nodes") or []
+    return int(((nodes[0] or {}).get("pullRequest") or {}).get("number") or 0) if nodes else 0
+
 QUEUE_QUERY = """query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) {
   id state headRefOid isInMergeQueue autoMergeRequest { enabledAt } mergeCommit { oid } mergeQueueEntry { state headCommit { oid } }
   timelineItems(last: 5, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { reason createdAt } } } } } }"""
@@ -246,7 +254,7 @@ def stop_pr(repo, n):
         pr = None
     return stop(pr, every=True)
 
-def queued(repo, n, head, base, since, secs, poll):
+def queued(repo, n, head, base, since, secs, poll, alone=False):
     """Wait for PR n, enqueued at head (since: epoch seconds just before the enqueue), to merge. The
     CI deadline (secs) runs from when the PR's own merge group starts, and again from each rebuilt
     group; waiting its turn, or for auto-merge to enqueue it, has the queue's own bound, TURNS
@@ -255,8 +263,9 @@ def queued(repo, n, head, base, since, secs, poll):
     queue with no auto-merge waiting after one showed it in) or closed; 2 a timeout; 3 READ_TRIES
     failed reads in a row (a gh error is a missed read); 4 never read as queued or waiting in
     READ_TRIES reads; 5 an open PR whose head is not head; 6 a PR that merged at a head that is not
-    head; 7 a TERM, HUP or INT. On 2, 3, 4, 5 and 7 the message is the cause, a newline, and what
-    stop() did."""
+    head; 7 a TERM, HUP or INT; 8 (alone, for a release) another PR first in the queue while it is
+    queued, or a failed read of who is. On 2, 3, 4, 5, 7 and 8 the message is the cause, a newline,
+    and what stop() did."""
     owner, name = repo.split("/")
     for s in SIGNALS:
         signal.signal(s, on_signal)
@@ -270,7 +279,8 @@ def queued(repo, n, head, base, since, secs, poll):
             except (Err, KeyError, TypeError) as e:
                 missed += 1
                 if missed == READ_TRIES:
-                    return 3, "error %s (%d reads in a row failed)\n%s" % (e, missed, stop(pr))
+                    # One line: the error names the query, which spans lines, and merge cuts at the first.
+                    return 3, "error %s (%d reads in a row failed)\n%s" % (" ".join(str(e).split()), missed, stop(pr, every=True))
                 last = "a read failed: %s" % e
             else:
                 missed, pr = 0, read
@@ -297,12 +307,21 @@ def queued(repo, n, head, base, since, secs, poll):
                     last = "merged, with no merge commit yet"
                 elif state != "OPEN":
                     return 1, "%s while queued" % state.lower()
+                elif removals(pr, since) and not pr.get("isInMergeQueue"):
+                    # Dropped from the queue: auto-merge may still be on, and could enqueue it again unwatched.
+                    why = dequeued(repo, base, n, head, group, pr, since)
+                    return 1, why + ("; " + stop(pr) if pr.get("autoMergeRequest") else "")
                 elif pr.get("isInMergeQueue") or pr.get("autoMergeRequest"):
                     seen, out = True, 0
+                    if alone and pr.get("isInMergeQueue"):
+                        try:
+                            first = first_in_queue(repo, base)
+                        except (Err, KeyError, TypeError, ValueError) as e:
+                            return 8, "cannot read who is first in the merge queue: %s\n%s" % (e, stop(pr, every=True))
+                        if first and first != int(n):
+                            return 8, "#%d is ahead of it in the merge queue\n%s" % (first, stop(pr, every=True))
                     last = ("waiting its turn in the merge queue" if pr.get("isInMergeQueue") and not running
                             else "in the merge queue" if pr.get("isInMergeQueue") else "auto-merge waits for the head's checks")
-                elif removals(pr, since):
-                    return 1, dequeued(repo, base, n, head, group, pr, since)
                 elif seen:
                     # Out of the queue, not merged yet, and no removal: GitHub may not have said merged.
                     out += 1
@@ -511,10 +530,13 @@ try:
             sys.exit(1)
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
+    elif mode == "first":
+        print(first_in_queue(repo, args[0]))
     elif mode == "stop":
         print(stop_pr(repo, args[0]))
     elif mode == "queued":
-        rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]))
+        rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]),
+                         len(args) > 6 and args[6] == "alone")
         print(msg)
         sys.exit(rc)
     elif mode == "files":

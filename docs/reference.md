@@ -1132,7 +1132,8 @@ so the merged code gets a review. A merged PR logs `merge ok` and goes straight 
 queue already ran CI on the commit it merged, so there is no `main-ci` wait. A PR that reads merged
 before GitHub shows its merge commit is read again, up to three times. A PR that leaves the queue
 unmerged is a dequeue when GitHub logged its removal after this enqueue (one dropped within seconds
-for a conflict counts, an earlier run's does not), or when three reads in a row, after one showed it
+for a conflict counts, an earlier run's does not), even while its auto-merge still reads on, which
+`merge` then turns off; or when three reads in a row, after one showed it
 queued or waiting for auto-merge, find it out of the queue and not merged. `merge` exits non-zero with one
 `merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished on
 the merge group's commit. That commit is the one seen while the PR was queued, or, for a PR that
@@ -1144,7 +1145,10 @@ while `merge` enqueues or waits each turn auto-merge off and take the PR out of 
 unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
 hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
 the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
-base with a queue, a direct merge would enqueue the PR with nothing watching its head. With no
+base with a queue, a direct merge would enqueue the PR with nothing watching its head. `--release`
+goes through the queue only alone, so its tag holds nothing that merged after its checks: it
+refuses while the queue holds any PR, and while it is queued, another PR first in the queue, or a
+failed read of who is first, takes it out of the queue and fails. With no
 queue the path is the one above. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
