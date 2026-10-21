@@ -28,7 +28,9 @@ the run stops whenever a decision is yours.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
    `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
-   session, so merges go through `swarm.sh merge`. It also refuses a `cd` followed by `;`, a
+   session, so merges go through `swarm.sh merge`. Where the base has a GitHub merge queue,
+   `swarm.sh merge` goes through it, and the conductor enqueues each reviewed PR without waiting
+   for the one before it to merge ([details](docs/reference.md#merging)). The hook also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
    `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
 
@@ -97,11 +99,12 @@ Every agent is a full Claude Code session on your own logins. On infrafactory, f
 The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
 section shows how long CI takes per push, how often it goes red and how often it flakes, and its
 `incidents` section counts, per day, the waits that timed out, the logins that expired, the
-builders that stopped with no PR, the board pulls that an uncommitted edit stopped, and each time
-a person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, which the lead
-logs; dash shows the 7-day count beside the speedometer). `ci_health` also gives each repo's median
-CI time per PR and its slowest job, beside the same figures for the window before; dash shows this
-week's against last week's on one line. Its
+builders that stopped with no PR, the board pulls that an uncommitted edit stopped, each time a
+person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, which the lead logs;
+dash shows the 7-day count beside the speedometer), then the agents that stopped on an API error or
+an auto mode denial, per epic. `ci_health` also gives each repo's median CI time per PR and its
+slowest job, beside the same figures for the window before; dash shows this week's against last
+week's on one line. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
 money waits on you, so only those count. Its `model_fit` section sets cost against results for each

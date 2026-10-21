@@ -700,7 +700,21 @@ unless its cause is `stalled`, `paused`, `cleared-on-error` or `impossible`; the
 none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one line>"` writes one with
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
-first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
+first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write. When `status` or `wait` reads an agent's pane, herdr
+says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
+Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
+mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
+Error:` line counts only after `⏺` or `●` at the margin, where Claude Code prints its own. An agent's
+own indented text does not count, and neither does a tool's output (`⎿`) that prints `API Error:` or
+quotes the denial. `next` and `tell`
+only read. `status` and `wait` keep `.swarm/panes/<agent>`: the pane's checksum, when they last saw it
+change (which `dash` shows), and which stop was logged last. Stops are told apart by the lines from
+the last prompt above the stop down to it, or by the stop's line alone once that prompt has scrolled
+out of the window.
+The record drops it when a read of the pane shows no stop. Reading the same stopped pane again, after
+it scrolls or after a resume it has not shown yet, adds nothing. A stop after a new prompt is a new
+one, even when the resume and the second error both come between two reads. A retired agent's record moves to its new name, and a new
+agent of the name starts with none. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
 reached the builder. It also skips `tell:note`: a note the lead leaves a conductor says nothing about
@@ -711,7 +725,13 @@ per item they move. `merge` writes all its own lines, under the story's or epic'
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
-or `error <why>`, then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
+or `error <why>`, then reconcile's lines. Through a merge queue (§ Merging) it is the same `merge ok`,
+`main-ci` and reconcile lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
+queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge
+--auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
+unconfirmed (<why>)` for a timeout (`timeout (<what it waited on>)`), an error, a PR never read as
+queued, or a merge with no merge commit. A merge at a head other than the checked one is `merge
+merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
@@ -877,7 +897,10 @@ after its PR was created and for a build with no PR.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
-so `--epic` does not narrow it.
+so `--epic` does not narrow it. After a blank line, TSV `epic kind stops` counts the `api-error`
+and `auto-denied` lines per epic: a builder's or `review-<slug>`'s epic is its story's, a
+`conduct-<epic>`'s its epic, as `outcomes` gives them, and `-` when none does. `--epic` keeps that
+epic's rows.
 
 The `model_fit` section sets cost against results. It prints one TSV row per model and effort
 crossed with a story class, over the stories whose first build is dated in the window (with
@@ -1069,16 +1092,21 @@ repo, reconcile never deletes a tracked file in the main checkout. An item whose
 its file on the board is marked `done` in its state after a pull, or at once when the checkout's
 branch has no upstream (there is nothing to pull), and stays on the board until
 `swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
-cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged. `swarm.sh unblock` then readies a
+cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged.
+Reconciles in one project run one at a time (merges through a merge queue run side by side): one
+waits up to 300 seconds (`SWARM_RECONCILE_WAIT`) for `.swarm/reconcile.lock`, then stops naming it. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
-with `--match-head-commit`, never `--auto`, waits for CI on the base, and runs `swarm.sh reconcile`.
+with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
 That pulls the board the way it does for you, and finishes
 the story, closing its builder. The conductor never closes the builder before that, because closing
-a story that is still `ready` counts a failed build. It runs one `swarm.sh merge` at a time, and starts
-the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
+a story that is still `ready` counts a failed build. Its first `swarm.sh merge` shows whether the
+base has a merge queue. Where it prints `merge queue: <base> has one`, the conductor starts `swarm.sh
+merge` for every PR whose latest head passed review as soon as it passes, without waiting for the
+ones before it to merge, so the queue tests them together and merges them in batches. Otherwise it
+runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
 run, starts each story of the epic that unblock printed as `ready:` and that clashes with no
 running one (§ Building, Pick the wave). A build cleared on error or given up on stops that: it starts nothing more in
 the wave. It reports once no story of the epic that it may start is ready and none is running. If
@@ -1103,7 +1131,54 @@ The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
 when allowed, else a merge commit, else rebase) and `--match-head-commit`, so a head that moved
-after the check stops the merge. It never passes `--auto`. It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
+after the check stops the merge. It never passes `--auto`, except to join a merge queue (below). It passes `--admin` only with `merge_admin = on`, and only after `ci_gate admin` passes (§ Settings).
+
+**Merge queue.** With `merge_admin` off, `merge` asks GitHub whether the base has a merge queue
+(GraphQL `repository.mergeQueue(branch:)`, which covers a ruleset's `merge_queue` rule and classic
+branch protection alike) before it merges. When it has one, `merge` enqueues the head with
+`gh pr merge --auto --match-head-commit <head>` (the queue picks the method) instead of merging.
+The queue tests the PR on top of the base and the PRs queued ahead of it, so two PRs that are each
+green alone but red together never land. `merge` reads the PR back even when gh fails, since an
+error can follow an enqueue GitHub made, and a PR already in the queue is waited on as if it had
+just joined it. It prints `merge queue: <base> has one` first, whatever happens next. Then it reads
+the PR every 20 seconds until it merges or leaves the queue, and checks its head on every read. The
+30 minutes for CI start when the PR's own merge group starts, and again for each group the queue
+rebuilds; waiting its turn behind other PRs, or for auto-merge to enqueue it, has a bound of its own,
+six times that (3 hours), which starts again when the queue takes its group apart. A head other than the one it checked stops the wait:
+`merge` turns auto-merge off and takes the PR out of the queue (GraphQL
+`disablePullRequestAutoMerge` and `dequeuePullRequest`), so a push made before the PR reached the
+queue never merges unreviewed. If the PR has already merged at another head, `merge` logs
+`merge merged at head <sha>, not <sha>, ...`, runs reconcile (main has changed) and exits non-zero,
+so the merged code gets a review. A merged PR logs `merge ok`, and a
+`main-ci` wait follows before reconcile, as for a direct merge: the queue ran the PR's checks on its group, but the
+workflows that run only on a push to the base (a release, a deploy) run where the base was pushed.
+The queue pushes a batch of PRs at its last commit, so `merge` waits on the base's head once it holds
+the PR's merge commit, not on that commit itself. A PR that reads merged
+before GitHub shows its merge commit is read again, up to three times. A PR that leaves the queue
+unmerged is a dequeue when GitHub logged its removal after this enqueue (one dropped within seconds
+for a conflict counts, an earlier run's does not), even while its auto-merge still reads on, which
+`merge` then turns off; or when three reads in a row, after one showed it
+queued or waiting for auto-merge, find it out of the queue and not merged. `merge` exits non-zero with one
+`merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished on
+the merge group's commit. That commit is the one seen while the PR was queued, or, for a PR that
+joined and left between two reads, the one its `merge_group` run names; the reason is GitHub's only
+for a removal after this enqueue. The conductor handles a dequeue like a red check: it sends the
+failing checks to the builder, which merges the base in and pushes, then reviews and merges the new
+head. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
+while `merge` enqueues or waits each turn auto-merge off and take the PR out of the queue. Each is logged as
+unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
+hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
+the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
+base with a queue, a direct merge would enqueue the PR with nothing watching its head. `--release`
+never joins the queue, where a PR queued behind it could share its push and so its tag, and a base
+that requires a queue takes no direct merge but `--admin`'s, which `merge_admin = off` rules out. So
+`merge --release` refuses there, naming the queue, and the release is yours to merge once the queue
+is empty. With no
+queue the path is the one above. ci.yml and zizmor.yml run on
+`merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
+so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
+merges with `--admin`, which would skip a queue. `ci_gate admin` refuses a base with a
+`merge_queue` rule for that reason.
 
 It reads the PR back after `gh pr merge`, whether gh succeeded or not, since an error can follow a
 merge GitHub made. A PR that does not read as merged is read again a few times, then logged as
@@ -1158,8 +1233,9 @@ Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
-**Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
-trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
+**Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
+trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang. A merge queue
+tests each PR on top of the ones ahead of it, so there every reviewed PR can be enqueued at once.
 
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 
@@ -1203,7 +1279,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
 
 ## Cleanup, escalation and session logs
 

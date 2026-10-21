@@ -47,8 +47,14 @@ case "$1 $2" in
       "$(cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
       "$(cat "${FX}/body" 2>/dev/null || echo null)" ;;
   "pr merge")
+    case " $* " in *" --disable-auto "*) exit 0 ;; esac
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
+    # --auto enqueues (with ${FX}/auto-fails, then fails with a 5xx): the queue fixture
+    # (serve queue) says what happens next.
+    # With ${FX}/auto-sleeps the enqueue takes 5 s, for a signal to land during it.
+    case " $* " in *" --auto "*) [ ! -e "${FX}/auto-sleeps" ] || sleep 5
+      [ ! -e "${FX}/auto-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }; exit 0 ;; esac
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
@@ -61,13 +67,23 @@ case "$1 $2" in
     for a in "$@"; do path="${a}"; done
     sha="${path#*/commits/}"; sha="${sha%%/*}"
     case "${path}" in
+      # The merge queue's read of the PR (api graphql); a read that says merged marks the PR so.
+      *"mergeQueue(branch"*) serve mq ;;   # whether the base has a merge queue
+      # Turning auto-merge off and dequeuing: they succeed, unless ${FX}/mutation.fail.
+      *"mutation("*) [ ! -e "${FX}/mutation.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"data":{}}' ;;
+      # With ${FX}/queue-sleeps the first read takes 5 s.
+      query=*) [ ! -e "${FX}/queue-sleeps" ] || { rm -f "${FX}/queue-sleeps"; sleep 5; }
+               out="$(serve queue)" || exit 1; echo "${out}"
+               case "${out}" in *'"state":"MERGED"'*) echo MERGED > "${FX}/state"; printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit" ;; esac ;;
       */check-runs*) serve "${sha}.checks"
                      # The head moves once its checks are read, before the merge.
                      [ "${sha}" != "$(cat "${FX}/head")" ] || [ ! -e "${FX}/move-head" ] || cp "${FX}/move-head" "${FX}/head" ;;
       */commits/*/status*) serve "${sha}.status" ;;
+      *event=merge_group*) serve mgruns ;;
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
       */pulls/*/files*) serve files ;;
       */rules/branches/*) serve rules ;;
+      */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
       */compare/*) serve compare ;;
       */contents/.github/workflows\?*) serve workflows ;;
@@ -125,6 +141,7 @@ fresh() {
   echo OPEN > "${FX}/state"; echo "${H1}" > "${FX}/head"; echo null > "${FX}/mergecommit"; echo main > "${FX}/base"
   echo '[{"filename":"docs/stories/s.md","status":"modified"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"; : > "${FX}/diff"
   echo '{"nameWithOwner":"o/r"}' > "${FX}/origin"; echo '[]' > "${FX}/rules"; echo 'Branch not protected' > "${FX}/branch.404"
+  echo '{"data":{"repository":{"mergeQueue":null}}}' > "${FX}/mq"
   echo '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"
   checks "${FX}/${H1}.checks" "$(run test completed success)"; statuses "${FX}/${H1}.status"
   checks "${FX}/${M}.checks" "$(run test completed success)"; statuses "${FX}/${M}.status"
@@ -587,8 +604,215 @@ echo '[{"type":"pull_request","parameters":{}},{"type":"deletion"},{"type":"non_
 echo '{"required_pull_request_reviews":{"required_approving_review_count":1},"allow_deletions":{"enabled":false},"enforce_admins":{"enabled":false}}' > "${FX}/branch"
 merge "${URL}"; is "merge_admin = on, only the review and push rules: exits 0" 0 "${rc}"
 check "merge_admin = on, only the review and push rules: --admin" grep -q -- "^pr merge 7 .*--admin" "${ROOT}/gh.log"
-fresh; echo '[{"type":"merge_queue","parameters":{}}]' > "${FX}/rules"; merge "${URL}"
-is "merge_admin off: a merge_queue rule is GitHub's, not read" 0 "${rc}"
+
+# --- A merge queue on the base: enqueue the pinned head, wait for the queue, no main-ci wait.
+G=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb   # the merge group's commit
+# now / ago — a fixture event's time: a minute after the enqueue the test is about to make (this
+# run's), or ten seconds before it (an earlier run's, such as its stop()'s dequeue).
+stamp() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + int(sys.argv[1]))))' "$1"; }
+now() { stamp 60; }
+ago() { stamp -10; }
+# qread <file> <state> <in queue> <auto-merge> <group|-> <merge commit|-> [reason [when]] — one graphql
+# read of the PR, its head ${QHEAD:-H1}; a reason is a removal from the queue at <when> (default now).
+# Its queue entry is in state ${QSTATE:-AWAITING_CHECKS} (its group's CI runs) with a group, and
+# with QSTATE=QUEUED and no group it waits its turn.
+qread() {
+  local g=null m=null r=""
+  [[ "$5" == - ]] || g="{\"state\":\"${QSTATE:-AWAITING_CHECKS}\",\"headCommit\":{\"oid\":\"$5\"}}"
+  [[ "$5" != - || -z "${QSTATE:-}" ]] || g="{\"state\":\"${QSTATE}\",\"headCommit\":null}"
+  [[ "$6" == - ]] || m="{\"oid\":\"$6\"}"
+  [[ -z "${7:-}" ]] || r="{\"reason\":\"$7\",\"createdAt\":\"${8:-$(now)}\"}"
+  printf '{"data":{"repository":{"pullRequest":{"id":"PR_7","state":"%s","headRefOid":"%s","isInMergeQueue":%s,"autoMergeRequest":%s,"mergeCommit":%s,"mergeQueueEntry":%s,"timelineItems":{"nodes":[%s]}}}}}\n' \
+    "$2" "${QHEAD:-${H1}}" "$3" "$4" "${m}" "${g}" "${r}" > "$1"
+}
+WAITING='{"enabledAt":"x"}'
+# qfresh — fresh, with a merge queue on main, and lint red on the merge group's commit.
+qfresh() {
+  fresh; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"
+  checks "${FX}/${G}.checks" "$(run test completed success)" "$(run lint completed failure)"; statuses "${FX}/${G}.status"
+}
+# auto_off / dequeued_it — the PR's auto-merge was turned off / it was taken out of the queue.
+auto_off() { grep -q "disablePullRequestAutoMerge" "${ROOT}/gh.log"; }
+dequeued_it() { grep -q "dequeuePullRequest" "${ROOT}/gh.log"; }
+LINT="lint (failure) https://github.com/o/r/runs/lint"
+qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; qread "${FX}/queue.2" OPEN true null "${G}" -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "queue: exits 0" 0 "${rc}"
+check "queue: enqueued with --auto pinned to the head, no method" grep -qxF "pr merge 7 --repo o/r --auto --match-head-commit ${H1}" "${ROOT}/gh.log"
+check "queue: no direct merge" bash -c "! grep -E -- '^pr merge .*--(squash|merge|rebase)' '${ROOT}/gh.log'"
+is "queue: merge ok, then CI on the merge commit, then reconcile" "merge s ok|main-ci s ok|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "queue: says it is queued, then that it merged through the queue" bash -c "grep -qF 'queued: s #7 (head 1111111)' '${ROOT}/out' && grep -qF 'merged: #7 through the merge queue (head 1111111, merge commit aaaaaaa)' '${ROOT}/out'"
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" OPEN false null - - "MERGE_QUEUE_STATUS_CHECK_FAILED"
+merge "${URL}"
+is "dequeue: exits non-zero" 1 "${rc}"
+check "dequeue: names the failing check on the merge group's commit" said "dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}"
+is "dequeue: one merge line naming the check, no reconcile" "merge s dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}" "$(events)"
+check "dequeue: the story stays on the board" test -e "${S}"
+# In and out of the queue between two reads: the group commit is found from its merge_group run.
+qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; qread "${FX}/queue.2" OPEN false null - - "MERGE_QUEUE_STATUS_CHECK_FAILED"
+printf '{"workflow_runs":[{"head_branch":"gh-readonly-queue/main/pr-7-%s-%s","head_sha":"%s","created_at":"%s"}]}\n' "${H1}" "${M}" "${G}" "$(now)" > "${FX}/mgruns"
+merge "${URL}"
+check "a dequeue between two reads: names the check on the group commit its run names" said "dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}"
+# In and out before the first read: a removal since the enqueue is a dequeue, not "never queued".
+qfresh; qread "${FX}/queue" OPEN false null - - "MERGE_CONFLICT"; merge "${URL}"
+is "a removal before the first read: one dequeue line naming GitHub's reason" "merge s dequeued (MERGE_CONFLICT): no red check on the head 1111111" "$(events)"
+# A removal from an earlier enqueue is not this one's reason.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue" OPEN false null - - "AN_OLD_REASON" 2020-01-01T00:00:00Z
+merge "${URL}"
+check "an earlier enqueue's removal: not its reason" said "dequeued (no reason given): ${LINT}"
+# A batch: the queue merged #7 and a PR after it in one push, at M2. The push-only runs are on M2,
+# none on #7's own merge commit, which is not waited on.
+M2=cccccccccccccccccccccccccccccccccccccccc
+qfresh; rm -f "${FX}/${M}.checks" "${FX}/${M}.runs"
+printf '{"commit":{"sha":"%s"}}\n' "${M2}" > "${FX}/basehead"; echo '{"status":"ahead"}' > "${FX}/compare"
+checks "${FX}/${M2}.checks" "$(run test completed success)"; statuses "${FX}/${M2}.status"
+wfruns "${FX}/${M2}.runs" "$(run ci completed success "${M2}")"
+qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${M}"; merge "${URL}"
+is "two PRs merged in one push: CI waited on at the pushed commit that holds this merge" "0|merge s ok|main-ci s ok" \
+  "${rc}|$(events | head -2 | paste -sd'|' -)"
+# A red main after a queued merge: main-ci red, reconcile, and a failure, as for a direct merge.
+qfresh; checks "${FX}/${M}.checks" "$(run test completed success)" "$(run e2e completed failure)"
+qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${M}"; merge "${URL}"
+check "a red main after a queued merge: main-ci red, reconcile still runs, exits non-zero" \
+  bash -c "[[ ${rc} -eq 1 ]] && grep -q 'main-ci	s	.*red .*e2e (failure)' '${P}/.swarm/events.tsv' && grep -q 'reconcile	s	.*ok (finished)' '${P}/.swarm/events.tsv'"
+# Dropped from the queue while auto-merge still reads on: a dequeue at once, and auto-merge turned off.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue" OPEN false "${WAITING}" - - "MERGE_QUEUE_STATUS_CHECK_FAILED"
+merge SWARM_MERGE_CI_SECONDS=1 "${URL}"
+is "dropped from the queue with auto-merge still on: a dequeue naming the check, auto-merge off" \
+  "merge s dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}; auto-merge is off" "$(events)"
+# An earlier run's dequeue (its stop(), seconds before this enqueue) is not this one's.
+qfresh; qread "${FX}/queue.1" OPEN false null - - "MANUAL" "$(ago)"; qread "${FX}/queue.2" OPEN true null "${G}" -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "an earlier run's dequeue seconds before this enqueue: not this one's, and it merges" "0|merge s ok" "${rc}|$(events | head -1)"
+# One read out of the queue, before GitHub says merged, is not a dequeue.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" OPEN false null - -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "out of the queue for one read before it reads merged: not a dequeue" "0|merge s ok" "${rc}|$(events | head -1)"
+# Merged before its merge commit shows: read again, then merge ok and reconcile.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "merged before its merge commit shows: reads again, merge ok, then reconcile" "0|merge s ok|main-ci s ok|reconcile s ok (finished)" "${rc}|$(events | paste -sd'|' -)"
+# Waiting its turn is not CI time: four reads queued behind others, past a 2 s CI deadline, then its
+# own group runs and merges. Waiting has the queue's own bound, six deadlines.
+qfresh; for i in 1 2 3 4; do QSTATE=QUEUED qread "${FX}/queue.${i}" OPEN true null - -; done
+qread "${FX}/queue.5" OPEN true null "${G}" -; qread "${FX}/queue.6" MERGED false null - "${M}"
+merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+is "waiting its turn past the CI deadline: still merges, nothing dequeued" "0|merge s ok|no" \
+  "${rc}|$(events | head -1)|$(grep -q 'mutation(' "${ROOT}/gh.log" && echo yes || echo no)"
+# A group taken apart (a PR ahead failed) after the turn bound has passed: it waits its turn afresh.
+# Seven reads, each a rebuilt group (its 1 s deadline restarts), take it past the 6 s bound.
+qfresh; for i in 1 2 3 4 5 6 7; do qread "${FX}/queue.${i}" OPEN true null "c$(printf '%039d' "${i}")" -; done
+QSTATE=QUEUED qread "${FX}/queue.8" OPEN true null - -; qread "${FX}/queue.9" MERGED false null - "${M}"
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+is "a group taken apart after the turn bound passed: waits its turn afresh, and merges" "0|merge s ok" "${rc}|$(events | head -1)"
+qfresh; QSTATE=QUEUED qread "${FX}/queue" OPEN true "${WAITING}" - -
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+check "waiting its turn past the queue's own bound: a timeout, out of the queue" \
+  logged "^merge s unconfirmed (timeout (waiting its turn in the merge queue)): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+# A first read that lags the enqueue is not a dequeue; READ_TRIES reads never queued are.
+qfresh; qread "${FX}/queue.1" OPEN false null - -; qread "${FX}/queue.2" OPEN true null "${G}" -; qread "${FX}/queue.3" MERGED false null - "${M}"
+merge "${URL}"; is "a first read before the queue shows it: still merges" 0 "${rc}"
+qfresh; qread "${FX}/queue" OPEN false null - -; merge "${URL}"
+is "never read as queued: exits non-zero" 1 "${rc}"
+check "never read as queued: unconfirmed, not a dequeue" logged "^merge s unconfirmed (never read as queued or waiting for auto-merge)"
+check "never read as queued: auto-merge off and out of the queue all the same" \
+  bash -c "grep -q disablePullRequestAutoMerge '${ROOT}/gh.log' && grep -q dequeuePullRequest '${ROOT}/gh.log'"
+# gh failing on the enqueue: read the PR back, and wait on it if GitHub queued it (or it already was).
+qfresh; touch "${FX}/auto-fails"; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${M}"
+merge "${URL}"; is "an enqueue that errors, but the PR reads queued: waits and merges" 0 "${rc}"
+check "an enqueue that errors: no queued line, says it reads the PR back" bash -c "! grep -qF 'queued: s #7' '${ROOT}/out' && grep -qF 'reading #7 back' '${ROOT}/out'"
+check "an enqueue that errors: still says the base has a merge queue, the line the conductor keys on" said "merge queue: main has one, so #7 goes through it"
+qfresh; touch "${FX}/auto-fails"; qread "${FX}/queue" OPEN false null - -; merge "${URL}"
+is "an enqueue that errors and never queues: exits non-zero" 1 "${rc}"
+check "an enqueue that errors and never queues: says gh failed" logged "^merge s gh pr merge --auto failed: gh: HTTP 502"
+# The head is read on every poll: one that moves stops the wait and turns auto-merge off.
+qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; QHEAD="${H2}" qread "${FX}/queue.2" OPEN false "${WAITING}" - -
+merge "${URL}"
+is "a head that moves while queued: exits non-zero" 1 "${rc}"
+check "a head that moves while queued: names both heads" said "the head is 2222222, not 1111111, the head that was checked; auto-merge is off: review the new head"
+check "a head that moves while queued: auto-merge turned off" auto_off
+# A merge at another head: said and logged, never merge ok, no auto-merge call, but reconciled.
+qfresh; QHEAD="${H2}" qread "${FX}/queue" MERGED false null - "${M}"; merge "${URL}"
+is "a merge of another head: exits non-zero" 1 "${rc}"
+is "a merge of another head: logged as one, then reconciled" \
+  "merge s merged at head 2222222, not 1111111, the head that was checked (merge commit aaaaaaa)|reconcile s ok (finished)" "$(events | paste -sd'|' -)"
+check "a merge of another head: says so" said "merge: #7 merged at head 2222222, not 1111111, the head that was checked (merge commit aaaaaaa): review what merged"
+check "a merge of another head: no auto-merge or dequeue call" bash -c "! grep -qE 'mutation\(|--disable-auto' '${ROOT}/gh.log'"
+# A timeout: auto-merge off and out of the queue, as the last read showed them.
+qfresh; qread "${FX}/queue" OPEN true "${WAITING}" "${G}" -
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+is "a queue that never merges: exits non-zero" 1 "${rc}"
+check "a queue that never merges: unconfirmed, auto-merge off and out of the queue" \
+  logged "^merge s unconfirmed (timeout (in the merge queue)): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+check "a queue that never merges: both calls made" bash -c "grep -q disablePullRequestAutoMerge '${ROOT}/gh.log' && grep -q dequeuePullRequest '${ROOT}/gh.log'"
+qfresh; touch "${FX}/mutation.fail"; qread "${FX}/queue" OPEN true null "${G}" -
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+check "a timeout whose dequeue fails: names it, and says to do it by hand" \
+  bash -c "grep -qF 'dequeuePullRequest failed (gh api graphql' '${ROOT}/out' && grep -qF 'take it out of the merge queue and turn auto-merge off by hand' '${ROOT}/out'"
+# term_merge <text> — merge in the background, TERM it once gh.log holds <text>, and wait for it.
+term_merge() {
+  local mpid
+  (cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
+    SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_SECONDS=60 bash "${SWARM}" merge "${URL}" > "${ROOT}/out" 2>&1) &
+  mpid=$!
+  for _ in $(seq 100); do grep -qF -- "$1" "${ROOT}/gh.log" && break; sleep 0.1; done
+  kill -TERM "${mpid}"; rc=0; wait "${mpid}" || rc=$?
+}
+# Three failed reads after one that showed auto-merge only: both undone, as GitHub may have queued it since.
+qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; touch "${FX}/queue.2.fail" "${FX}/queue.3.fail" "${FX}/queue.4.fail"
+merge "${URL}"
+check "three failed reads after one with auto-merge only: auto-merge off and out of the queue" \
+  logged "^merge s unconfirmed (error .*): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+# A TERM the moment queued() installs its handler: caught as a stop (7), the PR stopped, not an
+# error that escapes it. ci_gate's functions run here with signal.signal wrapped to TERM itself.
+qfresh; qread "${FX}/queue" OPEN true null "${G}" -
+early="$(cd "${P}" && PATH="${ROOT}/bin:${PATH}" python3 - "${REPO}/bin/lib/ci_gate.py" "${H1}" <<'PY'
+import os, signal, sys
+src = open(sys.argv[1]).read()
+ns = {"__name__": "ci_gate"}
+exec(compile(src[:src.index("\ntry:\n    mode, repo, args")], sys.argv[1], "exec"), ns)
+def install(sig, handler):
+    signal.signal(sig, handler)
+    if handler is ns["on_signal"] and sig == signal.SIGTERM:
+        os.kill(os.getpid(), signal.SIGTERM)
+ns["signal"] = type("Wrapped", (), {"signal": staticmethod(install), "SIG_IGN": signal.SIG_IGN, "Signals": signal.Signals})
+try:
+    print(ns["queued"]("o/r", "7", sys.argv[2], "main", 0, 5, 0)[0])
+except ns["Stopped"]:
+    print("escaped")
+PY
+)"
+is "a TERM as queued() installs its handler: a stop (7), and the PR stopped" "7|yes" "${early}|$(dequeued_it && echo yes || echo no)"
+# queue_rc: a merge ci_gate printed stands, whatever status a signal left; nothing else is changed.
+# shellcheck source=/dev/null
+# shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads
+qrc() { (PROJECT_DIR="${P}"; . "${REPO}/bin/lib/merge.sh"; queue_rc "$@"); }
+is "a printed merge stands over a signal's status, and nothing else does" "0|0|143|7" \
+  "$(qrc 143 "merged ${M}")|$(qrc 3 "merged ")|$(qrc 143 "merged at head 2222222, not 1111111, the head that was checked (merge commit none)")|$(qrc 7 "stopped by SIGTERM")"
+# A TERM while it waits on the queue, or during the enqueue: auto-merge off and out of the queue
+# before it exits.
+qfresh; qread "${FX}/queue" OPEN true null "${G}" -; term_merge isInMergeQueue
+check "a TERM while queued: auto-merge off and out of the queue, logged as unconfirmed" \
+  logged "^merge s unconfirmed (stopped by SIGTERM): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+qfresh; touch "${FX}/queue-sleeps"; qread "${FX}/queue" OPEN true null "${G}" -; term_merge isInMergeQueue
+check "a TERM before any read of the queue: stopped by its number, logged as unconfirmed" \
+  logged "^merge s unconfirmed (stopped by SIGTERM): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+qfresh; touch "${FX}/auto-sleeps"; qread "${FX}/queue" OPEN true null "${G}" -; term_merge "--auto"
+check "a TERM during the enqueue: auto-merge off and out of the queue, logged as unconfirmed" \
+  logged "^merge s unconfirmed (stopped by SIGTERM): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+# A null repository on the queue read is a failed read, tried again, not a crash.
+fresh; echo '{"data":{"repository":null}}' > "${FX}/mq.1"; merge "${URL}"
+is "a null repository on the queue read: read again, then merges" "0|2" "${rc}|$(grep -c mergeQueue "${ROOT}/gh.log")"
+# --release on a base with a merge queue, merge_admin off: refused, naming the queue, with no merge,
+# no enqueue and never --admin.
+release_pr; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"; echo '[{"type":"merge_queue"}]' > "${FX}/rules"
+merge --release "${URL}"
+refused "--release on a base with a merge queue, merge_admin off" "--release: main requires a merge queue, which a release must not join"
+check "--release on a base with a merge queue, merge_admin off: never passes --admin" bash -c "! grep -q -- '--admin' '${ROOT}/gh.log'"
+# A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
+fresh; touch "${FX}/mq.fail"; merge "${URL}"
+refused "a queue that cannot be read" "could not read whether main has a merge queue"
+is "a queue that cannot be read: tried three times" 3 "$(grep -c mergeQueue "${ROOT}/gh.log")"
 # The review rule's own settings: thread resolution, and merge methods that leave out the one used.
 fresh "merge_admin = on"; echo '[{"type":"pull_request","parameters":{"required_review_thread_resolution":true}}]' > "${FX}/rules"
 merge "${URL}"; refused "merge_admin = on, the review rule's required_review_thread_resolution" "pull_request's required_review_thread_resolution"
