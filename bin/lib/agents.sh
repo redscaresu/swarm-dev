@@ -325,12 +325,28 @@ start_agent() {
   read -r kind model effort <<< "$(policy "${role}")"
   # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
   # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
-  local session=-
+  local session=- flags=()
   if [[ "${kind}" == claude ]]; then
     require_trusted "${cwd}"
     # shellcheck disable=SC2119 # takes no argument here
     require_claude
     session="$(python3 -c 'import uuid; print(uuid.uuid4())')" || die "${name}: could not mint a session id (python3)"
+    # No agent can run `gh pr merge`, a conductor with merge = agent included: it merges through
+    # swarm.sh merge, whose gh the guard never reaches. `gh api` could still merge, so the briefs say it too.
+    # The session's env goes through --settings, since herdr passes no env. SWARM_AGENT tells the
+    # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
+    # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
+    # parent's model (opusplan-spike).
+    local env="\"SWARM_AGENT\":\"${name}\"" deny=("Bash(gh pr merge:*)") a opt=""
+    # The fallback reviewer stands in for codex's read-only sandbox: no file tools, no commit or push.
+    [[ "${role}" != review-fallback ]] || deny+=(Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)")
+    [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
+    flags=(--model "${model}" --effort "${effort}" --permission-mode auto --disallowedTools "${deny[@]}" --settings "{\"env\":{${env}}}")
+    # They are also the command herdr resumes the agent with after a restart, where herdr refuses an apostrophe.
+    for a in "${flags[@]}"; do
+      [[ "${a}" != --* ]] || opt="${a}"
+      [[ "${a}" != *"'"* ]] || die "${name}: ${opt} ${a} has an apostrophe, which herdr refuses in the command that resumes the agent after a restart"
+    done
   fi
   free_agent_name "${name}"
   pane=$(next_pane "${tab}" "${cwd}" "${pane_name}")
@@ -351,19 +367,8 @@ start_agent() {
       out=$(herdr agent start "${name}" --kind codex --pane "${pane}" --timeout 60000 -- \
         "${sandbox[@]}" -c features.hooks=false -c "model_reasoning_effort=\"${effort}\"" -c check_for_update_on_startup=false 2>&1) && break
     else
-      # No agent can run `gh pr merge`, a conductor with merge = agent included: it merges through
-      # swarm.sh merge, whose gh the guard never reaches. `gh api` could still merge, so the briefs say it too.
-      # The session's env goes through --settings, since herdr passes no env. SWARM_AGENT tells the
-      # plugin's guard hook the session is an agent's, kept out of the main checkout (hooks/merge-guard.sh).
-      # builder_subagent_model: without _FORCE the model setting leaves an Explore subagent on the
-      # parent's model (opusplan-spike).
-      local env="\"SWARM_AGENT\":\"${name}\"" deny=("Bash(gh pr merge:*)")
-      # The fallback reviewer stands in for codex's read-only sandbox: no file tools, no commit or push.
-      [[ "${role}" != review-fallback ]] || deny+=(Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)")
-      [[ -n "${CFG_builder_subagent_model}" && " ${BUILDER_ROLES} " == *" ${role} "* ]] && env+=",\"CLAUDE_CODE_SUBAGENT_MODEL\":\"${CFG_builder_subagent_model}\",\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\":\"1\""
       out=$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- \
-        --model "${model}" --effort "${effort}" --session-id "${session}" --permission-mode auto \
-        --disallowedTools "${deny[@]}" --settings "{\"env\":{${env}}}" 2>&1) && break
+        --session-id "${session}" "${flags[@]}" 2>&1) && break
     fi
     if [[ ${try} -eq 2 ]]; then
       # Close the pane rather than leave an empty shell; next_pane prunes it from the tab record.
@@ -372,6 +377,14 @@ start_agent() {
     fi
     nap 3
   done
+  # herdr resumes a Claude pane with `claude --resume <id>` alone, which drops every flag above, the
+  # guards included. Reporting the whole command makes a restart resume the agent as it started; the
+  # plugin's hooks report its state from then on (hooks/agent-state.sh).
+  if [[ "${kind}" == claude ]] && ! out=$(herdr pane report-agent "${pane}" --source swarm --agent claude --state idle \
+      -- claude --resume "${session}" "${flags[@]}" 2>&1); then
+    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+    die "${name}: herdr did not take the command that resumes the agent, so a restart would drop its guards: ${out}"
+  fi
   # Before the brief, so an agent whose brief is not taken up is still on record.
   record_agent "${role}" "${name}" "${kind}" "${model}" "${effort}" "${session}"
   if [[ "${kind}" == codex && -n "$(codex_out_dir "${tab}")" ]]; then

@@ -1,5 +1,5 @@
 {
-  "description": "In a swarm project, refuse careless raw PR merges so they go through swarm.sh merge, and commands that lose work",
+  "description": "In a swarm project, refuse careless raw PR merges so they go through swarm.sh merge, and commands that lose work; in a swarm agent's session, report its state to herdr",
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +8,47 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/merge-guard.sh\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" working"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" idle"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" blocked"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/agent-state.sh\" release"
           }
         ]
       }

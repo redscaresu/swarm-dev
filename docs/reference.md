@@ -1106,6 +1106,19 @@ Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
+An agent's guards come from the flags it starts with: `--disallowedTools` (no `gh pr merge`, and for
+the fallback reviewer no file tools, commit or push) and `--settings`, which sets `SWARM_AGENT`.
+When herdr restarts, it reopens each agent's pane and resumes the session, and on its own it would
+run `claude --resume <id>` with none of those flags. So once a Claude agent starts, swarm.sh gives
+herdr the whole command to resume it with (`herdr pane report-agent --source swarm`): `claude
+--resume <id>` and every flag the agent started with. herdr refuses an apostrophe in that command,
+so a flag that holds one stops the start before a pane opens, naming the flag. A report herdr
+refuses closes the pane and fails the start. The plugin's hooks also report an agent's state to
+herdr, in a swarm agent's session only: working on each prompt, idle when a turn stops, blocked on a
+permission prompt. When you quit an agent's session yourself, they hand the pane back to herdr
+(`release-agent`). A session that ends because herdr restarts keeps its resume command. This needs
+herdr 0.9.2 or later.
+
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
 
