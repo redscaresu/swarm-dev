@@ -43,10 +43,11 @@ stop_rule() {
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
-A story is reviewed only when its latest head has passed a review agent's review. As soon as a
-story's PR is green, start one with \`${sw} review-agent <slug> <PR URL>\`.
-Do not wait for other PRs or reviews: start one for each green PR, so PRs that land together are
-reviewed at once. It returns at once. It refuses when the story's worktree is not at the PR's head,
+A story is reviewed only when its latest head has passed a review agent's review. The moment a
+story's PR head is green and mergeable, start one with \`${sw} review-agent <slug> <PR URL>\`.
+Never wait for other PRs or reviews to gather first: run one review agent for every green PR at
+once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints, or the lead sends
+you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
 or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
 the story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not
 only docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches
@@ -56,7 +57,7 @@ naming the commit it reviewed, its findings, and an out-of-scope section. Wait o
 agent (\`swarm.sh close review-<slug>\`) whatever it found. A file with a \`head moved:\` line, or
 with no \`## Findings\` section, is not a pass: start the review again. When the wait returns with
 no findings file (it timed out, or the agent waits on a prompt, is gone or needs a login), close the
-review agent, never answering its prompt, and start the review again in a later round, or read the
+review agent, never answering its prompt, and start the review again, or read the
 diff yourself as for a skipped codex. Send the real findings to the story's
 builder with \`${sw} tell <slug> findings <file>\` (a file holding the findings and what to
 decline). Log each item of the out-of-scope section with
@@ -74,7 +75,9 @@ as below: nit for a nit or an edge case, out-of-scope or wrong where they apply.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
-its latest head has passed.
+its latest head has passed. Act on each review the moment it finishes: once a PR's latest head has
+passed, merge it (or hand it over, as below) at once, and never hold a finished review result back
+while other reviews run.
 
 $(finding_rule)
 EOF
@@ -484,7 +487,8 @@ build_story() {
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
-# started (kept aside until then), so the conductor reads only this head's.
+# started (kept aside until then), so the conductor reads only this head's. Once started, the head
+# goes in .swarm/reviews/<slug>.head, which review_on_head reads.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
@@ -525,6 +529,24 @@ review_agent() {
     die "review-agent: review-${slug} did not start; ${out} is as it was"
   fi
   rm -f "${out}.prev"
+  echo "${head}" > "${out%.md}.head"
+}
+
+# review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is
+# <sha>, and it has a ## Findings section and no head moved: line (review_rule's test).
+review_pass() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"
+}
+
+# review_on_head <slug> <sha> — true while <sha> has a review agent's review, for watch and next
+# (queued_line): its findings file for <sha> is a pass, or, with no file for <sha> yet, a review agent
+# started on it (.swarm/reviews/<slug>.head) and review-<slug> is still open in a pane this project
+# opened. One that crashed, was closed or tidied, or that herdr cannot list, is no review.
+review_on_head() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  if grep -qx "head: $2" "${f}" 2>/dev/null; then review_pass "$1" "$2"; return; fi
+  [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" && -n "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]
 }
 
 # review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents), that their
@@ -534,6 +556,69 @@ review_stack_note() {
   parents="$(stacked_parents "$1")"; [[ -n "${parents}" ]] || return 0
   for p in ${parents//,/ }; do b+="${b:+, }origin/story/${p}"; done
   printf '\n%s\n' "This story is stacked on ${parents}: their branches (${b}) are in its diff against origin/$2, but their code is not this story's. Leave it out of everything you write: it is neither a finding nor out of scope."
+}
+
+# SCOPE_RULE: what a reviewer holds out of scope, in the review agent's brief and codex's story prompt
+# (so the fallback reviewer's too), the same words in each.
+SCOPE_RULE="A point that only a change to a file outside the touches can fix is out of scope, not a finding. A gap in the PR's own code is a finding, even where the touches and Done when do not name it."
+
+# DECISION_MAX_BYTES: the most of one marked line a review brief carries; a longer one is cut on a
+# character boundary, with "…". DECISIONS_MAX_BYTES: the most all of them take together; a line past
+# it is left out, and the brief says how many were and in which files they are.
+DECISION_MAX_BYTES=1500
+DECISIONS_MAX_BYTES=2000
+
+# user_decisions <file>... — each line of the files that holds a `(user, <date>` mark, verbatim, as
+# `- <path>:<line>: <text>` (the path relative to the project), while they fit in DECISIONS_MAX_BYTES. A mark inside a fenced block (a
+# ``` line toggles it), an inline code span or the first file's (the story's) **Done when** section,
+# which the brief already quotes, is not a decision; an epic's decisions sit in its Done when.
+user_decisions() {
+  LC_ALL=C awk -v max="${DECISION_MAX_BYTES}" -v all="${DECISIONS_MAX_BYTES}" -v story="$1" -v root="${PROJECT_DIR}/" '
+    function rel(f) { return index(f, root) == 1 ? substr(f, length(root) + 1) : f }
+    function marked(s) { gsub(/`[^`]*`/, "", s); return s ~ /\(user, [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ }
+    FNR == 1 { fence = 0; dw = 0 }
+    /^ *```/ { fence = !fence; next }
+    fence { next }
+    /^\*\*|^#/ { dw = FILENAME == story && index($0, "**Done when") == 1 }
+    dw || !marked($0) { next }
+    {
+      d = $0
+      if (length(d) > max) {
+        # Back off while the byte after the cut is a UTF-8 continuation byte (10xxxxxx).
+        for (n = max; n > 0 && substr(d, n + 1, 1) >= "\200" && substr(d, n + 1, 1) < "\300"; n--) ;
+        d = substr(d, 1, n) "…"
+      }
+      d = (out == "" ? "" : "\n") "- " rel(FILENAME) ":" FNR ": " d
+      if (length(out) + length(d) <= all) out = out d
+      else { left++; if (!(FILENAME in named)) { named[FILENAME]; where = where (where == "" ? "" : ", ") rel(FILENAME) } }
+    }
+    END {
+      if (out != "") print out
+      if (left) printf "\n%d more decision%s left out of this brief (past %d bytes): read %s.\n", left, (left > 1 ? "s are" : " is"), all, where
+    }' "$@"
+}
+
+# review_checklist [story file] — the checks the lead learned by hand, one line each, for the review
+# agent's and the fallback reviewer's briefs. With a story file, also the check on the user's
+# decisions and each decision its story and its epic mark (user_decisions).
+review_checklist() {
+  local epic decisions files
+  cat <<'EOF'
+Hold the PR to these as well:
+- A claim checked against a stand-in (a mock, a sibling API, a narrower sample) is unverified.
+- An audit or test scoped to one file, when the defect class spans many, is a finding.
+- A new code path must enforce every rule the existing paths enforce.
+- A zero or empty value shown to a person must say what it means.
+- A repair path that changes something must say what it did.
+EOF
+  [[ -f "${1:-}" ]] || return 0
+  # shellcheck disable=SC2016 # the backticks are for the reader
+  echo '- A change that contradicts a decision marked `(user, <date>)` in the epic or story is a finding, even when it is stricter.'
+  files=("$1"); epic="$(fm "$1" epic)"
+  [[ -z "${epic}" || ! -f "${BOARD}/epics/${epic}.md" ]] || files+=("${BOARD}/epics/${epic}.md")
+  decisions="$(user_decisions "${files[@]}")"
+  [[ -z "${decisions}" ]] || printf '\n%s\n%s\n%s\n' "The user's decisions, from the story and its epic:" "${decisions}" \
+    "Read each decision in full at that line (it may continue on the following lines or list items) before you judge the PR against it."
 }
 
 # review_brief <slug> <PR URL> <base> <findings file> <head> — a review agent's brief: read-only, the
@@ -551,7 +636,7 @@ The story touches: $(fm "${story}" touches)
 Its **Done when:**
 $(story_items "${story}" 'Done when')
 
-Judge the PR against these touches and items alone: work outside them is not a finding.
+Judge the PR against these touches and items. ${SCOPE_RULE}
 $(review_stack_note "$1" "$3")
 Run \`$(codex_review_cmd "$3" "$1")\` in the background (Bash run_in_background) and wait for it to
 finish: it can run for ${CFG_codex_minutes} minutes, longer than a foreground Bash call may last.
@@ -563,6 +648,8 @@ its findings as codex's, under that line. When the PR
 changes code (not only docs, board files or a dependency bump), state the touches and Done when
 above, then run \`/code-review $2\`.
 
+$(review_checklist "${story}")
+
 When both are done, check that \`git rev-parse HEAD\` still prints $5 and \`git status --porcelain\`
 prints nothing. If not, the worktree moved under you: write ${4} with the Write tool holding two
 lines, \`head: $5\` and \`head moved: <what changed>\`, then stop.
@@ -571,8 +658,8 @@ Otherwise, write ${4} with the Write tool, in one go (the conductor's wait ends 
 Its first line is \`head: $5\`; when codex was skipped, its second is \`codex skipped: <why>\`.
 Under a \`## Findings\` heading,
 one line per finding: its reviewer (codex or code-review), file:line, and the finding; with none, say
-so. Under a \`## Out of scope\` heading, the same for each point a reviewer raised outside the
-story's touches and Done when, so the conductor can decline it; with none, say so. Then reply with
+so. Under a \`## Out of scope\` heading, the same for each point a reviewer raised that only a
+change to a file outside the touches can fix, so the conductor can decline it; with none, say so. Then reply with
 ${4}, and with \`codex skipped: <why>\` when codex was.
 EOF
   rules="$(project_rules)"
