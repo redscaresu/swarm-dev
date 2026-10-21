@@ -72,6 +72,7 @@ A="${ROOT}/agents.json"; F="${ROOT}/start-fails"; P="${ROOT}/panes.json"; O="${R
 EOF
 cat >> "${ROOT}/bin/herdr" <<'EOF'
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") if [ -f "$I" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'; else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
