@@ -3,7 +3,7 @@ kind: code
 status: ready
 epic: safer-faster-swarm
 depends_on: []
-touches: [bin/lib/agents.sh, tests/wait_test.sh]
+touches: [bin/lib/agents.sh, tests/epic_wait_session_test.sh]
 estimate_lines: 40
 easy: true
 ---
@@ -15,5 +15,5 @@ easy: true
 Log the API-error resume under the `resume` kind that `tell` already uses (is_tell_kind), and change the comment to match. The `stuck: api error` limit (API_RESUMES) keeps counting the same way.
 
 **Done when:**
-- A wait test whose stub pane stops on an API error once and then finishes finds a `resume` line, and no `nudge` line, for that agent in events.tsv.
+- A test in tests/epic_wait_session_test.sh whose stub pane stops on an API error once and then finishes finds a `resume` line, and no `nudge` line, for that agent in events.tsv.
 - `flow`'s nudge count for that run is 0. `make test` passes.
