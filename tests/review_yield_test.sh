@@ -89,9 +89,9 @@ out="$(yield_of "${P}")"
 check "the split critic's fixed finding is a reviewers row" \
   "$(grep -E $'^split-critic\t' <<< "${out}")" "$(printf '%s\n' $'split-critic\tall\t1\t1\t0\t0%\t0' $'split-critic\tsplit-order\t1\t1\t0\t0%\t0')"
 check "the split block sets the critic's fix beside the escaped split-gap" \
-  "$(grep -A1 -E '^split\t' <<< "${out}")" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
+  "$(grep -A1 $'^split\t' <<< "${out}")" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
 check "--since 2026-10-04 keeps only the escaped split-gap in the split block" \
-  "$(yield_of "${P}" --since 2026-10-04 | grep -A1 -E '^split\t')" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t0\t0\t1')"
+  "$(yield_of "${P}" --since 2026-10-04 | grep -A1 $'^split\t')" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t0\t0\t1')"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \
