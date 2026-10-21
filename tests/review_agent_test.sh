@@ -34,6 +34,7 @@ cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
 next() { n=$(($(cat "$H/n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/n"; }
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "tab create")   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "agent start")  [ -e "$H/startfail" ] && { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }

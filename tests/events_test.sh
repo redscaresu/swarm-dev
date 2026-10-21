@@ -39,6 +39,7 @@ STUB
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "agent list") echo '{"result":{"agents":[{"name":"s1","agent_status":"idle","pane_id":"w:1"}]}}' ;;
   "pane list") echo '{"result":{"panes":[{"pane_id":"w:1"}]}}' ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
@@ -210,6 +211,7 @@ git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init &
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${EB}/herdr"
 cat >> "${EB}/herdr" <<'STUB'
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "tab create") echo '{"result":{"root_pane":{"pane_id":"w:5"}}}' ;;
   "agent start") touch "$H/esc-started" ;;
   "agent list") if [ -e "$H/esc-started" ]; then echo '{"result":{"agents":[{"name":"x1","agent_status":"idle","pane_id":"w:5"}]}}'
