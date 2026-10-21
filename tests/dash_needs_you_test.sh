@@ -107,7 +107,7 @@ check "an idle agent whose login expired is ! auth, not idle" grep -qE '! s-auth
 check "needs you lists an agent whose login expired, with /login" has "! auth: run /login (s-auth's login expired), then /swarm-dev:swarm tells it to resume" "${needs}"
 check "a working agent whose pane is on the usage-limit dialog is usage-limit, not working" grep -qE '⏸ s-limit .* usage-limit' <<< "${out}"
 check "an agent on the usage limit is not in needs you" lacks s-limit "${needs}"
-st="$(cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR=working PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1 || true)"
+st="$(cd "${S}" || exit 1; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR=working PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1 || true)"
 check "status shows usage-limit for an agent on the usage limit" grep -qE '^  s-limit +usage-limit  \[' <<< "${st}"
 check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
 check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
