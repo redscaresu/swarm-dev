@@ -226,9 +226,12 @@ for ladder in sonnet,opus,fable ""; do
     check "a tell whose step-up fails partway is not sent, and says so" "1|yes|no" \
       "${rc}|$(grep -q 'its step-up failed partway' <<< "${out}" && echo yes)|$(grep -q 'told s1' <<< "${out}" && echo yes || echo no)"
     rm -f "${ROOT}/startfail"
-    # A step-up that fails before it closes anything, with a status of its own (here handover_brief's
-    # git diff exits 128 under pipefail: the worktree is no longer a git checkout), is a refusal: the
-    # close goes on and counts the attempt.
+    # Its resume writes the brief again with the tell's findings, though the tell's file is gone.
+    mv "${ROOT}/f.md" "${ROOT}/f.keep"; out="$(run step-up --resume s1)" || true; mv "${ROOT}/f.keep" "${ROOT}/f.md"
+    check "a resumed step-up of a tell still pastes its findings" "ok (findings-3: sonnet -> opus)|yes|no" \
+      "$(escalates)|$(grep -qx 'fix it' "${P}/.swarm/briefs/s1.md" && echo yes)|$([[ -e "${P}/.swarm/briefs/s1.findings.md" ]] && echo yes || echo no)"
+    # A step-up that fails before it closes anything, with a status of its own (here git exits 128: the
+    # worktree is no longer a git checkout), is a refusal: the close goes on and counts the attempt.
     fresh "${ladder}" idle; rm -f "${WT}/.git"
     out="$(run close s1)" && rc=0 || rc=$?
     check "a step-up that fails before closing the builder is a refusal: the close goes on" "0|no|1|" \
