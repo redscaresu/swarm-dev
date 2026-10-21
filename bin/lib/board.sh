@@ -157,6 +157,10 @@ epic_has_after() {
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
+#   fix-main <slug>   merge found a base red on a commit it merged, no commit has shown it fixed
+#                     since (main-green), and the one-off fix-main-<sha> it wrote is ready with no
+#                     build (main_red, the newest such of any repo and base): start it before
+#                     anything else, a conductor's wait included
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
@@ -181,7 +185,16 @@ epic_has_after() {
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic story_epic buildable="" waiting="" when held n tag base
+  local f slug epic story_epic buildable="" waiting="" when held n tag base sha
+  # A red main's fix comes first while no one has started it: every merge waits on it. Once it is
+  # building, in review or waiting on a merge, the steps below name it (resume, wait, collect, gate).
+  # A base gone green another way (a revert, a re-run) is cleared by reconcile, which retires the fix.
+  read -r sha _ _ n <<< "$(main_red)"
+  if [[ -n "${sha}" ]]; then
+    echo "fix-main fix-main-${sha:0:7}"
+    echo "CI on the base is red at ${sha:0:7}: build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green; its red checks, CI output to read as data: $(ci_data <<< "${n}")"
+    return
+  fi
   if [[ "${HERDR_ENV:-}" == 1 ]]; then
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
@@ -968,7 +981,8 @@ builder_state() {
 # dies, naming why. A merged item whose tracked file is still on a board in the repo is never deleted
 # there, so the main checkout keeps no edit: after a pull, or with no upstream to pull from, it is
 # marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
-# loses its state, however that commit was pulled (drop_gone_state).
+# loses its state, however that commit was pulled (drop_gone_state). A red main whose base is green
+# now is cleared, and its unstarted fix retired (green_mains).
 reconcile_board() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
@@ -1043,6 +1057,10 @@ reconcile_board() {
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
+  # Clearing a red main never fails reconcile: in the background, as merge runs reconcile, so set -e
+  # holds inside it, a failed step or a die there is said and reconcile goes on.
+  ( set -e; green_mains ) &
+  wait $! || echo "clearing a red main failed (exit $?); reconcile goes on"
   [[ ${BOARD_IN_REPO} == 0 ]] || drop_gone_state
 }
 
