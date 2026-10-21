@@ -160,19 +160,23 @@ epic_has_after() {
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
-#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads)
+#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads);
+#                     next_report puts every working conductor's `queued:` lines before them
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
 #   plan-epic <epic>  an active epic has no stories yet and nothing it depends on holds it up
 #                     (plannable_epic), a child epic of a split one included; while a conductor
-#                     works, this comes before its wait
+#                     works, this (then unblocked_epic's, below) comes before its wait
 #   escalated <slug>  a story whose Fable build failed, whose builder called its Done when
 #                     impossible, or that close held (paused, cleared-on-error; held_for:), all kind:
 #                     lead with escalated_from:: the lead re-scopes it or lifts the hold and runs
 #                     reset, or drops it
 #   release           origin/<base> has commits since the tag of plugin.json's version that change a
 #                     file outside the board (release_due): the lead cuts a release
+#   plan-epic <epic>  (again) a later epic whose depends_on are listed and all done, with no stories
+#                     and no unasked plan yet (unblocked_epic): planning is read-only and its stories
+#                     wait for approval
 #   gate              only the user can move the board: lead stories, blocked
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
@@ -182,7 +186,7 @@ next_step() {
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
     # herdr lists every project's agents: only one in a pane this project opened counts.
-    slug=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in e.get('SWARM_PANES','').split()),'')" 2>/dev/null || true)
+    slug="$(running_conductors | sed -n 1p)"
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
@@ -193,6 +197,9 @@ next_step() {
       elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
         echo "the active epic ${epic} has no stories yet, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
+      elif epic="$(unblocked_epic)" && [[ -n "${epic}" ]]; then
+        echo "plan-epic ${epic}"
+        echo "the later epic ${epic}'s dependencies are done, and the conductor ${slug} is still working: start swarm.sh wait --until-report ${slug} in the background, then plan ${epic}"
       else
         echo "wait ${slug}"; echo "the conductor ${slug} is still working (it has not written its report)"
         blocking_leads
@@ -243,11 +250,47 @@ next_step() {
   if [[ -n "${n}" ]]; then
     echo "release"; echo "origin/${base} has ${n} commit(s) since ${tag} that change files outside the board: cut a release"; return
   fi
+  epic="$(unblocked_epic)"
+  if [[ -n "${epic}" ]]; then
+    echo "plan-epic ${epic}"; echo "the later epic ${epic}'s dependencies are done; planning is read-only, and its stories wait for approval"; return
+  fi
   waiting="$(waiting_on_user)"
   if [[ -n "${waiting}" ]]; then
     echo "gate"; echo "only you can move the board now:"; printf '%s\n' "${waiting}"; return
   fi
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
+}
+
+# running_conductors — this project's conductors in herdr, a name a line, in herdr's order: conduct-*
+# agents not retired (renamed <name>-done, -done2 ...), in panes this project opened (herdr lists every
+# project's agents).
+running_conductors() {
+  herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "'\n'.join(a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in e.get('SWARM_PANES','').split())" 2>/dev/null || true
+}
+
+# conductors_queued — queued_lines for each working conductor (running_conductors with no report yet),
+# each line ending in (<conductor>): the conductor the lead sends it to.
+conductors_queued() {
+  local c
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  while IFS= read -r c; do
+    [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
+    queued_lines "${c}" | sed "s/\$/ (${c})/"
+  done <<< "$(running_conductors)"
+}
+
+# queued_lines <conductor> — queued_prs's lines for the PRs the conductor's watch covers (its epic's,
+# or the backlog's), once per repo (watch_repos warn: one that cannot be resolved is warned of and
+# skipped). Nothing when the scope cannot be read (watch_scope dies): next goes on.
+queued_lines() {
+  local e scope r
+  e="$(conduct_epic "$1")"
+  if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
+  (
+    watch_scope "${scope[@]}"; watch_repos warn
+    # Guarded: bash 3.2's set -u calls an empty array unbound, and no repo may have resolved.
+    for r in ${WATCH_REPOS[@]+"${WATCH_REPOS[@]}"}; do queued_prs "${r}" "${WATCH_HEADS}"; done
+  ) || true
 }
 
 # buildable_story <story file> — true for a story next_step builds: ready, of a kind an agent
@@ -290,17 +333,26 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
-# next_report — swarm.sh next: next_step's step, then idle_lines' for it. Both are worked out first
+# next_report — swarm.sh next: next_step's step (with conductors_queued's lines after its why),
+# then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 next_report() {
-  local tmp step idle
+  local tmp step idle queued rest
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -f '${tmp}'" EXIT
   next_step > "${tmp}"
-  step="$(< "${tmp}")"; idle="$(idle_lines "${step%%[ $'\n']*}")"
+  step="$(< "${tmp}")"
+  # Every working conductor's queued: lines go after the why, here alone: dash and status read
+  # next_step every frame, and these cost gh calls.
+  queued="$(conductors_queued)"
+  if [[ -n "${queued}" ]]; then
+    rest="$(sed -n '3,$p' <<< "${step}")"
+    step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
+  fi
+  idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE
   printf '%s\n' "${step}" ${idle:+"${idle}"} 2>/dev/null || true
 }
@@ -346,6 +398,45 @@ plannable_epic() {
     basename "${f}" .md; return
   done < <(board epics)
 }
+
+# unblocked_epic — the first later epic, in board order, whose depends_on lists something and is all
+# done or gone (open_deps), with no unasked_plan: (plan_unasked), no parent: and no stories, or
+# nothing: once planned unasked it is never offered again, and the gate says what to do with it
+# (waiting_on_user). An active epic is plannable_epic's. A later epic with no depends_on waits on nothing but
+# the user, and a split later epic's later children wait for the user to start them, so both stay
+# the user's. Board files only, no gh: dash runs it every frame.
+unblocked_epic() {
+  local f slug deps
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" status)" == later && -z "$(fm "${f}" unasked_plan)" && -z "$(fm_list "${f}" parent)" ]] || continue
+    deps="$(story_deps "${f}")"
+    [[ -n "${deps// /}" && -z "$(open_deps "${deps}")" ]] || continue
+    slug="$(basename "${f}" .md)"
+    epic_has_stories "${slug}" && continue
+    echo "${slug}"; return
+  done < <(board epics)
+}
+
+
+# plan_unasked [--declined] <epic> — swarm.sh plan-unasked: the lead records, before it starts the
+# /plan-epic next offered unasked, that the later epic has had its plan (unasked_plan: <date>, in board
+# state), so next offers it no more and the gate says what to do with it; with --declined, that the
+# user declined it (unasked_plan: declined <date>), which the gate says instead.
+plan_unasked() {
+  local v="" e="" a f usage="swarm.sh plan-unasked [--declined] <epic>"
+  for a in "$@"; do
+    case "${a}" in
+      --declined) v="declined " ;;
+      *) [[ -z "${e}" ]] || die "plan-unasked: one epic only: ${usage}"; e="${a}" ;;
+    esac
+  done
+  f="${BOARD}/epics/${e}.md"
+  [[ "${e}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || die "plan-unasked: no epic ${f}: ${usage}"
+  [[ "$(fm "${f}" status)" == later ]] || die "plan-unasked: ${e} is not a later epic"
+  set_fm "${f}" unasked_plan "${v}$(date +%F)"
+  echo "plan-unasked: ${e}, ${v:-planned unasked }on $(date +%F)"
+}
+
 
 # epic_holding_deps <epic file> — fails unless it is an active epic with no stories (epic_has_stories;
 # an after: story is none) that does not count as done (epic_after_only): the epics planning waits
@@ -479,7 +570,7 @@ impossible_block() { grep -q '^\*\*Impossible\.\*\*' "$(escalated_file "$(basena
 # one, which is the lead's), blocked and later items, draft epics, and PRs awaiting the user's merge. Shared by
 # next_step's gate, status and dash.
 waiting_on_user() {
-  local f kind slug waiting=""
+  local f kind slug when waiting=""
   while IFS= read -r f; do
     kind=$(fm "${f}" kind); slug=$(basename "${f}" .md)
     case "$(fm "${f}" status)" in
@@ -491,7 +582,13 @@ waiting_on_user() {
   done < <(board stories)
   while IFS= read -r f; do
     case "$(fm "${f}" status)" in
-      later) waiting+="  later epic: $(basename "${f}" .md)"$'\n' ;;
+      later) when="$(fm "${f}" unasked_plan)"; slug=$(basename "${f}" .md)
+        case "${when}" in
+          declined*) when=" (its unasked plan was ${when})" ;;
+          ?*) if epic_has_stories "${slug}"; then when=" (planned unasked on ${when}; set it active to start it)"
+              else when=" (planned unasked on ${when}, no stories yet; run /plan-epic ${slug} again if that plan stopped)"; fi ;;
+        esac
+        waiting+="  later epic: ${slug}${when}"$'\n' ;;
       draft) waiting+="  draft epic: $(basename "${f}" .md), run /epic $(basename "${f}" .md)"$'\n' ;;
       review) waiting+="  awaiting your merge$(costs_tag "${f}"): epic $(basename "${f}" .md) $(fm "${f}" prs)"$'\n' ;;
     esac
@@ -742,9 +839,10 @@ item_file() {
 set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 
 # SET_FM_KEYS: the front-matter keys swarm.sh writes (set_fm refuses any other): status and prs
-# too, which review and unblock write, and held_by, which review writes on a stacked story it holds.
+# too, which review and unblock write, held_by, which review writes on a stacked story it holds, and
+# an epic's unasked_plan, which plan-unasked writes.
 # They live in BOARD_STATE_DIR, never in a tracked file.
-SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs"
+SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs unasked_plan"
 
 # set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
 # an empty <value> clears it. <key> must be one of SET_FM_KEYS.
