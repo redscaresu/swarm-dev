@@ -371,37 +371,56 @@ for v in 1.2.0:"is not greater than '1.2.0' on main" 1.1.9:"is not greater than 
 done
 release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json.main" "${FX}/wf.plugin.json.feature"
 merge --release "${URL}"; refused "--release for a PR into another branch" "goes into feature, not main, the project's base"
-# A release ships its docs: bin/, commands/ or hooks/ changed since the tag needs README.md, AGENTS.md,
-# docs/ or commands/*.md changed too, or a "Docs: none — <reason>" line in the PR body. The board is
-# docs/ here, and its own files (stories, epics, Board.base, .obsidian) are not docs.
+# A release ships its docs: bin/, commands/ or hooks/ changed since origin's tag needs README.md,
+# AGENTS.md, docs/ or commands/*.md changed too, or a "Docs: none — <reason>" line in the PR body.
+# The board is docs/ here, and none of it counts as docs: not its stories, Board.base or hld/.
 commit() { # <file>... — a commit on main that changes each file, pushed to origin
   local f; for f in "$@"; do mkdir -p "$(dirname "${P}/${f}")"; echo x >> "${P}/${f}"; git -C "${P}" add -f "${f}"; done
   git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "$*"; git -C "${P}" push -q origin HEAD:refs/heads/main
 }
 retag() { git -C "${P}" tag -f v1.2.0 >/dev/null; git -C "${P}" push -q -f origin v1.2.0; } # v1.2.0 on main's head
-commit bin/x.sh docs/stories/x.md docs/epics/x.md docs/Board.base docs/.obsidian/app.json
-release_pr; merge --release "${URL}"; refused "--release with bin/ and board files changed and no docs" "bin/x.sh changed since v1.2.0 but README.md, AGENTS.md, docs/ and commands/*.md did not"
-release_pr; printf '%s\n' '"Bumps the version.\r\nDocs: none — a typo in a comment\r\n"' > "${FX}/body"; merge --release "${URL}"
-is "--release with bin/ changed and a Docs: none line: exits 0" 0 "${rc}"
-for b in 'Docs: none' 'Docs: none \u2014\r\nmore' 'Docs: none \u2014 \r\nmore' 'Docs: none --' 'Docs: none -- '; do
+commit bin/x.sh docs/stories/x.md docs/Board.base docs/hld/x.md docs/reference.md
+release_pr; merge --release "${URL}"; refused "--release with bin/ and only board files changed" "bin/x.sh changed since v1.2.0 but README.md, AGENTS.md, docs/ and commands/*.md did not"
+check "--release's refusal says the forms a Docs: none line takes" said "a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet"
+for b in 'Bumps the version.\r\nDocs: none \u2014 a typo in a comment\r\n' '- Docs: none -- only tests changed' '* Docs: none - a comment'; do
+  release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
+  is "--release with bin/ changed and '${b}': exits 0" 0 "${rc}"
+done
+for b in 'Docs: none' 'Docs: none \u2014\r\nmore' 'Docs: none \u2014 \r\nmore' 'Docs: none --' 'Docs: none -- ' \
+  'Docs: none \u2014 <reason>' 'Docs: none - -' 'Docs: none \u2014 x' '  Docs: none \u2014 indented'; do
   release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
   refused "--release with '${b}' and no reason" "bin/x.sh changed since v1.2.0"
 done
 release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
-merge --release "${URL}"; refused "--release with no tag for the base's version" "no v1.2.5 tag on origin to compare against: tag main's last release v1.2.5, or put a 'Docs: none — <reason>' line in the PR body"
+merge --release "${URL}"; refused "--release with no tag for the base's version" "no v1.2.5 tag on origin to compare against: tag main's last release v1.2.5, or give the PR body a line 'Docs: none — '"
 # v1.2.5 on a commit that is not on main.
 git -C "${P}" tag v1.2.5 "$(git -C "${P}" -c user.name=t -c user.email=t@t commit-tree -m side "HEAD^{tree}")"; git -C "${P}" push -q origin v1.2.5
 release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
 merge --release "${URL}"; refused "--release with the base's tag off the base" "the tag v1.2.5 is not on origin/main"
-commit docs/reference.md
-release_pr; merge --release "${URL}"
-is "--release with bin/ and docs/reference.md under the board's docs/ changed: exits 0" 0 "${rc}"
+# origin's tag is read, never fetched over the local one.
+git -C "${P}" tag -f v1.2.0 HEAD >/dev/null; local_tag="$(git -C "${P}" rev-parse v1.2.0)"
+release_pr; merge --release "${URL}"; refused "--release with a local tag that differs from origin's" "bin/x.sh changed since v1.2.0"
+is "--release leaves the local tag where it was" "${local_tag}" "$(git -C "${P}" rev-parse v1.2.0)"
+# With the board elsewhere, docs/ counts.
+release_pr; echo "board_dir = board" >> "${P}/.claude/swarm/config"; mkdir -p "${P}/board/stories"; merge --release "${URL}"
+is "--release with the board in board/ and docs/ changed: exits 0" 0 "${rc}"
+retag; commit hooks/x.sh
+release_pr; merge --release "${URL}"; refused "--release with only hooks/ changed" "hooks/x.sh changed since v1.2.0"
+retag; commit commands/x.sh
+release_pr; merge --release "${URL}"; refused "--release with only a non-.md file under commands/ changed" "commands/x.sh changed since v1.2.0"
 retag; commit commands/x.md
 release_pr; merge --release "${URL}"
 is "--release with only commands/*.md changed: exits 0" 0 "${rc}"
 retag; commit hooks/x.sh README.md
 release_pr; merge --release "${URL}"
 is "--release with hooks/ and README.md changed: exits 0" 0 "${rc}"
+# An annotated v1.2.0 made in another clone, whose tag object a --no-tags checkout never fetches.
+git clone -q "${ROOT}/origin.git" "${ROOT}/other"; git -C "${P}" config remote.origin.tagOpt --no-tags
+git -C "${ROOT}/other" -c user.name=t -c user.email=t@t tag -a -f -m v1.2.0 v1.2.0 >/dev/null; git -C "${ROOT}/other" push -q -f origin v1.2.0
+commit bin/y.sh README.md
+release_pr; merge --release "${URL}"
+is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
+git -C "${P}" config --unset remote.origin.tagOpt
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 

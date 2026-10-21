@@ -33,6 +33,9 @@ the run stops whenever a decision is yours.
    for the one before it to merge ([details](docs/reference.md#merging)). The hook also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
    `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
+   `swarm.sh merge --release` refuses a version bump while `bin/`, `commands/` or `hooks/` changed
+   since the last tag and README.md, AGENTS.md, `docs/` and `commands/*.md` did not. The lead lands a docs PR first, or, when nothing a user sees changed,
+   writes `Docs: none — <why>` in the release PR body ([details](docs/reference.md#releases)).
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those

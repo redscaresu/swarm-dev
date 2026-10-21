@@ -1125,10 +1125,13 @@ repo and go into its base, and it may change only `"version"` in `.claude-plugin
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
 greater than the base's. When `bin/`, `commands/` or `hooks/` changed between the tag
 `v<base version>` and the base but README.md, AGENTS.md, `docs/` and `commands/*.md` did not, it
-refuses and names the changed paths, unless the PR body has a `Docs: none — <reason>` line. A change
-to `commands/*.md` counts as docs too, since that is the text a user reads. The board's own files
-(stories, epics, `Board.base`, `.obsidian/`) are not docs, even when the board is `docs/`. It also
-refuses when the tag is missing, cannot be fetched or is not on the base. No story or epic need list it.
+refuses and names the changed paths, unless the PR body has a `Docs: none — <reason>` line. That
+line may be a `- ` or `* ` list item and may use `-` or `--` for the dash. The reason must be at
+least two characters, and a placeholder such as `<reason>` does not count. A change to
+`commands/*.md` counts as docs too, since that is the text a user reads. Nothing on the board counts
+as docs, so when the board is `docs/`, only README.md, AGENTS.md and `commands/*.md` do. It compares
+against origin's tag by its SHA and never fetches over your local tag. It refuses when origin has no
+such tag or the tag is not on the base. No story or epic need list it.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
@@ -1254,7 +1257,9 @@ release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugi
 outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR
 from `release/v<new>` that bumps only that file, to the next minor version (a patch when every
 change since the tag is a fix), and lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
-every behaviour change since the tag, and the release PR names it. With `merge = agent` the
+every behaviour change since the tag, and the release PR names it. When nothing since the tag
+changes what a user runs, sees or has to do, a `Docs: none — <why>` line in the release PR body
+stands in for the docs PR. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 
