@@ -12,12 +12,16 @@ import json, socket, sys, time
 from contextlib import closing
 
 SETTLED = ("idle", "blocked", "done")
+# DONE: what ends the wait.
+DONE = SETTLED + ("gone",)
 # REPLY_S: how long herdr has to accept the connection and answer a request.
 REPLY_S = 5
-# GONE: agent.get's error for a pane herdr cannot find.
+# GONE: agent.get's error for a pane herdr cannot find; SUB_GONE: events.subscribe's, for a pane that
+# closed before the subscription.
 GONE = "agent_not_found"
-# RECHECK_S: how long after a settle event that agent.get does not yet show it is read again.
-RECHECK_S = 0.5
+SUB_GONE = "pane_not_found"
+# RECHECK_S: how often agent.get is read again while it does not show a settle event (it can lag one).
+RECHECK_S = 1
 # TIMED_OUT: the exit code at the timeout.
 TIMED_OUT = 3
 
@@ -75,35 +79,47 @@ def status(path, pane, deadline):
     return reply["result"]["agent"]["agent_status"]
 
 
-def recheck(path, pane, deadline, said):
-    """The agent's status after an event said <said>: agent.get, and once more after RECHECK_S when it
-    does not agree, since agent.get can lag the event. An event queued before an earlier read may be
-    stale (idle, then working again), so a read that still disagrees wins. A read cut off by the
-    deadline leaves the event's word."""
+def by_deadline(deadline, late, fn, *args):
+    """fn(*args), or <late> when the deadline cuts herdr's answer off. A timeout before the deadline is
+    herdr too slow to answer, not the wait over, so it is raised: the caller polls instead."""
     try:
-        now = status(path, pane, deadline)
-        if now not in SETTLED + ("gone",):
-            time.sleep(min(RECHECK_S, left(deadline)))
-            now = status(path, pane, deadline)
-        return now
+        return fn(*args)
     except socket.timeout:
         if time.monotonic() < deadline:
             raise
-        return said
+        return late
 
 
 def watch(path, pane, deadline):
     subs = [{"type": "pane.agent_status_changed", "pane_id": pane}, {"type": "pane.closed"}, {"type": "pane.exited"}]
     stream, ack = request(path, {"id": "swarm-wait", "method": "events.subscribe", "params": {"subscriptions": subs}}, deadline)
     with closing(stream):
+        if ack.get("error", {}).get("code") == SUB_GONE:
+            return "gone"
         if "result" not in ack:
             raise OSError(ack.get("error"))
+        # said: the last settle event, while agent.get does not show it. An event queued before a read
+        # may be stale (idle, then working again), so agent.get decides, read again every RECHECK_S
+        # until it agrees, a later event says otherwise, or the deadline passes, when the event's
+        # word stands if agent.get has not answered.
+        said = None
+
+        def confirm():
+            return by_deadline(deadline, said, status, path, pane, deadline)
+
         now = status(path, pane, deadline)
         # Other panes' close and exit events keep the stream busy, so the deadline is checked, not only
         # the read's timeout.
-        while now not in SETTLED + ("gone",) and time.monotonic() < deadline:
+        while now not in DONE and time.monotonic() < deadline:
             try:
-                ev = json.loads(stream.read(deadline))
+                line = stream.read(min(deadline, time.monotonic() + RECHECK_S) if said else deadline)
+            except socket.timeout:
+                if not said or time.monotonic() >= deadline:
+                    raise
+                now = confirm()
+                continue
+            try:
+                ev = json.loads(line)
             except ValueError:
                 continue   # a blank line (herdr's keepalive) or one that is not JSON
             data = ev.get("data") if isinstance(ev, dict) else None
@@ -113,18 +129,15 @@ def watch(path, pane, deadline):
             kind = "pane." + kind[5:] if kind.startswith("pane_") else kind
             if kind in ("pane.closed", "pane.exited"):
                 return "gone"
-            if kind == "pane.agent_status_changed" and data.get("agent_status") in SETTLED:
-                now = recheck(path, pane, deadline, data["agent_status"])
-        return now if now in SETTLED + ("gone",) else None
+            if kind == "pane.agent_status_changed":
+                said = data.get("agent_status") if data.get("agent_status") in SETTLED else None
+                if said:
+                    now = confirm()
+        return now if now in DONE else None
 
 
 def wait(path, pane, deadline):
-    try:
-        return watch(path, pane, deadline)
-    except socket.timeout:
-        if time.monotonic() < deadline:
-            raise   # herdr is slow to answer, not the wait over: poll instead
-        return None
+    return by_deadline(deadline, None, watch, path, pane, deadline)
 
 
 if __name__ == "__main__":

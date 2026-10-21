@@ -47,10 +47,11 @@ chmod +x "${ROOT}/herdr"
 # event and then mode's: blocked (pane.agent_status_changed, agent.get blocked from then on), closed
 # (pane_closed, the lifecycle envelope), stale (an idle event from before agent.get, which still says
 # working), noise (lines that are no event, then blocked), junk (a blank line and one that is not
-# JSON, then blocked), lag (blocked, though the next agent.get still says working) or slowget
+# JSON, then blocked), lag and lag3 (blocked, though the next one or three agent.get reads still say
+# working) or slowget
 # (blocked, though no agent.get after the first answers), drop (the stream ends) or silent (nothing). Mode vanish has agent.get find no pane (herdr's agent_not_found): it closed after the
-# subscription. Mode refuse answers the subscription with an error, as herdr does for an unknown
-# pane. Mode dribble sends the subscription's reply a byte every tenth of a second.
+# subscription. Mode refuse answers the subscription with an error; mode gonefirst with herdr's
+# pane_not_found, for a pane that closed before it. Mode dribble sends the subscription's reply a byte every tenth of a second.
 cat > "${ROOT}/server.py" <<'EOF'
 import json, os, socketserver, sys, time
 path, mode = sys.argv[1], sys.argv[2]
@@ -73,6 +74,9 @@ class H(socketserver.StreamRequestHandler):
             out({"id": req["id"], "result": {"agent": {"pane_id": "w:7", "agent_status": agent["status"]}}})
             return
         if mode == "refuse":
+            out({"id": req["id"], "error": {"code": "invalid_request", "message": "invalid request"}})
+            return
+        if mode == "gonefirst":
             out({"id": req["id"], "error": {"code": "pane_not_found", "message": "pane w:7 not found"}})
             return
         if mode == "dribble":
@@ -90,8 +94,8 @@ class H(socketserver.StreamRequestHandler):
             out({"id": "late", "result": {}}); out({"event": "keepalive"}); out([])
         if mode == "junk":
             self.wfile.write(b"\nnot json\n")
-        if mode in ("blocked", "noise", "junk", "lag", "slowget"):
-            agent["status"], agent["lag"] = "blocked", 1 if mode == "lag" else 0
+        if mode in ("blocked", "noise", "junk", "lag", "lag3", "slowget"):
+            agent["status"], agent["lag"] = "blocked", {"lag": 1, "lag3": 3}.get(mode, 0)
             out({"event": "pane.agent_status_changed", "data": {"pane_id": "w:7", "workspace_id": "w", "agent_status": "blocked"}})
         elif mode == "closed":
             out({"event": "pane_closed", "data": {"type": "pane_closed", "pane_id": "w:7", "workspace_id": "w"}})
@@ -111,12 +115,12 @@ p="${ROOT}/proj"; mkdir -p "${p}/.claude/swarm" "${p}/.swarm/state"; : > "${p}/.
 echo "w:7 cx" > "${p}/.swarm/state/wait-cx"   # this project's agent cx, in a pane it recorded
 # wait_cx [<socket>] [<ms>] — "<stdout>|<polls>|<seconds>": wait on cx for <ms> (two minutes) in
 # slices of SLICE ms (a minute), with HERDR_SOCKET_PATH set to <socket> or unset, and PRE, when set,
-# first on PATH. Its exit code goes to ${ROOT}/rc.
+# first on PATH. Its exit code goes to ${ROOT}/rc, its stderr to ${ROOT}/stderr.
 wait_cx() {
   local t0=${SECONDS} out
   : > "${ROOT}/herdr.log"
   out="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_SOCKET_PATH ${1:+HERDR_SOCKET_PATH="$1"} HERDR_ENV=1 \
-    SWARM_STALL_POLL_MS="${SLICE:-60000}" PATH="${PRE:+${PRE}:}${ROOT}:${PATH}" bash "${SWARM}" wait cx "${2:-120000}" 2>/dev/null)" \
+    SWARM_STALL_POLL_MS="${SLICE:-60000}" PATH="${PRE:+${PRE}:}${ROOT}:${PATH}" bash "${SWARM}" wait cx "${2:-120000}" 2>"${ROOT}/stderr")" \
     && echo 0 > "${ROOT}/rc" || echo $? > "${ROOT}/rc"
   echo "${out}|$(grep -c '^agent wait' "${ROOT}/herdr.log" || true)|$((SECONDS - t0))"
 }
@@ -162,6 +166,9 @@ check "a blank line and one that is not JSON on the stream are skipped: wait ret
 serve lag
 check "agent.get lags a blocked event: wait reads it again and returns blocked, without a poll" \
   "blocked|0" "$(quick "$(wait_cx "${SOCK}" 3000)")"
+serve lag3
+check "agent.get lags a blocked event by three reads: wait keeps reading it and returns blocked, without a poll" \
+  "blocked|0" "$(quick "$(wait_cx "${SOCK}" 6000)")"
 serve slowget
 check "agent.get after a blocked event answers only past the deadline: wait returns blocked, not a timeout" \
   "blocked|0" "$(quick "$(wait_cx "${SOCK}" 2000)")"
@@ -184,6 +191,9 @@ serve drop
 out="$(wait_cx "${SOCK}")"; ms="$(sed -n 's/^agent wait .*--timeout \([0-9]*\).*/\1/p' "${ROOT}/herdr.log")"
 check "the stream ends mid-slice: wait polls herdr agent wait for what is left of the slice" \
   "idle|1 short" "$(quick "${out}") $([[ -n "${ms}" && ${ms} -lt 60000 ]] && echo short || echo "full (${ms})")"
+serve gonefirst
+check "the pane closes before the subscription (pane_not_found): wait returns gone, without a poll" \
+  "gone|0" "$(quick "$(wait_cx "${SOCK}")")"
 serve refuse
 check "a stream that refuses the subscription: wait polls herdr agent wait, as before" "idle|1" "$(quick "$(wait_cx "${SOCK}")")"
 check "no socket: wait polls herdr agent wait, as before" "idle|1" "$(quick "$(wait_cx)")"
@@ -195,6 +205,8 @@ rm -f "${ROOT}/garbled"; touch "${ROOT}/slowfail"
 SLICE=1000 wait_cx "" 2500 >/dev/null; ms="$(sed -n 's/^agent wait .*--timeout \([0-9]*\).*/\1/p' "${ROOT}/herdr.log" | tail -1)"
 check "a step that fails for real after 0.8 s: the last step waits only what is left, so the wait keeps to its timeout" \
   "short" "$([[ -n "${ms}" && ${ms} -le 1700 ]] && echo short || echo "long (${ms})")"
+check "the wait that fails after a step failed for real says why: that step's herdr error" \
+  "kept" "$(grep -q 'herdr failed' "${ROOT}/stderr" && echo kept || echo "lost: $(tr '\n' ' ' < "${ROOT}/stderr")")"
 rm -f "${ROOT}/slowfail"
 kill "${server}"; wait "${server}" 2>/dev/null || true; server=""   # its socket file stays behind
 check "a socket nothing listens on any more: wait polls herdr agent wait, as before" "idle|1" "$(quick "$(wait_cx "${SOCK}")")"

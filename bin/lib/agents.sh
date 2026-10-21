@@ -965,15 +965,15 @@ herdr_events() {
 # step, its stderr in <err>. Prints the agent's state and succeeds; fails with 1 when the step timed
 # out, and 2 when herdr failed or answered with no agent status.
 herdr_step() {
-  local target="$1" ms="$2" err="$3" out rc=0
+  local target="$1" ms="$(($2 > 1 ? $2 : 1))" err="$3" out rc=0
   : > "${err}"
-  out="$(herdr_events "${target}" "$((ms > 1 ? ms : 1))")" || rc=$?
+  out="$(herdr_events "${target}" "${ms}")" || rc=$?
   case "${rc}" in
     0) echo "${out}"; return 0 ;;
     3) return 1 ;;
   esac
   [[ ! "${out}" =~ ^[0-9]+$ ]] || ms="${out}"   # what herdr_events.py left of the step
-  if out="$(herdr agent wait "${target}" --timeout "$((ms > 1 ? ms : 1))" 2>"${err}")"; then
+  if out="$(herdr agent wait "${target}" --timeout "${ms}" 2>"${err}")"; then
     json "d['result']['agent']['agent_status']" <<< "${out}" && return 0
     return 2
   fi
@@ -986,15 +986,16 @@ herdr_step() {
 # in STALL_POLL_MS steps. With <since>, between steps an agent stalled since then (agent_stalled)
 # ends the wait with "stalled: ...", and so does a pane quiet for stall_minutes (pane_check, then
 # pane_quiet). A step that fails other than by timing out ends the stepping, and the last step, for
-# what is left of <timeout-ms>, then fails as one unbroken wait does: 1, with herdr's stderr.
+# what is left of <timeout-ms>, then fails as one unbroken wait does: 1, with herdr's stderr from the
+# step that failed (why) and the last.
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end pane_kind="" pane_at=""
+  local target="$1" name="$2" left="$3" since="${4:-}" err min state rc end why="" pane_kind="" pane_at=""
   end=$(($(now_ms) + left))
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
     rc=0; herdr_step "${target}" "${STALL_POLL_MS}" "${err}" || rc=$?
     [[ ${rc} -ne 0 ]] || { rm -f "${err}"; return 0; }
-    [[ ${rc} -eq 1 ]] || { left=$((end - $(now_ms))); break; }
+    [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
@@ -1002,7 +1003,7 @@ herdr_wait() {
     pane_check "${name}" "${target}"
     if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
   done
-  rc=0; herdr_step "${target}" "${left}" "${err}" || { rc=1; cat "${err}" >&2; }
+  rc=0; herdr_step "${target}" "${left}" "${err}" || { rc=1; [[ -z "${why}" ]] || echo "${why}" >&2; cat "${err}" >&2; }
   rm -f "${err}"; return "${rc}"
 }
 
