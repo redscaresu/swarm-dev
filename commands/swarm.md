@@ -87,7 +87,16 @@ Repeat until a step below says stop:
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
 
-     Once both waits are running, take each `also: lead <slug> blocks <slugs>` line after the why
+     Once both waits are running, send each
+     `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why
+     to the conductor it names: write the line to a file and run `swarm.sh tell <conductor> note <file>`.
+     That PR has been green and mergeable for `queue_minutes` with no review agent on that head, and
+     the note tells the conductor to start its review now. `tell` records the head as sent, and `next`
+     leaves out a head already sent (by you, or by the conductor's own `watch`), so each line comes once.
+     `next` prints these lines after the why of any step while conductors work (a `collect` or
+     `plan-epic` too, one line per PR of every working conductor): send them the same way.
+
+     Then take each `also: lead <slug> blocks <slugs>` line after the why
      and run that lead story while the wait runs: the stories it names stay blocked until it is
      done, and no conductor builds it. Tell the user, as the gate does, that you will run it once
      they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land
@@ -161,6 +170,13 @@ Repeat until a step below says stop:
      (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
+     When its why says a `later` epic's dependencies are done (offered before the gate), run it
+     unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`, so `next` offers it no more:
+     the gate lists it as planned unasked, and with no stories yet says to run `/plan-epic <epic>`
+     again if that plan stopped (a login expired, a pane closed). If the user declines it,
+     run `swarm.sh plan-unasked --declined <epic>`, so the gate says that instead. Approving its stories stays the user's, unless the user named
+     the epic as pre-approved (in the brief or in chat). Its stories, or its child epics (kept
+     `later`), then wait in the gate until the user starts it.
      When `next`'s why names a conductor that is still working, start
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
