@@ -14,7 +14,7 @@ the run stops whenever a decision is yours.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swarm-flow-dark.png">
-  <img alt="How the swarm builds a design: /hld, /swarm-dev:swarm, /plan-hld, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
+  <img alt="How the swarm builds a design: /epic, /swarm-dev:swarm, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
 1. **Design.** You write a draft epic with a co-author agent (`/epic`): the problem with its
@@ -29,7 +29,7 @@ the run stops whenever a decision is yours.
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
    session, so merges go through `swarm.sh merge`. It also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
-   `reset --hard` in the main checkout.
+   `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those

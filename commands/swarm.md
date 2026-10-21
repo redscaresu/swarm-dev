@@ -1,5 +1,5 @@
 ---
-description: Start here. Runs the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
+description: Start here. Runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
@@ -212,7 +212,7 @@ Repeat until a step below says stop:
      opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. Stop.
-   - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories
+   - `done`: say so and stop. If this finds no file (`find <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
      about five lines (an epic written with you, split into stories, built by
      agents in panes, and where it stops for you: approvals, `lead` stories, merges) and suggest
