@@ -6,3 +6,6 @@ lessons_file = AGENTS.md
 lead = session
 # The conductor merges its own green, reviewed PRs through swarm.sh merge (head pinned) and keeps going.
 merge = agent
+# One in four easy, low-risk code stories builds on Sonnet (user, 2026-10-22: run sonnet-share-on here,
+# compare after 20 Sonnet builds). Stop early: two Sonnet builds in a row that miss a green, reviewed PR set it to 0.
+sonnet_share = 4
