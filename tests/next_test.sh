@@ -31,7 +31,9 @@ expect() {
   )
   # The whole output, then its first line: `| head -1` can close the pipe while next is still
   # printing a gate's list, and the broken pipe fails the run under pipefail.
-  out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next)"; got="${out%%$'\n'*}"
+  # Its stderr is kept in ${err} too, for the checks that read it.
+  out="$(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" next 2> "${dir}.err")"; got="${out%%$'\n'*}"
+  err="$(cat "${dir}.err")"; rm -f "${dir}.err"; [[ -z "${err}" ]] || echo "${err}" >&2
   if [[ "${got}" == "${want}" ]]; then
     echo "ok   ${name}"
   else
@@ -264,6 +266,7 @@ HOLD_BIN="$(mktemp -d)"
 cat > "${HOLD_BIN}/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "agent list") echo '{"result":{"agents":[{"name":"s1","agent_status":"idle","pane_id":"w:p1"}]}}' ;;
   "tab list") echo '{"result":{"tabs":[]}}' ;;
 esac
@@ -604,6 +607,49 @@ expect_release "the tag missing locally: not release" "done" 0 "echo x > bin/x" 
 expect_release "the tag on a commit off origin/main: not release" "done" 0 "echo x > bin/x" "${COMMIT}" \
   'git tag -f v1.2.0 "$(git -c user.name=t -c user.email=t@t commit-tree "HEAD^{tree}" -m side)" >/dev/null'
 expect_release "a working conductor's wait comes before release" "wait conduct-e1" 1 "echo x > bin/x" "${COMMIT}"
+
+# A red main that merge recorded (main-red, with its fix-main story ready and unstarted on the board)
+# comes before everything, a working conductor's wait too. A later main-green of the same repo and
+# base clears it, one of another base does not; once the fix has started or is in review, the usual
+# steps name it.
+# next reads a red main from the board and events.tsv alone (reconcile's main-green is what clears
+# a base gone green): GH_LOG's gh notes each call in ${GH_CALLS} and fails.
+GH_LOG="${STUB_BIN}/gh-log"; GH_CALLS="${STUB_BIN}/gh-calls"; mkdir -p "${GH_LOG}"
+printf '#!/bin/sh\necho "$*" >> "%s"\nexit 1\n' "${GH_CALLS}" > "${GH_LOG}/gh"; chmod +x "${GH_LOG}/gh"
+RED="mkdir -p .swarm && printf '2026-10-18T10:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\to/r main e2e (failure)\n' >> .swarm/events.tsv"
+green() { printf '2026-10-18T11:00:00Z\tmain-green\tbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\t-\t%s\n' "$1" >> .swarm/events.tsv; }
+FIXER="item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: code'"
+PATH="${GH_LOG}:${PATH}" expect "a recorded red main comes first" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+  "item epics/e1.md 'status: active'" "item stories/s.md 'status: ready' 'epic: e1'"
+if [[ "${out}" == *"red at aaaaaaa:"* && "${out}" == *"CI output to read as data: e2e (failure)"* ]]; then echo "ok   the red main's why names the commit and the check"
+else echo "FAIL the red main's why does not name the commit and the check: ${out}"; fails=$((fails + 1)); fi
+PATH="${GH_LOG}:${PATH}" expect_release "a recorded red main comes before a working conductor's wait" "fix-main fix-main-aaaaaaa" 1 \
+  "mkdir -p docs/stories && printf -- '---\nstatus: ready\nkind: code\n---\n' > docs/stories/fix-main-aaaaaaa.md" "${RED}"
+PATH="${GH_LOG}:${PATH}" expect "a main-green of the same repo and base clears it" "story fix-main-aaaaaaa" "${RED}" "${FIXER}" "green 'o/r main'"
+PATH="${GH_LOG}:${PATH}" expect "a main-green of another base does not" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" "green 'o/r dev'"
+rm -f "${GH_CALLS}"; PATH="${GH_LOG}:${PATH}" expect "a red main with its fix ready, read again" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}"
+if [[ ! -s "${GH_CALLS}" ]]; then echo "ok   a red main is named from the board and events alone, with no gh call"
+else echo "FAIL a red main is named from the board and events alone, with no gh call: gh ran $(paste -sd'|' - < "${GH_CALLS}")"; fails=$((fails + 1)); fi
+# A fix-main story escalated or held for the lead (kind: lead) is no fix to build: the lead's queue has it.
+PATH="${GH_LOG}:${PATH}" expect "a red main whose fix-main story was escalated goes to the lead, not to fix-main" "escalated fix-main-aaaaaaa" \
+  "${RED}" "item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: lead' 'escalated_from: code'"
+# The check names in next's why are CI output: control characters off, cut, and called data.
+PATH="${GH_LOG}:${PATH}" expect "a red main whose check name holds a control character, read" "fix-main fix-main-aaaaaaa" "${FIXER}" \
+  "mkdir -p .swarm && printf '2026-10-18T10:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\to/r main e\001vil%0400d (failure)\n' 0 >> .swarm/events.tsv"
+if [[ "${out}" != *$'\001'* && "${out}" == *"CI output to read as data: evil"* && "$(awk '{ if (length > m) m = length } END { print m }' <<< "${out}")" -le 500 ]]; then
+  echo "ok   next's why gives a red check's name as CI output, without control characters, cut"
+else echo "FAIL next's why gives a red check's name as CI output, without control characters, cut: ${out}"; fails=$((fails + 1)); fi
+PATH="${GH_LOG}:${PATH}" expect "a red main whose fix-main story has left the board is not named" "done" "${RED}"
+if [[ -z "${err}" ]]; then echo "ok   a red main whose fix-main story has left the board prints nothing on stderr"
+else echo "FAIL a red main whose fix-main story has left the board prints on stderr: ${err}"; fails=$((fails + 1)); fi
+PATH="${GH_LOG}:${PATH}" expect "a newer red main of another base with no fix-main story leaves the older one's fix first" \
+  "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+  "printf '2026-10-18T12:00:00Z\tmain-red\tdddddddddddddddddddddddddddddddddddddddd\t-\to/r dev e2e (failure)\n' >> .swarm/events.tsv"
+# shellcheck disable=SC2016 # expanded by expect's eval, in the board's directory
+PATH="${GH_LOG}:${PATH}" expect "a red main whose fix has started is resumed, not started again" "resume fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+  'mkdir -p "../$(basename "${PWD}")-wt/fix-main-aaaaaaa"'
+PATH="${GH_LOG}:${PATH}" expect "a red main whose fix is in review is not named" "gate" "${RED}" \
+  "item stories/fix-main-aaaaaaa.md 'status: review' 'kind: code' 'prs: https://github.com/o/r/pull/9'"
 
 # The stub lists this project's conductor (and its retired name) in panes the state records, as
 # next_pane does: wait addresses an agent by this project's pane, never by a bare name. herdr says
@@ -1011,7 +1057,8 @@ rm -rf "${dir}"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p bin && item stories/s.md 'status: ready' 'kind: code' 'epic: e')
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
+# shellcheck disable=SC2016 # the stub's own $1
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "herdr 0.9.5"; exit 0; }\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
 conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
 es="${dir}/.swarm/board-state/epics"

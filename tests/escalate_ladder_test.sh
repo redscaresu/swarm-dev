@@ -40,6 +40,7 @@ cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
 next() { n=$(($(cat "$H/n" 2>/dev/null || echo 10) + 1)); echo "$n" > "$H/n"; }
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "tab create")   [ ! -e "$H/tabfail" ] || { echo '{"error":{"code":"tab_failed"}}' >&2; exit 1; }
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
@@ -249,7 +250,8 @@ check "an origin whose default branch cannot be read stops it too, with the rung
   "${rc}|$(has "origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume w1" "${out}")|$(starts)|$([[ -e "${P}/.swarm/briefs/w1.step-up" ]] && echo kept)"
 mv "${ROOT}/origin.gone" "${ROOT}/origin.git"
 out="$(run step-up --resume w1)" && rc=0 || rc=$?
-check "once cleared, --resume writes the brief and starts the rung" "0|yes|code opus high" "${rc}|$(has "Implement docs/stories/w1.md" "$(cat "${P}/.swarm/briefs/w1.md" 2>/dev/null)")|$(newest w1)"
+# w1 is untracked here, so its brief names it by its full path (story_path); either form names w1.
+check "once cleared, --resume writes the brief and starts the rung" "0|yes|code opus high" "${rc}|$(has "stories/w1.md (this worktree is proj)" "$(cat "${P}/.swarm/briefs/w1.md" 2>/dev/null)")|$(newest w1)"
 
 # m1 was stacked on p2, whose PR has since squash-merged into main (its change on main under another
 # commit), and main moved on. The diff is against origin/main with the branch merged in: m1's own

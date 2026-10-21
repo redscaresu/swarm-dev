@@ -68,6 +68,16 @@ Repeat until a step below says stop:
      user's to start, as the gate lists them. Declined out-of-scope findings are the swarm's list of
      follow-ups, so you need not keep them in memory.
 2. Do the step:
+   - `fix-main <slug>`: `swarm.sh merge` found CI on the base red on a commit it merged, printed
+     `fix-main:` with the failed jobs' FAIL lines, and wrote the one-off story `<slug>` with them.
+     `next` names this step only while `<slug>` is ready and nobody has started it. Merge nothing
+     else until `<slug>` merges and the base is green, and never wait on an unrelated PR to fix it.
+     If a conductor is still working (`swarm.sh status` lists one with no report), write a note
+     telling it to start `<slug>` at once, ahead of every other story, send it with
+     `swarm.sh tell <conductor> note <file>` (once: skip it if you already sent that note), and
+     handle the step as `wait <conductor>`. Otherwise handle it as `story <slug>`. Once its build
+     has started, `next` names the usual steps for it: `resume`, `wait`, or the gate with its PR
+     waiting on a merge.
    - `wait <agent>`: a conductor is working. Run `swarm.sh wait --until-report <agent>` in the
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns

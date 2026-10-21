@@ -136,6 +136,7 @@ cat >> "${ROOT}/bin/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
 next() { n=$(($(cat "$H/n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/n"; }
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "workspace list")   echo '{"result":{"workspaces":[]}}' ;;
   "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
   "tab create")       next; label=$(echo "$*" | sed 's/.*--label \([^ ]*\).*/\1/')

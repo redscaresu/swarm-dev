@@ -37,6 +37,7 @@ cat >> "${ROOT}/bin/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
 next() { n=$(($(cat "$H/n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/n"; }
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "workspace list")   echo '{"result":{"workspaces":[]}}' ;;
   "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
   "tab create")       next; echo "t$n $(echo "$*" | sed 's/.*--label \([^ ]*\).*/\1/')" >> "$H/tabs"
@@ -128,8 +129,9 @@ bl="$(cat "${brief}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog conductor waits on its own one-off's merge, as an epic's does, unless it costs money" "yes" \
   "$(has 'If the refusal ends `(costs money)`, only the user merges the named story, maybe days later: do not wait for it, and report yours as `not started: <slug> (waits on <other>'"'"'s merge)`.' "${bl}")"
-check "with merge = agent, the backlog conductor also stops when CI on the base is red or timed out" "yes" \
-  "$(has 'that you may start is left and none is running, or when CI on the base is red or timed out.' "${bl}")"
+# shellcheck disable=SC2016 # the backticks are the brief's
+check "with merge = agent, the backlog conductor also stops when CI on the base timed out or is red with no fix-main line" "yes|yes" \
+  "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")|$(has 'On `fix-main`, start its builder at once' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
   "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
