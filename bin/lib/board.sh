@@ -582,12 +582,12 @@ open_parents() {
   printf '%s' "${out# }"
 }
 
-# open_pr <repo-dir> <slug> — the URL of the open PR on story/<slug> in the repo's origin; fails when
-# there is none or gh cannot tell.
+# open_pr <repo-dir> <slug> — the URL of the open PR on story/<slug> in the repo's origin; fails (1)
+# when there is none, or no origin, and (2) when gh cannot tell.
 open_pr() {
   local url pr
   url="$(git -C "$1" remote get-url origin 2>/dev/null)" || return 1
-  pr="$(gh pr list -R "${url}" --head "story/$2" --state open --json url --jq '.[0].url // empty' </dev/null 2>/dev/null)" || return 1
+  pr="$(gh pr list -R "${url}" --head "story/$2" --state open --json url --jq '.[0].url // empty' </dev/null 2>/dev/null)" || return 2
   [[ -n "${pr}" ]] && echo "${pr}"
 }
 

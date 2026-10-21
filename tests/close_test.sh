@@ -2,9 +2,10 @@
 # close_test.sh — close shuts every tab that carries the agent's label, one id per herdr call, even
 # when two tabs share it, and archives the agent's session log once; closing the open builder of a
 # ready story counts a failed build, and close takes a cause. herdr and gh are stubs on PATH: herdr records each tab close and
-# lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default) and the panes in
-# ${ROOT}/panes ("<pane> <tab>" lines; pane list fails while ${ROOT}/panefail exists); gh answers pr list
-# from ${ROOT}/prs.json.
+# lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
+# none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
+# lines; pane list fails while ${ROOT}/panefail exists); gh answers pr list from ${ROOT}/prs.json, with
+# --state open the first open PR's URL, as open_pr's --jq asks.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -23,8 +24,9 @@ cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "tab list") echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"}]}}' ;;
   "tab close") printf '<%s>\n' "$3" >> "${CLOSED}" ;;
-  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, (NF > 2 ? $3 : "idle"), $2 }
+  "agent list") [ -e "$H/agentfail" ] && exit 1
+                awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                     { printf "%s{%s\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), ($1 == "-" ? "" : "\"name\":\"" $1 "\","), (NF > 2 ? $3 : "idle"), $2 }
                      END { print "]}}" }' "$A" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$A" > "$A.tmp" && mv "$A.tmp" "$A" ;;
   "pane list") [ -e "$H/panefail" ] && exit 1
@@ -37,7 +39,10 @@ STUB
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "$H/gh.log"
 [ -e "$H/ghfail" ] && exit 1
-case "$1 $2" in "pr list") cat "$H/prs.json" ;; esac
+case "$1 $2 $*" in
+  "pr list "*"--state open"*) python3 -c 'import json, sys; print(next((p["url"] for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN"), ""))' "$H/prs.json" ;;
+  "pr list "*) cat "$H/prs.json" ;;
+esac
 exit 0
 STUB
 chmod +x "${ROOT}/bin/herdr" "${ROOT}/bin/gh"
@@ -413,11 +418,34 @@ conductor_fixture idle idle; echo "w:p94 cb4" > "${P}/.swarm/state/cb4"; echo "c
 out="$(cs conduct-ce)"; rm -f "${P}/.swarm/state/cb4"
 is "a working builder moved into the conductor's tab by hand keeps the tab" "<w:t8>|w:p90|1" \
   "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(grep -c '^kept cb4 (working) in tab ce' <<< "${out}")"
-conductor_fixture idle idle; echo "cb5 w:p95" >> "${ROOT}/agents"; echo "w:p95 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
-is "an agent in the conductor's tab with no tab record is kept, named by herdr" "<w:t8>|1" \
-  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb5 (its state could not be read) in tab ce' <<< "${out}")"
-# A survivor moved out to a new tab (herdr pane move --new-tab) no longer holds its old tab open.
-echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle; printf '%s\n' "w:p90 w:t7" "w:p91 w:t9" > "${ROOT}/panes"; out="$(cs conduct-ce)"
+# The kept cb4 joins ce's record, so once the conductor's pane, the last one recorded there, closes,
+# the tab is still recorded, and --all still closes it.
+rec="$(cat "${P}/.swarm/state/ce" 2>/dev/null)"; cs conduct-ce --all >/dev/null
+is "the kept cb4 joins ce's record, so close conduct-ce --all still closes ce" "w:p94 cb4|<w:t8><w:t7>" "${rec}|$(tr -d '\n' < "${CLOSED}")"
+conductor_fixture idle idle; echo "cb5 w:p95 working" >> "${ROOT}/agents"; echo "w:p95 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
+is "an agent in no tab record, working by herdr's word, is kept, named by herdr" "<w:t8>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb5 (working) in tab ce' <<< "${out}")"
+# An agent with no name is herdr's to answer for: idle it keeps nothing, working it is kept by its pane.
+echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle idle; echo "- w:p97" >> "${ROOT}/agents"; echo "w:p97 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
+is "an idle agent with no name in ce keeps nothing, and nothing says None" "<w:t7><w:t8>|0" "$(tr -d '\n' < "${CLOSED}")|$(grep -c None <<< "${out}")"
+conductor_fixture idle idle; echo "- w:p97 working" >> "${ROOT}/agents"; echo "w:p97 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
+is "a working agent with no name in ce is kept, named by its pane" "<w:t8>|1|0" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept w:p97 (working) in tab ce' <<< "${out}")|$(grep -c None <<< "${out}")"
+# A story whose repo has no origin has no PR to keep it; a repo that is missing says so, not gh.
+git init -q "${ROOT}/noorigin"; echo "${open_pr}" > "${ROOT}/prs.json"
+conductor_fixture idle idle; item cb1 "status: review" "kind: code" "epic: ce" "repo: noorigin"; out="$(cs conduct-ce)"
+is "cb1's repo has no origin: both tabs close and nothing is kept" "<w:t7><w:t8>|0" "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept' <<< "${out}")"
+conductor_fixture idle idle; item cb1 "status: review" "kind: code" "epic: ce" "repo: nosuch"; out="$(cs conduct-ce)"
+is "cb1's repo is missing: both tabs close, and stderr names the cause, not gh" "<w:t7><w:t8>|1|0" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c "cb1: no repo at ${ROOT}/nosuch, so no PR of its was looked for" <<< "${out}")|$(grep -c 'gh could not' <<< "${out}")"
+# herdr lists its panes but none in ce-2: the record stands in, so cb1 (PR open) is kept.
+conductor_fixture idle idle; echo "w:p90 w:t7" > "${ROOT}/panes"; out="$(cs conduct-ce)"
+is "herdr lists no pane in ce-2: its record stands in, so cb1 (PR open) is kept" "<w:t7>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1 (PR open) in tab ce-2' <<< "${out}")"
+# A survivor moved out to a new tab (herdr pane move --new-tab) no longer holds its old tab open,
+# where cb6, idle with no story, is left.
+echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle; echo "cb6 w:p96" >> "${ROOT}/agents"
+printf '%s\n' "w:p90 w:t7" "w:p91 w:t9" "w:p96 w:t8" > "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "cb1, its PR open, moved out of ce-2 to a new tab: both tabs close and nothing is kept" "<w:t7><w:t8>|0" \
   "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept' <<< "${out}")"
 # With herdr's pane list failing, the tab records stand in: cb1, recorded in ce-2, is kept.
@@ -430,6 +458,12 @@ printf '%s\n' "w:p93 w:t7" "w:p91 w:t8" > "${ROOT}/panes"
 cs cb3 >/dev/null
 is "closing cb3, the last pane of tab ce, leaves ce-2 and its builder with an open PR" "<w:t7>|w:p91 cb1" \
   "$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)"
+# The same close (reconcile's path) with herdr's agent list failing keeps ce-2, its state unknown, and
+# carries on: it exits 0, never dies.
+conductor_fixture idle idle; echo "w:p93 cb3" > "${P}/.swarm/state/ce"; echo "cb3 w:p93" >> "${ROOT}/agents"
+printf '%s\n' "w:p93 w:t7" "w:p91 w:t8" > "${ROOT}/panes"; touch "${ROOT}/agentfail"; rc=0; out="$(cs cb3)" || rc=$?; rm "${ROOT}/agentfail"
+is "with herdr's agent list failing, closing cb3 exits 0, closes its tab and keeps ce-2, its state unknown" "0|<w:t7>|1" \
+  "${rc}|$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1 (herdr gave no agent list, so its state is unknown) in tab ce-2' <<< "${out}")"
 
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

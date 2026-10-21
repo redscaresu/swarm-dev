@@ -577,6 +577,7 @@ clear_build() {
 # then closes alone.
 close_panes() {
   local state pane own
+  CLOSE_READ=""
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
@@ -606,38 +607,54 @@ close_pane() {
   return 1
 }
 
-# live_agents <tab-ids> <tab-record> [pane] — each agent herdr has in a pane of those tabs, <pane>'s
-# aside, that a tab close must not take, as "<name> (<why>)": read_state has it working, waiting or
-# blocked, or cannot say, or its story has an open PR on story/<name>, or gh could not say. herdr's
-# panes, not the record's, since a pane moved in by hand closes with the tab and one moved out does
-# not; the record's stand in only when herdr lists no panes. <name> is the record's, else herdr's. A
-# pane with no agent holds nothing to lose. Prints why and fails when herdr lists no agents.
+# close_lists — herdr's pane and agent lists, read once per close (close_panes clears CLOSE_READ) for
+# live_agents: CLOSE_PANES as "<pane> <tab>" lines, empty when herdr gave none, and CLOSE_AGENTS as
+# "<pane> <status> <name>" lines, "-" for an agent with no name; CLOSE_AGENTS_OK is empty when herdr
+# gave no agent list. herdr's status is the word for an agent no session answers for, as in read_state.
+CLOSE_READ=""
+close_lists() {
+  [[ -z "${CLOSE_READ}" ]] || return 0
+  CLOSE_READ=1
+  CLOSE_PANES="$(herdr pane list 2>/dev/null | json "'\n'.join('%s %s' % (p['pane_id'], p.get('tab_id') or '-') for p in d['result']['panes'])" 2>/dev/null)" || CLOSE_PANES=""
+  CLOSE_AGENTS_OK=1
+  CLOSE_AGENTS="$(herdr agent list 2>/dev/null | json "'\n'.join('%s %s %s' % (a['pane_id'], a.get('agent_status') or 'unknown', a.get('name') or '-') for a in d['result']['agents'])" 2>/dev/null)" \
+    || { CLOSE_AGENTS=""; CLOSE_AGENTS_OK=""; }
+}
+
+# live_agents <tab-ids> <tab-record> [pane] — each agent in a pane of those tabs, <pane>'s aside, that
+# a tab close must not take, as "<pane>\t<name>\t<why>": working or waiting (session_state, else
+# herdr's status), its state unknown (herdr gave no agent list too), or its story's PR open on
+# story/<name> (open_pr), or gh could not say. The panes are herdr's (close_lists), since a pane moved
+# in by hand closes with the tab and one moved out does not; the record's stand in when herdr lists
+# none in those tabs. <name> is the record's (record_name), else herdr's, else the pane. A pane with no
+# agent, or a story whose repo has no origin, has nothing to keep.
 live_agents() {
-  local panes agents pane who name f src url prs open
-  panes="$(herdr pane list 2>/dev/null | SWARM_TABS="$1" json "'\n'.join(p['pane_id'] for p in d['result']['panes'] if p.get('tab_id') in e['SWARM_TABS'].split())" 2>/dev/null)" \
-    || panes="$(awk '{ print $1 }' "$2")"
-  agents="$(herdr agent list 2>/dev/null | json "'\n'.join('%s %s' % (a.get('pane_id'), a.get('name')) for a in d['result']['agents'])")" \
-    || { echo "herdr gave no agent list, so whether it holds a live agent is unknown"; return 1; }
+  local panes pane st who name s f src rc
+  panes="$(awk -v t=" $1 " 'index(t, " " $2 " ") { print $1 }' <<< "${CLOSE_PANES}")"
+  [[ -n "${panes}" ]] || panes="$(awk '{ print $1 }' "$2")"
   while read -r pane; do
     [[ -n "${pane}" && "${pane}" != "${3:-}" ]] || continue
-    who="$(awk -v p="${pane}" '$1 == p { print $2; exit }' <<< "${agents}")"
-    [[ -n "${who}" ]] || continue
-    name="$(cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' || true)"
-    name="${name:-${who}}"; f="${BOARD}/stories/${name}.md"
-    case "$(read_state "${who}" </dev/null)" in
-      busy|herdr:working) echo "${name} (working)"; continue ;;
-      waiting*|herdr:blocked) echo "${name} (waiting)"; continue ;;
-      # herdr: with no status is an agent in no tab record, which agent_field does not read.
-      unknown|herdr:unknown|herdr:) echo "${name} (its state could not be read)"; continue ;;
+    name="$(record_name "${pane}")"
+    if [[ -z "${CLOSE_AGENTS_OK}" ]]; then printf '%s\t%s\t%s\n' "${pane}" "${name:-${pane}}" "herdr gave no agent list, so its state is unknown"; continue; fi
+    read -r _ st who <<< "$(awk -v p="${pane}" '$1 == p { print; exit }' <<< "${CLOSE_AGENTS}")"
+    [[ -n "${st}" ]] || continue
+    [[ "${who}" != - ]] || who=""
+    name="${name:-${who:-${pane}}}"
+    s=herdr; [[ -z "${who}" ]] || s="$(session_state "${who}" </dev/null)"
+    [[ "${s}" != herdr ]] || s="herdr:${st}"
+    case "${s}" in
+      busy|herdr:working) printf '%s\t%s\t%s\n' "${pane}" "${name}" working; continue ;;
+      waiting*|herdr:blocked) printf '%s\t%s\t%s\n' "${pane}" "${name}" waiting; continue ;;
+      unknown|herdr:unknown) printf '%s\t%s\t%s\n' "${pane}" "${name}" "its state could not be read"; continue ;;
     esac
+    f="${BOARD}/stories/${name}.md"
     [[ "${name}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || continue
-    if src="$(repo_dir "$(fm "${f}" repo)")" && url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
-       && prs="$(gh pr list -R "${url}" --head "story/${name}" --state open --json state </dev/null 2>/dev/null)" \
-       && open="$(json "any(p['state'] == 'OPEN' for p in d)" <<< "${prs}" 2>/dev/null)"; then
-      [[ "${open}" == False ]] || echo "${name} (PR open)"
-    else
-      echo "${name} (gh could not list its PRs)"
-    fi
+    src="$(repo_dir "$(fm "${f}" repo)")" || { echo "swarm: ${name}: ${src}, so no PR of its was looked for" >&2; continue; }
+    rc=0; open_pr "${src}" "${name}" >/dev/null || rc=$?
+    case ${rc} in
+      0) printf '%s\t%s\t%s\n' "${pane}" "${name}" "PR open" ;;
+      2) printf '%s\t%s\t%s\n' "${pane}" "${name}" "gh could not list its PRs" ;;
+    esac
   done <<< "${panes}"
 }
 
@@ -838,8 +855,9 @@ init_project() {
 
 # close_tabs <label> [pane] — close every tab this script opened under <label>, and its state, archiving the
 # session of each agent in it first. herdr's tab close asks nothing, so a tab that holds a live agent
-# besides <pane>'s (live_agents) is kept, each such agent printed as kept, unless CLOSE_ALL is set
-# (close --all). A tab may be in another workspace (a conductor's is its HLD's):
+# besides <pane>'s (live_agents) is kept, unless CLOSE_ALL is set (close --all): each such agent is
+# printed as kept and joins the tab's record, so a later close --all, and tidy, still find the tab
+# once the panes recorded there close. A tab may be in another workspace (a conductor's is its HLD's):
 # its first pane id, "<workspace>:<pane>", says which.
 CLOSE_ALL=""
 close_tabs() {
@@ -855,9 +873,13 @@ for t in json.load(sys.stdin)['result']['tabs']:
     if t.get('label') == sys.argv[1]: print(t['tab_id'])" "${tab_label}")
     # No tab with the label: nothing to close, so nothing to keep.
     if [[ -z "${CLOSE_ALL}" && -n "${id}" ]]; then
-      kept="$(live_agents "${id}" "${state}" "${2:-}")" || die "close: ${kept}; tab ${tab_label} was left open, and --all closes it anyway"
+      close_lists
+      kept="$(live_agents "${id}" "${state}" "${2:-}")"
       if [[ -n "${kept}" ]]; then
-        while IFS= read -r n; do echo "kept ${n} in tab ${tab_label}: --all closes it too"; done <<< "${kept}"
+        while IFS=$'\t' read -r p n why; do
+          echo "kept ${n} (${why}) in tab ${tab_label}: --all closes it too"
+          awk -v p="${p}" '$1 == p { f = 1 } END { exit !f }' "${state}" || echo "${p} ${n}" >> "${state}"
+        done <<< "${kept}"
         continue
       fi
     fi

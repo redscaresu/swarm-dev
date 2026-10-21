@@ -633,8 +633,11 @@ codex_fallback() {
 pane_name_of() {
   local pane
   pane="$(agent_field "$1" pane_id)"; [[ -n "${pane}" ]] || return 0
-  cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' || true
+  record_name "${pane}"
 }
+
+# record_name <pane> — the name the tab records give <pane>, or nothing.
+record_name() { cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="$1" 'NF == 2 && $1 == p { print $2; exit }' || true; }
 
 # fallback_close <name> — close a fallback agent as `swarm.sh close` does a review agent: its session
 # log archived, and its tab (fallback-<story>, its own) closed by that exact label, so no other

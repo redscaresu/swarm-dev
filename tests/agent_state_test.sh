@@ -28,6 +28,7 @@ agent_field     the definition: the one reader of herdr's agent list
 agent_status    the definition: herdr's status for an agent, used only by the fallbacks here
 read_state      the reader's herdr fallback for tell and free_agent_name: codex, or no session recorded
 herdr_wait      wait's herdr fallback: codex, or no session recorded
+close_lists     close's guard, read once per close: herdr's word for an agent no session answers for
 "
 # Allowed anywhere, with no list entry:
 #   `-z "$(agent_field <name> agent_status any)"` — a name check: does any agent hold the name. Any
