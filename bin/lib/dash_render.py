@@ -258,6 +258,11 @@ if agents is not None:
             words = {"EMPTY": "empty pane", "WAITING": f"waiting on {why or 'a prompt'}", "done": "idle", "auth": "auth: login expired",
                      "gone": "gone: session ended", "unknown": "unknown: no session state" if s else "unknown"}.get(st, st)
             since = started.get(slug) or started.get(epic_of.get(base)) or started.get(base)
+            try:   # pane_check's record, unless status or wait last read the pane stall_minutes ago or more
+                f = os.path.join(E["DASH_PROJECT"], ".swarm", "panes", name)
+                pane_at = float(open(f).read().split("\t")[1]) if NOW - os.path.getmtime(f) < 60 * int(E["DASH_STALL_MIN"]) else None
+            except (OSError, ValueError, IndexError):
+                pane_at = None
             if st == "working":
                 # Any agent with a Claude session: its session log, written on every turn and tool call.
                 log = session_log(E["DASH_PROJECTS"], rec[6]) if rec else ""
@@ -278,7 +283,7 @@ if agents is not None:
             r.update(name=name, role=rec[1] if rec else "?", model=(f"{rec[4] if rec[3] == 'claude' else rec[3]}·{rec[5]}") if rec else "?",
                      look=look, why=why, slug=slug, epic=epic_for(base, slug, label), state=st, words=words, prs=builder_prs(slug),
                      open=bool(slug) and story_by_slug[slug][2] != "done",
-                     since=since, day=rec[0] if rec else "", tail=tail_of(rec, bool(slug) and st in ("idle", "done") and epic_for(base, slug, label) not in epics),
+                     since=since, pane=pane_at, day=rec[0] if rec else "", tail=tail_of(rec, bool(slug) and st in ("idle", "done") and epic_for(base, slug, label) not in epics),
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
@@ -432,9 +437,15 @@ for r in shown:
     groups.setdefault(r["epic"] if r["epic"] in epics else "", []).append(r)
 name_w = min(max((len(r["name"]) for r in shown), default=0), 30 if not NARROW else max(12, (W - 20) // 2))
 
+def dur(s):
+    m = max(int(s) // 60, 0)
+    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m" if m < 1440 else f"{m // 1440}d"
+
 def agent_cols(r):
     # Role and model, then the state (a working agent's with its age); from 140 columns the model is
-    # a label in its colour, and a working agent shows how long since it started.
+    # a label in its colour, and a working agent shows how long since it started. Last, how long
+    # since its pane last changed, as status or wait last saw it (pane_check's file), when one of them
+    # read it within stall_minutes.
     row = []
     if WIDE:
         label = f" {r['model']} "
@@ -445,6 +456,8 @@ def agent_cols(r):
     if WIDE and r.get("state") == "working" and r.get("since"):
         m = max(int(NOW - r["since"]) // 60, 0)
         row.append((f"  {m}m" if m < 60 else f"  {m // 60}h{m % 60:02d}m", "dim"))
+    if r.get("pane"):
+        row.append((f"  pane {dur(NOW - r['pane'])}", "dim"))
     if r.get("escalated"):
         t, n = r["escalated"]
         row.append((f"  {n} · {datetime.datetime.fromtimestamp(t).strftime('%H:%M')}", "fable"))
@@ -683,10 +696,6 @@ def held_cause(slug):
         return ""
     m = re.search(r"^held_for: *(.*?)\r?$", text.split("\n---", 1)[0], re.M)
     return m.group(1) if m else ""
-
-def dur(s):
-    m = max(int(s) // 60, 0)
-    return f"{m}m" if m < 60 else f"{m // 60}h{m % 60:02d}m" if m < 1440 else f"{m // 1440}d"
 
 def running_view():
     cells = []
