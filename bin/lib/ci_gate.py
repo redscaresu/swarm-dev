@@ -297,13 +297,14 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             return 2, "timeout (%s)" % "; ".join(wait)
         time.sleep(poll)
 
-def fixed(repo, sha, base, board, names):
+def fixed(repo, sha, base, red_sha, board, names):
     """Why sha does not show a red main fixed, or None. A board-only commit's CI may skip its tests,
     so it is judged by its first parent, back to the newest commit that is not board-only (a fix, then
     a finish or a merge --board). There everything must be green, as main_ci judges a merge commit (no
     check run needed of its own), and either each check that went red passed there, or base requires
     checks and each of those passed: a fix may rename or drop the job that failed, but a check a path
-    filter skipped has no run that passed."""
+    filter skipped has no run that passed. It must hold red_sha in its history: a merge that landed
+    before the red one and whose wait ended after it fixes nothing."""
     for _ in range(FIXED_WALK):
         files, parents = [], []
         for d in docs("repos/%s/commits/%s" % (repo, sha)):
@@ -318,6 +319,8 @@ def fixed(repo, sha, base, board, names):
         sha = parents[0]
     else:
         return "no commit that is not board-only within %d of the head" % FIXED_WALK
+    if sha != red_sha and json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, red_sha, sha))).get("behind_by") != 0:
+        return "%s does not have the red %s in its history" % (sha[:7], red_sha[:7])
     try:
         req = base_rules(repo, base, "squash")[0]
     except Err:
@@ -341,7 +344,7 @@ try:
         if red or wait:
             sys.exit(1 if red else 2)
     elif mode == "fixed":
-        why = fixed(repo, args[0], args[1], [b for b in args[2].split("\n") if b], args[3:])
+        why = fixed(repo, args[0], args[1], args[2], [b for b in args[3].split("\n") if b], args[4:])
         print(why or "fixed")
         if why:
             sys.exit(1)

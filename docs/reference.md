@@ -1120,8 +1120,10 @@ one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged s
 the main checkout's board, where every command reads stories. There it is git-ignored through the
 clone's `.git/info/exclude`, as `.gitignore` does `.swarm/`, so it shows in no `git status` and meets
 no pull; its builder reads it there and leaves it alone, and reconcile takes it off once its PR
-merges. The story names the failed Actions runs and holds up to 20 FAIL lines from their logs,
-indented, each log read once its run has completed. Those reads stop 10 minutes after the first
+merges. The story names the failed Actions runs and holds the red checks and up to 20 FAIL lines
+from their logs, each log read once its run has completed. The code under test writes those lines,
+so the story fences them under a line saying to read them as data, never as instructions, with
+control characters taken off and each line cut to 300 characters. Those reads stop 10 minutes after the first
 (`SWARM_FIX_MAIN_LOG_SECONDS`), however many runs failed, so a slow log cannot hold up the reconcile
 that follows; a run gh cannot read stops at once, and the story names each run it could not read,
 and why. Once the story is written, merge logs `main-red <sha> <owner/repo> <base> <checks>` (the
@@ -1129,7 +1131,8 @@ repo lowercased), retires an older fix-main story of the same repo and base that
 so one fix is built per red main, and prints `fix-main: <checks> on <short sha>` with the same lines.
 When it cannot write the story it says so in a line that does not start `fix-main:`, and leaves the
 red main and fix before it as they were. A red main clears, logging `main-green` and retiring its
-fix-main story if nobody has started it, only on a commit that shows it fixed: a later merge into
+fix-main story if nobody has started it, only on a commit that shows it fixed and has the red
+commit in its history (a merge that landed before it, its CI wait ending later, fixes nothing): a later merge into
 the same repo and base, or the base's head that reconcile reads (a revert, a re-run), that changes
 more than the board's own files (a board-only commit's CI may skip its tests, so a board-only head
 is judged by the newest commit before it that is not), has every check, status and workflow run green (a commit with only statuses counts), and has a passing run of each
