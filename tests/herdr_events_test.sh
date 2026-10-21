@@ -48,7 +48,7 @@ chmod +x "${ROOT}/herdr"
 # (pane_closed, the lifecycle envelope), stale (an idle event from before agent.get, which still says
 # working), noise (lines that are no event, then blocked), junk (a blank line and one that is not
 # JSON, then blocked), lag and lag3 (blocked, though the next one or three agent.get reads still say
-# working) or slowget
+# working), keepalive (blocked, agent.get two reads behind, then a blank line every 0.3 s) or slowget
 # (blocked, though no agent.get after the first answers), drop (the stream ends) or silent (nothing). Mode vanish has agent.get find no pane (herdr's agent_not_found): it closed after the
 # subscription. Mode refuse answers the subscription with an error; mode gonefirst with herdr's
 # pane_not_found, for a pane that closed before it. Mode dribble sends the subscription's reply a byte every tenth of a second.
@@ -94,11 +94,13 @@ class H(socketserver.StreamRequestHandler):
             out({"id": "late", "result": {}}); out({"event": "keepalive"}); out([])
         if mode == "junk":
             self.wfile.write(b"\nnot json\n")
-        if mode in ("blocked", "noise", "junk", "lag", "lag3", "slowget"):
-            agent["status"], agent["lag"] = "blocked", {"lag": 1, "lag3": 3}.get(mode, 0)
+        if mode in ("blocked", "noise", "junk", "lag", "lag3", "keepalive", "slowget"):
+            agent["status"], agent["lag"] = "blocked", {"lag": 1, "lag3": 3, "keepalive": 2}.get(mode, 0)
             out({"event": "pane.agent_status_changed", "data": {"pane_id": "w:7", "workspace_id": "w", "agent_status": "blocked"}})
         elif mode == "closed":
             out({"event": "pane_closed", "data": {"type": "pane_closed", "pane_id": "w:7", "workspace_id": "w"}})
+        for _ in range(100 if mode == "keepalive" else 0):
+            self.wfile.write(b"\n"); self.wfile.flush(); time.sleep(0.3)
         time.sleep(30)
 socketserver.ThreadingUnixStreamServer.daemon_threads = True
 socketserver.ThreadingUnixStreamServer.handle_error = lambda *a: None   # a client that hung up first
@@ -168,6 +170,9 @@ check "agent.get lags a blocked event: wait reads it again and returns blocked, 
   "blocked|0" "$(quick "$(wait_cx "${SOCK}" 3000)")"
 serve lag3
 check "agent.get lags a blocked event by three reads: wait keeps reading it and returns blocked, without a poll" \
+  "blocked|0" "$(quick "$(wait_cx "${SOCK}" 6000)")"
+serve keepalive
+check "keepalives more often than the re-read, while agent.get lags a blocked event: wait still returns blocked" \
   "blocked|0" "$(quick "$(wait_cx "${SOCK}" 6000)")"
 serve slowget
 check "agent.get after a blocked event answers only past the deadline: wait returns blocked, not a timeout" \

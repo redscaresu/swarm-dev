@@ -90,6 +90,26 @@ def by_deadline(deadline, late, fn, *args):
         return late
 
 
+def pane_event(line, pane):
+    """What a stream line says about <pane>: ("gone", None) when it closed or exited, ("status", s) for
+    an agent_status_changed to s, or None for anything else (another pane's event, a blank line, which
+    is herdr's keepalive, or one that is not JSON or not an event)."""
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return None
+    data = ev.get("data") if isinstance(ev, dict) else None
+    if not isinstance(data, dict) or data.get("pane_id") != pane:
+        return None
+    kind = str(ev.get("event", ""))   # lifecycle events come as pane_closed, subscription ones as pane.<x>
+    kind = "pane." + kind[5:] if kind.startswith("pane_") else kind
+    if kind in ("pane.closed", "pane.exited"):
+        return "gone", None
+    if kind == "pane.agent_status_changed":
+        return "status", data.get("agent_status")
+    return None
+
+
 def watch(path, pane, deadline):
     subs = [{"type": "pane.agent_status_changed", "pane_id": pane}, {"type": "pane.closed"}, {"type": "pane.exited"}]
     stream, ack = request(path, {"id": "swarm-wait", "method": "events.subscribe", "params": {"subscriptions": subs}}, deadline)
@@ -99,10 +119,10 @@ def watch(path, pane, deadline):
         if "result" not in ack:
             raise OSError(ack.get("error"))
         # said: the last settle event, while agent.get does not show it. An event queued before a read
-        # may be stale (idle, then working again), so agent.get decides, read again every RECHECK_S
-        # until it agrees, a later event says otherwise, or the deadline passes, when the event's
-        # word stands if agent.get has not answered.
-        said = None
+        # may be stale (idle, then working again), so agent.get decides, read again at next_check,
+        # every RECHECK_S, however busy the stream, until it agrees, a later event says otherwise, or
+        # the deadline passes, when the event's word stands if agent.get has not answered.
+        said, next_check = None, deadline
 
         def confirm():
             return by_deadline(deadline, said, status, path, pane, deadline)
@@ -112,27 +132,18 @@ def watch(path, pane, deadline):
         # the read's timeout.
         while now not in DONE and time.monotonic() < deadline:
             try:
-                line = stream.read(min(deadline, time.monotonic() + RECHECK_S) if said else deadline)
+                ev = pane_event(stream.read(min(deadline, next_check) if said else deadline), pane)
             except socket.timeout:
                 if not said or time.monotonic() >= deadline:
                     raise
-                now = confirm()
-                continue
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue   # a blank line (herdr's keepalive) or one that is not JSON
-            data = ev.get("data") if isinstance(ev, dict) else None
-            if not isinstance(data, dict) or data.get("pane_id") != pane:
-                continue   # another pane's event, or a line that is none (a keepalive, a late reply)
-            kind = str(ev.get("event", ""))   # lifecycle events come as pane_closed, subscription ones as pane.<x>
-            kind = "pane." + kind[5:] if kind.startswith("pane_") else kind
-            if kind in ("pane.closed", "pane.exited"):
+                ev = None
+            if ev and ev[0] == "gone":
                 return "gone"
-            if kind == "pane.agent_status_changed":
-                said = data.get("agent_status") if data.get("agent_status") in SETTLED else None
-                if said:
-                    now = confirm()
+            if ev:
+                said = ev[1] if ev[1] in SETTLED else None
+                next_check = time.monotonic()
+            if said and time.monotonic() >= next_check:
+                now, next_check = confirm(), time.monotonic() + RECHECK_S
         return now if now in DONE else None
 
 
