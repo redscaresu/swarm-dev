@@ -1131,7 +1131,9 @@ queue never merges unreviewed. If the PR has already merged at another head, `me
 `merge merged at head <sha>, not <sha>, ...`, runs reconcile (main has changed) and exits non-zero,
 so the merged code gets a review. A merged PR logs `merge ok`, and a
 `main-ci` wait follows before reconcile, as for a direct merge: the queue ran the PR's checks on its group, but the
-workflows that run only on a push to the base (a release, a deploy) run on the merge commit alone. A PR that reads merged
+workflows that run only on a push to the base (a release, a deploy) run where the base was pushed.
+The queue pushes a batch of PRs at its last commit, so `merge` waits on the base's head once it holds
+the PR's merge commit, not on that commit itself. A PR that reads merged
 before GitHub shows its merge commit is read again, up to three times. A PR that leaves the queue
 unmerged is a dequeue when GitHub logged its removal after this enqueue (one dropped within seconds
 for a conflict counts, an earlier run's does not), even while its auto-merge still reads on, which
@@ -1148,9 +1150,11 @@ unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not un
 hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
 the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
 base with a queue, a direct merge would enqueue the PR with nothing watching its head. `--release`
-goes through the queue only alone, so its tag holds nothing that merged after its checks: it
-refuses while the queue holds any other PR, and while it waits, another PR in the queue (ahead of
-it or behind), or a failed read of the queue, takes it out of the queue and fails. With no
+never joins the queue, where a PR queued behind it could share its push and so its tag. It merges
+past the queue, directly with `--admin`, and only when `ci_gate admin` finds nothing else that
+`--admin` would skip (the review and the queue may be skipped) and a read made just before the merge
+finds no other PR in the queue. It needs a token that may bypass the queue; without one, gh refuses
+the merge and nothing merges. With no
 queue the path is the one above. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`

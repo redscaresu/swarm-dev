@@ -27,7 +27,7 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
 # read is a missed poll; three in a row end it. Prints ok (0), red <checks> (1), timeout (<what it
 # waited on>) (2) or error <why> (3); YAML it does not read is an error, never a skipped workflow.
-# ci_gate admin <owner/repo> <base> <sha> <method> — for merge_admin, since --admin skips every rule on
+# ci_gate admin <owner/repo> <base> <sha> <method> [past-queue] — for merge_admin, since --admin skips every rule on
 # <base>, not just the approving review: succeed when <sha> has every status check <base>'s rulesets
 # and branch protection require, is up to date with <base> when they say strict, and <base> has no
 # rule --admin would skip besides the review (merge queue, required workflows, signatures, the
@@ -44,8 +44,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # (1), timeout (2), error (3), never read as queued (4), an open PR at a head that is not <head> (5), a
 # merge at such a head (6), or a TERM, HUP or INT (7). On 2, 3, 4, 5 and 7 it has turned auto-merge
 # off and taken the PR out of the queue first, and its second line says so.
-# With a last argument alone (--release), another PR in the queue, ahead or behind, or a failed read
-# of the queue, takes it out (8).
+# ci_gate pushed <owner/repo> <base> <commit> <wait> — the base's head once it holds <commit> (a merge
+# queue pushes a batch at its last commit), else <commit>.
 # ci_gate other <owner/repo> <base> <pr> — the number of a PR other than <pr> in <base>'s merge queue,
 # 0 when there is none; 3 when the read fails.
 # ci_gate stop <owner/repo> <pr> — turn the PR's auto-merge off and take it out of the queue, saying
@@ -105,13 +105,14 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # changes is .claude-plugin/plugin.json, release_check's), and ci_gate passes on the head.
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
-# queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead. Then wait for CI on the merge commit and, without --board or --release, run
+# queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
+# --release, which merges past an empty queue with --admin (ci_gate admin ... past-queue). Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
 # reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue alone=""
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -196,18 +197,23 @@ merge_pr() {
     queue="$(ci_gate queue "${repo}" "${base}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")" \
       || merge_fail "could not read whether ${base} has a merge queue: ${queue}"
   fi
+  if [[ "${queue}" == yes && "${only}" == --release ]]; then
+    # A release never joins the queue, where a PR queued behind it could share its push and its
+    # tag: it merges past it, directly (--admin), once nothing else is queued, re-checked last.
+    why="$(ci_gate admin "${repo}" "${base}" "${head}" "${method}" past-queue)" \
+      || merge_fail "--release: --admin may not merge ${head:0:7} past ${base}'s merge queue: ${why}"
+    why="$(ci_gate other "${repo}" "${base}" "${n}")" || merge_fail "--release: cannot read ${base}'s merge queue: ${why}"
+    [[ "${why}" == 0 ]] || merge_fail "--release: #${why} is in ${base}'s merge queue; merge the release once the queue is empty"
+    echo "--release: ${base}'s merge queue holds no other PR, so #${n} merges past it, directly"
+    admin=(--admin); queue=no
+  fi
   if [[ "${queue}" == yes ]]; then
     # The conductor's brief keys on this line: every PR goes through the queue at once.
     echo "merge queue: ${base} has one, so #${n} goes through it"
-    # A release goes through only alone, so its tag holds nothing that merged after release_check: no
-    # other PR in the queue now, nor on any read while it waits (ci_gate queued ... alone).
-    if [[ "${only}" == --release ]]; then
-      why="$(ci_gate other "${repo}" "${base}" "${n}")" || merge_fail "--release: cannot read ${base}'s merge queue: ${why}"
-      [[ "${why}" == 0 ]] || merge_fail "--release: #${why} is in ${base}'s merge queue; merge the release once the queue is empty"
-      alone=alone
-    fi
-    queue_merge "${n}" "${repo}" "${head}" "${base}" ${alone:+"${alone}"}
+    queue_merge "${n}" "${repo}" "${head}" "${base}"
     oid="${QUEUE_OID}"
+    # A batch is pushed at its last commit, and the push-only workflows run there alone.
+    [[ -z "${oid}" ]] || oid="$(ci_gate pushed "${repo}" "${base}" "${oid}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")"
   else
     why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
     # Read the PR back either way: a 5xx or a dropped connection can follow a merge GitHub made.
@@ -247,7 +253,7 @@ merge_pr() {
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
 }
 
-# queue_merge <n> <owner/repo> <head> <base> [alone] — merge's path for a base with a merge queue: enqueue the
+# queue_merge <n> <owner/repo> <head> <base> — merge's path for a base with a merge queue: enqueue the
 # head with --auto pinned by --match-head-commit (the queue picks the method), wait up to
 # MERGE_CI_SECONDS for it to merge (ci_gate queued, which reads the head on every poll) and log merge
 # ok, setting QUEUE_OID for merge_pr's wait for CI on the base. The PR is read back
@@ -272,7 +278,7 @@ queue_merge() {
   fi
   [[ -z "${QUEUE_SIG}" ]] || queue_stopped "$1" "$2"
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" queued "$2" "$1" "$3" "$4" "${since}" \
-    "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" ${5:+"$5"} > "${out}" &
+    "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" > "${out}" &
   pid=$!
   # A signal ends the wait at once; ci_gate then stops the PR (exit 7), and is waited for.
   # shellcheck disable=SC2064 # the pid is fixed now
@@ -294,7 +300,6 @@ queue_merge() {
     4) [[ -n "${ran}" ]] || merge_fail "gh pr merge --auto failed: ${err##*$'\n'}; ${why#*$'\n'}"
        merge_fail "unconfirmed (${why%%$'\n'*}): gh pr merge --auto ran, but #$1 never read as queued; ${why#*$'\n'}; check it by hand" ;;
     5) merge_fail "${why%%$'\n'*}; ${why#*$'\n'}: review the new head" ;;
-    8) merge_fail "--release: ${why%%$'\n'*}; ${why#*$'\n'}: merge the release once the queue is empty" ;;
     6) record_event merge "${MERGE_TARGET}" "${why}"
        echo "merge: #$1 ${why}"
        QUEUE_BAD="#$1 ${why}: review what merged"; return 0 ;;

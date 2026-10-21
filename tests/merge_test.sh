@@ -83,6 +83,7 @@ case "$1 $2" in
       */actions/runs*) sha="${path#*head_sha=}"; serve "${sha%%&*}.runs" ;;
       */pulls/*/files*) serve files ;;
       */rules/branches/*) serve rules ;;
+      */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
       */compare/*) serve compare ;;
       */contents/.github/workflows\?*) serve workflows ;;
@@ -636,6 +637,16 @@ is "a removal before the first read: one dequeue line naming GitHub's reason" "m
 qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue" OPEN false null - - "AN_OLD_REASON" 2020-01-01T00:00:00Z
 merge "${URL}"
 check "an earlier enqueue's removal: not its reason" said "dequeued (no reason given): ${LINT}"
+# A batch: the queue merged #7 and a PR after it in one push, at M2. The push-only runs are on M2,
+# none on #7's own merge commit, which is not waited on.
+M2=cccccccccccccccccccccccccccccccccccccccc
+qfresh; rm -f "${FX}/${M}.checks" "${FX}/${M}.runs"
+printf '{"commit":{"sha":"%s"}}\n' "${M2}" > "${FX}/basehead"; echo '{"status":"ahead"}' > "${FX}/compare"
+checks "${FX}/${M2}.checks" "$(run test completed success)"; statuses "${FX}/${M2}.status"
+wfruns "${FX}/${M2}.runs" "$(run ci completed success "${M2}")"
+qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${M}"; merge "${URL}"
+is "two PRs merged in one push: CI waited on at the pushed commit that holds this merge" "0|merge s ok|main-ci s ok" \
+  "${rc}|$(events | head -2 | paste -sd'|' -)"
 # A red main after a queued merge: main-ci red, reconcile, and a failure, as for a direct merge.
 qfresh; checks "${FX}/${M}.checks" "$(run test completed success)" "$(run e2e completed failure)"
 qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${M}"; merge "${URL}"
@@ -772,7 +783,7 @@ is "a null repository on the queue read: read again, then merges" "0|2" "${rc}|$
 # --release on a base with a merge queue goes through only alone: refused while the queue holds a PR,
 # and taken out if another is first in it while the release is queued.
 rqfresh() {
-  release_pr; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"
+  release_pr; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"; echo '[{"type":"merge_queue"}]' > "${FX}/rules"
   checks "${FX}/${G}.checks" "$(run test completed success)"; statuses "${FX}/${G}.status"
 }
 mqfirst() { # <file> [pr]... — the merge queue's first entries, in order: each <pr>, or none
@@ -782,17 +793,14 @@ mqfirst() { # <file> [pr]... — the merge queue's first entries, in order: each
 }
 rqfresh; mqfirst "${FX}/mqfirst" 9; merge --release "${URL}"
 refused "--release while the queue holds another PR" "#9 is in main's merge queue; merge the release once the queue is empty"
-rqfresh; mqfirst "${FX}/mqfirst.1"; mqfirst "${FX}/mqfirst" 9; qread "${FX}/queue" OPEN true null "${G}" -; merge --release "${URL}"
-check "--release with another PR first in the queue while queued: taken out, and fails" \
-  logged "^merge ${URL} --release: #9 is in the merge queue with it; auto-merge is off and it is out of the merge queue: merge the release once the queue is empty$"
-rqfresh; mqfirst "${FX}/mqfirst.1"; mqfirst "${FX}/mqfirst" 7 9; qread "${FX}/queue" OPEN true null "${G}" -; merge --release "${URL}"
-check "--release with another PR behind it in the queue while queued: taken out, and fails" \
-  logged "^merge ${URL} --release: #9 is in the merge queue with it; auto-merge is off and it is out of the merge queue: merge the release once the queue is empty$"
 rqfresh; mqfirst "${FX}/mqfirst" 7 9; merge --release "${URL}"
 refused "--release while a PR is in the queue behind an earlier enqueue of it" "#9 is in main's merge queue; merge the release once the queue is empty"
-rqfresh; mqfirst "${FX}/mqfirst.1"; mqfirst "${FX}/mqfirst" 7; qread "${FX}/queue.1" OPEN true null "${G}" -
-qread "${FX}/queue.2" MERGED false null - "${M}"; merge --release "${URL}"
-is "--release first in the queue: merges, no reconcile" "0|merge ${URL} ok|main-ci ${URL} ok" "${rc}|$(events | paste -sd'|' -)"
+rqfresh; mqfirst "${FX}/mqfirst"; merge --release "${URL}"
+is "--release past an empty merge queue: merges directly, no reconcile" "0|merge ${URL} ok|main-ci ${URL} ok" "${rc}|$(events | paste -sd'|' -)"
+check "--release past a merge queue: never enqueued, so no PR queued behind it can share its commit, and the queue is read just before the merge" \
+  bash -c "! grep -q -- '--auto' '${ROOT}/gh.log' && grep -B1 '^pr merge' '${ROOT}/gh.log' | head -1 | grep -q 'entries(' && grep -qxF 'pr merge 7 --repo o/r --squash --match-head-commit ${H1} --admin' '${ROOT}/gh.log'"
+rqfresh; mqfirst "${FX}/mqfirst"; echo '[{"type":"merge_queue"},{"type":"code_scanning"}]' > "${FX}/rules"; merge --release "${URL}"
+refused "--release past a merge queue with another rule --admin would skip" "--admin may not merge 1111111 past main's merge queue: ruleset rule code_scanning, which --admin would skip"
 # A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
 fresh; touch "${FX}/mq.fail"; merge "${URL}"
 refused "a queue that cannot be read" "could not read whether main has a merge queue"
