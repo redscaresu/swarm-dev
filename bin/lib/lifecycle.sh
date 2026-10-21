@@ -515,15 +515,15 @@ step_up_resume() {
 
 # start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>),
 # once the old builder is closed: refuse while the worktree holds a git step it left unfinished (an
-# index.lock, a merge, rebase, cherry-pick or revert), write handover_brief beside the marker, start
-# <role> on <to> in the worktree with it, then log escalate `ok (<trigger>: <from> -> <to>)`, drop the
-# marker and send the /goal its caller's goal_preflight made. start_agent runs with errexit on, so a
+# index.lock, a merge, rebase, cherry-pick or revert) or with origin's default branch unread, write
+# handover_brief beside the marker, start <role> on <to> in the worktree with it, then log escalate
+# `ok (<trigger>: <from> -> <to>)`, drop the marker and send the /goal its caller's goal_preflight made. start_agent runs with errexit on, so a
 # step that fails stops it with that step's own message; then the marker stays and the message says
 # to run step-up --resume. The rung has started only once its brief is taken up: an agent start_agent
 # recorded before deliver_prompt failed is closed and loses its agents.tsv line, so a resume starts it
 # afresh and the rung is on record once.
 start_rung() {
-  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p goal="${PREFLIGHT_GOAL}"
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p base goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
@@ -534,7 +534,9 @@ start_rung() {
     [[ ! -e "${gd}/${p}" ]] \
       || die "step-up: ${slug}'s ${from} builder is closed, but its worktree ${wt} holds ${gd}/${p}, a git step left unfinished: finish or abort it there, then run swarm.sh step-up --resume ${slug}"
   done
-  handover_brief "${slug}" "${src}" "$(base_for "${src}")" "${trigger}" "${from}" "${to}" > "${prompt}"
+  base="$(base_for "${src}")" \
+    || die "step-up: ${slug}'s ${from} builder is closed, but origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume ${slug}"
+  handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" > "${prompt}"
   n="$(wc -l < "${AGENTS_LOG}")"; n=$((n))
   set +e
   (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}")

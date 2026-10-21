@@ -227,7 +227,11 @@ check "an index.lock left in the worktree stops the step-up, naming it, before a
 rm "${gd}/index.lock"; git -C "${ROOT}/proj-wt/w1" rev-parse HEAD > "${gd}/MERGE_HEAD"
 out="$(run step-up --resume w1)" && rc=0 || rc=$?
 check "and so does a merge in progress, on resume too" "1|yes|${n}" "${rc}|$(has "holds ${gd}/MERGE_HEAD" "${out}")|$(starts)"
-rm "${gd}/MERGE_HEAD"
+rm "${gd}/MERGE_HEAD"; mv "${ROOT}/origin.git" "${ROOT}/origin.gone"
+out="$(run step-up --resume w1)" && rc=0 || rc=$?
+check "an origin whose default branch cannot be read stops it too, with the rung kept to resume" "1|yes|${n}|kept" \
+  "${rc}|$(has "origin's default branch could not be read (see above); once it can, run swarm.sh step-up --resume w1" "${out}")|$(starts)|$([[ -e "${P}/.swarm/briefs/w1.step-up" ]] && echo kept)"
+mv "${ROOT}/origin.gone" "${ROOT}/origin.git"
 out="$(run step-up --resume w1)" && rc=0 || rc=$?
 check "once cleared, --resume writes the brief and starts the rung" "0|yes|code opus high" "${rc}|$(has "Implement docs/stories/w1.md" "$(cat "${P}/.swarm/briefs/w1.md" 2>/dev/null)")|$(newest w1)"
 
