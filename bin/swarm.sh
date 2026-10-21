@@ -741,7 +741,8 @@ EOF
 }
 
 # main_signal <INT|TERM|HUP> — stop the logged command at once (it runs in the background, so this
-# trap runs as soon as the signal lands; codex-review is waited for while it stops codex), log it as
+# trap runs as soon as the signal lands; codex-review is waited for while it stops codex, and merge
+# while it takes a queued PR out of the queue), log it as
 # interrupted, remove the temp file, and die of the same signal, so the exit status stays 128+N.
 # shellcheck disable=SC2317,SC2329 # invoked by the signal traps
 main_signal() {
@@ -749,7 +750,11 @@ main_signal() {
     # It stops codex itself (stop_codex, from its tree as it stands), so it alone gets the TERM, and
     # swarm.sh exits only once codex is gone.
     kill -TERM "${EV_CHILD}" 2>/dev/null || true; wait "${EV_CHILD}" || true
-  elif [[ -n "${EV_CHILD:-}" ]]; then kill_tree "${EV_CHILD}"; fi
+  elif [[ -n "${EV_CHILD:-}" ]]; then
+    kill_tree "${EV_CHILD}"
+    # A merge waiting on a merge queue stops the PR first (queue_merge), so it is waited for.
+    [[ "${EV_CMD}" != merge ]] || wait "${EV_CHILD}" || true
+  fi
   record_event "${EV_CMD}" "${EV_TARGET#[+!]}" interrupted
   [[ "${EV_ERR}" == /dev/null ]] || rm -f "${EV_ERR}"
   trap - "$1"
