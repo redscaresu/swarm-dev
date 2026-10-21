@@ -16,12 +16,15 @@ Then run these three, in order:
 
 1. `swarm.sh init`, from the project's git root. It leaves the board (`docs/epics/`,
    `docs/stories/`), `.claude/swarm/` with a config, the `.gitignore` lines, a CI workflow and a
-   pre-commit hook that run `make check`.
-2. `/epic <title>`. It leaves `docs/epics/<slug>.md`, written with the user in its own pane. It
-   stays `status: draft` until the user agrees it, then becomes `active`.
+   pre-commit hook that run `make check`. With no `check` target in the Makefile, init says so;
+   add one, or CI fails every change that is not board-only.
+2. `/epic <title>` (the plugin's full name is `/swarm-dev:epic`). It leaves `docs/epics/<slug>.md`,
+   written with the user in its own pane. It stays `status: draft` until the user agrees it, then
+   becomes `active`.
 3. `/swarm-dev:swarm`. It reads the board with `swarm.sh next`, plans the epic into stories,
-   builds them and loops until the user must decide. It leaves `docs/stories/<slug>.md` files, one
-   PR per story, and merged code. Run it again after each decision.
+   builds them and loops until the user must decide. It leaves `docs/stories/<slug>.md` files and
+   one PR per story. With the default `merge = human` the user merges each PR; with
+   `merge = agent` the swarm merges them. Run it again after each decision.
 
 The method, and why it is shaped this way, is in [`docs/method.md`](docs/method.md). Read it before
 you run anything. [`llms.txt`](llms.txt) maps the rest of the docs.
@@ -38,8 +41,8 @@ that folder once and accept the trust prompt. Never accept it for them, and neve
 If `swarm.sh` is missing, the user runs `claude plugin marketplace add redscaresu/swarm-dev` and
 `claude plugin install swarm-dev@swarm-dev`, then restarts Claude Code.
 
-**Set the project up** if `stories/README.md` does not exist in the board (`swarm.sh config
-board_dir`): run `swarm.sh init` and follow the README's § Getting started, step 3. Keep links as
+**Set the project up** if `<board>/stories/README.md` does not exist, where `<board>` is what
+`swarm.sh config board_dir` prints (`docs` by default, so `docs/stories/README.md`): run `swarm.sh init` and follow the README's § Getting started, step 3. Keep links as
 markdown links, never `[[wikilinks]]`. Ask the user for the contents of `.claude/swarm/brief.md`
 (their commit trailers, where credentials live, commands that must not run); do not invent them.
 
