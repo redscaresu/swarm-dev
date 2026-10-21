@@ -1057,7 +1057,10 @@ reconcile_board() {
     state_drop "${f}"
     record_event reconcile "${slug}" "ok (finished by its PR)"; echo "merged: ${slug}"
   done
-  green_mains
+  # Clearing a red main never fails reconcile: in the background, as merge runs reconcile, so set -e
+  # holds inside it, a failed step or a die there is said and reconcile goes on.
+  ( set -e; green_mains ) &
+  wait $! || echo "clearing a red main failed (exit $?); reconcile goes on"
   [[ ${BOARD_IN_REPO} == 0 ]] || drop_gone_state
 }
 

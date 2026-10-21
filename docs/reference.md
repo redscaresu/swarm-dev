@@ -1204,7 +1204,9 @@ merge's own `main-ci:` and `fix-main:` lines, and `next`'s why, show them the sa
 (`SWARM_FIX_MAIN_LOG_SECONDS`), however many runs failed, so a slow log cannot hold up the reconcile
 that follows; a run gh cannot read stops at once, and the story names each run it could not read,
 and why. Once the story is written, merge logs `main-red <sha> <owner/repo> <base> <checks>` (the
-repo lowercased), retires an older fix-main story of the same repo and base that nobody has started,
+repo lowercased), retires an older fix-main story of the same repo and base that nobody has started
+(one merge at a time per repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`, so
+two red merges in one merge-queue batch never retire each other's story),
 so one fix is built per red main, and prints `fix-main: <checks> on <short sha>` with the same lines.
 When it cannot write the story it says so in a line that does not start `fix-main:`, and leaves the
 red main and fix before it as they were. A red main clears, logging `main-green` and retiring its

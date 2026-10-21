@@ -23,7 +23,9 @@ git init -q --bare "${ROOT}/origin.git"; git -C "${P}" remote add origin "${ROOT
 # gh: pr view, pr merge (fails unless --match-head-commit is ${FX}/head; marks the PR merged with
 # merge commit ${FX}/oid, else ${M}, and then fails the next ${FX}/readback-fails pr views) and repo view (the merge
 # methods, or with nameWithOwner ${FX}/origin) from ${FX}; each api path from serve's fixture.
-printf '#!/usr/bin/env bash\nFX="%s"; LOG="%s"; M="%s"\n' "${FX}" "${ROOT}/gh.log" "${M}" > "${ROOT}/bin/gh"
+# STUB_FX, when set, is a run's own fixtures (two merges at once).
+# shellcheck disable=SC2016 # ${STUB_FX} is the stub's, expanded when it runs
+printf '#!/usr/bin/env bash\nFX="${STUB_FX:-%s}"; LOG="%s"; M="%s"\n' "${FX}" "${ROOT}/gh.log" "${M}" > "${ROOT}/bin/gh"
 cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "${LOG}"
 # serve <key> — the fixture <key>.<n> on the nth read of <key> when there is one, else <key>; with
@@ -366,6 +368,33 @@ wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
 check "a base gone green another way: reconcile logs main-green and retires the fix" \
   bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main$"
+# Clearing a red main that fails (its fix-main story cannot be removed) never fails reconcile.
+failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
+echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"; wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
+chmod a-w "${P}/docs/stories"; rrc=0
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || rrc=$?
+chmod u+w "${P}/docs/stories"
+check "a red main whose clearing fails in reconcile: reconcile says so and still succeeds" \
+  bash -c "[ ${rrc} = 0 ] && grep -qF 'clearing a red main failed' '${ROOT}/out'"
+# Two red merges in one batch, on one repo and base: fix_main runs one at a time under the key's
+# lock, so neither logs main-red while another holds it, and only the story logged last is left.
+fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; M3=dddddddddddddddddddddddddddddddddddddddd; URL2=https://github.com/o/r/pull/8
+rm -rf "${ROOT}/fxb"; cp -R "${FX}" "${ROOT}/fxb"; echo "${M3}" > "${ROOT}/fxb/oid"; cp "${FX}/${M}.checks" "${ROOT}/fxb/${M3}.checks"
+statuses "${ROOT}/fxb/${M3}.status"; wfruns "${ROOT}/fxb/${M3}.runs" "$(run ci completed success "${M3}")"; item t "status: review" "prs: ${URL2}"
+racer() { # <fixtures> <url> <out>
+  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 \
+    SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=5 SWARM_LOCK_WAIT=30 STUB_FX="$1" bash "${SWARM}" merge "$2" > "$3" 2>&1) &
+}
+mkdir "${P}/.swarm/fix-main.o-r-main.lock"
+racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -qs "run view\|check-runs.*${M3}" "${ROOT}/gh.log" && grep -qs "check-runs.*${M}" "${ROOT}/gh.log" && break; sleep 1; done; sleep 2
+check "two red merges racing on one key: neither logs main-red while the key's lock is held" bash -c "! grep -q main-red '${P}/.swarm/events.tsv'"
+rmdir "${P}/.swarm/fix-main.o-r-main.lock"; wait "${pa}" "${pb}" || true
+last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
+check "two red merges racing on one key: both print fix-main:, and only the story logged last is left" \
+  bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] \
+    && [ -n '${last}' ] && [ -e '${P}/docs/stories/fix-main-${last}.md' ]"
+rm -rf "${ROOT}/fxb"
 # A green fix (H2) under a board-only head (H3, a finish or a merge --board): judged by the fix.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"; H3=3333333333333333333333333333333333333333
 echo "${H3}" > "${FX}/commit.main"; printf '{"files":[{"filename":"docs/stories/x.md"}],"parents":[{"sha":"%s"}]}' "${H2}" > "${FX}/commit.${H3}"
@@ -946,6 +975,28 @@ is "a TERM as queued() installs its handler: a stop (7), and the PR stopped" "7|
 # shellcheck source=/dev/null
 # shellcheck disable=SC2034 # merge.sh reads PROJECT_DIR as it loads
 qrc() { (PROJECT_DIR="${P}"; . "${REPO}/bin/lib/merge.sh"; queue_rc "$@"); }
+# retire_fixes retires only the fix-main stories of its key logged before its own main-red: one logged
+# after it is a newer red main's, which stays (two runs in one batch never retire each other).
+# shellcheck disable=SC2034 # merge.sh's functions read these
+older="$(
+  PROJECT_DIR="${ROOT}/rf"; BOARD="${ROOT}/rf/board"; EVENTS_LOG="${ROOT}/rf/events.tsv"; mkdir -p "${BOARD}/stories"
+  for s in aaaaaaa ccccccc eeeeeee; do : > "${BOARD}/stories/fix-main-${s}.md"
+    printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\to/r main test (failure)\n' "${s}$(printf '0%.0s' $(seq 1 33))" >> "${EVENTS_LOG}"; done
+  # shellcheck source=/dev/null
+  . "${REPO}/bin/lib/merge.sh"
+  # retire_fixes calls these.
+  # shellcheck disable=SC2329
+  fm() { echo ready; }
+  # shellcheck disable=SC2329
+  one_off_started() { return 1; }
+  # shellcheck disable=SC2329
+  delete_item() { rm "$1"; }
+  # shellcheck disable=SC2329
+  record_event() { :; }
+  retire_fixes "o/r main" "ccccccc$(printf '0%.0s' $(seq 1 33))" why > /dev/null
+  find "${BOARD}/stories" -type f -exec basename {} \; | sort | paste -sd' ' -
+)"
+is "retire_fixes retires only the fix-main stories logged before its own" "fix-main-ccccccc.md fix-main-eeeeeee.md" "${older}"
 is "a printed merge stands over a signal's status, and nothing else does" "0|0|143|7" \
   "$(qrc 143 "merged ${M}")|$(qrc 3 "merged ")|$(qrc 143 "merged at head 2222222, not 1111111, the head that was checked (merge commit none)")|$(qrc 7 "stopped by SIGTERM")"
 # A TERM while it waits on the queue, or during the enqueue: auto-merge off and out of the queue
