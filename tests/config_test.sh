@@ -206,6 +206,7 @@ mkdir -p "${ROOT}/bin"
 cat > "${ROOT}/bin/herdr" <<'EOF'
 #!/bin/sh
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
@@ -385,6 +386,7 @@ cat > "${rc}/bin/herdr" <<'EOF'
 #!/bin/sh
 echo "$*" >> "${HERDR_LOG}"
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "tab create")   echo '{"result":{"root_pane":{"pane_id":"w:1"}}}' ;;
   "pane split")   echo '{"result":{"pane":{"pane_id":"w:2"}}}' ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;

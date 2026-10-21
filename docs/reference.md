@@ -1127,16 +1127,25 @@ a command that says `git` or `cd` but not merge passes when the check cannot run
 
 An agent's guards come from the flags it starts with: `--disallowedTools` (no `gh pr merge`, and for
 the fallback reviewer no file tools, commit or push) and `--settings`, which sets `SWARM_AGENT`.
-When herdr restarts, it reopens each agent's pane and resumes the session, and on its own it would
-run `claude --resume <id>` with none of those flags. So once a Claude agent starts, swarm.sh gives
-herdr the whole command to resume it with (`herdr pane report-agent --source swarm`): `claude
---resume <id>` and every flag the agent started with. herdr refuses an apostrophe in that command,
-so a flag that holds one stops the start before a pane opens, naming the flag. A report herdr
-refuses closes the pane and fails the start. The plugin's hooks also report an agent's state to
-herdr, in a swarm agent's session only: working on each prompt, idle when a turn stops, blocked on a
-permission prompt. When you quit an agent's session yourself, they hand the pane back to herdr
-(`release-agent`). A session that ends because herdr restarts keeps its resume command. This needs
-herdr 0.9.2 or later.
+When herdr restarts, it reopens each agent's pane and resumes the session. On its own it would run
+`claude --resume <id>` with none of those flags, in the pane's whole environment. So once a Claude
+agent starts, swarm.sh gives herdr the command to resume it with (`herdr pane report-agent --source
+swarm`, with the session id): `bash .swarm/resume/<agent>.sh claude --resume <id>` and every flag the
+agent started with. That wrapper unsets every variable except the allowlist the agent started with
+(§ Building, **The agents' environment**) and its story's `env:` names, which keep the restored
+pane's own values, so no value is written to disk or put on a command line. herdr refuses a resume
+command over 64 arguments or
+8 KiB, or with an apostrophe or a control character in it, so swarm.sh checks those before a pane
+opens and stops the start, saying which. It also stops on a herdr older than 0.9.2, which takes the
+command and drops it. A report herdr refuses closes the pane and fails the start.
+
+The plugin's hooks report an agent's state to herdr, in a swarm agent's session only: working on
+each prompt, idle when a turn stops, blocked on a permission prompt. When the session is cleared or
+resumed under a new id, they report the resume command again with that id
+(`.swarm/resume/<agent>.argv`), so a restart resumes the session the agent is in. When you quit an
+agent's session yourself, they hand the pane back to herdr (`release-agent`). A session that ends
+because herdr restarts keeps its resume command. Each hook calls herdr in the background, so a
+herdr that hangs never holds a prompt.
 
 **Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
