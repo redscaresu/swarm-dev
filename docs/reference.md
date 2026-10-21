@@ -1095,7 +1095,10 @@ board's own repo (its origin) and every path it changes, a renamed file's old pa
 under the board instead. With `--release`, for a release PR, the PR must be in the project's own
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
-greater than the base's. No story or epic need list it.
+greater than the base's. When `bin/`, `commands/` or `hooks/` changed between the tag
+`v<base version>` and the base but README.md, AGENTS.md and `docs/` (the board's stories and epics aside) did not, it
+refuses and names the changed paths, unless the PR body has a `Docs: none — <reason>` line.
+It fetches the base and the tag first, and refuses when it cannot. No story or epic need list it.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash
@@ -1172,7 +1175,8 @@ release, `swarm.sh next` prints `release`: the project has `.claude-plugin/plugi
 `v<version>` for its version is on `origin/<base>`, and a commit since that tag changes a file
 outside the board. It reads local refs only, since reconcile has just pulled. The lead opens a PR
 from `release/v<new>` that bumps only that file, to the next minor version (a patch when every
-change since the tag is a fix), and lists the PRs merged since the tag. With `merge = agent` the
+change since the tag is a fix), and lists the PRs merged since the tag. Before it cuts that branch, the lead lands a docs PR that covers
+every behaviour change since the tag, and the release PR names it. With `merge = agent` the
 lead merges it with `swarm.sh merge --release` and checks that the tag and the GitHub release
 exist. With `merge = human` it waits on your merge.
 

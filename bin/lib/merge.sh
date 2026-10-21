@@ -161,7 +161,7 @@ merge_pr() {
       p="$(costs_diff <<< "${info}")"
       [[ -z "${p}" ]] || merge_fail "held: ${url} changes a costs: line in ${p}; with merge = agent the user merges it"
     fi
-    [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}"
+    [[ "${only}" == --board ]] || release_check "${repo}" "${base}" "${head}" "${n}"
   fi
   why="$(ci_gate head "${repo}" "${head}")" || merge_fail "the head ${head:0:7} is not green: ${why}"
   method="$(gh repo view "${repo}" --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed \
@@ -307,10 +307,10 @@ wait_pr() {
   done
 }
 
-# release_check <owner/repo> <base> <head> — merge --release's checks past the file list: the PR goes
+# release_check <owner/repo> <base> <head> <pr> — merge --release's checks past the file list: the PR goes
 # into the project's base, its plugin.json differs from the base's only in "version" (compared as
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
-# and that version is MAJOR.MINOR.PATCH and greater than the base's.
+# that version is MAJOR.MINOR.PATCH and greater than the base's, and release_docs passes.
 release_check() {
   local want old new why
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
@@ -332,6 +332,30 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
     print("it changes more of .claude-plugin/plugin.json than its version; if %s changed plugin.json after the release branch was cut, merge origin/%s into it and retry" % (e["BASE"], e["BASE"]))' 2>/dev/null)" \
     || why="cannot read .claude-plugin/plugin.json as JSON"
   [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET}: ${why}"
+  release_docs "$1" "$4" "$2" "$(plugin_version <<< "${old}")"
+}
+
+# release_docs <owner/repo> <pr> <base> <version> — a release ships its docs: refuse when bin/,
+# commands/ or hooks/ changed between the tag v<version> and origin/<base> but README.md, AGENTS.md
+# and docs/ (the board's stories and epics aside) did not, naming the changed paths, unless the PR body has a
+# "Docs: none — <reason>" line. A tag or base it cannot fetch refuses too.
+release_docs() {
+  local body code docs rel ex=()
+  body="$(gh pr view "$2" --repo "$1" --json body | json "d['body'] or ''")" \
+    || merge_fail "--release: gh cannot read the body of ${MERGE_TARGET}"
+  ! grep -Eq '^Docs: none +(—|--?) +[^[:space:]]' <<< "${body}" || return 0
+  { fetch_branch "${PROJECT_DIR}" "$3" && git -C "${PROJECT_DIR}" fetch -q origin "+refs/tags/v$4:refs/tags/v$4" 2>/dev/null; } \
+    || merge_fail "--release: cannot fetch origin/$3 and the tag v$4 to check the docs changed since it"
+  code="$(git -C "${PROJECT_DIR}" diff --name-only "refs/tags/v$4" "origin/$3" -- bin commands hooks)" \
+    || merge_fail "--release: git cannot diff v$4 with origin/$3"
+  [[ -n "${code}" ]] || return 0
+  # The board's stories and epics are not docs, though the board may live under docs/.
+  rel="${BOARD#"${PROJECT_DIR}"/}"
+  [[ ${BOARD_IN_REPO} != 1 ]] || ex=(":(exclude)${rel}/stories" ":(exclude)${rel}/epics")
+  docs="$(git -C "${PROJECT_DIR}" diff --name-only "refs/tags/v$4" "origin/$3" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
+    || merge_fail "--release: git cannot diff v$4 with origin/$3"
+  [[ -z "${docs}" ]] || return 0
+  merge_fail "--release: ${code//$'\n'/, } changed since v$4 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or put a 'Docs: none — <reason>' line in the PR body"
 }
 
 # watch_scope [--epic <slug>|--backlog] [repo...] — set WATCH_HEADS and WATCH_NAMES for watch. With
