@@ -425,8 +425,8 @@ short. It takes only a conductor's name and fails on any other.
 A codex agent, or one with no recorded session, is waited on through herdr's status. `wait`
 listens on herdr's event stream (the socket at `HERDR_SOCKET_PATH`, which herdr sets in every pane)
 and returns the moment herdr says the agent is `idle`, `blocked` or `done`, or `gone` when its pane
-closes or exits. With no socket, or one that refuses the subscription, it falls back to herdr's
-`agent wait` in slices. A builder
+closes or exits. With no socket, or a stream that fails, it falls back to herdr's `agent wait` for
+the rest of each slice, which also returns `gone` for a pane herdr no longer finds. A builder
 whose session goes idle while its story is `ready` and has no open or merged PR (a closed one is an
 earlier attempt's) has stopped early, perhaps on a failed request, and nothing else would wake it. `wait` tells it
 why ("you are idle and story/<slug> has no PR") and waits again, up to three times. Nudges are at

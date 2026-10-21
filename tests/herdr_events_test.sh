@@ -21,42 +21,62 @@ check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
 }
 
-# herdr: logs every call; agent cx works in pane w:7; agent wait (the poll) says idle.
+# herdr: logs every call; agent cx works in pane w:7; agent wait (the poll) says idle, or, once
+# ${ROOT}/closed exists, fails as herdr does for a pane that has closed.
 cat > "${ROOT}/herdr" <<EOF
 #!/bin/sh
 echo "\$*" >> "${ROOT}/herdr.log"
 case "\$1 \$2" in
   "agent list") echo '{"result":{"agents":[{"name":"cx","agent_status":"working","pane_id":"w:7"}]}}' ;;
-  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent wait")
+    if [ -f "${ROOT}/closed" ]; then
+      echo '{"error":{"code":"agent_not_found","message":"agent target w:7 not found"},"id":"cli:agent:wait"}' >&2; exit 1
+    fi
+    echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
 esac
 EOF
 chmod +x "${ROOT}/herdr"
 
 # The fake herdr socket: newline-delimited JSON. agent.get says the agent works, or with mode now
 # that it is blocked. events.subscribe is acknowledged, then, a moment later, gets another pane's
-# event and then mode's: blocked (pane.agent_status_changed) or closed (pane_closed, the lifecycle
-# envelope). Mode vanish has agent.get find no pane: it closed after the subscription. Mode refuse
-# answers the subscription with an error, as herdr does for an unknown pane.
+# event and then mode's: blocked (pane.agent_status_changed, agent.get blocked from then on), closed
+# (pane_closed, the lifecycle envelope), stale (an idle event from before agent.get, which still says
+# working), noise (lines that are no event, then blocked), drop (the stream ends) or silent
+# (nothing). Mode vanish has agent.get find no pane (herdr's agent_not_found): it closed after the
+# subscription. Mode refuse answers the subscription with an error, as herdr does for an unknown
+# pane. Mode dribble sends the subscription's reply a byte every tenth of a second.
 cat > "${ROOT}/server.py" <<'EOF'
 import json, os, socketserver, sys, time
 path, mode = sys.argv[1], sys.argv[2]
+agent = {"status": "blocked" if mode == "now" else "working"}
 class H(socketserver.StreamRequestHandler):
     def handle(self):
         req = json.loads(self.rfile.readline())
         out = lambda o: (self.wfile.write((json.dumps(o) + "\n").encode()), self.wfile.flush())
         if req["method"] == "agent.get" and mode == "vanish":
-            out({"id": req["id"], "error": {"code": "pane_not_found", "message": "pane w:7 not found"}})
+            out({"id": req["id"], "error": {"code": "agent_not_found", "message": "agent target w:7 not found"}})
             return
         if req["method"] == "agent.get":
-            out({"id": req["id"], "result": {"agent": {"pane_id": "w:7", "agent_status": "blocked" if mode == "now" else "working"}}})
+            out({"id": req["id"], "result": {"agent": {"pane_id": "w:7", "agent_status": agent["status"]}}})
             return
         if mode == "refuse":
             out({"id": req["id"], "error": {"code": "pane_not_found", "message": "pane w:7 not found"}})
             return
+        if mode == "dribble":
+            for b in (json.dumps({"id": req["id"], "result": {"type": "subscription_started"}}) + "\n").encode():
+                self.wfile.write(bytes([b])); self.wfile.flush(); time.sleep(0.1)
+            return
         out({"id": req["id"], "result": {"type": "subscription_started"}})
         time.sleep(0.3)
         out({"event": "pane.agent_status_changed", "data": {"pane_id": "w:8", "workspace_id": "w", "agent_status": "idle"}})
-        if mode == "blocked":
+        if mode == "drop":
+            return
+        if mode == "stale":
+            out({"event": "pane.agent_status_changed", "data": {"pane_id": "w:7", "workspace_id": "w", "agent_status": "idle"}})
+        if mode == "noise":
+            out({"id": "late", "result": {}}); out({"event": "keepalive"}); out([])
+        if mode in ("blocked", "noise"):
+            agent["status"] = "blocked"
             out({"event": "pane.agent_status_changed", "data": {"pane_id": "w:7", "workspace_id": "w", "agent_status": "blocked"}})
         elif mode == "closed":
             out({"event": "pane_closed", "data": {"type": "pane_closed", "pane_id": "w:7", "workspace_id": "w"}})
@@ -74,13 +94,14 @@ serve() { # <mode> — (re)start the fake socket in <mode>
 
 p="${ROOT}/proj"; mkdir -p "${p}/.claude/swarm" "${p}/.swarm/state"; : > "${p}/.claude/swarm/config"
 echo "w:7 cx" > "${p}/.swarm/state/wait-cx"   # this project's agent cx, in a pane it recorded
-# wait_cx [<socket>] — "<stdout>|<polls>|<seconds>": wait on cx (a minute's slice, two minutes in
-# all), with HERDR_SOCKET_PATH set to <socket> or unset.
+# wait_cx [<socket>] [<ms>] — "<stdout>|<polls>|<seconds>": wait on cx for <ms> (two minutes) in
+# slices of SLICE ms (a minute), with HERDR_SOCKET_PATH set to <socket> or unset, and PRE, when set,
+# first on PATH.
 wait_cx() {
   local t0=${SECONDS} out
   : > "${ROOT}/herdr.log"
   out="$(cd "${p}" && env -u SWARM_PROJECT -u HERDR_SOCKET_PATH ${1:+HERDR_SOCKET_PATH="$1"} HERDR_ENV=1 \
-    PATH="${ROOT}:${PATH}" bash "${SWARM}" wait cx 120000 2>/dev/null)" || true
+    SWARM_STALL_POLL_MS="${SLICE:-60000}" PATH="${PRE:+${PRE}:}${ROOT}:${PATH}" bash "${SWARM}" wait cx "${2:-120000}" 2>/dev/null)" || true
   echo "${out}|$(grep -c '^agent wait' "${ROOT}/herdr.log" || true)|$((SECONDS - t0))"
 }
 quick() { local s="${1##*|}"; [[ ${s} -lt 10 ]] && echo "${1%|*}" || echo "${1%|*} after ${s}s"; }
@@ -99,24 +120,49 @@ cat > "${ROOT}/busy.py" <<'EOF'
 import json, sys
 sys.path.insert(0, sys.argv[1]); import herdr_events as h
 class Stream:
-    def settimeout(self, t): pass
     def close(self): pass
-    def readline(self): return json.dumps({"event": "pane_closed", "data": {"pane_id": "w:8"}}) + "\n"
+    def read(self, end): return {"event": "pane_closed", "data": {"pane_id": "w:8"}}
 def request(path, req, deadline):
     if req["method"] == "events.subscribe":
-        return Stream(), Stream(), {"result": {}}
-    return Stream(), None, {"result": {"agent": {"agent_status": "working"}}}
+        return Stream(), {"result": {}}
+    return Stream(), {"result": {"agent": {"agent_status": "working"}}}
 h.request = request
-print(h.wait("sock", "w:7", 200))
+print(h.wait("sock", "w:7", h.time.monotonic() + 0.2))
 EOF
 check "a stream busy with other panes' events still times out at the deadline" "None" \
   "$(perl -e 'alarm 5; exec @ARGV' python3 -I "${ROOT}/busy.py" "$(dirname "${SWARM}")/lib" 2>&1 || true)"
 serve vanish
 check "the pane closes between the subscription and the read of its agent: wait returns gone, without a poll" \
   "gone|0" "$(quick "$(wait_cx "${SOCK}")")"
+serve stale
+check "an idle event queued before wait read the agent, which works: wait does not return idle" \
+  "|0" "$(quick "$(wait_cx "${SOCK}" 1500)")"
+serve noise
+check "stream lines that are no event (a late reply, a keepalive) are skipped: wait returns blocked, without a poll" \
+  "blocked|0" "$(quick "$(wait_cx "${SOCK}")")"
+serve dribble
+check "herdr answering the subscription a byte at a time still times out at the deadline" "rc=1" \
+  "$(perl -e 'alarm 3; exec @ARGV' python3 -I "$(dirname "${SWARM}")/lib/herdr_events.py" "${SOCK}" w:7 500 >/dev/null 2>&1; echo "rc=$?")"
+serve silent
+check "a stream slice that times out moves on to the pane check and the next slice, without a poll" \
+  "|0 2" "$(quick "$(SLICE=1000 wait_cx "${SOCK}" 2500)") $(grep -c '^agent read' "${ROOT}/herdr.log" || true)"
+# python3 that fails on herdr_events.py (127, as when it is missing), and runs anything else.
+mkdir -p "${ROOT}/nopy"
+# shellcheck disable=SC2016 # the wrapper's own $1 and $@
+printf '#!/bin/sh\ncase "$1" in *herdr_events.py) exit 127 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "${ROOT}/nopy/python3"
+chmod +x "${ROOT}/nopy/python3"
+check "the stream fails with neither a state nor a timeout (127): wait polls herdr agent wait" \
+  "idle|1" "$(quick "$(PRE="${ROOT}/nopy" wait_cx "${SOCK}")")"
+serve drop
+out="$(wait_cx "${SOCK}")"; ms="$(sed -n 's/^agent wait .*--timeout \([0-9]*\).*/\1/p' "${ROOT}/herdr.log")"
+check "the stream ends mid-slice: wait polls herdr agent wait for what is left of the slice" \
+  "idle|1 short" "$(quick "${out}") $([[ -n "${ms}" && ${ms} -lt 60000 ]] && echo short || echo "full (${ms})")"
 serve refuse
 check "a stream that refuses the subscription: wait polls herdr agent wait, as before" "idle|1" "$(quick "$(wait_cx "${SOCK}")")"
 check "no socket: wait polls herdr agent wait, as before" "idle|1" "$(quick "$(wait_cx)")"
+touch "${ROOT}/closed"
+check "no socket, and the pane has closed: the poll says gone, as the stream does" "gone|1" "$(quick "$(wait_cx)")"
+rm -f "${ROOT}/closed"
 kill "${server}"; wait "${server}" 2>/dev/null || true; server=""   # its socket file stays behind
 check "a socket nothing listens on any more: wait polls herdr agent wait, as before" "idle|1" "$(quick "$(wait_cx "${SOCK}")")"
 

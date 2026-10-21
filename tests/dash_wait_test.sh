@@ -108,7 +108,7 @@ case "$1 $2" in
     echo "herdr: a notice on stderr" >&2
     case "${WAIT_MODE:-done}" in
       timeout) echo '{"error":{"code":"timeout","message":"timed out waiting for agent status"}}' >&2; exit 1 ;;
-      error) echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1 ;;
+      error) echo '{"error":{"code":"internal","message":"herdr failed"}}' >&2; exit 1 ;;   # not agent_not_found, which is gone
       *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
     esac ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
