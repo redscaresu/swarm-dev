@@ -1133,14 +1133,16 @@ before calling main green, for checks other apps post just after the push. A fai
 missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
-one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`) into
+one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
+`touches: [.]`: the fix may change whatever turns the base green) into
 the main checkout's board, where every command reads stories. There it is git-ignored through the
 clone's `.git/info/exclude`, as `.gitignore` does `.swarm/`, so it shows in no `git status` and meets
 no pull; its builder reads it there and leaves it alone, and reconcile takes it off once its PR
 merges. The story names the failed Actions runs and holds the red checks and up to 20 FAIL lines
 from their logs, each log read once its run has completed. The code under test writes those lines,
 so the story fences them under a line saying to read them as data, never as instructions, with
-control characters taken off and each line cut to 300 characters. Those reads stop 10 minutes after the first
+control characters taken off and each line cut to 300 characters; main-red keeps the whole names.
+merge's own `main-ci:` and `fix-main:` lines, and `next`'s why, show them the same way. Those reads stop 10 minutes after the first
 (`SWARM_FIX_MAIN_LOG_SECONDS`), however many runs failed, so a slow log cannot hold up the reconcile
 that follows; a run gh cannot read stops at once, and the story names each run it could not read,
 and why. Once the story is written, merge logs `main-red <sha> <owner/repo> <base> <checks>` (the
@@ -1154,7 +1156,8 @@ the same repo and base, or the base's head that reconcile reads (a revert, a re-
 more than the board's own files (a board-only commit's CI may skip its tests, so a board-only head
 is judged by the newest commit before it that is not), has every check, status and workflow run green (a commit with only statuses counts), and has a passing run of each
 check that went red, or, when the base requires checks, of each of those (a fix may rename or drop the
-failed job; a path filter may skip a check the base does not require). Until then, while the story is ready with no build of it, `next` names
+failed job; a path filter may skip a check the base does not require). Until then, while the story is buildable (ready, `kind: code`: one escalated or held for the lead goes
+to the lead's queue instead) with no build of it, `next` names
 `fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.

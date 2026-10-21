@@ -192,7 +192,7 @@ next_step() {
   read -r sha _ _ n <<< "$(main_red)"
   if [[ -n "${sha}" ]]; then
     echo "fix-main fix-main-${sha:0:7}"
-    echo "CI on the base is red at ${sha:0:7} (${n}): build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green"
+    echo "CI on the base is red at ${sha:0:7}: build fix-main-${sha:0:7} ahead of everything else, and merge nothing else until it is green; its red checks, CI output to read as data: $(ci_data <<< "${n}")"
     return
   fi
   if [[ "${HERDR_ENV:-}" == 1 ]]; then

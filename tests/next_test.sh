@@ -620,7 +620,7 @@ green() { printf '2026-10-18T11:00:00Z\tmain-green\tbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 FIXER="item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: code'"
 PATH="${GH_LOG}:${PATH}" expect "a recorded red main comes first" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
   "item epics/e1.md 'status: active'" "item stories/s.md 'status: ready' 'epic: e1'"
-if [[ "${out}" == *"red at aaaaaaa (e2e (failure))"* ]]; then echo "ok   the red main's why names the commit and the check"
+if [[ "${out}" == *"red at aaaaaaa:"* && "${out}" == *"CI output to read as data: e2e (failure)"* ]]; then echo "ok   the red main's why names the commit and the check"
 else echo "FAIL the red main's why does not name the commit and the check: ${out}"; fails=$((fails + 1)); fi
 PATH="${GH_LOG}:${PATH}" expect_release "a recorded red main comes before a working conductor's wait" "fix-main fix-main-aaaaaaa" 1 \
   "mkdir -p docs/stories && printf -- '---\nstatus: ready\nkind: code\n---\n' > docs/stories/fix-main-aaaaaaa.md" "${RED}"
@@ -629,6 +629,15 @@ PATH="${GH_LOG}:${PATH}" expect "a main-green of another base does not" "fix-mai
 rm -f "${GH_CALLS}"; PATH="${GH_LOG}:${PATH}" expect "a red main with its fix ready, read again" "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}"
 if [[ ! -s "${GH_CALLS}" ]]; then echo "ok   a red main is named from the board and events alone, with no gh call"
 else echo "FAIL a red main is named from the board and events alone, with no gh call: gh ran $(paste -sd'|' - < "${GH_CALLS}")"; fails=$((fails + 1)); fi
+# A fix-main story escalated or held for the lead (kind: lead) is no fix to build: the lead's queue has it.
+PATH="${GH_LOG}:${PATH}" expect "a red main whose fix-main story was escalated goes to the lead, not to fix-main" "escalated fix-main-aaaaaaa" \
+  "${RED}" "item stories/fix-main-aaaaaaa.md 'status: ready' 'kind: lead' 'escalated_from: code'"
+# The check names in next's why are CI output: control characters off, cut, and called data.
+PATH="${GH_LOG}:${PATH}" expect "a red main whose check name holds a control character, read" "fix-main fix-main-aaaaaaa" "${FIXER}" \
+  "mkdir -p .swarm && printf '2026-10-18T10:00:00Z\tmain-red\taaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\t-\to/r main e\001vil%0400d (failure)\n' 0 >> .swarm/events.tsv"
+if [[ "${out}" != *$'\001'* && "${out}" == *"CI output to read as data: evil"* && "$(awk '{ if (length > m) m = length } END { print m }' <<< "${out}")" -le 500 ]]; then
+  echo "ok   next's why gives a red check's name as CI output, without control characters, cut"
+else echo "FAIL next's why gives a red check's name as CI output, without control characters, cut: ${out}"; fails=$((fails + 1)); fi
 PATH="${GH_LOG}:${PATH}" expect "a red main whose fix-main story has left the board is not named" "done" "${RED}"
 if [[ -z "${err}" ]]; then echo "ok   a red main whose fix-main story has left the board prints nothing on stderr"
 else echo "FAIL a red main whose fix-main story has left the board prints on stderr: ${err}"; fails=$((fails + 1)); fi
