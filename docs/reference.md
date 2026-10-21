@@ -668,8 +668,10 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 or `error <why>`, then reconcile's lines. Through a merge queue (§ Merging) it is `merge ok` and then
 reconcile's lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
 queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge
---auto failed: <error>`, or `merge unconfirmed (<why>)` for a timeout (`timeout (<what it waited
-on>)`), an error, a PR never read as queued, or a merge with no merge commit. A `story` that starts an `escalate` build, and the `close` that hands its story to
+--auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
+unconfirmed (<why>)` for a timeout (`timeout (<what it waited on>)`), an error, a PR never read as
+queued, or a merge with no merge commit. A merge at a head other than the checked one is `merge
+merged at head <sha>, not <sha>, ...` and then reconcile's lines. A `story` that starts an `escalate` build, and the `close` that hands its story to
 the lead, each write one more line of their own (§ Model and effort). The plugin's merge guard
 (§ Merging) writes an `incident` line, target `-` and outcome `merge-blocked: <form>` or `guard-blocked: <form>`, for each call it blocks.
 `reconcile` writes one, target `-` and outcome `pull-failed: <files>`, when changed tracked files stop
@@ -1071,21 +1073,26 @@ The queue tests the PR on top of the base and the PRs queued ahead of it, so two
 green alone but red together never land. `merge` reads the PR back even when gh fails, since an
 error can follow an enqueue GitHub made, and a PR already in the queue is waited on as if it had
 just joined it. Then it reads the PR every 20 seconds, up to 30 minutes, until it merges or leaves
-the queue, and checks its head on every read: a head other than the one it checked stops the wait
-and turns auto-merge off, so a push made before the PR reached the queue never merges unreviewed.
-A merged PR logs `merge ok` and goes straight to reconcile: the queue already ran CI on the commit
-it merged, so there is no `main-ci` wait. A PR that leaves the queue unmerged, after a read showed
-it queued or waiting for auto-merge, is a dequeue. `merge` exits non-zero with one
+the queue, and checks its head on every read. A head other than the one it checked stops the wait:
+`merge` turns auto-merge off and takes the PR out of the queue (GraphQL
+`disablePullRequestAutoMerge` and `dequeuePullRequest`), so a push made before the PR reached the
+queue never merges unreviewed. If the PR has already merged at another head, `merge` logs
+`merge merged at head <sha>, not <sha>, ...`, runs reconcile (main has changed) and exits non-zero,
+so the merged code gets a review. A merged PR logs `merge ok` and goes straight to reconcile: the
+queue already ran CI on the commit it merged, so there is no `main-ci` wait. A PR that leaves the
+queue unmerged, after a read showed it queued or waiting for auto-merge or with a removal since this
+enqueue (one dropped within seconds for a conflict), is a dequeue. `merge` exits non-zero with one
 `merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished on
 the merge group's commit. That commit is the one seen while the PR was queued, or, for a PR that
 joined and left between two reads, the one its `merge_group` run names; the reason is GitHub's only
 for a removal since this enqueue. The conductor handles a dequeue like a red check: it sends the
 failing checks to the builder, which merges the base in and pushes, then reviews and merges the new
-head. A wait that runs out or errors turns auto-merge off and is logged as unconfirmed; the PR may
-still be in the queue, and running `merge` again waits on it. A PR that never reads as queued is
-unconfirmed too, unless gh failed, which is a refusal. If the queue cannot be read (three tries),
-`merge` says so and merges directly; on a base that does have a queue, that reads back unconfirmed
-rather than merged. With no queue the path is the one above. ci.yml and zizmor.yml run on
+head. A wait that runs out or errors turns auto-merge off, takes the PR out of the queue and is
+logged as unconfirmed, naming anything it could not undo for you to do by hand; running `merge`
+again enqueues it again. A PR that never reads as queued is unconfirmed too, unless gh failed, which
+is a refusal. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
+base with a queue, a direct merge would enqueue the PR with nothing watching its head. With no
+queue the path is the one above. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
 merges with `--admin`, which would skip a queue. `ci_gate admin` refuses a base with a
