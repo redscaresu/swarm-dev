@@ -550,7 +550,7 @@ rm -f "${P}/.swarm/state/ce-foo"
 got=""
 for st in starting 'done'; do
   conductor_fixture "${st}" idle; out="$(cs conduct-ce)"
-  got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept cb1 (state ${st}) in tab ce-2" <<< "${out}") "
+  got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept cb1 (state ${st}) in tab ce-2" <<< "${out}" || true) "
 done
 is "cb1 starting, then done (herdr's word, no session): each keeps ce-2" "<w:t7>|1 <w:t7>|1 " "${got}"
 # Closing one builder's last pane closes that record's own tab only: overflow ce-2 and epic ce-foo's
