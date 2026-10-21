@@ -1124,9 +1124,11 @@ under the board instead. With `--release`, for a release PR, the PR must be in t
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
 greater than the base's. When `bin/`, `commands/` or `hooks/` changed between the tag
-`v<base version>` and the base but README.md, AGENTS.md and `docs/` (the board's stories and epics aside) did not, it
-refuses and names the changed paths, unless the PR body has a `Docs: none — <reason>` line.
-It fetches the base and the tag first, and refuses when it cannot. No story or epic need list it.
+`v<base version>` and the base but README.md, AGENTS.md, `docs/` and `commands/*.md` did not, it
+refuses and names the changed paths, unless the PR body has a `Docs: none — <reason>` line. A change
+to `commands/*.md` counts as docs too, since that is the text a user reads. The board's own files
+(stories, epics, `Board.base`, `.obsidian/`) are not docs, even when the board is `docs/`. It also
+refuses when the tag is missing, cannot be fetched or is not on the base. No story or epic need list it.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,
 and any gh error or answer it cannot read is a refusal. It merges with the repo's method (squash

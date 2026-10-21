@@ -224,8 +224,8 @@ Repeat until a step below says stop:
      `Release v<new>`, listing the PRs merged since the tag and naming the docs PR. When nothing
      since the tag changes what a user runs, sees or has to do, skip the docs PR and put a
      `Docs: none — <reason>` line in the release PR body instead: `merge --release` refuses a
-     release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md
-     and docs/ did not, unless that line is there. Run `swarm.sh wait-pr <PR URL>` in the
+     release whose `bin/`, `commands/` or `hooks/` changed since the tag while README.md, AGENTS.md,
+     docs/ and commands/*.md did not, unless that line is there. Run `swarm.sh wait-pr <PR URL>` in the
      background and wait for it. If it exits 1, a check is red. A release PR may change only the
      version, so `merge --release` refuses one with a fix on it: the fix goes to the base through a
      story or a lead PR, then close this PR and cut the release branch again from the base's latest
