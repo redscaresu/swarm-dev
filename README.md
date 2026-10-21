@@ -84,7 +84,7 @@ The other commands are tools the lead runs; they are listed in
 | proposed epics or stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (a `later` epic whose dependencies are done gets its stories planned first, for you to approve) |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
 
 ## Cost and safety
