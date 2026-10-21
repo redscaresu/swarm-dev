@@ -345,12 +345,13 @@ clean_env() {
 }
 
 # resume_refusal <arg>... — when herdr would refuse <arg>... as a resume command, print why and
-# succeed: more than 64 arguments or 8 KiB, or an argument with an apostrophe or a control character
-# (herdr's rules; its first word, bash, is a plain command name).
+# succeed: more than 64 arguments or 8 KiB (the command joined, a separator between arguments), or
+# an argument with an apostrophe or a control character (herdr's rules; its first word, python3, is a
+# plain command name).
 resume_refusal() {
   local a opt="" bytes
   [[ $# -le 64 ]] || { echo "$# arguments, more than 64"; return 0; }
-  bytes="$(printf '%s' "$@" | LC_ALL=C wc -c | tr -d ' ')"
+  bytes="$(printf '%s' "$*" | LC_ALL=C wc -c | tr -d ' ')"
   [[ ${bytes} -le 8192 ]] || { echo "${bytes} bytes, more than 8 KiB"; return 0; }
   for a in "$@"; do
     [[ "${a}" != --* ]] || opt="${a}"
@@ -366,28 +367,41 @@ RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
 
 # resume_file <name> <session> <names> <arg>... — what herdr runs to resume agent <name> (Claude
 # session <session>) after a restart, in RESUME_DIR: <session>.argv, its resume command <arg>... one
-# argument a line, which the plugin's hooks attach to each report with the session's current id
-# (SWARM_RESUME); and <session>.sh, the wrapper that command starts with (bash <wrapper> claude
-# --resume ...). A restored pane's shell holds the user's whole environment, so the wrapper unsets
-# every variable but those clean_env's agent starts with (AGENT_ENV, AGENT_PREFIXES', herdr's and
-# <names>), which keep the restored pane's own values, so no value is written down or put on a
-# command line; sets AGENT_SET as launch_file does, with SWARM_PROJECT and SWARM_RESUME; and execs
-# its arguments. Both 0600, and a session's own, so a later agent of the same name never changes them.
+# argument a line, whose --resume the plugin's hooks keep at the pane's own session and attach to
+# each report (SWARM_RESUME); and <session>.py, the wrapper that command starts with (python3 -I
+# <wrapper> claude --resume ...). A restored pane's shell holds the user's whole environment, so the
+# wrapper keeps only the variables clean_env's agent starts with (AGENT_ENV, AGENT_PREFIXES', herdr's
+# and <names>), with the restored pane's own values, so no value is written down or put on a command
+# line; sets AGENT_SET as launch_file does, with SWARM_PROJECT and SWARM_RESUME; and execs its
+# arguments. Python, not bash, so neither a BASH_ENV nor an exported function in that environment
+# runs before the scrub or changes it, as none can on a first start through env -i. Both 0600, and a
+# session's own, so a later agent of the same name never changes them.
 resume_file() {
   local name="$1" session="$2" names="$3"
   shift 3
   mkdir -p "${RESUME_DIR}"
   (umask 077
     printf '%s\n' "$@" > "${RESUME_DIR}/${session}.argv"
-    # shellcheck disable=SC2016 # the wrapper's bash expands them
-    { printf 'keep=%q\n' " HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names} "
-      printf '%s\n' 'for n in $(compgen -e); do' \
-        "  [[ \"\${keep}\" == *\" \${n} \"* || \"\${n}\" =~ ^(${AGENT_PREFIXES// /|}) ]] || unset \"\${n}\"" 'done'
-      printf 'export SWARM_PROJECT=%q SWARM_RESUME=%q SHELL=%q ZDOTDIR=%q\n' "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" \
-        "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}"
-      printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
-        "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done" 'exec "$@"'
-    } > "${RESUME_DIR}/${session}.sh")
+    python3 - "${RESUME_DIR}/${session}.py" "HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names}" "${AGENT_PREFIXES}" \
+      "${HERDR_PANE_ENV}" "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" "${AGENT_SHELL%% *}" "${PROJECT_DIR}/.swarm/zdotdir/${name}" <<'PY'
+import sys
+path, keep, prefixes, pane, project, resume, shell, zdotdir = sys.argv[1:]
+open(path, "w").write(f"""# swarm.sh's restore wrapper (resume_file): the agent's allowlisted environment, then its arguments.
+import os, sys
+keep = {sorted(set(keep.split()))!r}
+env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(prefixes.split())!r})}}
+env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r})
+try:
+    env["GPG_TTY"] = os.ttyname(0)
+except OSError:
+    pass
+for n in {pane.split()!r}:
+    if not env.get(n):
+        env.pop(n, None)
+os.execvpe(sys.argv[1], sys.argv[1:], env)
+""")
+PY
+  ) || die "${name}: could not write its restore wrapper in ${RESUME_DIR}"
 }
 
 # agent_cmd <tab> <name> <cwd> <role> <prompt-file> [pane-name] — `swarm.sh agent`: start_agent, with
@@ -437,7 +451,7 @@ start_agent() {
       || die "${name}: could not write its --settings (python3)"
     flags=(--model "${model}" --effort "${effort}" --permission-mode auto --disallowedTools "${deny[@]}" --settings "${settings}")
     # What herdr runs to resume the agent after a restart: resume_file's wrapper, then claude as it started.
-    resume=(bash "${RESUME_DIR}/${session}.sh" claude --resume "${session}" "${flags[@]}")
+    resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" "${flags[@]}")
     why="$(resume_refusal "${resume[@]}")" \
       && die "${name}: herdr would refuse the command that resumes the agent after a restart: ${why}"
   fi
@@ -488,11 +502,11 @@ start_agent() {
   # guards included, in the pane's whole environment. Reporting the whole command makes a restart
   # resume the agent as it started. Only once the brief is taken up, so no state of swarm's stands in
   # for the one deliver_prompt waits on; as working, at the time the brief was sent, so a later report
-  # of the plugin's hooks (hooks/agent-state.sh, which attach the same command) wins over it.
+  # of the plugin's hooks (hooks/agent-state.sh, which attach the same command) wins over it. The
+  # agent is at work by then, so a refusal keeps it and says so: its hooks send the command again.
   if [[ "${kind}" == claude ]] && ! out=$(herdr pane report-agent "${pane}" --source swarm --agent claude --state working \
       --seq "${seq}" --agent-session-id "${session}" -- "${resume[@]}" 2>&1); then
-    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
-    die "${name}: herdr did not take the command that resumes the agent, so a restart would drop its guards: ${out}"
+    echo "swarm: ${name}: herdr did not take the command that resumes the agent (${out}); the agent works on, and its hooks send the command again with its next state, but until one lands a herdr restart brings it back without its guards" >&2
   fi
   echo "${name} ${pane} ${kind}:${model}:${effort}"
 }
