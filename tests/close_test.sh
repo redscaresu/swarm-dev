@@ -378,6 +378,8 @@ is "with goal off, close g5 with no cause closes and counts as today" "0|2|" "${
 # ce-2, and cb2 w:p92 in ce when its line is given.
 cp "$(dirname "${SWARM}")/../tests/claude_stub.sh" "${ROOT}/bin/claude"; chmod +x "${ROOT}/bin/claude"
 printf '[{"sessionId":"sess-cb2","status":"busy"}]' > "${ROOT}/claude-agents.json"; export CLAUDE_STUB_AGENTS="${ROOT}/claude-agents.json"
+# count <pattern> <file> — the lines of <file> matching <pattern>, 0 when <file> is gone.
+count() { local n; n="$(grep -c -- "$1" "$2" 2>/dev/null)" || true; echo "${n:-0}"; }
 conductor_fixture() {
   item cb1 "status: review" "kind: code" "epic: ce"
   printf 'w:p90 conductor\n%s' "${3:+$3$'\n'}" > "${P}/.swarm/state/ce"; echo "w:p91 cb1" > "${P}/.swarm/state/ce-2"
@@ -428,13 +430,13 @@ is "the kept cb4 joins ce's record, so close conduct-ce --all still closes ce" "
 conductor_fixture idle idle; echo "cb5 w:p95 working" >> "${ROOT}/agents"; echo "w:p95 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "an agent in no tab record, working by herdr's word, is kept, named by herdr" "<w:t8>|1" \
   "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb5 (working) in tab ce' <<< "${out}")"
-is "cb5, with no agents.tsv line here, is not this project's: ce's record never gains it" "0" "$(cat "${P}/.swarm/state/ce" 2>/dev/null | grep -c 'w:p95' || true)"
+is "cb5, with no agents.tsv line here, is not this project's: ce's record never gains it" "0" "$(count 'w:p95' "${P}/.swarm/state/ce")"
 # An agent with no name is herdr's to answer for: idle it keeps nothing, working it is kept by its pane.
 echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle idle; echo "- w:p97" >> "${ROOT}/agents"; echo "w:p97 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "an idle agent with no name in ce keeps nothing, and nothing says None" "<w:t7><w:t8>|0" "$(tr -d '\n' < "${CLOSED}")|$(grep -c None <<< "${out}")"
 conductor_fixture idle idle; echo "- w:p97 working" >> "${ROOT}/agents"; echo "w:p97 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "a working agent with no name in ce is kept, named by its pane, and never recorded" "<w:t8>|1|0|0" \
-  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept w:p97 (working) in tab ce' <<< "${out}")|$(grep -c None <<< "${out}")|$(cat "${P}/.swarm/state/ce" 2>/dev/null | grep -c 'w:p97' || true)"
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept w:p97 (working) in tab ce' <<< "${out}")|$(grep -c None <<< "${out}")|$(count 'w:p97' "${P}/.swarm/state/ce")"
 # A story whose repo has no origin has no PR to keep it; a repo that is missing says so, not gh.
 git init -q "${ROOT}/noorigin"; echo "${open_pr}" > "${ROOT}/prs.json"
 conductor_fixture idle idle; item cb1 "status: review" "kind: code" "epic: ce" "repo: noorigin"; out="$(cs conduct-ce)"
@@ -470,14 +472,14 @@ echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle; item "${LS}
 echo "${LSN} w:p98" >> "${ROOT}/agents"; echo "w:p98 w:t8" >> "${ROOT}/panes"; : > "${ROOT}/claude.log"
 out="$(CLAUDE_STUB_LOG="${ROOT}/claude.log" cs conduct-ce)"
 is "${LS} (agent ${LSN}, ${#LSN} long) in no record: its story is found, its PR keeps ce-2, and ce-2 records its full slug" "1|1" \
-  "$(grep -c "^kept ${LS} (PR open) in tab ce-2" <<< "${out}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null | grep -cx "w:p98 ${LS}" || true)"
+  "$(grep -c "^kept ${LS} (PR open) in tab ce-2" <<< "${out}")|$(count "^w:p98 ${LS}$" "${P}/.swarm/state/ce-2")"
 is "Claude Code's agent list is read once for the whole close" "1" "$(grep -c '^agents --json$' "${ROOT}/claude.log")"
 rm -f "${P}/docs/stories/${LS}.md"
 # A 32-character name no story's agent has is kept, since its story cannot be found; it is not recorded.
 X=zz-a-name-that-is-thirty-two-chr; echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle idle
 echo "${X} w:p99" >> "${ROOT}/agents"; echo "w:p99 w:t8" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "an idle agent named ${X} (${#X} characters, no story's) keeps ce-2, its story not found, and is not recorded" "<w:t7>|1|0" \
-  "$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept ${X} (its story could not be found) in tab ce-2" <<< "${out}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null | grep -c 'w:p99' || true)"
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept ${X} (its story could not be found) in tab ce-2" <<< "${out}")|$(count 'w:p99' "${P}/.swarm/state/ce-2")"
 # With herdr's agent list failing, the conductor's pane comes from its record line, and closes alone
 # while ce and ce-2 are kept; with no record naming it either, close says so and fails.
 conductor_fixture idle idle "w:p92 cb2"; touch "${ROOT}/agentfail"; rc=0; out="$(cs conduct-ce)" || rc=$?; rm "${ROOT}/agentfail"
