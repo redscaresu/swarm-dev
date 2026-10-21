@@ -830,6 +830,17 @@ it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a ne
 read the moved copy, act on it, and delete it. Do all this once more just before you write your report,
 so a note left after your last wait is not lost.
 EOF
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ -z "${CFG_escalate_ladder:-}" ]] || cat <<EOF
+
+swarm.sh steps a build up the escalation ladder (${CFG_escalate_ladder}) itself when its builder
+stops with no PR (close), stalls (\`wait --stall\`), is sent findings round ${STEP_UP_FINDINGS} of its build
+(tell), or its PR's checks go red on ${STEP_UP_RED_HEADS} heads of its build (\`watch --epic\` or
+\`--backlog\`). That command then prints \`stepped up: <slug>\` (wait prints it in place of
+\`stalled:\`): the next model carries on in the same worktree and branch. Do not close, retry or
+tell that story for it; wait on its builder again. A \`step-up failed: <slug>\` line means the
+step-up stopped after closing the builder: leave that story alone and list it for the lead.
+EOF
   local rules; rules="$(project_rules)"
   [[ -z "${rules}" ]] || printf '\nThe project'"'"'s rules, which every builder also gets:\n\n%s\n' "${rules}"
   cat <<EOF
@@ -885,7 +896,7 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
 - met: the story's reply is there. Review it as below; the closes after review or merge stay bare.
 - impossible: the reply starts \`IMPOSSIBLE:\`.
   Run \`swarm.sh close <slug> impossible\`, which makes the story \`kind: lead\`, and list it for the lead.
-- stalled: \`wait --stall\` returned stalled.
+- stalled: \`wait --stall\` returned stalled.$([[ -z "${CFG_escalate_ladder:-}" ]] || echo " (With escalate_ladder set, a stall it steps up prints \`stepped up:\` instead: wait on the builder again, and close nothing.)")
   Run \`swarm.sh close <slug> stalled\` and start the story again in a later wave.
 - bound: the reply is not there, and the met entry's reason says the stop-after clause applied.
   Run \`swarm.sh close <slug> bound\` and start the story again in a later wave.
@@ -960,7 +971,7 @@ worktree exists has started: never run \`swarm.sh story\` for it), then run \`sw
 read its Stacked lines. Both cover the whole board: act only on a line whose <child> is yours, and
 leave the rest to their own conductor.
 - \`<child>: merge <ref>\`: write a file saying to merge <ref> into its branch, re-run the tests and
-  push, and send it with \`swarm.sh tell <child> findings <file>\`. On a line that ends \`(no builder)\`,
+  push, and send it with \`swarm.sh tell <child> nudge <file>\` (not findings: those count review rounds). On a line that ends \`(no builder)\`,
   first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with
   \`swarm.sh agent <tab> <child> <worktree> <role> <brief>\`, where <tab> is the child's \`epic:\` (its
   slug when it has none), <role> is what \`swarm.sh _role <child>\` prints, and the brief says the

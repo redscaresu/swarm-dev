@@ -627,11 +627,22 @@ queued_sent() {
 # checks reported finished, has waited green for a review (queued_line). An agent of this
 # project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
 # lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
-# poll finds that agent no longer waiting (state in .swarm/state).
+# poll finds that agent no longer waiting (state in .swarm/state). With escalate_ladder set, a watch
+# with --epic or --backlog steps up a story of its own whose PR went red on STEP_UP_RED_HEADS heads of
+# its build (ci_red_scan); the lead's bare watch leaves that to the story's conductor.
 watch_prs() {
   local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo
   watch_scope "$@"; watch_repos die
   local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
+  # homes: "<slug>=<owner/repo>" for each of these stories, its own repo (repo:, or the project), so a
+  # red head on another repo's story/<slug> PR is never this <slug>'s (ci_red_scan).
+  local homes="" home h f
+  if [[ -n "${CFG_escalate_ladder:-}" && -n "${heads}" ]]; then
+    for h in ${heads#-}; do
+      f="${BOARD}/stories/${h#story/}.md"
+      home="$(repo_slug "$(fm "${f}" repo)" 2>/dev/null)" && homes+=" ${h#story/}=${home}"
+    done
+  fi
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   while :; do
     for repo in "${repos[@]}"; do
@@ -641,6 +652,9 @@ watch_prs() {
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
+        # The ladder's red heads, judged on every poll of a watch that owns these stories, on a PR in
+        # the story's own repo: a step-up tried is said, and the watch returns.
+        if [[ " ${homes} " == *" ${br#story/}=${repo} "* ]] && ci_red_scan "${repo}" "${sha}" "${br#story/}"; then return 0; fi
         if grep -qx "done ${sha}" "${seen}"; then
           # Its finished checks are reported: once, a head left green with no review is queued.
           if [[ "${mergeable}" == MERGEABLE ]] && ! grep -qx "queued ${sha:0:7}" "${seen}"; then
@@ -693,6 +707,57 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     fi
     nap 60
   done
+}
+
+# RED_HEADS: `<slug> <sha> <time> <seen|red|green|cancelled|refused>`: each PR head a watch saw,
+# ci_gate's verdict on it once it gave one (cancelled: not green, with no check failed or timed out), and a step-up that closed nothing while it was the PR's head. Only
+# appended to, one short line at a time, so two watches at once lose none.
+RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
+
+# ci_red_scan <owner/repo> <head> <slug> — watch's, with escalate_ladder set: note <head> as seen, the first
+# time any watch sees it, then judge with ci_gate head every head first seen in this build
+# (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
+# is final, and pending or a failed read is judged again next poll. A head that was there before the
+# build is not this build's. With STEP_UP_RED_HEADS distinct red heads or more, <head> not green,
+# the story's builder open (a PR whose builder was closed is the lead's) and idle (one mid-turn is
+# tried again next poll), and no step-up refused on this head, step it up (ladder_step ci-red-<N>)
+# and succeed unless that closed nothing, which is noted (refused) so this head is not tried again;
+# else fail.
+# ponytail: ci_gate reads a head still running on each poll; skip it there if watch's gh calls matter.
+ci_red_scan() {
+  local since now h rc v n out
+  since="$(build_started "$3")"; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "${RED_HEADS%/*}"; touch "${RED_HEADS}"
+  # A head is noted once, the first time any watch sees it: one there before the build is never this
+  # build's. mine: heads first seen this build, judged: those with a verdict.
+  awk -v s="$3" -v h="$2" '$1 == s && $2 == h { f = 1 } END { exit !f }' "${RED_HEADS}" \
+    || printf '%s %s %s seen\n' "$3" "$2" "${now}" >> "${RED_HEADS}"
+  while read -r h; do
+    rc=0; out="$(ci_gate head "$1" "${h}" 2>/dev/null)" || rc=$?
+    # Red only for a check that failed or timed out: one cancelled (a newer push, cancel-in-progress)
+    # or otherwise not green failed nothing.
+    case "${rc}" in
+      0) v=green ;;
+      1) if grep -qE '\((failure|timed_out)\)' <<< "${out}"; then v=red; else v=cancelled; fi ;;
+      *) continue ;;
+    esac
+    printf '%s %s %s %s\n' "$3" "${h}" "${now}" "${v}" >> "${RED_HEADS}"
+  done < <(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t { if ($4 == "seen") mine[$2] = 1; else if ($4 == "red" || $4 == "green" || $4 == "cancelled") judged[$2] = 1 }
+      END { for (h in mine) if (!(h in judged)) print h }' "${RED_HEADS}")
+  # Distinct heads: two watches can both judge one head.
+  n="$(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t && $4 == "red" && !red[$2]++ { n++ } END { print n + 0 }' "${RED_HEADS}")"
+  (( n >= STEP_UP_RED_HEADS )) && [[ -n "$(agent_field "$(agent_name "$3")" pane_id)" ]] || return 1
+  # Not while the PR's head is green: a builder whose fix passed is left be. A head still running counts
+  # (an idle builder that pushed it waits on it), as the builder fixing a red one is busy at every poll.
+  ! awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "green" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
+  ! awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "refused" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
+  # Only an idle builder, as tell needs: one mid-turn (an edit, a rebase) is left to finish, and the
+  # step-up is tried again on a later poll.
+  case "$(read_state "$(agent_name "$3")")" in idle|herdr:idle|herdr:done) ;; *) return 1 ;; esac
+  rc=0; ladder_step "$3" "ci-red-${STEP_UP_RED_HEADS}" || rc=$?
+  [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" ]] && return 0
+  [[ ${rc} != "${STEP_UP_BUSY}" ]] || return 1   # another step-up is running: not a refusal of this head
+  printf '%s %s %s refused\n' "$3" "$2" "${now}" >> "${RED_HEADS}"; return 1
 }
 
 # ref_in <repo-dir> <ref> <branch> — 0 when <ref>'s head is in <branch>, 1 when it is not, 2 when
