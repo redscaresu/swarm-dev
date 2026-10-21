@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # resume_report_test.sh — herdr resumes a Claude pane after a restart with `claude --resume <id>`
-# alone, in the pane's whole environment, so start_agent reports the agent's own resume command: once
-# a Claude agent's brief is taken up, `herdr pane report-agent <pane> --source swarm --agent claude
-# --state working --seq <time the brief was sent> --agent-session-id <session> -- bash <wrapper>
-# claude --resume <session>` carries every flag of its launch line, --session-id as --resume, with
-# --settings JSON a real encoder wrote. The wrapper (python3 -I <wrapper>) and the command it reads
+# alone, in the pane's whole environment, so start_agent reports the agent's own resume command: as
+# soon as herdr has started a Claude agent, before its brief (so a brief never taken up leaves it in
+# place), `herdr pane report-agent <pane> --source swarm --agent claude --state idle --seq <now>
+# --agent-session-id <session> -- python3 -I <wrapper> claude --resume <session>` carries every flag
+# of its launch line, --session-id as --resume, with --settings JSON a real encoder wrote (python3 -I,
+# so a json.py where swarm.sh runs changes nothing). The wrapper (python3 -I <wrapper>) and the command it reads
 # are the session's own, outside the project, so a project path with ", \ or ' starts as any other
 # and a start refused for a busy name changes no agent's files. Run as herdr would after a restart,
 # that command starts claude with those flags in the allowlisted environment (the story's names kept,
@@ -12,7 +13,9 @@
 # value is on it or in the files it reads. A codex agent reports nothing. Before a pane opens, a herdr
 # older than 0.9.2 stops the start, and so does a resume command herdr would refuse (an apostrophe or
 # a control character in a flag, more than 8 KiB joined or 64 arguments), naming why; a report herdr
-# refuses keeps the agent, which is at work by then, and says so. Then the plugin's hooks
+# refuses closes the pane and fails the start, the agent having done nothing yet. The restored
+# agent's ZDOTDIR is the session's own, so restoring one session of a name never empties another's,
+# and restores of one session at once all finish. Then the plugin's hooks
 # (hooks/hooks.json, run as Claude Code would for each event) report working on UserPromptSubmit and
 # PostToolUse, idle on Stop, StopFailure and a cleared or resumed SessionStart, blocked on a
 # permission Notification, and release on a quit, each with a --seq taken before it forks, the
@@ -30,6 +33,7 @@ trap 'rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 LOG="${ROOT}/herdr.log"; echo brief > "${ROOT}/brief.md"
 RDIR="${CLAUDE_CONFIG_DIR}/swarm-dev/resume"
+mkdir -p "${ROOT}/p/.swarm/zdotdir"   # what clean_env (stubbed below) leaves at an agent's first start
 fails=0
 check() { # <name> <want> <got>
   if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi
@@ -39,16 +43,17 @@ now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 
 # start <role> [names] — start_agent for agent a1 with role <role>, policy $POLICY (claude opus high)
 # and the story names <names>, in project $PROJ (${ROOT}/p), in a subshell with agents.sh sourced and
-# its helpers stubbed, where FAKE_SECRET is lead-secret: free_agent_name refuses while namefail
+# its helpers stubbed, from START_CWD when set, where FAKE_SECRET is lead-secret: free_agent_name refuses while namefail
 # exists, a pane opens as w:1 (logged as "pane opened"), clean_env writes the SWARM_RESUME it would
 # pass on to launch-resume, herdr --version says herdr $HERDR_VERSION (0.9.5), herdr logs every other
 # call's argv to herdr.log and fails a report-agent while reportfail exists, and deliver_prompt logs
-# "brief" and writes the time it ran to brief-at. Sets start_out (stdout and stderr) and start_rc.
+# "brief", writes the time it ran to brief-at and fails, as an untaken brief does, while briefnottaken exists. Sets start_out (stdout and stderr) and start_rc.
 # started refusal <n> prints resume_refusal's word on <n> arguments, or "passes"; started refusal-args
 # <arg>... its word on those; started version <text> <min> says ok or refused, as version_at_least
 # does, and started version-herdr <text> <min> as require_herdr_version does for a herdr saying <text>.
 start() { : > "${LOG}"; start_rc=0; start_out="$(started "$1" "${2:-}" 2>&1)" || start_rc=$?; }
 started() (
+    [[ -z "${START_CWD:-}" ]] || cd "${START_CWD}"
     local PROJECT_DIR="${PROJ:-${ROOT}/p}" SWARM_HOME="${REPO}" STATE_DIR="${ROOT}/p/.swarm/state"
     local CFG_builder_subagent_model="${SUBAGENT:-}" BUILDER_ROLES="code code-risky"
     export FAKE_SECRET=lead-secret
@@ -61,7 +66,10 @@ started() (
     free_agent_name() { [[ ! -e "${ROOT}/namefail" ]] || die "$1 is working, so its name is not free"; }
     clean_env() { printenv SWARM_RESUME > "${ROOT}/launch-resume" || echo "(not exported)" > "${ROOT}/launch-resume"; }
     next_pane() { echo "pane opened" >> "${LOG}"; echo w:1; }
-    deliver_prompt() { echo brief >> "${LOG}"; python3 -c 'import time; print(time.time_ns())' > "${ROOT}/brief-at"; }
+    deliver_prompt() {
+      echo brief >> "${LOG}"; python3 -I -c 'import time; print(time.time_ns())' > "${ROOT}/brief-at"
+      [[ ! -e "${ROOT}/briefnottaken" ]] || die "$1: the brief was not taken up after 2 attempts"
+    }
     herdr() {
       [[ "$1" != --version ]] || { echo "herdr ${HERDR_VERSION:-0.9.5}"; return; }
       { printf '%q ' "$@"; echo; } >> "${LOG}"
@@ -79,11 +87,11 @@ line() { grep "^$1 " "${LOG}" | sed -E 's/ $//; s/--seq [0-9]+/--seq N/' || true
 seq_of() { sed -nE 's/^pane report-agent .*--seq ([0-9]+) .*/\1/p' "${LOG}"; }
 order() { cut -d' ' -f1,2 "${LOG}" | paste -sd'|' -; }
 sid() { line 'agent start' | sed -E 's/.* -- --session-id ([^ ]+).*/\1/'; }   # the session the start minted
-# want_report — the report the agent start line calls for: working, its session id, and the wrapper,
+# want_report — the report the agent start line calls for: idle, its session id, and the wrapper,
 # then claude with its launch flags, --session-id as --resume.
 want_report() {
   local l id; l="$(line 'agent start')"; l="${l#* -- --session-id }"; id="${l%% *}"
-  echo "pane report-agent w:1 --source swarm --agent claude --state working --seq N --agent-session-id ${id} -- python3 -I $(printf %q "${RDIR}/${id}.py") claude --resume ${l}"
+  echo "pane report-agent w:1 --source swarm --agent claude --state idle --seq N --agent-session-id ${id} -- python3 -I $(printf %q "${RDIR}/${id}.py") claude --resume ${l}"
 }
 # settings_env <argv file> — the env --settings sets, as sorted NAME=value words, from its JSON.
 settings_env() {
@@ -96,19 +104,20 @@ print(" ".join("%s=%s" % kv for kv in sorted(json.loads(a[a.index("--settings") 
 # the user's whole environment (FAKE_SECRET, the story's name, as restored-value; LEAK_TOKEN and
 # AWS_SECRET_ACCESS_KEY too), with herdr's variables for pane w:5 (HERDR_TAB_ID left empty), and a
 # claude stub on PATH that writes its argv to claude.argv and its environment to claude.env. Any
-# NAME=value arguments join that environment.
+# NAME=value arguments join that environment. REPORT, when set, is the logged report to restore from. A
+# restore that fails leaves claude.argv and claude.env missing, for the checks to find.
 mkdir -p "${ROOT}/restore-bin" "${ROOT}/home"
 cat > "${ROOT}/restore-bin/claude" <<EOF
 #!/bin/sh
-printf '%s\n' "\$@" > "${ROOT}/claude.argv"; env > "${ROOT}/claude.env"
+printf '%s\n' "\$@" > "${ROOT}/claude.argv"; env > "${ROOT}/claude.env"; echo run >> "${ROOT}/claude.runs"
 EOF
 chmod +x "${ROOT}/restore-bin/claude"
 restore() {
-  local cmd; cmd="$(grep '^pane report-agent ' "${LOG}")"; cmd="${cmd#* -- }"
+  local cmd; cmd="${REPORT:-$(grep '^pane report-agent ' "${LOG}")}"; cmd="${cmd#* -- }"
   local args; eval "args=(${cmd})"   # the stub's own %q quoting
   rm -f "${ROOT}/claude.argv" "${ROOT}/claude.env"
   (cd "${ROOT}" && env -i PATH="${ROOT}/restore-bin:/usr/bin:/bin" HOME="${ROOT}/home" TERM=dumb FAKE_SECRET=restored-value \
-    LEAK_TOKEN=leak AWS_SECRET_ACCESS_KEY=aws-leak SWARM_X=1 HERDR_ENV=1 HERDR_PANE_ID=w:5 HERDR_TAB_ID= "$@" "${args[@]}")
+    LEAK_TOKEN=leak AWS_SECRET_ACCESS_KEY=aws-leak SWARM_X=1 HERDR_ENV=1 HERDR_PANE_ID=w:5 HERDR_TAB_ID= "$@" "${args[@]}") || true
 }
 var() { sed -n "s/^$1=//p" "${ROOT}/claude.env"; }   # <name> — its value in the restored claude's environment
 
@@ -117,29 +126,30 @@ var() { sed -n "s/^$1=//p" "${ROOT}/claude.env"; }   # <name> — its value in t
 SUBAGENT=haiku start code FAKE_SECRET
 S1="$(sid)"
 check "a builder starts" "0" "${start_rc}"
-check "its report-agent call is working, its session id, the wrapper and its launch line in resume form" "$(want_report)" "$(line 'pane report-agent')"
+check "its report-agent call is idle, its session id, the wrapper and its launch line in resume form" "$(want_report)" "$(line 'pane report-agent')"
 check "the report carries the model, effort, permission mode, merge guard and SWARM_AGENT, and the subagent model" \
   "yes|CLAUDE_CODE_SUBAGENT_MODEL=haiku CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 SWARM_AGENT=a1" \
   "$(has '--model opus --effort high --permission-mode auto --disallowedTools Bash\(gh\ pr\ merge:\*\) --settings' "$(line 'pane report-agent')")|$(
   settings_env "${RDIR}/${S1}.argv")"
-check "no state is reported before the brief is taken up: the report comes after it" "pane opened|agent start|brief|pane report-agent" "$(order)"
-check "the report's --seq is the time before the brief was sent, so the hooks' later reports win" "yes" \
+check "the resume command is reported as soon as herdr has started the agent, before the brief" "pane opened|agent start|pane report-agent|brief" "$(order)"
+check "the report's --seq is from before the brief was sent, so the hooks' later reports win" "yes" \
   "$( (($(seq_of) > 0 && $(seq_of) <= $(cat "${ROOT}/brief-at"))) && echo yes || echo "no: $(seq_of) vs $(cat "${ROOT}/brief-at")")"
 check "SWARM_RESUME reaches the agent through clean_env, exported, never on a command line" "${RDIR}/${S1}.argv|0" \
   "$(cat "${ROOT}/launch-resume")|$(grep -c SWARM_RESUME "${LOG}" || true)"
 cp "${RDIR}/${S1}.argv" "${ROOT}/a1.argv"   # the builder's resume command, for the hooks below
+R1="$(grep '^pane report-agent ' "${LOG}")"   # its report, to restore it again below
 
 # --- The builder restored: claude with its flags, in the allowlist alone, and no value written down.
-# A .zshrc planted in its ZDOTDIR during the session is gone: the wrapper makes it afresh.
-ZD="${ROOT}/p/.swarm/zdotdir/a1"; mkdir -p "${ZD}"; echo "touch '${ROOT}/zshrc-ran'" > "${ZD}/.zshrc"; chmod 755 "${ZD}"
+# A .zshrc planted in its ZDOTDIR since an earlier restore is gone: the wrapper makes it afresh.
+ZD="${RDIR}/${S1}.zdotdir"; mkdir -p "${ZD}"; echo "touch '${ROOT}/zshrc-ran'" > "${ZD}/.zshrc"; chmod 755 "${ZD}"
 restore
 check "restored, the wrapper starts claude with --resume and every launch flag" "$(tail -n +5 "${ROOT}/a1.argv")" "$(cat "${ROOT}/claude.argv")"
 check "restored, the agent keeps the allowlist and its story's name, with the restored pane's values" \
-  "${ROOT}/home|restored-value|1|w:5|${ROOT}/p|${RDIR}/${S1}.argv|/bin/zsh|${ROOT}/p/.swarm/zdotdir/a1" \
+  "${ROOT}/home|restored-value|1|w:5|${ROOT}/p|${RDIR}/${S1}.argv|/bin/zsh|${RDIR}/${S1}.zdotdir" \
   "$(var HOME)|$(var FAKE_SECRET)|$(var SWARM_X)|$(var HERDR_PANE_ID)|$(var SWARM_PROJECT)|$(var SWARM_RESUME)|$(var SHELL)|$(var ZDOTDIR)"
 check "restored, its ZDOTDIR is made afresh at 0700 with clean_env's two files, the planted .zshrc gone" \
-  "a1|.zprofile .zshenv|__swarm_path=\"\${PATH}\"|[[ -z \"\${__swarm_path}\" ]] || export PATH=\"\${__swarm_path}\"" \
-  "$(find "${ROOT}/p/.swarm/zdotdir" -name a1 -type d -perm 700 -exec basename {} \;)|$(cd "${ZD}" && find . -type f | sed 's|^\./||' | sort | paste -sd' ' -)|$(
+  "${S1}.zdotdir|.zprofile .zshenv|__swarm_path=\"\${PATH}\"|[[ -z \"\${__swarm_path}\" ]] || export PATH=\"\${__swarm_path}\"" \
+  "$(find "${RDIR}" -name "${S1}.zdotdir" -type d -perm 700 -exec basename {} \;)|$(cd "${ZD}" && find . -type f | sed 's|^\./||' | sort | paste -sd' ' -)|$(
   cat "${ZD}/.zshenv")|$(cat "${ZD}/.zprofile")"
 check "restored, the agent gets no other variable, and herdr's empty ones are unset" "" \
   "$(grep -E '^(LEAK_TOKEN|AWS_SECRET_ACCESS_KEY|HERDR_TAB_ID)=' "${ROOT}/claude.env" || true)"
@@ -171,7 +181,31 @@ check "a project path with \", \\ and ' starts as any other" "0" "${start_rc}"
 check "its --settings is JSON a real encoder wrote" "SWARM_AGENT=a1" "$(settings_env "${RDIR}/${S2}.argv")"
 check "its resume command holds no project path" "0" "$(grep -cF "${ROOT}/p\"q" "${RDIR}/${S2}.argv" || true)"
 restore
-check "restored, it is in its project, with that path" "${ROOT}/p\"q\\r's|${ROOT}/p\"q\\r's/.swarm/zdotdir/a1" "$(var SWARM_PROJECT)|$(var ZDOTDIR)"
+check "restored, it is in its project, with that path" "${ROOT}/p\"q\\r's|${RDIR}/${S2}.zdotdir" "$(var SWARM_PROJECT)|$(var ZDOTDIR)"
+
+# --- Two sessions of one name (a retired a1-done and the live a1): restoring the old one leaves the
+# live one's ZDOTDIR alone. And four restores of one session at once all start claude.
+start code; R3="$(grep '^pane report-agent ' "${LOG}")"; S3="$(sid)"
+REPORT="${R3}" restore; Z3="$(var ZDOTDIR)"; if [[ -d "${Z3}" ]]; then echo "live" > "${Z3}/.zcompdump"; fi
+REPORT="${R1}" restore
+check "restoring an older session of the same name leaves the live session's ZDOTDIR as it was" "live|${RDIR}/${S3}.zdotdir|${RDIR}/${S1}.zdotdir" \
+  "$(cat "${Z3}/.zcompdump" 2>/dev/null)|${Z3}|$(var ZDOTDIR)"
+: > "${ROOT}/claude.runs"
+for i in 1 2 3 4; do REPORT="${R1}" restore & done; wait
+check "four restores of one session at once all start claude, and leave its ZDOTDIR its two files" "4|.zprofile .zshenv" \
+  "$(grep -c run "${ROOT}/claude.runs")|$(cd "${RDIR}/${S1}.zdotdir" && find . -type f | sed 's|^\./||' | sort | paste -sd' ' -)"
+
+# --- A json.py in the folder swarm.sh runs from stands in for nothing: --settings is still written by
+# the stdlib's json, and the planted one never runs.
+mkdir -p "${ROOT}/evil-start"; printf '%s\n' "open('${ROOT}/start-json-ran', 'w').close()" "raise ImportError('planted')" > "${ROOT}/evil-start/json.py"
+START_CWD="${ROOT}/evil-start" start code
+check "a json.py where swarm.sh runs never stands in for the stdlib's: the start writes --settings, the file never runs" \
+  "0|SWARM_AGENT=a1|no" "${start_rc}|$(settings_env "${RDIR}/$(sid).argv")|$([[ -e "${ROOT}/start-json-ran" ]] && echo yes || echo no)"
+
+# --- A start whose brief is not taken up: it fails, but its pane already has the guarded command.
+touch "${ROOT}/briefnottaken"; start code; rm -f "${ROOT}/briefnottaken"
+check "a start whose brief is not taken up fails, and its pane still has its guarded resume command" \
+  "1|pane opened|agent start|pane report-agent|brief|$(want_report)" "${start_rc}|$(order)|$(line 'pane report-agent')"
 
 # --- The fallback reviewer: its extra denied tools are in the report too.
 POLICY="claude sonnet high" start review-fallback
@@ -212,12 +246,11 @@ A4K="$(printf 'a%.0s' $(seq 4096))"
 check "8 KiB counts the command joined: 4096 + 4096 bytes and a separator is refused, 4096 + 4095 passes" \
   "8193 bytes, more than 8 KiB|passes" "$(started refusal-args "${A4K}" "${A4K}")|$(started refusal-args "${A4K}" "${A4K%a}")"
 
-# --- herdr refuses the report: the agent, at work on its brief by then, is kept, and the start says so.
+# --- herdr refuses the report, before the brief: the agent has done nothing, so its pane is closed
+# and the start fails.
 touch "${ROOT}/reportfail"; start code; rm -f "${ROOT}/reportfail"
-check "a refused report keeps the agent at work, its pane open, and says the command was not recorded" \
-  "0|yes|yes|pane opened|agent start|brief|pane report-agent" \
-  "${start_rc}|$(has 'swarm: a1: herdr did not take the command that resumes the agent ({"error":{"code":"invalid_resume_argv"}}); the agent works on' "${start_out}")|$(
-  has "a1 w:1 claude:opus:high" "${start_out}")|$(order)"
+check "a refused report, before the brief, closes the pane and fails the start" "1|yes|pane opened|agent start|pane report-agent|pane close" \
+  "${start_rc}|$(has 'swarm: a1: herdr did not take the command that resumes the agent, so a restart would drop its guards: {"error":{"code":"invalid_resume_argv"}}' "${start_out}")|$(order)"
 
 # --- The hooks. hook <event> <subject> <input> [unset] — run each command hooks.json gives <event>
 # whose matcher finds <subject> (or that has none), as Claude Code would: through sh, with <input> on
