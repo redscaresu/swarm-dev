@@ -184,7 +184,7 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
 The table in [the guide](method.md) lists every key. The rules the table leaves out:
 
 - `merge` (default `human`): `human`: no agent merges, and a green, reviewed PR waits for you (§ Merging). `agent`: the conductor merges, except a PR `swarm.sh merge` holds for you (§ Merging)
-- `stall_minutes` (default `20`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
+- `stall_minutes` (default `30`): a story's builder that is working this long with no sign of life (no commit in its worktree, no edit there to a file `git status` lists, no update to its PR, no swarm action on its story) is `stalled?`: `wait --stall` returns on it. `dash` shows every working agent's time since its last sign of life after its state (`working 12m`); past this it shows `stalled 40m` instead, marks the agent `!` and lists it under needs you (with `lead = session`, under the lead's queue). An agent with no story (a conductor or planner) has its own `events.tsv` lines as signs: those naming it, and once it has a start line, those its pane ran, nudges, incidents and failed tells excepted. Any agent with a Claude session, builder or not, also counts the last write to its session log (`.jsonl`), which the session makes on every turn and tool call. Working is its Claude session reporting busy, for `wait --stall` and `dash` alike, and herdr's working for a codex builder
 - `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
@@ -433,19 +433,27 @@ waited on: `wait` prints `auth` at once,
 with a line on stderr naming it, for a builder and a conductor alike. Only the user's `/login` clears
 it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a conductor tells the same
 to each builder whose `wait` printed `auth`.
-A turn can also stop on an API error (Claude Code's `API Error: ...`, such as a dropped connection)
-while the session still reads busy, because background shells the agent opened are still running.
-When herdr says the agent is `done` or `idle` and the last turn in its pane ended on an `API Error:`
-line, `wait` sends it "Your last turn stopped on an API error; carry on where you stopped." and
-waits again. It logs each one as a nudge, conductors included. After three such stops in a row (a
-turn that ends any other way resets the count), or if herdr cannot deliver the message, `wait`
-exits 3 with `stalled: api error`. `tell` treats that agent as idle and delivers, and `next` names
-the conductor's stall. Any `wait` also exits 3 with `stalled: no output for <N>m (<pane>)` when a
-busy agent (its session busy, or herdr's working for one herdr answers for) has not changed its
-pane for `stall_minutes`. It sends nothing then: read the pane. `wait --stall
+A turn can also stop on an API error while the session still reads busy, because background shells
+the agent opened are still running. When herdr says the agent is `done` or `idle` and the last thing
+in its pane is Claude Code's own error line (`⏺ API Error: ...` at the left margin, with no reply or
+submitted prompt after it; the input box, which may hold a suggestion, is not read), `wait` sends it "Your last turn stopped on an API error; carry on where you
+stopped." and waits again. It logs each one as a nudge, conductors included. After three such stops
+in a row (a turn that ends any other way resets the count), or if the message is not taken up, `wait`
+prints `stuck: api error` and exits 4. With `goal` on it never resumes a builder: it returns
+`stuck: api error` at once, so the transcript still ends on the error for the goal rule. A conductor
+or review agent is resumed either way. When the transcript ends on an expired login, `wait` prints
+`auth` instead, busy session or not, and resumes nothing. `tell`
+treats such an agent as idle and delivers, and `next` names a conductor's stop. Any `wait` also
+prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
+herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
+transcript shows no background task still running (a shell, an async subagent or a monitor it
+started, with no `<task-notification>` carrying a `<status>` for it since). It sends nothing then: read the pane. `stuck` is
+not a stall, and no close follows from it. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, session-log write or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
-worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
+worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began.
+So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at the timeout or when
+herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, or when an agent's session is waiting, and it names what the agent waits for. A codex
 agent, or one with no session recorded, counts as waiting when herdr says it is blocked. Each agent's

@@ -464,10 +464,10 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
 expect_conductor "idle conductor without a report is still waited on" "wait conduct-e1" no
 expect_conductor "conductor with a report is collected" "collect conduct-e1" yes
 # A conductor whose turn stopped on an API error (herdr idle, its pane ending on the error) is named a stall.
-expect_conductor "a conductor stopped on an API error: next names the stall" "wait conduct-e1" no e1 "stalled: *API error*" \
-  "printf '%s\n' '⏺ Waiting on the builders.' '  ⎿  API Error: Connection dropped (ECONNRESET)' > screen"
+expect_conductor "a conductor stopped on an API error: next names the stop" "wait conduct-e1" no e1 "stuck: *API error*" \
+  "printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error: Connection dropped (ECONNRESET)' > screen"
 expect_conductor "a conductor whose pane has a later reply after an API error is still working" "wait conduct-e1" no e1 "*still working*" \
-  "printf '%s\n' '  ⎿  API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > screen"
+  "printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > screen"
 expect_conductor "a long epic's conductor is collected by its report" "collect AGENT" yes aws-layer3-claim-sweep-reap
 # While a conductor works, an epic whose dependency is all in review is planned first; the why names
 # the conductor to wait on in the background. With no such epic, next waits on the conductor.
@@ -545,7 +545,7 @@ expect_release "a working conductor's wait comes before release" "wait conduct-e
 # `done` for both and is never asked for a Claude conductor's state: that is its session's, recorded
 # in agents.tsv (sess-c1) and read from the claude stub's fixture.
 # shellcheck disable=SC2016 # the stub's $1/$2/$3 are its own arguments, written literally
-stub() { # [api-error]
+stub() { # [api-error | api-stop] — the pane: an API error with a reply after it, or one it stopped on
   {
     echo '#!/bin/sh'
     echo 'case "$1 $2" in'
@@ -553,7 +553,10 @@ stub() { # [api-error]
     echo 'esac'
     echo 'case "$1 $2" in'
     echo "  \"agent list\") echo '{\"result\":{\"agents\":[{\"name\":\"conduct-e1\",\"agent_status\":\"done\",\"pane_id\":\"w:1\"},{\"name\":\"conduct-e1-done\",\"agent_status\":\"done\",\"pane_id\":\"w:2\"}]}}' ;;"
-    if [ -n "${1:-}" ]; then printf '%s\n' "  \"agent read\") printf '%s\\n' '⏺ API Error: overloaded' '⏺ Carrying on.' ;;"; fi
+    case "${1:-}" in
+      api-error) printf '%s\n' "  \"agent read\") printf '%s\\n' '⏺ API Error: overloaded' '⏺ Carrying on.' ;;" ;;
+      api-stop) printf '%s\n' "  \"agent read\") printf '%s\\n' '⏺ API Error: overloaded' ;;" ;;
+    esac
     echo '  "agent wait"|"agent prompt") case "$3" in w:1|w:2) ;; *) echo "{\"error\":\"not this project'"'"'s pane: $3\"}"; exit 1 ;; esac ;;'
     echo 'esac'
     echo 'case "$1 $2" in "agent list"|"agent read") ;; *)'
@@ -610,7 +613,15 @@ got="$(nextc)"
 if [[ "${got}" == "wait conduct-e1"$'\n'"auth: the conductor conduct-e1 stopped on an expired login; run /login"* ]]; then
   echo "ok   next names auth and /login for a conductor whose login expired"; else
   echo "FAIL next names auth and /login for a conductor whose login expired: got '${got}'"; fails=$((fails + 1)); fi
-# Only an idle session is auth, as in wait: with the session gone there is nothing to resume.
+# A busy session (background shells open) whose turn stopped on an API error, behind an expired login:
+# auth too, as wait returns it, never "wait resumes it".
+stub api-stop; session busy
+got="$(nextc)"
+if [[ "${got}" == "wait conduct-e1"$'\n'"auth: the conductor conduct-e1 stopped on an expired login; run /login"* ]]; then
+  echo "ok   next names auth for a busy conductor stopped on an API error behind an expired login"; else
+  echo "FAIL next names auth for a busy conductor stopped on an API error behind an expired login: got '${got}'"; fails=$((fails + 1)); fi
+stub; session idle
+# Only an idle session (or one stopped on an API error) is auth, as in wait: with the session gone there is nothing to resume.
 echo '[]' > "${dir}/claude.json"
 got="$(nextc)"
 if [[ "${got}" == "wait conduct-e1"$'\n'"the conductor conduct-e1 is still working"* ]]; then
