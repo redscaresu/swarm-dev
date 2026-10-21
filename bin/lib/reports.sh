@@ -148,7 +148,7 @@ outcomes_report() {
   # pulls (the github pull URLs its session log names, or - when there is no log to read), then the
   # columns the report prints after attempts as they are: started to drop_at, then subagent_cost_usd and
   # subagent_cost_by_model, which it prints last.
-  rows="$(python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
+  rows="$(SWARM_ESCALATE_MODEL="$(policy escalate | cut -d' ' -f2)" python3 "${SWARM_HOME}/bin/lib/outcomes_rows.py" "${AGENTS_LOG}" "${EVENTS_LOG}" "${since:-0000-00-00}" \
     "${CLAUDE_PROJECTS}" "${BUILDER_ROLES}" "${SESSIONS_DIR}")" || die "outcomes: reading the logs failed"
   # Per slug: kind (an escalated story's kind: lead is its escalated_from:), risk, every PR of
   # story/<slug> (newest first, as `url state mergedAt createdAt main_merges checks commits closedAt` joined by commas, where
@@ -255,7 +255,15 @@ dataset_report() {
 #     (failure, timed_out or startup_failure) per PR and flakes (a red run, then a green one of the
 #     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
 #     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
-#     10 s prints `ci health: gh failed` and no numbers.
+#     10 s prints `ci health: gh failed` and no numbers. Then, per repo, a PR's CI time (its newest
+#     head's longest run, from its last attempt's start, and that run's slowest job, from that
+#     attempt's jobs listing less those a rerun carried over, its control characters dropped): its PRs, the median minutes, of the
+#     jobs that were a PR's slowest the one with the highest median minutes and that median, the same
+#     for the window of as many days before it (a PR built in both counts in the later), and the
+#     change in minutes. A PR gh cannot read is left out, and a line says how many (and how many of
+#     the window's own). dash's ci line is
+#     its origin repo's row of `flow --since <6 days ago>`, run with SWARM_CI_TIME_ONLY, which skips
+#     the row above.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
 #     window, and as "lead" the calling session when run inside herdr plus every session in the
 #     project's own Claude Code directory that agents.tsv does not name (by its first timestamp's
@@ -315,6 +323,7 @@ dataset_report() {
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
+# SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
   local since="" until="" epic="" rows=""
@@ -335,7 +344,8 @@ flow_report() {
   [[ ! -f "${AGENTS_LOG}" ]] || rows="$(SWARM_REWORK_SINCE="${since}" outcomes_report)"
   local lead=""
   [[ "${HERDR_ENV:-}" == 1 ]] && lead="$(session_for_pane "${HERDR_PANE_ID:-}")"
-  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}"
+  # shellcheck disable=SC2086 # one section name per word
+  flow_sections "${since:-0000-00-00}" "${until:-9999-12-30}" "${epic}" "${rows}" "${lead}" ${SWARM_FLOW_SECTIONS:-}
 }
 
 # flow_sections <since> <until> <epic> <outcomes rows> <lead session> [section...] — run flow_report.py

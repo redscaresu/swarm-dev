@@ -24,7 +24,7 @@ lacks() { ! grep -qF -- "$1" <<< "$2"; }
 source "${HERE}/fixtures/dash/two_projects.sh" "${ROOT}"
 A="${FIXTURE_A}"; B="${FIXTURE_B}"
 # frames: both projects' frames, with no cache, so each run reads its cost again.
-frames() { rm -f "${TMPDIR}"/swarm-dash-*; (cd "${A}" && DASH_W=100 "${FIXTURE_SWARM}" dash --project "${A}" --project "${B}"); }
+frames() { rm -rf "${TMPDIR}"/swarm-dash-*; (cd "${A}" && DASH_W=100 "${FIXTURE_SWARM}" dash --project "${A}" --project "${B}"); }
 # frame_of <name> <output>: the lines from <name>'s header line up to the next project's.
 frame_of() { awk -v n="$1" '/^(alpha|bravo)  swarm-dev / { on = index($0, n "  ") == 1 } on' <<< "$2"; }
 # working <frame>: its "N agents working" count.

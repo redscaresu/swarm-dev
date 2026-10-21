@@ -123,10 +123,11 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `board_dir` | `docs` | where the board is, relative to the project unless absolute; a `"` or `\` in it is refused, since init writes it into quoted strings |
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
-| `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it (reference.md § Building) |
+| `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it; `wait` also returns `stuck` on a busy agent whose pane has not changed this long while it runs no background task (reference.md § Building) |
 | `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
+| `escalate_ladder` | empty | models from low to high, each once, such as `sonnet,opus,fable`: `swarm.sh step-up` hands a struggling build to the next one in the same worktree. Empty is off (reference.md § The escalation ladder) |
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
 | `goal` | `off` | `N`: each builder gets a `/goal` condition and N more turns to meet it. Needs Claude Code 2.1.269 or later (reference.md § Building) |
 | `codex_minutes` | `10` | `swarm.sh codex-review` stops codex after this many minutes (reference.md § Building) |
