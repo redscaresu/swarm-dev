@@ -150,13 +150,15 @@ dash_base_ref() {
 # PR with a 5-second limit (a PR gh cannot answer in time is left out, and shows as its URL), each
 # open story's open story/<slug> PR in that story's own repo (a builder's PR, which its story lists
 # only from review on): one gh pr list of url and head per repo, named from its origin, then one gh pr
-# view per PR that matches, each with the same limit; and how many stories of each epic finished
-# (dash_finished).
+# view per PR that matches, each with the same limit; how many stories of each epic finished
+# (dash_finished); and the project's ci line (its origin repo's row of flow's ci time, from a cache of
+# its own, in a 0700 directory of this user's, that a detached dash_slow.py refreshes every 6 hours).
 dash_slow() {
-  local cache f r urls pairs day
+  local cache f r urls pairs day key
   day="$(dash_day)"
   # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
-  cache="${TMPDIR:-/tmp}/swarm-dash-3-$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  key="$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
+  cache="${TMPDIR:-/tmp}/swarm-dash-3-${key}"
   # DASH_FRESH (dash_check) asks again whatever the cache's age.
   if [[ -n "${DASH_FRESH:-}" || -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
     urls="$( { board stories; board epics; } | while IFS= read -r f; do
@@ -169,7 +171,8 @@ dash_slow() {
       printf 'cost\t%s\n' "$( (cost_report "${day}") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
-      if command -v gh >/dev/null 2>&1 && [[ -n "${urls}${pairs}" ]]; then SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
+      if command -v gh >/dev/null 2>&1; then
+        SWARM_CI_CACHE="${TMPDIR:-/tmp}/swarm-dash-ci-$(id -u)/${key}" SWARM_CI_PROJECT="${PROJECT_DIR}" SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
   fi
@@ -177,6 +180,7 @@ dash_slow() {
   DASH_FINISHED="$(awk -F'\t' '$1 == "finished" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
   DASH_HEADS="$(awk -F'\t' '$1 == "head" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
+  DASH_CI="$(awk -F'\t' '$1 == "ci" { print $2 }' "${cache}" 2>/dev/null || true)"
 }
 
 # dash_day [days before] — today as YYYY-MM-DD, or SWARM_DASH_NOW's day (dash_render's fixed clock),
@@ -584,7 +588,7 @@ for a in agents:
   DASH_WAITING="$(waiting_on_user)" DASH_EPIC_WAITS="${waits}" DASH_EPIC_DONE="${afterdone}" DASH_BUILDABLE="${buildable}" DASH_MERGES="${merges}" DASH_DRIFT="${drift}" \
   DASH_AGENTS="${agents}" DASH_PANES="${panes}" DASH_WORKSPACES="${workspaces}" DASH_STATE="${STATE_DIR}" DASH_BOARD_DIR="${BOARD}" \
   SWARM_OWN="$(own_panes)" DASH_COLS="${DASH_W:-100}" DASH_LINES="${DASH_H:-0}" \
-  DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" \
+  DASH_COLOR="${DASH_COLOR:-0}" DASH_FIT="${DASH_ENV_H:+1}" DASH_PRSTATE="${DASH_PRSTATE:-}" DASH_HEADS="${DASH_HEADS:-}" DASH_COST="${DASH_COST:-}" DASH_CI="${DASH_CI:-}" \
   DASH_FINISHED="${DASH_FINISHED:-}" DASH_TREE="${DASH_TREE:-0}" DASH_LADDER="${DASH_LADDER:-0}" \
   DASH_COMMITS="${commits}" DASH_STALL_MIN="${CFG_stall_minutes}" DASH_SESSIONS="${sessions}" \
   DASH_AGENTS_LOG="${AGENTS_LOG}" DASH_PROJECTS="${CLAUDE_PROJECTS}" DASH_FINDINGS="${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" DASH_EVENTS="${EVENTS_LOG}" \

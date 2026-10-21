@@ -125,8 +125,9 @@ mkdir -p "${p}/.swarm/state"
 
 # --- wait: herdr's agent wait is only the wake-up (the stub always says done); a Claude agent's
 # state is its session's, from the claude stub's fixture. A builder idle before its story has a PR
-# is nudged; any other idle agent is left alone. The pane shows an API error throughout, so the old
-# rule (nudge on an API error on screen) would nudge every case here: none of these read the pane.
+# is nudged; any other idle agent is left alone. The pane shows an API error throughout, with a later
+# reply after it, so the old rule (nudge on any API error on screen) would nudge every case here; the
+# last turn did not stop on it, so wait's API-error resume (api_stopped) never fires.
 export CLAUDE_STUB_AGENTS="${ROOT}/claude.json"
 session() { # <file> <session>=<status>... — a `claude agents --json` fixture
   local f="$1" e out=""; shift
@@ -152,7 +153,7 @@ echo '[{"state":"OPEN"}]' > "${ROOT}/prs-a.json"
 echo "a w:950" >> "${ROOT}/agents"; echo "w:950 a" > "${p}/.swarm/state/wait-a"   # a pane id the stub never reaches; this project's agent a, in a pane it recorded
 printf '2026-10-13\tcode\ta\tclaude\topus\thigh\tsess-a\n' >> "${p}/.swarm/agents.tsv"
 session "${ROOT}/claude.json" sess-a=idle
-printf '%s\n' "⏺ API Error: 401 invalid key" > "${ROOT}/screen"
+printf '%s\n' "⏺ API Error: 401 invalid key" "⏺ Carrying on." > "${ROOT}/screen"
 : > "${ROOT}/herdr.log"
 check "an idle agent with no story is not nudged" "idle|0" "$(run wait a)|$(nudges)"
 # Story a, in svc (repos_dir set), has no PR: its idle builder is nudged three times, each logged.

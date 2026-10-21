@@ -1,4 +1,4 @@
-import glob, json, os, re
+import glob, json, os, re, subprocess
 WHY_MAX = 60
 def pane_records(state, keep):
     seen = set()
@@ -60,9 +60,74 @@ def login_expired(log, name, projects):
             return False
         break
     return last is not None and last.get("type") == "assistant" and last.get("error") == "authentication_failed"
+def bg_running(log, name, projects):
+    sid, live, monitors = session_id(log, name), set(), set()
+    for path in glob.glob(os.path.join(projects, "*", sid + ".jsonl")) if sid else []:
+        try:
+            for l in open(path, encoding="utf-8", errors="replace"):
+                if not any(k in l for k in ("backgroundTaskId", "async_launched", "taskId", "<task-notification>", '"Monitor"')):
+                    continue
+                try:
+                    d = json.loads(l)
+                except ValueError:
+                    continue
+                if not isinstance(d, dict) or d.get("isSidechain"):
+                    continue
+                content = (d.get("message") or {}).get("content")
+                items = [c for c in content if isinstance(c, dict)] if isinstance(content, list) else []
+                if d.get("type") == "assistant":   # which tool_use ids are Monitor calls
+                    monitors.update(c.get("id") for c in items if c.get("type") == "tool_use" and c.get("name") == "Monitor")
+                    continue
+                r = d.get("toolUseResult")
+                if isinstance(r, dict):
+                    if isinstance(r.get("backgroundTaskId"), str):
+                        live.add(r["backgroundTaskId"])
+                    if r.get("status") == "async_launched" and isinstance(r.get("agentId"), str):
+                        live.add(r["agentId"])
+                    # A Monitor's taskId only: a task-list tool's (TaskUpdate) gets no notification.
+                    if isinstance(r.get("taskId"), str) and any(c.get("tool_use_id") in monitors for c in items):
+                        live.add(r["taskId"])
+                    continue
+                text = json.dumps([(d.get("message") or {}).get("content"), (d.get("attachment") or {}).get("prompt")])
+                for n in re.findall(r"<task-notification>.*?</task-notification>", text):
+                    if "<status>" in n:   # an end; a check-in on a running shell carries none
+                        live.difference_update(re.findall(r"<task-id>([\w-]+)</task-id>", n))
+        except OSError:
+            return False
+        break
+    return bool(live)
+# USAGE_TAIL: how many of the pane's last non-empty lines the live usage-limit dialog's options sit in.
+USAGE_TAIL = 8
+USAGE_OPTION = r"[\s│]*(?:❯\s*)?(\d+)\.\s*"
+USAGE_PROMPT = re.compile(r"[\s│]*(>|❯)(\s|$)(?!\s*\d+\.)")
+def usage_limit(text):
+    lines = [l for l in (text or "").splitlines() if l.strip()]
+    tail = lines[max([i for i, l in enumerate(lines) if re.match("(⏺|●)", l)] or [-1]) + 1:]
+    # The live dialog: both options among the last lines, and no prompt line (an input box) under the
+    # second, which a submitted prompt quoting the dialog always has.
+    last = tail[-USAGE_TAIL:]
+    stop = [i for i, l in enumerate(last) if re.match(USAGE_OPTION + "Stop and wait for limit to reset", l)]
+    go = [(i, m.group(1)) for i, l in enumerate(last) for m in [re.match(USAGE_OPTION + "Wait here, then continue automatically", l)] if m]
+    if stop and go and not any(USAGE_PROMPT.match(l) for l in last[go[-1][0] + 1:]):
+        return "dialog", go[-1][1]
+    joined = "\n".join(tail)
+    if "Usage limit reached" in joined and re.search("Continuing shortly|limit resets", joined):
+        return "waiting", ""
+    return None
+def pane_text(pane):
+    try:
+        return subprocess.run(["herdr", "agent", "read", pane, "--source", "recent-unwrapped"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 def shown_state(a, name, s, log, projects):
     st, look = agent_state(a, name, s)
-    return ("auth", True) if st == "idle" and s is not None and login_expired(log, name, projects) else (st, look)
+    if st == "idle" and s is not None and login_expired(log, name, projects):
+        return "auth", True
+    u = usage_limit(pane_text(a["pane_id"])) if st in ("working", "idle", "done", "WAITING") and a and a.get("pane_id") else None
+    # The waiting line counts only while the turn runs: an idle session under it is idle.
+    if u and (u[0] == "dialog" or st in ("working", "WAITING")):
+        return "usage-limit", False
+    return st, look
 def session_state(log, name, listing):
     sid = session_id(log, name)
     if sid is None:
