@@ -61,12 +61,18 @@ check "two status runs log one event per stopped pane" test "$(incidents)" = "$(
 check "a pane ending on an API error mid-turn (herdr working) logs nothing" test "$(incidents | grep -c 's-mid')" = 0
 check "an agent's own text naming the classifier or an API Error: line logs nothing" test "$(incidents | grep -c 's-prose')" = 0
 check "status notes when each own pane last changed" test -s "${P}/.swarm/panes/s-ok" -a ! -e "${P}/.swarm/panes/foreign"
-# The same ECONNRESET again, after s-err carried on, is a new occurrence: one more event.
-printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: Connection error (ECONNRESET)' >> "${ROOT}/pane-w:1"
+# The same ECONNRESET again, after s-err carried on (a read saw its reply), is a new occurrence: one
+# more event.
+printf '%s\n' '⏺ Retrying.' >> "${ROOT}/pane-w:1"
+status
+# A delivered tell to s-err (an ok tell:findings line), before this stop.
+printf '%s\ttell:findings\ts-err\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
+printf '%s\n' '  ⎿  API Error: Connection error (ECONNRESET)' >> "${ROOT}/pane-w:1"
 status; status
 check "a new stop on the same line logs one more event" test "$(incidents | grep -c 's-err')" = 2
-# Retired (retire_agent renames it s-err-done and moves its pane record and stops), the same stopped
-# pane logs nothing more. Then a new agent in the same pane id logs its own stop there.
+# Retired (retire_agent renames it s-err-done and moves its pane record), the same stopped pane logs
+# nothing more, the tell to s-err notwithstanding. Then a new agent in the same pane
+# id logs its own stop there.
 (cd "${P}" && PROJECT_DIR="${P}" STATE_DIR="${P}/.swarm/state" PATH="${ROOT}/bin:${PATH}" bash -c '
   die() { echo "$*" >&2; exit 1; }; agent_name() { printf "%s" "$1"; }
   json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
@@ -76,19 +82,46 @@ ERR_NAME=s-err-done status
 check "a retired agent's stop is not logged again" test "$(incidents | grep -c 's-err')" = 2
 ERR_NAME=s-new status
 check "a new agent in a reused pane logs its own stop" test "$(incidents | grep -c 's-new')" = 1
-# s-again stops twice after resumes with the same lines above each stop: wait's resume (an ok nudge
-# line) between them makes the second a new stop.
+# s-again stops, and wait resumes it (an ok nudge line). A status before the pane redraws logs nothing
+# more; once a read sees the resume taken up, a stop after it, with the same lines above it, is new.
 again=('> Your last turn stopped on an API error; carry on where you stopped.' '  ⎿  API Error: 529 overloaded')
 printf '%s\n' '⏺ Working.' "${again[@]}" "${again[@]}" > "${ROOT}/pane-w:6"
 status
 printf '%s\tnudge\ts-again\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
-printf '%s\n' "${again[@]}" >> "${ROOT}/pane-w:6"
+status
+check "a status between a resume and the pane redrawing logs nothing more" test "$(incidents | grep -c 's-again')" = 1
+printf '%s\n' "${again[0]}" >> "${ROOT}/pane-w:6"
+status
+printf '%s\n' "${again[1]}" >> "${ROOT}/pane-w:6"
 status
 check "a stop after a resume, with the same lines above it, logs again" test "$(incidents | grep -c 's-again')" = 2
 # s-deny's pane scrolls a line: the top line goes, a line comes under the stop. The stop is the same.
 printf '%s\n' "${deny[@]:1}" '> carry on' > "${ROOT}/pane-w:2"
 status
 check "a line added under a stop, scrolling the pane, logs nothing more" test "$(incidents | grep -c 's-deny')" = 1
+# pane_check alone, on a pane text file: pc <name> <file> reads it once (herdr says the turn ended).
+L="${ROOT}/lib"; mkdir -p "${L}"
+pc() { PROJECT_DIR="${L}" PANE_FILE="$2" bash -c 'source "$1/../bin/lib/agents.sh"; pane_text() { cat "${PANE_FILE}"; }
+  turn_ended() { :; }; pane_check "$2" w:1 > /dev/null' _ "${HERE}" "$1"; }
+stops() { grep -c $'^[^\t]*\tincident\t'"$1"$'\t' "${L}/.swarm/events.tsv" || true; }
+ev() { printf '%s\t%s\t%s\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >> "${L}/.swarm/events.tsv"; }
+# wait resumes a stopped agent (an ok nudge line) that never takes it up: wait's idle read of the
+# same pane, with no resumed checksum, logs nothing more.
+printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' > "${ROOT}/t-idle"
+pc l-idle "${ROOT}/t-idle"; ev nudge l-idle; pc l-idle "${ROOT}/t-idle"
+check "wait's idle read after a resume not taken up logs nothing more" test "$(stops l-idle)" = 1
+# A tell to a long slug is logged under the slug, not the agent's name. The agent replies, then stops
+# again with the same lines above the stop: a new stop.
+stop2=('  a' '  b' '⏺ Running.' '  ⎿  API Error: 529 overloaded')
+printf '%s\n' "${stop2[@]}" > "${ROOT}/t-tell"
+pc l-tell "${ROOT}/t-tell"; ev tell:findings l-tell-with-a-very-long-slug-past-the-name-cut
+printf '%s\n' '> From the conductor: findings' '⏺ Fixing them.' >> "${ROOT}/t-tell"; pc l-tell "${ROOT}/t-tell"
+printf '%s\n' "${stop2[@]}" >> "${ROOT}/t-tell"; pc l-tell "${ROOT}/t-tell"
+check "after a tell to a long slug, a new stop with the same lines above it logs again" test "$(stops l-tell)" = 2
+# A stop in the window's top lines, scrolled up by lines under it, is the same stop.
+printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' '> ' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
+printf '%s\n' '  ⎿  API Error: 500' '> ' '' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
+check "a stop near the window's top that scrolls logs nothing more" test "$(stops l-top)" = 1
 # Eight reads of one stopped pane at once (status and a background wait, say) log it once.
 R="${ROOT}/race"; mkdir -p "${R}"
 n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"
