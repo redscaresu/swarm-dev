@@ -9,6 +9,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  # A required check: a merge queue waits for it on each merge group.
+  merge_group:
 
 # Read-only: the audit only needs to read the workflow files it scans.
 permissions:

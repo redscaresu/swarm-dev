@@ -30,7 +30,9 @@ the run stops whenever a decision is yours.
    merge, `swarm.sh merge` writes a `fix-main-<sha>` story holding the failed tests' FAIL lines,
    and the swarm builds that fix before anything else merges. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
-   session, so merges go through `swarm.sh merge`. It also refuses a `cd` followed by `;`, a
+   session, so merges go through `swarm.sh merge`. Where the base has a GitHub merge queue,
+   `swarm.sh merge` goes through it, and the conductor enqueues each reviewed PR without waiting
+   for the one before it to merge ([details](docs/reference.md#merging)). The hook also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
    `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
 

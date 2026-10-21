@@ -983,7 +983,7 @@ builder_state() {
 # marked done; while an unread PR holds the pull, it stays in review for the reconcile that pulls. On a board in the repo, each item a commit took off the board
 # loses its state, however that commit was pulled (drop_gone_state). A red main whose base is green
 # now is cleared, and its unstarted fix retired (green_mains).
-reconcile() {
+reconcile_board() {
   local f slug url state closed waiting urls builder unread="" merged=() merged_files=()
   while IFS= read -r f; do
     [[ "$(fm "${f}" status)" == review ]] || continue
@@ -1059,6 +1059,23 @@ reconcile() {
   done
   green_mains
   [[ ${BOARD_IN_REPO} == 0 ]] || drop_gone_state
+}
+
+# RECONCILE_LOCK_WAIT: seconds a reconcile waits for another to finish (SWARM_RECONCILE_WAIT).
+RECONCILE_LOCK_WAIT=300
+
+# reconcile — reconcile_board, one at a time per project: merges through a merge queue run side by
+# side, and two pulls of one checkout at once would collide. The lock is held by a subshell whose
+# EXIT trap removes it, so a die inside still frees it; the subshell is the logged level when its
+# caller was, so that die is still the command's outcome.
+reconcile() {
+  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" level="${DIE_LEVEL}"
+  mkdir -p "${PROJECT_DIR}/.swarm" || die "reconcile: cannot create ${PROJECT_DIR}/.swarm"
+  SWARM_LOCK_WAIT="${SWARM_RECONCILE_WAIT:-${RECONCILE_LOCK_WAIT}}" state_lock "${lock}"
+  # shellcheck disable=SC2064 # the path is fixed now
+  ( [[ $((BASH_SUBSHELL - 1)) != "${level}" ]] || DIE_LEVEL="${BASH_SUBSHELL}"
+    trap "rmdir '${lock}' 2>/dev/null || true" EXIT   # a failed rmdir must not fail a finished reconcile
+    reconcile_board )
 }
 
 # drop_gone_state — state_drop each story and epic, by its board-state or escalated file, whose file a
