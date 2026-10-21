@@ -1185,17 +1185,22 @@ agents.tsv line for its builder, and the next model is the ladder's first one ab
 model, so a chore on Haiku steps to the first rung. The new builder keeps its build's role family. On
 the escalate role's model (Fable) it runs as `escalate`. Otherwise a code build runs as `code-sonnet`
 on Sonnet and as `code` on Opus, and a docs or chore build keeps its role, and that role's effort, on
-the new model. The Fable rung is an `escalate` build like the one `escalate_after` starts, so a
-close that counts it as failed hands the story to the lead, as after any failed escalate build. The
-`escalate_after` retries are not run first: on the ladder, the step-ups below Fable take their place.
+the new model. `escalate_ladder` changes nothing about `escalate_after`: a step-up counts no
+attempt, while a close that counts a build as failed raises `attempts:` and clears the build as
+before, and the next `swarm.sh story` build is on Fable once `attempts:` reaches `escalate_after`.
+The Fable rung is an `escalate` build, though, so a close that counts it as failed hands the story to
+the lead, as after any failed escalate build, whatever `attempts:` says.
 Nothing is closed when the ladder is empty, when the build is at or above the ladder's top rung, when
-the story is not `ready`, not of a kind an agent builds, or has no worktree, when its `env:` names a
+the story is not `ready`, not of a kind an agent builds, held for review as a stacked child
+(`held_by:`), or has no worktree, when a PR on `story/<slug>` has merged or is set to auto-merge (the
+build is done, as `close` also judges), when gh cannot list those PRs, when its `env:` names a
 variable not set here, or when the build's role is one nothing starts now (a past `verify` build).
 
 The old builder is closed before the new one starts, since the new one takes its name. If the start
 fails, step-up stops at the step that failed, with that step's message, and logs nothing as an
-escalation. If start_agent had already put the new builder in agents.tsv (its brief not taken up),
-that line is removed again, so the rung is on record once, when it starts. The worktree, branch and brief are kept, and `swarm.sh step-up --resume <slug>` starts
+escalation. If start_agent had already put the new builder in agents.tsv when it failed (on the
+brief's delivery), a builder still running in its pane has started: the step-up stands and step-up
+says to look at it. One that is gone loses that line, so the rung is on record once, when it starts. The worktree, branch and brief are kept, and `swarm.sh step-up --resume <slug>` starts
 the rung once the cause is fixed. A resume that starts logs the step-up and sends the `/goal` as
 step-up would have.
 
@@ -1205,7 +1210,11 @@ from its worktree. Next comes the diff: committed and uncommitted changes and un
 the build's merge-base with the base, so the base's newer commits are not in it. It stops at 400
 lines, and the fence around it is longer than any run of backticks inside it. For a story stacked
 on parents whose PRs are still open, the diff starts at their branches instead, and the handover
-carries build_story's `Merge after <PRs>` note. Then come the review agent's findings from
+carries build_story's `Merge after <PRs>` note. When a parent's PR has merged (squashed, its commits
+are on the base under other ids), the diff is of `origin/<base>` to the branch as if the base were
+merged in, and the handover says to merge it in before pushing. If that merge would conflict, the
+diff stays the one from the merge-base, with the parent's commits in it, and the handover says to
+merge the base in and resolve it first. Then come the review agent's findings from
 `.swarm/reviews/<slug>.md`, pasted only when their `head:` line is the branch's HEAD. Findings of an
 older head may be fixed already, so the handover only names the file. Last come the open PR's
 failing checks. The handover also tells the builder to put a `Models:` line in the PR body naming
