@@ -541,8 +541,17 @@ conductor starts a review agent for it with `swarm.sh review-agent <slug> <PR UR
 wait for other PRs or reviews, so PRs that land together are reviewed at once. The command returns
 straight away. The agent, `review-<slug>`, is read-only and runs in the story's worktree and tab. It
 runs `codex-review` with `SWARM_STORY=<slug>` and, when the PR changes code, `/code-review <PR URL>`.
-It judges the PR against the story's touches and **Done when** only: work outside them is not a
-finding. Its brief carries the project's own rules, as a builder's does. It writes to the absolute
+It judges the PR against the story's touches and **Done when**. A point that only a change to a file
+outside the touches can fix is out of scope; a gap in the PR's own code is a finding, even where the
+touches do not name it. Its brief carries the project's own rules, as a builder's does, and six checks
+the lead used to make by hand, which the fallback reviewer's brief carries too. After them come the
+lines of the story and its epic that hold a `(user, <date>)` mark. Each is printed as it stands, with
+its `path:line`, cut at 1500 bytes on a character boundary, and the brief tells the reviewer to read
+each decision in full at that line. Together they take at most 2000 bytes; past that, the brief says
+how many were left out and which files hold them. A mark inside code or a fenced block, or in the
+story's own **Done when** (which the brief already quotes), is not a decision. A PR that contradicts
+a decision is a finding, even when the PR is stricter. The fallback reviewer gets the decisions
+only when codex-review knows the story (`SWARM_STORY`). It writes to the absolute
 path `<project>/.swarm/reviews/<slug>.md` (its working directory is the worktree, outside the
 project), and replies with that path. It writes the file in one go once both reviews are done,
 after `review-agent` has removed the one from an earlier head. The file starts with `head: <SHA>`,
@@ -598,7 +607,7 @@ beside `--base`) and stdin from `/dev/null`, and stops it after `codex_minutes`.
 `SWARM_STORY=<slug>` it passes a prompt in place of `--base`. The prompt asks codex to review the diff
 against `origin/<base>`, uncommitted changes and untracked files included, so a builder's review
 before its first commit sees its work. It lists the story's touches with its **Done when** and **From review** items,
-and says that work outside them is not a finding. If `SWARM_STORY` is not a slug, names no story file,
+and holds out of scope only a point that a change to a file outside the touches alone can fix. If `SWARM_STORY` is not a slug, names no story file,
 or names a story with no **Done when** item, codex-review fails before codex starts. An interrupted
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex

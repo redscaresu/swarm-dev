@@ -470,7 +470,7 @@ story_items() {
 }
 # codex_story_prompt <base> <story file> — the review prompt: the branch's diff against origin/<base>,
 # the story's touches, its **Done when** and **From review** items (the builder's acceptance, as in
-# goal_condition), and that work outside them is not a finding. Fails with no Done when item.
+# goal_condition), and SCOPE_RULE. Fails with no Done when item.
 codex_story_prompt() {
   local done_when from_review
   done_when="$(story_items "$2" 'Done when')"
@@ -478,8 +478,8 @@ codex_story_prompt() {
   from_review="$(story_items "$2" 'From review')"
   [[ -z "${from_review}" ]] || from_review=$'\n\nIts From review:\n'"${from_review}"
   # shellcheck disable=SC2016 # the $(...) is for codex to run
-  printf 'Review the changes on this branch against origin/%s, committed or not: git diff $(git merge-base origin/%s HEAD) for tracked files, and each untracked file git status --porcelain lists. They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. Work outside them is not a finding.' \
-    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}"
+  printf 'Review the changes on this branch against origin/%s, committed or not: git diff $(git merge-base origin/%s HEAD) for tracked files, and each untracked file git status --porcelain lists. They implement a story that touches: %s\n\nIts Done when:\n%s%s\n\nReview them against these touches and items. %s' \
+    "$1" "$1" "$(fm "$2" touches)" "${done_when}" "${from_review}" "${SCOPE_RULE}"
 }
 
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
@@ -667,7 +667,7 @@ fallback_close() {
 
 # fallback_brief <base> <prompt> <findings file> — the fallback reviewer's brief: codex's prompt (the
 # branch's diff against origin/<base> when codex had none), read-only, and its findings written to
-# <findings file> in the form codex prints them.
+# <findings file> in the form codex prints them; review_checklist, with SWARM_STORY's story when set.
 fallback_brief() {
   # shellcheck disable=SC2016 # the $(...) is for the agent to run
   local diff='Review the changes on this branch against origin/'"$1"', committed or not: git diff $(git merge-base origin/'"$1"' HEAD) for tracked files, and each untracked file git status --porcelain lists.'
@@ -676,6 +676,8 @@ codex hit its usage limit, so you review in its place. You are read-only: never 
 here, and never merge, by any route. The one file you write is $3.
 
 ${2:-${diff}}
+
+$(review_checklist "${SWARM_STORY:+${BOARD}/stories/${SWARM_STORY}.md}")
 
 You have no Edit, Write or NotebookEdit tool. When done, write your findings with Bash to $3.tmp,
 then mv it to $3 (codex-review waits until that exists): each finding as codex prints one, most severe first, \`- [P<0-3>] <title> — <file>:<line>\` with a line
