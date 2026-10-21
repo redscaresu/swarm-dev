@@ -160,7 +160,13 @@ for ladder in sonnet,opus,fable ""; do
     fresh "${ladder}" idle; echo cancelled > "${ROOT}/runs-bbbb2222"
     heads aaaa1111 bbbb2222; first="$(stepped)"; heads cccc3333
     check "a cancelled head is not red: a third head red after it is the second" "|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
-    # Two red heads while the PR's head is green (or still running) leave the builder be.
+    # Two red heads, both while the builder was busy fixing, then a third head still running with the
+    # builder idle: it is stepped up.
+    fresh "${ladder}" busy; heads aaaa1111 bbbb2222; first="$(stepped)"
+    echo '[{"sessionId":"sess-1","status":"idle"}]' > "${CLAUDE_STUB_AGENTS}"
+    echo success > "${ROOT}/runs-cccc3333"; echo pending > "${ROOT}/status-cccc3333"; heads cccc3333
+    check "two red heads, then a third still running with the builder idle, steps up" "|ok (ci-red-2: sonnet -> opus)" "${first}|$(stepped)"
+    # Two red heads while the PR's head is green leave the builder be.
     fresh "${ladder}" idle; echo success > "${ROOT}/runs-bbbb2222"; echo pending > "${ROOT}/status-bbbb2222"
     heads aaaa1111 bbbb2222; echo failure > "${ROOT}/status-bbbb2222"; echo success > "${ROOT}/runs-cccc3333"
     heads cccc3333

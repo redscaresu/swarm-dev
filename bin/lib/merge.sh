@@ -437,7 +437,7 @@ RED_HEADS="${PROJECT_DIR}/.swarm/red-heads.tsv"
 # time any watch sees it, then judge with ci_gate head every head first seen in this build
 # (build_started) and not judged yet, the current one or one replaced since; red, green or cancelled
 # is final, and pending or a failed read is judged again next poll. A head that was there before the
-# build is not this build's. With STEP_UP_RED_HEADS distinct red heads or more, <head> one of them,
+# build is not this build's. With STEP_UP_RED_HEADS distinct red heads or more, <head> not green,
 # the story's builder open (a PR whose builder was closed is the lead's) and idle (one mid-turn is
 # tried again next poll), and no step-up refused on this head, step it up (ladder_step ci-red-<N>)
 # and succeed unless that closed nothing, which is noted (refused) so this head is not tried again;
@@ -466,8 +466,9 @@ ci_red_scan() {
   # Distinct heads: two watches can both judge one head.
   n="$(awk -v s="$3" -v t="${since}" '$1 == s && $3 >= t && $4 == "red" && !red[$2]++ { n++ } END { print n + 0 }' "${RED_HEADS}")"
   (( n >= STEP_UP_RED_HEADS )) && [[ -n "$(agent_field "$(agent_name "$3")" pane_id)" ]] || return 1
-  # Only while the PR's head is one of them: a builder whose fix is green, or still running, is left be.
-  awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "red" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
+  # Not while the PR's head is green: a builder whose fix passed is left be. A head still running counts
+  # (an idle builder that pushed it waits on it), as the builder fixing a red one is busy at every poll.
+  ! awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "green" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
   ! awk -v s="$3" -v h="$2" -v t="${since}" '$1 == s && $2 == h && $3 >= t && $4 == "refused" { f = 1 } END { exit !f }' "${RED_HEADS}" || return 1
   # Only an idle builder, as tell needs: one mid-turn (an edit, a rebase) is left to finish, and the
   # step-up is tried again on a later poll.
