@@ -38,7 +38,7 @@ item() { # <path under docs> <front-matter line>...
 }
 
 run() { # <command> — swarm.sh <command> in the project, outside herdr
-  (cd "${P}" && rm -f "${TMPDIR}"/swarm-dash-* && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" "$1" 2>&1) || true
+  (cd "${P}" && rm -rf "${TMPDIR}"/swarm-dash-* && env -u HERDR_ENV -u SWARM_PROJECT bash "${SWARM}" "$1" 2>&1) || true
 }
 commit() { # <subject> — commit the whole board
   git -C "${P}" add -A && git -C "${P}" -c user.name=t -c user.email=t@example.com commit -qm "$1"

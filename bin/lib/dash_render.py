@@ -279,11 +279,11 @@ if agents is not None:
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
-        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
+        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done", "usage-limit": "blocked"}.get(r["state"], "unknown")
         recs.append(r)
 
 # Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
-shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
+shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported", "usage-limit") or r["open"]]
 idle = len(recs) - len(shown)
 
 # Running codex reviews (codex-review's markers): one row each, under the epic of its worktree's story
@@ -889,8 +889,10 @@ esc = next((p for p in (l.split() for l in lines("DASH_POLICY")) if p[0] == "esc
 on_call = "off" if E.get("DASH_ESCALATE_AFTER") == "0" or not esc else f"{esc[2] if esc[1] == 'claude' else esc[1]}·{esc[3]}"
 on_call = [("on call: ", "dim"), (on_call, model_style(on_call)), (" · ", "dim"),
            (f"{escalations} escalation{'' if escalations == 1 else 's'} today", "fable" if escalations else "")]
+# CI time this week against last (dash_slow.py's ci line), a group of its own.
+ci = [(SEP, [(E["DASH_CI"], "")])] if E.get("DASH_CI") else []
 if not WIDE:
-    out += pack([(SEP, summary), (SEP, on_call)], W)
+    out += pack([(SEP, summary), (SEP, on_call)] + ci, W)
 drift = lines("DASH_DRIFT")
 if drift:
     out.append(fit([(f"board: {len(drift)} uncommitted edit{'' if len(drift) == 1 else 's'} in the main checkout: {', '.join(drift)}", "warn")], W))
@@ -917,7 +919,7 @@ if blocked or later:
 LEGEND_ON = E.get("DASH_LEGEND") != "0"
 foot = [fit([(cut(l, W), "dim")], W) for l in legend_lines(W, KEYS, WIDE, LEAD)] if LEGEND_ON else []
 if WIDE:
-    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)]
+    foot += pack([(SEP, [("merge ", "dim"), (E["DASH_MERGE"], "b"), (" · ", "dim")] + summary), (SEP, on_call)] + ci
                  + ([(("   ", ""), [(KEYWORDS if KEYS else KEYWORDS + " (with --watch)", "dim")])] if LEGEND_ON else []), W)
 
 # Recent fills the height left. Under 140 columns it, a shown ladder and running now are stacked

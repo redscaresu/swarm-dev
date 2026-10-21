@@ -88,6 +88,8 @@ The other commands are tools the lead runs; they are listed in
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (a `later` epic whose dependencies are done gets its stories planned first, for you to approve) |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
+| an agent on `usage-limit` | nothing: `wait` chose "Wait here, then continue automatically", and it carries on when the limit resets |
+| an agent stuck (`stuck: api error` after three resumes, or `stuck: no output` for `stall_minutes`) | read its pane (`herdr agent read <agent>`), then type into it or close it |
 
 ## Cost and safety
 
@@ -99,7 +101,9 @@ section shows how long CI takes per push, how often it goes red and how often it
 `incidents` section counts, per day, the waits that timed out, the logins that expired, the
 builders that stopped with no PR, the board pulls that an uncommitted edit stopped, and each time
 a person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, which the lead
-logs; dash shows the 7-day count beside the speedometer). Its
+logs; dash shows the 7-day count beside the speedometer). `ci_health` also gives each repo's median
+CI time per PR and its slowest job, beside the same figures for the window before; dash shows this
+week's against last week's on one line. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
 money waits on you, so only those count. Its `model_fit` section sets cost against results for each
