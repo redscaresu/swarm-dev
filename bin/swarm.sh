@@ -9,7 +9,7 @@
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or a green PR in review that waits on the user (merge = human, or merge holds it); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause] [--all]                   close a story's pane, a conductor's epic tab, or a tab and its overflow, keeping each tab that holds an agent working, waiting or with its story's PR open (named as kept; a conductor's own pane still closes) unless --all; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
-#   swarm.sh step-up <slug> <trigger>                       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief; trigger: findings-3, ci-red-2, stalled or no-pr
+#   swarm.sh step-up <slug> <trigger> [findings-file]       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief (and the file's findings); trigger: findings-3, ci-red-2, stalled or no-pr. close, wait --stall, tell and watch run it themselves
 #   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
@@ -417,7 +417,9 @@ dispatch() {
             if [[ "${*: -1}" == --all ]]; then CLOSE_ALL=1; set -- "${@:1:$#-1}"; fi
             [[ "${1:-}" != -* ]] || die "close: --all goes last: swarm.sh close <name> [cause] [--all]"
             close_agent "${1:?name}" "${2:-}" ;;
-    step-up) require_herdr; if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}"; fi ;;
+    # _step-up: ladder_step's, not logged, and a failure after the old builder closed exits STEP_UP_PARTWAY
+    step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
+            if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
     next)   next_report ;;
@@ -473,7 +475,7 @@ dispatch() {
 # The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
-READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime"
+READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime _step-up"
 
 # is_command <name> — true when <name> is one of dispatch's arms, read off its case statement.
 is_command() {
@@ -796,6 +798,7 @@ main() {
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null
+  EV_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   trap 'main_signal INT' INT; trap 'main_signal TERM' TERM; trap 'main_signal HUP' HUP
   # In the background, with stdin kept, so `wait` returns the moment a signal lands.
   set +e
@@ -809,6 +812,8 @@ main() {
   elif [[ ${rc} -ne 0 ]]; then
     why="$(head -1 "${EV_ERR}" 2>/dev/null || true)"
     record_event "${EV_CMD}" "${EV_TARGET#+}" "${why:-failed (exit ${rc})}"
+  elif [[ "${EV_CMD}" == close* ]] && stepped_up_since "${EV_TARGET}" "${EV_START}"; then
+    :   # a step-up took the close's place (close_agent): its escalate line ends that build
   elif [[ "${EV_TARGET}" != + ]]; then
     record_event "${EV_CMD}" "${EV_TARGET}" "${EV_OK}"
   fi
