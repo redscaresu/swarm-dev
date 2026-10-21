@@ -578,13 +578,20 @@ check "merge_admin = on, only the review and push rules: --admin" grep -q -- "^p
 
 # --- A merge queue on the base: enqueue the pinned head, wait for the queue, no main-ci wait.
 G=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb   # the merge group's commit
-# now — the time a fixture is written: ci_gate counts only events within SKEW (30 s) of the enqueue.
-now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# now / ago — a fixture event's time: a minute after the enqueue the test is about to make (this
+# run's), or ten seconds before it (an earlier run's, such as its stop()'s dequeue).
+stamp() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + int(sys.argv[1]))))' "$1"; }
+now() { stamp 60; }
+ago() { stamp -10; }
 # qread <file> <state> <in queue> <auto-merge> <group|-> <merge commit|-> [reason [when]] — one graphql
 # read of the PR, its head ${QHEAD:-H1}; a reason is a removal from the queue at <when> (default now).
+# Its queue entry is in state ${QSTATE:-AWAITING_CHECKS} (its group's CI runs) with a group, and
+# with QSTATE=QUEUED and no group it waits its turn.
 qread() {
   local g=null m=null r=""
-  [[ "$5" == - ]] || g="{\"headCommit\":{\"oid\":\"$5\"}}"; [[ "$6" == - ]] || m="{\"oid\":\"$6\"}"
+  [[ "$5" == - ]] || g="{\"state\":\"${QSTATE:-AWAITING_CHECKS}\",\"headCommit\":{\"oid\":\"$5\"}}"
+  [[ "$5" != - || -z "${QSTATE:-}" ]] || g="{\"state\":\"${QSTATE}\",\"headCommit\":null}"
+  [[ "$6" == - ]] || m="{\"oid\":\"$6\"}"
   [[ -z "${7:-}" ]] || r="{\"reason\":\"$7\",\"createdAt\":\"${8:-$(now)}\"}"
   printf '{"data":{"repository":{"pullRequest":{"id":"PR_7","state":"%s","headRefOid":"%s","isInMergeQueue":%s,"autoMergeRequest":%s,"mergeCommit":%s,"mergeQueueEntry":%s,"timelineItems":{"nodes":[%s]}}}}}\n' \
     "$2" "${QHEAD:-${H1}}" "$3" "$4" "${m}" "${g}" "${r}" > "$1"
@@ -621,19 +628,45 @@ check "a dequeue between two reads: names the check on the group commit its run 
 qfresh; qread "${FX}/queue" OPEN false null - - "MERGE_CONFLICT"; merge "${URL}"
 is "a removal before the first read: one dequeue line naming GitHub's reason" "merge s dequeued (MERGE_CONFLICT): no red check on the head 1111111" "$(events)"
 # A removal from an earlier enqueue is not this one's reason.
-qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" OPEN false null - - "AN_OLD_REASON" 2020-01-01T00:00:00Z
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue" OPEN false null - - "AN_OLD_REASON" 2020-01-01T00:00:00Z
 merge "${URL}"
 check "an earlier enqueue's removal: not its reason" said "dequeued (no reason given): ${LINT}"
+# An earlier run's dequeue (its stop(), seconds before this enqueue) is not this one's.
+qfresh; qread "${FX}/queue.1" OPEN false null - - "MANUAL" "$(ago)"; qread "${FX}/queue.2" OPEN true null "${G}" -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "an earlier run's dequeue seconds before this enqueue: not this one's, and it merges" "0|merge s ok" "${rc}|$(events | head -1)"
+# One read out of the queue, before GitHub says merged, is not a dequeue.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" OPEN false null - -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "out of the queue for one read before it reads merged: not a dequeue" "0|merge s ok" "${rc}|$(events | head -1)"
+# Merged before its merge commit shows: read again, then merge ok and reconcile.
+qfresh; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - -
+qread "${FX}/queue.3" MERGED false null - "${M}"; merge "${URL}"
+is "merged before its merge commit shows: reads again, merge ok, then reconcile" "0|merge s ok|reconcile s ok (finished)" "${rc}|$(events | paste -sd'|' -)"
+# Waiting its turn is not CI time: four reads queued behind others, past a 2 s CI deadline, then its
+# own group runs and merges. Waiting has the queue's own bound, six deadlines.
+qfresh; for i in 1 2 3 4; do QSTATE=QUEUED qread "${FX}/queue.${i}" OPEN true null - -; done
+qread "${FX}/queue.5" OPEN true null "${G}" -; qread "${FX}/queue.6" MERGED false null - "${M}"
+merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
+is "waiting its turn past the CI deadline: still merges, nothing dequeued" "0|merge s ok|no" \
+  "${rc}|$(events | head -1)|$(grep -q 'mutation(' "${ROOT}/gh.log" && echo yes || echo no)"
+qfresh; QSTATE=QUEUED qread "${FX}/queue" OPEN true "${WAITING}" - -
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+check "waiting its turn past the queue's own bound: a timeout, out of the queue" \
+  logged "^merge s unconfirmed (timeout (waiting its turn in the merge queue)): #7 did not merge; auto-merge is off and it is out of the merge queue$"
 # A first read that lags the enqueue is not a dequeue; READ_TRIES reads never queued are.
 qfresh; qread "${FX}/queue.1" OPEN false null - -; qread "${FX}/queue.2" OPEN true null "${G}" -; qread "${FX}/queue.3" MERGED false null - "${M}"
 merge "${URL}"; is "a first read before the queue shows it: still merges" 0 "${rc}"
 qfresh; qread "${FX}/queue" OPEN false null - -; merge "${URL}"
 is "never read as queued: exits non-zero" 1 "${rc}"
 check "never read as queued: unconfirmed, not a dequeue" logged "^merge s unconfirmed (never read as queued or waiting for auto-merge)"
+check "never read as queued: auto-merge off and out of the queue all the same" \
+  bash -c "grep -q disablePullRequestAutoMerge '${ROOT}/gh.log' && grep -q dequeuePullRequest '${ROOT}/gh.log'"
 # gh failing on the enqueue: read the PR back, and wait on it if GitHub queued it (or it already was).
 qfresh; touch "${FX}/auto-fails"; qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${M}"
 merge "${URL}"; is "an enqueue that errors, but the PR reads queued: waits and merges" 0 "${rc}"
 check "an enqueue that errors: no queued line, says it reads the PR back" bash -c "! grep -qF 'queued: s #7' '${ROOT}/out' && grep -qF 'reading #7 back' '${ROOT}/out'"
+check "an enqueue that errors: still says the base has a merge queue, the line the conductor keys on" said "merge queue: main has one, so #7 goes through it"
 qfresh; touch "${FX}/auto-fails"; qread "${FX}/queue" OPEN false null - -; merge "${URL}"
 is "an enqueue that errors and never queues: exits non-zero" 1 "${rc}"
 check "an enqueue that errors and never queues: says gh failed" logged "^merge s gh pr merge --auto failed: gh: HTTP 502"
@@ -661,6 +694,15 @@ qfresh; touch "${FX}/mutation.fail"; qread "${FX}/queue" OPEN true null "${G}" -
 merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
 check "a timeout whose dequeue fails: names it, and says to do it by hand" \
   bash -c "grep -qF 'dequeuePullRequest failed (gh api graphql' '${ROOT}/out' && grep -qF 'take it out of the merge queue and turn auto-merge off by hand' '${ROOT}/out'"
+# A TERM while it waits on the queue: auto-merge off and out of the queue before it exits.
+qfresh; qread "${FX}/queue" OPEN true null "${G}" -
+(cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
+  SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_SECONDS=60 bash "${SWARM}" merge "${URL}" > "${ROOT}/out" 2>&1) &
+mpid=$!
+for _ in $(seq 100); do grep -q isInMergeQueue "${ROOT}/gh.log" && break; sleep 0.1; done
+kill -TERM "${mpid}"; rc=0; wait "${mpid}" || rc=$?
+check "a TERM while queued: auto-merge off and out of the queue, logged as unconfirmed" \
+  logged "^merge s unconfirmed (stopped by SIGTERM): #7 did not merge; auto-merge is off and it is out of the merge queue$"
 # A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
 fresh; touch "${FX}/mq.fail"; merge "${URL}"
 refused "a queue that cannot be read" "could not read whether main has a merge queue"

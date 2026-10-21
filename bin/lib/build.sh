@@ -225,15 +225,15 @@ Merge a PR only when it is green and reviewed, and only through \`swarm.sh merge
 \`swarm.sh review $1\`, then \`swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>\`, never
 \`gh pr merge\` or \`gh api\`. It merges by the literal PR number with \`--match-head-commit <sha>\` and the
 repo's merge method, squash when allowed
-(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), never --auto,
-and only once every check on that head has completed and passed, which it checks itself. On a base
+(\`gh repo view --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed\`), with no --auto
+where the base has no merge queue, and only once every check on that head has completed and passed, which it checks itself. On a base
 with a merge queue it enqueues that head with \`--auto --match-head-commit\` instead and waits for the
 queue, which tests it on top of the base and the PRs ahead of it. A PR the queue drops prints
 \`dequeued (<reason>): <checks>\` and merged nothing: handle it like a red check. Send the failing
 checks to the builder with \`swarm.sh tell <slug> findings <file>\`, telling it to merge
 origin/<base> in, fix what broke and push; then review the new head and merge it again. The first
-\`swarm.sh merge\` shows whether the base has a merge queue. Where it prints \`queued:\`, the base has a merge
-queue: start \`swarm.sh merge\` for every PR whose latest head passed review as soon as it passes,
+\`swarm.sh merge\` shows whether the base has a merge queue. Where it prints \`merge queue: <base> has
+one\`, start \`swarm.sh merge\` for every PR whose latest head passed review as soon as it passes,
 without waiting for the ones before it to merge, so the queue tests them together and merges them in
 batches. Where it prints \`merged: <PR URL> (...); waiting for CI on <base>\`, or before any merge has
 printed either, run one \`swarm.sh merge\` at a time: start the next only after the previous one has

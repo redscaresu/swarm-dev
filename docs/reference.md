@@ -1052,11 +1052,11 @@ blocked story once every slug in its `depends_on` is finished. It leaves an old 
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
 <PR URL>`, then `swarm.sh merge --head <that SHA> <PR URL>`, which merges by the literal PR number
-with `--match-head-commit`, never `--auto`, waits for CI on the base, and runs `swarm.sh reconcile`.
+with `--match-head-commit` (with `--auto` only to enqueue it on a base with a merge queue), waits for CI on the base, and runs `swarm.sh reconcile`.
 That pulls the board the way it does for you, and finishes
 the story, closing its builder. The conductor never closes the builder before that, because closing
 a story that is still `ready` counts a failed build. Its first `swarm.sh merge` shows whether the
-base has a merge queue. Where it prints `queued:`, the base has a merge queue, and the conductor starts `swarm.sh
+base has a merge queue. Where it prints `merge queue: <base> has one`, the conductor starts `swarm.sh
 merge` for every PR whose latest head passed review as soon as it passes, without waiting for the
 ones before it to merge, so the queue tests them together and merges them in batches. Otherwise it
 runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
@@ -1090,25 +1090,31 @@ branch protection alike) before it merges. When it has one, `merge` enqueues the
 The queue tests the PR on top of the base and the PRs queued ahead of it, so two PRs that are each
 green alone but red together never land. `merge` reads the PR back even when gh fails, since an
 error can follow an enqueue GitHub made, and a PR already in the queue is waited on as if it had
-just joined it. Then it reads the PR every 20 seconds, up to 30 minutes, until it merges or leaves
-the queue, and checks its head on every read. A head other than the one it checked stops the wait:
+just joined it. It prints `merge queue: <base> has one` first, whatever happens next. Then it reads
+the PR every 20 seconds until it merges or leaves the queue, and checks its head on every read. The
+30 minutes for CI start when the PR's own merge group starts, and again for each group the queue
+rebuilds; waiting its turn behind other PRs, or for auto-merge to enqueue it, has a bound of its own,
+six times that (3 hours). A head other than the one it checked stops the wait:
 `merge` turns auto-merge off and takes the PR out of the queue (GraphQL
 `disablePullRequestAutoMerge` and `dequeuePullRequest`), so a push made before the PR reached the
 queue never merges unreviewed. If the PR has already merged at another head, `merge` logs
 `merge merged at head <sha>, not <sha>, ...`, runs reconcile (main has changed) and exits non-zero,
 so the merged code gets a review. A merged PR logs `merge ok` and goes straight to reconcile: the
-queue already ran CI on the commit it merged, so there is no `main-ci` wait. A PR that leaves the
-queue unmerged, after a read showed it queued or waiting for auto-merge or with a removal since this
-enqueue (one dropped within seconds for a conflict), is a dequeue. `merge` exits non-zero with one
+queue already ran CI on the commit it merged, so there is no `main-ci` wait. A PR that reads merged
+before GitHub shows its merge commit is read again, up to three times. A PR that leaves the queue
+unmerged is a dequeue when GitHub logged its removal after this enqueue (one dropped within seconds
+for a conflict counts, an earlier run's does not), or when three reads in a row, after one showed it
+queued or waiting for auto-merge, find it out of the queue and not merged. `merge` exits non-zero with one
 `merge dequeued (<GitHub's reason>): <checks>` line naming the checks that were red or unfinished on
 the merge group's commit. That commit is the one seen while the PR was queued, or, for a PR that
 joined and left between two reads, the one its `merge_group` run names; the reason is GitHub's only
-for a removal since this enqueue. The conductor handles a dequeue like a red check: it sends the
+for a removal after this enqueue. The conductor handles a dequeue like a red check: it sends the
 failing checks to the builder, which merges the base in and pushes, then reviews and merges the new
-head. A wait that runs out or errors turns auto-merge off, takes the PR out of the queue and is
-logged as unconfirmed, naming anything it could not undo for you to do by hand; running `merge`
-again enqueues it again. A PR that never reads as queued is unconfirmed too, unless gh failed, which
-is a refusal. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
+head. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
+while `merge` waits each turn auto-merge off and take the PR out of the queue. Each is logged as
+unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
+hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
+the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
 base with a queue, a direct merge would enqueue the PR with nothing watching its head. With no
 queue the path is the one above. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,

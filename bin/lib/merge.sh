@@ -39,10 +39,11 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # ci_gate queue <owner/repo> <base> <wait> — yes when <base> has a merge queue (a ruleset's or classic
 # protection's, GraphQL's mergeQueue), else no; 3 when the read fails three times, <wait> apart.
 # ci_gate queued <owner/repo> <pr> <head> <base> <since> <seconds> <poll> — wait for the PR enqueued at
-# <head> (<since>, epoch seconds before the enqueue): merged <commit> (0), dequeued (<reason>): <checks
-# red on the merge group's commit> or closed (1), timeout (2), error (3), never read as queued (4), an
-# open PR at a head that is not <head> (5), or a merge at such a head (6). On 2, 3 and 5 it has turned
-# auto-merge off and taken the PR out of the queue first, and its second line says so.
+# <head> (<since>, epoch seconds before the enqueue), <seconds> of CI from when its own merge group
+# starts: merged <commit> (0), dequeued (<reason>): <checks red on the merge group's commit> or closed
+# (1), timeout (2), error (3), never read as queued (4), an open PR at a head that is not <head> (5), a
+# merge at such a head (6), or a TERM, HUP or INT (7). On 2, 3, 4, 5 and 7 it has turned auto-merge
+# off and taken the PR out of the queue first, and its second line says so.
 ci_gate() {
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"
 }
@@ -190,6 +191,8 @@ merge_pr() {
       || merge_fail "could not read whether ${base} has a merge queue: ${queue}"
   fi
   if [[ "${queue}" == yes ]]; then
+    # The conductor's brief keys on this line: every PR goes through the queue at once.
+    echo "merge queue: ${base} has one, so #${n} goes through it"
     queue_merge "${n}" "${repo}" "${head}" "${base}"
   else
     why="$(gh pr merge "${n}" --repo "${repo}" "--${method}" --match-head-commit "${head}" ${admin[@]+"${admin[@]}"} 2>&1)" || ran=""
@@ -233,25 +236,37 @@ merge_pr() {
 # however gh exits, since an error can follow an enqueue GitHub made, and a PR already queued is
 # waited on again. A dequeue fails naming the checks red on the merge group's commit. A head that
 # moved, a timeout or an error fails once ci_gate queued has turned auto-merge off and taken the PR
-# out of the queue, so no head merges unwatched (it says what it could not do). A merge at another
+# out of the queue, so no head merges unwatched (it says what it could not do); so does a TERM, HUP or
+# INT: ci_gate runs in the background, so the trap reaches it at once. A merge at another
 # head is logged as one, and sets QUEUE_BAD: merge_pr reconciles, since main changed, then fails. A
 # merge with no merge commit, or a PR never read as queued, is unconfirmed.
 queue_merge() {
-  local why err rc=0 ran=1 oid since
+  local why err rc=0 ran=1 oid since out pid
+  out="$(mktemp "${TMPDIR:-/tmp}/swarm-queue.XXXXXX")" || merge_fail "cannot make a temp file to wait on #$1"
   since="$(date +%s)"
   if err="$(gh pr merge "$1" --repo "$2" --auto --match-head-commit "$3" 2>&1)"; then
     echo "queued: ${MERGE_TARGET} #$1 (head ${3:0:7}); waiting for the merge queue"
   else
     ran=""; echo "gh pr merge --auto failed (${err##*$'\n'}); reading #$1 back, as GitHub may have queued it"
   fi
-  why="$(ci_gate queued "$2" "$1" "$3" "$4" "${since}" "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" \
-    "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}")" || rc=$?
+  python3 "${SWARM_HOME}/bin/lib/ci_gate.py" queued "$2" "$1" "$3" "$4" "${since}" \
+    "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" > "${out}" &
+  pid=$!
+  # A signal ends the wait at once; ci_gate then stops the PR (exit 7), and is waited for.
+  # shellcheck disable=SC2064 # the pid is fixed now
+  trap "kill -TERM ${pid} 2>/dev/null || true" TERM HUP INT
+  while :; do
+    if wait "${pid}"; then rc=0; else rc=$?; fi
+    kill -0 "${pid}" 2>/dev/null || break
+  done
+  trap - TERM HUP INT
+  why="$(cat "${out}")"; rm -f "${out}"
   case ${rc} in
     0) oid="${why#merged }"
        [[ "${oid}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "unconfirmed (MERGED, no merge commit): the merge queue merged #$1; check it by hand" ;;
     1) merge_fail "${why}" ;;
-    4) [[ -n "${ran}" ]] || merge_fail "gh pr merge --auto failed: ${err##*$'\n'}"
-       merge_fail "unconfirmed (${why}): gh pr merge --auto ran, but #$1 never read as queued; check it by hand" ;;
+    4) [[ -n "${ran}" ]] || merge_fail "gh pr merge --auto failed: ${err##*$'\n'}; ${why#*$'\n'}"
+       merge_fail "unconfirmed (${why%%$'\n'*}): gh pr merge --auto ran, but #$1 never read as queued; ${why#*$'\n'}; check it by hand" ;;
     5) merge_fail "${why%%$'\n'*}; ${why#*$'\n'}: review the new head" ;;
     6) record_event merge "${MERGE_TARGET}" "${why}"
        echo "merge: #$1 ${why}"
