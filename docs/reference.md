@@ -433,10 +433,38 @@ Code's "Login expired · Please run /login", with no message sent to it since, i
 waited on: `wait` prints `auth` at once,
 with a line on stderr naming it, for a builder and a conductor alike. Only the user's `/login` clears
 it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a conductor tells the same
-to each builder whose `wait` printed `auth`. `wait` does not read the pane. `wait --stall
+to each builder whose `wait` printed `auth`.
+A turn can also stop on an API error while the session still reads busy, because background shells
+the agent opened are still running. When herdr says the agent is `done` or `idle` and the last thing
+in its pane is Claude Code's own error line (`⏺ API Error: ...` at the left margin, with no reply or
+submitted prompt after it; the input box, which may hold a suggestion, is not read), `wait` sends it "Your last turn stopped on an API error; carry on where you
+stopped." and waits again. It logs each one as a nudge, conductors included. After three such stops
+in a row (a turn that ends any other way resets the count), or if the message is not taken up, `wait`
+prints `stuck: api error` and exits 4. A pane that still shows the old error after a resume (the
+message has not shown yet) is no new stop. An idle session still on that same pane a slice later
+never took the message up. With `goal` on it never resumes a builder: it returns
+`stuck: api error` at once, so the transcript still ends on the error for the goal rule. A conductor
+or review agent is resumed either way. When the transcript ends on an expired login, `wait` prints
+`auth` instead, busy session or not, and resumes nothing. `tell`
+treats such an agent as idle and delivers, and `next` names a conductor's stop. Any `wait` also
+prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
+herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
+transcript shows no background task still running (a shell, an async subagent or a monitor it
+started, with no `<task-notification>` carrying a `<status>` for it since). It sends nothing then: read the pane. `stuck` is
+not a stall, and no close follows from it. When an agent's pane shows Claude Code's usage-limit dialog
+("Stop and wait for limit to reset" / "Wait here, then continue automatically"), `wait` picks
+"Wait here, then continue automatically" (the user's standing choice) once per dialog, logs one
+`usage-limit` event for the agent in events.tsv, and keeps waiting. Only the live dialog counts: its
+options among the pane's last lines with no input box under them, so a prompt quoting it sends nothing. A pane already waiting after that choice ("Usage
+limit reached" with "limit resets" or "Continuing shortly") is handled the same way, with no keys
+sent, while the session is busy or waiting; an idle session under that line is idle. Neither counts as a nudge or a resume, and neither turns into `stuck: no output` however long
+it sits; at its timeout `wait` prints `usage-limit` and exits 1. Until the pane moves on, `status`
+and `dash` show `usage-limit` for the agent in place of working or idle. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, session-log write or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
-worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
+worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began.
+So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at the timeout or when
+herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, when it is queued (green and mergeable for `queue_minutes` with no review agent on
 its head, reported once per head), or when an agent's session is waiting, and it names what the agent waits for. A codex

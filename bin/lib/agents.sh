@@ -24,8 +24,23 @@
 #     <task-notification>, "[Request interrupted by user]", a slash command such as /login run in its
 #     pane and its <local-command-stdout>). A transcript that cannot be read is not
 #     expired. Never the pane.
+#   bg_running(log, name, projects) -> True when <name>'s transcript (as login_expired finds it) has a
+#     background task it started (a tool result's backgroundTaskId, an async_launched agentId, or a
+#     Monitor call's taskId; a task-list tool's taskId is none) with no <task-notification> for that
+#     <task-id> carrying a <status> since: the session
+#     waits on it, so its quiet pane is no stall. A check-in on a running shell has no <status> and
+#     ends nothing. Sidechain entries are skipped. A transcript that cannot be read has none.
+#   usage_limit(text) -> ("dialog", <option>) when the pane text, after its last reply (⏺ or ●), ends on
+#     Claude Code's live usage-limit dialog: its option lines ("Stop and wait for limit to reset" /
+#     "<option>. Wait here, then continue automatically") among the last USAGE_TAIL non-empty lines,
+#     with no prompt line (an input box) under them, so a prompt quoting the dialog is none;
+#     ("waiting", "") when it waits after that choice ("Usage limit reached" with "Continuing shortly"
+#     or "limit resets"); else None. pane_text(pane) is herdr's agent read.
 #   shown_state(a, name, s, log, projects) -> agent_state, except that an idle Claude agent whose
-#     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle.
+#     login expired is (auth, True): only the user's /login clears it, so it needs them, never idle;
+#     and a working, idle or waiting agent whose pane is on the usage-limit dialog, or a working or
+#     waiting one whose pane waits after it, is (usage-limit, False): an idle one under the waiting
+#     line is idle.
 #     For the views (status, dash); wait reads login_expired itself.
 
 # bin/lib/stall.py: the one stall rule and agent-to-story mapping, shared by dash and `wait --stall` (each
@@ -38,7 +53,7 @@
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
 #     line is the lead's board edit, whose name may be a story's slug, so it is never one either, and
-#     nor is an `incident` line, which wait and close write about the agent, not the agent itself.
+#     nor is a `usage-limit` line (wait's, about the agent) or an `incident` line, which wait and close write about the agent, not the agent itself.
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
@@ -551,6 +566,105 @@ nudge_reason() {
   echo "you are idle and story/${slug} has no PR"
 }
 
+# API_RESUMES: how many API-error stops in a row one `wait` resumes before it returns `stuck: api
+# error` for the lead. An API error is transient; one that keeps coming back is not.
+API_RESUMES=3
+API_RESUME_MSG="Your last turn stopped on an API error; carry on where you stopped."
+
+# pane_text <target> — the recent text of the agent's pane, or nothing when herdr cannot read it.
+pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || true; }
+
+# pane_sum <target> — the checksum of pane_text, as api_stopped takes it.
+pane_sum() { printf '%s' "$(pane_text "$1")" | cksum; }
+
+# api_stopped <name> <target> — succeed when herdr says <name> is done or idle and its pane's last
+# event is Claude Code's own error line, `⏺ API Error: ...` at the left margin (● on Linux): no reply
+# (⏺ or ●) and no submitted prompt (`> text`) after it. The input box at the bottom is not read: a
+# suggestion or half-typed text there is no prompt. It is the last two border lines (─ at the margin)
+# with no reply from the upper one down; a box higher up (a banner, a dialog) is read as any line.
+# Its session can still read busy then: background shells it left open keep it so. With <sum> (the
+# pane's checksum when wait last resumed it), a pane still that same text is no new stop: the resume
+# has not shown yet.
+api_stopped() {
+  local text
+  text="$(pane_text "$2")"
+  [[ -z "${3:-}" || "$(printf '%s' "${text}" | cksum)" != "$3" ]] || return 1
+  printf '%s\n' "${text}" | awk '{ l[NR] = $0 } /^(╭|╰)?─/ { t = b; b = NR }
+    END {
+      n = NR; if (!t) t = b
+      if (t) { n = t - 1; for (i = t; i <= NR; i++) if (l[i] ~ /^(⏺|●)/) n = NR }
+      for (i = 1; i <= n; i++) {
+        if (l[i] ~ /^(⏺|●) API Error:/) e = 1
+        else if (l[i] ~ /^(⏺|●)/ || l[i] ~ /^(>|❯) +[^ ]/) e = 0
+      }
+      exit !e
+    }' \
+    && [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]
+}
+
+# resume_agent <name> <target> — send API_RESUME_MSG once through deliver_prompt (once: no retry,
+# which would send it twice when the resumed turn errors before herdr shows it working); succeed when
+# herdr took it. Its line then stands in the pane after the error, so api_stopped no longer holds
+# until a new error. deliver_prompt's die ends only the subshell here.
+resume_agent() {
+  local f rc=0
+  f="$(mktemp "${TMPDIR:-/tmp}/swarm-resume.XXXXXX")" || return 1
+  printf '%s\n' "${API_RESUME_MSG}" > "${f}"
+  (deliver_prompt "$1" "${f}" "$2" once) >/dev/null 2>&1 || rc=$?
+  rm -f "${f}"; return "${rc}"
+}
+
+# bg_running <name> — succeed when <name>'s Claude session has a background task (a shell, an async
+# subagent, a monitor) it started and has not yet been told the end of (panes.py's bg_running, over
+# its transcript): it is waiting on it.
+bg_running() {
+  SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
+sys.exit(0 if bg_running(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}"
+}
+
+# usage_state <target> — print `dialog <option>` or `waiting` and succeed when the agent's pane is on
+# Claude Code's usage limit (panes.py's usage_limit); fail otherwise.
+usage_state() {
+  pane_text "$1" | SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
+import os, sys
+sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import usage_limit
+u = usage_limit(sys.stdin.read())
+sys.exit(1) if u is None else print(" ".join(u).strip())'
+}
+
+# usage_event <name> — log a usage-limit event for <name>, unless its newest events.tsv line is one.
+# ponytail: one wait logs once per limit (its own flag); a new limit with no other event for <name>
+# since the last is not logged again. A reset time in the event would tell them apart.
+usage_event() {
+  awk -F'\t' -v n="$1" '$3 == n { k = $2 } END { exit k == "usage-limit" ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
+    || record_event usage-limit "$1"
+}
+
+# is_builder <name> — succeed when <name>'s newest agents.tsv line has a building role (BUILDER_ROLES).
+is_builder() {
+  local r
+  r="$(awk -F'\t' -v n="$1" '$3 == n { r = $2 } END { print r }' "${AGENTS_LOG}" 2>/dev/null)"
+  [[ -n "${r}" && " ${BUILDER_ROLES} " == *" ${r} "* ]]
+}
+
+# pane_quiet <name> <target> — succeed when the agent's pane has not changed for stall_minutes and it
+# runs no background task (bg_running), setting the caller's state to `stuck: no output for <N>m
+# (<target>)`. Between calls it keeps the caller's pane_sum (the pane's checksum at the last read) and
+# pane_at (when it last changed; first, the time the wait began). An empty read says nothing.
+pane_quiet() {
+  local text sum min
+  text="$(pane_text "$2")"; [[ -n "${text}" ]] || return 1
+  sum="$(printf '%s' "${text}" | cksum)"
+  [[ -z "${pane_sum}" || "${sum}" == "${pane_sum}" ]] || pane_at="$(date +%s)"
+  pane_sum="${sum}"; min=$((($(date +%s) - pane_at) / 60))
+  # shellcheck disable=SC2154 # assigned in another file
+  [[ ${min} -ge ${CFG_stall_minutes} ]] || return 1
+  ! bg_running "$1" || return 1
+  state="stuck: no output for ${min}m ($2)"
+}
+
 # STALL_PATHS: how many of a worktree's changed and untracked files story_work_time reads the mtime of.
 STALL_PATHS=300
 
@@ -630,6 +744,9 @@ agent_stalled() {
 STALL_POLL_MS="${SWARM_STALL_POLL_MS:-60000}"
 # WAIT_STALLED: the exit code of `wait --stall` when it returns because the agent stalled.
 WAIT_STALLED=3
+# WAIT_STUCK: the exit code of any `wait` that returns "stuck: ..." (an API error resumes did not
+# clear, or a pane quiet for stall_minutes): distinct from a stall, which a conductor closes on.
+WAIT_STUCK=4
 
 # timed_out <stderr file> — true when herdr's failed agent wait only timed out.
 timed_out() { grep -q '"timeout"' "$1"; }
@@ -637,10 +754,11 @@ timed_out() { grep -q '"timeout"' "$1"; }
 # herdr_wait <target> <name> <timeout-ms> [<since>] — the wait for an agent with no Claude session to
 # read (codex, or no session recorded), and the one place a wait takes herdr's own status: herdr
 # agent wait in STALL_POLL_MS steps; with <since>, between steps an agent stalled since then
-# (agent_stalled) ends the wait with "stalled: ...". herdr's stderr goes to a file, read only to tell
+# (agent_stalled) ends the wait with "stalled: ...", and so does a pane quiet for stall_minutes
+# (pane_quiet). herdr's stderr goes to a file, read only to tell
 # a step's timeout from a real failure; a real failure, and the last step, fail as one unbroken wait does.
 herdr_wait() {
-  local target="$1" name="$2" left="$3" since="${4:-}" out err min
+  local target="$1" name="$2" left="$3" since="${4:-}" out err min state pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"
   while [[ ${left} -gt ${STALL_POLL_MS} ]]; do
     if out="$(herdr agent wait "${target}" --timeout "${STALL_POLL_MS}" 2>"${err}")"; then
@@ -651,6 +769,7 @@ herdr_wait() {
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
     fi
+    if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
   done
   rm -f "${err}"
   herdr agent wait "${target}" --timeout "${left}" | json "d['result']['agent']['agent_status']"
@@ -684,6 +803,9 @@ poll_while() {
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
 # The session is read before the first wake and right after each; every decision is taken on that
 # read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
+# A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit", before any
+# other pane check. A busy agent whose turn stopped on an API error (api_stopped, past the caller's resumed_sum) ends it with "api error", and one
+# whose pane has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
 # unknown (said once on stderr), it sleeps out the rest of the slice, the last one only to the
 # deadline (now plus <timeout-ms>), where it reads once more, prints that state and fails. With
@@ -691,6 +813,7 @@ poll_while() {
 # session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
 settle() {
   local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0
+  local pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
   err="$(mktemp "${TMPDIR:-/tmp}/swarm-wait.XXXXXX")"; deadline=$(($(now_ms) + $3))
@@ -707,9 +830,12 @@ settle() {
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
+    if [[ "${state}" == busy ]] && usage_state "${target}" >/dev/null; then state=usage-limit; break; fi
+    if [[ "${state}" == busy ]] && api_stopped "${name}" "${target}" "${resumed_sum:-}"; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
     fi
+    if [[ "${state}" == busy ]] && pane_quiet "${name}" "${target}"; then break; fi
     t0="$(now_ms)"
     if [[ ${t0} -ge ${deadline} ]]; then rc=1; break; fi
     sleep_ms $((end - t0))
@@ -726,26 +852,73 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
-# WAIT_STALLED. SWARM_WAIT_STARTED (epoch) overrides when the wait began, for tests.
+# WAIT_STALLED. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
+# for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
+# the wait began, for tests.
+# An agent whose turn stopped on an API error (settle's "api error", or idle and api_stopped) is sent
+# API_RESUME_MSG and waited on again, logged as a nudge, up to API_RESUMES stops in a row (a turn that
+# ends otherwise resets the count); the next one, or a resume not taken up, returns "stuck: api error"
+# (wait keeps the pane's checksum from each resume, resumed_sum: until the pane moves past it, the old
+# error is no new stop, and an idle session still on it a slice later never took the resume up)
+# and WAIT_STUCK. With goal on a builder (is_builder) is never resumed: the conductor reads the stop
+# from the transcript, which must still end on the error (goal_rule's cleared-on-error), so it returns
+# stuck at once. A conductor or review agent is resumed as with goal off. An expired login
+# (login_expired) on a busy session's API-error stop is auth, as on an idle one, and never resumed.
+# An agent whose pane is on Claude Code's usage limit (settle's "usage-limit", or idle or waiting and
+# usage_state; an idle session under the waiting line is idle) is neither a stop nor a stall: on its
+# dialog wait sends the option "Wait here, then continue automatically" (the user's standing choice)
+# once, not again while that dialog stands, logs one usage-limit event for that limit
+# (usage_event), counts no nudge or resume, and waits on, a slice at a time, never past its timeout,
+# where it prints usage-limit and fails. A pane that already waits after that choice is the same,
+# with nothing sent; pane_quiet never sees it, so it is never stuck however long it sits.
 # A wait that ran out logs a wait-timeout incident, unless SWARM_WAIT_SLICE is set (the caller waits again);
 # one that failed sooner is herdr's wait failing, and logs none. auth logs a login incident
 # (login_incident).
 wait_agent() {
-  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 target since="" rc wake="" reason t0
+  local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline
+  local answered="" resumed_sum=""
+  deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then echo "${status}"; return "${WAIT_STALLED}"; fi
+    if [[ "${status}" == stuck:* ]]; then echo "${status}"; return "${WAIT_STUCK}"; fi
     if [[ ${rc} -ne 0 ]]; then
       [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
-    if [[ "${status}" == idle ]] && login_expired "${name}"; then
+    if [[ "${status}" =~ ^(usage-limit|idle|waiting) ]] && lim="$(usage_state "${target}")" && [[ "${lim}" == dialog* || "${status}" != idle ]]; then
+      if [[ "${lim}" == dialog* && -z "${answered}" ]]; then
+        herdr pane send-keys "${target}" "${lim#dialog }" >/dev/null 2>&1 \
+          || echo "swarm: ${name}: could not answer its usage-limit dialog" >&2
+      fi
+      [[ "${lim}" == dialog* ]] && answered=1 || answered=""
+      [[ -n "${limited}" ]] || { usage_event "${name}"; echo "swarm: ${name}: on the usage limit; it continues by itself once the limit resets" >&2; }
+      limited=1; t0=$((deadline - $(now_ms)))
+      if [[ ${t0} -le 0 ]]; then echo usage-limit; return 1; fi
+      sleep_ms $((t0 < STALL_POLL_MS ? t0 : STALL_POLL_MS)); continue
+    fi
+    limited=""; answered=""
+    if [[ "${status}" == idle || "${status}" == "api error" ]] && login_expired "${name}"; then
       echo "swarm: ${name}: its login expired (Login expired · Please run /login); only your /login clears it" >&2
       login_incident "${name}"
       echo auth; return 0
     fi
+    if [[ "${status}" == "api error" ]] || { [[ "${status}" == idle ]] && api_stopped "${name}" "${target}"; }; then
+      # Idle on the very pane it was resumed from (settle held a slice): the resume was not taken up.
+      [[ -z "${resumed_sum}" || "$(pane_sum "${target}")" != "${resumed_sum}" ]] || { echo "stuck: api error"; return "${WAIT_STUCK}"; }
+      resumed_sum="$(pane_sum "${target}")"
+      # shellcheck disable=SC2154 # assigned in another file
+      if { [[ "${CFG_goal}" != off ]] && is_builder "${name}"; } || [[ ${resumes} -ge ${API_RESUMES} ]] || ! resume_agent "${name}" "${target}"; then
+        echo "stuck: api error"; return "${WAIT_STUCK}"
+      fi
+      resumes=$((resumes + 1)); wake=1
+      record_event nudge "${name}"
+      echo "swarm: ${name}: its turn stopped on an API error; told it to carry on (${resumes}/${API_RESUMES})" >&2
+      continue
+    fi
+    resumes=0; resumed_sum=""
     # Only a Claude session is nudged: herdr's idle (a codex agent's) gives settle no session to hold on.
     [[ "${status}" == idle && ${nudges} -lt ${IDLE_NUDGES} && "$(session_state "${name}")" == idle ]] || break
     # With goal on, the conductor reads why the builder stopped from its reply and session log.
@@ -786,7 +959,7 @@ login_incident() {
 # <timeout-ms> is the whole wait, so a conductor that stopped without a report cannot hang it.
 # <timeout-ms> 0 (`wait --until-report`) has no deadline: each wait_agent slice is
 # SWARM_CONDUCTOR_SLICE_MS (an hour), and a slice that ran out with the session still busy (or
-# unknown) waits again. Such a return before the slice ran out is herdr's wait failing, and ends it.
+# unknown, or on the usage limit) waits again. Such a return before the slice ran out is herdr's wait failing, and ends it.
 wait_conductor() {
   local name="$1" report="${3:-}" forever="" status deadline=$((SECONDS + $2 / 1000)) poll rc ms t0
   [[ $2 -ne 0 ]] || forever=1
@@ -794,7 +967,7 @@ wait_conductor() {
     ms=$(( (deadline - SECONDS) * 1000 > 1000 ? (deadline - SECONDS) * 1000 : 1000 ))
     [[ -z "${forever}" ]] || ms="${SWARM_CONDUCTOR_SLICE_MS:-3600000}"
     t0="$(now_ms)"; rc=0; status="$(SWARM_WAIT_SLICE="${forever}" wait_agent "${name}" "${ms}")" || rc=$?
-    [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
+    [[ -z "${forever}" || ${rc} -ne 1 || ! "${status}" =~ ^(busy|unknown|usage-limit)$ || $(($(now_ms) - t0)) -lt ${ms} ]] || continue
     [[ "${status}" =~ ^(idle|done)$ && ! -f "${report:-$(conductor_report "${name}")}" ]] || break
     [[ -n "${forever}" || ${SECONDS} -lt ${deadline} ]] || break
     poll="${SWARM_CONDUCTOR_POLL:-30}"; [[ -n "${forever}" ]] || (( poll <= deadline - SECONDS )) || poll=$((deadline - SECONDS))
@@ -810,7 +983,8 @@ is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; retu
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
 # main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
-# read as a flag. Only an idle agent is told (read_state): it refuses one mid-turn (findings sent then
+# read as a flag. Only an idle agent is told (read_state; a busy one whose turn stopped on an API
+# error, api_stopped, counts as idle): it refuses one mid-turn (findings sent then
 # would be counted as taken up at once), waiting on a prompt (the text would land in the dialog), gone,
 # or of unknown state, rather than waiting on it. With goal on, findings get a fresh goal (findings_goal).
 # A note goes only to a live conductor of this project, and never as a prompt: it is appended to
@@ -836,6 +1010,8 @@ tell_agent() {
     echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
+  # A turn that stopped on an API error has ended, though open background shells keep its session busy.
+  [[ "${state}" != busy ]] || ! api_stopped "${name}" "$(agent_field "${name}" pane_id)" || state=idle
   case "${state}" in
     idle|herdr:idle|herdr:done) ;;
     busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;

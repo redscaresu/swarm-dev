@@ -279,11 +279,11 @@ if agents is not None:
                      escalated=escalated_at.get(slug or base) if rec and rec[1] == "escalate" else None)
         except Exception as err:  # one odd agent record must not cost the whole panel
             r.update(state="unreadable", words=f"unreadable: {type(err).__name__}", prs="", open=False)
-        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done"}.get(r["state"], "unknown")
+        r["sym"] = "look" if r["look"] else {"working": "working", "reported": "done", "idle": "done", "done": "done", "retired": "done", "usage-limit": "blocked"}.get(r["state"], "unknown")
         recs.append(r)
 
 # Shown: what needs a look, works, reported, or is tied to an open story; the rest is one +N idle.
-shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported") or r["open"]]
+shown = [r for r in recs if r["look"] or r["state"] in ("working", "reported", "usage-limit") or r["open"]]
 idle = len(recs) - len(shown)
 
 # Running codex reviews (codex-review's markers): one row each, under the epic of its worktree's story

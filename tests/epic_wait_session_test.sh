@@ -76,6 +76,10 @@ PY
                         # Any other prompt starts a turn: the goal tests list its session as busy.
                         *) [ -e "$H/session" ] && echo "[{\"sessionId\":\"$(basename "$(cat "$H/session")" .jsonl)\",\"status\":\"busy\"}]" > "$H/started.json" ;;
                       esac
+                      [ -e "$H/resumed" ] && mv "$H/resumed" "$H/screen"   # the pane after the prompt
+                      # reerr: the prompt shows in the pane and the resumed turn stops on a new API error.
+                      [ -e "$H/reerr" ] && printf '> %s\n⏺ API Error: Connection dropped (%s)\n' "$4" "$(wc -l < "$H/herdr.log")" >> "$H/screen"
+                      [ -e "$H/late" ] && echo 3 > "$H/lag"   # the pane shows the prompt only after 3 reads
                       if [ -e "$H/idle" ]; then echo '{"result":{"agent":{"agent_status":"idle"}}}'
                       else echo '{"result":{"agent":{"agent_status":"working"}}}'; fi ;;
   "agent start")      sid=$(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')
@@ -84,14 +88,18 @@ PY
                       echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename")     [ -e "$H/norename" ] && exit 1
                       [ -e "$H/agents" ] && awk -v t="$3" -v n="$4" '$2 == t { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
-  "agent list")       [ -e "$H/listfail" ] && exit 1
-                      awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+  "agent list")       [ -e "$H/listfail" ] && exit 1   # each agent's status is the file hstatus's, else idle
+                      awk -v st="$(cat "$H/hstatus" 2>/dev/null || echo idle)" 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                           { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, st, $2 }
                            END { print "]}}" }' "$H/agents" 2>/dev/null || echo '{"result":{"agents":[]}}' ;;
   "agent wait")       [ -e "$H/swap" ] && mv "$H/swap" "$H/claude.json"   # the session changes while herdr waits
                       [ -e "$H/waiterr" ] && { echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; }
                       echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
-  "agent read")       cat "$H/screen" 2>/dev/null ;;
+  "agent read")       if [ -e "$H/lag" ]; then n=$(cat "$H/lag")
+                        if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$H/lag"; else rm "$H/lag" "$H/late"; cat "$H/resumed-late" >> "$H/screen"; fi
+                      fi
+                      cat "$H/screen" 2>/dev/null ;;
+  "pane send-keys")   [ -e "$H/after-keys" ] && mv "$H/after-keys" "$H/screen" ;;   # the pane once the dialog is answered
   # A closed pane takes its agent with it; a tab t<n> closes its first pane, w:<n>.
   "pane close"|"tab close") p=$3; [ "$2" = close ] && [ "$1" = tab ] && p="w:${3#t}"
                       [ -e "$H/agents" ] && awk -v p="$p" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
@@ -223,6 +231,125 @@ mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-
 check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
 rm "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 rm -rf "${wt}" "${b}/stories/a.md"; : > "${p}/.claude/swarm/config"
+# API errors: the session reads busy (background shells left open), herdr says done, and the pane's
+# last event is Claude Code's own `⏺ API Error:` line. wait resumes it up to 3 times in a row, then
+# returns stuck: api error (exit 4); tell delivers. A pane with a reply or a prompt after the error,
+# or only an indented `API Error:` line (a reply quoting one), is still working.
+api_screen() { printf '%s\n' '⏺ Waiting on the builders.' '⏺ API Error: Connection dropped (ECONNRESET)' '' '> ' > "$1"; }
+prompts() { grep -c "^agent prompt w:950 ${1:-}" "${ROOT}/herdr.log" || true; }
+session "${ROOT}/claude.json" sess-a2=busy; echo "done" > "${ROOT}/hstatus"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+touch "${ROOT}/reerr"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "an API-error stop, resumed 3 times, comes back a 4th time: wait returns stuck: api error with no 4th resume" \
+  "stuck: api error|exit 4|3" "${got%|*}|$(prompts "Your last turn stopped on an API error; carry on where you stopped.")"
+# A resumed turn that errors before herdr shows it working: each stop still gets one resume, never two.
+touch "${ROOT}/idle"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; rm -f "${ROOT}/idle" "${ROOT}/reerr"
+check "a resume herdr never sees taken up is sent once per stop: 3 resumes, then stuck: api error" "stuck: api error|exit 4|3" "${got%|*}|$(prompts)"
+# The pane still shows the old error for a few reads after the resume: no new stop, so one resume.
+api_screen "${ROOT}/screen"; printf '%s\n' '> Your last turn stopped on an API error; carry on where you stopped.' '⏺ Carrying on.' > "${ROOT}/resumed-late"
+touch "${ROOT}/late"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 4000)"; rm -f "${ROOT}/late" "${ROOT}/lag"
+check "a resume the pane shows only a moment later is one resume, not three, and no stuck" "busy|exit 1|1" "${got%|*}|$(prompts)"
+# An idle session still on the very pane it was resumed from a slice later never took the resume up.
+session "${ROOT}/claude.json" sess-a2=idle; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; session "${ROOT}/claude.json" sess-a2=busy
+check "an idle pane unchanged since its resume: one resume, then stuck: api error" "stuck: api error|exit 4|1" "${got%|*}|$(prompts)"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
+# With goal on, a builder is never resumed: wait returns stuck at once, the transcript still ending on the error.
+printf 'goal = 3\n' > "${p}/.claude/swarm/config"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "with goal on, a builder's API-error stop is not resumed: wait returns stuck: api error and sends nothing" "stuck: api error|exit 4|0" "${got%|*}|$(prompts)"
+# A conductor (its newest agents.tsv line) is resumed with goal on, as with it off.
+printf '2026-10-16\tconduct\ta\tclaude\topus\thigh\tsess-a2\n' >> "${p}/.swarm/agents.tsv"; : > "${ROOT}/herdr.log"
+touch "${ROOT}/reerr"; got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; rm -f "${ROOT}/reerr"
+check "with goal on, a conductor's API-error stop is still resumed 3 times" "stuck: api error|exit 4|3" "${got%|*}|$(prompts)"
+printf '2026-10-16\tcode\ta\tclaude\topus\thigh\tsess-a2\n' >> "${p}/.swarm/agents.tsv"
+: > "${p}/.claude/swarm/config"
+# An expired login behind the API error (its transcript's last entry): auth, never resumed.
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+printf '%s\n' '{"type":"assistant","error":"authentication_failed","message":{"content":[{"type":"text","text":"Login expired · Please run /login"}]}}' > "${tr}"
+: > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
+check "a busy session's API-error stop on an expired login returns auth and sends nothing" "auth|exit 0|0" "${got%|*}|$(prompts)"
+rm -f "${tr}"
+echo "findings" > "${ROOT}/tell.txt"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "tell delivers to a busy session whose turn stopped on an API error" "told a|1" "${got}|$(prompts)"
+refused() { # <pane line>... — tell on a pane of these lines: "yes|<prompts sent>" when it refuses as working
+  local got; printf '%s\n' "$@" > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+  got="$(run tell a resume "${ROOT}/tell.txt")" || true
+  echo "$([[ "${got}" == *"still working"* ]] && echo yes || echo "no, ${got}")|$(prompts)"
+}
+check "the same pane without the API Error: line: tell refuses" "yes|0" "$(refused '⏺ Waiting on the builders.' '' '> ')"
+check "an indented API Error: line (a reply quoting one) is no stop: tell refuses" "yes|0" \
+  "$(refused '⏺ The log said:' '  API Error: Connection dropped (ECONNRESET)' '' '> ')"
+check "a prompt typed after the API error ends the stop: tell refuses" "yes|0" \
+  "$(refused '⏺ API Error: Connection dropped (ECONNRESET)' '' '> carry on' '' '────────' '> ' '────────')"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '' '────────' '> Try "carry on where you stopped"' '────────' '  ? for shortcuts' > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"; got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "a suggestion in the input box under the API error is no prompt: tell delivers" "told a|1" "${got}|$(prompts)"
+printf '%s\n' '╭────────╮' '│ Welcome │' '╰────────╯' '⏺ API Error: Connection dropped (ECONNRESET)' '' '────────' '> ' '────────' > "${ROOT}/screen"
+: > "${ROOT}/herdr.log"; got="$(run tell a resume "${ROOT}/tell.txt")" || true
+check "a box above the API error (a banner) is read past: tell delivers" "told a|1" "${got}|$(prompts)"
+# A busy session whose pane has not changed since the wait began, 2 hours ago (past stall_minutes):
+# stuck: no output (exit 4), naming the pane, and nothing sent. Not while its transcript shows a
+# background task it has not been told the end of.
+echo working > "${ROOT}/hstatus"; printf '%s\n' '⏺ Waiting on CI.' > "${ROOT}/screen"
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; tr="${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+started() { printf '{"type":"user","message":{"content":[{"type":"tool_result","content":"started"}]},"toolUseResult":%s}\n' "$1" >> "${tr}"; }
+told() { # <task id> [status] — a task-notification for it; with no status, a check-in on a running task
+  printf '{"type":"user","message":{"content":"<task-notification>\\n<task-id>%s</task-id>\\n%s</task-notification>"}}\n' "$1" "${2:+<status>$2</status>\\n}" >> "${tr}"
+}
+quiet() { local got; got="$(SWARM_WAIT_STARTED=$(($(date +%s) - 7200)) SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"; echo "${got%|*}|$(prompts)"; }
+: > "${tr}"; started '{"backgroundTaskId":"bx-1"}'; : > "${ROOT}/herdr.log"
+check "a quiet pane whose session runs a background shell is no stop: wait times out" "busy|exit 1|0" "$(quiet)"
+told bx-1
+check "a check-in on the running shell (no status) ends nothing: wait still times out" "busy|exit 1|0" "$(quiet)"
+told bx-1 completed
+check "a pane unchanged past stall_minutes, its background task (a hyphenated id) done: wait returns stuck: no output naming the pane, and sends nothing" \
+  "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
+started '{"status":"async_launched","agentId":"a-7"}'
+check "a quiet pane whose session waits on an async subagent is no stop" "busy|exit 1|0" "$(quiet)"
+call() { # <tool name> <tool_use id> <toolUseResult> — a tool call and its result
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"%s","name":"%s","input":{}}]}}\n' "$2" "$1" >> "${tr}"
+  printf '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"%s","content":"ok"}]},"toolUseResult":%s}\n' "$2" "$3" >> "${tr}"
+}
+told a-7 completed; call TaskUpdate tu-t '{"success":true,"taskId":"7"}'
+check "a task-list tool's taskId is no background task: the quiet pane is stuck" "stuck: no output for 120m (w:950)|exit 4|0" "$(quiet)"
+call Monitor tu-m '{"taskId":"m-3"}'
+check "a quiet pane whose session runs a monitor (a Monitor call's taskId) is no stop" "busy|exit 1|0" "$(quiet)"
+rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${tr}"
+# Usage limit: the pane shows Claude Code's dialog. wait answers "Wait here, then continue
+# automatically" (option 2) once, logs one usage-limit event, and waits on to its timeout: no stop,
+# no stall, no stuck, no resume. Then a pane already waiting after that choice, unchanged for 2 hours.
+limit_dialog() { printf '%s\n' '⏺ Working on it.' '' "You've hit your usage limit · resets 3pm" '' '❯ 1. Stop and wait for limit to reset' '  2. Wait here, then continue automatically' > "$1"; }
+limit_waiting() { printf '%s\n' '⏺ Working on it.' '' '⚠ Usage limit reached · limit resets 3pm' '  Continuing shortly' > "$1"; }
+keys() { grep -c "^pane send-keys w:950 ${1:-}" "${ROOT}/herdr.log" || true; }
+limits() { grep -c $'\tusage-limit\ta\t' "${p}/.swarm/events.tsv" || true; }
+session "${ROOT}/claude.json" sess-a2=busy; echo working > "${ROOT}/hstatus"
+limit_dialog "${ROOT}/screen"; limit_waiting "${ROOT}/after-keys"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 4000)"
+check "a usage-limit dialog: wait sends 'continue automatically' once, logs one event, and keeps waiting" \
+  "usage-limit|exit 1|1|1|0" "${got%|*}|$(keys 2)|$(limits)|$(prompts)"
+limit_waiting "${ROOT}/screen"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_WAIT_STARTED=$(($(date +%s) - 7200)) SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 4000)"
+check "a pane waiting on the usage limit for 2 hours: no keys, one event, never stuck" "usage-limit|exit 1|0|1|0" "${got%|*}|$(keys)|$(limits)|$(prompts)"
+session "${ROOT}/claude.json" sess-a2=idle; : > "${p}/.swarm/events.tsv"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "an idle session under the waiting line is idle, with no usage-limit event" "idle|exit 0|0" "${got%|*}|$(limits)"
+# The dialog stays up over several passes (the key not taken yet): it gets one keypress, not one a pass.
+session "${ROOT}/claude.json" sess-a2=busy; limit_dialog "${ROOT}/screen"; rm -f "${ROOT}/after-keys"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 4000)"
+check "a usage-limit dialog held for several passes gets exactly one keypress" "usage-limit|exit 1|1|1" "${got%|*}|$(keys)|$(limits)"
+# A submitted prompt that quotes the dialog, the input box under it, is no dialog: no key, no event.
+printf '%s\n' '⏺ Working on it.' '> The dialog said:' '  1. Stop and wait for limit to reset' '  2. Wait here, then continue automatically' '' '────────' '> ' '────────' > "${ROOT}/screen"
+: > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "a prompt quoting the usage-limit dialog sends no key" "busy|exit 1|0|0" "${got%|*}|$(keys)|$(limits)"
+rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${ROOT}/after-keys"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"
