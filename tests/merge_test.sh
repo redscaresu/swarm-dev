@@ -985,13 +985,13 @@ older="$(
   # shellcheck source=/dev/null
   . "${REPO}/bin/lib/merge.sh"
   # retire_fixes calls these.
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   fm() { echo ready; }
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   one_off_started() { return 1; }
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   delete_item() { rm "$1"; }
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   record_event() { :; }
   retire_fixes "o/r main" "ccccccc$(printf '0%.0s' $(seq 1 33))" why > /dev/null
   find "${BOARD}/stories" -type f -exec basename {} \; | sort | paste -sd' ' -
