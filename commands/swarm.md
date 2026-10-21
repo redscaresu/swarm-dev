@@ -72,8 +72,9 @@ Repeat until a step below says stop:
      background, in the same response that read `next` and before any other work: a side task the
      user asks for meanwhile must not leave the conductor unwatched. It has no timeout. It returns
      once the conductor has written its report, is not idle (its session is waiting on a prompt, or
-     gone), or prints `auth`, not each time it idles on its own background work. `wait` never
-     nudges a conductor. When it returns, go back to 1. Never
+     gone), or prints `auth` or `stuck: ...`, not each time it idles on its own background work.
+     `wait` nudges a conductor only to resume a turn that stopped on an API error. When it returns,
+     go back to 1. Never
      close a conductor that has not reported.
 
      In the same response, also run `swarm.sh wait --lead` in the background. It returns when
@@ -105,6 +106,11 @@ Repeat until a step below says stop:
      stories its own unblock readies. Act on each `also:` story once. It stays `ready`, and
      `next` names it again, until its `finish-<slug>` board PR merges, so skip one you have
      already asked about or run, or whose finish PR is open.
+
+     If any `wait` here or below prints `stuck: api error` (exit 4: the agent's turn stopped on an
+     API error three times in a row, and `wait` already told it to carry on each time) or `stuck: no
+     output for <N>m (<pane>)`, read the pane (`herdr agent read <agent>`), tell the user what it
+     shows, and stop for them.
 
      If any `wait` here or below prints `auth`, the agent it names stopped on "Login expired ·
      Please run /login". No agent can fix that, and only the user's `/login` clears it. Stop, and
