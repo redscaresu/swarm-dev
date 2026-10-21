@@ -292,6 +292,17 @@ wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
 check "a base gone green another way: reconcile logs main-green and retires the fix" \
   bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main$"
+# A green fix (H2) under a board-only head (H3, a finish or a merge --board): judged by the fix.
+failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"; H3=3333333333333333333333333333333333333333
+echo "${H3}" > "${FX}/commit.main"; printf '{"files":[{"filename":"docs/stories/x.md"}],"parents":[{"sha":"%s"}]}' "${H2}" > "${FX}/commit.${H3}"
+checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"; wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
+check "a green fix followed by a board-only head: reconcile clears the red main and retires the fix" \
+  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H3} o/r main$"
+# Clearing a red main that fails (its fix-main story cannot be removed) still lets reconcile run.
+fresh; red_main "o/r main"; chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
+check "a red main whose clearing fails: merge says so and reconcile still runs" \
+  bash -c "grep -qF 'main green, and clearing its red main failed' '${ROOT}/out'" && logged '^reconcile '
 # One deadline for every run: run 98's status read hangs, so run 99 is never read; a gh error on a
 # run's status stops at once. Each is named as not read.
 failed_job 'x\ty\tz FAIL never read\n'

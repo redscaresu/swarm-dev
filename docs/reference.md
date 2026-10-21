@@ -236,7 +236,7 @@ stop listing it as waiting on you. It runs in a herdr workspace named for the ep
 parent share it), or else for the epic, in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
-`watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
+`watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
 **The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
 first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
@@ -1131,8 +1131,8 @@ When it cannot write the story it says so in a line that does not start `fix-mai
 red main and fix before it as they were. A red main clears, logging `main-green` and retiring its
 fix-main story if nobody has started it, only on a commit that shows it fixed: a later merge into
 the same repo and base, or the base's head that reconcile reads (a revert, a re-run), that changes
-more than the board's own files (a board-only commit's CI may skip its tests), has every check,
-status and workflow run green, and has a passing run of each check that went red (a path filter may
+more than the board's own files (a board-only commit's CI may skip its tests, so a board-only head
+is judged by the newest commit before it that is not), has every check, status and workflow run green, and has a passing run of each check that went red (a path filter may
 skip one). Until then, while the story is ready with no build of it, `next` names
 `fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a

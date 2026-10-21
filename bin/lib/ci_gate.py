@@ -1,6 +1,7 @@
 import calendar, json, re, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
+FIXED_WALK = 20  # board-only commits fixed steps back over to the commit it judges
 
 class Err(Exception):
     """gh failed, or answered something unreadable: main_ci reads again."""
@@ -297,15 +298,23 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
         time.sleep(poll)
 
 def fixed(repo, sha, board, names):
-    """Why sha does not show a red main fixed, or None: a board-only commit's CI may skip its tests,
-    and a check a path filter skipped has no run of its own that passed."""
-    files = []
-    for d in docs("repos/%s/commits/%s" % (repo, sha)):
-        if not (isinstance(d, dict) and isinstance(d.get("files"), list)):
-            raise Err("unreadable commit " + sha[:7])
-        files += [f.get("filename") or "" for f in d["files"]]
-    if board and files and all(f.startswith(tuple(board)) for f in files):
-        return "%s changes only the board's files" % sha[:7]
+    """Why sha does not show a red main fixed, or None. A board-only commit's CI may skip its tests,
+    so it is judged by its first parent, back to the newest commit that is not board-only (a fix, then
+    a finish or a merge --board); a check a path filter skipped has no run of its own that passed."""
+    for _ in range(FIXED_WALK):
+        files, parents = [], []
+        for d in docs("repos/%s/commits/%s" % (repo, sha)):
+            if not (isinstance(d, dict) and isinstance(d.get("files"), list)):
+                raise Err("unreadable commit " + sha[:7])
+            files += [f.get("filename") or "" for f in d["files"]]
+            parents = [p.get("sha") for p in d.get("parents") or [] if isinstance(p, dict)] or parents
+        if not (board and files and all(f.startswith(tuple(board)) for f in files)):
+            break
+        if not parents or not re.fullmatch(r"[0-9a-f]{40}", parents[0] or ""):
+            return "%s changes only the board's files" % sha[:7]
+        sha = parents[0]
+    else:
+        return "no commit that is not board-only within %d of the head" % FIXED_WALK
     red, wait, ok = checks(repo, sha)
     judge([r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
            if r.get("head_sha") == sha], red, wait, ok)

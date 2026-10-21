@@ -23,9 +23,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate fixed <owner/repo> <sha> <board paths> <check>... — succeed when <sha> shows a red main
-# fixed: it changes a file outside <board paths> (prefixes, one a line: a board-only commit's CI may
-# skip its tests), every check run, status and workflow run on it is green, and each named <check>
-# (one that went red) has one of its own that passed, so a check a path filter skipped does not count.
+# fixed, judged at the newest commit from <sha> back (first parents) that changes a file outside
+# <board paths> (prefixes, one a line: a board-only commit's CI may skip its tests): every check run,
+# status and workflow run on it is green, and each named <check> (one that went red) has one of its
+# own that passed, so a check a path filter skipped does not count.
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -204,12 +205,14 @@ merge_pr() {
   record_event main-ci "${MERGE_TARGET}" "${why}"
   echo "main-ci: ${why}"
   # A green main clears a red one of this repo and base only, and only when it ran the checks that
-  # went red (clear_red_main). fix_main's every gh call is bounded and cannot fail merge, so
-  # reconcile below runs whatever it does.
+  # went red (clear_red_main). Each runs in a subshell, its every gh call bounded, so neither a failed
+  # step nor a die in it (a state lock that times out) can stop merge before reconcile below. The
+  # clear runs in the background, as reconcile does, so set -e holds inside it and a failure is said.
   if [[ ${rc} -eq 0 ]]; then
-    clear_red_main "$(main_key "${repo}" "${base}")" "${oid}" "CI on ${base} is green at ${oid:0:7}"
+    ( set -e; clear_red_main "$(main_key "${repo}" "${base}")" "${oid}" "CI on ${base} is green at ${oid:0:7}" ) &
+    wait $! || echo "main green, and clearing its red main failed (exit $?)"
   elif [[ ${rc} -eq 1 ]]; then
-    fix_main "${repo}" "${oid}" "${base}" "${why#red }" || echo "main red, and fix_main failed (exit $?)"
+    ( fix_main "${repo}" "${oid}" "${base}" "${why#red }" ) || echo "main red, and fix_main failed (exit $?)"
   fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
@@ -521,9 +524,10 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
 }
 
 # watch_scope [--epic <slug>|--backlog] [repo...] — set WATCH_HEADS and WATCH_NAMES for watch. With
-# --epic, only that epic's stories' story/<slug> heads count, and with --backlog only those of stories
-# with no epic (WATCH_HEADS empty: every story/* head); the default repos are then those stories'
-# repos: a conductor must not wake for another epic's PR on the same board. WATCH_NAMES holds each
+# --epic, only that epic's stories' story/<slug> heads count, and the fix-main stories' (no epic, but
+# every conductor builds and merges one), and with --backlog only those of stories with no epic
+# (WATCH_HEADS empty: every story/* head); the default repos are then those stories' repos: a
+# conductor must not wake for another epic's PR on the same board. WATCH_NAMES holds each
 # repo as the board names it (repo_slug resolves one). Dies with no repo to watch.
 watch_scope() {
   local epic="" stories=("${BOARD}"/stories/*.md) f
@@ -536,7 +540,8 @@ watch_scope() {
     else shift; fi
     stories=(); WATCH_HEADS="-"
     for f in "${BOARD}"/stories/*.md; do
-      [[ -f "${f}" && "$(basename "${f}")" != README.md && "$(fm "${f}" epic)" == "${epic}" ]] || continue
+      [[ -f "${f}" && "$(basename "${f}")" != README.md ]] || continue
+      [[ "$(fm "${f}" epic)" == "${epic}" || ( -n "${epic}" && "$(basename "${f}")" == fix-main-*.md ) ]] || continue
       stories+=("${f}"); WATCH_HEADS="${WATCH_HEADS} story/$(basename "${f}" .md)"
     done
   fi
