@@ -420,7 +420,7 @@ is "a working builder moved into the conductor's tab by hand keeps the tab" "<w:
   "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(grep -c '^kept cb4 (working) in tab ce' <<< "${out}")"
 # The kept cb4 joins ce's record, so once the conductor's pane, the last one recorded there, closes,
 # the tab is still recorded, and --all still closes it.
-rec="$(cat "${P}/.swarm/state/ce" 2>/dev/null)"; cs conduct-ce --all >/dev/null
+rec="$(cat "${P}/.swarm/state/ce" 2>/dev/null || true)"; cs conduct-ce --all >/dev/null
 is "the kept cb4 joins ce's record, so close conduct-ce --all still closes ce" "w:p94 cb4|<w:t8><w:t7>" "${rec}|$(tr -d '\n' < "${CLOSED}")"
 conductor_fixture idle idle; echo "cb5 w:p95 working" >> "${ROOT}/agents"; echo "w:p95 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "an agent in no tab record, working by herdr's word, is kept, named by herdr" "<w:t8>|1" \
