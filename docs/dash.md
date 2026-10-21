@@ -38,7 +38,11 @@ is one column, top to bottom:
   the stories behind `+N more`. It also says how long the oldest one has waited: a board item waits
   from its newest `review`, `close:<cause>` or `escalated` line in `events.tsv`, or else from its
   file's last commit. The second counts the escaped defects logged in the last 7 days
-  (`--reviewer escaped` in `findings.tsv`). From 60 columns a sparkline follows: the stories
+  (`--reviewer escaped` in `findings.tsv`). A third light shows only when someone had to step in on
+  those 7 days: `! N interventions in 7 days`, the `swarm.sh intervene` lines (`lead-hand` and
+  `user-caught`), the same count `flow`'s `incidents` section gives for them. It goes on the
+  speedometer's line when it fits, and on the next line when it does not; a frame cut to the
+  terminal's height drops that line after the sparkline, the gauges and the `idle:` count. From 60 columns a sparkline follows: the stories
   finished on each of the last 14 days, oldest first (`▁` for none, `▇` for the busiest day), then
   today's count and the average of its last 7 days, which is the speedometer's number. From 100
   columns two gauges follow, on the sparkline's line when both fit. `rate` is that average against the best 7 days in a row
@@ -69,13 +73,13 @@ is one column, top to bottom:
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
   by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
-  pane, nudges, incidents and failed tells excepted), `agree` a draft HLD. A `lead` story's row ends with
+  pane, nudges, incidents and failed tells excepted), `agree` a draft epic. A `lead` story's row ends with
   who it waits for: `waits for: you: create the read-only user`, with the text of its first
   **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
   the first ready `lead` story that has one, with `+N more` when other stories have one too. When
   nothing needs you, it is one line.
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
-  you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft HLD) and
+  you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
   everything else from the list above moves to this box under it: every `merge`, `answer`, `close`
   and `look at` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
@@ -161,6 +165,7 @@ still shows the board and says the agents are unavailable. At 100 columns, from 
 ```text
 infrafactory  swarm-dev 0.13.0  merge human  next wait conduct-rehearsal-prepare-gate       12:48:02
 1.6 merged/day over 7 days · ! 2 waiting on you, oldest 4h05m · ✓ 0 escaped in 7 days
+! 1 intervention in 7 days
 14 days ▂▁▃▇▅▁▂▂▃▂▂▃▃▃  today 2  7-day avg 1.6
 rate ████████████ 1.6 of best 1.6/day · running ███▓▓▓······ 2 of peak 4 in 7 days
 9 epics active · 2 agents working · 1 PRs green, waiting · 0 stalled · $427.69 today
