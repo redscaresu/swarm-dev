@@ -70,7 +70,10 @@ Useful while it runs:
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
 - `swarm.sh tell <slug> <kind> <file>`: findings, nudge or resume sends an idle builder a file; `tell conduct-<epic> note <file>` appends it to a conductor's inbox, busy or not.
-- `swarm.sh merge [--board|--release] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
+- `swarm.sh merge [--board|--release] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR. Where the base has a merge queue it enqueues the PR. When CI on main goes red on a commit it merged, it prints `fix-main:` and writes a `fix-main-<sha>` story, which `next` names first. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
+- `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`.
+- `swarm.sh intervene lead-hand|user-caught "<one line>"`: log a time a person had to step in; `flow` and `dash` count them.
+- `swarm.sh dash --check`: compare each figure dash shows with the command that owns it.
 - `swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr> <text>`: the outer loop. Log findings by kind, with the reason for a declined one and who raised it (codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped). `outcomes`' recurring block lists kinds fixed on 3+ PRs, and `/swarm-dev:swarm` files a `checks:` story for each.
 - `herdr agent read <name> --source recent-unwrapped`: what an agent is doing.
 
@@ -136,4 +139,6 @@ release through `/swarm-dev:swarm`'s release arm and `swarm.sh merge --release`:
 unchanged. No story PR bumps it, and a story PR without a bump is not a review finding. Merging a version
 bump to `main` publishes the release and its `v<version>` tag (`.github/workflows/release.yml`); a merge
 without one publishes nothing. Before a release, bring AGENTS.md, README.md, docs/ and commands/ in
-line with everything merged since the last tag.
+line with everything merged since the last tag. `merge --release` refuses the bump while `bin/`,
+`commands/` or `hooks/` changed since that tag and README.md, AGENTS.md and `docs/` did not, unless
+the release PR body has a `Docs: none — <reason>` line.
