@@ -78,13 +78,13 @@ is one column, top to bottom:
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
   by default, with no sign of life: for any agent with a Claude session no write to its session log, for a builder also no commit or uncommitted edit in its worktree, PR update or swarm action on its story,
   for an agent with no story (a conductor or planner) no `events.tsv` line naming it or run from its
-  pane, nudges, incidents and failed tells excepted), `agree` a draft HLD. A `lead` story's row ends with
+  pane, nudges, incidents and failed tells excepted), `agree` a draft epic. A `lead` story's row ends with
   who it waits for: `waits for: you: create the read-only user`, with the text of its first
   **You:** line, or `waits for: the lead` when it has none. Only your next **You:** step is listed,
   the first ready `lead` story that has one, with `+N more` when other stories have one too. When
   nothing needs you, it is one line.
 - **Lead's queue**, only with `lead = session` in the config: a lead session acts for you, so needs
-  you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft HLD) and
+  you keeps only your steps (`run` a story with a **You:** step, `auth`, `agree` a draft epic) and
   everything else from the list above moves to this box under it: every `merge`, `answer`, `close`
   and `look at` row, a `lead` story with no **You:** step (`waits for: the lead`), and `decide` for
   every escalated `lead` story (`swarm.sh reset` or `swarm.sh drop`). It is left out when empty.
@@ -214,6 +214,22 @@ error that stopped it, or `failed (exit N)`). Every command writes it except the
 (`dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, `wait`, `watch`,
 `base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
 holds names and paths, never the contents of a brief or a message.
+
+`swarm.sh dash --check` draws nothing. It compares each figure in this project's frame (or in each
+`--project` frame) with the command that owns it, prints one line per mismatch, such as
+`bravo: cost: dash shows 31.20, flow --since 2026-10-18 says 2.80`, and exits 1 if it found any.
+It checks the working agents and the running gauge against `swarm.sh status`, the header's next
+against `swarm.sh next`, and the epics waiting on their `depends_on` against the rule `next` plans
+by. The cost is checked against the `cost` section of `swarm.sh flow --since <today>` with no calling
+session, read just before and just after the frame: anything between the two agrees, so agents
+spending while it runs is no mismatch. Merges today and the 7-day rate are checked against flow's
+`merges` section, the stories finished per day. Every item that flow's `lead_queue` holds open
+must show in needs you or the lead's queue (an escalated or held story only with `lead = session`,
+the only time dash draws one), and so must every PR, every story only you or the lead can run
+(those behind `+N more` count) and every agent waiting on a prompt that status lists. flow's
+sections run inside the check and ask `gh` nothing. The release arm of `/swarm-dev:swarm` runs it
+after each release. `tests/dash_check_test.sh` shows that it agrees on the two-project fixture, with
+`lead = off` too, and fails when one of the fixes for the 2026-10-17 dash defects is reverted.
 
 `tests/dash_golden_test.sh` draws a fixed two-project board (`tests/fixtures/dash/two_projects.sh`)
 at 60, 100 and 200 columns and compares each frame with `tests/fixtures/dash/golden-<cols>.txt`.

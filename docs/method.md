@@ -34,7 +34,7 @@ it files as filed in the findings log). With nothing to offer it prints no proje
 are the swarm's own list of follow-ups. The board is the
 only state, so a run can stop anywhere and the next `/swarm-dev:swarm` continues. Building comes
 first (a conductor still working, then an already-started one-off with `resume <slug>`, then an active epic's ready stories with `conduct <epic>`, then new one-offs), then
-planning (an active epic with no stories, then an agreed HLD with no epics). An epic is planned
+planning (an active epic with no stories). An epic is planned
 only once every epic it `depends_on` is done or has only stories in `review` left, so its stories
 are scoped against code that exists. That can happen while a conductor is still working: `next`
 then names the planning first, and the lead keeps waiting on the conductor in the background.
@@ -44,8 +44,7 @@ conductor will build them.
 
 A story the swarm must not build says so with `kind: lead`: the lead runs it, and any step that is
 yours is marked **You:** in it. An open question for you is a `lead` story too, so the board's
-**Waiting on you** view lists it. An epic is done when its last story's PR deletes the epic file
-and marks it done in the HLD's `## Epics`.
+**Waiting on you** view lists it. An epic is done when its last story's PR deletes the epic file.
 
 The session that runs the chain supervises, reviews and merges. It does not do the agents' work.
 
@@ -53,7 +52,7 @@ The session that runs the chain supervises, reviews and merges. It does not do t
 
 Three parties do the work, and the plan decides which one does each step, not the build.
 
-- **You** agree the HLD, approve the epics and the stories, merge PRs (with `merge = human`), say go
+- **You** agree each epic, approve the stories, merge PRs (with `merge = human`), say go
   before each `lead` story, and do its **You:** steps.
 - **The lead** is your own Claude Code session, the one you run `/swarm-dev:swarm` in. It
   supervises, reviews, and runs `lead` stories while you watch.
@@ -75,14 +74,13 @@ A story is `kind: lead`, never an agent's, when it:
 A merge is never a story of its own. A `kind` that is none of code, docs, chore or lead is never
 built: `swarm.sh` stops and names it.
 
-**Planned up front.** `/plan-hld` writes each epic's **Your part**: the human steps it expects.
+**Planned up front.** `/epic` writes each epic's **Your part**: the human steps it expects.
 `/plan-epic` turns them into `lead` stories, and its report ends with **What you will do**, so you
 see your share of the work before you approve it. A step found during the build that needs you is a
 new `lead` story, not done quietly.
 
-**Every stop names its exit.** A `lead` story says what it needs from you in its body, and each
-**You:** step says how the lead learns it is done. A status or flag raised for you says who clears
-it and how.
+**Every stop names its exit.** A `lead` story says what it needs from you in its body, and each **You:**
+step says how the lead learns it is done. A status or flag raised for you says who clears it and how.
 
 ## The board
 
@@ -126,6 +124,7 @@ prints every setting and where it came from. Each key's full rules are in refere
 | `repos_dir` | the project's parent | where a story's `repo: <name>` is found |
 | `merge` | `human` | `human`: no agent merges, and a green, reviewed PR waits for you. `agent`: the conductor merges, except a story with `costs: money`, which `swarm.sh merge` holds for you (reference.md § Merging) |
 | `stall_minutes` | `30` | a working builder with no sign of life this long is `stalled?`, and `dash` and `wait --stall` flag it (reference.md § Building) |
+| `queue_minutes` | `30` | a story PR green and mergeable this long with no review agent on its head is `queued:` in `watch` and `next` (reference.md § Building) |
 | `sonnet_share` | `0` | `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet, to compare it with Opus. `0` is off (reference.md § Model and effort) |
 | `escalate_after` | `2` | `N`: a story whose `attempts:` has reached N is built on Fable. `0` is off (reference.md § Model and effort) |
 | `builder_subagent_model` | empty | a model such as `haiku` that builders' subagents run on. Empty leaves Claude Code's choice (reference.md § Settings) |
@@ -144,6 +143,6 @@ the lead runs `swarm.sh finish <slug>` once the PR merges.
 
 ## Where the rest is
 
-[`reference.md`](reference.md) holds the lead's board PRs and wake, writing the HLD, model and effort,
+[`reference.md`](reference.md) holds the lead's board PRs and wake, writing an epic, model and effort,
 settings, scoping an epic, building, logs and outcomes, flow and features, the outer loop, merging
 and releases.

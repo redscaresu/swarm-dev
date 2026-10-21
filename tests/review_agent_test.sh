@@ -116,6 +116,7 @@ echo wip > "${ROOT}/svc-wt/s1/wip.txt"
 check "a worktree with uncommitted changes makes review-agent s1 fail with nothing started" "1|yes|0" \
   "$(set +e; o="$(run review-agent s1 "${PR}")"; echo "$?|$(has "has uncommitted changes" "${o}")")|$(started)"
 rm "${ROOT}/svc-wt/s1/wip.txt"
+check "no refused start records a reviewed head for watch and next" "no" "$([[ -e "${p}/.swarm/reviews/s1.head" ]] && echo yes || echo no)"
 
 # --- One review agent: started in s1's worktree with role review, its brief scoped to s1.
 check "review-agent s1 returns at once, its agent still working" "back:0" "$(start s1)"
@@ -133,6 +134,8 @@ check "the brief has the agent write the file, starting with the head reviewed a
   "$(has "Its first line is \`head: ${HEAD_SHA}\`; when codex was skipped, its second is \`codex skipped: <why>\`." "${brief}")|$(has "prints nothing" "${brief}")|$([[ -d "${p}/.swarm/reviews" ]] && echo yes || echo no)"
 check "the brief says to wait for codex-review to exit, never to stop early on a usage limit" "yes|no" \
   "$(has "Wait for it to exit, and act on what it prints last" "$(tr -s '[:space:]' ' ' <<< "${brief}")")|$(grep -q "do not wait" <<< "${brief}" && echo yes || echo no)"
+check "a started review agent records the head it reviews, so watch and next do not call the PR queued" "${HEAD_SHA}" \
+  "$(cat "${p}/.swarm/reviews/s1.head")"
 check "events.tsv gains a review-agent line whose target is s1 (the newest, after the refusals')" "s1	ok" \
   "$(awk -F'\t' '$2 == "review-agent" { l = $3 "\t" $5 } END { print l }' "${p}/.swarm/events.tsv")"
 

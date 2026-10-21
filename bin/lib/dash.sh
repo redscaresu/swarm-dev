@@ -8,8 +8,9 @@
 # tree and the ladder. Colour only on a terminal with NO_COLOR unset, or as DASH_COLOR says when set.
 # Each --project <dir> (repeatable) draws that project's frame in turn (dash_frame) in place of this
 # project's, so it runs from any directory; every dir is checked before anything is drawn.
+# --check draws nothing: it checks each project's figures against their commands (dash_check).
 dash() {
-  local every="" tty=0 i d b c
+  local every="" tty=0 check=0 i d b c
   DASH_LADDER=0; DASH_TREE=0; DASH_DIRS=(); DASH_LEAD_ANY=off; DASH_ENV_W="${DASH_W:-}"; DASH_ENV_H="${DASH_H:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -19,9 +20,10 @@ dash() {
         [[ "${every}" =~ ^[1-9][0-9]*$ ]] || die "dash --watch: seconds must be a positive whole number, not '${every}'" ;;
       --ladder) DASH_LADDER=1 ;;
       --tree) DASH_TREE=1 ;;
+      --check) check=1 ;;
       --project) [[ -n "${2:-}" ]] || die "dash --project: name a project directory"
                  DASH_DIRS+=("$2"); shift ;;
-      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]..." ;;
+      *) die "usage: swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]..." ;;
     esac
     shift
   done
@@ -40,6 +42,10 @@ dash() {
     [[ "${c}" != *$'\nlead = session '* ]] || DASH_LEAD_ANY=session
     DASH_DIRS[i]="${d}"
   done
+  if [[ ${check} == 1 ]]; then
+    [[ -z "${every}" && ${DASH_LADDER} == 0 && ${DASH_TREE} == 0 ]] || die "dash --check draws nothing: --watch, --tree and --ladder do not go with it"
+    dash_check; return
+  fi
   [[ ! -t 1 ]] || tty=1
   # Several projects share the height only in a watch on a terminal, or when DASH_H says so: a
   # one-shot dash, or one into a file or a pager, is never cut.
@@ -149,13 +155,12 @@ dash_base_ref() {
 # its own, in a 0700 directory of this user's, that a detached dash_slow.py refreshes every 6 hours).
 dash_slow() {
   local cache f r urls pairs day key
-  # Today, or SWARM_DASH_NOW's day (dash_render's fixed clock).
-  day="$(date +%F)"
-  [[ -z "${SWARM_DASH_NOW:-}" ]] || day="$(python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(float(sys.argv[1])))' "${SWARM_DASH_NOW}")"
+  day="$(dash_day)"
   # -3: the cache gained open-PR head lines; a name of its own, so an older swarm.sh's cache is never read.
   key="$(printf '%s' "${PROJECT_DIR}" | cksum | cut -d' ' -f1)"
   cache="${TMPDIR:-/tmp}/swarm-dash-3-${key}"
-  if [[ -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
+  # DASH_FRESH (dash_check) asks again whatever the cache's age.
+  if [[ -n "${DASH_FRESH:-}" || -z "$(find "${cache}" -mmin -1 2>/dev/null)" ]]; then
     urls="$( { board stories; board epics; } | while IFS= read -r f; do
         [[ "$(fm "${f}" status)" == "done" ]] || fm "${f}" prs; done | grep -o 'https://github.com/[^] ,"]*/pull/[0-9]*' | sort -u || true)"
     # Each open story's repo and slug, so a story/<slug> branch counts only in the story's own repo.
@@ -176,6 +181,200 @@ dash_slow() {
   DASH_PRSTATE="$(grep '^https://' "${cache}" 2>/dev/null || true)"
   DASH_HEADS="$(awk -F'\t' '$1 == "head" { print $2 "\t" $3 }' "${cache}" 2>/dev/null || true)"
   DASH_CI="$(awk -F'\t' '$1 == "ci" { print $2 }' "${cache}" 2>/dev/null || true)"
+}
+
+# dash_day [days before] — today as YYYY-MM-DD, or SWARM_DASH_NOW's day (dash_render's fixed clock),
+# or the day that many calendar days before it.
+dash_day() {
+  if [[ -z "${SWARM_DASH_NOW:-}${1:-}" ]]; then date +%F; return; fi
+  python3 -c 'import datetime, sys, time; print(datetime.date.fromtimestamp(float(sys.argv[1] or time.time())) - datetime.timedelta(days=int(sys.argv[2])))' \
+    "${SWARM_DASH_NOW:-}" "${1:-0}"
+}
+
+# dash_check — dash --check: each figure in this project's frame (drawn afresh, plain, at 100
+# columns so the gauges show) against the command that owns it; with --project, each project in
+# turn, by this script run again on it. agents working and the running gauge against the agents
+# `status` lists as working; the cost against flow's cost section since today with no calling
+# session (dash leaves it out), read just before and just after the frame, so spend in between
+# agrees; every item flow's lead_queue holds open, named in needs you or the lead's queue (an
+# escalated or held story only with lead = session, the only time dash draws it); the PRs, the
+# stories only you or the lead can run (+N more counted) and the agents waiting on a prompt that
+# status lists, in needs you and the lead's queue; next against `next`; the epics waiting on their
+# depends_on against epic_holding_deps, the rule next plans by (next prints one step, so it cannot
+# list them); merges today and the 7-day rate against flow's merges section. flow's sections run
+# here, in this process, and ask gh nothing. Prints each mismatch as `<project>: <field>: dash shows
+# <x>, <owner> says <y>` (a project by its basename, or by its path when two --project dirs share
+# one) and returns 1 on any; a frame dash cannot draw is one line, `<project>: frame: ...`.
+dash_check() {
+  local d n failed=0
+  if [[ ${#DASH_DIRS[@]} -gt 0 ]]; then
+    for d in "${DASH_DIRS[@]}"; do
+      n="$(basename "${d}")"
+      [[ "$(printf '%s\n' "${DASH_DIRS[@]}" | sed 's#.*/##' | grep -cxF -- "${n}")" == 1 ]] || n="${d}"
+      DASH_CHECK_NAME="${n}" SWARM_PROJECT="${d}" "${SWARM_HOME}/bin/swarm.sh" dash --check || failed=1
+    done
+    return "${failed}"
+  fi
+  local sw="${SWARM_HOME}/bin/swarm.sh" herdr="" day lo hi frame st need boxes drawn got want x f v err
+  DASH_CHECK_P="${DASH_CHECK_NAME:-$(basename "${PROJECT_DIR}")}"; DASH_CHECK_BAD=0; DASH_CHECK_NOSTATUS=""
+  ! command -v herdr >/dev/null 2>&1 || herdr=1
+  day="$(dash_day)"
+  lo="$(dash_flow_cost "${day}")"
+  err="$(mktemp "${TMPDIR:-/tmp}/swarm-dash.XXXXXX")" || die "dash --check: mktemp failed"
+  if ! frame="$(dash_check_frame 2> "${err}")"; then
+    echo "${DASH_CHECK_P}: frame: dash could not draw it: $(tail -n 1 "${err}")"
+    rm -f "${err}"; return 1
+  fi
+  rm -f "${err}"
+  # status asks herdr only inside a pane; dash whenever herdr is on PATH. Read next to the frame, as
+  # agents change state.
+  # A status that fails is said once, and the fields it owns are not compared with nothing.
+  st="$(HERDR_ENV="${herdr}" SWARM_PROJECT="${PROJECT_DIR}" "${sw}" status)" || { dash_unread "agents and Waiting on you" status; DASH_CHECK_NOSTATUS=1; }
+  hi="$(dash_flow_cost "${day}")"
+
+  want="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"
+  dash_agree "agents working" "$(dash_first '.* \([0-9][0-9]*\) agents working.*' "${frame}")" status "${want}"
+  got="$(dash_first '.*running [^0-9]*\([0-9][0-9]*\) of peak.*' "${frame}")"
+  # dash leaves the gauge out only with no agent list from herdr (none, or none it can read), and then
+  # status has none either.
+  if [[ -n "${got}" || ( "${st}" != "Agents: not inside herdr"* && "${st}" != *"(herdr gave no agent list)"* ) ]]; then
+    dash_agree running "${got}" status "${want}"
+  fi
+
+  got="$(dash_first '.*\$\([0-9][0-9.]*\) today.*' "${frame}")"
+  want="${lo}"; [[ "${hi}" == "${lo}" ]] || want="${lo} to ${hi}"
+  [[ -n "${lo}" && -n "${hi}" ]] || want="nothing: its cost could not be read"
+  # What the agents spent between the two reads moves flow's cost on: anything from one to the other agrees.
+  if [[ -n "${got}" && -n "${lo}" && -n "${hi}" ]] && awk -v g="${got:-x}" -v lo="${lo:-x}" -v hi="${hi:-x}" \
+      'BEGIN { exit !(g != "x" && lo != "x" && hi != "x" && g + 0 >= lo + 0 && g + 0 <= hi + 0) }'; then got="${want}"; fi
+  dash_agree cost "${got}" "flow --since ${day}" "${want}"
+
+  # A section that fails is reported, never read as an empty one.
+  x="$(flow_sections 0000-00-00 9999-12-30 "" "" "" lead_queue 2>/dev/null)" || dash_unread "lead's queue" "flow's lead_queue"
+  # shellcheck disable=SC2154 # assigned in another file
+  want="$(awk -F'\t' -v lead="${CFG_lead}" 'NR > 2 && NF == 5 && $5 != "-" {
+      n = split($5, a, ","); for (i = 1; i <= n; i++) if (lead == "session" || a[i] !~ /^(escalated|held):/) print a[i] }' <<< "${x}" | dash_words)"
+  need="$(dash_box "needs you" "${frame}")"
+  boxes="${need}"$'\n'"$(dash_box "lead's queue" "${frame}")"
+  # The PRs the merge rows show, as <repo>#<n>: by that ref, or by URL when gh did not answer. A held PR
+  # that a story and its epic both list is shown once, under the first.
+  x="$(grep '^│ [^ ]* merge ' <<< "${boxes}" || true)"
+  drawn="$( { sed -n 's/^│ [^ ]* merge \([^ ]*#[0-9][0-9]*\) .*/\1/p' <<< "${x}"; dash_prs <<< "${x}"; } | dash_words)"
+  got=""
+  for x in ${want}; do
+    # Each kind has its own row: merge, or decide for an escalated or held story, which dash draws as a
+    # merge row once it is in review. A merge item counts by its slug or by any PR status lists for it.
+    v=merge; [[ "${x%%:*}" == merge ]] || v="(merge|decide escalated story)"
+    if dash_names "${x#*:}" "$(grep -E "^│ [^ ]* ${v} " <<< "${boxes}" || true)"; then got+=" ${x}"; continue; fi
+    [[ "${x%%:*}" == merge ]] || continue
+    for f in $(awk -v s="${x#*:}" '/^  awaiting your merge/ { sub(/^[^:]*: /, ""); sub(/^epic /, ""); if ($1 == s) print }' <<< "${st}" | dash_prs); do
+      if [[ " ${drawn} " == *" ${f} "* ]]; then got+=" ${x}"; break; fi
+    done
+  done
+  dash_agree "lead's queue" "${got# }" "flow's lead_queue" "${want}"
+
+  dash_agree "PRs waiting for a merge" "${drawn}" status "$(grep '^  awaiting your merge' <<< "${st}" | dash_prs | dash_words)"
+  # A `<kind>: <slug>` line under Waiting on you is a story only you or the lead can run: a run row
+  # each, but for the ones behind needs you's +N more.
+  n="$(grep -c '^│ [^ ]* run [^ ]* story ' <<< "${boxes}" || true)"
+  got="$(dash_first '.* +\([0-9][0-9]*\) more.*' "${need}")"
+  want="$(sed -n '/^Waiting on you$/,/^$/p' <<< "${st}" | grep -c '^  [^ :]*: [^ ]*$' || true)"
+  dash_agree "stories only you or the lead can run" "$((n + ${got:-0}))" status "${want}"
+  dash_agree "agents waiting on a prompt" "$(sed -n 's/^│ [^ ]* answer \([^ :]*\)[: ].*/\1/p' <<< "${boxes}" | dash_words)" \
+    status "$(sed -n 's/^  \([^ ]*\)  *WAITING .*/\1/p' <<< "${st}" | dash_words)"
+
+  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" next 2>/dev/null | sed -n 1p || true)"
+  got="$(dash_first '.*  next \(.*[^ ]\)  *[0-9][0-9:]*$' "$(sed -n 1p <<< "${frame}")")"
+  dash_agree next "$(dash_cut "${got}" "${want}")" next "${want}"
+
+  want="$(while IFS= read -r f; do
+      if x="$(epic_holding_deps "${f}")" && [[ -n "${x}" ]]; then echo "$(basename "${f}" .md): ${x// /, }"; fi
+    done < <(board epics) | sort)"
+  # The epics box's epic rows only (its agent rows are indented), whatever their symbol: a waiting epic
+  # is ⏸ unless an agent, a look or a PR under it gives it another.
+  # An epic whose open stories are all after: ones says `after: <slugs> waits on the lead`, which is no
+  # depends_on wait (epic_holding_deps leaves it out).
+  got="$(dash_box epics "${frame}" rows | { grep -v ' after: .* waits on the lead *$' || true; } | sed -n 's/^│ [^ ][^ ]* \([^ ]*\) .* waits on \(.*[^ ]\) *$/\1: \2/p' | while IFS= read -r x; do
+      while IFS= read -r f; do x="$(dash_cut "${x}" "${f}")"; done <<< "${want}"; echo "${x}"
+    done | sort | paste -sd';' -)"
+  dash_agree "epics waiting on depends_on" "${got}" next "$(paste -sd';' - <<< "${want}")"
+
+  if x="$(flow_sections "$(dash_day 6)" "${day}" "" "" "" merges 2>/dev/null)"; then
+    x="$(awk -F'\t' -v d="${day}" 'NR > 2 && NF == 2 { w += $2; if ($1 == d) t = $2 } END { printf "%d %.1f\n", t, w / 7 }' <<< "${x}")"
+    dash_agree "merges today" "$(dash_first '.*  today \([0-9][0-9]*\)  7-day avg.*' "${frame}")" "flow's merges" "${x% *}"
+    dash_agree "7-day rate" "$(dash_first '^\([0-9][0-9.]*\) merged/day over 7 days.*' "${frame}")" "flow's merges" "${x#* }"
+  else
+    dash_unread "merges today and the 7-day rate" "flow's merges"
+  fi
+
+  [[ ${DASH_CHECK_BAD} == 1 ]] || echo "${DASH_CHECK_P}: every dash figure agrees with the command that owns it"
+  return "${DASH_CHECK_BAD}"
+}
+
+# dash_flow_cost <day> — the total of flow's cost section since that day, with no calling session.
+dash_flow_cost() {
+  { flow_sections "$1" 9999-12-30 "" "" "" cost 2>/dev/null || true; } | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p'
+}
+
+# dash_check_frame — this project's frame for dash_check: the slow fields asked again, plain, at 100
+# columns, with the epics and not the tree.
+dash_check_frame() {
+  # shellcheck disable=SC2034 # read by dash_slow and dash_render
+  local DASH_FRESH=1 DASH_W=100 DASH_H=0 DASH_ENV_H="" DASH_COLOR=0 DASH_TREE=0
+  dash_slow; DASH_LEGEND=0 dash_render
+}
+
+# dash_agree <field> <dash's value> <owner> <owner's value> — prints a mismatch and marks the check
+# failed; a field status owns is skipped once status could not be read (DASH_CHECK_NOSTATUS).
+dash_agree() {
+  [[ "$2" != "$4" ]] || return 0
+  [[ "$3" != status || -z "${DASH_CHECK_NOSTATUS}" ]] || return 0
+  echo "${DASH_CHECK_P}: $1: dash shows ${2:-nothing}, $3 says ${4:-nothing}"
+  DASH_CHECK_BAD=1
+}
+
+# dash_unread <field> <owner> — the owner could not be read: prints that and marks the check failed.
+dash_unread() {
+  echo "${DASH_CHECK_P}: $1: $2 could not be read"
+  DASH_CHECK_BAD=1
+}
+
+# dash_first <sed regex with a group> <text> — the group in the first line that matches, or nothing.
+dash_first() { sed -n "\\#$1#{s##\\1#p;q;}" <<< "$2"; }
+
+# dash_cut <dash's> <owner's> — the owner's value when dash's is it cut to the width (each … standing
+# for what was cut, the rest matched as plain text), else dash's.
+dash_cut() {
+  local shown="$1" rest="$2" piece
+  if [[ "${shown}" != *…* ]]; then printf '%s' "$1"; return; fi
+  piece="${shown%%…*}"; shown="${shown#*…}"
+  if [[ "${rest}" != "${piece}"* ]]; then printf '%s' "$1"; return; fi
+  rest="${rest#"${piece}"}"
+  while [[ "${shown}" == *…* ]]; do
+    piece="${shown%%…*}"; shown="${shown#*…}"
+    if [[ "${rest}" != *"${piece}"* ]]; then printf '%s' "$1"; return; fi
+    rest="${rest#*"${piece}"}"
+  done
+  if [[ "${rest}" == *"${shown}" ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi
+}
+
+# dash_names <word> <text> — true when a line of <text> has <word> as a whole word (words split at
+# spaces, parentheses and colons), compared as plain text.
+dash_names() { awk -v s="$1" '{ n = split($0, w, /[ ():]+/); for (i = 1; i <= n; i++) if (w[i] == s) f = 1 } END { exit !f }' <<< "$2"; }
+
+# dash_words — stdin's lines, sorted and each once (a story's merge row per PR), on one line.
+dash_words() { sort -u | paste -sd' ' -; }
+
+# dash_prs — the GitHub PR URLs in stdin, each as <repo>#<n> (dash's ref), one a line.
+dash_prs() { { grep -o 'https://github.com/[^/ ]*/[^/ ]*/pull/[0-9]*' || true; } | sed 's#.*/\([^/]*\)/pull/#\1\##'; }
+
+# dash_box <title> <frame> [rows] — the rows inside the frame's box of that title, the right border
+# gone, each wrapped row (its later lines indented) joined back onto one line; with rows, every line
+# as it is (the epics box indents its agent rows).
+dash_box() {
+  awk -v t="$1" -v rows="${3:-}" '/^╭─ / { on = index($0, "╭─ " t " ") == 1; next } /^╰/ { on = 0 } !on { next }
+    { sub(/ *│$/, "") } /^│   / && n && !rows { sub(/^│ */, ""); r[n] = r[n] " " $0; next } { r[++n] = $0 }
+    END { for (i = 1; i <= n; i++) print r[i] }' <<< "$2"
 }
 
 # dash_finished — "finished<TAB>epic<TAB>count" per epic, from the board's own repo (none when the
