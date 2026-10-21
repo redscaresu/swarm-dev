@@ -5,7 +5,7 @@
 # lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
 # none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
 # lines; pane list fails while ${ROOT}/panefail exists); gh answers pr list from ${ROOT}/prs.json, with
-# --state open the first open PR's URL, as open_pr's --jq asks.
+# --state open the heads of its open PRs that name one, as close_heads' --jq asks.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -40,7 +40,7 @@ cat >> "${ROOT}/bin/gh" <<'STUB'
 echo "$*" >> "$H/gh.log"
 [ -e "$H/ghfail" ] && exit 1
 case "$1 $2 $*" in
-  "pr list "*"--state open"*) python3 -c 'import json, sys; print(next((p["url"] for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN"), ""))' "$H/prs.json" ;;
+  "pr list "*"--state open"*) python3 -c 'import json, sys; [print(p["headRefName"]) for p in json.load(open(sys.argv[1])) if p["state"] == "OPEN" and p.get("headRefName")]' "$H/prs.json" ;;
   "pr list "*) cat "$H/prs.json" ;;
 esac
 exit 0
@@ -387,7 +387,7 @@ conductor_fixture() {
   printf '%s\n' "w:p90 w:t7" "w:p91 w:t8" ${3:+"w:p92 w:t7"} > "${ROOT}/panes"
   : > "${CLOSED}"; : > "${ROOT}/panes-closed"
 }
-open_pr='[{"number":10,"state":"OPEN","url":"'"${U}"'/10"}]'
+open_pr='[{"number":10,"state":"OPEN","url":"'"${U}"'/10","headRefName":"story/cb1"}]'
 echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle
 out="$(cs conduct-ce)"
 is "close conduct-ce, cb1's PR open in tab ce-2: only the conductor's tab closes, and cb1 is printed as kept" \
@@ -431,6 +431,8 @@ conductor_fixture idle idle; echo "cb5 w:p95 working" >> "${ROOT}/agents"; echo 
 is "an agent in no tab record, working by herdr's word, is kept, named by herdr" "<w:t8>|1" \
   "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb5 (working) in tab ce' <<< "${out}")"
 is "cb5, with no agents.tsv line here, is not this project's: ce's record never gains it" "0" "$(count 'w:p95' "${P}/.swarm/state/ce")"
+is "and close says cb5 stays unrecorded, never that --all closes it" "1|0" \
+  "$(grep -c '^kept cb5 (working) in tab ce: no tab record of this project has it, so it stays unrecorded$' <<< "${out}")|$(grep -c '^kept cb5 .*--all closes it too' <<< "${out}")"
 # An agent with no name is herdr's to answer for: idle it keeps nothing, working it is kept by its pane.
 echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle idle; echo "- w:p97" >> "${ROOT}/agents"; echo "w:p97 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
 is "an idle agent with no name in ce keeps nothing, and nothing says None" "<w:t7><w:t8>|0" "$(tr -d '\n' < "${CLOSED}")|$(grep -c None <<< "${out}")"
@@ -468,7 +470,8 @@ is "closing cb3, the last pane of tab ce, leaves ce-2 and its builder with an op
 # from that name, so its open PR keeps ce-2, and with an agents.tsv line it is this project's, recorded
 # under its full slug. Claude Code's list is read once for the whole close.
 LS=cb-a-story-whose-slug-runs-well-past-thirty-two; LSN="$(cd "${P}" && bash "${SWARM}" _name "${LS}")"
-echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle; item "${LS}" "status: review" "kind: code" "epic: ce"; built "${LSN}" code
+echo '[{"number":10,"state":"OPEN","url":"'"${U}"'/10","headRefName":"story/cb1"},{"number":11,"state":"OPEN","url":"'"${U}"'/11","headRefName":"story/'"${LS}"'"}]' > "${ROOT}/prs.json"
+conductor_fixture idle idle; item "${LS}" "status: review" "kind: code" "epic: ce"; built "${LSN}" code
 echo "${LSN} w:p98" >> "${ROOT}/agents"; echo "w:p98 w:t8" >> "${ROOT}/panes"; : > "${ROOT}/claude.log"
 out="$(CLAUDE_STUB_LOG="${ROOT}/claude.log" cs conduct-ce)"
 is "${LS} (agent ${LSN}, ${#LSN} long) in no record: its story is found, its PR keeps ce-2, and ce-2 records its full slug" "1|1" \
@@ -489,6 +492,49 @@ conductor_fixture idle idle "w:p92 cb2"; echo "w:p92 cb2" > "${P}/.swarm/state/c
 touch "${ROOT}/agentfail"; rc=0; out="$(cs conduct-ce)" || rc=$?; rm "${ROOT}/agentfail"
 is "with herdr's agent list failing and no record naming the conductor, close conduct-ce says its pane is still open and fails" "1|1|" \
   "${rc}|$(grep -c "no tab record names conduct-ce's pane, so it could not be found and is still open" <<< "${out}")|$(cat "${ROOT}/panes-closed")"
+# The conductor's pane is its record's conductor line, whatever herdr calls the agent in it: its
+# Claude exited to a shell (no agent named conduct-ce), or herdr lists it with no name, working.
+echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle working "w:p92 cb2"
+awk '$1 != "conduct-ce"' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"; out="$(cs conduct-ce)"
+is "conduct-ce's Claude gone from its pane: the record's pane closes alone, ce kept for cb2, ce-2 closes" "w:p90|<w:t8>|1" \
+  "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb2 (working) in tab ce' <<< "${out}")"
+conductor_fixture idle idle
+awk '$1 != "conduct-ce"' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"; echo "- w:p90 working" >> "${ROOT}/agents"; out="$(cs conduct-ce)"
+is "conduct-ce's pane listed with no name, working: it is the conductor, never kept, so both tabs close" "<w:t7><w:t8>|0" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept' <<< "${out}")"
+# A conductor line a gone pane left (w:p89, which herdr no longer lists) is passed over for the live one.
+conductor_fixture idle idle "w:p92 cb2"; printf '%s\n' "w:p89 conductor" "w:p90 conductor" "w:p92 cb2" > "${P}/.swarm/state/ce"; out="$(cs conduct-ce)"
+is "two conductor lines in ce, w:p89's pane gone: the live w:p90 closes alone, never w:p89" "w:p90|<w:t8>" "$(cat "${ROOT}/panes-closed")|$(tr -d '\n' < "${CLOSED}")"
+# Tabs are listed before any is kept: keeping cb1, moved by hand from ce-2 into ce, moves its line
+# out of ce-2's record, which then goes, and ce-2 (where cb6, idle with no story, is left) is still
+# checked and closed by its herdr id.
+conductor_fixture working idle; echo "cb6 w:p96" >> "${ROOT}/agents"; printf '%s\n' "w:p90 w:t7" "w:p91 w:t7" "w:p96 w:t8" > "${ROOT}/panes"
+out="$(cs conduct-ce)"
+is "cb1 moved into ce keeps ce; ce-2, its record gone with cb1's line, is still closed; ce records cb1" "<w:t8>|w:p90|1|w:p91 cb1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(grep -c '^kept cb1 (working) in tab ce:' <<< "${out}")|$(cat "${P}/.swarm/state/ce" 2>/dev/null || true)"
+# own_panes is read whole: sxa's pane w:p80 is recorded with no name, first of 20001 lines, and a
+# grep -q fed by a pipe would stop at it and, under pipefail, fail on own_panes' SIGPIPE.
+{ echo "w:p80"; seq 1 20000 | sed 's/^/w:q/'; } > "${P}/.swarm/state/aaa-big"
+echo "sxa w:p80" > "${ROOT}/agents"; echo "w:p80 w:t3" > "${ROOT}/panes"; : > "${CLOSED}"; : > "${ROOT}/panes-closed"
+cs sxa >/dev/null; rm -f "${P}/.swarm/state/aaa-big"
+is "close sxa, its pane first of 20001 recorded panes: herdr's pane for it is found, and closes" "w:p80" "$(cat "${ROOT}/panes-closed")"
+# Every name the close functions assign by read or for is local, so none leaks into a caller's own
+# (close_agent's why, through shut_agent and close_tabs).
+leaks="$(python3 -I - "$(dirname "${SWARM}")/lib/lifecycle.sh" <<'PY'
+import re, sys
+src = open(sys.argv[1]).read()
+for fn in ("close_panes", "own_pane", "close_pane", "record_kept", "close_heads", "close_stories", "live_agents", "close_tabs"):
+    body = re.search(r"^%s\(\) \{\n(.*?)^\}" % fn, src, re.S | re.M).group(1)
+    declared = {w.split("=")[0] for m in re.findall(r"\blocal ([^;\n]*)", body) for w in m.split()}
+    assigned = set(re.findall(r"\bfor ([a-z_][a-z0-9_]*) in\b", body))
+    for m in re.findall(r"\bread ([^<;\n]*)", body):
+        words = m.split()
+        assigned |= {w for i, w in enumerate(words) if not w.startswith("-") and not (i and words[i - 1] == "-u") and w != "_"}
+    for v in sorted(assigned - declared):
+        print(f"{fn}: {v}")
+PY
+)"
+is "the close functions declare every name they read or loop over as local" "" "${leaks}"
 # Two tabs share the label scope-x (herdr's w:t1 and w:t2): sxb, working, is in w:t2 and in no record,
 # so both tabs are checked and neither closes.
 echo "w:p80 sxa" > "${P}/.swarm/state/scope-x"; printf '%s\n' "sxa w:p80" "sxb w:p81 working" > "${ROOT}/agents"

@@ -360,12 +360,13 @@ step_role() {
 }
 
 # agent_name <name> — the herdr agent name for anything started or waited on. start_agent and
-# `wait` both map through here, so every caller agrees: lowercase, [a-z0-9_-], starting with a letter, at most 32 characters.
+# `wait` both map through here, so every caller agrees: lowercase, [a-z0-9_-], starting with a letter, at most AGENT_NAME_MAX characters.
+AGENT_NAME_MAX=32
 agent_name() {
   local n
   n=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')
   [[ "${n}" =~ ^[a-z] ]] || n="s${n}"
-  printf '%s' "${n:0:32}"
+  printf '%s' "${n:0:${AGENT_NAME_MAX}}"
 }
 
 json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
@@ -700,8 +701,9 @@ pane_name_of() {
   record_name "${pane}"
 }
 
-# record_name <pane> — the name the tab records give <pane>, or nothing.
-record_name() { cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="$1" 'NF == 2 && $1 == p { print $2; exit }' || true; }
+# record_name <pane> [records] — the name the tab records give <pane>, or nothing; <records> is their
+# lines read once, for a caller that asks about many panes.
+record_name() { awk -v p="$1" 'NF == 2 && $1 == p { print $2; exit }' <<< "${2-$(cat "${STATE_DIR}"/* 2>/dev/null || true)}"; }
 
 # fallback_close <name> — close a fallback agent as `swarm.sh close` does a review agent: its session
 # log archived, and its tab (fallback-<story>, its own) closed by that exact label, so no other
