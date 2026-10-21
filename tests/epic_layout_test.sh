@@ -245,7 +245,7 @@ check "the conductor reviews with codex and /code-review, tells the builder, and
   "$(has "runs codex-review with the story's slug" "${cbrief}")|$(has "/code-review <PR>" "${cbrief}")|$(has "swarm.sh tell <slug> findings <file>" "${cbrief}")|$(has "Never merge a story, and never run" "${cbrief}")"
 review="$(para "A story is reviewed only when" "${cbrief}")"
 check "the review paragraph starts a review agent per green PR without waiting, waits on each, and declines out-of-scope findings" "yes|yes|yes|yes|yes" \
-  "$(has "${SWARM} review-agent <slug> <PR URL>" "${review}")|$(has "Do not wait for other PRs or reviews: start one for each green PR" "${review}")|$(has "swarm.sh wait review-<slug>" "${review}")|$(has "log-finding --declined out-of-scope --reviewer <who>" "${review}")|$(has "${p}/.swarm/reviews/<slug>.md" "${review}")"
+  "$(has "${SWARM} review-agent <slug> <PR URL>" "${review}")|$(has "Never wait for other PRs or reviews to gather first: run one review agent for every green PR at" "${review}")|$(has "swarm.sh wait review-<slug>" "${review}")|$(has "log-finding --declined out-of-scope --reviewer <who>" "${review}")|$(has "${p}/.swarm/reviews/<slug>.md" "${review}")"
 check "the review paragraph has the conductor read the diff itself when a review agent reports codex skipped, and never run codex-review itself" "yes|0" \
   "$(has "When a review agent reports \`codex skipped: <why>\` (its file's second line says so too), read the diff yourself in codex's place." "${review}")|$(grep -c 'Run codex-review in the background' <<< "${review}" || true)"
 check "the review paragraph takes a head moved: line or no findings section for no pass, and closes the agent and reviews again when the wait brings no file" "yes|yes" \
