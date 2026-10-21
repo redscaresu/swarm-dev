@@ -403,6 +403,12 @@ close_agent() {
     fi
   fi
   shut_agent "$1"
+  # Its pane could not be closed (close_pane said why): the builder may still be working in its
+  # worktree, so nothing is counted, held, handed on or cleared.
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    echo "not closed: $1's pane is still open, so nothing was counted or cleared; close it again once herdr answers"
+    return 0
+  fi
   if [[ "${cause}" == impossible ]]; then
     # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
@@ -945,10 +951,12 @@ clear_build() {
 # close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
 # conductor's name closes its epic's tabs, with any story panes left in them, except a tab close_tabs
 # keeps for a live agent; the conductor's own pane (own_pane) then closes alone. A conductor whose
-# pane cannot be found while herdr gives no agent list, or could not be closed, is said, and fails.
+# pane cannot be found while herdr gives no agent list, or could not be closed, is said, and fails;
+# a builder whose pane could not be closed is said, and CLOSE_PANE_KEPT is set (close_pane).
+CLOSE_PANE_KEPT=""
 close_panes() {
-  local state pane own rc
-  CLOSE_READ=""
+  local state pane own
+  CLOSE_READ=""; CLOSE_PANE_KEPT=""
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
@@ -958,8 +966,8 @@ close_panes() {
   own="$(own_pane "$1")"
   [[ "$(agent_name "$1")" != conduct-* ]] || close_tabs "$(conduct_epic "$1")" "${own}"
   close_tabs "$1" "${own}"
-  rc=0; [[ -z "${own}" ]] || close_pane "${own}" "$1" "" alone || rc=$?
-  [[ ${rc} != 2 ]] || die "close: $1's pane ${own} could not be closed, so it is still open"
+  [[ -z "${own}" ]] || close_pane "${own}" "$1" "" alone || true
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || die "close: $1's pane ${own} could not be closed, so it is still open"
   [[ -n "${own}" || -n "${CLOSE_AGENTS_OK}" || "$(agent_name "$1")" != conduct-* ]] \
     || die "close: herdr gave no agent list and no tab record names $1's pane, so it could not be found and is still open"
 }
@@ -992,8 +1000,9 @@ own_pane() {
 # when not given), or close that record's own tab (close_tab, never close_tabs' label sweep, which
 # takes sibling and overflow tabs) when it is the record's last pane, unless alone is given; when that
 # tab is kept for a live agent herdr has in it besides, or herdr has no tab of that label, <pane>
-# closes alone. Fails (1) when no tab record has it, and (2) when herdr could not list that tab or
-# close the pane: it is said, and its record keeps it.
+# closes alone. Fails when no tab record has it. When herdr could not list that tab or close the pane,
+# the pane and its record are kept, that is said, CLOSE_PANE_KEPT is set for the caller to act on,
+# and it succeeds: under errexit a failure here would stop reconcile's loop over merged stories.
 close_pane() {
   local state="${3:-}" id
   if [[ -z "${state}" ]]; then
@@ -1006,7 +1015,7 @@ close_pane() {
   if [[ -z "${4:-}" && $(wc -l < "${state}") -le 1 ]]; then
     if ! id="$(tab_ids "${state}")"; then
       echo "kept pane $2 ($1) in tab ${state##*/}: herdr could not list its workspace's tabs, so neither was checked nor closed"
-      return 2
+      CLOSE_PANE_KEPT=1; return 0
     fi
     # With no herdr tab of that label there is none to close: the pane closes by itself below.
     [[ -z "${id}" ]] || close_tab "${state}" "${id}" "$1"
@@ -1015,7 +1024,7 @@ close_pane() {
   # Checked, not left to errexit: a caller's `|| true` turns that off here.
   if ! herdr pane close "$1" >/dev/null 2>&1; then
     echo "swarm: could not close pane $2 ($1): it is still open, and its tab record keeps it" >&2
-    return 2
+    CLOSE_PANE_KEPT=1; return 0
   fi
   record_drop "${state}" "$1"
   echo "closed pane $2"
@@ -1109,12 +1118,14 @@ close_stories() {
 # live_agents <tab-ids> <tab-record> [pane] — set LIVE to each agent in a pane of those tabs, <pane>'s
 # aside, that a tab close must not take, as "<pane>\t<name>\t<why>\t<herdr's name or ->" lines:
 # working or waiting (session_state, else herdr's status), its state unknown (herdr gave no agent
-# list too) or any other not known to be idle or finished, its story's PR open on story/<name> (close_heads) or gh could not say, or, for a name
-# agent_name may have cut, no story found. The panes are herdr's (close_lists), since a pane moved in
-# by hand closes with the tab and one moved out does not; the record's stand in when herdr lists none
-# in those tabs. <name> is the record's (record_name), else the story of herdr's name (close_stories),
-# else herdr's, else the pane. A pane with no agent, or a story whose repo has no origin, has nothing
-# to keep. It runs in close_tabs' own shell, so what close_heads and close_stories read lasts the close.
+# list too) or any other not known to be idle or finished, its story's PR open on story/<name>
+# (close_heads) or gh could not say, or, for a name agent_name may have cut, no story found. The panes
+# are herdr's (close_lists), since a pane moved in by hand closes with the tab and one moved out does
+# not; the record's stand in when herdr lists none in those tabs. <name> is the record's
+# (record_name), else the story of herdr's name (close_stories), else herdr's, else the pane. A
+# recorded pane with no agent yet is kept (starting); an unrecorded one, or a story whose repo has no
+# origin, has nothing to keep. It runs in close_tabs' own shell, so what close_heads and close_stories
+# read lasts the close.
 live_agents() {
   local panes pane st who name s f src rc
   LIVE=""
@@ -1126,7 +1137,13 @@ live_agents() {
     name="$(record_name "${pane}" "${CLOSE_RECORDS}")"
     if [[ -z "${CLOSE_AGENTS_OK}" ]]; then live_line "${pane}" "${name:-${pane}}" "herdr gave no agent list, so its state is unknown" -; continue; fi
     read -r _ st who <<< "$(awk -v p="${pane}" '$1 == p { print; exit }' <<< "${CLOSE_AGENTS}")"
-    [[ -n "${st}" ]] || continue
+    if [[ -z "${st}" ]]; then
+      # No agent in it: one a tab record has may be one still starting (next_pane records the pane
+      # before start_agent's agent start), so it is kept; any other holds nothing to lose.
+      ! awk -v p="${pane}" '$1 == p { f = 1 } END { exit !f }' <<< "${CLOSE_RECORDS}" \
+        || live_line "${pane}" "${name:-${pane}}" "starting: no agent in it yet" -
+      continue
+    fi
     [[ "${who}" != - ]] || who=""
     if [[ -z "${name}" && ${#who} -eq ${AGENT_NAME_MAX} ]]; then
       close_stories
