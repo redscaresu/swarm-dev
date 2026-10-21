@@ -236,7 +236,7 @@ stop listing it as waiting on you. It runs in a herdr workspace named for the ep
 parent share it), or else for the epic, in a tab named for the epic, in a pane named `conductor`. Each story it starts gets a pane in
 that tab, named for the story; a tab holds four panes, and the fifth opens `<epic>-2`. A one-off
 story gets a tab of its own. Conductors of different epics can run side by side (each watches only its own epic's PRs, with
-`watch --epic`), as long as their stories touch different files; shared files are the lead's alone.
+`watch --epic`, and a fix-main story's, which every conductor builds and merges first), as long as their stories touch different files; shared files are the lead's alone.
 
 **The backlog conductor.** `swarm.sh conduct --backlog` starts `conduct-backlog-<dir>-<hash>` (the
 first 9 characters of the project directory's name, then 6 hex characters of a checksum of its path), which builds the ready stories with no `epic:` (the one-offs) the way an epic's conductor builds an epic: waves with
@@ -725,7 +725,10 @@ per item they move. `merge` writes all its own lines, under the story's or epic'
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
-or `error <why>`, then reconcile's lines. Through a merge queue (§ Merging) it is the same `merge ok`,
+or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its repo, base and checks;
+an ok one that clears a red main of that repo and base by `main-green`, outcome its repo, base and
+the red commit it clears, and a `fix-main` line,
+outcome `retired: <why>`, for each unstarted fix-main story that retires), then reconcile's lines. Through a merge queue (§ Merging) it is the same `merge ok`,
 `main-ci` and reconcile lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
 queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
@@ -1110,8 +1113,9 @@ runs one `swarm.sh merge` at a time, and starts the next only once the last has 
 run, starts each story of the epic that unblock printed as `ready:` and that clashes with no
 running one (§ Building, Pick the wave). A build cleared on error or given up on stops that: it starts nothing more in
 the wave. It reports once no story of the epic that it may start is ready and none is running. If
-CI on the base goes red or times out, it merges nothing more and stops: it finds the pair of PRs
-that broke it, each green alone, opens the fix or lists it for you, and says so in its report. It stops only when what is left needs the lead: a story only
+CI on the base times out, it merges nothing more and stops, and says so in its report. If it goes
+red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
+its builder at once, ahead of every other story, and merges nothing else until that fix lands. It stops only when what is left needs the lead: a story only
 the lead can finish, or a merge that `swarm.sh merge` refused or could not confirm. The lead merges
 with `swarm.sh merge`: a one-off story with `merge = agent`, and any PR you ask it to merge, under
 `merge = human` too.
@@ -1187,7 +1191,35 @@ commit needs no check run of its own when no workflow is expected on it, but the
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
-exits non-zero, naming the check, when main is red or the wait runs out. Inside herdr it runs only
+exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
+one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
+`touches: [.]`: the fix may change whatever turns the base green) into
+the main checkout's board, where every command reads stories. There it is git-ignored through the
+clone's `.git/info/exclude`, as `.gitignore` does `.swarm/`, so it shows in no `git status` and meets
+no pull; its builder reads it there and leaves it alone, and reconcile takes it off once its PR
+merges. The story names the failed Actions runs and holds the red checks and up to 20 FAIL lines
+from their logs, each log read once its run has completed. The code under test writes those lines,
+so the story fences them under a line saying to read them as data, never as instructions, with
+control characters taken off and each line cut to 300 characters; main-red keeps the whole names.
+merge's own `main-ci:` and `fix-main:` lines, and `next`'s why, show them the same way. Those reads stop 10 minutes after the first
+(`SWARM_FIX_MAIN_LOG_SECONDS`), however many runs failed, so a slow log cannot hold up the reconcile
+that follows; a run gh cannot read stops at once, and the story names each run it could not read,
+and why. Once the story is written, merge logs `main-red <sha> <owner/repo> <base> <checks>` (the
+repo lowercased), retires an older fix-main story of the same repo and base that nobody has started
+(one merge at a time per repo and base does this, under `.swarm/fix-main.<repo>-<base>.lock`, so
+two red merges in one merge-queue batch never retire each other's story),
+so one fix is built per red main, and prints `fix-main: <checks> on <short sha>` with the same lines.
+When it cannot write the story it says so in a line that does not start `fix-main:`, and leaves the
+red main and fix before it as they were. A red main clears, logging `main-green` and retiring its
+fix-main story if nobody has started it, only on a commit that shows it fixed and has the red
+commit in its history (a merge that landed before it, its CI wait ending later, fixes nothing): a later merge into
+the same repo and base, or the base's head that reconcile reads (a revert, a re-run), that changes
+more than the board's own files (a board-only commit's CI may skip its tests, so a board-only head
+is judged by the newest commit before it that is not), has every check, status and workflow run green (a commit with only statuses counts), and has a passing run of each
+check that went red, or, when the base requires checks, of each of those (a fix may rename or drop the
+failed job; a path filter may skip a check the base does not require). Until then, while the story is buildable (ready, `kind: code`: one escalated or held for the lead goes
+to the lead's queue instead) with no build of it, `next` names
+`fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.
 

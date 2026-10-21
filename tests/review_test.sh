@@ -567,6 +567,15 @@ check "watch --backlog reports a no-epic story's PR and skips every epic story's
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --backlog 2>&1)"
 check "watch --epic skips another epic's PR and the epic/<slug> head in the same repo" "o/svc #3 story/a checks finished on head3" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+# A fix-main story has no epic, but every conductor builds and merges it: an epic's watch wakes for
+# its PR too. Bounded, so a watch that skips it fails here rather than polling on.
+item "${w}/docs" stories/fix-main-abcdef1.md "status: review" "kind: code" "repo: svc"
+cp "${ROOT}/gh/prlist.json" "${ROOT}/gh/prlist.keep"
+{ sed 's/}]$/},/' "${ROOT}/gh/prlist.keep"
+  echo ' {"number": 5, "headRefName": "story/fix-main-abcdef1", "headRefOid": "head5", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]'; } > "${ROOT}/gh/prlist.json"
+check "watch --epic wakes for a fix-main story's PR" "o/svc #5 story/fix-main-abcdef1 checks finished on head5" \
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1)"
+mv "${ROOT}/gh/prlist.keep" "${ROOT}/gh/prlist.json"; rm -f "${w}/docs/stories/fix-main-abcdef1.md"
 
 # watch reports this project's agents whose session is waiting, with what each waits for; herdr
 # lists every project's (lead, in w:6, is another's). A Claude agent's state is its session's (the
