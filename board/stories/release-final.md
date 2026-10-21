@@ -2,15 +2,15 @@
 kind: lead
 status: blocked
 epic: safer-faster-swarm
-depends_on: [docs-review-readme, docs-review-reference, agents-md-catch-up, escalate-ladder-step-up, escalate-ladder-triggers]
+depends_on: [merge-queue, red-main-gets-a-fixer, restore-keeps-launch-flags, close-spares-live-agents, api-error-stall, review-on-green, release-docs-gate, agents-md-catch-up]
 touches: [.claude-plugin/plugin.json]
 easy: false
 estimate_lines: 5
 ---
 
-# Release 0.24.0: telemetry, fewer parts, and the newcomer docs
+# Release 0.24.0: main protection, restart safety and the docs catch-up
 
-One of three releases for this epic, so each group reaches infrafactory as soon as it is done (user, 2026-10-17). It ships the rest of the epic: telemetry and model-fit, the dataset, the folded reports, /epic, lessons as checks, and the reviewed docs. It closes the epic. A release is a lead step, not a build, so it sits one past the 3-deep chain limit.
+Re-scoped by the user on 2026-10-21 so the safety fixes do not wait on telemetry. It ships the merge queue, a red main's fixer, guards kept across a herdr restart, a close that spares live builders, the stall detector, review-on-green and the release docs gate, with the docs for everything 0.22.0 and 0.23.0 shipped (agents-md-catch-up). The rest of the epic goes out in 0.25.0 (release-epic-close).
 
 The lead bumps .claude-plugin/plugin.json to 0.24.0 and writes notes for the merged PRs since the last tag (humanized). It merges with `swarm.sh merge --release --head <sha> <url>`, then runs `claude plugin update swarm-dev@swarm-dev`. New conductors pick up the new version; the lead's own session needs a restart, or it reads commands/*.md from the new cache directory. After installing, the lead runs `swarm.sh dash --check` if it has shipped.
 
