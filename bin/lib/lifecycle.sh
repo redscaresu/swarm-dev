@@ -570,10 +570,12 @@ start_rung() {
     # Recorded, but its brief was not taken up: closed (it would sit idle with no brief), and not on
     # record until a resume starts it. A pane already gone is no reason to stop.
     shut_agent "${slug}" >/dev/null 2>&1 || true
-    # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
-    # an append-only "start failed" event outcomes reads would avoid that.
-    awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
-      && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
+    # Its line goes under the lock record_agent appends under, held from the read to the replace, so
+    # a line another conductor records meanwhile is kept.
+    state_lock "${AGENTS_LOG}.lock"
+    { awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+        && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"; } || echo "step-up: could not take ${slug}'s unstarted ${to} builder off ${AGENTS_LOG}" >&2
+    rm -f "${AGENTS_LOG}.tmp"; rmdir "${AGENTS_LOG}.lock"
   fi
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
