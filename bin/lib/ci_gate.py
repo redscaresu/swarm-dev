@@ -157,13 +157,15 @@ def has_queue(repo, base, wait):
                 raise
             time.sleep(wait)
 
-def first_in_queue(repo, base):
-    """The number of the PR first in base's merge queue, or 0 when it is empty. A failed read raises."""
+def other_in_queue(repo, base, n):
+    """The number of a PR other than n in base's merge queue, ahead of it or behind, or 0 when there
+    is none: of its first two entries, at most one is n. A failed read raises."""
     owner, name = repo.split("/")
     q = graphql("query($o: String!, $r: String!, $b: String!) { repository(owner: $o, name: $r) { mergeQueue(branch: $b) "
-                "{ entries(first: 1) { nodes { pullRequest { number } } } } } }", o=owner, r=name, b=base)["mergeQueue"]
+                "{ entries(first: 2) { nodes { pullRequest { number } } } } } }", o=owner, r=name, b=base)["mergeQueue"]
     nodes = ((q or {}).get("entries") or {}).get("nodes") or []
-    return int(((nodes[0] or {}).get("pullRequest") or {}).get("number") or 0) if nodes else 0
+    nums = [int(((e or {}).get("pullRequest") or {}).get("number") or 0) for e in nodes]
+    return next((x for x in nums if x and x != int(n)), 0)
 
 QUEUE_QUERY = """query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) {
   id state headRefOid isInMergeQueue autoMergeRequest { enabledAt } mergeCommit { oid } mergeQueueEntry { state headCommit { oid } }
@@ -263,15 +265,16 @@ def queued(repo, n, head, base, since, secs, poll, alone=False):
     queue with no auto-merge waiting after one showed it in) or closed; 2 a timeout; 3 READ_TRIES
     failed reads in a row (a gh error is a missed read); 4 never read as queued or waiting in
     READ_TRIES reads; 5 an open PR whose head is not head; 6 a PR that merged at a head that is not
-    head; 7 a TERM, HUP or INT; 8 (alone, for a release) another PR first in the queue while it is
-    queued, or a failed read of who is. On 2, 3, 4, 5, 7 and 8 the message is the cause, a newline,
+    head; 7 a TERM, HUP or INT; 8 (alone, for a release) another PR in the queue, ahead or behind,
+    while it is queued or waiting, or a failed read of the queue. On 2, 3, 4, 5, 7 and 8 the message is the cause, a newline,
     and what stop() did."""
     owner, name = repo.split("/")
-    for s in SIGNALS:
-        signal.signal(s, on_signal)
     turn_end, end, running = time.time() + secs * TURNS, None, None
     missed, absent, out, nocommit, seen, group, last, pr = 0, 0, 0, 0, False, None, "not read yet", None
     try:
+        # Inside the try, so a signal the moment the handler is in still lands in except Stopped.
+        for s in SIGNALS:
+            signal.signal(s, on_signal)
         while True:
             try:
                 read = graphql(QUEUE_QUERY, o=owner, r=name, n=int(n))["pullRequest"]
@@ -313,13 +316,13 @@ def queued(repo, n, head, base, since, secs, poll, alone=False):
                     return 1, why + ("; " + stop(pr) if pr.get("autoMergeRequest") else "")
                 elif pr.get("isInMergeQueue") or pr.get("autoMergeRequest"):
                     seen, out = True, 0
-                    if alone and pr.get("isInMergeQueue"):
+                    if alone:
                         try:
-                            first = first_in_queue(repo, base)
+                            other = other_in_queue(repo, base, n)
                         except (Err, KeyError, TypeError, ValueError) as e:
-                            return 8, "cannot read who is first in the merge queue: %s\n%s" % (e, stop(pr, every=True))
-                        if first and first != int(n):
-                            return 8, "#%d is ahead of it in the merge queue\n%s" % (first, stop(pr, every=True))
+                            return 8, "cannot read the merge queue: %s\n%s" % (" ".join(str(e).split()), stop(pr, every=True))
+                        if other:
+                            return 8, "#%d is in the merge queue with it\n%s" % (other, stop(pr, every=True))
                     last = ("waiting its turn in the merge queue" if pr.get("isInMergeQueue") and not running
                             else "in the merge queue" if pr.get("isInMergeQueue") else "auto-merge waits for the head's checks")
                 elif seen:
@@ -337,7 +340,8 @@ def queued(repo, n, head, base, since, secs, poll, alone=False):
                 return 2, "timeout (%s)\n%s" % (last, stop(pr))
             time.sleep(poll)
     except Stopped as e:
-        return 7, "stopped by %s\n%s" % (e, stop(pr, every=True))
+        # With no read yet there is no id to stop it by: stop_pr reads it first.
+        return 7, "stopped by %s\n%s" % (e, stop(pr, every=True) if pr else stop_pr(repo, n))
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -530,8 +534,8 @@ try:
             sys.exit(1)
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
-    elif mode == "first":
-        print(first_in_queue(repo, args[0]))
+    elif mode == "other":
+        print(other_in_queue(repo, args[0], args[1]))
     elif mode == "stop":
         print(stop_pr(repo, args[0]))
     elif mode == "queued":

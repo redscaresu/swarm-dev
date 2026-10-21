@@ -711,8 +711,8 @@ per item they move. `merge` writes all its own lines, under the story's or epic'
 with `--board`, or before it knows the item): a refusal is one `merge` line saying why, and nothing
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
-or `error <why>`, then reconcile's lines. Through a merge queue (§ Merging) it is `merge ok` and then
-reconcile's lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
+or `error <why>`, then reconcile's lines. Through a merge queue (§ Merging) it is the same `merge ok`,
+`main-ci` and reconcile lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
 queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
 unconfirmed (<why>)` for a timeout (`timeout (<what it waited on>)`), an error, a PR never read as
@@ -1129,8 +1129,9 @@ six times that (3 hours), which starts again when the queue takes its group apar
 `disablePullRequestAutoMerge` and `dequeuePullRequest`), so a push made before the PR reached the
 queue never merges unreviewed. If the PR has already merged at another head, `merge` logs
 `merge merged at head <sha>, not <sha>, ...`, runs reconcile (main has changed) and exits non-zero,
-so the merged code gets a review. A merged PR logs `merge ok` and goes straight to reconcile: the
-queue already ran CI on the commit it merged, so there is no `main-ci` wait. A PR that reads merged
+so the merged code gets a review. A merged PR logs `merge ok`, and a
+`main-ci` wait follows before reconcile, as for a direct merge: the queue ran the PR's checks on its group, but the
+workflows that run only on a push to the base (a release, a deploy) run on the merge commit alone. A PR that reads merged
 before GitHub shows its merge commit is read again, up to three times. A PR that leaves the queue
 unmerged is a dequeue when GitHub logged its removal after this enqueue (one dropped within seconds
 for a conflict counts, an earlier run's does not), even while its auto-merge still reads on, which
@@ -1148,8 +1149,8 @@ hand; running `merge` again enqueues it again. A PR that never reads as queued a
 the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
 base with a queue, a direct merge would enqueue the PR with nothing watching its head. `--release`
 goes through the queue only alone, so its tag holds nothing that merged after its checks: it
-refuses while the queue holds any PR, and while it is queued, another PR first in the queue, or a
-failed read of who is first, takes it out of the queue and fails. With no
+refuses while the queue holds any other PR, and while it waits, another PR in the queue (ahead of
+it or behind), or a failed read of the queue, takes it out of the queue and fails. With no
 queue the path is the one above. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`
