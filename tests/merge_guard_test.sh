@@ -168,6 +168,17 @@ check "an agent's cd <main checkout> && git stash blocks" as agent "${W}" 2 "cd 
 check "git checkout -- f on a dirty f blocks" as lead "${W}" 2 "git checkout -- f"
 check "git checkout f on a dirty f blocks" as lead "${W}" 2 "git checkout f"
 check "cd /nope; cp a b blocks" as lead "${W}" 2 "cd /nope; cp a b"
+# The cd rule reads a command's own cd, never one in a while, until or if condition, and such a cd
+# never moves where later git commands run: the git rule still checks them where the call runs.
+# shellcheck disable=SC2016 # the $( ) is the hook's to see
+for c in "while cd /nope; do sleep 1; done" "until cd /nope; do sleep 1; done" "while ! cd /nope; do sleep 1; done" \
+         "if cd /nope; then cp a b; fi" "if ! cd /nope; then exit 1; fi" 'if cd "$(mktemp -d)"; then ls; fi'; do
+  check "${c} passes" as lead "${W}" 0 "${c}"
+done
+check "an agent's until cd /nope; do git reset --hard; done in the main checkout blocks" as agent "${P}" 2 "until cd /nope; do git reset --hard; done"
+check "an agent's if cd /nope; then :; fi; git reset --hard in the main checkout blocks" as agent "${P}" 2 "if cd /nope; then :; fi; git reset --hard"
+check "  ... but a cd before ; in its body still blocks" as lead "${W}" 2 "while true; do cd /nope; cp a b; done"
+check "read x; cd /nope; cp a b blocks" as lead "${W}" 2 "read x; cd /nope; cp a b"
 check "  ... and logs guard-blocked to the main checkout" test "$(tail -1 "${LOG}" | cut -f5)" == "guard-blocked: cd before ;"
 check "an agent's git checkout main in a story worktree passes" as agent "${W}" 0 "git checkout main"
 check "an agent's git -C <story worktree> restore x passes" as agent "${P}" 0 "git -C ${W} restore x"
@@ -207,6 +218,33 @@ for c in 'kill $!' "kill 1234" "kill -9 1234" "kill -s TERM 1234" "echo pkill"; 
   check "an agent's ${c} passes" as agent "${W}" 0 "${c}"
   check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
 done
+# An agent waits on CI with swarm.sh wait-pr, never a watch or a loop of its own; one read passes.
+for c in "gh pr checks 271 --watch" "until gh pr checks 271; do sleep 30; done" "while ! gh -R o/r pr checks 271; do sleep 30; done"; do
+  was="$(lines)"
+  check "an agent's ${c} blocks" as agent "${W}" 2 "${c}"
+  check "  ... and logs guard-blocked: gh pr checks loop" test "$(lines)/$(tail -1 "${LOG}" | cut -f5)" == "$((was + 1))/guard-blocked: gh pr checks loop"
+  check "the lead's ${c} passes" as lead "${W}" 0 "${c}"
+done
+check "an agent's gh pr checks 271 passes" as agent "${W}" 0 "gh pr checks 271"
+check "the lead's gh pr checks 271 passes" as lead "${W}" 0 "gh pr checks 271"
+check "an agent's until gh pr checks inside a for loop blocks" as agent "${W}" 2 "for i in 1 2; do until gh pr checks 271; do sleep 30; done; done"
+check "an agent's gh pr checks after a for loop inside a while loop blocks" as agent "${W}" 2 "while true; do for i in 1; do :; done; gh pr checks 271; done"
+check "an agent's gh pr checks inside a while loop's body blocks" as agent "${W}" 2 "while true; do gh pr checks 271; sleep 30; done"
+check "an agent's gh pr checks behind an if in a while loop blocks" as agent "${W}" 2 "while true; do if gh pr checks 271; then break; fi; sleep 30; done"
+check "an agent's gh pr checks in a { } group in a while loop blocks" as agent "${W}" 2 "while true; do { gh pr checks 271; }; sleep 30; done"
+check "an agent's gh pr -R o/r checks 271 --watch blocks" as agent "${W}" 2 "gh pr -R o/r checks 271 --watch"
+# shellcheck disable=SC2016 # $pr is the loop's own
+check "an agent's while read loop over PRs passes" as agent "${W}" 0 'while read pr; do gh pr checks "$pr"; done < prs.txt'
+# shellcheck disable=SC2016 # $pr is the loop's own
+check "an agent's while IFS= read -r loop over PRs passes" as agent "${W}" 0 'while IFS= read -r pr; do gh pr checks "$pr"; done < prs.txt'
+# shellcheck disable=SC2016 # $l is the loop's own
+check "an agent's single gh pr checks piped into a while loop passes" as agent "${W}" 0 'gh pr checks 271 | while read -r l; do echo "$l"; done'
+check "an agent's gh pr checks after a finished while loop passes" as agent "${W}" 0 "while false; do :; done; gh pr checks 271"
+# The fast path sends pr checks to the parser, and a bare checks word past it.
+mkdir -p "${ROOT}/markpy" && printf '#!/bin/sh\n: > "%s/py-ran"\nexit 0\n' "${ROOT}" > "${ROOT}/markpy/python3" && chmod +x "${ROOT}/markpy/python3"
+ran() { rm -f "${ROOT}/py-ran"; call "${W}" "$1" "PATH='${ROOT}/markpy':\${PATH} bash '${HOOK}'" >/dev/null; if [[ -e "${ROOT}/py-ran" ]]; then echo parser; else echo fast; fi; }
+check "make checks takes the fast path" test "$(ran "make checks")" == fast
+check "gh pr checks 271 reaches the parser" test "$(ran "gh pr checks 271")" == parser
 
 [[ "${fails}" -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
