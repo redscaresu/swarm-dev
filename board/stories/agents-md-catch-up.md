@@ -2,7 +2,7 @@
 kind: lead
 status: blocked
 epic: safer-faster-swarm
-depends_on: [tests-fast, epic-command, remove-plan-hld, fold-reports, remove-lessons, wait-pr, dataset, merge-guard-hook, env-allowlist, escalate-ladder-step-up]
+depends_on: [tests-fast, epic-command, remove-plan-hld, fold-reports, remove-lessons, wait-pr, dataset, merge-guard-hook, env-allowlist]
 touches: [AGENTS.md:steps table, useful commands, pre-PR list]
 easy: false
 estimate_lines: 40
