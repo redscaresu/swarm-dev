@@ -1273,6 +1273,33 @@ failing checks. With none listed, it says that none are failing, that the PR has
 reported, or that gh could not read them. The handover also tells the builder to put a `Models:` line in the PR body naming
 every model that worked on the story, in order.
 
+You rarely run `step-up` yourself: with the ladder set, swarm.sh runs it on each trigger as it sees
+it. A build here starts at the story's newest `story`, `escalate` or `agent` start.
+
+- `close` steps up a builder it closes with no PR (no cause, `met` or `bound`) instead of counting
+  an attempt.
+- `wait --stall` steps up a builder it finds stalled, and prints `stepped up:` in place of
+  `stalled:`.
+- `tell <slug> findings` steps up a builder on its third findings of the build or any after, and
+  does not send them: they go into the handover brief, and the tell fails, saying so. Instructions
+  that are not review findings, such as a stacked child's merge, go as `tell <slug> nudge`.
+- `watch --epic` or `--backlog` steps up a story of its own whose builder is open, once the PR has
+  gone red on two heads of the build. Every head it sees goes into `.swarm/red-heads.tsv`, and each
+  is judged again on later polls until `ci_gate` calls it red or green, even after a new push. A
+  head that was already there when the build started is not counted. The lead's bare `watch` steps
+  up nothing.
+
+Each prints `stepped up: <slug> ...`, and the conductor's brief tells it to wait on that builder
+again, not to close, retry or tell it. A close that a step-up replaced logs no close: the escalate
+line ends that build. One step-up of a story runs at a time, under `.swarm/locks/step-up-<slug>`. No
+step-up is tried at the top rung or off the ladder, so the command carries on as it would with the
+ladder empty. A step-up that is refused, or fails before it closes the builder, says why on stderr,
+logs nothing (a refusal is no sign of life), and leaves the command to carry on the same way. `watch`
+does not try it again on the same head. A step-up whose new builder does not start, after the old one
+closed, prints `step-up failed: <slug>` and stops the command that ran it: a close counts nothing
+and clears nothing. The story is then the lead's to resume (`step-up --resume`), and no trigger tries
+that build again meanwhile.
+
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
 escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's
 `ok (attempt N)`) with an escalate build, and `dash` counts only those among today's escalations. A
