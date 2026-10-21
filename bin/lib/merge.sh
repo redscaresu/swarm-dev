@@ -22,6 +22,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
 # ci_gate base <owner/repo> <sha> — as head, and every workflow run on <sha> green too, as main
 # judges them: a run that failed to start has no check run of its own.
+# ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
+# run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
 # <poll> seconds, until the merge commit <sha> is green as above (with no check run needed of its own,
 # though with no workflow expected not before <grace> seconds),
@@ -482,46 +484,113 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
   [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET}: ${why}"
 }
 
-# watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos needs the lead, print
-# one line saying which and why, and exit 0. With --epic, only that epic's stories' story/<slug> PRs
-# count, and with --backlog only those of stories with no epic; the default repos are then those
-# stories' repos: a conductor must not wake for another epic's PR on the same board. A PR needs the lead when its checks on a new head have all finished,
-# when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
-# or when its head has had no check at all for WATCH_STALL_SECS (default 600). An agent of this
-# project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
-# lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
-# poll finds that agent no longer waiting (state in .swarm/state).
-watch_prs() {
-  local epic="" stories=("${BOARD}"/stories/*.md) heads="" f
+# watch_scope [--epic <slug>|--backlog] [repo...] — set WATCH_HEADS and WATCH_NAMES for watch. With
+# --epic, only that epic's stories' story/<slug> heads count, and with --backlog only those of stories
+# with no epic (WATCH_HEADS empty: every story/* head); the default repos are then those stories'
+# repos: a conductor must not wake for another epic's PR on the same board. WATCH_NAMES holds each
+# repo as the board names it (repo_slug resolves one). Dies with no repo to watch.
+watch_scope() {
+  local epic="" stories=("${BOARD}"/stories/*.md) f
+  WATCH_HEADS=""
   if [[ "${1:-}" == --epic || "${1:-}" == --backlog ]]; then
     # The backlog's stories are those whose epic: is empty; heads stays non-empty, so no other PR counts.
     if [[ "$1" == --epic ]]; then
       epic="${2:?watch --epic needs an epic slug}"; shift 2
       [[ -f "${BOARD}/epics/${epic}.md" ]] || die "watch: no epic ${BOARD}/epics/${epic}.md"
     else shift; fi
-    stories=(); heads="-"
+    stories=(); WATCH_HEADS="-"
     for f in "${BOARD}"/stories/*.md; do
       [[ -f "${f}" && "$(basename "${f}")" != README.md && "$(fm "${f}" epic)" == "${epic}" ]] || continue
-      stories+=("${f}"); heads="${heads} story/$(basename "${f}" .md)"
+      stories+=("${f}"); WATCH_HEADS="${WATCH_HEADS} story/$(basename "${f}" .md)"
     done
   fi
-  local repos=("$@") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" repo n sha br mergeable age total pending
+  WATCH_NAMES=("$@")
   # Default: the project (when it is a repo) plus every repo a story names, so a new repo needs no edit here.
-  if [[ ${#repos[@]} -eq 0 ]]; then
+  if [[ ${#WATCH_NAMES[@]} -eq 0 ]]; then
     local own=""; [[ ${PROJECT_IS_GIT} == 1 ]] && own="$(basename "${PROJECT_DIR}")"
-    read -r -a repos <<< "${own} $( (( ${#stories[@]} )) && sed -n 's/^repo: *//p' "${stories[@]}" 2>/dev/null | sort -u | tr '\n' ' ')"
+    read -r -a WATCH_NAMES <<< "${own} $( (( ${#stories[@]} )) && sed -n 's/^repo: *//p' "${stories[@]}" 2>/dev/null | sort -u | tr '\n' ' ')"
   fi
-  # With nothing to poll, the loop below would sleep forever.
-  [[ ${#repos[@]} -gt 0 ]] || die "watch: no repo to watch${epic:+ for epic ${epic}}"
-  # Each repo as owner/name, from its own origin: repos on one board need not share an owner.
-  local full=() r src
-  for r in "${repos[@]}"; do
-    src="$(repo_dir "${r}")" || die "watch ${r}: ${src}"
-    r="$(gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner)" \
-      || die "no GitHub origin for ${src}"
-    [[ " ${full[*]-} " == *" ${r} "* ]] || full+=("${r}")
+  # With nothing to poll, watch's loop would sleep forever.
+  [[ ${#WATCH_NAMES[@]} -gt 0 ]] || die "watch: no repo to watch${epic:+ for epic ${epic}}"
+}
+
+# repo_slug <name> — the repo's owner/name, from its own origin: repos on one board need not share an
+# owner. Prints why and fails when there is no such repo or it has no GitHub origin.
+repo_slug() {
+  local src
+  src="$(repo_dir "$1")" || { echo "watch $1: ${src}"; return 1; }
+  gh repo view "$(git -C "${src}" remote get-url origin)" --json nameWithOwner -q .nameWithOwner \
+    || { echo "no GitHub origin for ${src}"; return 1; }
+}
+
+# watch_repos die|warn — set WATCH_REPOS to WATCH_NAMES resolved (repo_slug), each owner/name once: a
+# story's repo: can name the project's own repo. One that cannot be resolved stops watch (die), or for
+# next (warn) is warned of on stderr and left out.
+watch_repos() {
+  local name r
+  WATCH_REPOS=()
+  for name in "${WATCH_NAMES[@]}"; do
+    if [[ "$1" == die ]]; then
+      r="$(repo_slug "${name}")" || die "${r}"
+    elif ! r="$(repo_slug "${name}" 2>/dev/null)"; then
+      echo "warning: ${r}, so its PRs waiting for a review are unknown" >&2; continue
+    fi
+    [[ " ${WATCH_REPOS[*]-} " == *" ${r} "* ]] || WATCH_REPOS+=("${r}")
   done
-  repos=("${full[@]}")
+}
+
+# queued_line <owner/repo> <n> <sha> <branch> — "queued: <repo> #<n> <branch> green <m>m with no review
+# on <sha7>" for an open, mergeable PR (the caller's to check; an open PR has not merged) whose story an
+# agent builds (agent_kind: a lead story's PR is the lead's), with no review agent's review on <sha>
+# (review_on_head), and green by ci_gate's rule for queue_minutes or more (ci_gate age). The file
+# checks come first, so a reviewed head costs no gh call. Nothing otherwise, or when gh cannot tell.
+queued_line() {
+  local slug="${4#story/}" m
+  if [[ -f "${BOARD}/stories/${slug}.md" ]] && ! agent_kind "$(fm "${BOARD}/stories/${slug}.md" kind)"; then return 0; fi
+  if review_on_head "${slug}" "$3"; then return 0; fi
+  m="$(ci_gate age "$1" "$3" 2>/dev/null)" || return 0
+  # shellcheck disable=SC2154 # assigned in another file
+  if [[ "${m}" =~ ^[0-9]+$ ]] && (( m >= CFG_queue_minutes )); then echo "queued: $1 #$2 $4 green ${m}m with no review on ${3:0:7}"; fi
+}
+
+# queued_prs <owner/repo> <heads> — queued_line for each open, mergeable story/* PR in <heads> (empty:
+# every one), leaving out heads already sent to their conductor (watch-seen's queued <sha7>, from
+# watch or queued_sent). next's lines; warns on stderr when gh cannot list the PRs.
+queued_prs() {
+  local rows n sha br
+  rows="$(gh pr list -R "$1" --state open --json number,headRefOid,headRefName,mergeable \
+    -q '.[] | select((.headRefName | startswith("story/")) and .mergeable == "MERGEABLE") | "\(.number) \(.headRefOid) \(.headRefName)"')" \
+    || { echo "warning: gh cannot list $1's open PRs, so which of them wait for a review is unknown" >&2; return 0; }
+  while read -r n sha br; do
+    [[ -n "${n}" && ( -z "$2" || " $2 " == *" ${br} "* ) ]] || continue
+    if grep -qx "queued ${sha:0:7}" "${STATE_DIR}/watch-seen" 2>/dev/null; then continue; fi
+    queued_line "$1" "${n}" "${sha}" "${br}"
+  done <<< "${rows}"
+}
+
+# queued_sent <file> — when the lead sends a conductor queued: lines (tell note), record each line's
+# head in watch-seen as watch records one it reports (queued <sha7>, the line's own), so neither watch
+# nor next sends that head's line again.
+queued_sent() {
+  local seen="${STATE_DIR}/watch-seen" s
+  mkdir -p "${STATE_DIR}"; touch "${seen}"
+  sed -n 's/^queued: .* with no review on \([^ (]*\).*/\1/p' "$1" | while IFS= read -r s; do
+    grep -qx "queued ${s}" "${seen}" || echo "queued ${s}" >> "${seen}"
+  done
+}
+
+# watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
+# needs the lead, print one line saying which and why, and exit 0. A PR needs the lead when its checks on a new head have all finished,
+# when it conflicts with its base (a conflicted PR runs no checks, so waiting on checks never ends),
+# when its head has had no check at all for WATCH_STALL_SECS (default 600), or when its head, its
+# checks reported finished, has waited green for a review (queued_line). An agent of this
+# project whose session is waiting (herdr's blocked, for an agent herdr answers for) also needs the
+# lead, named with what it waits for. Each head is reported once, and each agent's wait once, until a
+# poll finds that agent no longer waiting (state in .swarm/state).
+watch_prs() {
+  local WATCH_HEADS WATCH_NAMES WATCH_REPOS repo
+  watch_scope "$@"; watch_repos die
+  local heads="${WATCH_HEADS}" repos=("${WATCH_REPOS[@]}") seen="${STATE_DIR}/watch-seen" stall="${WATCH_STALL_SECS:-600}" n sha br mergeable age total pending q
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   while :; do
     for repo in "${repos[@]}"; do
@@ -531,7 +600,14 @@ watch_prs() {
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
-        grep -qx "done ${sha}" "${seen}" && continue
+        if grep -qx "done ${sha}" "${seen}"; then
+          # Its finished checks are reported: once, a head left green with no review is queued.
+          if [[ "${mergeable}" == MERGEABLE ]] && ! grep -qx "queued ${sha:0:7}" "${seen}"; then
+            q="$(queued_line "${repo}" "${n}" "${sha}" "${br}")"
+            if [[ -n "${q}" ]]; then echo "queued ${sha:0:7}" >> "${seen}"; echo "${q}"; return 0; fi
+          fi
+          continue
+        fi
         read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
           -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
         if [[ "${total:-0}" -gt 0 && "${pending}" == 0 ]]; then

@@ -82,6 +82,61 @@ expect "epic planned once its dependency's stories are all in review" "plan-epic
   "item epics/b.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: b'" \
   "item stories/s2.md 'status: review' 'kind: code' 'epic: b'"
+# A later epic whose one dependency is done is planned before the gate: planning is read-only, and
+# its stories still wait for the user's approval. One not done yet leaves the gate.
+expect "a later epic whose dependency is done is planned before the gate" "plan-epic a" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item epics/b.md 'status: done'" \
+  "item stories/l.md 'status: ready' 'kind: lead'"
+expect "a later epic whose dependency is not done waits in the gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item epics/b.md 'status: active'" \
+  "item stories/s1.md 'status: review' 'kind: code' 'epic: b'"
+# shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
+if grep -qF 'its why says a `later` epic'"'"'s dependencies are done' "$(dirname "${SWARM}")/../commands/swarm.md" \
+  && grep -qF 'unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`' "$(dirname "${SWARM}")/../commands/swarm.md" \
+  && grep -qF 'run `swarm.sh plan-unasked --declined <epic>`' "$(dirname "${SWARM}")/../commands/swarm.md"; then echo "ok   swarm.md runs an unblocked epic's plan-epic unasked"
+else echo "FAIL swarm.md does not say the lead plans an unblocked epic unasked"; fails=$((fails + 1)); fi
+# shellcheck disable=SC2016 # backticks are the Markdown's, never expanded
+if grep -qF '`status: later` when $1 is `later`' "$(dirname "${SWARM}")/../commands/plan-epic.md"; then echo "ok   plan-epic.md keeps a later epic's child epics later"
+else echo "FAIL plan-epic.md's split arm makes a later epic's children active"; fails=$((fails + 1)); fi
+# A later epic that has stories, or is a split epic's later child, waits for the user to start it.
+expect "a later epic with done dependencies and a story is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: a'"
+expect "a split later epic's later child is not planned unasked" "gate" \
+  "item epics/p.md 'status: split' 'depends_on: [b]'" \
+  "item epics/c.md 'status: later' 'parent: p' 'depends_on: [b]'"
+# Once planned unasked (plan-unasked), a later epic is never offered again: the gate says what to do
+# with it. With no stories yet, plan it again if that plan stopped; with stories (they reach the board
+# only once approved), set it active. Declined (--declined), the gate says that instead.
+expect "a later epic planned unasked with no stories is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked a >/dev/null"
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F), no stories yet; run /plan-epic a again if that plan stopped)"* ]]; then echo "ok   the gate says a later epic planned unasked with no stories can be planned again"
+else echo "FAIL the gate's line for a later epic planned unasked with no stories: ${out}"; fails=$((fails + 1)); fi
+expect "a later epic planned unasked with stories is a gate" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: a'" \
+  "bash \"\${SWARM}\" plan-unasked a >/dev/null"
+if [[ "${out}" == *"later epic: a (planned unasked on $(date +%F); set it active to start it)"* ]]; then echo "ok   the gate says to set a later epic planned unasked with stories active"
+else echo "FAIL the gate's line for a later epic planned unasked with stories: ${out}"; fails=$((fails + 1)); fi
+expect "a later epic whose unasked plan was declined is offered no more" "gate" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" \
+  "bash \"\${SWARM}\" plan-unasked --declined a >/dev/null"
+if [[ "${out}" == *"later epic: a (its unasked plan was declined $(date +%F))"* ]]; then echo "ok   the gate says the later epic's unasked plan was declined"
+else echo "FAIL the gate does not say a's unasked plan was declined: ${out}"; fails=$((fails + 1)); fi
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p docs/stories && item epics/e.md 'status: active')
+got="$(cd "${dir}" && bash "${SWARM}" plan-unasked e 2>&1; echo "exit $?")"
+if [[ "${got}" == *"plan-unasked: e is not a later epic"*"exit 1" ]]; then echo "ok   plan-unasked refuses an epic that is not later"
+else echo "FAIL plan-unasked on an active epic: ${got}"; fails=$((fails + 1)); fi
+# --declined after the slug counts too; a second slug is refused.
+(cd "${dir}" && item epics/l.md 'status: later')
+got="$(cd "${dir}" && bash "${SWARM}" plan-unasked l --declined 2>&1; bash "${SWARM}" plan-unasked l e 2>&1; echo "exit $?")"
+if [[ "${got}" == "plan-unasked: l, declined on $(date +%F)"*"plan-unasked: one epic only"*"exit 1" ]]; then echo "ok   plan-unasked takes --declined after the slug and refuses a second slug"
+else echo "FAIL plan-unasked with the flag last or two slugs: ${got}"; fails=$((fails + 1)); fi
+rm -rf "${dir}"
 # A ready lead story: no agent builds it, so next reaches the plan-epic arm instead of conduct b.
 expect "a ready story of its dependency holds an epic's planning" "gate" \
   "item epics/a.md 'status: active' 'depends_on: [b]'" \
@@ -266,8 +321,11 @@ expect "ready story in a later epic waits" "gate" \
   "item stories/a.md 'status: ready' 'kind: code' 'epic: e1'"
 expect "only later stories left is a gate, not done" "gate" \
   "item stories/a.md 'status: later' 'kind: code'"
+# A later epic with no depends_on waits on nothing but the user: it is never planned unasked.
 expect "only later epics left is a gate" "gate" \
   "item epics/e1.md 'status: later'"
+expect "a later epic with an empty depends_on is a gate" "gate" \
+  "item epics/e1.md 'status: later' 'depends_on: []'"
 # A blocked story whose dependency shares no file in touches waits for nothing it uses: next names it.
 # A shared file (another function in it counts), a needs: line, or a hold by review keeps it quiet.
 # idle_case <name> <b's touches> <named: yes|no> [b's extra front-matter line]
@@ -465,6 +523,13 @@ expect_conductor "a plannable epic comes before a working conductor's wait" "pla
   "*conduct-e1*wait --until-report conduct-e1*" \
   "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'"
+expect_conductor "an unblocked later epic comes before a working conductor's wait" "plan-epic a" no e1 \
+  "*later epic a*conduct-e1*wait --until-report conduct-e1*" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" "item epics/e1.md 'status: active'" \
+  "item stories/s1.md 'status: ready' 'kind: code' 'epic: e1'"
+expect_conductor "a later epic planned unasked does not replace a working conductor's wait" "wait conduct-e1" no e1 "*" \
+  "item epics/a.md 'status: later' 'depends_on: [b]'" "item epics/e1.md 'status: active'" \
+  "item stories/s1.md 'status: ready' 'kind: code' 'epic: e1'" "bash \"\${SWARM}\" plan-unasked a >/dev/null"
 expect_conductor "a working conductor's dependent epic with a blocked story left: wait" "wait conduct-e1" no e1 "*" \
   "item epics/a.md 'status: active' 'depends_on: [e1]'" "item epics/e1.md 'status: active'" \
   "item stories/s1.md 'status: review' 'kind: code' 'epic: e1'" \

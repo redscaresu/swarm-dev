@@ -1,5 +1,5 @@
 ---
-description: Start here. Runs the whole chain from wherever it stands (HLD, epics, stories, builds), stopping only where the user must decide
+description: Start here. Runs the whole chain from wherever it stands (epics, stories, builds), stopping only where the user must decide
 ---
 
 The board is the directory `swarm.sh config board_dir` prints (`docs/` unless the project's
@@ -96,7 +96,16 @@ Repeat until a step below says stop:
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
 
-     Once both waits are running, take each `also: lead <slug> blocks <slugs>` line after the why
+     Once both waits are running, send each
+     `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why
+     to the conductor it names: write the line to a file and run `swarm.sh tell <conductor> note <file>`.
+     That PR has been green and mergeable for `queue_minutes` with no review agent on that head, and
+     the note tells the conductor to start its review now. `tell` records the head as sent, and `next`
+     leaves out a head already sent (by you, or by the conductor's own `watch`), so each line comes once.
+     `next` prints these lines after the why of any step while conductors work (a `collect` or
+     `plan-epic` too, one line per PR of every working conductor): send them the same way.
+
+     Then take each `also: lead <slug> blocks <slugs>` line after the why
      and run that lead story while the wait runs: the stories it names stay blocked until it is
      done, and no conductor builds it. Tell the user, as the gate does, that you will run it once
      they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land
@@ -165,6 +174,13 @@ Repeat until a step below says stop:
      (`conduct-backlog-<dir>-<hash>`; `next` prints the name).
    - `plan-epic <epic>`: follow `/plan-epic <epic>`. When it asks the user to approve the stories,
      that is the user's decision: stop and wait for it. On approval, finish the command and go on.
+     When its why says a `later` epic's dependencies are done (offered before the gate), run it
+     unasked: planning is read-only. First run `swarm.sh plan-unasked <epic>`, so `next` offers it no more:
+     the gate lists it as planned unasked, and with no stories yet says to run `/plan-epic <epic>`
+     again if that plan stopped (a login expired, a pane closed). If the user declines it,
+     run `swarm.sh plan-unasked --declined <epic>`, so the gate says that instead. Approving its stories stays the user's, unless the user named
+     the epic as pre-approved (in the brief or in chat). Its stories, or its child epics (kept
+     `later`), then wait in the gate until the user starts it.
      When `next`'s why names a conductor that is still working, start
      `swarm.sh wait --until-report <conductor>` in the background first, so it stays watched while
      you plan.
@@ -222,13 +238,21 @@ Repeat until a step below says stop:
      opens the co-author's pane and picks up the review and the agreement in the background; a PR
      awaiting your merge: merge it, or close it to send the story back to `ready`). An escalated
      story is never in that list: it is yours, and `next` names it first. Stop.
-   - `done`: say so and stop. If this finds no file (`find <board>/hld <board>/epics <board>/stories
+   - `done`: say so and stop. If this finds no file (`find <board>/epics <board>/stories
      -maxdepth 1 -name '*.md' ! -name README.md`), the board is empty, not finished: explain the flow in
      about five lines (an epic written with you, split into stories, built by
      agents in panes, and where it stops for you: approvals, `lead` stories, merges) and suggest
      `/epic <title>`. Otherwise suggest `/epic <title>` for the next piece of work.
 3. Go back to 1. Every step changes the board (a merge, a new file, a status), so `next` moves on;
    if it prints the same step twice in a row with nothing changed, stop and report why.
+
+Log every time a person had to step in, the moment it happens, so `swarm.sh flow` and `swarm.sh dash`
+count it:
+
+- `swarm.sh intervene lead-hand "<what you did>"` when you acted by hand where a command should
+  have (you typed into a stalled agent's pane, merged or edited something yourself).
+- `swarm.sh intervene user-caught "<what they found>"` when the user found a problem before the
+  swarm did (held stories or a slow CI run they found by asking).
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
 is `human` unless the user asks you to merge a PR, and then only with `swarm.sh merge <PR URL>`
