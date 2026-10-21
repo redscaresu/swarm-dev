@@ -71,6 +71,13 @@ board_pr() {
         && git -C "${wt}" -c core.quotepath=off ls-files --others --exclude-standard)" || die "board-pr: cannot list the changes in ${wt}"
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
       while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"
+      # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
+      # answer (commands/plan-epic.md step 0); any other board PR starts no critic.
+      f="${wt}/${rel}epics/${name#scope-}.md"
+      if [[ "${name}" == scope-?* && -f "${f}" ]] && awk '/^---$/ && ++n == 2 { exit } n == 1' "${f}" | grep -qE '^status: *split *$'; then
+        [[ "$(json "isinstance(d.get('findings'), list)" < "${PROJECT_DIR}/.swarm/${name#scope-}/split-critic.json" 2>/dev/null)" == True ]] \
+          || die "board-pr: ${name#scope-} is split, but .swarm/${name#scope-}/split-critic.json holds no {findings:[...]}; start the split critic first"
+      fi
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)"
       prs="$(gh pr list -R "${url}" --head "${b}" --state all --json state,url,headRefOid)" || die "board-pr: gh cannot list the PRs on ${b}"
       # A second open pushes more edits to the PR the first one opened. Once that PR merged or closed,

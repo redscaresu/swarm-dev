@@ -117,5 +117,13 @@ usage m8 claude-opus-5-5 0 0 0 1000000 > "${E}/s-nostamp.jsonl"
 same "with --until alone, a lead session with no timestamp counts" "$(cost --until 2026-12-31 | grep '^| lead |')" "| lead | 3 | claude-opus-5-5 | 0k | 0k | 0k | 3.0M | 60.00 |"
 same "with --since, a lead session with no timestamp is left out" "$(cost --since 2026-09-15 | grep '^| lead |')" "| lead | 2 | claude-opus-5-5 | 0k | 0k | 0k | 2.0M | 40.00 |"
 
+# /plan-epic's split critic is a critic agent named split-critic: its tokens get a row of their own.
+usage m9 claude-opus-5-5 0 0 0 1000000 > "${C}/p/s-split.jsonl"
+usage m10 claude-opus-5-5 0 0 0 2000000 > "${C}/p/s-critic.jsonl"
+printf '%s\n' $'2026-09-29\tcritic\tsplit-critic\tclaude\topus\thigh\ts-split' $'2026-09-29\tcritic\tcritic\tclaude\topus\thigh\ts-critic' >> "${R}/.swarm/agents.tsv"
+out="$(cost --since 2026-09-15)"
+check "the split critic has its own row" "| split-critic | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
+check "the plan critic keeps the critic row" "| critic | 1 | claude-opus-5-5 | 0k | 0k | 0k | 2.0M | 40.00 |"
+
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"

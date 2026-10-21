@@ -44,11 +44,13 @@ refused() {
 check "--reviewer is logged after the outcome" "fixed	codex" "$(logged --reviewer codex rev-kind o/r#93 t)"
 check "--declined before --reviewer" "declined	code-review" "$(logged --declined wrong --reviewer code-review rev-kind o/r#93 t)"
 check "--reviewer before --declined" "declined	code-review" "$(logged --reviewer code-review --declined wrong rev-kind o/r#93 t)"
-for who in skeptic critic; do
+for who in skeptic critic split-critic; do
   check "--reviewer ${who} is logged in field 6" "fixed	${who}" "$(logged --reviewer "${who}" rev-kind o/r#93 t)"
 done
 # An escaped defect is no finding review raised: its outcome is escaped, and it is never declined.
 check "--reviewer escaped is logged in field 6, with outcome escaped" "escaped	escaped" "$(logged --reviewer escaped rev-kind o/r#93 t)"
+check "an escaped split-gap (a gap the split critic missed) is logged as kind split-gap, outcome escaped" "split-gap	escaped	escaped" \
+  "$(logged --reviewer escaped split-gap o/r#95 t >/dev/null; tail -1 "${F}" | cut -f2,5,6)"
 check "--declined with --reviewer escaped is refused" "refused" "$(refused --declined nit --reviewer escaped rev-kind o/r#93 t)"
 check "--declined with no reason and --reviewer escaped says escaped is never declined" "refused|yes" \
   "$(refused --declined --reviewer escaped rev-kind o/r#93 t)|$(has "never declined" "$(sw log-finding --declined --reviewer escaped rev-kind o/r#93 t || true)")"
@@ -68,7 +70,7 @@ check "an empty --reviewer is refused" "refused" "$(refused --reviewer '' k o/r#
 check "unknown is not a --reviewer value" "refused" "$(refused --reviewer unknown k o/r#1 t)"
 check "two reviewers in one value are refused" "refused" "$(refused --reviewer 'conductor lead' k o/r#1 t)"
 check "the refusal lists the reviewers, not unknown" "yes" \
-  "$(has "must be one of: codex fallback code-review ci conductor lead skeptic critic escaped" "$(sw log-finding --reviewer unknown k o/r#1 t || true)")"
+  "$(has "must be one of: codex fallback code-review ci conductor lead skeptic critic split-critic escaped" "$(sw log-finding --reviewer unknown k o/r#1 t || true)")"
 
 
 # Unquoted text is kept whole, and a carriage return cannot split a row.

@@ -1,4 +1,5 @@
 # Cost, a flow section (flow_report.py gives its globals): tokens and estimated cost per role, in the window.
+# The split-critic agent (/plan-epic's check on a large epic's split) is a critic with a row of its own.
 import datetime, os
 from report import *
 log, agents, named = agents, [], set()
@@ -8,7 +9,7 @@ if os.path.exists(log):
         if len(f) == 7:
             named.add(f[6])
             if since <= f[0] <= until:
-                agents.append({"role": f[1], "kind": f[3], "session": f[6]})
+                agents.append({"role": "split-critic" if f[2] == "split-critic" else f[1], "kind": f[3], "session": f[6]})
 
 def started(path):
     # The first timestamp's local day, as since and agents.tsv's dates are, or "".

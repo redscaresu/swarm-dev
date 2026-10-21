@@ -80,6 +80,19 @@ out="$(yield_of "${P}")"
 check "the 7-field row counts as one decline, all all only adds it, and no escaped line" \
   "$(grep -E $'^(skeptic|all\tall|escaped)\t' <<< "${out}")" "$(printf '%s\n' $'skeptic\tall\t1\t0\t1\t100%\t0' $'skeptic\tplan-gap\t1\t0\t1\t100%\t0' $'all\tall\t9\t4\t5\t56%\t0')"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
+# A split's board PR (#9): one finding the split critic raised and the lead fixed, and one split-gap it
+# missed that a child's plan found later (escaped). The critic's counts are a reviewer of their own, and
+# the split block sets its fix beside the escaped gap; neither row changes block 1's old counts.
+printf '%s\n' $'2026-10-03\tsplit-order\to/r#9\tt\tfixed\tsplit-critic' \
+  $'2026-10-04\tsplit-gap\to/r#9\tt\tescaped\tescaped' >> "${P}/.swarm/findings.tsv"
+out="$(yield_of "${P}")"
+check "the split critic's fixed finding is a reviewers row" \
+  "$(grep -E $'^split-critic\t' <<< "${out}")" "$(printf '%s\n' $'split-critic\tall\t1\t1\t0\t0%\t0' $'split-critic\tsplit-order\t1\t1\t0\t0%\t0')"
+check "the split block sets the critic's fix beside the escaped split-gap" \
+  "$(grep -A1 -E '^split\t' <<< "${out}")" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
+check "--since 2026-10-04 keeps only the escaped split-gap in the split block" \
+  "$(yield_of "${P}" --since 2026-10-04 | grep -A1 -E '^split\t')" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t0\t0\t1')"
+cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \
   $'codex\tall\t4\t1\t3\t75%\t0' $'codex\tvacuous\t3\t1\t2\t67%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' \

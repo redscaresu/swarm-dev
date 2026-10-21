@@ -1,6 +1,6 @@
 # Reviewers, a flow section (flow_report.py gives its globals): findings raised, fixed and declined per
-# reviewer and kind, and the reworked PRs among those it raised them on, then review rounds per PR, and
-# with --epic the PRs counted.
+# reviewer and kind, and the reworked PRs among those it raised them on, then the split critic's yield
+# per split, review rounds per PR, and with --epic the PRs counted.
 import collections
 from report import *
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
@@ -30,6 +30,16 @@ print("reviewer\tkind\traised\tfixed\tdeclined\tdecline_rate\trework")
 for who in sorted({w for w, _ in c if w is not None}):
     print("\n".join(line(who, k) for k in [None] + kinds(who)))
 print("\n".join(line(None, k) for k in kinds(None) + [None]))
+# Per split (a large epic's board PR): the split critic's fixed and declined findings beside the
+# split-gaps it missed, which a child's plan or a build found later (escaped rows of kind split-gap).
+splits = {}
+for day, kind, pr, _, outcome, reviewer in finding_rows(findings, ("fixed", "declined", "escaped")):
+    if since <= day <= until and (not epic or pr_key(pr) in urls) and (reviewer == "split-critic" or kind == "split-gap" and outcome == "escaped"):
+        splits.setdefault(pr_key(pr), [pr, collections.Counter()])[1][outcome] += 1
+if splits:
+    print("\nsplit\tcritic_fixed\tcritic_declined\tescaped_split_gaps")
+    for pr, n in sorted(splits.values(), key=lambda v: v[0]):
+        print(f"{pr}\t{n['fixed']}\t{n['declined']}\t{n['escaped']}")
 rounds = collections.Counter()
 for r in rows:
     if since <= r["date"] <= until:

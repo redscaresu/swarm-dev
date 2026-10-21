@@ -287,6 +287,26 @@ rm "${ROOT}/wt-add.fail"
 reset_log; bpr start ../proj
 refused "a name with .." "not a name" "${before}"
 
+# --- /plan-epic's large-epic path: the board PR that splits big (scope-big, big at status: split) opens
+# only once the split critic wrote .swarm/big/split-critic.json; a medium epic's board PR needs none.
+rm -f "${ROOT}/prs"; bpr start scope-big; SB="${ROOT}/proj-wt/_board-scope-big/board/epics"; mkdir -p "${SB}"
+printf -- '---\nstatus: split\ndepends_on: []\n---\n\n# big\n' > "${SB}/big.md"
+printf -- '---\nstatus: active\nparent: big\ndepends_on: []\n---\n\n# big-a\n' > "${SB}/big-a.md"
+before="$(snap)"; reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
+refused "a split's board PR with no split-critic.json" "start the split critic first" "${before}"
+check "a split's board PR with no split-critic.json: no gh call" test ! -s "${ROOT}/gh.log"
+mkdir -p "${P}/.swarm/big"; echo '{"verdict": "fine"}' > "${P}/.swarm/big/split-critic.json"
+reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
+refused "a split's board PR whose split-critic.json has no findings list" "start the split critic first" "${before}"
+echo '{"findings": [{"kind": "split-gap", "why": "w", "fix": "f"}]}' > "${P}/.swarm/big/split-critic.json"
+reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
+is "a split's board PR opens once the split critic answered" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
+bpr start scope-med; mkdir -p "${ROOT}/proj-wt/_board-scope-med/board/epics"
+printf -- '---\nstatus: active\n---\n\n# med\n' > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
+echo story > "${ROOT}/proj-wt/_board-scope-med/board/stories/med-a.md"
+reset_log; bpr open scope-med "Plan med" "${ROOT}/body.md"
+is "a medium epic's board PR opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
+
 # --- board_dir = .: the whole repo is the board, so open takes any file.
 printf 'board_dir = .\n' > "${P}/.claude/swarm/config"
 bpr start y; echo changed > "${ROOT}/proj-wt/_board-y/bin/tool"
