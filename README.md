@@ -35,6 +35,7 @@ the run stops whenever a decision is yours.
    for the one before it to merge ([details](docs/reference.md#merging)). The hook also refuses a `cd` followed by `;`, a
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
    `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
+   An agent that herdr brings back after a restart keeps these guards.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
@@ -44,7 +45,7 @@ anywhere and the next `/swarm-dev:swarm` picks up where it left off.
 ## Requirements
 
 - [Claude Code](https://claude.com/claude-code) 2.1.145 or later (2.1.269 or later with `goal` on)
-- [herdr](https://herdr.dev), the terminal multiplexer every agent runs in
+- [herdr](https://herdr.dev) 0.9.2 or later, the terminal multiplexer every agent runs in
 - the [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), both logged in
 - `git`, `python3` and `bash`
 

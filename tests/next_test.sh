@@ -266,6 +266,7 @@ HOLD_BIN="$(mktemp -d)"
 cat > "${HOLD_BIN}/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;   # start_agent's require_herdr_version
   "agent list") echo '{"result":{"agents":[{"name":"s1","agent_status":"idle","pane_id":"w:p1"}]}}' ;;
   "tab list") echo '{"result":{"tabs":[]}}' ;;
 esac
@@ -1056,7 +1057,8 @@ rm -rf "${dir}"
 dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 (cd "${dir}" && git init -q && mkdir -p bin && item stories/s.md 'status: ready' 'kind: code' 'epic: e')
-printf '#!/bin/sh\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
+# shellcheck disable=SC2016 # the stub's own $1
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "herdr 0.9.5"; exit 0; }\necho %s\n' "'{\"result\":{\"workspaces\":[{\"workspace_id\":\"w\",\"label\":\"e\"}],\"root_pane\":{\"pane_id\":\"w:1\"},\"agent\":{\"agent_status\":\"working\"},\"agents\":[],\"panes\":[]}}'" > "${dir}/bin/herdr"
 chmod +x "${dir}/bin/herdr"
 conduct() { (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" conduct e 2>&1); }
 es="${dir}/.swarm/board-state/epics"

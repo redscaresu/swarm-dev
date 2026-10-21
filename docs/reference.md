@@ -1262,6 +1262,39 @@ Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
+An agent's guards come from the flags it starts with: `--disallowedTools` (no `gh pr merge`, and for
+the fallback reviewer no file tools, commit or push) and `--settings`, which sets `SWARM_AGENT`.
+When herdr restarts, it reopens each agent's pane and resumes the session. On its own it would run
+`claude --resume <id>` with none of those flags, in the pane's whole environment. So as soon as herdr
+has started a Claude agent, before its brief, swarm.sh gives herdr the command to resume it with
+(`herdr pane report-agent --source swarm`, with the session id), so a pane whose brief is never
+taken up has it too: `python3 -I <wrapper> claude --resume <id>` and
+every flag the agent started with. The wrapper, and the command it starts with, are the session's
+own, under `~/.claude/swarm-dev/resume/` (`$CLAUDE_CONFIG_DIR/swarm-dev/resume/` when that is set),
+so the project's path is never in the command and a later agent of the same name never changes
+them. The wrapper keeps only the allowlist the agent started with (§ Building, **The agents'
+environment**) and its story's `env:` names, with the restored pane's own values, so no value is
+written to disk or put on a command line. It is Python, not bash, so a `BASH_ENV` or an exported
+shell function in that pane never runs. It also makes the session's own `ZDOTDIR` afresh, as the
+first start makes the agent's, so nothing written there since runs in the restored agent's shells,
+and restoring one session never touches another's. herdr refuses a resume command over 64 arguments or 8 KiB
+(joined), or with an apostrophe or a control character in it, so swarm.sh checks those before a pane
+opens and stops the start, saying which. It also stops on a herdr older than 0.9.2, which takes the
+command and drops it. If herdr refuses the report itself, the agent has not had its brief yet, so
+swarm.sh closes the pane and fails the start.
+
+The plugin's hooks report an agent's state to herdr: working on each prompt and after each tool
+runs (so an answered permission prompt no longer reads as blocked), idle when a turn stops or ends
+on an API error, blocked on a permission prompt. Each report carries the resume command again. Only
+the pane's own session reports, the one the command resumes. A `claude -p` that an agent runs from
+Bash inherits the agent's variables, but its session is a different one, so it reports nothing and
+never changes the command. The agent's own `/clear` moves the command to the new session; a nested
+session's moves nothing. Each report has a
+`--seq` of the time the event happened, taken before herdr is called, and herdr keeps the newest,
+whatever order the calls arrive in. When you quit an agent's session yourself, the hooks hand the
+pane back to herdr (`release-agent`). A session that ends because herdr restarts keeps its resume
+command. Each hook calls herdr in the background, so a herdr that hangs never holds a prompt.
+
 **Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang. A merge queue
 tests each PR on top of the ones ahead of it, so there every reviewed PR can be enqueued at once.
