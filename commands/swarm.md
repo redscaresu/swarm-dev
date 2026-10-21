@@ -86,7 +86,16 @@ Repeat until a step below says stop:
      time: a new one stops the earlier one, which then ends with nothing printed; that needs
      nothing from you. A new run first reports anything that landed while none was running.
 
-     Once both waits are running, take each `also: lead <slug> blocks <slugs>` line after the why
+     Once both waits are running, send each
+     `queued: <repo> #<n> <branch> green <m>m with no review on <sha> (<conductor>)` line after the why
+     to the conductor it names: write the line to a file and run `swarm.sh tell <conductor> note <file>`.
+     That PR has been green and mergeable for `queue_minutes` with no review agent on that head, and
+     the note tells the conductor to start its review now. `tell` records the head as sent, and `next`
+     leaves out a head already sent (by you, or by the conductor's own `watch`), so each line comes once.
+     `next` prints these lines after the why of any step while conductors work (a `collect` or
+     `plan-epic` too, one line per PR of every working conductor): send them the same way.
+
+     Then take each `also: lead <slug> blocks <slugs>` line after the why
      and run that lead story while the wait runs: the stories it names stay blocked until it is
      done, and no conductor builds it. Tell the user, as the gate does, that you will run it once
      they say go, with its **You:** steps. Once it is done, run `swarm.sh finish <slug>` and land

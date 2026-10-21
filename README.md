@@ -22,8 +22,9 @@ the run stops whenever a decision is yours.
    nothing plans it until you agree it.
 2. **Plan.** Once you agree the epic, planning agents (`/plan-epic`) split it into stories of one
    PR each, and skeptic agents try to break the plan. You approve it.
-3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent,
-   and the builder fixes what it finds.
+3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent
+   as soon as it is green, and the builder fixes what it finds. A green PR left without a review
+   for 30 minutes (`queue_minutes`) is flagged to the lead, who passes it to the conductor.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
    `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude

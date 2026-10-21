@@ -43,10 +43,11 @@ stop_rule() {
 review_rule() {
   local sw="${SWARM_HOME}/bin/swarm.sh"
   cat <<EOF
-A story is reviewed only when its latest head has passed a review agent's review. As soon as a
-story's PR is green, start one with \`${sw} review-agent <slug> <PR URL>\`.
-Do not wait for other PRs or reviews: start one for each green PR, so PRs that land together are
-reviewed at once. It returns at once. It refuses when the story's worktree is not at the PR's head,
+A story is reviewed only when its latest head has passed a review agent's review. The moment a
+story's PR head is green and mergeable, start one with \`${sw} review-agent <slug> <PR URL>\`.
+Never wait for other PRs or reviews to gather first: run one review agent for every green PR at
+once, with no cap below the number of green PRs. When \`swarm.sh watch\` prints, or the lead sends
+you, \`queued: <repo> #<n> <branch> green <m>m with no review on <sha>\`, that PR has waited: start its review agent now. It returns at once. It refuses when the story's worktree is not at the PR's head,
 or has uncommitted changes: wait for the builder, then start it again. The review agent, review-<slug>, is read-only and runs in
 the story's worktree: it runs codex-review with the story's slug and, when the PR changes code (not
 only docs, board files or a dependency bump), \`/code-review <PR>\`, judges only the story's touches
@@ -56,7 +57,7 @@ naming the commit it reviewed, its findings, and an out-of-scope section. Wait o
 agent (\`swarm.sh close review-<slug>\`) whatever it found. A file with a \`head moved:\` line, or
 with no \`## Findings\` section, is not a pass: start the review again. When the wait returns with
 no findings file (it timed out, or the agent waits on a prompt, is gone or needs a login), close the
-review agent, never answering its prompt, and start the review again in a later round, or read the
+review agent, never answering its prompt, and start the review again, or read the
 diff yourself as for a skipped codex. Send the real findings to the story's
 builder with \`${sw} tell <slug> findings <file>\` (a file holding the findings and what to
 decline). Log each item of the out-of-scope section with
@@ -74,7 +75,9 @@ as below: nit for a nit or an edge case, out-of-scope or wrong where they apply.
 Before a story merges or goes to review, compare the file's \`head:\` line with the PR's head
 (\`gh pr view <PR URL> --json headRefOid --jq .headRefOid\`): if they differ, the latest head has
 not passed, so review the new head. Never merge a story, and never run \`swarm.sh close <slug>\` on its builder, before
-its latest head has passed.
+its latest head has passed. Act on each review the moment it finishes: once a PR's latest head has
+passed, merge it (or hand it over, as below) at once, and never hold a finished review result back
+while other reviews run.
 
 $(finding_rule)
 EOF
@@ -475,7 +478,8 @@ build_story() {
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
-# started (kept aside until then), so the conductor reads only this head's.
+# started (kept aside until then), so the conductor reads only this head's. Once started, the head
+# goes in .swarm/reviews/<slug>.head, which review_on_head reads.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
@@ -516,6 +520,24 @@ review_agent() {
     die "review-agent: review-${slug} did not start; ${out} is as it was"
   fi
   rm -f "${out}.prev"
+  echo "${head}" > "${out%.md}.head"
+}
+
+# review_pass <slug> <sha> — true when <slug>'s findings file is a pass on <sha>: its head: line is
+# <sha>, and it has a ## Findings section and no head moved: line (review_rule's test).
+review_pass() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  grep -qx "head: $2" "${f}" 2>/dev/null && grep -q '^## Findings' "${f}" && ! grep -q '^head moved:' "${f}"
+}
+
+# review_on_head <slug> <sha> — true while <sha> has a review agent's review, for watch and next
+# (queued_line): its findings file for <sha> is a pass, or, with no file for <sha> yet, a review agent
+# started on it (.swarm/reviews/<slug>.head) and review-<slug> is still open in a pane this project
+# opened. One that crashed, was closed or tidied, or that herdr cannot list, is no review.
+review_on_head() {
+  local f="${PROJECT_DIR}/.swarm/reviews/$1.md"
+  if grep -qx "head: $2" "${f}" 2>/dev/null; then review_pass "$1" "$2"; return; fi
+  [[ "$(cat "${f%.md}.head" 2>/dev/null)" == "$2" && -n "$(agent_field "$(agent_name "review-$1")" pane_id)" ]]
 }
 
 # review_stack_note <slug> <base> — for a story stacked on parents (stacked_parents), that their
