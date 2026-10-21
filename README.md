@@ -87,6 +87,8 @@ The other commands are tools the lead runs; they are listed in
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (a `later` epic whose dependencies are done gets its stories planned first, for you to approve) |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
+| an agent on `usage-limit` | nothing: `wait` chose "Wait here, then continue automatically", and it carries on when the limit resets |
+| an agent stuck (`stuck: api error` after three resumes, or `stuck: no output` for `stall_minutes`) | read its pane (`herdr agent read <agent>`), then type into it or close it |
 
 ## Cost and safety
 
@@ -98,7 +100,9 @@ section shows how long CI takes per push, how often it goes red and how often it
 `incidents` section counts, per day, the waits that timed out, the logins that expired, the
 builders that stopped with no PR, the board pulls that an uncommitted edit stopped, and each time
 a person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, which the lead
-logs; dash shows the 7-day count beside the speedometer). Its
+logs; dash shows the 7-day count beside the speedometer). `ci_health` also gives each repo's median
+CI time per PR and its slowest job, beside the same figures for the window before; dash shows this
+week's against last week's on one line. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
 money waits on you, so only those count. Its `model_fit` section sets cost against results for each
@@ -118,7 +122,11 @@ environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). 
 of their own, such as planners and review agents, never get one, so log in through `claude`,
 `codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
-details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
+details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs). With
+`escalate_ladder = sonnet,opus,fable` in the config (it ships off), `swarm.sh step-up <slug> <trigger>`
+hands a build that is struggling to the next model up, on the same branch, without counting a failed
+attempt. swarm.sh runs it itself when a builder stops with no PR, stalls, gets a third round of
+findings or has CI fail on two heads ([reference.md](docs/reference.md#the-escalation-ladder)).
 
 ## More
 
