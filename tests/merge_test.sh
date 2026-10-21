@@ -277,7 +277,7 @@ echo "lead's edit" >> "${FM}"; echo OPEN > "${FX}/state"; item s "status: review
 check "red main again: fix-main printed, the story already there kept" bash -c "grep -q '^fix-main:' '${ROOT}/out' && grep -qx \"lead's edit\" '${FM}'"
 # A later green merge into the same repo and base clears the red main and retires its unstarted fix.
 echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; checks "${FX}/${M}.checks" "$(run test completed success)"; merge "${URL}"
-check "a green merge after a red main of the same repo and base: main-green" logged "^main-green ${M} o/r main$"
+check "a green merge after a red main of the same repo and base: main-green" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 check "a green merge after a red main: its unstarted fix-main story is retired" \
   bash -c "[ ! -e '${FM}' ] && grep -q '^retired: fix-main-${M:0:7}' '${ROOT}/out'"
 # red_main <key> [checks] — a main-red for <key> (repo and base) logged before this merge, its
@@ -296,23 +296,23 @@ check "a green merge with no run of the check that went red: no main-green, the 
 fresh; red_main "o/r main" "oldjob (failure)"
 echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"; merge "${URL}"
 check "a fix that renames the failed job: a green merge with every required check passed clears the red main" \
-  logged "^main-green ${M} o/r main$"
+  logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 # A base whose CI posts only commit statuses: no check run is needed, as for main's own CI.
 fresh; red_main "o/r main" "lint (failure)"; checks "${FX}/${M}.checks"
 statuses "${FX}/${M}.status" '{"context":"lint","state":"success","target_url":"https://ci/1"}'; merge "${URL}"
-check "a base whose CI posts only statuses: a green merge clears its red main" logged "^main-green ${M} o/r main$"
+check "a base whose CI posts only statuses: a green merge clears its red main" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 # main-red keeps each red check's name and conclusion, with nothing after it however empty the
 # status's target_url, so the green merge's passing lint matches it.
 fresh; statuses "${FX}/${M}.status" '{"context":"lint","state":"failure","target_url":""}'; merge "${URL}"
 check "a red status with an empty target_url: main-red keeps its name with nothing after it" logged "^main-red ${M} o/r main lint (failure)$"
 echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"
 statuses "${FX}/${M}.status" '{"context":"lint","state":"success","target_url":""}'; merge "${URL}"
-check "a red status with an empty target_url: a later green merge clears it" logged "^main-green ${M} o/r main$"
+check "a red status with an empty target_url: a later green merge clears it" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 # A matrix job's name holds parentheses of its own: only the trailing conclusion is cut.
 fresh; checks "${FX}/${M}.checks" "$(run 'test (linux)' completed failure)"; merge "${URL}"
 check "a matrix job's red: main-red keeps its whole name" logged "^main-red ${M} o/r main test (linux) (failure)$"
 echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; checks "${FX}/${M}.checks" "$(run 'test (linux)' completed success)"; merge "${URL}"
-check "a matrix job's red: a later green merge clears it" logged "^main-green ${M} o/r main$"
+check "a matrix job's red: a later green merge clears it" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 # Six matrix jobs red: main-red keeps every whole name, past the 300 characters shown, so the green
 # merge that passes all six clears it.
 mx=(); for i in 1 2 3 4 5 6; do mx+=("test (ubuntu-22.04, python-3.1${i}, shard-${i}-of-6)"); done
@@ -320,7 +320,7 @@ fresh; red=(); for n in "${mx[@]}"; do red+=("$(run "${n}" completed failure)");
 check "six matrix jobs red: main-red keeps all six whole names" logged "${mx[5]} (failure)$"
 echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"
 green=(); for n in "${mx[@]}"; do green+=("$(run "${n}" completed success)"); done; checks "${FX}/${M}.checks" "${green[@]}"; merge "${URL}"
-check "six matrix jobs red: a green merge passing all six clears it" logged "^main-green ${M} o/r main$"
+check "six matrix jobs red: a green merge passing all six clears it" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 # A check name the code under test chose: merge prints it without control characters, cut, and the
 # FAIL lines under a line that calls them CI output.
 fresh; checks "${FX}/${M}.checks" "$(run "e\\u0001vil$(printf '%0400d' 0)" completed failure)"; merge "${URL}"
@@ -348,7 +348,7 @@ check "a fix-main story that cannot be written: the older fix kept, no main-red 
     && ! grep -q retired '${P}/.swarm/events.tsv' && grep -qF 'main red, and no fix-main story: cannot write' '${ROOT}/out'"
 # Keys ignore the repo's case, and match as text: o/r.x is not o/rxx.
 fresh; red_main "o/r main"; item s "status: review" "prs: https://github.com/O/R/pull/7"; merge "https://github.com/O/R/pull/7"
-check "a green merge from O/R clears o/r's red main" logged "^main-green ${M} o/r main$"
+check "a green merge from O/R clears o/r's red main" logged "^main-green ${M} o/r main [0-9a-f]\{40\}$"
 fresh; red_main "o/rxx main"; item s "status: review" "prs: https://github.com/o/r.x/pull/7"; merge "https://github.com/o/r.x/pull/7"
 check "a green merge into o/r.x leaves o/rxx's red main" bash -c "! grep -q main-green '${P}/.swarm/events.tsv' && [ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ]"
 # A second red merge before the fix: the older unstarted fix-main story gives way to the newer.
@@ -367,7 +367,7 @@ check "a base whose checks are green but a workflow run failed: reconcile keeps 
 wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
 check "a base gone green another way: reconcile logs main-green and retires the fix" \
-  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main$"
+  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main [0-9a-f]\{40\}$"
 # Clearing a red main that fails (its fix-main story cannot be removed) never fails reconcile.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
 echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"; wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
@@ -395,13 +395,27 @@ check "two red merges racing on one key: both print fix-main:, and only the stor
   bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] \
     && [ -n '${last}' ] && [ -e '${P}/docs/stories/fix-main-${last}.md' ]"
 rm -rf "${ROOT}/fxb"
+# Three in a row: each run's lock is its own, freed once, so the third never runs beside the second.
+fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; item t "status: review" "prs: ${URL2}"; item u "status: review" "prs: https://github.com/o/r/pull/9"
+for x in b:${M3} c:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee; do d="${ROOT}/fx${x%%:*}"; o="${x#*:}"; rm -rf "${d}"; cp -R "${FX}" "${d}"; echo "${o}" > "${d}/oid"
+  cp "${FX}/${M}.checks" "${d}/${o}.checks"; statuses "${d}/${o}.status"; wfruns "${d}/${o}.runs" "$(run ci completed success "${o}")"; done
+mkdir "${P}/.swarm/fix-main.o-r-main.lock"
+racer "${FX}" "${URL}" "${ROOT}/outa"; pa=$!; racer "${ROOT}/fxb" "${URL2}" "${ROOT}/outb"; pb=$!; racer "${ROOT}/fxc" https://github.com/o/r/pull/9 "${ROOT}/outc"; pc=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ "$(grep -c 'check-runs' "${ROOT}/gh.log")" -ge 3 ] && break; sleep 1; done; sleep 2
+rmdir "${P}/.swarm/fix-main.o-r-main.lock"; wait "${pa}" "${pb}" "${pc}" || true
+last="$(awk -F'\t' '$2 == "main-red" { s = $3 } END { print substr(s, 1, 7) }' "${P}/.swarm/events.tsv")"
+check "three red merges in a row on one key: all print fix-main:, one story is left, the one logged last, and no lock" \
+  bash -c "grep -q '^fix-main:' '${ROOT}/outa' && grep -q '^fix-main:' '${ROOT}/outb' && grep -q '^fix-main:' '${ROOT}/outc' \
+    && [ \"\$(ls '${P}/docs/stories' | grep -c '^fix-main-')\" = 1 ] && [ -n '${last}' ] && [ -e '${P}/docs/stories/fix-main-${last}.md' ] \
+    && [ ! -e '${P}/.swarm/fix-main.o-r-main.lock' ]"
+rm -rf "${ROOT}/fxb" "${ROOT}/fxc"
 # A green fix (H2) under a board-only head (H3, a finish or a merge --board): judged by the fix.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"; H3=3333333333333333333333333333333333333333
 echo "${H3}" > "${FX}/commit.main"; printf '{"files":[{"filename":"docs/stories/x.md"}],"parents":[{"sha":"%s"}]}' "${H2}" > "${FX}/commit.${H3}"
 checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"; wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
 check "a green fix followed by a board-only head: reconcile clears the red main and retires the fix" \
-  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H3} o/r main$"
+  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H3} o/r main [0-9a-f]\{40\}$"
 # Clearing a red main that fails (its fix-main story cannot be removed) still lets reconcile run.
 fresh; red_main "o/r main"; chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
 check "a red main whose clearing fails: merge says so and reconcile still runs" \
@@ -997,6 +1011,71 @@ older="$(
   find "${BOARD}/stories" -type f -exec basename {} \; | sort | paste -sd' ' -
 )"
 is "retire_fixes retires only the fix-main stories logged before its own" "fix-main-ccccccc.md fix-main-eeeeeee.md" "${older}"
+# unit <dir> — a board in <dir> for merge.sh's functions alone, its gh-free helpers stubbed (sourced
+# in the caller's subshell).
+# shellcheck disable=SC2034 # merge.sh's functions read these
+unit() {
+  PROJECT_DIR="$1"; BOARD="$1/board"; EVENTS_LOG="$1/events.tsv"; BOARD_IN_REPO=0; SWARM_HOME="${REPO}"; MERGE_TARGET=s
+  rm -rf "$1"; mkdir -p "${BOARD}/stories"
+}
+red_at() { printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\to/r main test (failure)\n' "$1" >> "${EVENTS_LOG}"; : > "${BOARD}/stories/fix-main-${1:0:7}.md"; }
+A40=$(printf 'a%.0s' $(seq 1 40)); B40=$(printf 'b%.0s' $(seq 1 40)); G40=$(printf 'c%.0s' $(seq 1 40))
+# Codex's sequence: clear_red_main reads CI for red A, and meanwhile fix_main logs red B. The green
+# clears nothing, so B and its fix stay.
+# shellcheck disable=SC2034 # merge.sh's functions read these
+cx="$(
+  unit "${ROOT}/cx"; red_at "${A40}"; : > "${BOARD}/stories/fix-main-${B40:0:7}.md"
+  # shellcheck source=/dev/null
+  . "${REPO}/bin/lib/merge.sh"
+  # shellcheck disable=SC2317,SC2329
+  fm() { echo ready; }
+  # shellcheck disable=SC2317,SC2329
+  one_off_started() { return 1; }
+  # shellcheck disable=SC2317,SC2329
+  delete_item() { rm "$1"; }
+  # shellcheck disable=SC2317,SC2329
+  record_event() { printf 'T\t%s\t%s\t-\t%s\n' "$1" "$2" "$3" >> "${EVENTS_LOG}"; }
+  # shellcheck disable=SC2317,SC2329
+  state_lock() { mkdir "$1"; }
+  # shellcheck disable=SC2317,SC2329
+  within() { printf '2026-10-18T10:00:01Z\tmain-red\t%s\t-\to/r main test (failure)\n' "${B40}" >> "${EVENTS_LOG}"; }
+  clear_red_main "o/r main" "${G40}" "green" > /dev/null
+  echo "$(red_mains | cut -d' ' -f1)|$(cut -f2 "${EVENTS_LOG}" | paste -sd, -)|$([ -e "${BOARD}/stories/fix-main-${B40:0:7}.md" ] && echo kept)"
+)"
+is "a red main logged while clear_red_main reads CI: no main-green, and the newer red and its fix stay" "${B40}|main-red,main-red|kept" "${cx}"
+# main-green clears the red it names alone; one naming no red (an older record) clears its key.
+# shellcheck disable=SC2034 # merge.sh's functions read these
+rm_="$(
+  unit "${ROOT}/rm"; red_at "${A40}"; red_at "${B40}"
+  # shellcheck source=/dev/null
+  . "${REPO}/bin/lib/merge.sh"
+  printf '2026-10-18T11:00:00Z\tmain-green\t%s\t-\to/r main %s\n' "${G40}" "${A40}" >> "${EVENTS_LOG}"; one="$(red_mains | cut -d' ' -f1)"
+  printf '2026-10-18T11:00:00Z\tmain-green\t%s\t-\to/r main %s\n' "${G40}" "${B40}" >> "${EVENTS_LOG}"; two="$(red_mains | cut -d' ' -f1)"
+  red_at "${A40}"; printf '2026-10-18T11:00:00Z\tmain-green\t%s\t-\to/r main\n' "${G40}" >> "${EVENTS_LOG}"
+  echo "${one}|${two}|$(red_mains | cut -d' ' -f1)"
+)"
+is "red_mains: a main-green naming an older red leaves the newer one; naming it, or no red, clears it" "${B40}||" "${rm_}"
+# fix_main's lock is freed once, inside it: the next run's lock, taken as this run's subshell ends,
+# stays. A .swarm/ it cannot make stops it before it writes anything.
+# shellcheck disable=SC2034 # merge.sh's functions read these
+tl="$(
+  unit "${ROOT}/tl"
+  # shellcheck source=/dev/null
+  . "${REPO}/bin/lib/merge.sh"
+  # shellcheck disable=SC2317,SC2329
+  record_event() { :; }
+  # shellcheck disable=SC2317,SC2329
+  retire_fixes() { :; }
+  # shellcheck disable=SC2317,SC2329
+  state_lock() { mkdir "$1"; }
+  lock="$(fix_lock "o/r main")"
+  ( fix_main o/r "${A40}" main "e2e (failure)" > /dev/null; mkdir "${lock}" )
+  kept="$([ -d "${lock}" ] && echo kept || echo gone)"; rmdir "${lock}" 2>/dev/null || true
+  rm -rf "${PROJECT_DIR}/.swarm"; : > "${PROJECT_DIR}/.swarm"; rm -f "${BOARD}"/stories/*
+  frc=0; ( fix_main o/r "${B40}" main "e2e (failure)" > /dev/null ) || frc=$?
+  echo "${kept}|${frc}|$(find "${BOARD}/stories" -type f | wc -l | tr -d ' ')"
+)"
+is "fix_main frees its own lock once, and a .swarm/ it cannot make stops it unwritten" "kept|1|0" "${tl}"
 is "a printed merge stands over a signal's status, and nothing else does" "0|0|143|7" \
   "$(qrc 143 "merged ${M}")|$(qrc 3 "merged ")|$(qrc 143 "merged at head 2222222, not 1111111, the head that was checked (merge commit none)")|$(qrc 7 "stopped by SIGTERM")"
 # A TERM while it waits on the queue, or during the enqueue: auto-merge off and out of the queue

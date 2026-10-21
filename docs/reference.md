@@ -726,7 +726,8 @@ with `--board`, or before it knows the item): a refusal is one `merge` line sayi
 else; a PR that `gh pr merge` ran on but that never reads as merged is one `merge unconfirmed
 (<state>)` line; otherwise `merge ok`, then `main-ci` with `ok`, `red <checks>`, `timeout (<what it waited on>)`
 or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its repo, base and checks;
-an ok one that clears a red main of that repo and base by `main-green`, and a `fix-main` line,
+an ok one that clears a red main of that repo and base by `main-green`, outcome its repo, base and
+the red commit it clears, and a `fix-main` line,
 outcome `retired: <why>`, for each unstarted fix-main story that retires), then reconcile's lines. Through a merge queue (§ Merging) it is the same `merge ok`,
 `main-ci` and reconcile lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
 queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge

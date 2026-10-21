@@ -34,8 +34,11 @@ stop_rule() {
     printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
     if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when $(base_stop)."; fi
   elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
-  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when $(base_stop)."; fi
+  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running $(fix_running), or when $(base_stop)."; fi
 }
+# fix_running — a merging epic conductor's fix-main story has no epic, yet it is the conductor's own to
+# review and merge: until it merges, the epic's stop and report rules count it as running.
+fix_running() { printf '%s' "(a fix-main story you started counts as running until its PR merges)"; }
 # base_stop — the broken base a merging conductor stops on: a red one has a fix-main story to build.
 base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-main:\` line"; }
 # The review every story's PR passes before its builder is closed. The builder keeps its context
@@ -175,7 +178,7 @@ bare \`swarm.sh close <slug>\`, which counts nothing for a blocked story and kee
 merge = human.
 $(held_ready_rule) After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
-story ${scope} that is yours to start is ready and none is running, or $(base_stop).${epic_end}
+story ${scope} that is yours to start is ready and none is running $(fix_running), or $(base_stop).${epic_end}
 EOF
   fi
 }
