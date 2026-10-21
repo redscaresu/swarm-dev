@@ -1216,13 +1216,15 @@ the story is not `ready`, not of a kind an agent builds, held for review as a st
 build is done, as `close` also judges), when gh cannot list those PRs, when its `env:` names a
 variable not set here, or when the build's role is one nothing starts now (a past `verify` build).
 
-The old builder is closed before the new one starts, since the new one takes its name. If the start
-fails, step-up stops at the step that failed, with that step's message, and logs nothing as an
-escalation. If start_agent had already put the new builder in agents.tsv when it failed (on the
-brief's delivery), a builder still running in its pane has started: the step-up stands and step-up
-says to look at it. One that is gone loses that line, so the rung is on record once, when it starts. The worktree, branch and brief are kept, and `swarm.sh step-up --resume <slug>` starts
-the rung once the cause is fixed. A resume that starts logs the step-up and sends the `/goal` as
-step-up would have.
+The old builder is closed first, since the new one takes its name, and only then is the handover
+brief written, so it holds everything the old builder did. If closing it left a git step unfinished
+in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in progress), step-up
+stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
+step that failed, with that step's message, and logs nothing as an escalation. A new builder that
+never took up its brief has not started: it is closed and loses its agents.tsv line, so the rung is
+on record once, when it starts. The worktree, branch and step-up marker are kept, and
+`swarm.sh step-up --resume <slug>` writes the brief afresh and starts the rung once the cause is
+fixed. A resume that starts logs the step-up and sends the `/goal` as step-up would have.
 
 The new builder's brief is the usual one with a handover after it. The handover says why it took
 over, and gives the story as the board holds it, since the last builder may have deleted the file
@@ -1237,7 +1239,8 @@ diff stays the one from the merge-base, with the parent's commits in it, and the
 merge the base in and resolve it first. Then come the review agent's findings from
 `.swarm/reviews/<slug>.md`, pasted only when their `head:` line is the branch's HEAD. Findings of an
 older head may be fixed already, so the handover only names the file. Last come the open PR's
-failing checks. The handover also tells the builder to put a `Models:` line in the PR body naming
+failing checks. With none listed, it says that none are failing, that the PR has no checks
+reported, or that gh could not read them. The handover also tells the builder to put a `Models:` line in the PR body naming
 every model that worked on the story, in order.
 
 A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the

@@ -9,9 +9,11 @@
 # claude (tests/claude_stub.sh) are stubs on PATH: herdr records each call, and fails tab create
 # while ${ROOT}/tabfail exists, agent start while ${ROOT}/startfail does and agent prompt (the brief,
 # after the agent is recorded) while ${ROOT}/promptfail does; while ${ROOT}/startghost exists an agent
-# starts but is gone at once (never listed). gh lists an open PR on
+# starts but is gone at once (never listed); a tab or pane it closes while ${ROOT}/late names a
+# worktree writes late.txt there, as a builder's last write. gh lists an open PR on
 # every branch (story/p1's its own, none once ${ROOT}/p1-closed exists; story/p2's and story/p3's
-# merged, none open), with one failing check. A list of every PR on story/<slug> (step-up's own) is
+# merged, none open), with one failing check (exit 1, as gh's is); PR #21 has no checks reported,
+# gh cannot read #22's, and #23's pass. A list of every PR on story/<slug> (step-up's own) is
 # ${ROOT}/prs-<slug>.json, else that open PR #5, and fails while ${ROOT}/ghfail exists.
 set -euo pipefail
 
@@ -41,8 +43,10 @@ case "$1 $2" in
   "tab create")   [ ! -e "$H/tabfail" ] || { echo '{"error":{"code":"tab_failed"}}' >&2; exit 1; }
                   next; echo "{\"result\":{\"root_pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
-  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"}]}}' ;;
-  "tab close")    : > "$H/agents" ;;
+  "pane run"|"pane wait-output") [ -n "$3" ] || exit 1 ;;   # herdr fails with no pane
+  "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"}]}}' ;;
+  "tab close")    : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
+  "pane close")   [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
   "agent start")  [ ! -e "$H/startfail" ] || { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
                   [ -e "$H/startghost" ] || echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
@@ -62,7 +66,10 @@ case "$1 $2 $*" in
   "pr list "*story/p[23]*"--state merged"*) echo 1 ;;
   "pr list "*story/p[23]*) ;;
   "pr list "*)  echo "https://github.com/o/proj/pull/5" ;;
-  "pr checks "*) echo "- test: https://ci/run/9" ;;
+  "pr checks "*/pull/21*) echo "no checks reported on the 'story/k1' branch" >&2; exit 1 ;;
+  "pr checks "*/pull/22*) echo "GraphQL: API rate limit exceeded" >&2; exit 1 ;;
+  "pr checks "*/pull/23*) ;;
+  "pr checks "*) echo "- test: https://ci/run/9"; exit 1 ;;
 esac
 EOF
 chmod +x "${STUB_BIN}/herdr" "${STUB_BIN}/gh"
@@ -103,7 +110,9 @@ newest() { awk -F'\t' -v n="$1" '$3 == n { l = $2 " " $5 " " $6 } END { print l 
 # shellcheck source=/dev/null
 attempts() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${BOARD}/stories/s1.md" attempts) 2>/dev/null || true; }
 
+echo "${WT}" > "${ROOT}/late"
 out="$(GIT_TRACE="${ROOT}/git.trace" run step-up s1 findings-3)" || true
+rm "${ROOT}/late" "${WT}/late.txt"
 check "step-up on a sonnet build closes its pane and starts opus as code in the same worktree" \
   "yes|yes|code opus high" \
   "$(grep -qx 'tab close w:t1' "${ROOT}/herdr.log" && echo yes)|$(grep -q -- "--cwd ${WT} " "${ROOT}/herdr.log" && echo yes)|$(newest s1)"
@@ -113,6 +122,7 @@ brief="$(cat "${P}/.swarm/briefs/s1.md")"
 check "the handover brief holds the story, the diff (cut to 400 lines), the findings and the failing check" "yes|yes|yes|yes|yes" \
   "$(has "Implement docs/stories/s1.md" "${brief}")|$(has "+SONNET-WORK" "${brief}")|$([[ $(grep -c "^+a line of the long diff" <<< "${brief}") -lt 400 ]] && echo yes)|$(has "REVIEW-FINDING: the guard is missing" "${brief}")|$(has "- test: https://ci/run/9" "${brief}")"
 check "the diff holds an untracked file" "yes" "$(has "+UNTRACKED-WORK" "${brief}")"
+check "the brief is written once the old builder is closed, so it holds that builder's last write" "yes" "$(has "+LATE-WORK" "${brief}")"
 check "it stops diffing untracked files at the cap: the 30 past it are never diffed" "yes" \
   "$([[ $(grep -c 'diff --no-index' "${ROOT}/git.trace") -lt 10 ]] && echo yes || echo "no, $(grep -c 'diff --no-index' "${ROOT}/git.trace") diffs")"
 check "the diff's fence is longer than the \`\`\` in a Markdown file it holds" "yes|yes" \
@@ -152,10 +162,14 @@ out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
 check "a resume whose agent is gone before its brief is taken up keeps the rung to resume again, and takes back the agents.tsv line it wrote" "1|yes|1|code opus high" \
   "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(escalates)|$(newest s1)"
 rm "${ROOT}/startghost"
+c="$(grep -c '^tab close' "${ROOT}/herdr.log")"
 out="$(SWARM_PROMPT_TIMEOUT_MS=100 run step-up --resume s1)" && rc=0 || rc=$?
+check "a resume whose agent runs but never took up its brief has not started: it is closed, off agents.tsv, and the rung waits to resume" "1|yes|$((c + 1))|code opus high|1|kept" \
+  "${rc}|$(has "run swarm.sh step-up --resume s1" "${out}")|$(grep -c '^tab close' "${ROOT}/herdr.log")|$(newest s1)|$(escalates)|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] && echo kept)"
 rm "${ROOT}/promptfail"
-check "a resume whose agent runs though its brief was not confirmed has started: the step-up stands, on record once, and it says to look" "0|yes|escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
-  "${rc}|$(has "s1's fable builder is running, but its brief was not confirmed taken up" "${out}")|$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
+out="$(run step-up --resume s1)" && rc=0 || rc=$?
+check "a resume whose brief is taken up has started: the step-up stands, on record once" "0|escalate fable xhigh|1|2|ok (ci-red-2: opus -> fable)|gone" \
+  "${rc}|$(newest s1)|$(grep -c $'\ts1\tclaude\tfable\t' "${P}/.swarm/agents.tsv")|$(escalates)|$(awk -F'\t' '$2 == "escalate" { l = $5 } END { print l }' "${P}/.swarm/events.tsv")|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] || echo gone)"
 out="$(run step-up --resume s1)" && rc=0 || rc=$?
 check "with nothing to resume, --resume refuses" "1|yes" "${rc}|$(has "no step-up of 's1' waits to start" "${out}")"
 
@@ -183,6 +197,39 @@ for s in d1:docs:sonnet c1:chore:haiku; do
 done
 check "a docs build steps up as docs, and a chore below the first rung as a chore on it" "docs opus medium|chore sonnet medium" "$(newest d1)|$(newest c1)"
 check "a story whose only PR closed unmerged has no open PR, and its brief says so" "yes" "$(has "No open PR on story/c1." "$(cat "${P}/.swarm/briefs/c1.md")")"
+
+# The open PR's checks: k1's PR has none reported, gh cannot read k2's, and k3's all pass. Each is
+# said plainly, never as gh failing when it did not.
+for k in k1:21 k2:22 k3:23; do
+  slug="${k%:*}"
+  printf '%s\n' --- "status: ready" "kind: code" --- "" "# ${slug}" "" "**Done when:**" "- it holds" > "${P}/docs/stories/${slug}.md"
+  "${GIT[@]}" -C "${P}" worktree add -q -b "story/${slug}" "${ROOT}/proj-wt/${slug}" origin/main
+  printf '2026-10-01\tcode-sonnet\t%s\tclaude\tsonnet\thigh\tsess-%s\n' "${slug}" "${slug}" >> "${P}/.swarm/agents.tsv"
+  echo "[{\"state\":\"OPEN\",\"url\":\"https://github.com/o/proj/pull/${k#*:}\",\"autoMergeRequest\":null}]" > "${ROOT}/prs-${slug}.json"
+  echo "w:2 ${slug}" > "${P}/.swarm/state/${slug}"; echo "${slug} w:2" > "${ROOT}/agents"
+  run step-up "${slug}" ci-red-2 >/dev/null || true
+done
+check "a PR with no checks reported, one gh cannot read and one with none failing are each said so in the brief" "yes|yes|yes" \
+  "$(has "No checks reported on https://github.com/o/proj/pull/21." "$(cat "${P}/.swarm/briefs/k1.md")")|$(has "gh could not list https://github.com/o/proj/pull/22's checks" "$(cat "${P}/.swarm/briefs/k2.md")")|$(has "None failing on https://github.com/o/proj/pull/23." "$(cat "${P}/.swarm/briefs/k3.md")")"
+
+# A git step the closed builder left unfinished in its worktree (an index.lock, then a merge in
+# progress) stops the step-up before the brief is written or a builder starts, and names it; once it
+# is cleared, --resume writes the brief and starts the rung.
+printf '%s\n' --- "status: ready" "kind: code" --- "" "# w1" "" "**Done when:**" "- it holds" > "${P}/docs/stories/w1.md"
+"${GIT[@]}" -C "${P}" worktree add -q -b story/w1 "${ROOT}/proj-wt/w1" origin/main
+printf '2026-10-01\tcode-sonnet\tw1\tclaude\tsonnet\thigh\tsess-w1\n' >> "${P}/.swarm/agents.tsv"
+echo "w:2 w1" > "${P}/.swarm/state/w1"; echo "w1 w:2" > "${ROOT}/agents"
+gd="$(git -C "${ROOT}/proj-wt/w1" rev-parse --absolute-git-dir)"; touch "${gd}/index.lock"
+n="$(starts)"; e="$(escalates)"
+out="$(run step-up w1 stalled)" && rc=0 || rc=$?
+check "an index.lock left in the worktree stops the step-up, naming it, before a brief or a start" "1|yes|${n}|${e}|none|kept" \
+  "${rc}|$(has "w1's sonnet builder is closed, but its worktree ${ROOT}/proj-wt/w1 holds ${gd}/index.lock, a git step left unfinished: finish or abort it there, then run swarm.sh step-up --resume w1" "${out}")|$(starts)|$(escalates)|$([[ -e "${P}/.swarm/briefs/w1.md" ]] && echo written || echo none)|$([[ -e "${P}/.swarm/briefs/w1.step-up" ]] && echo kept)"
+rm "${gd}/index.lock"; git -C "${ROOT}/proj-wt/w1" rev-parse HEAD > "${gd}/MERGE_HEAD"
+out="$(run step-up --resume w1)" && rc=0 || rc=$?
+check "and so does a merge in progress, on resume too" "1|yes|${n}" "${rc}|$(has "holds ${gd}/MERGE_HEAD" "${out}")|$(starts)"
+rm "${gd}/MERGE_HEAD"
+out="$(run step-up --resume w1)" && rc=0 || rc=$?
+check "once cleared, --resume writes the brief and starts the rung" "0|yes|code opus high" "${rc}|$(has "Implement docs/stories/w1.md" "$(cat "${P}/.swarm/briefs/w1.md" 2>/dev/null)")|$(newest w1)"
 
 # m1 was stacked on p2, whose PR has since squash-merged into main (its change on main under another
 # commit), and main moved on. The diff is against origin/main with the branch merged in: m1's own

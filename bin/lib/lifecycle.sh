@@ -448,7 +448,7 @@ HANDOVER_DIFF_LINES=400
 # it, run as step_role picks. Refused, with nothing closed, with escalate_ladder empty, at or above its
 # top rung, and for a story that is not ready, not an agent's kind, or has no worktree.
 step_up() {
-  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to="" m rank role names src wt base prompt
+  local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to="" m rank role names src wt
   [[ "${trigger}" =~ ^[a-z0-9-]+$ && " ${STEP_UP_TRIGGERS} " == *" ${trigger} "* ]] \
     || die "step-up: the trigger must be one of ${STEP_UP_TRIGGERS// /, } (swarm.sh step-up <slug> <trigger>)"
   [[ -n "${CFG_escalate_ladder}" ]] || die "step-up: escalate_ladder is empty (off), so there is no next model; nothing was closed"
@@ -468,11 +468,10 @@ step_up() {
     || die "step-up: ${slug}'s build is ${fromrole}, which steps up as ${role}, a role nothing starts now; nothing was closed"
   names="$(story_env "${f}")" || die "${names}"
   require_trusted "${wt}"; goal_preflight "${slug}" "${src}"
-  base="$(base_for "${src}")"
-  prompt="${PROJECT_DIR}/.swarm/briefs/${slug}.md"; mkdir -p "${prompt%/*}"
-  handover_brief "${slug}" "${src}" "${base}" "${trigger}" "${from}" "${to}" > "${prompt}"
-  printf '%s %s %s %s\n' "${trigger}" "${from}" "${to}" "${role}" > "${prompt%.md}.step-up"
-  # The old builder goes first: the new one takes its name.
+  mkdir -p "${PROJECT_DIR}/.swarm/briefs"
+  printf '%s %s %s %s\n' "${trigger}" "${from}" "${to}" "${role}" > "${PROJECT_DIR}/.swarm/briefs/${slug}.step-up"
+  # The old builder goes first: the new one takes its name, and start_rung reads the worktree for the
+  # brief only once nothing writes to it.
   shut_agent "${slug}"
   start_rung "${slug}"
 }
@@ -514,43 +513,47 @@ step_up_resume() {
   start_rung "${slug}"
 }
 
-# start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>):
-# <role> on <to> in its worktree with the brief beside the marker, then log escalate `ok (<trigger>:
-# <from> -> <to>)`, drop the marker and send the /goal its caller's goal_preflight made. start_agent
-# runs with errexit on, so a step that fails stops it with that step's own message; then the marker
-# stays and the message says to run step-up --resume. When start_agent recorded the agent before it
-# failed (deliver_prompt): an agent running in its pane has started, so the step-up stands (herdr saw
-# it working late); one that is gone loses its agents.tsv line, so the rung is on record once.
+# start_rung <slug> — start the rung <slug>'s .step-up marker names (<trigger> <from> <to> <role>),
+# once the old builder is closed: refuse while the worktree holds a git step it left unfinished (an
+# index.lock, a merge, rebase, cherry-pick or revert), write handover_brief beside the marker, start
+# <role> on <to> in the worktree with it, then log escalate `ok (<trigger>: <from> -> <to>)`, drop the
+# marker and send the /goal its caller's goal_preflight made. start_agent runs with errexit on, so a
+# step that fails stops it with that step's own message; then the marker stays and the message says
+# to run step-up --resume. The rung has started only once its brief is taken up: an agent start_agent
+# recorded before deliver_prompt failed is closed and loses its agents.tsv line, so a resume starts it
+# afresh and the rung is on record once.
 start_rung() {
-  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc goal="${PREFLIGHT_GOAL}"
+  local slug="$1" f="${BOARD}/stories/$1.md" prompt="${PROJECT_DIR}/.swarm/briefs/$1.md" trigger from to role src names epic n rc wt gd p goal="${PREFLIGHT_GOAL}"
   read -r trigger from to role < "${prompt%.md}.step-up"
   src="$(repo_dir "$(fm "${f}" repo)")" || die "step-up: ${slug}: ${src}"
   names="$(story_env "${f}")" || die "${names}"
   epic="$(fm "${f}" epic)"
+  wt="$(worktree_for "${src}" "${slug}")"
+  gd="$(git -C "${wt}" rev-parse --absolute-git-dir)" || die "step-up: ${slug}: git cannot read the worktree ${wt}; once that is fixed, run swarm.sh step-up --resume ${slug}"
+  for p in index.lock MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD; do
+    [[ ! -e "${gd}/${p}" ]] \
+      || die "step-up: ${slug}'s ${from} builder is closed, but its worktree ${wt} holds ${gd}/${p}, a git step left unfinished: finish or abort it there, then run swarm.sh step-up --resume ${slug}"
+  done
+  handover_brief "${slug}" "${src}" "$(base_for "${src}")" "${trigger}" "${from}" "${to}" > "${prompt}"
   n="$(wc -l < "${AGENTS_LOG}")"; n=$((n))
   set +e
-  (set -e; start_agent "${epic:-${slug}}" "${slug}" "$(worktree_for "${src}" "${slug}")" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
+  (set -e; start_agent "${epic:-${slug}}" "${slug}" "${wt}" "${role}" "${prompt}" "${slug}" "${names}" "${to}")
   rc=$?
   set -e
   if [[ ${rc} -ne 0 ]] && awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR > n && $3 == a { f = 1 } END { exit !f }' "${AGENTS_LOG}"; then
-    if [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]]; then
-      # Recorded and running in its pane: only the brief's delivery was not confirmed (herdr saw it
-      # working late), so the rung has started and the step-up stands.
-      echo "step-up: ${slug}'s ${to} builder is running, but its brief was not confirmed taken up; look at it: herdr agent read $(agent_name "${slug}")" >&2
-      rc=0
-    else
-      # Recorded but gone: the rung is not on record until it starts.
-      # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
-      # an append-only "start failed" event outcomes reads would avoid that.
-      awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
-        && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
-    fi
+    # Recorded, but its brief was not taken up: closed (it would sit idle with no brief), and not on
+    # record until a resume starts it. A pane already gone is no reason to stop.
+    shut_agent "${slug}" >/dev/null 2>&1 || true
+    # ponytail: rewrites agents.tsv, so a line another process appends in the same instant is lost;
+    # an append-only "start failed" event outcomes reads would avoid that.
+    awk -F'\t' -v n="${n}" -v a="$(agent_name "${slug}")" 'NR <= n || $3 != a' "${AGENTS_LOG}" > "${AGENTS_LOG}.tmp" \
+      && mv "${AGENTS_LOG}.tmp" "${AGENTS_LOG}"
   fi
   [[ ${rc} -eq 0 ]] \
     || die "step-up: ${slug}'s ${from} builder is closed, but the ${to} builder did not start (see above); its worktree, branch and brief are kept: once that is fixed, run swarm.sh step-up --resume ${slug}"
   rm -f "${prompt%.md}.step-up"
   record_event escalate "${slug}" "ok (${trigger}: ${from} -> ${to})"
-  echo "stepped up: ${slug} from ${from} to ${to} (${role}), in $(worktree_for "${src}" "${slug}")"
+  echo "stepped up: ${slug} from ${from} to ${to} (${role}), in ${wt}"
   [[ -z "${goal}" ]] || { printf '%s\n' "${goal}" > "${prompt%.md}.goal.md"; send_goal "${slug}" "${prompt%.md}.goal.md" brief; }
 }
 
@@ -605,9 +608,17 @@ handover_brief() {
   if [[ -z "${pr}" ]]; then
     checks="No open PR on story/$1."
   else
-    checks="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' </dev/null 2>/dev/null)" \
-      || checks="gh could not list ${pr}'s checks: run \`gh pr checks ${pr}\`."
-    [[ -n "${checks}" ]] || checks="None failing on ${pr}."
+    # gh pr checks exits 1 when a check failed and 8 while one is pending, printing them all the same;
+    # with no failing line printed, its exit and error tell none failing, no checks and a gh error apart.
+    out="$(gh pr checks "${pr}" --json name,bucket,link --jq '.[] | select(.bucket == "fail") | "- \(.name): \(.link)"' </dev/null 2>&1)" && rc=0 || rc=$?
+    checks="$(grep '^- ' <<< "${out}" || true)"
+    if [[ -z "${checks}" ]]; then
+      case "${rc}:${out}" in
+        0:*|8:*) checks="None failing on ${pr}." ;;
+        *"no checks reported"*) checks="No checks reported on ${pr}." ;;
+        *) checks="gh could not list ${pr}'s checks: run \`gh pr checks ${pr}\`." ;;
+      esac
+    fi
   fi
   story_brief "$1" "$2" "$3"
   cat <<EOF
