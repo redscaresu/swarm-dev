@@ -453,7 +453,8 @@ transcript shows no background task still running (a shell, an async subagent or
 started, with no `<task-notification>` carrying a `<status>` for it since). It sends nothing then: read the pane. `stuck` is
 not a stall, and no close follows from it. When an agent's pane shows Claude Code's usage-limit dialog
 ("Stop and wait for limit to reset" / "Wait here, then continue automatically"), `wait` picks
-"Wait here, then continue automatically" (the user's standing choice) once per dialog, logs one
+"Wait here, then continue automatically" (the user's standing choice) once per dialog (a keypress
+herdr fails to send is tried again on the next pass), logs one
 `usage-limit` event for the agent in events.tsv, and keeps waiting. Only the live dialog counts: its
 options among the pane's last lines with no input box under them, so a prompt quoting it sends nothing. A pane already waiting after that choice ("Usage
 limit reached" with "limit resets" or "Continuing shortly") is handled the same way, with no keys

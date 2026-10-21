@@ -98,8 +98,11 @@ PY
   "agent read")       if [ -e "$H/lag" ]; then n=$(cat "$H/lag")
                         if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$H/lag"; else rm "$H/lag" "$H/late"; cat "$H/resumed-late" >> "$H/screen"; fi
                       fi
-                      cat "$H/screen" 2>/dev/null ;;
-  "pane send-keys")   [ -e "$H/after-keys" ] && mv "$H/after-keys" "$H/screen" ;;   # the pane once the dialog is answered
+                      cat "$H/screen" 2>/dev/null
+                      [ -e "$H/flipped" ] && mv "$H/flipped" "$H/screen"   # the pane moves on after this one read
+                      true ;;
+  "pane send-keys")   [ -e "$H/keysfail" ] && { rm "$H/keysfail"; exit 1; }   # herdr fails the first send
+                      if [ -e "$H/after-keys" ]; then mv "$H/after-keys" "$H/screen"; fi ;;   # the pane once the dialog is answered
   # A closed pane takes its agent with it; a tab t<n> closes its first pane, w:<n>.
   "pane close"|"tab close") p=$3; [ "$2" = close ] && [ "$1" = tab ] && p="w:${3#t}"
                       [ -e "$H/agents" ] && awk -v p="$p" '$2 != p' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
@@ -349,7 +352,16 @@ printf '%s\n' '⏺ Working on it.' '> The dialog said:' '  1. Stop and wait for 
 : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
 check "a prompt quoting the usage-limit dialog sends no key" "busy|exit 1|0|0" "${got%|*}|$(keys)|$(limits)"
-rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${ROOT}/after-keys"
+# herdr fails the first keypress: the dialog is answered on the next pass, then not again.
+limit_dialog "${ROOT}/screen"; touch "${ROOT}/keysfail"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 8000)"
+check "a keypress herdr failed is sent again a pass later, then not again" "usage-limit|exit 1|2|1" "${got%|*}|$(keys 2)|$(limits)"
+# The pane moves off the dialog right after settle's read: wait answers from that read and waits on;
+# it never ends with usage-limit and exit 0.
+limit_dialog "${ROOT}/screen"; printf '%s\n' '⏺ Carrying on.' > "${ROOT}/flipped"; : > "${p}/.swarm/events.tsv"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 8000)"
+check "a dialog gone after settle's read: wait answers it from that read and waits on to its timeout" "busy|exit 1|1" "${got%|*}|$(keys 2)"
+rm -f "${ROOT}/hstatus" "${ROOT}/screen" "${ROOT}/after-keys" "${ROOT}/flipped" "${ROOT}/keysfail"
 # A codex agent has no session: herdr answers for it.
 printf '2026-10-15\tcode\ta\tcodex\tgpt\thigh\t-\n' >> "${p}/.swarm/agents.tsv"
 check "a codex agent is still waited on through herdr" "done|exit 0" "$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 2000 | cut -d'|' -f1-2)"
