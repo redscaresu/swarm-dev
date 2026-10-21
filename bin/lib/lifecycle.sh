@@ -1738,8 +1738,8 @@ upgrade_one() {
   done
   resume_file "${name}" "${session}" "$3" "${resume[@]}"
   a="$(upgrade_path)"
-  local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv" PATH="${a}"
-  clean_env "${pane}" "${name}" "$3"
+  local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv"
+  PATH="${a}" clean_env "${pane}" "${name}" "$3"   # the agent's PATH; herdr below still runs from the lead's
   out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
     || die "${name}: herdr could not start it again (${out}); in pane ${pane}, claude --resume ${session} brings it back"
 }
