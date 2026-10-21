@@ -572,23 +572,73 @@ clear_build() {
 }
 
 # close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
-# conductor's name closes its epic's tabs, with any story panes left in them.
+# conductor's name closes its epic's tabs, with any story panes left in them, except a tab close_tabs
+# keeps for a live agent; the conductor's own pane (herdr knows it by name, its record as conductor)
+# then closes alone.
 close_panes() {
-  local state pane epic
+  local state pane own
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
-    [[ -n "${pane}" ]] || continue
-    if [[ $(wc -l < "${state}") -le 1 ]]; then close_tabs "$(basename "${state}")"; return; fi
-    herdr pane close "${pane}" >/dev/null
-    awk -v p="${pane}" '$1 != p' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
-    echo "closed pane $1"; return
+    [[ -z "${pane}" ]] || { close_pane "${pane}" "$1"; return; }
   done
-  if [[ "$(agent_name "$1")" == conduct-* ]]; then
-    epic="$(conduct_epic "$1")"
-    close_tabs "${epic}"
-  fi
-  close_tabs "$1"
+  own="$(agent_field "$(agent_name "$1")" pane_id)"
+  [[ "$(agent_name "$1")" != conduct-* ]] || close_tabs "$(conduct_epic "$1")" "${own}"
+  close_tabs "$1" "${own}"
+  [[ -z "${own}" ]] || close_pane "${own}" "$1" alone || true
+}
+
+# close_pane <pane> <name> [alone] — close <pane> and drop it from its tab record, or close the tab
+# when it is the record's last pane, unless alone is given; when close_tabs keeps that tab for a live
+# agent herdr has in it besides, <pane> closes alone. False when no tab record has it.
+close_pane() {
+  local state
+  for state in "${STATE_DIR}"/*; do
+    [[ -f "${state}" ]] || continue
+    awk -v p="$1" '$1 == p { f = 1 } END { exit !f }' "${state}" || continue
+    [[ -n "${3:-}" || $(wc -l < "${state}") -gt 1 ]] || close_tabs "$(basename "${state}")" "$1"
+    [[ -f "${state}" ]] || return 0
+    herdr pane close "$1" >/dev/null
+    awk -v p="$1" '$1 != p' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
+    [[ -s "${state}" ]] || rm -f "${state}"
+    echo "closed pane $2"; return 0
+  done
+  return 1
+}
+
+# live_agents <tab-ids> <tab-record> [pane] — each agent herdr has in a pane of those tabs, <pane>'s
+# aside, that a tab close must not take, as "<name> (<why>)": read_state has it working, waiting or
+# blocked, or cannot say, or its story has an open PR on story/<name>, or gh could not say. herdr's
+# panes, not the record's, since a pane moved in by hand closes with the tab and one moved out does
+# not; the record's stand in only when herdr lists no panes. <name> is the record's, else herdr's. A
+# pane with no agent holds nothing to lose. Prints why and fails when herdr lists no agents.
+live_agents() {
+  local panes agents pane who name f src url prs open
+  panes="$(herdr pane list 2>/dev/null | SWARM_TABS="$1" json "'\n'.join(p['pane_id'] for p in d['result']['panes'] if p.get('tab_id') in e['SWARM_TABS'].split())" 2>/dev/null)" \
+    || panes="$(awk '{ print $1 }' "$2")"
+  agents="$(herdr agent list 2>/dev/null | json "'\n'.join('%s %s' % (a.get('pane_id'), a.get('name')) for a in d['result']['agents'])")" \
+    || { echo "herdr gave no agent list, so whether it holds a live agent is unknown"; return 1; }
+  while read -r pane; do
+    [[ -n "${pane}" && "${pane}" != "${3:-}" ]] || continue
+    who="$(awk -v p="${pane}" '$1 == p { print $2; exit }' <<< "${agents}")"
+    [[ -n "${who}" ]] || continue
+    name="$(cat "${STATE_DIR}"/* 2>/dev/null | awk -v p="${pane}" 'NF == 2 && $1 == p { print $2; exit }' || true)"
+    name="${name:-${who}}"; f="${BOARD}/stories/${name}.md"
+    case "$(read_state "${who}" </dev/null)" in
+      busy|herdr:working) echo "${name} (working)"; continue ;;
+      waiting*|herdr:blocked) echo "${name} (waiting)"; continue ;;
+      # herdr: with no status is an agent in no tab record, which agent_field does not read.
+      unknown|herdr:unknown|herdr:) echo "${name} (its state could not be read)"; continue ;;
+    esac
+    [[ "${name}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || continue
+    if src="$(repo_dir "$(fm "${f}" repo)")" && url="$(git -C "${src}" remote get-url origin 2>/dev/null)" \
+       && prs="$(gh pr list -R "${url}" --head "story/${name}" --state open --json state </dev/null 2>/dev/null)" \
+       && open="$(json "any(p['state'] == 'OPEN' for p in d)" <<< "${prs}" 2>/dev/null)"; then
+      [[ "${open}" == False ]] || echo "${name} (PR open)"
+    else
+      echo "${name} (gh could not list its PRs)"
+    fi
+  done <<< "${panes}"
 }
 
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
@@ -786,21 +836,32 @@ init_project() {
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
-# close_tabs <label> — close every tab this script opened under <label>, and its state, archiving the
-# session of each agent in it first. A tab may be in another workspace (a conductor's is its HLD's):
+# close_tabs <label> [pane] — close every tab this script opened under <label>, and its state, archiving the
+# session of each agent in it first. herdr's tab close asks nothing, so a tab that holds a live agent
+# besides <pane>'s (live_agents) is kept, each such agent printed as kept, unless CLOSE_ALL is set
+# (close --all). A tab may be in another workspace (a conductor's is its HLD's):
 # its first pane id, "<workspace>:<pane>", says which.
+CLOSE_ALL=""
 close_tabs() {
-  local label state tab_label id ws n
+  local label state tab_label id ws n kept
   label="$(tab_label "$1")"
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
-    while read -r _ n; do [[ -z "${n}" ]] || archive_session "${n}"; done < "${state}"
     tab_label="$(basename "${state}")"
     ws="$(head -1 "${state}")"; ws="${ws%%:*}"; ws="${ws:-${HERDR_WORKSPACE_ID}}"
     id=$(herdr tab list --workspace "${ws}" | python3 -c "
 import json,sys
 for t in json.load(sys.stdin)['result']['tabs']:
     if t.get('label') == sys.argv[1]: print(t['tab_id'])" "${tab_label}")
+    # No tab with the label: nothing to close, so nothing to keep.
+    if [[ -z "${CLOSE_ALL}" && -n "${id}" ]]; then
+      kept="$(live_agents "${id}" "${state}" "${2:-}")" || die "close: ${kept}; tab ${tab_label} was left open, and --all closes it anyway"
+      if [[ -n "${kept}" ]]; then
+        while IFS= read -r n; do echo "kept ${n} in tab ${tab_label}: --all closes it too"; done <<< "${kept}"
+        continue
+      fi
+    fi
+    while read -r _ n; do [[ -z "${n}" ]] || archive_session "${n}"; done < "${state}"
     # Two tabs can carry one label (a run that reopened it); close each, one id per call.
     while read -r t; do [[ -z "${t}" ]] || herdr tab close "${t}" >/dev/null; done <<< "${id}"
     rm -f "${state}"

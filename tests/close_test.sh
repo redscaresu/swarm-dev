@@ -2,7 +2,9 @@
 # close_test.sh — close shuts every tab that carries the agent's label, one id per herdr call, even
 # when two tabs share it, and archives the agent's session log once; closing the open builder of a
 # ready story counts a failed build, and close takes a cause. herdr and gh are stubs on PATH: herdr records each tab close and
-# lists the agents in ${ROOT}/agents ("<name> <pane>" lines); gh answers pr list from ${ROOT}/prs.json.
+# lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default) and the panes in
+# ${ROOT}/panes ("<pane> <tab>" lines; pane list fails while ${ROOT}/panefail exists); gh answers pr list
+# from ${ROOT}/prs.json.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -15,17 +17,20 @@ P="${ROOT}/proj"; CLOSED="${ROOT}/closed"
 mkdir -p "${P}/.swarm/state" "${P}/docs/stories" "${ROOT}/bin"
 git -C "${P}" init -q
 : > "${CLOSED}"
-: > "${ROOT}/agents"
+: > "${ROOT}/agents"; : > "${ROOT}/panes"
 printf '#!/bin/sh\nA="%s"; CLOSED="%s"; H="%s"\n' "${ROOT}/agents" "${CLOSED}" "${ROOT}" | tee "${ROOT}/bin/gh" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
-  "tab list") echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"}]}}' ;;
+  "tab list") echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"}]}}' ;;
   "tab close") printf '<%s>\n' "$3" >> "${CLOSED}" ;;
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, (NF > 2 ? $3 : "idle"), $2 }
                      END { print "]}}" }' "$A" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$A" > "$A.tmp" && mv "$A.tmp" "$A" ;;
-  "pane list") echo '{"result":{"panes":[]}}' ;;
+  "pane list") [ -e "$H/panefail" ] && exit 1
+               awk 'BEGIN { printf "{\"result\":{\"panes\":[" }
+                    { printf "%s{\"pane_id\":\"%s\",\"tab_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                    END { print "]}}" }' "$H/panes" ;;
   "pane close") echo "$3" >> "$H/panes-closed" ;;
 esac
 STUB
@@ -358,5 +363,73 @@ is "with goal = 5 and no cause, a story in review, a name with no story file, co
 : > "${P}/.claude/swarm/config"
 rc=0; cs g5 >/dev/null || rc=$?
 is "with goal off, close g5 with no cause closes and counts as today" "0|2|" "${rc}|$(attempts g5)|$(left g5)"
+
+# --- A tab close never takes a live agent: one working or waiting (its session's state, or herdr's
+# with no session), one whose state cannot be read, or one whose story has an open PR (or whose PRs gh
+# could not list). close conduct-<epic> keeps each tab that holds one, naming
+# it, and closes the conductor's own pane alone; with --all it closes every tab, and with no live agent
+# left it closes every tab as before. Tab ce is the conductor's (herdr's tabs w:t7 and w:t8 are ce, ce-2).
+# conductor_fixture <cb1 status> <cb2 status> <ce's second line> — conductor w:p90 in ce, cb1 w:p91 in
+# ce-2, and cb2 w:p92 in ce when its line is given.
+cp "$(dirname "${SWARM}")/../tests/claude_stub.sh" "${ROOT}/bin/claude"; chmod +x "${ROOT}/bin/claude"
+printf '[{"sessionId":"sess-cb2","status":"busy"}]' > "${ROOT}/claude-agents.json"; export CLAUDE_STUB_AGENTS="${ROOT}/claude-agents.json"
+conductor_fixture() {
+  item cb1 "status: review" "kind: code" "epic: ce"
+  printf 'w:p90 conductor\n%s' "${3:+$3$'\n'}" > "${P}/.swarm/state/ce"; echo "w:p91 cb1" > "${P}/.swarm/state/ce-2"
+  printf '%s\n' "conduct-ce w:p90" "cb1 w:p91 $1" "cb2 w:p92 $2" > "${ROOT}/agents"
+  printf '%s\n' "w:p90 w:t7" "w:p91 w:t8" ${3:+"w:p92 w:t7"} > "${ROOT}/panes"
+  : > "${CLOSED}"; : > "${ROOT}/panes-closed"
+}
+open_pr='[{"number":10,"state":"OPEN","url":"'"${U}"'/10"}]'
+echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle
+out="$(cs conduct-ce)"
+is "close conduct-ce, cb1's PR open in tab ce-2: only the conductor's tab closes, and cb1 is printed as kept" \
+  "<w:t7>||w:p91 cb1|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)|$(grep -c '^kept cb1 (PR open) in tab ce-2' <<< "${out}")"
+conductor_fixture idle idle; cs conduct-ce --all >/dev/null
+is "close conduct-ce --all closes both tabs" "<w:t7><w:t8>|" "$(tr -d '\n' < "${CLOSED}")|$(ls "${P}/.swarm/state/ce" "${P}/.swarm/state/ce-2" 2>/dev/null)"
+echo '[{"number":10,"state":"MERGED","url":"'"${U}"'/10"}]' > "${ROOT}/prs.json"; conductor_fixture idle idle "w:p92 cb2"
+cs conduct-ce >/dev/null
+is "with every builder merged and idle, close conduct-ce closes every tab as before" "<w:t7><w:t8>|" "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")"
+built cb2 code; conductor_fixture idle idle "w:p92 cb2"; out="$(cs conduct-ce)"
+is "cb2 working beside the conductor in ce (its session busy, herdr idle): ce is kept, the conductor's pane closes alone, cb2 is printed as kept, ce-2 closes" \
+  "<w:t8>|w:p90|w:p92 cb2|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(cat "${P}/.swarm/state/ce")|$(grep -c '^kept cb2 (working) in tab ce' <<< "${out}")"
+conductor_fixture idle idle; touch "${ROOT}/ghfail"; out="$(cs conduct-ce)"; rm "${ROOT}/ghfail"
+is "with gh failing, cb1 is kept, since its PR may be open" "<w:t7>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1 (gh could not list its PRs) in tab ce-2' <<< "${out}")"
+conductor_fixture idle idle "w:p92 cb2"; out="$(CLAUDE_STUB_AGENTS="${ROOT}/nosuch" cs conduct-ce)"
+is "with Claude Code's list unreadable, cb2 is kept, since it may be working" "<w:t8>|w:p90|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(grep -c '^kept cb2 (its state could not be read) in tab ce' <<< "${out}")"
+conductor_fixture working idle; out="$(cs conduct-ce)"
+is "cb1 working by herdr's word (no session recorded) is kept" "<w:t7>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1 (working) in tab ce-2' <<< "${out}")"
+conductor_fixture unknown idle; out="$(cs conduct-ce)"
+is "cb1 with no session and herdr's status unknown is kept" "<w:t7>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1 (its state could not be read) in tab ce-2' <<< "${out}")"
+# herdr's panes decide, not the records: cb4, working, was moved into ce by hand (its record still
+# says tab cb4), and cb5 is in ce in no record at all, so its state cannot be read.
+conductor_fixture idle idle; echo "w:p94 cb4" > "${P}/.swarm/state/cb4"; echo "cb4 w:p94 working" >> "${ROOT}/agents"; echo "w:p94 w:t7" >> "${ROOT}/panes"
+out="$(cs conduct-ce)"; rm -f "${P}/.swarm/state/cb4"
+is "a working builder moved into the conductor's tab by hand keeps the tab" "<w:t8>|w:p90|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${ROOT}/panes-closed")|$(grep -c '^kept cb4 (working) in tab ce' <<< "${out}")"
+conductor_fixture idle idle; echo "cb5 w:p95" >> "${ROOT}/agents"; echo "w:p95 w:t7" >> "${ROOT}/panes"; out="$(cs conduct-ce)"
+is "an agent in the conductor's tab with no tab record is kept, named by herdr" "<w:t8>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb5 (its state could not be read) in tab ce' <<< "${out}")"
+# A survivor moved out to a new tab (herdr pane move --new-tab) no longer holds its old tab open.
+echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle; printf '%s\n' "w:p90 w:t7" "w:p91 w:t9" > "${ROOT}/panes"; out="$(cs conduct-ce)"
+is "cb1, its PR open, moved out of ce-2 to a new tab: both tabs close and nothing is kept" "<w:t7><w:t8>|0" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept' <<< "${out}")"
+# With herdr's pane list failing, the tab records stand in: cb1, recorded in ce-2, is kept.
+conductor_fixture idle idle; touch "${ROOT}/panefail"; out="$(cs conduct-ce)"; rm "${ROOT}/panefail"
+is "with herdr's pane list failing, the record's cb1 (PR open) is kept" "<w:t7>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1 (PR open) in tab ce-2' <<< "${out}")"
+# A builder's close that closes its tab (its last pane) never takes an overflow tab's live builder.
+echo "${open_pr}" > "${ROOT}/prs.json"; conductor_fixture idle idle; echo "w:p93 cb3" > "${P}/.swarm/state/ce"; echo "cb3 w:p93" >> "${ROOT}/agents"
+printf '%s\n' "w:p93 w:t7" "w:p91 w:t8" > "${ROOT}/panes"
+cs cb3 >/dev/null
+is "closing cb3, the last pane of tab ce, leaves ce-2 and its builder with an open PR" "<w:t7>|w:p91 cb1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null)"
+
 if [[ ${fails} -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

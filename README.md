@@ -115,6 +115,8 @@ of their own, such as planners and review agents, never get one, so log in throu
 `codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
 details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
+`swarm.sh close` never closes a tab that still holds a working builder or one whose PR is open. It
+names each one it kept, and `--all` closes them too.
 
 ## More
 
