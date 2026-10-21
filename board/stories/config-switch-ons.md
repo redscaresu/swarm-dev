@@ -4,7 +4,6 @@ status: blocked
 epic: safer-faster-swarm
 depends_on: [release-epic-close, remove-lessons, fallback-reviewer, escalate-ladder-triggers]
 touches: [.claude/swarm/config]
-costs: money
 after: safer-faster-swarm
 easy: false
 estimate_lines: 5
@@ -12,7 +11,7 @@ estimate_lines: 5
 
 # After the release, the lead makes every .claude/swarm/config change in one PR, held for the user
 
-after: safer-faster-swarm. The only story that edits swarm-dev's .claude/swarm/config, a file only the lead edits. After the release: drop lessons_file, set `fallback_reviewer = <model>` (sonnet unless the model-fit table says otherwise), and set `escalate_ladder = sonnet,opus,fable`, all in one PR. costs: money, because the Fable rung spends usage credits beyond what escalate_after spends today, so swarm.sh merge holds the PR for the user. **You:** merge the config PR. The lead then runs one epic and posts each escalate event with its trigger beside the model-fit table's rows, and links a PR reviewed under a codex limit with its fallback line.
+after: safer-faster-swarm. The only story that edits swarm-dev's .claude/swarm/config, a file only the lead edits. After the release: drop lessons_file, set `fallback_reviewer = <model>` (sonnet unless the model-fit table says otherwise), and set `escalate_ladder = sonnet,opus,fable`, all in one PR. The user agreed to the Fable rung's usage on 2026-10-21 (costs: money is for cloud resources only), so the lead merges it. The lead then runs one epic and posts each escalate event with its trigger beside the model-fit table's rows, and links a PR reviewed under a codex limit with its fallback line.
 
 **Done when:**
 - The config PR's diff drops lessons_file and sets fallback_reviewer and escalate_ladder; once the user has merged it, `swarm.sh config` prints both and no lessons_file.
