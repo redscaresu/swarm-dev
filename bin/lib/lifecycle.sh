@@ -355,14 +355,16 @@ is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* 
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
 # shut_agent <name> — archive <name>'s session log, close what was opened for it (close_panes) and
-# remove its ZDOTDIR (clean_env's). close_agent and step_up both end a builder this way.
+# remove its ZDOTDIR (clean_env's), unless its pane could not be closed (CLOSE_PANE_KEPT). close_agent
+# and step_up both end a builder this way, and each checks CLOSE_PANE_KEPT after.
 shut_agent() {
   archive_session "$1"
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   close_panes "$1"
-  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
+  # Kept while its pane is (close_pane could not close it): the agent may still be using it.
+  [[ -n "${CLOSE_PANE_KEPT}" ]] || rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
 }
 
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
@@ -470,7 +472,8 @@ HANDOVER_DIFF_LINES=400
 # (start_rung) in the same worktree with handover_brief. The build is the newest agents.tsv line for
 # its agent: a building role on one of LADDER_MODELS. The next rung is the ladder's first model above
 # it, run as step_role picks. Refused, with nothing closed, with escalate_ladder empty, at or above its
-# top rung, and for a story that is not ready, not an agent's kind, or has no worktree. [findings] is a file the brief pastes
+# top rung, and for a story that is not ready, not an agent's kind, or has no worktree; refused too,
+# with no rung started, when the old builder's pane could not be closed. [findings] is a file the brief pastes
 # too (tell_agent's).
 step_up() {
   local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to rank role names src wt b
@@ -502,6 +505,13 @@ step_up() {
   # The old builder goes first: the new one takes its name, and start_rung reads the worktree for the
   # brief only once nothing writes to it.
   shut_agent "${slug}"
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    # Its pane could not be closed (close_pane said why): the old builder may still be working in
+    # the worktree, so no second one starts there. A refusal, not a failure partway: nothing changed.
+    [[ -z "${STEP_UP_AUTO:-}" ]] || trap - EXIT
+    rm -f "${b}.step-up" "${b}.findings.md"
+    die "step-up: ${slug}'s builder pane could not be closed, so it may still be working in its worktree; nothing was stepped up"
+  fi
   start_rung "${slug}"
 }
 
@@ -1070,7 +1080,8 @@ record_kept() {
 # panes as "<pane> <tab>" lines (CLOSE_PANES, empty when herdr gave none) and agents as "<pane>
 # <status> <name>" lines, "-" for an agent with no name (CLOSE_AGENTS; CLOSE_AGENTS_OK is empty when
 # herdr gave no agent list), Claude Code's list (CLOSE_CLAUDE, claude_agents' JSON or empty when it
-# failed) and the tab records' lines (CLOSE_RECORDS). The open PRs (close_heads) and the stories'
+# failed), the tab records' lines (CLOSE_RECORDS) and the names agents started under (CLOSE_STARTED,
+# agents.tsv's). The open PRs (close_heads) and the stories'
 # agent names (close_stories) are read when first asked for. herdr's status is the word for an agent
 # no session answers for, as in read_state.
 CLOSE_READ=""
@@ -1083,6 +1094,7 @@ close_lists() {
     || { CLOSE_AGENTS=""; CLOSE_AGENTS_OK=""; }
   CLOSE_CLAUDE="$(claude_agents </dev/null)" || CLOSE_CLAUDE=""
   CLOSE_RECORDS="$(cat "${STATE_DIR}"/* 2>/dev/null || true)"
+  CLOSE_STARTED="$(awk -F'\t' 'NF == 7 { print $3 }' "${AGENTS_LOG}" 2>/dev/null || true)"
   CLOSE_HEADS=""; CLOSE_HEAD_SRCS=""; CLOSE_STORIES=""; CLOSE_STORIES_READ=""
 }
 
@@ -1161,9 +1173,11 @@ live_agents() {
       # Finished, as tell and free_agent_name read it.
       idle|herdr:idle|herdr:done) ;;
       *)
-        # A retired builder (retire_agent's <slug>-done) is finished too; any other state (herdr's
-        # starting or error, or one that could not be read) is not known to be idle: kept.
-        if [[ "${who}" =~ -done[0-9]*$ ]]; then :
+        # A retired builder is finished too: retire_agent renames it <slug>-done, a name no agent
+        # started under, so agents.tsv has no line for it (a live builder whose slug ends in -done
+        # was started under it). Any other state (herdr's starting or error, or one that could not
+        # be read) is not known to be idle: kept.
+        if [[ "${who}" =~ -done[0-9]*$ ]] && ! grep -qxF -- "${who}" <<< "${CLOSE_STARTED}"; then :
         elif [[ "${s}" == unknown || "${s}" == herdr:unknown ]]; then live_line "${pane}" "${name}" "its state could not be read" "${who:--}"; continue
         else live_line "${pane}" "${name}" "state ${s#herdr:}" "${who:--}"; continue; fi ;;
     esac
@@ -1416,7 +1430,7 @@ kept_unlisted() { echo "kept tab ${1##*/}: herdr could not list its workspace's 
 # each such agent is printed as kept and, when it is this project's, joins the tab's record
 # (record_kept), so a later close --all, and tidy, still find the tab once the panes recorded there
 # close; one that is not is said to stay unrecorded. With no tab of that label, nothing is closed and
-# the record goes.
+# the record goes. A tab herdr could not close keeps its record, and that is said.
 close_tab() {
   local tab_label="${1##*/}" n p why a t
   if [[ -z "${CLOSE_ALL}" && -n "$2" ]]; then
@@ -1431,7 +1445,14 @@ close_tab() {
     fi
   fi
   if [[ -f "$1" ]]; then while read -r _ n; do [[ -z "${n}" ]] || archive_session "${n}"; done < "$1"; fi
-  for t in $2; do herdr tab close "${t}" >/dev/null </dev/null; done
+  for t in $2; do
+    # Checked, as close_pane checks its pane close: errexit would stop reconcile here, and a caller's
+    # `|| true` would drop the record of a tab still open.
+    if ! herdr tab close "${t}" >/dev/null 2>&1 </dev/null; then
+      echo "swarm: could not close tab ${tab_label} (${t}): it is still open, and its record keeps it" >&2
+      return 0
+    fi
+  done
   rm -f "$1"
   echo "closed ${tab_label}"
 }

@@ -34,7 +34,8 @@ has() { if grep -qF -- "$1" <<< "$2"; then echo yes; else echo "no, got: $2"; fi
 lacks() { if grep -qF -- "$1" <<< "$2"; then echo "no, it has $1"; else echo yes; fi; }
 
 # herdr: logs every call; panes are w:<n>; agents lists "<name> <pane>" lines, all idle, until a tab
-# closes (each story's builder has a tab of its own, and one is open at a time).
+# closes (each story's builder has a tab of its own, and one is open at a time); tab and pane close
+# fail while ${ROOT}/closefail exists.
 printf '#!/bin/sh\nH="%s"\n' "${ROOT}" | tee "${STUB_BIN}/gh" > "${STUB_BIN}/herdr"
 cat >> "${STUB_BIN}/herdr" <<'EOF'
 echo "$*" >> "$H/herdr.log"
@@ -46,8 +47,10 @@ case "$1 $2" in
   "pane split")   next; echo "{\"result\":{\"pane\":{\"pane_id\":\"w:$n\"}}}" ;;
   "pane run"|"pane wait-output") [ -n "$3" ] || exit 1 ;;   # herdr fails with no pane
   "tab list")     echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"s1"},{"tab_id":"w:t2","label":"d1"},{"tab_id":"w:t3","label":"c1"},{"tab_id":"w:t4","label":"m1"},{"tab_id":"w:t5","label":"m2"},{"tab_id":"w:t6","label":"k1"},{"tab_id":"w:t7","label":"k2"},{"tab_id":"w:t8","label":"k3"},{"tab_id":"w:t9","label":"w1"}]}}' ;;
-  "tab close")    : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
-  "pane close")   [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
+  "tab close")    [ ! -e "$H/closefail" ] || exit 1
+                  : > "$H/agents"; [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
+  "pane close")   [ ! -e "$H/closefail" ] || exit 1
+                  [ ! -e "$H/late" ] || echo LATE-WORK > "$(cat "$H/late")/late.txt" ;;
   "agent start")  [ ! -e "$H/startfail" ] || { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
                   [ -e "$H/startghost" ] || echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/')" >> "$H/agents" ;;
   "agent rename") awk -v p="$3" -v n="$4" '$2 == p { $1 = n } { print }' "$H/agents" > "$H/agents.tmp" && mv "$H/agents.tmp" "$H/agents" ;;
@@ -123,6 +126,12 @@ newest() { awk -F'\t' -v n="$1" '$3 == n { l = $2 " " $5 " " $6 } END { print l 
 # shellcheck source=/dev/null
 attempts() { (export BOARD="${P}/docs" PROJECT_DIR="${P}"; . "${SWARM%/*}/lib/board.sh"; get_fm "${BOARD}/stories/s1.md" attempts) 2>/dev/null || true; }
 
+# With herdr unable to close s1's builder (its tab, then its pane), the step-up is refused: no rung
+# starts in the worktree beside it, no escalation is logged, and no step-up marker is left.
+touch "${ROOT}/closefail"; out="$(run step-up s1 findings-3)" && rc=0 || rc=$?; rm "${ROOT}/closefail"
+check "with s1's pane failing to close, step-up refuses: no rung started, no escalation, no marker, and it says so" "1|0|0|none|yes" \
+  "${rc}|$(starts)|$(escalates)|$([[ -e "${P}/.swarm/briefs/s1.step-up" ]] && echo kept || echo none)|$(has "s1's builder pane could not be closed, so it may still be working in its worktree; nothing was stepped up" "${out}")"
+: > "${ROOT}/herdr.log"
 echo "${WT}" > "${ROOT}/late"
 out="$(GIT_TRACE="${ROOT}/git.trace" run step-up s1 findings-3)" || true
 rm "${ROOT}/late" "${WT}/late.txt"

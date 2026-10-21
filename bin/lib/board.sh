@@ -1014,9 +1014,14 @@ reconcile_board() {
       echo "back to ready: ${slug} (closed without merging:${closed})"
     elif [[ ${waiting} -eq 0 ]]; then
       if [[ "${f}" == "${BOARD}/stories/"* ]]; then
-        builder="$(builder_state "${slug}")"
+        builder="$(builder_state "${slug}")"; CLOSE_PANE_KEPT=""
         [[ "${builder}" != open ]] || close_agent "${slug}" </dev/null   # stdin is this loop's list
-        clear_build "${slug}" "the PR of ${slug} merged" "[]" </dev/null
+        # A builder whose pane could not be closed (close_pane) may still be working in the worktree.
+        if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+          echo "build kept: ${slug}'s builder pane is still open, so its worktree and story/${slug} stay; clear them once it is closed"
+        else
+          clear_build "${slug}" "the PR of ${slug} merged" "[]" </dev/null
+        fi
         [[ "${builder}" != unknown ]] \
           || echo "build cleared: ${slug}'s builder may still be open (herdr cannot list its agents); close its pane with swarm.sh close ${slug}"
       fi

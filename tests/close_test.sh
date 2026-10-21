@@ -4,8 +4,8 @@
 # ready story counts a failed build, and close takes a cause. herdr and gh are stubs on PATH: herdr records each tab close and
 # lists the agents in ${ROOT}/agents ("<name> <pane> [status]" lines, idle by default, a name of - for
 # none; agent list fails while ${ROOT}/agentfail exists) and the panes in ${ROOT}/panes ("<pane> <tab>"
-# lines; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does and
-# pane close while ${ROOT}/paneclosefail does); gh answers pr list from ${ROOT}/prs.json, with
+# lines; pane list fails while ${ROOT}/panefail exists, tab list while ${ROOT}/tablistfail does, tab
+# close while ${ROOT}/tabclosefail does and pane close while ${ROOT}/paneclosefail does); gh answers pr list from ${ROOT}/prs.json, with
 # --state open the heads of its open PRs that name one, as close_heads' --jq asks, and pr view <url>
 # from ${ROOT}/pr-states ("<url> <state>" lines).
 set -euo pipefail
@@ -26,7 +26,8 @@ cat >> "${ROOT}/bin/herdr" <<'STUB'
 case "$1 $2" in
   "tab list") [ -e "$H/tablistfail" ] && exit 1
               echo '{"result":{"tabs":[{"tab_id":"w:t1","label":"scope-x"},{"tab_id":"w:t2","label":"scope-x"},{"tab_id":"w:t3","label":"other"},{"tab_id":"w:t4","label":"_epic"},{"tab_id":"w:t5","label":"epic"},{"tab_id":"w:t6","label":"epic-x"},{"tab_id":"w:t7","label":"ce"},{"tab_id":"w:t8","label":"ce-2"},{"tab_id":"w:t10","label":"ce-foo"}]}}' ;;
-  "tab close") printf '<%s>\n' "$3" >> "${CLOSED}" ;;
+  "tab close") [ -e "$H/tabclosefail" ] && exit 1
+               printf '<%s>\n' "$3" >> "${CLOSED}" ;;
   "agent list") [ -e "$H/agentfail" ] && exit 1
                 awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{%s\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), ($1 == "-" ? "" : "\"name\":\"" $1 "\","), (NF > 2 ? $3 : "idle"), $2 }
@@ -628,18 +629,32 @@ is "cb2's pane recorded with no agent in it yet keeps ce (the conductor's pane c
 # reconcile goes on past a merged story whose builder's pane herdr could not close: rm1's and rm2's
 # panes both fail to close, and both stories are still finished, each saying its pane stays open.
 printf '%s\n' "${U}/21 MERGED" "${U}/22 MERGED" > "${ROOT}/pr-states"
-item rm1 "status: review" "kind: code" "prs: ${U}/21"; item rm2 "status: review" "kind: code" "prs: ${U}/22"
+item rm1 "status: review" "kind: code" "prs: ${U}/21"; item rm2 "status: review" "kind: code" "prs: ${U}/22"; started rm1; started rm2
 printf '%s\n' "w:p51 rm1" "w:p52 rm2" > "${P}/.swarm/state/rmt"; printf '%s\n' "rm1 w:p51" "rm2 w:p52" > "${ROOT}/agents"; : > "${ROOT}/panes"
 touch "${ROOT}/paneclosefail"; rc=0; out="$(sw reconcile)" || rc=$?; rm "${ROOT}/paneclosefail"
 is "reconcile with rm1's and rm2's panes failing to close finishes both (their files deleted), saying each pane stays open, and exits 0" "0|1|1|1|1" \
   "${rc}|$(grep -c 'deleted: .*/stories/rm1.md$' <<< "${out}")|$(grep -c 'deleted: .*/stories/rm2.md$' <<< "${out}")|$(grep -c 'could not close pane rm1 (w:p51)' <<< "${out}")|$(grep -c 'could not close pane rm2 (w:p52)' <<< "${out}")"
+is "and keeps rm1's and rm2's builds, since their builders may still be working there, saying so" "worktree branch origin|worktree branch origin|1|1" \
+  "$(left rm1)|$(left rm2)|$(grep -c "^build kept: rm1's builder pane is still open" <<< "${out}")|$(grep -c "^build kept: rm2's builder pane is still open" <<< "${out}")"
 rm -f "${P}/.swarm/state/rmt"
 # A failed build's close whose pane herdr could not close counts and clears nothing: its builder may
 # still be working in the worktree.
-echo '[]' > "${ROOT}/prs.json"; item pf "status: ready" "kind: code"; started pf w:p88
+echo '[]' > "${ROOT}/prs.json"; item pf "status: ready" "kind: code"; started pf w:p88; mkdir -p "${P}/.swarm/zdotdir/pf"
 touch "${ROOT}/paneclosefail"; out="$(cs pf)"; rm "${ROOT}/paneclosefail"
-is "close pf, its pane failing to close: no attempt counted, its build left, and it says so" "|worktree branch origin|1" \
-  "$(attempts pf)|$(left pf)|$(grep -c "^not closed: pf's pane is still open, so nothing was counted or cleared" <<< "${out}")"
+is "close pf, its pane failing to close: no attempt counted, its build and its ZDOTDIR left, and it says so" "|worktree branch origin|kept|1" \
+  "$(attempts pf)|$(left pf)|$([[ -d "${P}/.swarm/zdotdir/pf" ]] && echo kept || echo gone)|$(grep -c "^not closed: pf's pane is still open, so nothing was counted or cleared" <<< "${out}")"
+# herdr's tab close failing keeps each tab's record, says so, and the close carries on to the
+# conductor's own pane.
+echo '[]' > "${ROOT}/prs.json"; conductor_fixture idle idle; touch "${ROOT}/tabclosefail"; rc=0; out="$(cs conduct-ce)" || rc=$?; rm "${ROOT}/tabclosefail"
+is "with herdr's tab close failing, close conduct-ce keeps ce-2's record, says it could not close it, exits 0" "0|w:p91 cb1|1|0" \
+  "${rc}|$(cat "${P}/.swarm/state/ce-2" 2>/dev/null || true)|$(grep -c 'could not close tab ce-2 (w:t8)' <<< "${out}")|$(grep -c '^closed ce-2$' <<< "${out}" || true)"
+# A live builder whose slug ends in -done (mark-tasks-done, started under that name, so agents.tsv has
+# its line) is not retired: starting, it keeps its tab.
+conductor_fixture idle idle; built mark-tasks-done code; echo "w:p91 mark-tasks-done" > "${P}/.swarm/state/ce-2"
+awk '$1 == "cb1" { $1 = "mark-tasks-done"; $3 = "starting" } { print }' "${ROOT}/agents" > "${ROOT}/agents.tmp" && mv "${ROOT}/agents.tmp" "${ROOT}/agents"
+out="$(cs conduct-ce)"
+is "mark-tasks-done, a live builder starting, keeps ce-2; its -done is its slug's, not a retirement" "<w:t7>|1" \
+  "$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept mark-tasks-done (state starting) in tab ce-2' <<< "${out}" || true)"
 # Two tabs share the label scope-x (herdr's w:t1 and w:t2): sxb, working, is in w:t2 and in no record,
 # so both tabs are checked and neither closes.
 echo "w:p80 sxa" > "${P}/.swarm/state/scope-x"; printf '%s\n' "sxa w:p80" "sxb w:p81 working" > "${ROOT}/agents"
