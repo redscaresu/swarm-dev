@@ -26,9 +26,9 @@ lacks() { ! grep -qF -- "$1" <<< "$2"; }
 # shellcheck source=fixtures/dash/two_projects.sh disable=SC1091 # CI lints without -x; shellcheck -x lints it
 source "${HERE}/fixtures/dash/two_projects.sh" "${ROOT}"
 A="${FIXTURE_A}"; B="${FIXTURE_B}"
-frame() { rm -f "${TMPDIR}"/swarm-dash-*; (cd "$1" && DASH_W="$2" "${FIXTURE_SWARM}" dash); }
+frame() { rm -rf "${TMPDIR}"/swarm-dash-*; (cd "$1" && DASH_W="$2" "${FIXTURE_SWARM}" dash); }
 # cut <columns> <lines> [dash args]: alpha cut to <lines> as a watched frame is (DASH_KEYS).
-cut() { rm -f "${TMPDIR}"/swarm-dash-*; (cd "${A}" && DASH_KEYS=1 DASH_W="$1" DASH_H="$2" "${FIXTURE_SWARM}" dash "${@:3}"); }
+cut() { rm -rf "${TMPDIR}"/swarm-dash-*; (cd "${A}" && DASH_KEYS=1 DASH_W="$1" DASH_H="$2" "${FIXTURE_SWARM}" dash "${@:3}"); }
 both() { has "$1" "$3" && has "$2" "$3"; }
 sleepers=()
 trap 'kill ${sleepers[@]+"${sleepers[@]}"} 2>/dev/null || true; rm -rf "${ROOT}"' EXIT

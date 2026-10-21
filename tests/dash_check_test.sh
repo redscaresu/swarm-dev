@@ -37,7 +37,7 @@ box() { awk -v t="$1" '/^╭─ / { on = index($0, "╭─ " t " ") == 1; next }
 # 1. Each field against the command that owns it, in each project's own frame.
 for p in alpha bravo; do
   d="${ROOT}/${p}"
-  rm -f "${TMPDIR}"/swarm-dash-*
+  rm -rf "${TMPDIR}"/swarm-dash-*
   f="$(DASH_W=100 sw "${d}" dash)"
   st="$(HERDR_ENV=1 sw "${d}" status)"
   n="$(grep -c '^  [^ ]*  *working  \[' <<< "${st}" || true)"

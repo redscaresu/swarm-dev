@@ -35,7 +35,7 @@ for w in 60 100 200; do
   fi
 done
 # The clock is fixed: a later run, past the wall clock's next second and with no cache, still matches.
-sleep 1; rm -f "${TMPDIR}"/swarm-dash-*
+sleep 1; rm -rf "${TMPDIR}"/swarm-dash-*
 check "a later run draws the same frame" diff -u "${HERE}/fixtures/dash/golden-100.txt" <(frame 100)
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
