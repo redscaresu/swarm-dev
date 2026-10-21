@@ -40,7 +40,7 @@ chmod +x "${ROOT}/size/stty" "${ROOT}/size/tput"
 export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
 mkdir -p "${TMPDIR}"
 # fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
-fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }
+fresh() { rm -rf "${TMPDIR}"/swarm-dash-*; }
 git -C "${P}" init -q
 item hld/2026-01-01-x.md 'status: agreed'
 item epics/e1.md 'status: active' 'hld: 2026-01-01-x'

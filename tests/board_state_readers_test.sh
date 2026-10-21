@@ -34,7 +34,7 @@ run() { # <HERDR_ENV> <swarm.sh args...>
   local h="$1"; shift
   (cd "${P}" && env -u SWARM_PROJECT HERDR_ENV="${h}" PATH="${ROOT}/bin:${PATH}" COLUMNS=100 bash "${SWARM}" "$@" 2>&1) || true
 }
-dash() { rm -f "${TMPDIR}"/swarm-dash-*; run "" dash; }
+dash() { rm -rf "${TMPDIR}"/swarm-dash-*; run "" dash; }
 strict() { run 1 story --strict b; }
 
 printf 'board_dir = board\nlead = session\n' > "${P}/.claude/swarm/config"; echo '# stories' > "${P}/board/stories/README.md"
