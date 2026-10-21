@@ -257,10 +257,11 @@ dataset_report() {
 #     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
 #     10 s prints `ci health: gh failed` and no numbers. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from that
-#     attempt's jobs listing, its control characters dropped): its PRs, the median minutes, of the
+#     attempt's jobs listing less those a rerun carried over, its control characters dropped): its PRs, the median minutes, of the
 #     jobs that were a PR's slowest the one with the highest median minutes and that median, the same
 #     for the window of as many days before it (a PR built in both counts in the later), and the
-#     change in minutes. A PR gh cannot read is left out, and a line says how many. dash's ci line is
+#     change in minutes. A PR gh cannot read is left out, and a line says how many (and how many of
+#     the window's own). dash's ci line is
 #     its origin repo's row of `flow --since <6 days ago>`, run with SWARM_CI_TIME_ONLY, which skips
 #     the row above.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the

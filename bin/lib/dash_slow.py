@@ -5,6 +5,11 @@ FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
 # one still running after CI_TIMEOUT is stopped. ponytail: every PR is read again each time; keep a
 # closed PR's ci_time if the calls ever crowd gh's rate limit.
 CI_SECONDS, CI_RETRY, CI_TIMEOUT = 6 * 3600, 600, 1800
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # flow_ci_health.py's: the cache is text to print, not escapes
+def private(path, flags):
+    # os.open that never follows a symlink, as an opener for open(): the ci cache's files have names
+    # anyone can guess under a TMPDIR other users may write to (/tmp), so a planted link is refused.
+    return os.open(path, flags | os.O_NOFOLLOW, 0o600)
 def gh(args):
     p = subprocess.Popen(["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
@@ -21,16 +26,15 @@ def origin_of(repo):
 def ci_line(flow, repo):
     # dash's ci line from flow's ci_health output: repo's ci time row, as `ci 11m (slowest: test 9m)
     # ▼2m vs last week`, the change from the minutes it shows; "" with no row for a quiet week, None
-    # with no table (flow failed) or no row because gh could read none of the PRs (offline, a login
-    # expired): a failed refresh, tried again soon, that keeps the line there was.
+    # with no table (flow failed) or when gh could not read one of this window's PRs (offline, a login
+    # expired, a hiccup): a failed refresh, tried again soon, that keeps the line there was.
     lines = flow.splitlines()
     head = next((i for i, l in enumerate(lines) if l.startswith("repo\tprs\tci_min_median\t")), None)
-    if head is None:
+    if head is None or re.search(r"^ci time: gh could not read \d+ of \d+ PRs \([1-9]", flow, re.M):
         return None
     row = next((l.split("\t") for l in lines[head + 1:] if l.split("\t")[0].lower() == repo.lower()), None)
     if not row or not row[2]:
-        unread = next((m.groups() for m in map(re.compile(r"ci time: gh could not read (\d+) of (\d+) PRs").match, lines) if m), None)
-        return None if unread and unread[0] == unread[1] else ""
+        return ""
     now = round(float(row[2]))
     line = f"ci {now}m (slowest: {row[3]} {float(row[4]):.0f}m)"
     if row[6]:
@@ -62,14 +66,14 @@ def ci_refresh(project, repo, cache):
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL); p.communicate()
         if line is not None:
-            with open(f"{cache}.{os.getpid()}", "w", encoding="utf-8") as f:
+            with open(f"{cache}.{os.getpid()}", "w", encoding="utf-8", opener=private) as f:
                 f.write(line)
             os.replace(f"{cache}.{os.getpid()}", cache)
     except Exception:
         line = None
     finally:
         if line is None:
-            open(cache + ".failed", "w").close()
+            open(cache + ".failed", "w", opener=private).close()
 
 if sys.argv[1:2] == ["--ci"]:
     ci_refresh(*sys.argv[2:5])
@@ -104,7 +108,7 @@ def start_refresh(project, repo, cache):
     failed = age(cache + ".failed")
     if failed is not None and failed < CI_RETRY:
         return
-    fd = os.open(cache + ".run", os.O_CREAT | os.O_WRONLY)
+    fd = private(cache + ".run", os.O_CREAT | os.O_WRONLY)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         subprocess.Popen([sys.executable, os.path.abspath(__file__), "--ci", project, repo, cache], pass_fds=(fd,),
@@ -125,8 +129,8 @@ try:
         if (old is None or old > CI_SECONDS) and not os.environ.get("SWARM_NO_CI_REFRESH"):
             start_refresh(project, m.group(1), cache)
         if old is not None:
-            with open(cache, encoding="utf-8") as f:
-                line = f.read().strip()
+            with open(cache, encoding="utf-8", opener=private) as f:
+                line = CONTROL.sub("", f.read()).strip()
             if line and old > CI_SECONDS:
                 line += f" · {old // 3600:.0f}h old" if old < 2 * 86400 else f" · {old // 86400:.0f}d old"
             print("ci\t" + line)

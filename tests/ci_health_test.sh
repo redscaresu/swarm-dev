@@ -26,7 +26,8 @@
 # that is e and f, 11.5 min and test 9.0, against g's 13.0 and 10.0 the week before (f, built in
 # both weeks, counts in its latest alone): -1.5. dash's ci line is that row, its change from the
 # minutes it shows: ci 12m (slowest: test 9m) ▼1m vs last week; past 6 hours old it says its age. A
-# dash whose refresh fails (gh reads no PR, or flow prints no table) writes no line and tries again
+# dash whose refresh fails (gh cannot read one of this week's PRs, or flow prints no table) writes no
+# line, keeping the one there was, and tries again
 # after 10 minutes, not 6 hours. A gh answer of {} leaves that PR out, never the section.
 set -euo pipefail
 
@@ -100,7 +101,7 @@ case "$*" in
 "pr view https://github.com/"[oO]"/r/pull/"*) [ -z "${SLOW:-}" ] || sleep 12; if [ -n "${BADPR:-}" ]; then echo '{}'; else cat "$G/view-${3##*/}"; fi ;;
 "run list -R o/r --branch story/a "*) if [ -n "${RERUN:-}" ]; then cat "$G/rerun-a"; else cat "$G/runs-a"; fi ;;
 "run list -R o/r --branch story/b "*) [ -z "${FAIL:-}${FAILB:-}" ] || exit 1; cat "$G/runs-b" ;;
-"run list -R "[oO]"/r --branch story/"*) [ -z "${FAIL:-}" ] || exit 1; cat "$G/runs-${6##*/}" ;;
+"run list -R "[oO]"/r --branch story/"*) [ -z "${FAIL:-}" ] || exit 1; [ -z "${FAILWEEK:-}" ] || [ "${6##*/}" = g ] || exit 1; cat "$G/runs-${6##*/}" ;;
 "api --paginate --slurp repos/"[oO]"/r/actions/runs/"*"/attempts/"*"/jobs?per_page=100") cat "$G/jobs-$(echo "$4" | cut -d/ -f6,8 | tr / -)" ;;
 "api repos/"[oO]"/r/actions/runs/"*) cat "$G/attempt-$(echo "$2" | cut -d/ -f6,8 | tr / -)" ;;
 esac
@@ -121,13 +122,13 @@ check "a flaky head, a red head (one run could not start) fixed by a new head an
 check "a run whose failed first attempt was rerun to green is red once and a flake, its ci time from the rerun's start" \
   "$(RERUN=1 flow "${W[@]}" | ci)" "${H}"$'\n3\t4\t7.5\t1.33\t1\n'"${T}"$'\no/r\t3\t6.0\tlint\t7.0\t0\t\t\t\t'
 check "a failing gh prints the failure line and no numbers; ci time keeps a, whose runs it read" "$(FAIL=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed"$'\n'"${T}"$'\no/r\t1\t6.0\ttest\t5.0\t0\t\t\t\t\nci time: gh could not read 2 of 3 PRs, left out'
+  "ci health: gh failed"$'\n'"${T}"$'\no/r\t1\t6.0\ttest\t5.0\t0\t\t\t\t\nci time: gh could not read 2 of 3 PRs (2 of 3 in this window), left out'
 check "a gh answer of {} leaves that PR out of ci time, not the section" "$(BADPR=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed"$'\n'"${T}"$'\nci time: gh could not read 3 of 3 PRs, left out'
+  "ci health: gh failed"$'\n'"${T}"$'\nci time: gh could not read 3 of 3 PRs (3 of 3 in this window), left out'
 check "a gh call over 10 seconds is a failure, and ci time has no row" "$(SLOW=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed"$'\n'"${T}"$'\nci time: gh could not read 3 of 3 PRs, left out'
+  "ci health: gh failed"$'\n'"${T}"$'\nci time: gh could not read 3 of 3 PRs (3 of 3 in this window), left out'
 check "ci time keeps the PRs gh could read: a and c, and a line for b" "$(FAILB=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\nci time: gh could not read 1 of 3 PRs, left out'
+  "ci health: gh failed"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\nci time: gh could not read 1 of 3 PRs (1 of 3 in this window), left out'
 check "with no --since, the PRs of the last 30 days, and a line that says so" "$(flow | ci)" \
   "PRs from the last 30 days, ${start} on; --since sets the start"$'\n'"${H}"$'\n3\t5\t19.0\t0.00\t0\n'"${T}"$'\no/r\t3\t13.0\ttest\t10.0\t0\t\t\t\t'
 now="$(flow --since "${week}" | ci)"
@@ -191,6 +192,19 @@ check "a <cache>.run no refresh holds does not hold a refresh off" "$(dash)" "${
 aged 25200
 FAIL=1 dash > /dev/null; refreshed
 check "a refresh where gh can read none of the PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
+# One where gh cannot read this week's PRs (FAILWEEK=1: e's and f's), though it reads last week's g,
+# fails too: no blank line for a quiet week, and another refresh in 10 minutes.
+rm "${dir}"/tmp/swarm-dash-ci-*.failed
+FAILWEEK=1 dash > /dev/null; refreshed
+check "a refresh where gh cannot read this week's PRs keeps the line there was, and stamps .failed" "$(dash)|$(stamped)" "${want} · 7h old|failed"
+# The ci cache's files have names anyone can guess under TMPDIR: a planted link is never followed.
+# A cached line is printed without its control characters.
+echo keep > "${dir}/victim"; touch -t 202001010000 "${dir}/victim"
+ln -sf "${dir}/victim" "$(ci_cache).failed"
+FAIL=1 dash > /dev/null; refreshed
+check "a refresh never writes through a link planted at <cache>.failed" "$(cat "${dir}/victim")" keep
+rm "$(ci_cache).failed"; printf 'ci 1m\033[2J (slowest: x\n1m) vs last week' > "$(ci_cache)"
+check "a cached line is printed without its control characters" "$(SWARM_NO_CI_REFRESH=1 dash)" "ci 1m[2J (slowest: x1m) vs last week"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

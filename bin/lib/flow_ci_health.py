@@ -123,13 +123,13 @@ def summary(times):
 
 def trend(now, before):
     # One TSV row per repo (lowercased, as pr_key has it) of the PRs in now or before: its PRs, median CI minutes, slowest job and its
-    # median minutes in now, the same in before, and the change in CI minutes; and how many PRs gh
-    # could not read, which are left out.
-    times, unread = {}, 0
+    # median minutes in now, the same in before, and the change in CI minutes; and how many PRs of
+    # each window gh could not read, which are left out.
+    times, unread = {}, [0, 0]
     for i, urls in enumerate((now, before)):
         for url in urls:
             t = ci_time(url)
-            unread += t is None
+            unread[i] += t is None
             if t:
                 times.setdefault(GITHUB.match(url).group(1).lower(), ([], []))[i].append(t)
     rows = []
@@ -171,5 +171,5 @@ if __name__ == "__main__":
     print("repo\tprs\tci_min_median\tslowest_job\tslowest_job_min_median\tprev_prs\tprev_ci_min_median"
           "\tprev_slowest_job\tprev_slowest_job_min_median\tci_min_change")
     print("\n".join("\t".join(r) for r in rows))
-    if unread:
-        print(f"ci time: gh could not read {unread} of {len(now) + len(before)} PRs, left out")
+    if sum(unread):
+        print(f"ci time: gh could not read {sum(unread)} of {len(now) + len(before)} PRs ({unread[0]} of {len(now)} in this window), left out")
