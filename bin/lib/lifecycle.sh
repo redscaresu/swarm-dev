@@ -1124,13 +1124,15 @@ live_agents() {
     fi
     name="${name:-${who:-${pane}}}"
     s=herdr; [[ -z "${who}" ]] || s="$(session_state "${who}" "${CLOSE_CLAUDE}" </dev/null)"
-    [[ "${s}" != herdr ]] || s="herdr:${st}"
+    # No session to ask, or Claude Code lists none live under the recorded id (gone: exited, or a new
+    # session): herdr's status answers, so an agent herdr has working is kept.
+    [[ "${s}" != herdr && "${s}" != gone ]] || s="herdr:${st}"
     case "${s}" in
       busy|herdr:working) live_line "${pane}" "${name}" working "${who:--}"; continue ;;
       waiting*|herdr:blocked) live_line "${pane}" "${name}" waiting "${who:--}"; continue ;;
       unknown|herdr:unknown) live_line "${pane}" "${name}" "its state could not be read" "${who:--}"; continue ;;
       idle|herdr:idle) ;;
-      # Any other (a session gone, herdr's starting, done or error) is not known to be idle: kept.
+      # Any other (herdr's starting, done or error) is not known to be idle: kept.
       *) live_line "${pane}" "${name}" "state ${s#herdr:}" "${who:--}"; continue ;;
     esac
     f="${BOARD}/stories/${name}.md"

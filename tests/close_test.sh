@@ -553,6 +553,14 @@ for st in starting 'done'; do
   got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c "^kept cb1 (state ${st}) in tab ce-2" <<< "${out}" || true) "
 done
 is "cb1 starting, then done (herdr's word, no session): each keeps ce-2" "<w:t7>|1 <w:t7>|1 " "${got}"
+# cb1's recorded session gone from Claude Code's list (exited, or a new session): herdr's status
+# answers, so working keeps ce-2 and idle lets it close.
+built cb1 code; got=""
+for st in working idle; do
+  conductor_fixture "${st}" idle; out="$(cs conduct-ce)"
+  got+="$(tr -d '\n' < "${CLOSED}")|$(grep -c '^kept cb1' <<< "${out}" || true) "
+done
+is "cb1's session gone: herdr's working keeps ce-2, its idle closes it" "<w:t7>|1 <w:t7><w:t8>|0 " "${got}"
 # Closing one builder's last pane closes that record's own tab only: overflow ce-2 and epic ce-foo's
 # tab, both idle, stay open.
 conductor_fixture idle idle; echo "w:p93 cb3" > "${P}/.swarm/state/ce"; echo "cb3 w:p93" >> "${ROOT}/agents"
