@@ -717,7 +717,7 @@ def running_view():
 # waited, and the escaped defects logged in the last 7 days. A third light, shown only when lit, counts
 # the times a person stepped in on those days (`swarm.sh intervene`'s incident lines, of the kinds
 # swarm.sh passes): on the speedometer's line when it fits, else on its own line, which a cut frame
-# gives up last of the lines under the speedometer. A board item waits from its newest
+# gives up last of the lines under the speedometer (after the sparkline, the gauges and the idle line). A board item waits from its newest
 # review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
     d, slug = item
@@ -874,8 +874,8 @@ if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
 # The interventions light's own line, when it has one, heads the lines under the speedometer.
-stepped_line = pack([(SEP, speed), (SEP, stepped)] if stepped else [(SEP, speed)], W)[1:]
-out.append(fit(speed + ([SEP] + stepped if stepped and not stepped_line else []), W))
+speed_line, *stepped_line = pack([(SEP, speed), (SEP, stepped)] if stepped else [(SEP, speed)], W)
+out.append(speed_line)
 under = stepped_line + pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else [], idle_gauge() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
@@ -928,7 +928,7 @@ ladder = E.get("DASH_LADDER") == "1"
 def make_room(room, spare=H):
     # The lines under the speedometer (under) take recent's rows; a cut frame keeps RECENT_MIN of them
     # (or the ladder, when even those do not fit) and, from 140 columns, the whole left column (spare:
-    # the rows under it) first, dropping the sparkline's line, then the gauges, then the interventions light's.
+    # the rows under it) first, dropping the sparkline's line, then the gauges, the idle line, then the interventions light's.
     while under and FIT and H and (room - len(under) < RECENT_MIN or spare < len(under)):
         under.pop(len(stepped_line) if len(under) > len(stepped_line) else 0)
     return room - len(under)

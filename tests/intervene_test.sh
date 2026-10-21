@@ -62,8 +62,8 @@ ev 8 "lead-hand: too old"
 ev 2 "wait-timeout: busy"
 ev 2 "login: Login expired"
 since="$(python3 -c 'import datetime, sys; print(datetime.date.fromtimestamp(int(sys.argv[1])) - datetime.timedelta(days=6))' "${NOW}")"
-flow="$(sw flow --since "${since}" | sed -n '/^## incidents$/,/^$/p' | awk -F'\t' -v kinds=" ${KINDS} " 'index(kinds, " " $2 " ") { n += $3 } END { print n + 0 }')"
-dash="$(COLUMNS=200 SWARM_DASH_NOW="${NOW}" sw dash 2>&1 | sed -n 2p | grep -oE '[0-9]+ interventions? in 7 days' | cut -d' ' -f1)"
+flow="$(sw flow --since "${since}" | sed -n '/^## incidents$/,/^$/p' | awk -F'\t' -v kinds=" ${KINDS} " 'index(kinds, " " $2 " ") { n += $3 } END { print n + 0 }' || true)"
+dash="$(COLUMNS=200 SWARM_DASH_NOW="${NOW}" sw dash 2>&1 | sed -n 2p | grep -oE '[0-9]+ interventions? in 7 days' | cut -d' ' -f1 || true)"
 check "flow counts 4 interventions in the last 7 days" "${flow}" 4
 check "dash shows the same 7-day count as flow" "${dash}" "${flow}"
 # Where it does not fit beside the speedometer (80 columns) it takes the next line; a cut frame drops

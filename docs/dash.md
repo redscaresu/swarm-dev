@@ -42,7 +42,7 @@ is one column, top to bottom:
   those 7 days: `! N interventions in 7 days`, the `swarm.sh intervene` lines (`lead-hand` and
   `user-caught`), the same count `flow`'s `incidents` section gives for them. It goes on the
   speedometer's line when it fits, and on the next line when it does not; a frame cut to the
-  terminal's height drops that line after the sparkline and the gauges. From 60 columns a sparkline follows: the stories
+  terminal's height drops that line after the sparkline, the gauges and the `idle:` count. From 60 columns a sparkline follows: the stories
   finished on each of the last 14 days, oldest first (`▁` for none, `▇` for the busiest day), then
   today's count and the average of its last 7 days, which is the speedometer's number. From 100
   columns two gauges follow, on the sparkline's line when both fit. `rate` is that average against the best 7 days in a row
