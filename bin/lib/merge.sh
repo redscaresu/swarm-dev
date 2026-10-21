@@ -10,6 +10,8 @@ WAIT_PR_RETRY=60        # wait-pr's pause after a transient gh error, longer tha
 WAIT_PR_TRIES=3         # transient gh errors in a row wait-pr retries; the next one ends it
 FIX_MAIN_LINES=20       # FAIL lines fix-main prints and puts in its story
 FIX_MAIN_LOG_SECONDS=600  # how long fix_main waits for the failed runs to finish and give their logs (SWARM_FIX_MAIN_LOG_SECONDS)
+BASE_HEAD_WAIT=30       # how long reconcile's read of a red base's head commit may take (green_mains)
+BASE_CI_WAIT=60         # how long one read of CI there, or on a merge commit, may take before a red main is cleared (clear_red_main)
 # A gh error worth retrying: a dropped or unreachable network, a timeout, a rate limit, a 408 or 5xx. Matched as whole
 # words against the error with every word holding a / (a URL, a repo path) taken out, so a repo
 # named geofabrik or timeout does not make Bad credentials transient.
@@ -20,8 +22,10 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
-# ci_gate base <owner/repo> <sha> — as head, and every workflow run on <sha> green too, as main
-# judges them: a run that failed to start has no check run of its own.
+# ci_gate fixed <owner/repo> <sha> <board paths> <check>... — succeed when <sha> shows a red main
+# fixed: it changes a file outside <board paths> (prefixes, one a line: a board-only commit's CI may
+# skip its tests), every check run, status and workflow run on it is green, and each named <check>
+# (one that went red) has one of its own that passed, so a check a path filter skipped does not count.
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -199,8 +203,9 @@ merge_pr() {
   fi
   record_event main-ci "${MERGE_TARGET}" "${why}"
   echo "main-ci: ${why}"
-  # A green main clears a red one of this repo and base only. fix_main's every gh call is bounded and
-  # cannot fail merge, so reconcile below runs whatever it does.
+  # A green main clears a red one of this repo and base only, and only when it ran the checks that
+  # went red (clear_red_main). fix_main's every gh call is bounded and cannot fail merge, so
+  # reconcile below runs whatever it does.
   if [[ ${rc} -eq 0 ]]; then
     clear_red_main "$(main_key "${repo}" "${base}")" "${oid}" "CI on ${base} is green at ${oid:0:7}"
   elif [[ ${rc} -eq 1 ]]; then
@@ -244,12 +249,14 @@ run_fail_lines() {
 main_key() { printf '%s %s\n' "$(tr '[:upper:]' '[:lower:]' <<< "$1")" "$2"; }
 
 # fix_main <owner/repo> <sha> <base> <red checks> — CI on <base> is red at <sha>, a commit merge
-# merged: record main-red <sha> "<main_key> <checks>", retire the older fix-main stories of that repo
-# and base that no one has started (retire_fixes), and write the one-off story fix-main-<short sha>
-# (unless it is on the board already) in the merged story's repo:. It names the failed Actions runs,
-# the runs whose log could not be read and why, and their FAIL lines (FIX_MAIN_LINES at most),
+# merged: write the one-off story fix-main-<short sha> (unless it is on the board already) in the
+# merged story's repo:, git-ignored in the main checkout (ignore_fixes). It names the failed Actions
+# runs, the runs whose log could not be read and why, and their FAIL lines (FIX_MAIN_LINES at most),
 # indented. Reading the logs stops FIX_MAIN_LOG_SECONDS after it starts, however many runs failed.
-# Only once the story is there does it print fix-main: <checks> on <short sha>, then those lines.
+# Only once the story is there does it record main-red <sha> "<main_key> <checks>", retire the older
+# fix-main stories of that repo and base that no one has started (retire_fixes), and print
+# fix-main: <checks> on <short sha>, then those lines. A story it cannot write leaves the red main
+# and fix before it as they were, and fails, saying so.
 fix_main() {
   local repo="$1" sha="$2" base="$3" key checks runs id out rc fails="" unread="" rname="" nl=$'\n' end
   local none="no FAIL line in the failed runs' logs" item="${BOARD}/stories/${MERGE_TARGET}.md" f="${BOARD}/stories/fix-main-${2:0:7}.md"
@@ -267,10 +274,9 @@ fix_main() {
   fails="$(grep -v '^$' <<< "${fails}" | sed -n "1,${FIX_MAIN_LINES}p" || true)"
   [[ -z "${unread}" ]] || none="no FAIL line read; logs not read: ${unread}"
   fails="${fails:-${none}}"; runs="${runs:-none, as no red check is a GitHub Actions run}"
-  record_event main-red "${sha}" "${key} ${checks}"
-  retire_fixes "${key}" "${sha}" "superseded by fix-main-${sha:0:7}"
   [[ ! -f "${item}" ]] || rname="$(fm "${item}" repo)"
-  [[ -e "${f}" || ! -d "${BOARD}/stories" ]] || {
+  ignore_fixes || echo "fix-main: cannot git-ignore fix-main stories in ${PROJECT_DIR}; the story shows in git status there"
+  [[ -e "${f}" ]] || {
     echo ---; echo "kind: code"; echo "status: ready"; [[ -z "${rname}" ]] || echo "repo: ${rname}"
     echo "depends_on: []"; echo "touches: []"; echo ---
     cat <<EOF
@@ -289,11 +295,30 @@ prints a run's failed jobs. The logs not read: ${unread:-none}. Their FAIL lines
 **Done when:**
 - Every check above passes on this PR's head, with the test that failed kept, not skipped.
 EOF
-  } 2>/dev/null > "${f}" || true
-  if [[ -e "${f}" ]]; then echo "fix-main: ${checks} on ${sha:0:7}"
-  else echo "main red, and no fix-main story: cannot write ${f}; ${checks} on ${sha:0:7}"; fi
+  } 2>/dev/null > "${f}" || {
+    rm -f "${f}"
+    echo "main red, and no fix-main story: cannot write ${f}; ${checks} on ${sha:0:7}"
+    echo "  ${fails//${nl}/${nl}  }"
+    return 1
+  }
+  record_event main-red "${sha}" "${key} ${checks}"
+  retire_fixes "${key}" "${sha}" "superseded by fix-main-${sha:0:7}"
+  echo "fix-main: ${checks} on ${sha:0:7}"
   echo "  ${fails//${nl}/${nl}  }"
-  [[ ! -e "${f}" ]] || echo "story: ${f}"
+  echo "story: ${f}"
+}
+
+# ignore_fixes — on a board in the project's repo, git-ignore fix-main stories in the main checkout
+# through the clone's info/exclude, as .gitignore does .swarm/: fix_main writes them where every
+# command reads a story, and none shows in git status or meets a pull there.
+ignore_fixes() {
+  local ex rel="" pat
+  [[ ${BOARD_IN_REPO} == 1 ]] || return 0
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  pat="/${rel}stories/fix-main-*.md"
+  ex="$(git -C "${PROJECT_DIR}" rev-parse --git-path info/exclude)" || return 1
+  [[ "${ex}" == /* ]] || ex="${PROJECT_DIR}/${ex}"
+  grep -qxF -- "${pat}" "${ex}" 2>/dev/null || { mkdir -p "$(dirname "${ex}")" && echo "${pat}" >> "${ex}"; }
 }
 
 # retire_fixes <key> <sha> <why> — take off the board each fix-main story that a main-red of <key>
@@ -317,43 +342,54 @@ red_mains() {
     END { for (k in red) print ord[k] "\t" red[k] }' "${EVENTS_LOG}" 2>/dev/null | sort -n | cut -f2- || true
 }
 
-# clear_red_main <key> <sha> <why> — main is green at <sha> for <key>: when red_mains holds that key
-# (matched as text, never a pattern), log main-green <sha> <key> and retire its unstarted fixes.
+# board_paths — the board's own files in the project's repo, one prefix a line, as the board-only CI
+# gate that swarm.sh init writes has them; nothing for a board outside the repo.
+board_paths() {
+  local rel=""
+  [[ ${BOARD_IN_REPO} == 1 ]] || return 0
+  [[ "${BOARD}" == "${PROJECT_DIR}" ]] || rel="${BOARD#"${PROJECT_DIR}"/}/"
+  printf '%s\n' "${rel}stories/" "${rel}epics/" "${rel}hld/" "${rel}Board.base" "${rel}.obsidian/"
+}
+
+# clear_red_main <key> <sha> <why> — CI is green at <sha> for <key>: when red_mains holds that key
+# (matched as text, never a pattern) and <sha> shows it fixed (ci_gate fixed: not board-only, all
+# green, and each check that went red passed there), log main-green <sha> <key> and retire its
+# unstarted fixes. A read that fails, or runs past BASE_CI_WAIT, clears nothing.
 clear_red_main() {
-  red_mains | awk -v k="$1" '$2 " " $3 == k { found = 1 } END { exit !found }' || return 0
+  local line n names=()
+  line="$(red_mains | awk -v k="$1" '$2 " " $3 == k' | tail -1)"
+  [[ -n "${line}" ]] || return 0
+  while IFS= read -r n; do [[ -z "${n}" ]] || names+=("${n}"); done \
+    <<< "$(cut -d' ' -f4- <<< "${line}" | awk '{ n = split($0, c, "; "); for (i = 1; i <= n; i++) { sub(/ \([^()]*\)$/, "", c[i]); print c[i] } }')"
+  within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" fixed "${1%% *}" "$2" "$(board_paths)" \
+    ${names[@]+"${names[@]}"} >/dev/null 2>&1 </dev/null || return 0
   record_event main-green "$2" "$1"
   retire_fixes "$1" - "$3"
 }
 
-# base_green <owner/repo> <base> — print the base's head and succeed when CI there is green now
-# (ci_gate base), however it got green: a revert, a re-run, a merge swarm.sh did not make. Each gh
-# read is bounded, and any failure reads as not green.
-base_green() {
-  local head
-  head="$(within 30 gh api --jq .sha "repos/$1/commits/$2" 2>/dev/null </dev/null)" || return 1
-  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] && within 60 python3 "${SWARM_HOME}/bin/lib/ci_gate.py" base "$1" "${head}" >/dev/null 2>&1 </dev/null || return 1
-  echo "${head}"
-}
-
-# green_mains — reconcile's: clear each red main whose base is green now (base_green).
+# green_mains — reconcile's, and the only read of a red base's CI that next relies on: clear each red
+# main whose base's head shows it fixed (clear_red_main), however it got there: a revert, a re-run,
+# a merge swarm.sh did not make. Each gh read is bounded, and a failed one clears nothing.
 green_mains() {
   local sha repo base checks head
   while read -r sha repo base checks; do
     [[ -n "${sha}" ]] || continue
-    head="$(base_green "${repo}" "${base}")" || continue
+    head="$(within "${BASE_HEAD_WAIT}" gh api --jq .sha "repos/${repo}/commits/${base}" 2>/dev/null </dev/null)" || continue
+    [[ "${head}" =~ ^[0-9a-f]{40}$ ]] || continue
     clear_red_main "${repo} ${base}" "${head}" "CI on ${base} is green at ${head:0:7}"
   done <<< "$(red_mains)"
 }
 
 # main_red — "<sha> <owner/repo> <base> <checks>" for the newest red main (red_mains) whose
-# fix-main story is ready with no build and whose base is not green now (base_green); nothing when
-# no red main of any repo and base has such a fix.
+# fix-main story is on the board, ready with no build; nothing when no red main of any repo and base
+# has such a fix. It reads the board and events.tsv alone, never gh: next_step runs it every dash
+# frame, and reconcile's green_mains is what clears a base gone green.
 main_red() {
-  local line pick="" sha repo base
+  local line pick="" sha f
   while read -r line; do
-    read -r sha repo base _ <<< "${line}"
-    [[ -n "${sha}" && "$(fm "${BOARD}/stories/fix-main-${sha:0:7}.md" status)" == ready ]] || continue
-    ! one_off_started "fix-main-${sha:0:7}" && ! base_green "${repo}" "${base}" > /dev/null && pick="${line}"
+    sha="${line%% *}"; f="${BOARD}/stories/fix-main-${sha:0:7}.md"
+    [[ -n "${sha}" && -f "${f}" && "$(fm "${f}" status)" == ready ]] || continue
+    one_off_started "fix-main-${sha:0:7}" || pick="${line}"
   done <<< "$(red_mains)"
   [[ -z "${pick}" ]] || echo "${pick}"
 }

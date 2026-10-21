@@ -157,10 +157,10 @@ epic_has_after() {
 
 # next_step — what the chain does next, read from the board alone, so a run can stop anywhere and
 # pick up again. Prints "<action> <arg>" on the first line and why on the second. In order:
-#   fix-main <slug>   merge found a base red on a commit it merged, that base is not green now, and
-#                     the one-off fix-main-<sha> it wrote is ready with no build yet (main_red, the
-#                     newest such of any repo and base): start it before anything else, a
-#                     conductor's wait included
+#   fix-main <slug>   merge found a base red on a commit it merged, no commit has shown it fixed
+#                     since (main-green), and the one-off fix-main-<sha> it wrote is ready with no
+#                     build (main_red, the newest such of any repo and base): start it before
+#                     anything else, a conductor's wait included
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
@@ -188,7 +188,7 @@ next_step() {
   local f slug epic story_epic buildable="" waiting="" when held n tag base sha
   # A red main's fix comes first while no one has started it: every merge waits on it. Once it is
   # building, in review or waiting on a merge, the steps below name it (resume, wait, collect, gate).
-  # A base gone green another way (a revert, a re-run) holds nothing; reconcile then retires the fix.
+  # A base gone green another way (a revert, a re-run) is cleared by reconcile, which retires the fix.
   read -r sha _ _ n <<< "$(main_red)"
   if [[ -n "${sha}" ]]; then
     echo "fix-main fix-main-${sha:0:7}"

@@ -296,16 +296,35 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             return 2, "timeout (%s)" % "; ".join(wait)
         time.sleep(poll)
 
+def fixed(repo, sha, board, names):
+    """Why sha does not show a red main fixed, or None: a board-only commit's CI may skip its tests,
+    and a check a path filter skipped has no run of its own that passed."""
+    files = []
+    for d in docs("repos/%s/commits/%s" % (repo, sha)):
+        if not (isinstance(d, dict) and isinstance(d.get("files"), list)):
+            raise Err("unreadable commit " + sha[:7])
+        files += [f.get("filename") or "" for f in d["files"]]
+    if board and files and all(f.startswith(tuple(board)) for f in files):
+        return "%s changes only the board's files" % sha[:7]
+    red, wait, ok = checks(repo, sha)
+    judge([r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
+           if r.get("head_sha") == sha], red, wait, ok)
+    passed = {s[:-len(" (success)")] for s in ok if s.endswith(" (success)")}
+    wait += ["%s (no run that passed)" % n for n in names if n not in passed]
+    return "; ".join(red + wait) or None
+
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    if mode in ("head", "base"):
+    if mode == "head":
         red, wait, ok = checks(repo, args[0])
-        if mode == "base":
-            judge([r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, args[0]), "workflow_runs")
-                   if r.get("head_sha") == args[0]], red, wait, ok)
         print("; ".join(red + wait or ok))
         if red or wait:
             sys.exit(1 if red else 2)
+    elif mode == "fixed":
+        why = fixed(repo, args[0], [b for b in args[1].split("\n") if b], args[2:])
+        print(why or "fixed")
+        if why:
+            sys.exit(1)
     elif mode == "age":
         # head's rule; once green, the whole minutes since its last run or status finished.
         done = []

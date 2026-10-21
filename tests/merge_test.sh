@@ -79,8 +79,9 @@ case "$1 $2" in
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
                     [ ! -e "${FX}/${f}.${ref}" ] || f="${f}.${ref}"; serve "${f}" ;;
-      # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>.
-      */commits/*) serve "commit.${sha}" ;;
+      # A branch's head commit (gh api repos/o/r/commits/<branch> --jq .sha): commit.<branch>. A
+      # commit's files: commit.<sha>, else one file outside the board.
+      */commits/*) [ -e "${FX}/commit.${sha}" ] || { echo '{"files":[{"filename":"bin/x"}]}'; exit 0; }; serve "commit.${sha}" ;;
       *) echo "stub: no fixture for ${path}" >&2; exit 1 ;;
     esac ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
@@ -223,6 +224,8 @@ check "red main: prints fix-main naming the check and the commit" said "fix-main
 check "red main: main-red <sha> <checks>" logged "^main-red ${M} .*e2e (failure)"
 check "red main: writes the fix-main story, kind code and ready" grep -qx 'kind: code' "${FM}"
 check "red main with no Actions run: the story says it found no FAIL line" grep -qF "no FAIL line" "${FM}"
+check "red main: the fix-main story is git-ignored in the main checkout, so git status there shows no board edit" \
+  bash -c "git -C '${P}' check-ignore -q '${FM}' && ! git -C '${P}' status --porcelain --untracked-files=all | grep -q fix-main"
 # A failed Actions job: once its run has completed (in progress on the first read), its FAIL line,
 # colour off, goes into fix-main's output and, indented, into the story's body with the run's URL.
 # The story carries the merged story's repo:.
@@ -250,8 +253,23 @@ echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"; checks "${FX}/
 check "a green merge after a red main of the same repo and base: main-green" logged "^main-green ${M} o/r main$"
 check "a green merge after a red main: its unstarted fix-main story is retired" \
   bash -c "[ ! -e '${FM}' ] && grep -q '^retired: fix-main-${M:0:7}' '${ROOT}/out'"
-# red_main <key> — a main-red for <key> (repo and base) logged before this merge, its story ready.
-red_main() { printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\t%s e2e (failure)\n' "${H2}" "$1" >> "${P}/.swarm/events.tsv"; item "fix-main-${H2:0:7}" "status: ready" "kind: code"; }
+# red_main <key> [checks] — a main-red for <key> (repo and base) logged before this merge, its
+# checks (test (failure) unless given) red, its story ready.
+red_main() { printf '2026-10-18T10:00:00Z\tmain-red\t%s\t-\t%s %s\n' "${H2}" "$1" "${2:-test (failure)}" >> "${P}/.swarm/events.tsv"; item "fix-main-${H2:0:7}" "status: ready" "kind: code"; }
+# A green merge clears a red main only when it shows it fixed: a board-only merge commit's CI may
+# skip its tests, and a check a path filter skipped has no run that passed.
+fresh; red_main "o/r main"; rm "${S}"; echo '{"files":[{"filename":"docs/stories/s.md"}]}' > "${FX}/commit.${M}"; merge --board "${URL}"
+check "a board-only merge after a red main: no main-green, the fix-main story kept" \
+  bash -c "! grep -q main-green '${P}/.swarm/events.tsv' && [ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ]"
+fresh; red_main "o/r main" "e2e (failure)"; merge "${URL}"
+check "a green merge with no run of the check that went red: no main-green, the fix-main story kept" \
+  bash -c "! grep -q main-green '${P}/.swarm/events.tsv' && [ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ]"
+# A new fix-main story that cannot be written leaves the red main and fix before it as they were.
+fresh; red_main "o/r main"; checks "${FX}/${M}.checks" "$(run e2e completed failure)"
+chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
+check "a fix-main story that cannot be written: the older fix kept, no main-red for the new one, said so" \
+  bash -c "[ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && ! cut -f2,3 '${P}/.swarm/events.tsv' | tr '\t' ' ' | grep -qx 'main-red ${M}' \
+    && ! grep -q retired '${P}/.swarm/events.tsv' && grep -qF 'main red, and no fix-main story: cannot write' '${ROOT}/out'"
 # Keys ignore the repo's case, and match as text: o/r.x is not o/rxx.
 fresh; red_main "o/r main"; item s "status: review" "prs: https://github.com/O/R/pull/7"; merge "https://github.com/O/R/pull/7"
 check "a green merge from O/R clears o/r's red main" logged "^main-green ${M} o/r main$"
