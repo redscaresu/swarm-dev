@@ -778,8 +778,8 @@ stop_id() {
 # unless the record holds it already: the record keeps the stop's id (stop_id) until a read finds no
 # stop. It is the same stop when its turn is, or, with no prompt above it left in the window (the
 # window scrolled), when its line is. So a stop after a new prompt (a resume) is logged even with no
-# stop-free read between. The read and the write are under PANE_DIR/<name>.lock (mkdir), so of
-# concurrent readers one logs and the rest only read. Only status and wait call it. An empty read sets
+# stop-free read between. The read and the write are under PANE_DIR/<name>.lock (mkdir(2), through
+# perl as in state_lock), so of concurrent readers one logs and the rest only read. Only status and wait call it. An empty read sets
 # both empty.
 # ponytail: a lock a killed reader left is broken after a minute.
 pane_check() {
@@ -787,7 +787,7 @@ pane_check() {
   pane_kind="" pane_at=""
   [[ -n "$1" ]] || return 0
   mkdir -p "${PANE_DIR}" 2>/dev/null || true
-  mkdir "${lock}" 2>/dev/null || { find "${lock}" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null; mkdir "${lock}" 2>/dev/null; } || lock=""
+  perl -e 'mkdir shift or exit 1' "${lock}" || { find "${lock}" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null; perl -e 'mkdir shift or exit 1' "${lock}"; } || lock=""
   text="$(pane_text "$2")"
   if [[ -n "${text}" ]]; then
     sum="$(printf '%s' "${text}" | cksum)"

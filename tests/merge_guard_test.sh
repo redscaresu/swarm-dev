@@ -117,7 +117,7 @@ check "  ... and logs to the main checkout" test "$(wc -l < "${Q}/.swarm/events.
 # Once a call says merge the guard fails closed: no python3, input it cannot read, a call too big
 # for an environment variable.
 feed() { local rc=0; PATH="${2:-${PATH}}" "${BASH}" "${HOOK}" < "$1" >/dev/null 2>&1 || rc=$?; echo "${rc}"; } # <file> [PATH]
-mkdir -p "${ROOT}/nopy" && for b in cat sed tr; do ln -s "$(command -v "${b}")" "${ROOT}/nopy/${b}"; done
+mkdir -p "${ROOT}/nopy" && for b in cat sed tr; do printf '#!/bin/sh\nexec %s "$@"\n' "$(command -v "${b}")" > "${ROOT}/nopy/${b}"; chmod +x "${ROOT}/nopy/${b}"; done
 printf '{"cwd": "%s", "tool_input": {"command": "git merge x"}}' "${OUT}" > "${ROOT}/says-merge.json"
 printf '{"tool_input": {"command": "ls"}}' > "${ROOT}/ls.json"
 printf '{"cwd": "%s", "tool_input": {"command": "git checkout -- f"}}' "${W}" > "${ROOT}/says-git.json"

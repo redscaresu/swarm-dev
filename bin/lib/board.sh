@@ -889,13 +889,14 @@ state_set() {
 # STATE_LOCK_WAIT: seconds state_lock waits for an item's lock (SWARM_LOCK_WAIT).
 STATE_LOCK_WAIT=10
 
-# state_lock <dir> — take the lock <dir>: mkdir makes it or fails, so one writer holds it (macOS has no
-# flock). It tries every 0.1s, and dies naming it after STATE_LOCK_WAIT seconds.
+# state_lock <dir> — take the lock <dir>: mkdir(2) makes it or fails, so one writer holds it (macOS has
+# no flock). It calls mkdir(2) through perl: uutils mkdir (ubuntu 26.04) lets two racing callers both
+# succeed. It tries every 0.1s, and dies naming it after STATE_LOCK_WAIT seconds.
 # ponytail: a writer killed holding the lock leaves it; the next write dies, saying to remove it.
 state_lock() {
   local i n=$(( ${SWARM_LOCK_WAIT:-${STATE_LOCK_WAIT}} * 10 ))
   for ((i = 0; i < n; i++)); do
-    if mkdir "$1" 2>/dev/null; then return 0; fi
+    if perl -e 'mkdir shift or exit 1' "$1"; then return 0; fi
     sleep 0.1
   done
   die "board state: ${1%.lock} is locked (${1} is still there after ${SWARM_LOCK_WAIT:-${STATE_LOCK_WAIT}}s); if no swarm.sh is writing it, remove ${1} and run this again"
