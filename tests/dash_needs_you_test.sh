@@ -60,7 +60,9 @@ case "$1 $2" in
       *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
     esac ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
-  "agent read") [ "$3" = w2:p10 ] && printf '%s\n' '⏺ Working on it.' '❯ 1. Stop and wait for limit to reset' '  2. Wait here, then continue automatically' ;;
+  "agent read") [ "$3" = w2:p10 ] || exit 0   # s-limit's pane: the usage-limit dialog, or with LIMIT_WAITING the line after it
+    if [ -n "${LIMIT_WAITING:-}" ]; then printf '%s\n' '⏺ Working on it.' '⚠ Usage limit reached · limit resets 3pm' '  Continuing shortly'
+    else printf '%s\n' '⏺ Working on it.' '❯ 1. Stop and wait for limit to reset' '  2. Wait here, then continue automatically'; fi ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -109,6 +111,9 @@ check "a working agent whose pane is on the usage-limit dialog is usage-limit, n
 check "an agent on the usage limit is not in needs you" lacks s-limit "${needs}"
 st="$(cd "${S}" || exit 1; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR=working PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1 || true)"
 check "status shows usage-limit for an agent on the usage limit" grep -qE '^  s-limit +usage-limit  \[' <<< "${st}"
+sed 's/"limit","status":"busy"/"limit","status":"idle"/' "${ROOT}/s.json" > "${ROOT}/s-idle.json"
+st="$(cd "${S}" || exit 1; HERDR_ENV=1 LIMIT_WAITING=1 CLAUDE_STUB_AGENTS="${ROOT}/s-idle.json" RE_HERDR=working PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status --all 2>&1 || true)"
+check "an idle agent under the usage-limit waiting line is idle in status" grep -qE '^  s-limit +idle: ' <<< "${st}"
 check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
 check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
 check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"
