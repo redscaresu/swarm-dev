@@ -1132,8 +1132,9 @@ red main and fix before it as they were. A red main clears, logging `main-green`
 fix-main story if nobody has started it, only on a commit that shows it fixed: a later merge into
 the same repo and base, or the base's head that reconcile reads (a revert, a re-run), that changes
 more than the board's own files (a board-only commit's CI may skip its tests, so a board-only head
-is judged by the newest commit before it that is not), has every check, status and workflow run green, and has a passing run of each check that went red (a path filter may
-skip one). Until then, while the story is ready with no build of it, `next` names
+is judged by the newest commit before it that is not), has every check, status and workflow run green (a commit with only statuses counts), and has a passing run of each
+check that went red, or, when the base requires checks, of each of those (a fix may rename or drop the
+failed job; a path filter may skip a check the base does not require). Until then, while the story is ready with no build of it, `next` names
 `fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a
 pane it cannot identify is refused.

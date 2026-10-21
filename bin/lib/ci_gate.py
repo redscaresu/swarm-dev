@@ -297,10 +297,13 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
             return 2, "timeout (%s)" % "; ".join(wait)
         time.sleep(poll)
 
-def fixed(repo, sha, board, names):
+def fixed(repo, sha, base, board, names):
     """Why sha does not show a red main fixed, or None. A board-only commit's CI may skip its tests,
     so it is judged by its first parent, back to the newest commit that is not board-only (a fix, then
-    a finish or a merge --board); a check a path filter skipped has no run of its own that passed."""
+    a finish or a merge --board). There everything must be green, as main_ci judges a merge commit (no
+    check run needed of its own), and either each check that went red passed there, or base requires
+    checks and each of those passed: a fix may rename or drop the job that failed, but a check a path
+    filter skipped has no run that passed."""
     for _ in range(FIXED_WALK):
         files, parents = [], []
         for d in docs("repos/%s/commits/%s" % (repo, sha)):
@@ -315,12 +318,20 @@ def fixed(repo, sha, board, names):
         sha = parents[0]
     else:
         return "no commit that is not board-only within %d of the head" % FIXED_WALK
-    red, wait, ok = checks(repo, sha)
+    try:
+        req = base_rules(repo, base, "squash")[0]
+    except Err:
+        req = []   # rules gh cannot read (no admin read on protection): each check that went red decides
+    red, wait, ok = checks(repo, sha, required=req, need_run=False)
     judge([r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, sha), "workflow_runs")
            if r.get("head_sha") == sha], red, wait, ok)
+    if red or wait:
+        return "; ".join(red + wait)
     passed = {s[:-len(" (success)")] for s in ok if s.endswith(" (success)")}
-    wait += ["%s (no run that passed)" % n for n in names if n not in passed]
-    return "; ".join(red + wait) or None
+    missing = [n for n in names if n not in passed]
+    if missing and not req:
+        return "; ".join("%s (no run that passed)" % n for n in missing)
+    return None
 
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
@@ -330,7 +341,7 @@ try:
         if red or wait:
             sys.exit(1 if red else 2)
     elif mode == "fixed":
-        why = fixed(repo, args[0], [b for b in args[1].split("\n") if b], args[2:])
+        why = fixed(repo, args[0], args[1], [b for b in args[2].split("\n") if b], args[3:])
         print(why or "fixed")
         if why:
             sys.exit(1)

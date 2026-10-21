@@ -22,11 +22,13 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
-# ci_gate fixed <owner/repo> <sha> <board paths> <check>... — succeed when <sha> shows a red main
-# fixed, judged at the newest commit from <sha> back (first parents) that changes a file outside
-# <board paths> (prefixes, one a line: a board-only commit's CI may skip its tests): every check run,
-# status and workflow run on it is green, and each named <check> (one that went red) has one of its
-# own that passed, so a check a path filter skipped does not count.
+# ci_gate fixed <owner/repo> <sha> <base> <board paths> <check>... — succeed when <sha> shows a red
+# main of <base> fixed, judged at the newest commit from <sha> back (first parents) that changes a
+# file outside <board paths> (prefixes, one a line: a board-only commit's CI may skip its tests):
+# every check run, status and workflow run on it is green (no check run needed, as main), and each
+# named <check> (one that went red) has one of its own that passed, or <base> requires checks and
+# each of those passed (the fix renamed or dropped the job). A check a path filter skipped and
+# <base> does not require has no run that passed, so it does not count.
 # ci_gate age <owner/repo> <sha> — head's rule; when green, print the whole minutes since its last check
 # run or commit status finished (queued_line). Exits as head does.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
@@ -247,6 +249,10 @@ run_fail_lines() {
   cut -f3- <<< "${log}" | sed -E "s/${esc}\[[0-9;]*[A-Za-z]//g; s/^[0-9]{4}-[0-9-]+T[0-9:.]+Z //" | grep -wF FAIL || true
 }
 
+# red_names_only <red checks> — ci_gate main's "<name> (<conclusion>) <url>; ..." with each URL, or
+# whatever follows the conclusion (an empty or non-http target_url, None), taken off.
+red_names_only() { sed -E 's/ \(([A-Za-z_]+)\)[^;]*(;|$)/ (\1)\2/g; s/[[:space:]]+$//' <<< "$1"; }
+
 # main_key <owner/repo> <base> — what a red main is logged and cleared under: the repo lowercased
 # (GitHub's names ignore case, and a PR URL may not), then the base.
 main_key() { printf '%s %s\n' "$(tr '[:upper:]' '[:lower:]' <<< "$1")" "$2"; }
@@ -264,7 +270,7 @@ fix_main() {
   local repo="$1" sha="$2" base="$3" key checks runs id out rc fails="" unread="" rname="" nl=$'\n' end
   local none="no FAIL line in the failed runs' logs" item="${BOARD}/stories/${MERGE_TARGET}.md" f="${BOARD}/stories/fix-main-${2:0:7}.md"
   key="$(main_key "${repo}" "${base}")"; end=$((SECONDS + ${SWARM_FIX_MAIN_LOG_SECONDS:-${FIX_MAIN_LOG_SECONDS}}))
-  checks="$(sed -E 's# (https?://[^;]*|None)(;|$)#\2#g' <<< "$4")"
+  checks="$(red_names_only "$4")"
   runs="$(grep -oE 'https://github\.com/[^ ;]+/actions/runs/[0-9]+' <<< "$4" | sort -u | paste -sd' ' - || true)"
   for id in ${runs}; do
     rc=0; out="$(run_fail_lines "${repo}" "${id##*/}" "${end}")" || rc=$?
@@ -356,15 +362,16 @@ board_paths() {
 
 # clear_red_main <key> <sha> <why> — CI is green at <sha> for <key>: when red_mains holds that key
 # (matched as text, never a pattern) and <sha> shows it fixed (ci_gate fixed: not board-only, all
-# green, and each check that went red passed there), log main-green <sha> <key> and retire its
-# unstarted fixes. A read that fails, or runs past BASE_CI_WAIT, clears nothing.
+# green, and each check that went red, or each the base requires, passed there), log main-green
+# <sha> <key> and retire its unstarted fixes. A read that fails, or runs past BASE_CI_WAIT, clears
+# nothing.
 clear_red_main() {
   local line n names=()
   line="$(red_mains | awk -v k="$1" '$2 " " $3 == k' | tail -1)"
   [[ -n "${line}" ]] || return 0
   while IFS= read -r n; do [[ -z "${n}" ]] || names+=("${n}"); done \
-    <<< "$(cut -d' ' -f4- <<< "${line}" | awk '{ n = split($0, c, "; "); for (i = 1; i <= n; i++) { sub(/ \([^()]*\)$/, "", c[i]); print c[i] } }')"
-  within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" fixed "${1%% *}" "$2" "$(board_paths)" \
+    <<< "$(cut -d' ' -f4- <<< "${line}" | awk '{ n = split($0, c, "; "); for (i = 1; i <= n; i++) { sub(/ \([A-Za-z_]+\)( .*)?$/, "", c[i]); print c[i] } }')"
+  within "${BASE_CI_WAIT}" python3 "${SWARM_HOME}/bin/lib/ci_gate.py" fixed "${1%% *}" "$2" "${1#* }" "$(board_paths)" \
     ${names[@]+"${names[@]}"} >/dev/null 2>&1 </dev/null || return 0
   record_event main-green "$2" "$1"
   retire_fixes "$1" - "$3"

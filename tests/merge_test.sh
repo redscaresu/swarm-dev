@@ -264,6 +264,23 @@ check "a board-only merge after a red main: no main-green, the fix-main story ke
 fresh; red_main "o/r main" "e2e (failure)"; merge "${URL}"
 check "a green merge with no run of the check that went red: no main-green, the fix-main story kept" \
   bash -c "! grep -q main-green '${P}/.swarm/events.tsv' && [ -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ]"
+# A fix may rename or drop the job that failed: with every check the base requires passed, a green
+# merge clears it.
+fresh; red_main "o/r main" "oldjob (failure)"
+echo '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "${FX}/rules"; merge "${URL}"
+check "a fix that renames the failed job: a green merge with every required check passed clears the red main" \
+  logged "^main-green ${M} o/r main$"
+# A base whose CI posts only commit statuses: no check run is needed, as for main's own CI.
+fresh; red_main "o/r main" "lint (failure)"; checks "${FX}/${M}.checks"
+statuses "${FX}/${M}.status" '{"context":"lint","state":"success","target_url":"https://ci/1"}'; merge "${URL}"
+check "a base whose CI posts only statuses: a green merge clears its red main" logged "^main-green ${M} o/r main$"
+# main-red keeps each red check's name and conclusion, with nothing after it however empty the
+# status's target_url, so the green merge's passing lint matches it.
+fresh; statuses "${FX}/${M}.status" '{"context":"lint","state":"failure","target_url":""}'; merge "${URL}"
+check "a red status with an empty target_url: main-red keeps its name with nothing after it" logged "^main-red ${M} o/r main lint (failure)$"
+echo OPEN > "${FX}/state"; item s "status: review" "prs: ${URL}"
+statuses "${FX}/${M}.status" '{"context":"lint","state":"success","target_url":""}'; merge "${URL}"
+check "a red status with an empty target_url: a later green merge clears it" logged "^main-green ${M} o/r main$"
 # A new fix-main story that cannot be written leaves the red main and fix before it as they were.
 fresh; red_main "o/r main"; checks "${FX}/${M}.checks" "$(run e2e completed failure)"
 chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
