@@ -89,6 +89,11 @@ item "${B}" stories/b-a-story-slug-long-enough-that-its-merge-row-wraps-at-one-h
 # lead_queue holds both while dash draws their one PR once; a story escalated and then sent to review,
 # still escalated in lead_queue but drawn as a merge row.
 item "${B}" stories/b-wait.md "Deploy waits on DNS" "status: ready" "kind: lead"
+# An active epic whose code story is done and whose only open story is an after: lead story: dash
+# says it waits on the lead, which is no depends_on wait.
+item "${B}" epics/bravo-after.md "After" "status: active"
+item "${B}" stories/b-after-code.md "Build it" "status: done" "kind: code" "epic: bravo-after"
+item "${B}" stories/b-after.md "Measure it" "status: ready" "kind: lead" "epic: bravo-after" "after: bravo-after"
 item "${B}" stories/b-esc2.md "Escalated" "status: review" "kind: code" "prs: https://github.com/o/bravo/pull/95"
 { printf '%s\treview\tb-held\tw2:p1\tok\n' "$(at 40)"; printf '%s\treview\tbravo-held\tw2:p1\tok\n' "$(at 39)"
   printf '%s\tescalated\tb-esc2\tw2:p1\tok\n' "$(at 38)"; printf '%s\treview\tb-esc2\tw2:p1\tok\n' "$(at 37)"; } >> "${B}/.swarm/events.tsv"
@@ -97,6 +102,7 @@ queued() { has "merge:b-held" "${q}" && has "merge:bravo-held" "${q}" && has "es
 check "bravo: lead_queue holds the held story and its epic, and b-esc2 as escalated" queued
 fb="$(DASH_W=100 sw "${B}" dash)"
 check "bravo: the lead story's row says waits on" has "deploy waits on DNS" "${fb}"
+check "bravo: the after-only epic waits on the lead" grep -qE 'bravo-after .*after: b-after waits on the lead' <<< "${fb}"
 check "bravo: b-esc2 has a merge row" grep -qE '! merge .*b-esc2' <<< "${fb}"
 check "bravo: dash shows the held PR once" test "$(grep -c 'pull/97' <<< "${fb}")" -eq 1
 check "bravo: the long merge row wraps" grep -qE '^│   https://github.com/o/bravo/pull/96 ' <<< "${fb}"

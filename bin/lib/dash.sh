@@ -288,7 +288,9 @@ dash_check() {
     done < <(board epics) | sort)"
   # The epics box's epic rows only (its agent rows are indented), whatever their symbol: a waiting epic
   # is ⏸ unless an agent, a look or a PR under it gives it another.
-  got="$(dash_box epics "${frame}" rows | sed -n 's/^│ [^ ][^ ]* \([^ ]*\) .* waits on \(.*[^ ]\) *$/\1: \2/p' | while IFS= read -r x; do
+  # An epic whose open stories are all after: ones says `after: <slugs> waits on the lead`, which is no
+  # depends_on wait (epic_holding_deps leaves it out).
+  got="$(dash_box epics "${frame}" rows | { grep -v ' after: .* waits on the lead *$' || true; } | sed -n 's/^│ [^ ][^ ]* \([^ ]*\) .* waits on \(.*[^ ]\) *$/\1: \2/p' | while IFS= read -r x; do
       while IFS= read -r f; do x="$(dash_cut "${x}" "${f}")"; done <<< "${want}"; echo "${x}"
     done | sort | paste -sd';' -)"
   dash_agree "epics waiting on depends_on" "${got}" next "$(paste -sd';' - <<< "${want}")"
