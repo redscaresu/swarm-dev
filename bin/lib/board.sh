@@ -160,8 +160,8 @@ epic_has_after() {
 #   collect <agent>   a conductor has written its report: read it, then close its tab
 #   wait <agent>      a conductor exists and has not reported (idle between its own steps counts);
 #                     why starts `auth:` when its login expired (wait then prints auth at once);
-#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads),
-#                     and next_report puts its `queued:` lines (queued_lines) before them
+#                     otherwise an `also: lead <slug> blocks <slugs>` line follows (blocking_leads);
+#                     next_report puts every working conductor's `queued:` lines before them
 #   conduct <epic>    an active epic has a story an agent can build
 #   resume <slug>     a one-off already started (its worktree exists): wait for it, then review
 #   story <slug>      a ready story outside any epic
@@ -183,7 +183,7 @@ next_step() {
     # Any status: idle is not finished. Only the conductor's report file says it is done.
     # A retired conductor (renamed <name>-done, -done2 ...) has finished: never wait on it.
     # herdr lists every project's agents: only one in a pane this project opened counts.
-    slug=$(herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "next((a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in e.get('SWARM_PANES','').split()),'')" 2>/dev/null || true)
+    slug="$(running_conductors | sed -n 1p)"
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
@@ -251,6 +251,24 @@ next_step() {
   echo "done"; echo "nothing is open; start the next epic with /epic <title>"
 }
 
+# running_conductors — this project's conductors in herdr, a name a line, in herdr's order: conduct-*
+# agents not retired (renamed <name>-done, -done2 ...), in panes this project opened (herdr lists every
+# project's agents).
+running_conductors() {
+  herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "'\n'.join(a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in e.get('SWARM_PANES','').split())" 2>/dev/null || true
+}
+
+# conductors_queued — queued_lines for each working conductor (running_conductors with no report yet),
+# each line ending in (<conductor>): the conductor the lead sends it to.
+conductors_queued() {
+  local c
+  [[ "${HERDR_ENV:-}" == 1 ]] || return 0
+  while IFS= read -r c; do
+    [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
+    queued_lines "${c}" | sed "s/\$/ (${c})/"
+  done <<< "$(running_conductors)"
+}
+
 # queued_lines <conductor> — queued_prs's lines for the PRs the conductor's watch covers (its epic's,
 # or the backlog's), once per repo (watch_repos warn: one that cannot be resolved is warned of and
 # skipped). Nothing when the scope cannot be read (watch_scope dies): next goes on.
@@ -260,7 +278,8 @@ queued_lines() {
   if [[ "${e}" == backlog ]]; then scope=(--backlog); else scope=(--epic "${e}"); fi
   (
     watch_scope "${scope[@]}"; watch_repos warn
-    for r in "${WATCH_REPOS[@]}"; do queued_prs "${r}" "${WATCH_HEADS}"; done
+    # Guarded: bash 3.2's set -u calls an empty array unbound, and no repo may have resolved.
+    for r in ${WATCH_REPOS[@]+"${WATCH_REPOS[@]}"}; do queued_prs "${r}" "${WATCH_HEADS}"; done
   ) || true
 }
 
@@ -304,7 +323,7 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
-# next_report — swarm.sh next: next_step's step (with queued_lines' after a working conductor's why),
+# next_report — swarm.sh next: next_step's step (with conductors_queued's lines after its why),
 # then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
@@ -316,14 +335,12 @@ next_report() {
   trap "rm -f '${tmp}'" EXIT
   next_step > "${tmp}"
   step="$(< "${tmp}")"
-  # A working conductor's queued: lines go after the why, here alone: dash and status read next_step
-  # every frame, and these cost gh calls.
-  if [[ "${step}" == "wait "* && "$(sed -n 2p <<< "${step}")" != auth:* ]]; then
-    queued="$(queued_lines "$(sed -n '1s/^wait //p' <<< "${step}")")"
-    if [[ -n "${queued}" ]]; then
-      rest="$(sed -n '3,$p' <<< "${step}")"
-      step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
-    fi
+  # Every working conductor's queued: lines go after the why, here alone: dash and status read
+  # next_step every frame, and these cost gh calls.
+  queued="$(conductors_queued)"
+  if [[ -n "${queued}" ]]; then
+    rest="$(sed -n '3,$p' <<< "${step}")"
+    step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"
   fi
   idle="$(idle_lines "${step%%[ $'\n']*}")"
   trap '' PIPE

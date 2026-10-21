@@ -389,8 +389,8 @@ queued_line() {
 }
 
 # queued_prs <owner/repo> <heads> — queued_line for each open, mergeable story/* PR in <heads> (empty:
-# every one), leaving out heads watch has already reported queued (its watch-seen): the conductor
-# watching them has been told. next's lines; warns on stderr when gh cannot list the PRs.
+# every one), leaving out heads already sent to their conductor (watch-seen's queued <sha7>, from
+# watch or queued_sent). next's lines; warns on stderr when gh cannot list the PRs.
 queued_prs() {
   local rows n sha br
   rows="$(gh pr list -R "$1" --state open --json number,headRefOid,headRefName,mergeable \
@@ -398,9 +398,20 @@ queued_prs() {
     || { echo "warning: gh cannot list $1's open PRs, so which of them wait for a review is unknown" >&2; return 0; }
   while read -r n sha br; do
     [[ -n "${n}" && ( -z "$2" || " $2 " == *" ${br} "* ) ]] || continue
-    if grep -qx "queued ${sha}" "${STATE_DIR}/watch-seen" 2>/dev/null; then continue; fi
+    if grep -qx "queued ${sha:0:7}" "${STATE_DIR}/watch-seen" 2>/dev/null; then continue; fi
     queued_line "$1" "${n}" "${sha}" "${br}"
   done <<< "${rows}"
+}
+
+# queued_sent <file> — when the lead sends a conductor queued: lines (tell note), record each line's
+# head in watch-seen as watch records one it reports (queued <sha7>, the line's own), so neither watch
+# nor next sends that head's line again.
+queued_sent() {
+  local seen="${STATE_DIR}/watch-seen" s
+  mkdir -p "${STATE_DIR}"; touch "${seen}"
+  sed -n 's/^queued: .* with no review on \([^ (]*\).*/\1/p' "$1" | while IFS= read -r s; do
+    grep -qx "queued ${s}" "${seen}" || echo "queued ${s}" >> "${seen}"
+  done
 }
 
 # watch [--epic <slug>|--backlog] [repo...] — block until a story/* PR in these repos (watch_scope)
@@ -426,9 +437,9 @@ watch_prs() {
         fi
         if grep -qx "done ${sha}" "${seen}"; then
           # Its finished checks are reported: once, a head left green with no review is queued.
-          if [[ "${mergeable}" == MERGEABLE ]] && ! grep -qx "queued ${sha}" "${seen}"; then
+          if [[ "${mergeable}" == MERGEABLE ]] && ! grep -qx "queued ${sha:0:7}" "${seen}"; then
             q="$(queued_line "${repo}" "${n}" "${sha}" "${br}")"
-            if [[ -n "${q}" ]]; then echo "queued ${sha}" >> "${seen}"; echo "${q}"; return 0; fi
+            if [[ -n "${q}" ]]; then echo "queued ${sha:0:7}" >> "${seen}"; echo "${q}"; return 0; fi
           fi
           continue
         fi
