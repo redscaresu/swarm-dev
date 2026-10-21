@@ -44,6 +44,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # (1), timeout (2), error (3), never read as queued (4), an open PR at a head that is not <head> (5), a
 # merge at such a head (6), or a TERM, HUP or INT (7). On 2, 3, 4, 5 and 7 it has turned auto-merge
 # off and taken the PR out of the queue first, and its second line says so.
+# ci_gate stop <owner/repo> <pr> — turn the PR's auto-merge off and take it out of the queue, saying
+# what it did: for a signal that lands before ci_gate queued can do it.
 ci_gate() {
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" "$@"
 }
@@ -243,24 +245,31 @@ merge_pr() {
 queue_merge() {
   local why err rc=0 ran=1 oid since out pid
   out="$(mktemp "${TMPDIR:-/tmp}/swarm-queue.XXXXXX")" || merge_fail "cannot make a temp file to wait on #$1"
+  # From before the enqueue to the end of the wait, a signal stops the PR: one that lands before
+  # ci_gate queued can stop it (QUEUE_SIG, then queue_stopped) is handled here.
+  QUEUE_SIG=""; trap 'QUEUE_SIG=TERM' TERM; trap 'QUEUE_SIG=HUP' HUP; trap 'QUEUE_SIG=INT' INT
   since="$(date +%s)"
   if err="$(gh pr merge "$1" --repo "$2" --auto --match-head-commit "$3" 2>&1)"; then
     echo "queued: ${MERGE_TARGET} #$1 (head ${3:0:7}); waiting for the merge queue"
   else
     ran=""; echo "gh pr merge --auto failed (${err##*$'\n'}); reading #$1 back, as GitHub may have queued it"
   fi
+  [[ -z "${QUEUE_SIG}" ]] || queue_stopped "$1" "$2"
   python3 "${SWARM_HOME}/bin/lib/ci_gate.py" queued "$2" "$1" "$3" "$4" "${since}" \
     "${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" "${SWARM_MERGE_POLL:-$(scaled "${MERGE_POLL}")}" > "${out}" &
   pid=$!
   # A signal ends the wait at once; ci_gate then stops the PR (exit 7), and is waited for.
   # shellcheck disable=SC2064 # the pid is fixed now
-  trap "kill -TERM ${pid} 2>/dev/null || true" TERM HUP INT
+  trap "QUEUE_SIG=TERM; kill -TERM ${pid} 2>/dev/null || true" TERM HUP INT
+  [[ -z "${QUEUE_SIG}" ]] || kill -TERM "${pid}" 2>/dev/null || true
   while :; do
     if wait "${pid}"; then rc=0; else rc=$?; fi
     kill -0 "${pid}" 2>/dev/null || break
   done
   trap - TERM HUP INT
   why="$(cat "${out}")"; rm -f "${out}"
+  # Killed before its own handler was in place (128+N): nothing stopped the PR yet.
+  [[ -z "${QUEUE_SIG}" || ${rc} -lt 128 ]] || queue_stopped "$1" "$2"
   case ${rc} in
     0) oid="${why#merged }"
        [[ "${oid}" =~ ^[0-9a-f]{40}$ ]] || merge_fail "unconfirmed (MERGED, no merge commit): the merge queue merged #$1; check it by hand" ;;
@@ -276,6 +285,12 @@ queue_merge() {
   esac
   record_event merge "${MERGE_TARGET}" ok
   echo "merged: #$1 through the merge queue (head ${3:0:7}, merge commit ${oid:0:7})"
+}
+
+# queue_stopped <n> <owner/repo> — a signal landed while queue_merge enqueued #<n> or before ci_gate
+# queued could stop it: stop it (ci_gate stop) and fail as unconfirmed.
+queue_stopped() {
+  merge_fail "unconfirmed (stopped by SIG${QUEUE_SIG}): #$1 did not merge; $(ci_gate stop "$2" "$1")"
 }
 
 # within <seconds> <command>... — the command in its own process group, the group KILLed after

@@ -137,19 +137,22 @@ def graphql(query, **v):
     for k, x in v.items():
         args += ["-F" if isinstance(x, int) else "-f", "%s=%s" % (k, x)]
     try:
-        return json.loads(gh(*(args + ["-f", "query=" + query])))["data"]["repository"]
+        repo = json.loads(gh(*(args + ["-f", "query=" + query])))["data"]["repository"]
     except (ValueError, KeyError, TypeError) as e:
         raise Err("unreadable GraphQL answer: %s" % e)
+    if not isinstance(repo, dict):
+        raise Err("unreadable GraphQL answer: no repository")
+    return repo
 
 def has_queue(repo, base, wait):
     """Whether base has a merge queue, from a ruleset or classic protection (GitHub's own answer,
-    repository.mergeQueue). A failed read is tried READ_TRIES times, wait seconds apart."""
+    repository.mergeQueue). A failed or unparsable read is tried READ_TRIES times, wait seconds apart."""
     owner, name = repo.split("/")
     for i in range(READ_TRIES):
         try:
             return graphql("query($o: String!, $r: String!, $b: String!) { repository(owner: $o, name: $r) "
                            "{ mergeQueue(branch: $b) { id } } }", o=owner, r=name, b=base)["mergeQueue"] is not None
-        except Err:
+        except (Err, KeyError):
             if i == READ_TRIES - 1:
                 raise
             time.sleep(wait)
@@ -231,11 +234,23 @@ def on_signal(sig, _frame):
         signal.signal(s, signal.SIG_IGN)   # stop() runs once, and to the end
     raise Stopped(signal.Signals(sig).name)
 
+def stop_pr(repo, n):
+    """stop(), every=True, on PR n as one read shows it (its id), for a signal that landed before
+    queued() could stop it. Later signals are ignored, so it runs to the end."""
+    for s in SIGNALS:
+        signal.signal(s, signal.SIG_IGN)
+    owner, name = repo.split("/")
+    try:
+        pr = graphql(QUEUE_QUERY, o=owner, r=name, n=int(n))["pullRequest"]
+    except (Err, KeyError, TypeError):
+        pr = None
+    return stop(pr, every=True)
+
 def queued(repo, n, head, base, since, secs, poll):
     """Wait for PR n, enqueued at head (since: epoch seconds just before the enqueue), to merge. The
     CI deadline (secs) runs from when the PR's own merge group starts, and again from each rebuilt
     group; waiting its turn, or for auto-merge to enqueue it, has the queue's own bound, TURNS
-    deadlines from the start. Codes: 0 "merged <merge commit>" (READ_TRIES reads wait for the
+    deadlines from the start, or from when its group was taken apart. Codes: 0 "merged <merge commit>" (READ_TRIES reads wait for the
     commit); 1 a dequeue (a removal since the enqueue, or READ_TRIES reads in a row out of the
     queue with no auto-merge waiting after one showed it in) or closed; 2 a timeout; 3 READ_TRIES
     failed reads in a row (a gh error is a missed read); 4 never read as queued or waiting in
@@ -265,8 +280,9 @@ def queued(repo, n, head, base, since, secs, poll):
                 if g and entry.get("state") != "QUEUED":
                     if g != running:
                         running, end = g, time.time() + secs
-                else:
-                    running = end = None
+                elif running:
+                    # Its group was taken apart (a PR ahead failed): it waits its turn again, afresh.
+                    running, end, turn_end = None, None, time.time() + secs * TURNS
                 if pr.get("headRefOid") != head:
                     now = (pr.get("headRefOid") or "unknown")[:7]
                     if state == "MERGED":
@@ -495,6 +511,8 @@ try:
             sys.exit(1)
     elif mode == "queue":
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
+    elif mode == "stop":
+        print(stop_pr(repo, args[0]))
     elif mode == "queued":
         rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]))
         print(msg)

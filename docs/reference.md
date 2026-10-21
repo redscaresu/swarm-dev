@@ -1094,7 +1094,7 @@ just joined it. It prints `merge queue: <base> has one` first, whatever happens 
 the PR every 20 seconds until it merges or leaves the queue, and checks its head on every read. The
 30 minutes for CI start when the PR's own merge group starts, and again for each group the queue
 rebuilds; waiting its turn behind other PRs, or for auto-merge to enqueue it, has a bound of its own,
-six times that (3 hours). A head other than the one it checked stops the wait:
+six times that (3 hours), which starts again when the queue takes its group apart. A head other than the one it checked stops the wait:
 `merge` turns auto-merge off and takes the PR out of the queue (GraphQL
 `disablePullRequestAutoMerge` and `dequeuePullRequest`), so a push made before the PR reached the
 queue never merges unreviewed. If the PR has already merged at another head, `merge` logs
@@ -1111,7 +1111,7 @@ joined and left between two reads, the one its `merge_group` run names; the reas
 for a removal after this enqueue. The conductor handles a dequeue like a red check: it sends the
 failing checks to the builder, which merges the base in and pushes, then reviews and merges the new
 head. A wait that runs out or errors, a PR that never reads as queued, and a TERM, HUP or INT
-while `merge` waits each turn auto-merge off and take the PR out of the queue. Each is logged as
+while `merge` enqueues or waits each turn auto-merge off and take the PR out of the queue. Each is logged as
 unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not undo for you to do by
 hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
 the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a

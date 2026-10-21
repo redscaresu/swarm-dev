@@ -51,7 +51,9 @@ case "$1 $2" in
     [ "${want}" = "$(cat "${FX}/head")" ] || { echo "GraphQL: Head branch was modified. Review and try the merge again." >&2; exit 1; }
     # --auto enqueues (with ${FX}/auto-fails, then fails with a 5xx): the queue fixture
     # (serve queue) says what happens next.
-    case " $* " in *" --auto "*) [ ! -e "${FX}/auto-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }; exit 0 ;; esac
+    # With ${FX}/auto-sleeps the enqueue takes 5 s, for a signal to land during it.
+    case " $* " in *" --auto "*) [ ! -e "${FX}/auto-sleeps" ] || sleep 5
+      [ ! -e "${FX}/auto-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }; exit 0 ;; esac
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "${M}" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
@@ -650,6 +652,12 @@ qread "${FX}/queue.5" OPEN true null "${G}" -; qread "${FX}/queue.6" MERGED fals
 merge SWARM_MERGE_CI_SECONDS=2 SWARM_MERGE_POLL=1 "${URL}"
 is "waiting its turn past the CI deadline: still merges, nothing dequeued" "0|merge s ok|no" \
   "${rc}|$(events | head -1)|$(grep -q 'mutation(' "${ROOT}/gh.log" && echo yes || echo no)"
+# A group taken apart (a PR ahead failed) after the turn bound has passed: it waits its turn afresh.
+# Seven reads, each a rebuilt group (its 1 s deadline restarts), take it past the 6 s bound.
+qfresh; for i in 1 2 3 4 5 6 7; do qread "${FX}/queue.${i}" OPEN true null "c$(printf '%039d' "${i}")" -; done
+QSTATE=QUEUED qread "${FX}/queue.8" OPEN true null - -; qread "${FX}/queue.9" MERGED false null - "${M}"
+merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
+is "a group taken apart after the turn bound passed: waits its turn afresh, and merges" "0|merge s ok" "${rc}|$(events | head -1)"
 qfresh; QSTATE=QUEUED qread "${FX}/queue" OPEN true "${WAITING}" - -
 merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
 check "waiting its turn past the queue's own bound: a timeout, out of the queue" \
@@ -694,15 +702,26 @@ qfresh; touch "${FX}/mutation.fail"; qread "${FX}/queue" OPEN true null "${G}" -
 merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
 check "a timeout whose dequeue fails: names it, and says to do it by hand" \
   bash -c "grep -qF 'dequeuePullRequest failed (gh api graphql' '${ROOT}/out' && grep -qF 'take it out of the merge queue and turn auto-merge off by hand' '${ROOT}/out'"
-# A TERM while it waits on the queue: auto-merge off and out of the queue before it exits.
-qfresh; qread "${FX}/queue" OPEN true null "${G}" -
-(cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
-  SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_SECONDS=60 bash "${SWARM}" merge "${URL}" > "${ROOT}/out" 2>&1) &
-mpid=$!
-for _ in $(seq 100); do grep -q isInMergeQueue "${ROOT}/gh.log" && break; sleep 0.1; done
-kill -TERM "${mpid}"; rc=0; wait "${mpid}" || rc=$?
+# term_merge <text> — merge in the background, TERM it once gh.log holds <text>, and wait for it.
+term_merge() {
+  local mpid
+  (cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
+    SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_SECONDS=60 bash "${SWARM}" merge "${URL}" > "${ROOT}/out" 2>&1) &
+  mpid=$!
+  for _ in $(seq 100); do grep -qF -- "$1" "${ROOT}/gh.log" && break; sleep 0.1; done
+  kill -TERM "${mpid}"; rc=0; wait "${mpid}" || rc=$?
+}
+# A TERM while it waits on the queue, or during the enqueue: auto-merge off and out of the queue
+# before it exits.
+qfresh; qread "${FX}/queue" OPEN true null "${G}" -; term_merge isInMergeQueue
 check "a TERM while queued: auto-merge off and out of the queue, logged as unconfirmed" \
   logged "^merge s unconfirmed (stopped by SIGTERM): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+qfresh; touch "${FX}/auto-sleeps"; qread "${FX}/queue" OPEN true null "${G}" -; term_merge "--auto"
+check "a TERM during the enqueue: auto-merge off and out of the queue, logged as unconfirmed" \
+  logged "^merge s unconfirmed (stopped by SIGTERM): #7 did not merge; auto-merge is off and it is out of the merge queue$"
+# A null repository on the queue read is a failed read, tried again, not a crash.
+fresh; echo '{"data":{"repository":null}}' > "${FX}/mq.1"; merge "${URL}"
+is "a null repository on the queue read: read again, then merges" "0|2" "${rc}|$(grep -c mergeQueue "${ROOT}/gh.log")"
 # A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
 fresh; touch "${FX}/mq.fail"; merge "${URL}"
 refused "a queue that cannot be read" "could not read whether main has a merge queue"
