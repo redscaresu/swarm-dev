@@ -9,13 +9,19 @@ def pairs(lines, out, stop=None):
         if sep and k not in out:
             out[k] = v.lstrip(" ")
 
+# front_text(text) — a story's own front matter, each key's first value as pairs leaves it; CRLF
+# tolerated. dataset imports it for a story's text from git.
+def front_text(text):
+    lines, out = [l.rstrip("\r") for l in text.split("\n")], {}
+    if lines[0] == "---":
+        pairs(lines[1:], out, "---")
+    return out
+
 # front(path) — the story's front matter, under what swarm.sh wrote to its state file (state_set),
 # but for a key whose <key>@base: the file no longer has: a later edit to the file wins. The values
 # are compared as state_value compares them, then trimmed.
 def front(path):
-    lines, out, st = open(path, encoding="utf-8", errors="replace").read().split("\n"), {}, {}
-    if lines[0] == "---":
-        pairs(lines[1:], out, "---")
+    out, st = front_text(open(path, encoding="utf-8", errors="replace").read()), {}
     try:
         pairs(open(os.path.join(state, os.path.basename(path)[:-3]), encoding="utf-8", errors="replace").read().split("\n"), st)
     except FileNotFoundError:
