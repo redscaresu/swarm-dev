@@ -86,8 +86,8 @@ def health(urls):
 def ci_time(url):
     # The PR's CI time: the longest run on its newest head, its last commit (not the head of the run
     # created last: a rerun of an old head can come after it), timed over its last attempt, startedAt
-    # to updatedAt, and that run's slowest job (one jobs listing of that same attempt, all its pages:
-    # a run's own listing keeps the jobs a rerun of failed jobs carried over), as (minutes, job, job
+    # to updatedAt, and that run's slowest job (one jobs listing of that same attempt, all its pages,
+    # less the jobs a rerun of failed jobs carried over from an earlier one), as (minutes, job, job
     # minutes); () when it has no timed run or job, None when gh fails or answers without them.
     got = head_runs(url)
     if got is None:
@@ -103,7 +103,7 @@ def ci_time(url):
         return None
     jobs = [(secs(j.get("completed_at")) - secs(j.get("started_at")), CONTROL.sub("", j["name"]))
             for page in got if isinstance(page, dict) for j in page.get("jobs") or []
-            if isinstance(j, dict) and isinstance(j.get("name"), str)
+            if isinstance(j, dict) and isinstance(j.get("name"), str) and j.get("run_attempt") == run["attempt"]
             and secs(j.get("started_at")) is not None and secs(j.get("completed_at")) is not None]
     if not jobs:
         return ()

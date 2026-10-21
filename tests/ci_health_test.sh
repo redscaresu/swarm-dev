@@ -15,7 +15,8 @@
 # in the window, and the section says so.
 # Then ci time, per repo: a PR's newest head's longest run, from its last attempt's start, and that
 # run's slowest job, from that attempt's own jobs. a: 6 min, test 5 (with RERUN=1, attempt 2's jobs,
-# not attempt 1's 20 min test); b: b2's 6 min pull_request run (not the 3 min push), test 4; c: 8 min,
+# not attempt 1's 20 min test, nor the 9 min build attempt 2's listing carried over from attempt 1);
+# b: b2's 6 min pull_request run (not the 3 min push), test 4; c: 8 min,
 # lint 7 (its run with no parseable start counts for nothing). So 6.0 min, and lint slowest at 7.0
 # (test's own median is 4.5). With FAILB=1 b's runs cannot be read: a and c alone, 7.0 min, and a
 # line that says 1 PR was left out. e: 4 min, test 2; f: 19 min on f1, test 16 (on its jobs
@@ -48,12 +49,14 @@ run() { # <id> <head> <workflow> <event> <conclusion> <attempt> <created HH:MM> 
   printf '{"databaseId":%s,"headSha":"%s","workflowName":"%s","event":"%s","status":"completed","conclusion":"%s","attempt":%s,"createdAt":"2026-10-01T%s:00Z","startedAt":"2026-10-01T%s:00Z","updatedAt":"2026-10-01T%s:00Z"}' \
     "$1" "$2" "$3" "$4" "$5" "$6" "$7" "${9:-$7}" "$8"
 }
-jobs() { # <run id>-<attempt> [<name> <started HH:MM> <completed HH:MM> | /]... — that run's jobs listing, its
-  # pages slurped into one array; / starts the next page
-  local id="$1" sep="" out=""; shift
+jobs() { # <run id>-<attempt> [<name>[@<run_attempt>] <started HH:MM> <completed HH:MM> | /]... — that
+  # attempt's jobs listing, its pages slurped into one array; / starts the next page, and a job's
+  # run_attempt is the listing's own unless @ names an earlier one (a job a rerun carried over)
+  local id="$1" sep="" out="" name n; shift
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == / ]]; then out+="]},{\"jobs\":["; sep=""; shift; continue; fi
-    out+="${sep}{\"name\":\"$1\",\"started_at\":\"2026-10-01T$2:00Z\",\"completed_at\":\"2026-10-01T$3:00Z\"}"; sep=,; shift 3
+    name="${1%@*}"; n="${id##*-}"; [[ "$1" != *@* ]] || n="${1##*@}"
+    out+="${sep}{\"name\":\"${name}\",\"run_attempt\":${n},\"started_at\":\"2026-10-01T$2:00Z\",\"completed_at\":\"2026-10-01T$3:00Z\"}"; sep=,; shift 3
   done
   echo "[{\"jobs\":[${out}]}]" > "${G}/jobs-${id}"
 }
@@ -66,7 +69,8 @@ echo '{"headRefName":"story/g","commits":[{"oid":"g0"},{"oid":"g1"}]}' > "${G}/v
 echo "[$(run 11 a1 CI pull_request success 1 10:10 10:16),$(run 10 a1 CI pull_request failure 1 10:00 10:04)]" > "${G}/runs-a"
 echo "[$(run 12 a1 CI pull_request success 2 10:00 10:16 10:10)]" > "${G}/rerun-a"
 echo '{"conclusion":"failure"}' > "${G}/attempt-12-1"
-jobs 11-1 test 10:10 10:15 lint 10:10 10:11; cp "${G}/jobs-11-1" "${G}/jobs-12-2"
+jobs 11-1 test 10:10 10:15 lint 10:10 10:11
+jobs 12-2 test 10:10 10:15 lint 10:10 10:11 build@1 10:00 10:09
 jobs 12-1 test 10:00 10:20
 echo "[$(run 21 b2 CI pull_request success 1 10:20 10:26),$(run 22 b2 CI push failure 1 10:19 10:22),
   $(run 20 b1 CI pull_request failure 1 10:00 10:05),$(run 23 b1 lint pull_request startup_failure 1 10:00 10:01)]" > "${G}/runs-b"
