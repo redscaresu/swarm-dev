@@ -123,7 +123,11 @@ environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). 
 of their own, such as planners and review agents, never get one, so log in through `claude`,
 `codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
-details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
+details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs). With
+`escalate_ladder = sonnet,opus,fable` in the config (it ships off), `swarm.sh step-up <slug> <trigger>`
+hands a build that is struggling to the next model up, on the same branch, without counting a failed
+attempt. swarm.sh runs it itself when a builder stops with no PR, stalls, gets a third round of
+findings or has CI fail on two heads ([reference.md](docs/reference.md#the-escalation-ladder)).
 
 ## More
 
