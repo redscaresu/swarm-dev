@@ -191,12 +191,15 @@ esac
 EOF
 chmod +x "${ROOT}/bin/herdr"
 log() { cat "${ROOT}/herdr.log"; }
-# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs; pr view <url> gives the state on
+# gh: logs every call; pr list prints ${ROOT}/prs.json, or no PRs, and with --state open (close's
+# call) the heads of its open PRs that name one, as its --jq asks; pr view <url> gives the state on
 # <url>'s line in ${ROOT}/pr-states.
 gh_stub() {
   printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${ROOT}/bin/gh"
   # shellcheck disable=SC2016 # the stub's own shell expands these
-  printf '%s\n' 'echo "$*" >> "$H/gh.log"' 'case "$1 $2" in "pr list") cat "$H/prs.json" 2>/dev/null || echo "[]" ;;' \
+  printf '%s\n' 'echo "$*" >> "$H/gh.log"' \
+    'case "$1 $2 $*" in "pr list "*"--state open"*) [ -e "$H/prs.json" ] && python3 -c '\''import json, sys; [print(p["headRefName"]) for p in json.load(open(sys.argv[1])) if p.get("state") == "OPEN" and p.get("headRefName")]'\'' "$H/prs.json" ;; esac' \
+    'case "$1 $2" in "pr list") case "$*" in *"--state open"*) ;; *) cat "$H/prs.json" 2>/dev/null || echo "[]" ;; esac ;;' \
     '  "pr view") echo "{\"state\":\"$(awk -v u="$3" '\''$1 == u { print $2 }'\'' "$H/pr-states")\"}" ;; esac' >> "${ROOT}/bin/gh"
   chmod +x "${ROOT}/bin/gh"
 }

@@ -136,6 +136,8 @@ details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-l
 hands a build that is struggling to the next model up, on the same branch, without counting a failed
 attempt. swarm.sh runs it itself when a builder stops with no PR, stalls, gets a third round of
 findings or has CI fail on two heads ([reference.md](docs/reference.md#the-escalation-ladder)).
+`swarm.sh close` never closes a tab that still holds a working builder or one whose PR is open. It
+names each one it kept, and `--all` closes them too.
 
 ## More
 

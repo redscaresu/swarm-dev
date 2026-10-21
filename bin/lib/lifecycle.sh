@@ -355,14 +355,16 @@ is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* 
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
 
 # shut_agent <name> — archive <name>'s session log, close what was opened for it (close_panes) and
-# remove its ZDOTDIR (clean_env's). close_agent and step_up both end a builder this way.
+# remove its ZDOTDIR (clean_env's), unless its pane could not be closed (CLOSE_PANE_KEPT). close_agent
+# and step_up both end a builder this way, and each checks CLOSE_PANE_KEPT after.
 shut_agent() {
   archive_session "$1"
   # One builder, two names: herdr's (agent_name, cut at 32 characters), which failed_build and
   # retire_agent map to, and the pane record's full slug (start_agent's pane name), which close_panes
   # matches. Passing close_panes the cut name would leave a long slug's pane open.
   close_panes "$1"
-  rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
+  # Kept while its pane is (close_pane could not close it): the agent may still be using it.
+  [[ -n "${CLOSE_PANE_KEPT}" ]] || rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
 }
 
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
@@ -403,6 +405,12 @@ close_agent() {
     fi
   fi
   shut_agent "$1"
+  # Its pane could not be closed (close_pane said why): the builder may still be working in its
+  # worktree, so nothing is counted, held, handed on or cleared.
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    echo "not closed: $1's pane is still open, so nothing was counted or cleared; close it again once herdr answers"
+    return 0
+  fi
   if [[ "${cause}" == impossible ]]; then
     # The build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
@@ -464,7 +472,8 @@ HANDOVER_DIFF_LINES=400
 # (start_rung) in the same worktree with handover_brief. The build is the newest agents.tsv line for
 # its agent: a building role on one of LADDER_MODELS. The next rung is the ladder's first model above
 # it, run as step_role picks. Refused, with nothing closed, with escalate_ladder empty, at or above its
-# top rung, and for a story that is not ready, not an agent's kind, or has no worktree. [findings] is a file the brief pastes
+# top rung, and for a story that is not ready, not an agent's kind, or has no worktree; refused too,
+# with no rung started, when the old builder's pane could not be closed. [findings] is a file the brief pastes
 # too (tell_agent's).
 step_up() {
   local slug="$1" trigger="$2" f="${BOARD}/stories/$1.md" last fromrole from to rank role names src wt b
@@ -496,6 +505,13 @@ step_up() {
   # The old builder goes first: the new one takes its name, and start_rung reads the worktree for the
   # brief only once nothing writes to it.
   shut_agent "${slug}"
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    # Its pane could not be closed (close_pane said why): the old builder may still be working in
+    # the worktree, so no second one starts there. A refusal, not a failure partway: nothing changed.
+    [[ -z "${STEP_UP_AUTO:-}" ]] || trap - EXIT
+    rm -f "${b}.step-up" "${b}.findings.md"
+    die "step-up: ${slug}'s builder pane could not be closed, so it may still be working in its worktree; nothing was stepped up"
+  fi
   start_rung "${slug}"
 }
 
@@ -943,24 +959,241 @@ clear_build() {
 }
 
 # close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
-# conductor's name closes its epic's tabs, with any story panes left in them.
+# conductor's name closes its epic's tabs, with any story panes left in them, except a tab close_tabs
+# keeps for a live agent; the conductor's own pane (own_pane) then closes alone. A conductor whose
+# pane cannot be found while herdr gives no agent list, or could not be closed, is said, and fails;
+# a builder whose pane could not be closed is said, and CLOSE_PANE_KEPT is set (close_pane).
+CLOSE_PANE_KEPT=""
 close_panes() {
-  local state pane epic
+  local state pane own
+  CLOSE_READ=""; CLOSE_PANE_KEPT=""
   for state in "${STATE_DIR}"/*; do
     [[ -f "${state}" ]] || continue
     pane="$(awk -v n="$1" 'NF > 1 && $2 == n { print $1; exit }' "${state}")"
-    [[ -n "${pane}" ]] || continue
-    if [[ $(wc -l < "${state}") -le 1 ]]; then close_tabs "$(basename "${state}")"; return; fi
-    herdr pane close "${pane}" >/dev/null
-    awk -v p="${pane}" '$1 != p' "${state}" > "${state}.tmp" && mv "${state}.tmp" "${state}"
-    echo "closed pane $1"; return
+    [[ -z "${pane}" ]] || { close_pane "${pane}" "$1" "${state}"; return; }
   done
-  if [[ "$(agent_name "$1")" == conduct-* ]]; then
-    epic="$(conduct_epic "$1")"
-    close_tabs "${epic}"
-  fi
-  close_tabs "$1"
+  close_lists
+  own="$(own_pane "$1")"
+  [[ "$(agent_name "$1")" != conduct-* ]] || close_tabs "$(conduct_epic "$1")" "${own}"
+  close_tabs "$1" "${own}"
+  [[ -z "${own}" ]] || close_pane "${own}" "$1" "" alone || true
+  [[ -z "${CLOSE_PANE_KEPT}" ]] || die "close: $1's pane ${own} could not be closed, so it is still open"
+  [[ -n "${own}" || -n "${CLOSE_AGENTS_OK}" || "$(agent_name "$1")" != conduct-* ]] \
+    || die "close: herdr gave no agent list and no tab record names $1's pane, so it could not be found and is still open"
 }
+
+# own_pane <name> — the pane this project's agent <name> holds. A conductor's is its tab records' line
+# named conductor (its epic's and their numbered overflow's, or its own label's for the backlog), confirmed by herdr's pane list
+# when herdr gave one, so a line a gone pane left is passed over; anything else's is herdr's
+# (CLOSE_AGENTS), on a pane a tab record has.
+own_pane() {
+  local want p n s e
+  want="$(agent_name "$1")"
+  if [[ "${want}" == conduct-* ]]; then
+    e="$(tab_label "$(conduct_epic "$1")")"
+    for s in "${STATE_DIR}/${e}" "${STATE_DIR}/${e}"-* "${STATE_DIR}/$(tab_label "$1")"; do
+      [[ -f "${s}" ]] || continue
+      label_record "${s}" "${e}" || [[ "${s##*/}" == "$(tab_label "$1")" ]] || continue
+      while read -r p n; do
+        [[ "${n}" == conductor ]] || continue
+        [[ -z "${CLOSE_PANES}" ]] || awk -v p="${p}" '$1 == p { f = 1 } END { exit !f }' <<< "${CLOSE_PANES}" || continue
+        echo "${p}"; return 0
+      done < "${s}"
+    done
+  fi
+  p="$(awk -v n="${want}" '$3 == n { print $1; exit }' <<< "${CLOSE_AGENTS}")"
+  # A here-string, not a pipe: grep -q stops at its match, and under pipefail own_panes' SIGPIPE would fail it.
+  if [[ -n "${p}" ]] && grep -qxF -- "${p}" <<< "$(own_panes)"; then echo "${p}"; fi
+}
+
+# close_pane <pane> <name> [tab-record] [alone] — close <pane> and drop it from its tab record (found
+# when not given), or close that record's own tab (close_tab, never close_tabs' label sweep, which
+# takes sibling and overflow tabs) when it is the record's last pane, unless alone is given; when that
+# tab is kept for a live agent herdr has in it besides, or herdr has no tab of that label, <pane>
+# closes alone. Fails when no tab record has it. When herdr could not list that tab or close the pane,
+# the pane and its record are kept, that is said, CLOSE_PANE_KEPT is set for the caller to act on,
+# and it succeeds: under errexit a failure here would stop reconcile's loop over merged stories.
+close_pane() {
+  local state="${3:-}" id
+  if [[ -z "${state}" ]]; then
+    for state in "${STATE_DIR}"/*; do
+      [[ -f "${state}" ]] && record_has "${state}" "$1" && break
+      state=""
+    done
+  fi
+  [[ -n "${state}" ]] || return 1
+  if [[ -z "${4:-}" && $(wc -l < "${state}") -le 1 ]]; then
+    if ! id="$(tab_ids "${state}")"; then
+      echo "kept pane $2 ($1) in tab ${state##*/}: herdr could not list its workspace's tabs, so neither was checked nor closed"
+      CLOSE_PANE_KEPT=1; return 0
+    fi
+    # With no herdr tab of that label there is none to close: the pane closes by itself below.
+    [[ -z "${id}" ]] || close_tab "${state}" "${id}" "$1"
+  fi
+  [[ -f "${state}" ]] || return 0
+  # Checked, not left to errexit: a caller's `|| true` turns that off here.
+  if ! herdr pane close "$1" >/dev/null 2>&1; then
+    echo "swarm: could not close pane $2 ($1): it is still open, and its tab record keeps it" >&2
+    CLOSE_PANE_KEPT=1; return 0
+  fi
+  record_drop "${state}" "$1"
+  echo "closed pane $2"
+}
+
+# label_record <tab-record> <label> — succeed when the record is <label>'s own or its numbered
+# overflow's (<label>-2 ...), never a longer label's: epic ce-foo's, or a story backlog-x's, is not
+# ce's or the backlog's.
+label_record() {
+  local r="${1#"${STATE_DIR}/$2"}"
+  [[ "${1}" == "${STATE_DIR}/$2"* && ( -z "${r}" || "${r}" =~ ^-[0-9]+$ ) ]]
+}
+
+# record_has <tab-record> <pane> — succeed when the record has a line for <pane>.
+record_has() { awk -v p="$2" 'NF <= 2 && $1 == p { f = 1 } END { exit !f }' "$1"; }
+
+# record_drop <tab-record> <pane> — drop <pane>'s line from the record, and the record once it is empty.
+record_drop() {
+  awk -v p="$2" '!(NF <= 2 && $1 == p)' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
+  [[ -s "$1" ]] || rm -f "$1"
+}
+
+# record_kept <tab-record> <pane> <name> <agent> — put a pane close_tabs kept in <tab-record>, its line
+# moved from any other tab record, so the kept tab stays recorded; succeed when the record has it then.
+# Only this project's: a pane in no record whose <agent> has no agents.tsv line here (a user's own
+# session, another project's agent, one with no name) is kept open but never recorded, and fails.
+record_kept() {
+  local s ours=""
+  record_has "$1" "$2" 2>/dev/null && return 0
+  for s in "${STATE_DIR}"/*; do
+    [[ -f "${s}" && "${s}" != "$1" && "${s}" != *.tmp ]] || continue
+    record_has "${s}" "$2" || continue
+    ours=1; record_drop "${s}" "$2"
+  done
+  if [[ -z "${ours}" ]]; then
+    [[ -n "$4" && -f "${AGENTS_LOG}" ]] || return 1
+    awk -F'\t' -v n="$4" '$3 == n { f = 1 } END { exit !f }' "${AGENTS_LOG}" || return 1
+  fi
+  echo "$2 $3" >> "$1"
+}
+
+# close_lists — what close's guard reads once per close (close_panes clears CLOSE_READ): herdr's
+# panes as "<pane> <tab>" lines (CLOSE_PANES, empty when herdr gave none) and agents as "<pane>
+# <status> <name>" lines, "-" for an agent with no name (CLOSE_AGENTS; CLOSE_AGENTS_OK is empty when
+# herdr gave no agent list), Claude Code's list (CLOSE_CLAUDE, claude_agents' JSON or empty when it
+# failed), the tab records' lines (CLOSE_RECORDS) and the names agents started under (CLOSE_STARTED,
+# agents.tsv's). The open PRs (close_heads) and the stories'
+# agent names (close_stories) are read when first asked for. herdr's status is the word for an agent
+# no session answers for, as in read_state.
+CLOSE_READ=""
+close_lists() {
+  [[ -z "${CLOSE_READ}" ]] || return 0
+  CLOSE_READ=1
+  CLOSE_PANES="$(herdr pane list 2>/dev/null </dev/null | json "'\n'.join('%s %s' % (p['pane_id'], p.get('tab_id') or '-') for p in d['result']['panes'])" 2>/dev/null)" || CLOSE_PANES=""
+  CLOSE_AGENTS_OK=1
+  CLOSE_AGENTS="$(herdr agent list 2>/dev/null </dev/null | json "'\n'.join('%s %s %s' % (a['pane_id'], a.get('agent_status') or 'unknown', a.get('name') or '-') for a in d['result']['agents'])" 2>/dev/null)" \
+    || { CLOSE_AGENTS=""; CLOSE_AGENTS_OK=""; }
+  CLOSE_CLAUDE="$(claude_agents </dev/null)" || CLOSE_CLAUDE=""
+  CLOSE_RECORDS="$(cat "${STATE_DIR}"/* 2>/dev/null || true)"
+  CLOSE_STARTED="$(awk -F'\t' 'NF == 7 { print $3 }' "${AGENTS_LOG}" 2>/dev/null || true)"
+  CLOSE_HEADS=""; CLOSE_HEAD_SRCS=""; CLOSE_STORIES=""; CLOSE_STORIES_READ=""
+}
+
+# close_heads <repo-dir> — read the heads of the open PRs on the repo's origin into CLOSE_HEADS
+# ("<repo-dir>\t<head>" lines), once per repo per close; fails (1) with no origin, which has no PR,
+# and (2) when gh cannot tell.
+close_heads() {
+  local rc url heads
+  rc="$(awk -F'\t' -v s="$1" '$1 == s { print $2; exit }' <<< "${CLOSE_HEAD_SRCS}")"
+  if [[ -z "${rc}" ]]; then
+    rc=0
+    if ! url="$(git -C "$1" remote get-url origin 2>/dev/null)"; then rc=1
+    # ponytail: 1000 open PRs per repo; page through gh api if a repo ever holds more.
+    elif ! heads="$(gh pr list -R "${url}" --state open --limit 1000 --json headRefName --jq '.[].headRefName' </dev/null 2>/dev/null)"; then rc=2
+    else CLOSE_HEADS+="$(awk -v s="$1" 'NF { print s "\t" $0 }' <<< "${heads}")"$'\n'; fi
+    CLOSE_HEAD_SRCS+="$1"$'\t'"${rc}"$'\n'
+  fi
+  return "${rc}"
+}
+
+# close_stories — "<agent name> <slug>" for each story on the board into CLOSE_STORIES, once per close:
+# a long slug's agent is known to herdr by its first AGENT_NAME_MAX characters (agent_name).
+close_stories() {
+  local f
+  [[ -z "${CLOSE_STORIES_READ}" ]] || return 0
+  CLOSE_STORIES_READ=1
+  for f in "${BOARD}"/stories/*.md; do
+    [[ -f "${f}" ]] || continue
+    f="$(basename "${f}" .md)"; CLOSE_STORIES+="$(agent_name "${f}") ${f}"$'\n'
+  done
+}
+
+# live_agents <tab-ids> <tab-record> [pane] — set LIVE to each agent in a pane of those tabs, <pane>'s
+# aside, that a tab close must not take, as "<pane>\t<name>\t<why>\t<herdr's name or ->" lines:
+# working or waiting (session_state, else herdr's status), its state unknown (herdr gave no agent
+# list too) or any other not known to be idle or finished, its story's PR open on story/<name>
+# (close_heads) or gh could not say, or, for a name agent_name may have cut, no story found. The panes
+# are herdr's (close_lists), since a pane moved in by hand closes with the tab and one moved out does
+# not; the record's stand in when herdr lists none in those tabs. <name> is the record's
+# (record_name), else the story of herdr's name (close_stories), else herdr's, else the pane. A
+# recorded pane with no agent yet is kept (starting); an unrecorded one, or a story whose repo has no
+# origin, has nothing to keep. It runs in close_tabs' own shell, so what close_heads and close_stories
+# read lasts the close.
+live_agents() {
+  local panes pane st who name s f src rc
+  LIVE=""
+  # The ids space-separated (two tabs can share a label; close_tabs joins them), matched as " <id> ".
+  panes="$(awk -v t=" $1 " 'index(t, " " $2 " ") { print $1 }' <<< "${CLOSE_PANES}")"
+  [[ -n "${panes}" || ! -f "$2" ]] || panes="$(awk '{ print $1 }' "$2")"
+  while read -r pane; do
+    [[ -n "${pane}" && "${pane}" != "${3:-}" ]] || continue
+    name="$(record_name "${pane}" "${CLOSE_RECORDS}")"
+    if [[ -z "${CLOSE_AGENTS_OK}" ]]; then live_line "${pane}" "${name:-${pane}}" "herdr gave no agent list, so its state is unknown" -; continue; fi
+    read -r _ st who <<< "$(awk -v p="${pane}" '$1 == p { print; exit }' <<< "${CLOSE_AGENTS}")"
+    if [[ -z "${st}" ]]; then
+      # No agent in it: one a tab record has may be one still starting (next_pane records the pane
+      # before start_agent's agent start), so it is kept; any other holds nothing to lose.
+      ! awk -v p="${pane}" '$1 == p { f = 1 } END { exit !f }' <<< "${CLOSE_RECORDS}" \
+        || live_line "${pane}" "${name:-${pane}}" "starting: no agent in it yet" -
+      continue
+    fi
+    [[ "${who}" != - ]] || who=""
+    if [[ -z "${name}" && ${#who} -eq ${AGENT_NAME_MAX} ]]; then
+      close_stories
+      name="$(awk -v n="${who}" '$1 == n { print $2; exit }' <<< "${CLOSE_STORIES}")"
+      [[ -n "${name}" ]] || { live_line "${pane}" "${who}" "its story could not be found" "${who}"; continue; }
+    fi
+    name="${name:-${who:-${pane}}}"
+    s=herdr; [[ -z "${who}" ]] || s="$(session_state "${who}" "${CLOSE_CLAUDE}" </dev/null)"
+    # No session to ask, or Claude Code lists none live under the recorded id (gone: exited, or a new
+    # session): herdr's status answers, so an agent herdr has working is kept.
+    [[ "${s}" != herdr && "${s}" != gone ]] || s="herdr:${st}"
+    case "${s}" in
+      busy|herdr:working) live_line "${pane}" "${name}" working "${who:--}"; continue ;;
+      waiting*|herdr:blocked) live_line "${pane}" "${name}" waiting "${who:--}"; continue ;;
+      # Finished, as tell and free_agent_name read it.
+      idle|herdr:idle|herdr:done) ;;
+      *)
+        # A retired builder is finished too: retire_agent renames it <slug>-done, a name no agent
+        # started under, so agents.tsv has no line for it (a live builder whose slug ends in -done
+        # was started under it). Any other state (herdr's starting or error, or one that could not
+        # be read) is not known to be idle: kept.
+        if [[ "${who}" =~ -done[0-9]*$ ]] && ! grep -qxF -- "${who}" <<< "${CLOSE_STARTED}"; then :
+        elif [[ "${s}" == unknown || "${s}" == herdr:unknown ]]; then live_line "${pane}" "${name}" "its state could not be read" "${who:--}"; continue
+        else live_line "${pane}" "${name}" "state ${s#herdr:}" "${who:--}"; continue; fi ;;
+    esac
+    f="${BOARD}/stories/${name}.md"
+    [[ "${name}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || continue
+    src="$(repo_dir "$(fm "${f}" repo)")" || { echo "swarm: ${name}: ${src}, so no PR of its was looked for" >&2; continue; }
+    rc=0; close_heads "${src}" || rc=$?
+    case ${rc} in
+      0) ! grep -qxF -- "${src}"$'\t'"story/${name}" <<< "${CLOSE_HEADS}" || live_line "${pane}" "${name}" "PR open" "${who:--}" ;;
+      2) live_line "${pane}" "${name}" "gh could not list its PRs" "${who:--}" ;;
+    esac
+  done <<< "${panes}"
+}
+
+# live_line <pane> <name> <why> <agent> — one line of LIVE.
+live_line() { LIVE+="$1"$'\t'"$2"$'\t'"$3"$'\t'"$4"$'\n'; }
 
 # tidy [--yes] — the panes this script opened that hold nothing to read any more: no agent in them
 # (a start that failed) or a retired agent (<name>-done, left open by retire_agent). Lists them; with
@@ -1157,26 +1390,71 @@ init_project() {
   echo "One step left: run claude once in ${PROJECT_DIR} and accept the folder trust prompt. Agents won't start until it is trusted."
 }
 
-# close_tabs <label> — close every tab this script opened under <label>, and its state, archiving the
-# session of each agent in it first. A tab may be in another workspace (a conductor's is its HLD's):
-# its first pane id, "<workspace>:<pane>", says which.
+# close_tabs <label> [pane] — close every tab this script opened under <label> and its numbered
+# overflow (label_record; close_tab each), <pane>'s agent aside from the check. Every tab, with its herdr ids (tab_ids), is
+# listed before any is kept or closed: keeping one can move a later one's last line out of its
+# record, which then goes, and that tab is visited all the same. A tab whose ids herdr could not list
+# is kept and said (kept_unlisted), and the rest go on.
+CLOSE_ALL=""
 close_tabs() {
-  local label state tab_label id ws n
+  local label state id tabs=""
   label="$(tab_label "$1")"
   for state in "${STATE_DIR}/${label}" "${STATE_DIR}/${label}"-*; do
     [[ -f "${state}" ]] || continue
-    while read -r _ n; do [[ -z "${n}" ]] || archive_session "${n}"; done < "${state}"
-    tab_label="$(basename "${state}")"
-    ws="$(head -1 "${state}")"; ws="${ws%%:*}"; ws="${ws:-${HERDR_WORKSPACE_ID}}"
-    id=$(herdr tab list --workspace "${ws}" | python3 -c "
-import json,sys
-for t in json.load(sys.stdin)['result']['tabs']:
-    if t.get('label') == sys.argv[1]: print(t['tab_id'])" "${tab_label}")
-    # Two tabs can carry one label (a run that reopened it); close each, one id per call.
-    while read -r t; do [[ -z "${t}" ]] || herdr tab close "${t}" >/dev/null; done <<< "${id}"
-    rm -f "${state}"
-    echo "closed ${tab_label}"
+    label_record "${state}" "${label}" || continue
+    if id="$(tab_ids "${state}")"; then tabs+="${state}"$'\t'"${id}"$'\n'; else kept_unlisted "${state}"; fi
   done
+  while IFS=$'\t' read -r -u 3 state id; do
+    [[ -z "${state}" ]] || close_tab "${state}" "${id}" "${2:-}"
+  done 3<<< "${tabs}"
+}
+
+# tab_ids <tab-record> — the ids of the herdr tabs labelled as the record is, space-separated (two
+# tabs can carry one label: a run that reopened it); fails when herdr cannot list them. A tab may be
+# in another workspace (a conductor's is its HLD's): the record's first pane id,
+# "<workspace>:<pane>", says which.
+tab_ids() {
+  local ws
+  ws="$(head -1 "$1")"; ws="${ws%%:*}"; ws="${ws:-${HERDR_WORKSPACE_ID}}"
+  herdr tab list --workspace "${ws}" </dev/null 2>/dev/null | python3 -c "
+import json,sys
+print(' '.join(t['tab_id'] for t in json.load(sys.stdin)['result']['tabs'] if t.get('label') == sys.argv[1]))" "${1##*/}"
+}
+
+# kept_unlisted <tab-record> — say a tab whose ids herdr could not list is kept, unchecked.
+kept_unlisted() { echo "kept tab ${1##*/}: herdr could not list its workspace's tabs, so it was neither checked nor closed"; }
+
+# close_tab <tab-record> <tab-ids> [pane] — close the record's herdr tabs (<tab-ids>) and the record,
+# archiving the session of each agent in it first. herdr's tab close asks nothing, so a tab that
+# holds a live agent besides <pane>'s (live_agents) is kept, unless CLOSE_ALL is set (close --all):
+# each such agent is printed as kept and, when it is this project's, joins the tab's record
+# (record_kept), so a later close --all, and tidy, still find the tab once the panes recorded there
+# close; one that is not is said to stay unrecorded. With no tab of that label, nothing is closed and
+# the record goes. A tab herdr could not close keeps its record, and that is said.
+close_tab() {
+  local tab_label="${1##*/}" n p why a t
+  if [[ -z "${CLOSE_ALL}" && -n "$2" ]]; then
+    close_lists
+    live_agents "$2" "$1" "${3:-}"
+    if [[ -n "${LIVE}" ]]; then
+      while IFS=$'\t' read -r p n why a; do
+        if record_kept "$1" "${p}" "${n}" "${a#-}"; then echo "kept ${n} (${why}) in tab ${tab_label}: --all closes it too"
+        else echo "kept ${n} (${why}) in tab ${tab_label}: no tab record of this project has it, so it stays unrecorded"; fi
+      done <<< "${LIVE%$'\n'}"
+      return 0
+    fi
+  fi
+  if [[ -f "$1" ]]; then while read -r _ n; do [[ -z "${n}" ]] || archive_session "${n}"; done < "$1"; fi
+  for t in $2; do
+    # Checked, as close_pane checks its pane close: errexit would stop reconcile here, and a caller's
+    # `|| true` would drop the record of a tab still open.
+    if ! herdr tab close "${t}" >/dev/null 2>&1 </dev/null; then
+      echo "swarm: could not close tab ${tab_label} (${t}): it is still open, and its record keeps it" >&2
+      return 0
+    fi
+  done
+  rm -f "$1"
+  echo "closed ${tab_label}"
 }
 
 LEAD_POLL="${SWARM_LEAD_POLL:-30}"    # seconds between wait --lead's reads of the board, at least 1

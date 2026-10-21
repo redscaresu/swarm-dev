@@ -1314,7 +1314,11 @@ tests each PR on top of the ones ahead of it, so there every reviewed PR can be 
 **Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and
 removes its worktree and `story/<slug>`, here and on origin (§ Merging). By hand,
 `swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there), and
-`swarm.sh close conduct-<epic>` closes the epic's tabs.
+`swarm.sh close conduct-<epic>` closes the epic's tabs. herdr closes a tab without asking, so close
+first checks each tab's panes. It keeps a tab that holds an agent that is working or waiting, or
+whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
+its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
+`swarm.sh close <name> [cause] --all` closes the kept tabs as well.
 
 ## Releases
 
