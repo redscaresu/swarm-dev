@@ -432,13 +432,14 @@ session_for_pane() {
 # read. Its errors go to <err-file>, else nowhere.
 claude_agents() { claude agents --json 2>"${1:-/dev/null}"; }
 
-# session_state <name> — the state Claude Code reports for <name>'s session (panes.py's
-# session_state over one claude_agents call, its listing on stdin): busy, idle, waiting[:
+# session_state <name> [listing] — the state Claude Code reports for <name>'s session (panes.py's
+# session_state over one claude_agents call, its listing on stdin, or over <listing>, one a caller
+# read once for many agents, empty when that read failed): busy, idle, waiting[:
 # <waitingFor>], unknown or gone; `herdr` when herdr answers for the agent instead (codex, or no
 # session recorded). A reader that fails, or prints nothing, is unknown, never herdr.
 session_state() {
   local list ok=1 out
-  list="$(claude_agents)" || ok=""
+  if [[ $# -gt 1 ]]; then list="$2"; [[ -n "$2" ]] || ok=""; else list="$(claude_agents)" || ok=""; fi
   out="$(printf '%s' "${list}" | SWARM_LIST_OK="${ok}" SWARM_LIB="${SWARM_HOME}/bin/lib" python3 -I -c '
 import os, sys
 sys.path.insert(0, os.environ["SWARM_LIB"]); from panes import *
