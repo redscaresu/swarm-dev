@@ -45,8 +45,9 @@ case "$1 $2" in
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
     left="$(cat "${FX}/readback-left" 2>/dev/null || echo 0)"
     if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
-    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s}\n' \
-      "$(cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" ;;
+    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s}\n' \
+      "$(cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
+      "$(cat "${FX}/body" 2>/dev/null || echo null)" ;;
   "pr merge")
     case " $* " in *" --disable-auto "*) exit 0 ;; esac
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
@@ -567,9 +568,9 @@ fresh; rm "${S}"; echo '{"nameWithOwner":"other/repo"}' > "${FX}/origin"
 merge --board "${URL}"; refused "--board for a PR outside the board's repo" "is not in other/repo, the board's repo"
 # --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json,
 # in the project's own repo, merges with no story listing it and runs no reconcile; any other file or
-# field, another base, or another repo, is refused. origin's default branch is main.
-git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
-git -C "${P}" push -q origin HEAD:refs/heads/main; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
+# field, another base, or another repo, is refused. origin's default branch is main, tagged v1.2.0.
+git -C "${P}" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init; git -C "${P}" tag v1.2.0
+git -C "${P}" push -q origin HEAD:refs/heads/main v1.2.0; git -C "${ROOT}/origin.git" symbolic-ref HEAD refs/heads/main
 release_pr() {
   fresh; rm "${S}"; echo '[{"filename":".claude-plugin/plugin.json","status":"modified"}]' > "${FX}/files"
   echo '{"name":"x","version":"1.2.0","hooks":{}}' > "${FX}/wf.plugin.json.main"
@@ -599,6 +600,63 @@ for v in 1.2.0:"is not greater than '1.2.0' on main" 1.1.9:"is not greater than 
 done
 release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json.main" "${FX}/wf.plugin.json.feature"
 merge --release "${URL}"; refused "--release for a PR into another branch" "goes into feature, not main, the project's base"
+# A release ships its docs: bin/, commands/ or hooks/ changed since origin's tag needs README.md,
+# AGENTS.md or docs/ changed too, or a "Docs: none — <reason>" line in the PR body; a commands/*.md
+# change answers for itself only. The board is docs/ here: its own paths (stories, epics, hld,
+# Board.base, .obsidian) are not docs, and the rest of docs/ is.
+commit() { # <file>... — a commit on main that changes each file, pushed to origin
+  local f; for f in "$@"; do mkdir -p "$(dirname "${P}/${f}")"; echo x >> "${P}/${f}"; git -C "${P}" add -f "${f}"; done
+  git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "$*"; git -C "${P}" push -q origin HEAD:refs/heads/main
+}
+retag() { git -C "${P}" tag -f v1.2.0 >/dev/null; git -C "${P}" push -q -f origin v1.2.0; } # v1.2.0 on main's head
+commit bin/x.sh docs/stories/x.md docs/epics/x.md docs/hld/x.md docs/Board.base docs/.obsidian/app.json
+release_pr; merge --release "${URL}"; refused "--release with bin/ and only board files changed" "bin/x.sh changed since v1.2.0 but README.md, AGENTS.md and docs/ did not"
+check "--release's refusal says the forms a Docs: none line takes" said "a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do; not in a \`\`\` block or a > quote)"
+# shellcheck disable=SC2016 # the backticks are a markdown fence
+for b in 'Bumps the version.\r\nDocs: none \u2014 a typo in a comment\r\n' '- Docs: none -- only tests changed' '* Docs: none - a comment' \
+  '```sh\nx\n```\nDocs: none \u2014 after a fence'; do
+  release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
+  is "--release with bin/ changed and '${b}': exits 0" 0 "${rc}"
+done
+# shellcheck disable=SC2016 # the backticks are a markdown fence
+for b in 'Docs: none' 'Docs: none \u2014\r\nmore' 'Docs: none \u2014 \r\nmore' 'Docs: none --' 'Docs: none -- ' \
+  'Docs: none \u2014 <reason>' 'Docs: none - -' 'Docs: none \u2014 x' '  Docs: none \u2014 indented' \
+  'Template:\n```\nDocs: none \u2014 inside a fence\n```' '> Docs: none \u2014 quoted from another PR'; do
+  release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
+  refused "--release with '${b}' and no reason" "bin/x.sh changed since v1.2.0"
+done
+release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
+merge --release "${URL}"; refused "--release with no tag for the base's version" "no v1.2.5 tag on origin to compare against: tag main's last release v1.2.5, or give the PR body a line 'Docs: none — '"
+# v1.2.5 on a commit that is not on main.
+git -C "${P}" tag v1.2.5 "$(git -C "${P}" -c user.name=t -c user.email=t@t commit-tree -m side "HEAD^{tree}")"; git -C "${P}" push -q origin v1.2.5
+release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
+merge --release "${URL}"; refused "--release with the base's tag off the base" "the tag v1.2.5 is not on origin/main"
+# origin's tag is read, never fetched over the local one.
+git -C "${P}" tag -f v1.2.0 HEAD >/dev/null; local_tag="$(git -C "${P}" rev-parse v1.2.0)"
+release_pr; merge --release "${URL}"; refused "--release with a local tag that differs from origin's" "bin/x.sh changed since v1.2.0"
+is "--release leaves the local tag where it was" "${local_tag}" "$(git -C "${P}" rev-parse v1.2.0)"
+commit docs/method.md
+release_pr; merge --release "${URL}"
+is "--release with bin/ and docs/method.md beside the board in docs/ changed: exits 0" 0 "${rc}"
+retag; commit bin/y.sh commands/y.md
+release_pr; merge --release "${URL}"; refused "--release with bin/ and commands/*.md changed and no other docs" "bin/y.sh, commands/y.md changed since v1.2.0"
+retag; commit hooks/x.sh
+release_pr; merge --release "${URL}"; refused "--release with only hooks/ changed" "hooks/x.sh changed since v1.2.0"
+retag; commit commands/x.sh
+release_pr; merge --release "${URL}"; refused "--release with only a non-.md file under commands/ changed" "commands/x.sh changed since v1.2.0"
+retag; commit commands/x.md
+release_pr; merge --release "${URL}"
+is "--release with only commands/*.md changed: exits 0" 0 "${rc}"
+retag; commit hooks/x.sh README.md
+release_pr; merge --release "${URL}"
+is "--release with hooks/ and README.md changed: exits 0" 0 "${rc}"
+# An annotated v1.2.0 made in another clone, whose tag object a --no-tags checkout never fetches.
+git clone -q "${ROOT}/origin.git" "${ROOT}/other"; git -C "${P}" config remote.origin.tagOpt --no-tags
+git -C "${ROOT}/other" -c user.name=t -c user.email=t@t tag -a -f -m v1.2.0 v1.2.0 >/dev/null; git -C "${ROOT}/other" push -q -f origin v1.2.0
+commit bin/y.sh README.md
+release_pr; merge --release "${URL}"
+is "--release against an annotated tag it has not fetched: exits 0" 0 "${rc}"
+git -C "${P}" config --unset remote.origin.tagOpt
 fresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true}' > "${FX}/repo"; merge "${URL}"
 check "squash off, merge commits on: --merge" grep -qxF "pr merge 7 --repo o/r --merge --match-head-commit ${H1}" "${ROOT}/gh.log"
 
@@ -1124,6 +1182,12 @@ merge "${URL}"; refused "merge_admin = on, branch protection Not Found" "Not Fou
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
+# The release arm, on one line: a docs PR lands before the bump, and the release PR names it.
+# shellcheck disable=SC2016 # the backticks are markdown
+arm="$(sed -n '/^   - `release`:/,/^   - `gate`:/p' "${REPO}/commands/swarm.md" | tr '\n' ' ' | tr -s ' ')"
+check "commands/swarm.md's release arm lands a docs PR before the bump" \
+  grep -qE 'land a docs PR .* Then make a worktree of a new branch .release/v<new>.' <<< "${arm}"
+check "commands/swarm.md's release arm names the docs PR in the release PR" grep -qF 'and naming the docs PR' <<< "${arm}"
 check "reference.md § Merging merges with swarm.sh merge" \
   bash -c "sed -n '/^## Merging/,/^## Releases/p' '${REPO}/docs/reference.md' | grep -q 'swarm.sh merge'"
 

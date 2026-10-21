@@ -36,6 +36,10 @@ the run stops whenever a decision is yours.
    `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
    `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
    An agent that herdr brings back after a restart keeps these guards.
+   `swarm.sh merge --release` refuses a version bump while `bin/`, `commands/` or `hooks/` changed
+   since the last tag and README.md, AGENTS.md and `docs/` did not. The lead lands a docs PR
+   first, or, when nothing a user sees changed, writes `Docs: none — <why>` in the release PR body
+   ([details](docs/reference.md#merging)).
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
