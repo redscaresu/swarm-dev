@@ -40,6 +40,11 @@ run `start` again for the next edit. `done` also clears a start you abandoned wi
 First run `swarm.sh version`. If it prints a WARNING, show it to the user word for word, then carry on:
 an old version still runs.
 
+When the user has updated the plugin while an epic's conductor runs, run `swarm.sh upgrade <epic>`
+in the background for each such epic and wait for it. It moves the epic's agents to the new version
+with `--resume`, so each keeps its context, and prints each one's old and new version. If it exits 1,
+show the user the agents it names as left on their old version, and run it again once they are idle.
+
 Repeat until a step below says stop:
 
 1. Run `swarm.sh reconcile` (it takes off the board what you merged, and puts back to `ready`

@@ -1604,6 +1604,189 @@ wait_lead() {
   return 1
 }
 
+# UPGRADE_WAIT_MS: how long upgrade waits in all, for the handovers and for its agents to go idle.
+UPGRADE_WAIT_MS="${SWARM_UPGRADE_WAIT_MS:-1800000}"
+
+# upgrade_agents [<epic>] — after `claude plugin update`, restart <epic>'s Claude agents (its
+# conductor, builders and review agents; with no epic, every one this project started) on this
+# swarm.sh's version, each in its own pane with --resume, so it keeps its context. Each conductor
+# first writes a handover and ends its turn (upgrade_handover). Then each agent, builders first, is
+# waited for until idle, never interrupted, restarted (upgrade_one) and told the new swarm.sh path
+# (upgrade_told). One still busy after
+# UPGRADE_WAIT_MS in all, or one already on this version, is left as it is, and so is every builder
+# when a conductor wrote no handover. Worktrees are never
+# touched. Fails when any agent was left on its old version, so a second run picks it up.
+upgrade_agents() {
+  local epic="${1:-}" new end want="" f slug name role pane e hand names rc=0 held="" builders="" conductors=""
+  [[ -z "${epic}" || ( "${epic}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/epics/${epic}.md" ) ]] || die "upgrade: no epic ${BOARD}/epics/${epic}.md"
+  require_herdr_version
+  new="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")"
+  end=$(($(now_ms) + UPGRADE_WAIT_MS))
+  if [[ -n "${epic}" ]]; then
+    want=" $(conductor_name "${epic}") "
+    while IFS= read -r f; do
+      [[ "$(fm "${f}" epic)" == "${epic}" ]] || continue
+      slug="$(basename "${f}" .md)"; want+="$(agent_name "${slug}") $(agent_name "review-${slug}") "
+    done < <(board stories)
+  fi
+  # Each Claude agent agents.tsv has (its last role), herdr holds in a pane recorded here, and not this one.
+  while read -r name role; do
+    [[ -z "${want}" || "${want}" == *" ${name} "* ]] || continue
+    pane="$(agent_field "${name}" pane_id)"
+    [[ -n "${pane}" && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
+    if [[ "$(cat "${VERSIONS_DIR}/${name}" 2>/dev/null)" == "${new}" ]]; then echo "${name}: already on ${new}"; continue; fi
+    if [[ "${role}" == conduct ]]; then conductors+="${name} ${pane}"$'\n'; else builders+="${name} ${pane} ${role}"$'\n'; fi
+  done < <(awk -F'\t' 'NF == 7 && $4 == "claude" { r[$3] = $2; if (!($3 in o)) o[$3] = n++ }
+    END { for (k in r) print o[k], k, r[k] }' "${AGENTS_LOG}" 2>/dev/null | sort -n | cut -d' ' -f2-)
+  # Handovers first, so no conductor acts on a builder mid-restart; a conductor with none stays as it is.
+  local ready=""
+  while read -r name pane; do
+    [[ -n "${name}" ]] || continue
+    e="$(conduct_epic "${name}")"
+    if hand="$(upgrade_handover "${name}" "${pane}" "${e}" "${new}" "${end}")"; then ready+="${name} ${pane} ${e} ${hand}"$'\n'
+    else echo "${name}: no handover by the end of the wait, left on $(cat "${VERSIONS_DIR}/${name}" 2>/dev/null || echo unknown)"; rc=1; held=1; fi
+  done <<< "${conductors}"
+  # Each in a subshell, so a die stops that agent alone; its env: names first, before anything is sent.
+  # ponytail: one missing handover holds every builder, any epic's; hold only that epic's if a run
+  # without <epic> over several conductors needs it.
+  while read -r name pane role; do
+    [[ -n "${name}" ]] || continue
+    if [[ -n "${held}" ]]; then echo "${name}: its conductor wrote no handover, left on $(cat "${VERSIONS_DIR}/${name}" 2>/dev/null || echo unknown)"; continue; fi
+    ( names="$(upgrade_env "${name}" "${role}")" || die "${name}: ${names}; left on its old version"
+      upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
+      upgrade_told "${name}" "${pane}" "${new}" ) || rc=1
+  done <<< "${builders}"
+  while read -r name pane e hand; do
+    [[ -n "${name}" ]] || continue
+    ( names="$(upgrade_env "${name}" conduct "${e}")" || die "${name}: ${names}; left on its old version"
+      upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
+      upgrade_told "${name}" "${pane}" "${new}" "${hand}" ) || rc=1
+  done <<< "${ready}"
+  [[ ${rc} -eq 0 ]] || echo "Run swarm.sh upgrade${epic:+ ${epic}} again once the agents named above are idle."
+  return "${rc}"
+}
+
+# upgrade_told <name> <pane> <version> [handover] — tell a restarted agent this version's swarm.sh
+# path, which its brief names under the old root, then that a conductor (with its handover) carries
+# on, and any other agent goes on as before. Only then is it on <version>: it prints its old and new
+# version and records the new, so a run whose tell failed restarts and tells it again.
+upgrade_told() {
+  local f then="If you were waiting on the conductor, end your turn; otherwise carry on where you stopped."
+  [[ -z "${4:-}" ]] || then="Your handover is $4. Carry on where you stopped."
+  f="$(mktemp "${TMPDIR:-/tmp}/swarm-upgrade.XXXXXX")" || die "$1: restarted on $3, but could not tell it the new swarm.sh path"
+  printf '%s\n' "swarm.sh upgrade restarted you on swarm-dev $3. Its swarm.sh is ${SWARM_HOME}/bin/swarm.sh: use that path wherever your brief names another. ${then}" > "${f}"
+  deliver_prompt "$1" "${f}" "$2"; rm -f "${f}"
+  echo "$1: $(cat "${VERSIONS_DIR}/$1" 2>/dev/null || echo unknown) -> $3"
+  { mkdir -p "${VERSIONS_DIR}" && echo "$3" > "${VERSIONS_DIR}/$1"; } || true
+}
+
+# upgrade_env <name> <role> [epic] — the env: names clean_env gives <name> again: a conductor's epic's
+# (epic_env, empty for the backlog's), a builder's story's (story_env), none for any other agent.
+upgrade_env() {
+  local f
+  if [[ "$2" == conduct ]]; then
+    if [[ "$3" == backlog ]]; then epic_env ""; else epic_env "$3"; fi
+    return
+  fi
+  [[ " ${BUILDER_ROLES} " == *" $2 "* ]] || return 0
+  while IFS= read -r f; do
+    [[ "$(agent_name "$(basename "${f}" .md)")" != "$1" ]] || { story_env "${f}"; return; }
+  done < <(board stories)
+}
+
+# upgrade_handover <conductor> <pane> <epic> <version> <end-ms> — ask the conductor to write its
+# handover to .swarm/handover-<epic>-<date>[-n].md and end its turn (a prompt when it is idle,
+# read_state, else a note in its inbox, read after its wait), and print that file once it is written; fail at
+# <end-ms>.
+upgrade_handover() {
+  local day file n=1 msg
+  day="$(date +%F)"; file="${PROJECT_DIR}/.swarm/handover-$3-${day}.md"
+  while [[ -e "${file}" ]]; do n=$((n + 1)); file="${PROJECT_DIR}/.swarm/handover-$3-${day}-${n}.md"; done
+  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-upgrade.XXXXXX")" || return 1
+  printf '%s\n' "swarm.sh upgrade is moving this epic's agents to swarm-dev $4, restarting each with --resume, so it keeps its context. Write a handover to ${file}: each open PR with its review round, what its builder still owes, and any findings you have not sent. Then end your turn: start nothing and run no wait or watch. upgrade restarts you and tells you to carry on." > "${msg}"
+  case "$(read_state "$1")" in
+    idle|herdr:idle|herdr:done) (deliver_prompt "$1" "${msg}" "$2") >&2 ;;
+    *) (tell_agent "$1" note "${msg}") >/dev/null ;;
+  esac || { rm -f "${msg}"; return 1; }
+  rm -f "${msg}"
+  while [[ ! -s "${file}" ]]; do (($(now_ms) < $5)) || return 1; nap 5; done
+  echo "${file}"
+}
+
+# upgrade_one <name> <pane> <env-names> <version> <end-ms> — once <name> is idle (upgrade_idle, by <end-ms>),
+# ctrl+c until claude has left its pane, then start it there again, through clean_env with this
+# version's bin first on PATH: --resume of herdr's session for the pane, with the flags its claude
+# ran with (herdr pane process-info) and a resume command (resume_file) of this version's. Prints
+# Run in a subshell: a die stops only this agent.
+upgrade_one() {
+  local name="$1" pane="$2" old session a out why rc flags=() resume=() try
+  old="$(cat "${VERSIONS_DIR}/${name}" 2>/dev/null)" || old=unknown
+  upgrade_idle "${name}" "${pane}" "$5" || die "${name}: still busy at the end of the wait, left on ${old}"
+  session="$(session_for_pane "${pane}")"
+  [[ -n "${session}" ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
+  out="$(herdr pane process-info --pane "${pane}" 2>/dev/null | claude_flags)" && rc=0 || rc=$?
+  [[ ${rc} -ne 3 ]] || die "${name}: a flag of its claude holds a control character, which herdr refuses in a resume command; left on ${old}"
+  [[ ${rc} -eq 0 ]] || die "${name}: no claude in pane ${pane} (herdr pane process-info), left on ${old}"
+  if [[ -n "${out}" ]]; then while IFS= read -r a; do flags+=("${a}"); done <<< "${out}"; fi
+  resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
+  why="$(resume_refusal "${resume[@]}")" && die "${name}: herdr would refuse its resume command (${why}), left on ${old}"
+  for try in 1 2 3 4 5; do
+    herdr pane send-keys "${pane}" ctrl+c >/dev/null 2>&1 || true
+    nap 1
+    herdr pane process-info --pane "${pane}" 2>/dev/null | claude_flags >/dev/null || break
+    [[ ${try} -lt 5 ]] || die "${name}: claude did not exit on ctrl+c, left on ${old}"
+  done
+  resume_file "${name}" "${session}" "$3" "${resume[@]}"
+  a="$(upgrade_path)"
+  local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv" PATH="${a}"
+  clean_env "${pane}" "${name}" "$3"
+  out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
+    || die "${name}: herdr could not start it again (${out}); in pane ${pane}, claude --resume ${session} brings it back"
+}
+
+# upgrade_idle <name> <pane> <end-ms> — succeed once <name> is idle as read_state reads it (Claude
+# Code's own state; herdr's wait is only the wake-up, as for settle); a busy one is waited on at
+# least once, and fails when it is still busy at <end-ms>.
+upgrade_idle() {
+  local left
+  while :; do
+    case "$(read_state "$1")" in idle|herdr:idle|herdr:done) return 0 ;; esac
+    left=$(($3 - $(now_ms))); ((left > 0)) || left=1
+    herdr agent wait "$2" --until idle --until "done" --timeout "${left}" >/dev/null 2>&1 || true
+    nap 1
+    case "$(read_state "$1")" in idle|herdr:idle|herdr:done) return 0 ;; esac
+    (($(now_ms) < $3)) || return 1
+  done
+}
+
+# claude_flags — from herdr pane process-info on stdin, the arguments of the pane's claude, but its
+# --session-id or --resume and their value, one a line; fails when no claude runs there, or exits 3
+# when an argument holds a control character, which a line cannot carry and herdr refuses anyway.
+claude_flags() {
+  python3 -I -c '
+import json, os, sys
+for p in json.load(sys.stdin)["result"]["process_info"].get("foreground_processes") or []:
+    a = p.get("argv") or []
+    if a and os.path.basename(a[0]) == "claude":
+        out, skip = [], False
+        for x in a[1:]:
+            if skip: skip = False
+            elif x in ("--session-id", "--resume"): skip = True
+            else: out.append(x)
+        if any(c < " " or c == "\x7f" for x in out for c in x): sys.exit(3)
+        print("\n".join(out)); sys.exit(0)
+sys.exit(1)'
+}
+
+# upgrade_path — PATH with this version's bin first and every other plugin root's bin (a folder with
+# swarm.sh beside a .claude-plugin/plugin.json: an older version's) gone.
+upgrade_path() {
+  local d dirs out="${SWARM_HOME}/bin"
+  IFS=: read -r -a dirs <<< "${PATH}"
+  for d in ${dirs[@]+"${dirs[@]}"}; do [[ -z "${d}" || ( -x "${d}/swarm.sh" && -f "${d}/../.claude-plugin/plugin.json" ) ]] || out+=":${d}"; done
+  echo "${out}"
+}
+
 # wait_command [--stall | --until-report] <name> [timeout-ms] | --lead [timeout-ms] — the wait command:
 # a conductor's wait, with no timeout under --until-report, any other agent's, or the lead's (wait_lead).
 wait_command() {

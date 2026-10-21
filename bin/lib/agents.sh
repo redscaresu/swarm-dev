@@ -630,8 +630,13 @@ record_agent() {
   state_lock "${AGENTS_LOG}.lock"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}" || rc=$?
   rmdir "${AGENTS_LOG}.lock"
+  # The version it starts on, for upgrade to print; one it cannot write reads as unknown there.
+  { mkdir -p "${VERSIONS_DIR}" && plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json" > "${VERSIONS_DIR}/$2"; } 2>/dev/null || true
   return "${rc}"
 }
+
+# VERSIONS_DIR: the plugin version the agent holding each name started on (record_agent, upgrade).
+VERSIONS_DIR="${PROJECT_DIR}/.swarm/versions"
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,
 # target, the actor's herdr pane, outcome). Names and paths only, never a brief's or a message's contents;

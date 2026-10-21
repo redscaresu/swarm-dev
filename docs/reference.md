@@ -1305,6 +1305,26 @@ whatever order the calls arrive in. When you quit an agent's session yourself, t
 pane back to herdr (`release-agent`). A session that ends because herdr restarts keeps its resume
 command. Each hook calls herdr in the background, so a herdr that hangs never holds a prompt.
 
+**Moving a running epic to a new version.** A running agent keeps the plugin version it started
+on. After `swarm.sh update` (or `claude plugin update`) and a restart of your own session, run
+`swarm.sh upgrade <epic>` to move that epic's agents (its conductor, builders and review agents) to
+the installed version. With no epic it moves every agent the project started. First the conductor
+writes a handover to `.swarm/handover-<epic>-<date>.md`: each open PR with its review round, what
+its builder still owes, and findings it has not sent. Then it ends its turn. An idle conductor is
+asked by prompt; a busy one gets a note in its inbox, which it reads when its wait returns. Then
+upgrade waits for each agent, builders first, until herdr has it idle (`herdr agent wait`), and
+never interrupts one. It sends ctrl+c until claude exits, then starts it again in the same pane: a fresh
+allowlisted environment whose `PATH` starts at the new version's `bin/` (an older version's is
+dropped), and `claude --resume <session>` with the flags its claude ran with (`herdr pane
+process-info`; the session from `herdr agent list`). A resumed session keeps its context, so only
+the plugin root changes. upgrade then gives each restarted agent the new `swarm.sh` path, since
+its brief names the old one, and tells the conductor to carry on. It never touches a worktree, so uncommitted and unpushed work stays as it is. It prints each agent as
+`<name>: <old> -> <new>`, and `swarm.sh version` in a pane confirms it. An agent still busy after
+`SWARM_UPGRADE_WAIT_MS` (30 minutes, for the whole run) is named and left on its old version. So is
+a conductor that wrote no handover by then, and every builder with it. Idle means idle to Claude
+Code itself: herdr's wait only wakes upgrade to check. upgrade then exits 1. Run it again once they are
+idle; it skips the agents already on the new version.
+
 **Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang. A merge queue
 tests each PR on top of the ones ahead of it, so there every reviewed PR can be enqueued at once.
@@ -1343,6 +1363,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh init` | Set a project up, from its git root: the board templates, `.claude/swarm/` with a commented `commit_trailers` line, the `.gitignore` lines, a `ci.yml` that runs `make check` on each PR and on pushes to origin's default branch, and fails when make has no `check` target, with a gate (`.github/swarm-board-only.sh`) that skips a PR or push changing only the board's own files (with workflows already there, it writes the gate and prints the step to add; a board outside the repo gets no gate; when origin's default branch can't be found, no CI), and a pre-commit hook that runs `make check` except on a commit that changes only the board's own files (when a hook exists or `core.hooksPath` is set, it writes none and prints the lines to add before any `exec`, or, for a global `core.hooksPath`, says to add them nowhere there). It ends by listing the files it wrote that git does not track yet, to commit. A second run changes nothing. |
 | `swarm.sh status` | Show agents that need a look, stacked builds whose parent moved or merged, what waits on you, and what runs next. |
 | `swarm.sh dash --watch` | Open the live dashboard: a running-now box, how long each working agent has gone without a sign of life, how long each running codex review has run, and a merges-per-day speedometer with two warning lights, and a third when someone had to step in. `swarm.sh dash --project <dir>` (repeatable) draws several projects. `swarm.sh dash --check` compares each figure with the command that owns it and exits 1 naming each one that differs. With `lead = session` in the config, only your own steps say needs you; the rest goes in a lead's queue ([details](dash.md)). |
+| `swarm.sh upgrade [<epic>]` | After a plugin update, move a running epic's agents to the new version: its conductor writes a handover, then each agent, once idle, restarts in its pane with `--resume`, keeping its context. It prints each one's old and new version and never touches a worktree. |
 | `swarm.sh conduct <epic>` | Start a fresh conductor for one epic. `swarm.sh conduct --backlog` starts one for the ready stories that have no epic. `watch --backlog` follows their PRs. |
 | `swarm.sh wait --until-report conduct-<epic>` | Wait, with no timeout, until an epic's conductor writes its report, waits on a prompt, exits or needs a login. `/swarm-dev:swarm` runs it for you. |
 | `swarm.sh wait --lead` | Wait until the lead's queue gains a held or escalated story, or a green PR in review that waits on you, and print each new one. |
