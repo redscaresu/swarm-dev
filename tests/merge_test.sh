@@ -175,6 +175,9 @@ merge() {
 events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
 merge_lines() { events | grep -c '^merge ' || true; }
 logged() { events | grep -q -- "$1"; }
+# and_logged <pattern> <command>... — the command succeeds and events.tsv has a line matching
+# <pattern>: one check, so a miss counts as a FAIL and never ends the file under set -e.
+and_logged() { local p="$1"; shift; "$@" && logged "${p}"; }
 
 fails=0
 check() { local name="$1"; shift; if "$@"; then echo "ok   ${name}"; else echo "FAIL ${name}"; fails=$((fails + 1)); fi; }
@@ -355,8 +358,8 @@ check "a green merge into o/r.x leaves o/rxx's red main" bash -c "! grep -q main
 failed_job 'x\ty\tz FAIL one\n'; red_main "o/r main"; echo "${M2:=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}" > "${FX}/oid"
 cp "${FX}/${M}.checks" "${FX}/${M2}.checks"; statuses "${FX}/${M2}.status"; wfruns "${FX}/${M2}.runs" "$(run ci completed success "${M2}")"
 merge "${URL}"
-check "a second red main: the older unstarted fix-main story is retired, the newer written" \
-  bash -c "[ ! -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && [ -e '${P}/docs/stories/fix-main-${M2:0:7}.md' ]" && logged "^fix-main fix-main-${H2:0:7} retired: superseded by fix-main-${M2:0:7}$"
+check "a second red main: the older unstarted fix-main story is retired, the newer written" and_logged "^fix-main fix-main-${H2:0:7} retired: superseded by fix-main-${M2:0:7}$" \
+  bash -c "[ ! -e '${P}/docs/stories/fix-main-${H2:0:7}.md' ] && [ -e '${P}/docs/stories/fix-main-${M2:0:7}.md' ]"
 # Main gone green another way: reconcile reads the base's head and, green, clears it.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
 echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"
@@ -366,8 +369,8 @@ check "a base whose checks are green but a workflow run failed: reconcile keeps 
   bash -c "[ -e '${FM}' ] && ! grep -q main-green '${P}/.swarm/events.tsv'"
 wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
-check "a base gone green another way: reconcile logs main-green and retires the fix" \
-  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main [0-9a-f]\{40\}$"
+check "a base gone green another way: reconcile logs main-green and retires the fix" and_logged "^main-green ${H2} o/r main [0-9a-f]\{40\}$" \
+  bash -c "[ ! -e '${FM}' ]"
 # Clearing a red main that fails (its fix-main story cannot be removed) never fails reconcile.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
 echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"; wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
@@ -414,12 +417,12 @@ failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"; H3=3333333333333333333333333333
 echo "${H3}" > "${FX}/commit.main"; printf '{"files":[{"filename":"docs/stories/x.md"}],"parents":[{"sha":"%s"}]}' "${H2}" > "${FX}/commit.${H3}"
 checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"; wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
-check "a green fix followed by a board-only head: reconcile clears the red main and retires the fix" \
-  bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H3} o/r main [0-9a-f]\{40\}$"
+check "a green fix followed by a board-only head: reconcile clears the red main and retires the fix" and_logged "^main-green ${H3} o/r main [0-9a-f]\{40\}$" \
+  bash -c "[ ! -e '${FM}' ]"
 # Clearing a red main that fails (its fix-main story cannot be removed) still lets reconcile run.
 fresh; red_main "o/r main"; chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
-check "a red main whose clearing fails: merge says so and reconcile still runs" \
-  bash -c "grep -qF 'main green, and clearing its red main failed' '${ROOT}/out'" && logged '^reconcile '
+check "a red main whose clearing fails: merge says so and reconcile still runs" and_logged '^reconcile ' \
+  bash -c "grep -qF 'main green, and clearing its red main failed' '${ROOT}/out'"
 # One deadline for every run: run 98's status read hangs, so run 99 is never read; a gh error on a
 # run's status stops at once. Each is named as not read.
 failed_job 'x\ty\tz FAIL never read\n'
@@ -439,8 +442,8 @@ check "a gh error on a run's status: read once, and named as one gh could not re
 failed_job 'x\ty\tz FAIL never read\n'; : > "${FX}/run.hang"; start=${SECONDS}
 merge SWARM_FIX_MAIN_LOG_SECONDS=2 "${URL}"
 check "a hanging log download: merge ends within 20 s" test $((SECONDS - start)) -lt 20
-check "a hanging log download: no FAIL line, the story still written, reconcile ran" \
-  bash -c "grep -qF 'no FAIL line' '${FM}' && grep -q '^fix-main:' '${ROOT}/out'" && logged '^reconcile s'
+check "a hanging log download: no FAIL line, the story still written, reconcile ran" and_logged '^reconcile s' \
+  bash -c "grep -qF 'no FAIL line' '${FM}' && grep -q '^fix-main:' '${ROOT}/out'"
 # With no story written, merge never prints fix-main:, so a conductor stops instead of starting one.
 fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; chmod a-w "${P}/docs/stories"; merge "${URL}"; chmod u+w "${P}/docs/stories"
 check "a fix-main story that cannot be written: no fix-main: line, says it cannot write it" \
