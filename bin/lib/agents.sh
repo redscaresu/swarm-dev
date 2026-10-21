@@ -330,14 +330,16 @@ agent_cmd() {
   start_agent "${1:-}" "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-${2:-}}" "${names}"
 }
 
-# start_agent <tab> <name> <cwd> <role> <prompt-file> [pane-name] [env-names] — an agent in a fresh
-# pane with a clean environment (clean_env), plus the variables <env-names> names, which its caller
-# has checked with story_env. Never read from the environment, where any value could stand in.
+# start_agent <tab> <name> <cwd> <role> <prompt-file> [pane-name] [env-names] [model] — an agent in a
+# fresh pane with a clean environment (clean_env), plus the variables <env-names> names, which its
+# caller has checked with story_env. Never read from the environment, where any value could stand in.
+# [model] runs <role> on another model than its policy's, at its policy's effort (step_up's rung).
 start_agent() {
   local tab="$1" name cwd="$3" role="$4" prompt_file="$5" pane_name="${6:-$2}" names="${7:-}" kind model effort pane
   name="$(agent_name "$2")"   # the one place names are mapped, so `wait <same name>` always finds it
   [[ -f "${prompt_file}" ]] || die "no prompt file ${prompt_file}"
   read -r kind model effort <<< "$(policy "${role}")"
+  model="${8:-${model}}"   # a step-up's rung: the role's family on another model
   # Before the pane opens, so a refusal leaves no empty pane behind. A claude agent's session id is
   # minted here, once, so a retry reuses it and agents.tsv holds it from the start; codex has none.
   local session=- flags=()
@@ -484,8 +486,14 @@ sys.exit(0 if login_expired(*sys.argv[1:4]) else 1)' "${AGENTS_LOG}" "$1" "${CLA
 # record_agent <role> <name> <kind> <model> <effort> <session> — append the agent's line; session is
 # '-' for codex.
 record_agent() {
+  local rc=0
   mkdir -p "$(dirname "${AGENTS_LOG}")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}"
+  # Under the log's lock, so start_rung's drop of an unstarted rung (a read, then a replace) never
+  # loses this line.
+  state_lock "${AGENTS_LOG}.lock"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}" || rc=$?
+  rmdir "${AGENTS_LOG}.lock"
+  return "${rc}"
 }
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,
@@ -820,7 +828,7 @@ poll_while() {
 # herdr's agent wait is only the wake-up, in STALL_POLL_MS slices, and its status is never parsed.
 # The session is read before the first wake and right after each; every decision is taken on that
 # read. Settled, it returns at once. A herdr wait that fails other than by timing out fails the wait.
-# A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit", before any
+# A busy agent whose pane is on the usage limit (usage_state) ends it with "usage-limit <usage_state>", before any
 # other pane check. A busy agent whose turn stopped on an API error (api_stopped, past the caller's resumed_sum) ends it with "api error", and one
 # whose pane has not changed for stall_minutes (pane_quiet) with "stuck: no output ...".
 # With <since>, a busy builder stalled since then (agent_stalled) ends it with "stalled: ...". Busy or
@@ -829,7 +837,7 @@ poll_while() {
 # wake (after a nudge), an idle read ends the wait only once a whole slice has passed, unless the
 # session read busy (or waiting, or gone) in between: two nudges are never closer than a slice.
 settle() {
-  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0
+  local target="$1" name="$2" since="${4:-}" wake="${5:-}" state deadline t0 end err min said="" rc=0 hold=0 lim
   local pane_sum="" pane_at="${SWARM_WAIT_STARTED:-$(date +%s)}"
   state="$(session_state "${name}")"
   [[ "${state}" != herdr ]] || { herdr_wait "${target}" "${name}" "$3" "${since}"; return; }
@@ -847,7 +855,7 @@ settle() {
     if [[ "${state}" == unknown && -z "${said}" ]]; then
       said=1; echo "swarm: ${name}: Claude Code gives no state for its session (unknown); waiting on" >&2
     fi
-    if [[ "${state}" == busy ]] && usage_state "${target}" >/dev/null; then state=usage-limit; break; fi
+    if [[ "${state}" == busy ]] && lim="$(usage_state "${target}")"; then state="usage-limit ${lim}"; break; fi
     if [[ "${state}" == busy ]] && api_stopped "${name}" "${target}" "${resumed_sum:-}"; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
       state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
@@ -884,7 +892,8 @@ settle() {
 # An agent whose pane is on Claude Code's usage limit (settle's "usage-limit", or idle or waiting and
 # usage_state; an idle session under the waiting line is idle) is neither a stop nor a stall: on its
 # dialog wait sends the option "Wait here, then continue automatically" (the user's standing choice)
-# once, not again while that dialog stands, logs one usage-limit event for that limit
+# once (a send herdr failed is tried again a pass later), not again while that dialog stands, taking
+# settle's read when settle ended on it, logs one usage-limit event for that limit
 # (usage_event), counts no nudge or resume, and waits on, a slice at a time, never past its timeout,
 # where it prints usage-limit and fails. A pane that already waits after that choice is the same,
 # with nothing sent; pane_quiet never sees it, so it is never stuck however long it sits.
@@ -905,12 +914,16 @@ wait_agent() {
       [[ -n "${SWARM_WAIT_SLICE:-}" || $(($(now_ms) - t0)) -lt ${timeout} ]] || record_event incident "${name}" "wait-timeout: ${status}"
       echo "${status}"; return "${rc}"
     fi
-    if [[ "${status}" =~ ^(usage-limit|idle|waiting) ]] && lim="$(usage_state "${target}")" && [[ "${lim}" == dialog* || "${status}" != idle ]]; then
-      if [[ "${lim}" == dialog* && -z "${answered}" ]]; then
-        herdr pane send-keys "${target}" "${lim#dialog }" >/dev/null 2>&1 \
-          || echo "swarm: ${name}: could not answer its usage-limit dialog" >&2
+    lim=""   # settle's own read when it ended on the usage limit; else, idle or waiting, a read here
+    if [[ "${status}" == usage-limit* ]]; then lim="${status#usage-limit }"
+    elif [[ "${status}" =~ ^(idle|waiting) ]] && lim="$(usage_state "${target}")" && [[ "${lim}" == dialog* || "${status}" != idle ]]; then :
+    else lim=""; fi
+    if [[ -n "${lim}" ]]; then
+      if [[ "${lim}" != dialog* ]]; then answered=""
+      elif [[ -z "${answered}" ]]; then   # answered only once herdr took the key; a failed send is tried again
+        if herdr pane send-keys "${target}" "${lim#dialog }" >/dev/null 2>&1; then answered=1
+        else echo "swarm: ${name}: could not answer its usage-limit dialog; trying again" >&2; fi
       fi
-      [[ "${lim}" == dialog* ]] && answered=1 || answered=""
       [[ -n "${limited}" ]] || { usage_event "${name}"; echo "swarm: ${name}: on the usage limit; it continues by itself once the limit resets" >&2; }
       limited=1; t0=$((deadline - $(now_ms)))
       if [[ ${t0} -le 0 ]]; then echo usage-limit; return 1; fi

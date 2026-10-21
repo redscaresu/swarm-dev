@@ -9,17 +9,19 @@
 #   swarm.sh wait --lead [timeout-ms]                       block until the lead's queue gains a held or escalated story or a green PR in review that waits on the user (merge = human, or merge holds it); print each new one
 #   swarm.sh policy <role>                                  print the model and effort for a role
 #   swarm.sh close <name> [cause]                           close a story's pane, a conductor's epic tab, or a tab and its overflow; closing a ready story's builder counts a failed build (attempts:) and clears its worktree, branch and PR; cause: met, impossible, stalled, bound, paused or cleared-on-error (the last three count nothing; impossible makes the story the lead's, and paused and cleared-on-error hold it for the lead), required with goal on while the story is ready
+#   swarm.sh step-up <slug> <trigger>                       with escalate_ladder set, close a story's builder without counting an attempt and start the ladder's next model in the same worktree and branch, with a handover brief; trigger: findings-3, ci-red-2, stalled or no-pr
+#   swarm.sh step-up --resume <slug>                        start the rung a step-up closed the old builder for but could not start, from the brief it wrote
 #   swarm.sh tell <slug> <kind> <file>                      send an idle builder (or any agent) a file's contents; kind: findings, nudge or resume; or note: append it to a conductor's inbox, busy or not
 #   swarm.sh cost | features | review-yield                 moved: each prints which flow section holds its numbers (cost, features, reviewers)
 #   swarm.sh outcomes [--since YYYY-MM-DD]                  one TSV row per builder: story, kind, model, cost, tells, findings, PR, attempt, minutes start → PR → merge, main merges
 #   swarm.sh dataset                                        write .swarm/dataset.jsonl: one JSON line per finished story, its planned inputs (story text, kind, risk, touches, easy, estimate, planner model) and results (diff, attempts, findings rounds, rework, cost, minutes, models, escalations), and was_easy
-#   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
+#   swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]  one section per bin/lib/flow_*.py: cost (tokens and estimated cost per role), features (each docs/features.tsv feature's uses, metric, baseline, and delete? when unused or unmeasured), merges (stories finished per day), reviewers (findings raised, fixed and declined per reviewer and kind, and review rounds per PR), throughput (per epic: builders at once, stories per chain, review wait, stacked starts)
 #   swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr-url> <text>  log one review finding that was fixed (or, --declined, declined for <reason>: out-of-scope, nit or wrong; or, --filed, a declined out-of-scope one filed as a story, so next stops offering it), by its kind and the reviewer that raised it: codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped for a defect found after its PR merged (the outer loop)
 #   swarm.sh intervene <kind> "<one line>"                  log a time a person had to step in, as an incident line: lead-hand (the lead acted by hand where a command should have) or user-caught (the user found a problem first)
 #   swarm.sh lessons [--all]                                moved: prints that recurring kinds are in outcomes' recurring block
 #   swarm.sh next                                           the chain's next step, read from the board (resumable)
 #   swarm.sh status [--all]                                 agents that need a look, stacked builds whose parent moved or merged, what waits on you, and the next step
-#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another
+#   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
 #   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
@@ -165,6 +167,7 @@ CFG_stall_minutes=30    # an agent working this long with no sign of life (a bui
 CFG_queue_minutes=30    # a story PR green and mergeable this long with no review agent on its head is queued: (watch, next)
 CFG_sonnet_share=0      # N > 0: 1 in N code stories with easy: true and without risk: high is built on Sonnet (code-sonnet), to compare
 CFG_escalate_after=2   # N > 0: a story whose attempts: reaches N is built as escalate (Fable); 0 is off
+CFG_escalate_ladder=""  # empty: off; else models low to high, such as sonnet,opus,fable: step-up hands a build to the next one
 CFG_builder_subagent_model=""  # empty: building roles' subagents keep Claude Code's choice; else forced to this model
 CFG_goal=off            # N > 0: each builder gets a goal condition (.swarm/briefs/<slug>.goal.md) bounded at N turns
 CFG_codex_minutes=10    # codex-review stops a codex review that runs this long
@@ -172,7 +175,7 @@ CFG_fallback_reviewer="" # empty: a codex usage limit skips codex's review; else
 CFG_lead=off            # session: a lead session acts for the user, so dash splits needs you into the user's steps and a lead's queue
 CFG_merge_admin=off     # on: swarm.sh merge passes --admin to gh pr merge, once its own checks pass (a ruleset that wants an approving review)
 CFG_commit_trailers=""  # empty: none; else trailers every builder adds to each commit, ; between several
-CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin commit_trailers"
+CONFIG_KEYS="board_dir repos_dir merge stall_minutes queue_minutes sonnet_share escalate_after escalate_ladder builder_subagent_model goal codex_minutes fallback_reviewer lead merge_admin commit_trailers"
 for _key in ${CONFIG_KEYS}; do printf -v "SRC_${_key}" default; done
 
 # load_config — read CONFIG_FILE as `key = value` lines. It is parsed, never sourced, so it cannot run
@@ -202,6 +205,9 @@ load_config() {
         [[ "${value}" =~ ^[1-9][0-9]*$ ]] || die "${where}: ${key} must be a positive whole number, not '${value}'" ;;
       sonnet_share|escalate_after)
         [[ "${value}" =~ ^(0|[1-9][0-9]*)$ ]] || die "${where}: ${key} must be a non-negative whole number, not '${value}'" ;;
+      escalate_ladder)
+        # Its models are checked once LADDER_MODELS is defined (model_rank).
+        [[ "${value}" =~ ^([a-z0-9.-]+(,[a-z0-9.-]+)*)?$ ]] || die "${where}: escalate_ladder must be models separated by commas, such as sonnet,opus,fable, not '${value}'" ;;
       builder_subagent_model|fallback_reviewer)
         [[ "${value}" =~ ^[A-Za-z0-9._-]*(\[1m\])?$ ]] || die "${where}: ${key} must be a model name such as haiku, not '${value}'" ;;
       goal)
@@ -318,6 +324,41 @@ policy() {
   esac
 }
 
+# LADDER_MODELS: the models a building role runs on, low to high (the policy's). escalate_ladder names
+# some of them, each once and rising, so a step-up never steps down or back; a build on a model below
+# the ladder's first rung (a chore on haiku) steps to it.
+LADDER_MODELS="haiku sonnet opus fable"
+# model_rank <model> — how many of LADDER_MODELS come before <model>; fails for any other model.
+model_rank() {
+  local p=" ${LADDER_MODELS} " w
+  [[ "${p}" == *" $1 "* ]] || return 1
+  read -r -a w <<< "${p%%" $1 "*}"
+  echo "${#w[@]}"
+}
+_rank=-1
+for _m in ${CFG_escalate_ladder//,/ }; do
+  # shellcheck disable=SC2154 # load_config assigns it with printf -v
+  _r="$(model_rank "${_m}")" \
+    || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' is not one of the models building roles run on (${LADDER_MODELS})"
+  (( _r > _rank )) \
+    || die "${SRC_escalate_ladder}: escalate_ladder: '${_m}' comes after a model as high or higher; name each model once, from low to high, such as sonnet,opus,fable"
+  _rank=${_r}
+done
+
+# step_role <role> <model> — the role a step-up from a build of <role> starts on <model>: escalate on
+# escalate's model (the ladder's Fable rung); a code build (code-sonnet, code, code-risky) code-sonnet
+# on code-sonnet's model and code on any other; any other (docs, chore) its own role, which start_agent
+# runs on <model>.
+step_role() {
+  local m
+  read -r _ m _ <<< "$(policy escalate)"
+  if [[ "$2" == "${m}" ]]; then echo escalate; return; fi
+  case "$1" in
+    code|code-sonnet|code-risky) read -r _ m _ <<< "$(policy code-sonnet)"; if [[ "$2" == "${m}" ]]; then echo code-sonnet; else echo code; fi ;;
+    *) echo "$1" ;;
+  esac
+}
+
 # agent_name <name> — the herdr agent name for anything started or waited on. start_agent and
 # `wait` both map through here, so every caller agrees: lowercase, [a-z0-9_-], starting with a letter, at most 32 characters.
 agent_name() {
@@ -373,6 +414,7 @@ dispatch() {
             else [[ -z "${2:-}" ]] || die "story: unknown argument '$2'"; build_story "${1:?slug}"; fi ;;
     conduct) require_herdr; start_conductor "${1:?epic}" ;;
     close)  require_herdr; close_agent "${1:?name}" "${2:-}" ;;
+    step-up) require_herdr; if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
     unblock) unblock ;;
     next)   next_report ;;
@@ -744,6 +786,7 @@ main() {
     review) EV_TARGET="${2:-}"; EV_OK="ok (${*:3})" ;;
     board-pr) EV_TARGET="${3:-}"; case "${2:-}" in start|open|done) EV_CMD="board-pr:$2" ;; esac ;;
     story) EV_TARGET="${2:-}"; [[ "${EV_TARGET}" != --strict ]] || EV_TARGET="${3:-}" ;;
+    step-up) EV_TARGET="${2:-}"; if [[ "${EV_TARGET}" == --resume ]]; then EV_CMD="step-up:resume"; EV_TARGET="${3:-}"; fi ;;
     *) EV_TARGET="${2:-}" ;;
   esac
   EV_ERR="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX" 2>/dev/null)" || EV_ERR=/dev/null

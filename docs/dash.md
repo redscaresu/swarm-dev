@@ -64,10 +64,15 @@ is one column, top to bottom:
   pane dash runs in). After
   it comes who is on call (`on call: fable·xhigh`, the escalate role's model and effort, or `on
   call: off` with `escalate_after = 0`) and how many builds escalated to it today (`0 escalations
-  today` too), on the same line when they fit there and on the next line when they don't. Then a
+  today` too), on the same line when they fit there and on the next line when they don't. Then CI
+  time against last week, for the project's origin repo: `ci 11m (slowest: test 9m) ▼2m vs last
+  week`. It is that repo's row of the ci time table in the `ci_health` section of `swarm.sh flow
+  --since <6 days ago>`, which dash runs in the background at most every 6 hours (10 minutes after
+  one that failed or could not read one of this week's PRs, which keeps the line there was, and one
+  at a time, stopped after 30 minutes), so the line appears a minute or so after the first dash. A line older than 6 hours says so: `· 9h old`. Then a
   warning when the main checkout has board edits not committed yet, naming the files, cut to the
   width: `board: 2 uncommitted edits in the main checkout: stories/a.md, stories/b.md`. From 140
-  columns the merge mode, the summary and who is on call move to the status bar.
+  columns the merge mode, the summary, who is on call and the ci line move to the status bar.
 - **Needs you**: only what you act on, one short action a line: `merge` a PR (with its checks and
   whether it is behind the base), `run` a `lead` story (with its title), `answer` an agent waiting
   on a prompt (with what its session waits for), `auth: run /login` for an agent whose login expired (it is idle, but only your `/login` clears it), `close` an empty pane, `look at` an agent whose session is gone or unknown, `look at` a stalled agent (working for `stall_minutes`, 30
@@ -150,7 +155,7 @@ is one column, top to bottom:
   or green, ✗ failing, ⏸ blocked, ! needs you (including an agent whose session is gone or unknown, or whose login expired), and ?
   for a herdr state dash does not know (with herdr's word for it).
 - **Status bar**, from 140 columns, on the last lines: the merge mode, the summary's counts, today's
-  cost, who is on call and today's escalations, and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
+  cost, who is on call and today's escalations, the ci line, and the keys (`q` quit, `t` tree, `l` ladder, `r` redraw).
 
 It fits the terminal: it truncates with … rather than wraps, except that a needs-you action wraps
 onto an indented line so it is never cut. Under 100 columns it drops the role, model and actor
@@ -209,6 +214,22 @@ error that stopped it, or `failed (exit N)`). Every command writes it except the
 (`dash`, `status`, `next`, `config`, `policy`, `cost`, `lessons`, `findings`, `wait`, `watch`,
 `base`, and `tidy` without `--yes`); `reconcile` and `unblock` write a line per item they move. It
 holds names and paths, never the contents of a brief or a message.
+
+`swarm.sh dash --check` draws nothing. It compares each figure in this project's frame (or in each
+`--project` frame) with the command that owns it, prints one line per mismatch, such as
+`bravo: cost: dash shows 31.20, flow --since 2026-10-18 says 2.80`, and exits 1 if it found any.
+It checks the working agents and the running gauge against `swarm.sh status`, the header's next
+against `swarm.sh next`, and the epics waiting on their `depends_on` against the rule `next` plans
+by. The cost is checked against the `cost` section of `swarm.sh flow --since <today>` with no calling
+session, read just before and just after the frame: anything between the two agrees, so agents
+spending while it runs is no mismatch. Merges today and the 7-day rate are checked against flow's
+`merges` section, the stories finished per day. Every item that flow's `lead_queue` holds open
+must show in needs you or the lead's queue (an escalated or held story only with `lead = session`,
+the only time dash draws one), and so must every PR, every story only you or the lead can run
+(those behind `+N more` count) and every agent waiting on a prompt that status lists. flow's
+sections run inside the check and ask `gh` nothing. The release arm of `/swarm-dev:swarm` runs it
+after each release. `tests/dash_check_test.sh` shows that it agrees on the two-project fixture, with
+`lead = off` too, and fails when one of the fixes for the 2026-10-17 dash defects is reverted.
 
 `tests/dash_golden_test.sh` draws a fixed two-project board (`tests/fixtures/dash/two_projects.sh`)
 at 60, 100 and 200 columns and compares each frame with `tests/fixtures/dash/golden-<cols>.txt`.

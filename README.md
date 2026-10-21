@@ -69,7 +69,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
 | `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents, and a count of ready stories nobody has started ([details](docs/dash.md)). |
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents, and a count of ready stories nobody has started ([details](docs/dash.md)). `--check` compares each of its figures with the command that owns it. |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
 | `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for a PR's checks: exits 0 green, 1 red, 2 when gh fails, the PR conflicts with its base, no checks appear, or one is still pending at the timeout (30 minutes by default). |
 
@@ -100,7 +100,9 @@ section shows how long CI takes per push, how often it goes red and how often it
 `incidents` section counts, per day, the waits that timed out, the logins that expired, the
 builders that stopped with no PR, the board pulls that an uncommitted edit stopped, and each time
 a person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, which the lead
-logs; dash shows the 7-day count beside the speedometer). Its
+logs; dash shows the 7-day count beside the speedometer). `ci_health` also gives each repo's median
+CI time per PR and its slowest job, beside the same figures for the window before; dash shows this
+week's against last week's on one line. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
 money waits on you, so only those count. Its `model_fit` section sets cost against results for each
@@ -120,7 +122,10 @@ environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). 
 of their own, such as planners and review agents, never get one, so log in through `claude`,
 `codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
 most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
-details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs).
+details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs). With
+`escalate_ladder = sonnet,opus,fable` in the config (it ships off), `swarm.sh step-up <slug> <trigger>`
+hands a build that is struggling to the next model up, on the same branch, without counting a failed
+attempt ([reference.md](docs/reference.md#the-escalation-ladder)).
 
 ## More
 
