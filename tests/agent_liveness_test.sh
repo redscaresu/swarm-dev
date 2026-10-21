@@ -43,14 +43,14 @@ printf 'w:1 s-err\nw:2 s-deny\nw:3 s-ok\nw:4 s-mid\nw:5 s-prose\nw:6 s-again\n' 
 # s-err stopped on ECONNRESET; s-deny on an auto mode denial; s-ok had an API error, then carried on;
 # s-mid's pane ends on an API error while herdr says it is still working (mid-turn); s-prose's own
 # indented text mentions the classifier and an `API Error:` line. foreign is another project's agent, whose pane must not be read.
-printf '%s\n' '⏺ Running the tests.' '  ⎿  API Error: Connection error (ECONNRESET)' '' '> ' > "${ROOT}/pane-w:1"
+printf '%s\n' '⏺ Running the tests.' '⏺ API Error: Connection error (ECONNRESET)' '' '> ' > "${ROOT}/pane-w:1"
 deny=('⏺ Reading the story.' '  ⎿  Read 40 lines' '⏺ Applying the plan.' '⏺ Bash(terraform apply)'
   '  ⎿  Error: Permission for this action was denied by the Claude Code auto mode classifier.' '     Reason: real cloud' '> ')
 printf '%s\n' "${deny[@]}" > "${ROOT}/pane-w:2"
-printf '%s\n' '  ⎿  API Error: 529 overloaded' '⏺ Carrying on.' > "${ROOT}/pane-w:3"
-printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: 529 overloaded' > "${ROOT}/pane-w:4"
+printf '%s\n' '⏺ API Error: 529 overloaded' '⏺ Carrying on.' > "${ROOT}/pane-w:3"
+printf '%s\n' '⏺ Retrying.' '⏺ API Error: 529 overloaded' > "${ROOT}/pane-w:4"
 printf '%s\n' '⏺ Noted for the brief:' '  commands can be denied by the Claude Code auto mode classifier.' '  API Error: lines mean retry.' '> ' > "${ROOT}/pane-w:5"
-printf '%s\n' '  ⎿  API Error: foreign' > "${ROOT}/pane-w:9"
+printf '%s\n' '⏺ API Error: foreign' > "${ROOT}/pane-w:9"
 
 status() { (cd "${P}" && SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status > /dev/null 2>&1) || true; }
 incidents() { cut -f2,3,5 "${P}/.swarm/events.tsv" 2>/dev/null | grep '^incident' || true; }
@@ -67,7 +67,7 @@ printf '%s\n' '⏺ Retrying.' >> "${ROOT}/pane-w:1"
 status
 # A delivered tell to s-err (an ok tell:findings line), before this stop.
 printf '%s\ttell:findings\ts-err\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
-printf '%s\n' '  ⎿  API Error: Connection error (ECONNRESET)' >> "${ROOT}/pane-w:1"
+printf '%s\n' '⏺ API Error: Connection error (ECONNRESET)' >> "${ROOT}/pane-w:1"
 status; status
 check "a new stop on the same line logs one more event" test "$(incidents | grep -c 's-err')" = 2
 # Retired (retire_agent renames it s-err-done and moves its pane record), the same stopped pane logs
@@ -84,7 +84,7 @@ ERR_NAME=s-new status
 check "a new agent in a reused pane logs its own stop" test "$(incidents | grep -c 's-new')" = 1
 # s-again stops, and wait resumes it (an ok nudge line). A status before the pane redraws logs nothing
 # more; once a read sees the resume taken up, a stop after it, with the same lines above it, is new.
-again=('> Your last turn stopped on an API error; carry on where you stopped.' '  ⎿  API Error: 529 overloaded')
+again=('> Your last turn stopped on an API error; carry on where you stopped.' '⏺ API Error: 529 overloaded')
 printf '%s\n' '⏺ Working.' "${again[@]}" "${again[@]}" > "${ROOT}/pane-w:6"
 status
 printf '%s\tnudge\ts-again\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
@@ -107,20 +107,20 @@ stops() { grep -c $'^[^\t]*\tincident\t'"$1"$'\t' "${L}/.swarm/events.tsv" || tr
 ev() { printf '%s\t%s\t%s\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >> "${L}/.swarm/events.tsv"; }
 # wait resumes a stopped agent (an ok nudge line) that never takes it up: wait's idle read of the
 # same pane, with no resumed checksum, logs nothing more.
-printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' > "${ROOT}/t-idle"
+printf '%s\n' '⏺ Running.' '⏺ API Error: 500' > "${ROOT}/t-idle"
 pc l-idle "${ROOT}/t-idle"; ev nudge l-idle; pc l-idle "${ROOT}/t-idle"
 check "wait's idle read after a resume not taken up logs nothing more" test "$(stops l-idle)" = 1
 # A tell to a long slug is logged under the slug, not the agent's name. The agent replies, then stops
 # again with the same lines above the stop: a new stop.
-stop2=('  a' '  b' '⏺ Running.' '  ⎿  API Error: 529 overloaded')
+stop2=('  a' '  b' '⏺ Running.' '⏺ API Error: 529 overloaded')
 printf '%s\n' "${stop2[@]}" > "${ROOT}/t-tell"
 pc l-tell "${ROOT}/t-tell"; ev tell:findings l-tell-with-a-very-long-slug-past-the-name-cut
 printf '%s\n' '> From the conductor: findings' '⏺ Fixing them.' >> "${ROOT}/t-tell"; pc l-tell "${ROOT}/t-tell"
 printf '%s\n' "${stop2[@]}" >> "${ROOT}/t-tell"; pc l-tell "${ROOT}/t-tell"
 check "after a tell to a long slug, a new stop with the same lines above it logs again" test "$(stops l-tell)" = 2
 # A stop in the window's top lines, scrolled up by lines under it, is the same stop.
-printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' '> ' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
-printf '%s\n' '  ⎿  API Error: 500' '> ' '' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
+printf '%s\n' '⏺ Running.' '⏺ API Error: 500' '> ' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
+printf '%s\n' '⏺ API Error: 500' '> ' '' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
 check "a stop near the window's top that scrolls logs nothing more" test "$(stops l-top)" = 1
 # A resume and a second API error both land before the next read: the second stop follows a new
 # prompt, so it is logged too.
@@ -129,9 +129,16 @@ printf '%s\n' '⏺ API Error: first' '> carry on' '⏺ API Error: second' > "${R
 check "a resume and a second API error before the next read log both stops" \
   test "$(grep $'\tl-two\t' "${L}/.swarm/events.tsv" | cut -f5)" = "$(printf '%s\n' 'api-error: API Error: first' 'api-error: API Error: second')"
 # A stop whose prompt scrolls out of the window is the same stop.
-printf '%s\n' '> go' '⏺ Running.' '  ⎿  API Error: 500' > "${ROOT}/t-off"; pc l-off "${ROOT}/t-off"
-printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' '' > "${ROOT}/t-off"; pc l-off "${ROOT}/t-off"
+printf '%s\n' '> go' '⏺ Running.' '⏺ API Error: 500' > "${ROOT}/t-off"; pc l-off "${ROOT}/t-off"
+printf '%s\n' '⏺ Running.' '⏺ API Error: 500' '' > "${ROOT}/t-off"; pc l-off "${ROOT}/t-off"
 check "a stop whose prompt scrolls out of the window logs nothing more" test "$(stops l-off)" = 1
+# Two stops with no prompt in the window either time, a reply between them: two incidents.
+printf '%s\n' '⏺ API Error: first' > "${ROOT}/t-np"; pc l-np "${ROOT}/t-np"
+printf '%s\n' '⏺ API Error: first' '⏺ Retrying.' '⏺ API Error: second' > "${ROOT}/t-np"; pc l-np "${ROOT}/t-np"
+check "two stops with no prompt in the window, a reply between them, log two incidents" test "$(stops l-np)" = 2
+# A tool the agent ran printed an API error (its result, ⎿, ends the turn): no stop.
+printf '%s\n' '⏺ Bash(curl -s localhost:8080/health)' '  ⎿  API Error: 500 upstream' '> ' > "${ROOT}/t-tool"; pc l-tool "${ROOT}/t-tool"
+check "a turn ending on a tool result reading API Error: logs nothing" test "$(stops l-tool)" = 0
 # A turn that ends on a tool result quoting the denial phrase (a grep over the docs) is no denial.
 printf '%s\n' '⏺ Bash(grep -n classifier docs/reference.md)' \
   '  ⎿  706:saying "denied by the Claude Code auto mode classifier", it writes api-error or' '> ' > "${ROOT}/t-quote"
@@ -140,7 +147,7 @@ check "a tool result quoting the denial phrase logs nothing" test "$(stops l-quo
 # Eight reads of one stopped pane at once (status and a background wait, say) log it once.
 R="${ROOT}/race"; mkdir -p "${R}"
 n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"
-  pane_text() { printf "%s\n" "⎿ API Error: Connection reset"; }; turn_ended() { :; }
+  pane_text() { printf "%s\n" "⏺ API Error: Connection reset"; }; turn_ended() { :; }
   for i in 1 2 3 4 5 6 7 8; do pane_check s-race w:1 > /dev/null & done; wait
   wc -l < "${EVENTS_LOG}"' _ "${HERE}")"
 check "eight reads of one stop at once log one event" test "${n// /}" = 1

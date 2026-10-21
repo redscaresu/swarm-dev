@@ -581,11 +581,11 @@ PANE_DIR="${PROJECT_DIR}/.swarm/panes"
 
 # pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<prompt>\t<line>" for the stop
 # its last turn ended on: no reply (⏺ or ●) and no submitted prompt (`> text`) after it. <prompt> is
-# the line number of the last submitted prompt above it, 0 for none. The stop is Claude Code's `API
-# Error:` line, after ⏺ or ● at the margin or in a tool result (⎿) (api-error), or the tool result
-# Claude Code gives for a denial, `Error: Permission for this action was denied by the Claude Code auto
-# mode classifier.` (auto-denied). An agent's own indented text, or a tool result quoting the phrase,
-# is neither. The input box at the bottom is not read: a suggestion or half-typed text
+# the line number of the last submitted prompt above it, 0 for none. The stop is Claude Code's own
+# `API Error:` line, after ⏺ or ● at the margin (api-error), or the tool result Claude Code gives for a
+# denial, `Error: Permission for this action was denied by the Claude Code auto mode classifier.`
+# (auto-denied). An agent's own indented text, or a tool's output (⎿) that prints `API Error:` or
+# quotes the denial, is neither. The input box at the bottom is not read: a suggestion or half-typed text
 # there is no prompt. It is the last two border lines (─ at the margin) with no reply from the upper
 # one down; a box higher up (a banner, a dialog) is read as any line.
 pane_stop() {
@@ -594,7 +594,7 @@ pane_stop() {
       n = NR; if (!t) t = b
       if (t) { n = t - 1; for (i = t; i <= NR; i++) if (l[i] ~ /^(⏺|●)/) n = NR }
       for (i = 1; i <= n; i++) {
-        if (l[i] ~ /^(⏺|●)[[:space:]]*API Error:|^[[:space:]]*⎿[[:space:]]*API Error:/) { s = i; k = "api-error" }
+        if (l[i] ~ /^(⏺|●)[[:space:]]*API Error:/) { s = i; k = "api-error" }
         else if (l[i] ~ /^[[:space:]]*(⏺|●)/) s = 0
         else if (l[i] ~ /^(>|❯) +[^ ]/) { s = 0; q = i }
         else if (l[i] ~ /^[[:space:]]*⎿[[:space:]]*Error: Permission for this action was denied by the Claude Code auto mode classifier/) { s = i; k = "auto-denied" }
@@ -643,7 +643,7 @@ pane_check() {
     hit="$(pane_stop <<< "${text}")"; now="${logged}"; [[ -n "${hit}" ]] || now=""
     if [[ -n "${hit}" ]] && turn_ended "$1" && [[ -z "${3:-}" || "${sum}" != "$3" ]]; then
       IFS=$'\t' read -r n pane_kind p line <<< "${hit}"; now="$(stop_id "${text}" "${n}" "${p}" "${line}")"
-      [[ -n "${logged}" && ( "${now%/*}" == "${logged%/*}" || ( "${now%/*}" == - && "${now#*/}" == "${logged#*/}" ) ) ]] || new=1
+      [[ -n "${logged}" && ( ( "${now%/*}" != - && "${now%/*}" == "${logged%/*}" ) || ( "${now%/*}" == - && "${now#*/}" == "${logged#*/}" ) ) ]] || new=1
     fi
     if [[ -n "${lock}" ]]; then
       { t="$(mktemp "${f}.XXXXXX")" && printf '%s\t%s\t%s\n' "${sum}" "${pane_at}" "${now}" > "${t}" && mv -f "${t}" "${f}"; } 2>/dev/null || true

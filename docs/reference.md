@@ -704,8 +704,9 @@ first. Any other kind, or an empty line, fails and writes nothing, and so does a
 says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
 Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
 mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
-Error:` line counts after `⏺` or `●` at the margin or in a tool result (`⎿`). An agent's own indented
-text does not count, and neither does a tool result that only quotes the phrase. `next` and `tell`
+Error:` line counts only after `⏺` or `●` at the margin, where Claude Code prints its own. An agent's
+own indented text does not count, and neither does a tool's output (`⎿`) that prints `API Error:` or
+quotes the denial. `next` and `tell`
 only read. `status` and `wait` keep `.swarm/panes/<agent>`: the pane's checksum, when they last saw it
 change (which `dash` shows), and which stop was logged last. Stops are told apart by the lines from
 the last prompt above the stop down to it, or by the stop's line alone once that prompt has scrolled

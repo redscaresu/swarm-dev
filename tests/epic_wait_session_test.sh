@@ -261,6 +261,10 @@ check "an idle pane unchanged since its resume: one resume, then stuck: api erro
 printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
 check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
+# A tool the agent ran printed an API error (its result, ⎿, ends the turn): no stop, so no resume.
+printf '%s\n' '⏺ Bash(curl -s localhost:8080/health)' '  ⎿  API Error: 500 upstream' '' '> ' > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
+check "a turn ending on a tool result reading API Error: is no stop: wait sends no resume" "busy|exit 1|0" "${got%|*}|$(prompts)"
 # With goal on, a builder is never resumed: wait returns stuck at once, the transcript still ending on the error.
 printf 'goal = 3\n' > "${p}/.claude/swarm/config"; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"
