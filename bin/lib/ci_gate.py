@@ -1,4 +1,4 @@
-import calendar, json, re, subprocess, sys, time, urllib.parse
+import calendar, json, re, signal, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 
@@ -130,6 +130,216 @@ def admin(repo, base, sha, method):
         if behind:
             why.append("%s requires the head up to date, and it is %d commit(s) behind %s" % (base, behind, base))
     return why
+
+def graphql(query, **v):
+    """One GraphQL read: v's ints as -F (typed), every other value as -f (a string)."""
+    args = ["api", "graphql"]
+    for k, x in v.items():
+        args += ["-F" if isinstance(x, int) else "-f", "%s=%s" % (k, x)]
+    try:
+        repo = json.loads(gh(*(args + ["-f", "query=" + query])))["data"]["repository"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise Err("unreadable GraphQL answer: %s" % e)
+    if not isinstance(repo, dict):
+        raise Err("unreadable GraphQL answer: no repository")
+    return repo
+
+def has_queue(repo, base, wait):
+    """Whether base has a merge queue, from a ruleset or classic protection (GitHub's own answer,
+    repository.mergeQueue). A failed or unparsable read is tried READ_TRIES times, wait seconds apart."""
+    owner, name = repo.split("/")
+    for i in range(READ_TRIES):
+        try:
+            return graphql("query($o: String!, $r: String!, $b: String!) { repository(owner: $o, name: $r) "
+                           "{ mergeQueue(branch: $b) { id } } }", o=owner, r=name, b=base)["mergeQueue"] is not None
+        except (Err, KeyError):
+            if i == READ_TRIES - 1:
+                raise
+            time.sleep(wait)
+
+def pushed(repo, base, oid, wait):
+    """The base's head once it holds oid, the commit a merge queue's batch was pushed at, where the
+    base's push-only workflows run; oid itself when it is the head, or when READ_TRIES reads, wait
+    apart, never show the head holding it."""
+    b = urllib.parse.quote(base, safe="")
+    for i in range(READ_TRIES):
+        try:
+            head = json.loads(gh("api", "repos/%s/branches/%s" % (repo, b)))["commit"]["sha"]
+            if head == oid or json.loads(gh("api", "repos/%s/compare/%s...%s" % (repo, oid, head)))["status"] in ("ahead", "identical"):
+                return head
+        except (Err, ValueError, KeyError, TypeError):
+            pass
+        if i < READ_TRIES - 1:
+            time.sleep(wait)
+    return oid
+
+QUEUE_QUERY = """query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { pullRequest(number: $n) {
+  id state headRefOid isInMergeQueue autoMergeRequest { enabledAt } mergeCommit { oid } mergeQueueEntry { state headCommit { oid } }
+  timelineItems(last: 5, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { reason createdAt } } } } } }"""
+# ponytail: a PR may wait its turn in the queue this many CI deadlines (3 hours at 30 minutes); a
+# slower queue needs a setting of its own.
+TURNS = 6
+
+def when(s):
+    """A GitHub timestamp as epoch seconds, or 0."""
+    try:
+        return calendar.timegm(time.strptime(s, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return 0
+
+def group_commit(repo, base, n, head, since):
+    """The merge group commit of the latest merge_group run for this PR at head (its branch is
+    gh-readonly-queue/<base>/pr-<n>-<head>-...), started after this enqueue: for a PR that entered
+    and left the queue between two reads. None when there is none, or the read fails."""
+    pre = "gh-readonly-queue/%s/pr-%s-%s" % (base, n, head)
+    try:
+        runs = json.loads(gh("api", "repos/%s/actions/runs?event=merge_group&per_page=100" % repo)).get("workflow_runs") or []
+    except (Err, ValueError, AttributeError):
+        return None
+    return next((r.get("head_sha") for r in runs if (r.get("head_branch") or "").startswith(pre)
+                 and when(r.get("created_at")) >= since), None)
+
+def removals(pr, since):
+    """The PR's removals from the queue after this enqueue (since is read just before it), oldest
+    first: never an earlier run's, such as the dequeue its stop() made."""
+    return [e for e in ((pr.get("timelineItems") or {}).get("nodes") or []) if e and when(e.get("createdAt")) >= since]
+
+def dequeued(repo, base, n, head, group, pr, since):
+    """Why the PR left the queue: GitHub's reason for a removal since this enqueue, and the red or
+    unfinished checks on the merge group's commit (seen while queued, else found from its runs),
+    else on the head."""
+    gone = removals(pr, since)
+    why = "dequeued (%s)" % ((gone[-1].get("reason") if gone else None) or "no reason given")
+    sha = group or group_commit(repo, base, n, head, since)
+    where = "the merge group's commit" if sha else "the head"
+    try:
+        red, wait, _ = checks(repo, sha or head, need_run=False)
+    except Err as e:
+        return "%s: cannot read the checks on %s %s: %s" % (why, where, (sha or head)[:7], e)
+    return "%s: %s" % (why, "; ".join(red + wait) or "no red check on %s %s" % (where, (sha or head)[:7]))
+
+STOPS = (("autoMergeRequest", "auto-merge is off", "disablePullRequestAutoMerge(input: {pullRequestId: $id})"),
+         ("isInMergeQueue", "it is out of the merge queue", "dequeuePullRequest(input: {id: $id})"))
+
+def stop(pr, every=False):
+    """Turn the PR's auto-merge off, then take it out of the queue, as the last read (pr) showed
+    them, or both with every (the last read may be behind), so no head merges unwatched. Says what
+    it did, and what is left to do by hand."""
+    if not (pr and pr.get("id")):
+        return "its state is unknown: take it out of the merge queue and turn auto-merge off by hand"
+    done, left = [], []
+    for key, what, mutation in STOPS:
+        if not (every or pr.get(key)):
+            continue
+        try:
+            gh("api", "graphql", "-f", "id=" + pr["id"], "-f", "query=mutation($id: ID!) { %s { clientMutationId } }" % mutation)
+            done.append(what)
+        except Err as e:
+            left.append("%s failed (%s)" % (mutation.split("(")[0], e))
+    if left:
+        return "; ".join(done + left) + ": take it out of the merge queue and turn auto-merge off by hand"
+    return " and ".join(done) or "it was neither queued nor waiting for auto-merge"
+
+class Stopped(Exception):
+    """A TERM, HUP or INT while queued() waits; its message is the signal's name."""
+
+SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+def on_signal(sig, _frame):
+    for s in SIGNALS:
+        signal.signal(s, signal.SIG_IGN)   # stop() runs once, and to the end
+    raise Stopped(signal.Signals(sig).name)
+
+def stop_pr(repo, n):
+    """stop(), every=True, on PR n as one read shows it (its id), for a signal that landed before
+    queued() could stop it. Later signals are ignored, so it runs to the end."""
+    for s in SIGNALS:
+        signal.signal(s, signal.SIG_IGN)
+    owner, name = repo.split("/")
+    try:
+        pr = graphql(QUEUE_QUERY, o=owner, r=name, n=int(n))["pullRequest"]
+    except (Err, KeyError, TypeError):
+        pr = None
+    return stop(pr, every=True)
+
+def queued(repo, n, head, base, since, secs, poll):
+    """Wait for PR n, enqueued at head (since: epoch seconds just before the enqueue), to merge. The
+    CI deadline (secs) runs from when the PR's own merge group starts, and again from each rebuilt
+    group; waiting its turn, or for auto-merge to enqueue it, has the queue's own bound, TURNS
+    deadlines from the start, or from when its group was taken apart. Codes: 0 "merged <merge commit>" (READ_TRIES reads wait for the
+    commit); 1 a dequeue (a removal since the enqueue, or READ_TRIES reads in a row out of the
+    queue with no auto-merge waiting after one showed it in) or closed; 2 a timeout; 3 READ_TRIES
+    failed reads in a row (a gh error is a missed read); 4 never read as queued or waiting in
+    READ_TRIES reads; 5 an open PR whose head is not head; 6 a PR that merged at a head that is not
+    head; 7 a TERM, HUP or INT. On 2, 3, 4, 5 and 7 the message is the cause, a newline, and what
+    stop() did."""
+    owner, name = repo.split("/")
+    turn_end, end, running = time.time() + secs * TURNS, None, None
+    missed, absent, out, nocommit, seen, group, last, pr = 0, 0, 0, 0, False, None, "not read yet", None
+    try:
+        # Inside the try, so a signal the moment the handler is in still lands in except Stopped.
+        for s in SIGNALS:
+            signal.signal(s, on_signal)
+        while True:
+            try:
+                read = graphql(QUEUE_QUERY, o=owner, r=name, n=int(n))["pullRequest"]
+                state = read["state"]
+            except (Err, KeyError, TypeError) as e:
+                missed += 1
+                if missed == READ_TRIES:
+                    # One line: the error names the query, which spans lines, and merge cuts at the first.
+                    return 3, "error %s (%d reads in a row failed)\n%s" % (" ".join(str(e).split()), missed, stop(pr, every=True))
+                last = "a read failed: %s" % e
+            else:
+                missed, pr = 0, read
+                entry = pr.get("mergeQueueEntry") or {}
+                g = (entry.get("headCommit") or {}).get("oid")
+                group = g or group
+                if g and entry.get("state") != "QUEUED":
+                    if g != running:
+                        running, end = g, time.time() + secs
+                elif running:
+                    # Its group was taken apart (a PR ahead failed): it waits its turn again, afresh.
+                    running, end, turn_end = None, None, time.time() + secs * TURNS
+                if pr.get("headRefOid") != head:
+                    now = (pr.get("headRefOid") or "unknown")[:7]
+                    if state == "MERGED":
+                        return 6, "merged at head %s, not %s, the head that was checked (merge commit %s)" % (
+                            now, head[:7], ((pr.get("mergeCommit") or {}).get("oid") or "none")[:7])
+                    return 5, "the head is %s, not %s, the head that was checked\n%s" % (now, head[:7], stop(pr))
+                if state == "MERGED":
+                    oid = (pr.get("mergeCommit") or {}).get("oid")
+                    nocommit += 1
+                    if oid or nocommit == READ_TRIES:
+                        return 0, "merged %s" % (oid or "")
+                    last = "merged, with no merge commit yet"
+                elif state != "OPEN":
+                    return 1, "%s while queued" % state.lower()
+                elif removals(pr, since) and not pr.get("isInMergeQueue"):
+                    # Dropped from the queue: auto-merge may still be on, and could enqueue it again unwatched.
+                    why = dequeued(repo, base, n, head, group, pr, since)
+                    return 1, why + ("; " + stop(pr) if pr.get("autoMergeRequest") else "")
+                elif pr.get("isInMergeQueue") or pr.get("autoMergeRequest"):
+                    seen, out = True, 0
+                    last = ("waiting its turn in the merge queue" if pr.get("isInMergeQueue") and not running
+                            else "in the merge queue" if pr.get("isInMergeQueue") else "auto-merge waits for the head's checks")
+                elif seen:
+                    # Out of the queue, not merged yet, and no removal: GitHub may not have said merged.
+                    out += 1
+                    if out == READ_TRIES:
+                        return 1, dequeued(repo, base, n, head, group, pr, since)
+                    last = "out of the merge queue, not merged yet"
+                else:
+                    absent += 1
+                    if absent == READ_TRIES:
+                        return 4, "never read as queued or waiting for auto-merge\n%s" % stop(pr, every=True)
+                    last = "not yet read as queued"
+            if time.time() >= (end or turn_end):
+                return 2, "timeout (%s)\n%s" % (last, stop(pr))
+            time.sleep(poll)
+    except Stopped as e:
+        # With no read yet there is no id to stop it by: stop_pr reads it first.
+        return 7, "stopped by %s\n%s" % (e, stop(pr, every=True) if pr else stop_pr(repo, n))
 
 def unq(s):
     """A scalar, unquoted. An anchor (&a) or alias (*a) is not read: as a literal glob it would
@@ -320,6 +530,16 @@ try:
         if why:
             print("; ".join(why))
             sys.exit(1)
+    elif mode == "queue":
+        print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
+    elif mode == "pushed":
+        print(pushed(repo, args[0], args[1], float(args[2])))
+    elif mode == "stop":
+        print(stop_pr(repo, args[0]))
+    elif mode == "queued":
+        rc, msg = queued(repo, args[0], args[1], args[2], float(args[3]), float(args[4]), float(args[5]))
+        print(msg)
+        sys.exit(rc)
     elif mode == "files":
         files = pr_files(repo, args[0], int(args[1]))
         if not files:
