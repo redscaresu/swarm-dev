@@ -390,7 +390,7 @@ done
 release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
 merge --release "${URL}"; refused "--release with no tag for the base's version" "no v1.2.5 tag on origin to compare against: tag main's last release v1.2.5, or put a 'Docs: none — <reason>' line in the PR body"
 # v1.2.5 on a commit that is not on main.
-git -C "${P}" tag v1.2.5 "$(git -C "${P}" commit-tree -m side "HEAD^{tree}")"; git -C "${P}" push -q origin v1.2.5
+git -C "${P}" tag v1.2.5 "$(git -C "${P}" -c user.name=t -c user.email=t@t commit-tree -m side "HEAD^{tree}")"; git -C "${P}" push -q origin v1.2.5
 release_pr; echo '{"name":"x","version":"1.2.5","hooks":{}}' > "${FX}/wf.plugin.json.main"
 merge --release "${URL}"; refused "--release with the base's tag off the base" "the tag v1.2.5 is not on origin/main"
 commit docs/reference.md
