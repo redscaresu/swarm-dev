@@ -296,8 +296,11 @@ def main_ci(repo, sha, base, n, changed, secs, poll, grace):
 
 try:
     mode, repo, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    if mode == "head":
+    if mode in ("head", "base"):
         red, wait, ok = checks(repo, args[0])
+        if mode == "base":
+            judge([r for r in pages("repos/%s/actions/runs?head_sha=%s&per_page=100" % (repo, args[0]), "workflow_runs")
+                   if r.get("head_sha") == args[0]], red, wait, ok)
         print("; ".join(red + wait or ok))
         if red or wait:
             sys.exit(1 if red else 2)

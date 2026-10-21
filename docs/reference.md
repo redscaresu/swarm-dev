@@ -1079,7 +1079,7 @@ each run it could not read, and why. Once the story is there, merge prints
 `fix-main: <checks> on <short sha>` with the same lines; when it cannot write the story it says so
 in a line that does not start `fix-main:`. A later merge into the same repo and base that sees CI
 green logs `main-green`, and so does reconcile when it finds the base's head green some other way
-(a revert, a re-run); either retires the fix-main story if nobody has started it. Until then, while
+(a revert, a re-run): its checks, statuses and workflow runs all passed; either retires the fix-main story if nobody has started it. Until then, while
 the story is ready with no build of it and CI at the base's head is not green, `next` names
 `fix-main fix-main-<short sha>` ahead of everything else, a conductor's wait included. Inside herdr it runs only
 from a pane this project did not start (the lead's), or from a conductor's with `merge = agent`; a

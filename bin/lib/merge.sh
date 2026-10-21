@@ -20,6 +20,8 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # Else print which checks and fail (1 red, 2 pending; "no check runs" when there are none). It is the
 # block-red-pr-merge hook's rule, which never sees a gh call made inside swarm.sh, and it fails
 # closed: every page is read, and a gh error, unreadable JSON or fewer items than total_count is 3.
+# ci_gate base <owner/repo> <sha> — as head, and every workflow run on <sha> green too, as main
+# judges them: a run that failed to start has no check run of its own.
 # ci_gate main <owner/repo> <sha> <base> <pr> <changed> <seconds> <poll> <grace> — wait, reading every
 # <poll> seconds, until the merge commit <sha> is green as above (with no check run needed of its own,
 # though with no workflow expected not before <grace> seconds),
@@ -322,12 +324,12 @@ clear_red_main() {
 }
 
 # base_green <owner/repo> <base> — print the base's head and succeed when CI there is green now
-# (ci_gate head), however it got green: a revert, a re-run, a merge swarm.sh did not make. Each gh
+# (ci_gate base), however it got green: a revert, a re-run, a merge swarm.sh did not make. Each gh
 # read is bounded, and any failure reads as not green.
 base_green() {
   local head
   head="$(within 30 gh api --jq .sha "repos/$1/commits/$2" 2>/dev/null </dev/null)" || return 1
-  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] && within 60 python3 "${SWARM_HOME}/bin/lib/ci_gate.py" head "$1" "${head}" >/dev/null 2>&1 </dev/null || return 1
+  [[ "${head}" =~ ^[0-9a-f]{40}$ ]] && within 60 python3 "${SWARM_HOME}/bin/lib/ci_gate.py" base "$1" "${head}" >/dev/null 2>&1 </dev/null || return 1
   echo "${head}"
 }
 

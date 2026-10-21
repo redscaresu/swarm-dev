@@ -535,7 +535,7 @@ expect_release "a working conductor's wait comes before release" "wait conduct-e
 # base clears it, one of another base does not; once the fix has started or is in review, the usual
 # steps name it.
 # gh stubs for base_green: GH_RED's fails every call (the base's CI unknown, so still red); GH_GREEN's
-# reads the base's head as cccc... with one green check run and no status.
+# reads the base's head as cccc... with one green check run, no status and no workflow run.
 GH_RED="${STUB_BIN}/gh-red"; GH_GREEN="${STUB_BIN}/gh-green"; mkdir -p "${GH_RED}" "${GH_GREEN}"
 printf '#!/bin/sh\nexit 1\n' > "${GH_RED}/gh"
 cat > "${GH_GREEN}/gh" <<'STUB'
@@ -544,6 +544,7 @@ for a in "$@"; do p="${a}"; done
 case "${p}" in
   *check-runs*) echo '{"total_count":1,"check_runs":[{"name":"t","status":"completed","conclusion":"success","html_url":"u"}]}' ;;
   */status*) echo '{"total_count":0,"statuses":[]}' ;;
+  *actions/runs*) echo '{"total_count":0,"workflow_runs":[]}' ;;
   */commits/*) echo cccccccccccccccccccccccccccccccccccccccc ;;
   *) exit 1 ;;
 esac

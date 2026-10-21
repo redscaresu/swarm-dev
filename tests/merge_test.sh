@@ -266,6 +266,11 @@ check "a second red main: the older unstarted fix-main story is retired, the new
 # Main gone green another way: reconcile reads the base's head and, green, clears it.
 failed_job 'x\ty\tz FAIL one\n'; merge "${URL}"
 echo "${H2}" > "${FX}/commit.main"; checks "${FX}/${H2}.checks" "$(run test completed success)"; statuses "${FX}/${H2}.status"
+wfruns "${FX}/${H2}.runs" "$(run ci completed startup_failure "${H2}")"
+(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
+check "a base whose checks are green but a workflow run failed: reconcile keeps the red main and its fix" \
+  bash -c "[ -e '${FM}' ] && ! grep -q main-green '${P}/.swarm/events.tsv'"
+wfruns "${FX}/${H2}.runs" "$(run ci completed success "${H2}")"
 (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile > "${ROOT}/out" 2>&1) || true
 check "a base gone green another way: reconcile logs main-green and retires the fix" \
   bash -c "[ ! -e '${FM}' ]" && logged "^main-green ${H2} o/r main$"
