@@ -90,10 +90,12 @@ case "$1 $2" in
       */rules/branches/*) serve rules ;;
       */branches/main) serve basehead ;;   # the base's head (a merge queue's push)
       */branches/*) serve branch ;;
-      # compare/<red sha>...<green>: compare.<red sha>, else the green one holds it (behind_by 0).
+      # compare/<base>...<head>: compare.<base>, else compare, else for a commit base the head holds
+      # it (fix-main's compare of a red commit with a green one).
       */compare/*) c="${path##*/compare/}"; c="${c%%...*}"
                    if [ -e "${FX}/compare.${c}" ]; then serve "compare.${c}"
-                   elif [ "${#c}" = 40 ]; then echo '{"behind_by":0}'; else serve compare; fi ;;
+                   elif [ -e "${FX}/compare" ] || [ "${#c}" != 40 ]; then serve compare
+                   else echo '{"status":"ahead","behind_by":0}'; fi ;;
       */contents/.github/workflows\?*) serve workflows ;;
       # A file read at a ref with a fixture of its own (wf.<file>.<ref>) gets that one.
       */contents/*) f="${path%%\?*}"; f="wf.${f##*/}"; ref="${path##*ref=}"
