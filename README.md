@@ -26,7 +26,9 @@ the run stops whenever a decision is yours.
    as soon as it is green, and the builder fixes what it finds. A green PR left without a review
    for 30 minutes (`queue_minutes`) is flagged to the lead, who passes it to the conductor.
 4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
-   `merge = agent`. Anything marked `costs: money` always waits for you. In a swarm project, a
+   `merge = agent`. Anything marked `costs: money` always waits for you. If main goes red after a
+   merge, `swarm.sh merge` writes a `fix-main-<sha>` story holding the failed tests' FAIL lines,
+   and the swarm builds that fix before anything else merges. In a swarm project, a
    plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
    session, so merges go through `swarm.sh merge`. Where the base has a GitHub merge queue,
    `swarm.sh merge` goes through it, and the conductor enqueues each reviewed PR without waiting

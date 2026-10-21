@@ -32,10 +32,15 @@ wait_pr_rule() {
 stop_rule() {
   if [[ "$1" == backlog ]]; then
     printf '%s' "Stop when no ready story with no \`epic:\` that you may start is left and none is running"
-    if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when CI on the base is red or timed out."; fi
+    if [[ "${CFG_merge}" == human ]]; then echo "."; else echo ", or when $(base_stop)."; fi
   elif [[ "${CFG_merge}" == human ]]; then echo "Stop when the epic's **Done when** holds or when nothing ready is left."
-  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running, or when CI on the base is red or timed out."; fi
+  else echo "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running $(fix_running), or when $(base_stop)."; fi
 }
+# fix_running — a merging epic conductor's fix-main story has no epic, yet it is the conductor's own to
+# review and merge: until it merges, the epic's stop and report rules count it as running.
+fix_running() { printf '%s' "(a fix-main story you started counts as running until its PR merges)"; }
+# base_stop — the broken base a merging conductor stops on: a red one has a fix-main story to build.
+base_stop() { printf '%s' "CI on the base timed out, or is red with no \`fix-main:\` line"; }
 # The review every story's PR passes before its builder is closed. The builder keeps its context
 # until then, so findings go back to it rather than to a fresh agent that has none. Each PR gets its
 # own review agent (review_agent) as soon as it is green, so PRs that land together are reviewed at
@@ -173,8 +178,7 @@ bare \`swarm.sh close <slug>\`, which counts nothing for a blocked story and kee
 merge = human.
 $(held_ready_rule) After a
 cleared-on-error close or a give-up, start nothing more in this wave. Write your report only when no
-story ${scope} that is yours to start is ready and none is running, or CI on the base is red or
-timed out.${epic_end}
+story ${scope} that is yours to start is ready and none is running $(fix_running), or $(base_stop).${epic_end}
 EOF
   fi
 }
@@ -243,8 +247,21 @@ base, then runs \`swarm.sh reconcile\`, never a plain \`git pull\`, which pulls 
 it exits non-zero, read why: a refusal before \`gh pr merge\` ran merged nothing; \`unconfirmed\`
 means \`gh pr merge\` ran but the PR never read as merged (a merge queue may hold it), so check it by
 hand. A red or timed-out CI on the base means the PR merged and the base is broken: merge nothing
-more, find the PR pair that broke it (this PR and one merged before it, each green alone), open the
-fix or list it for the lead, and say so in your report.
+more until it is green, and say so in your report. $(fix_main_rule)
+EOF
+}
+
+# fix_main_rule — what a merging conductor does when swarm.sh merge finds the base red (fix_main).
+fix_main_rule() {
+  cat <<EOF
+On a red base \`swarm.sh merge\` prints \`fix-main: <checks> on <short sha>\` with the failed jobs'
+FAIL lines, and writes the one-off story fix-main-<short sha> (kind code, no epic, those lines in
+its body). On \`fix-main\`, start its builder at once with \`swarm.sh story --strict fix-main-<short sha>\`,
+ahead of every other story and whatever your scope, and review and merge its PR as any story's: it
+is the one merge allowed while the base is red. Never wait on an unrelated PR to fix it. With no
+\`fix-main:\` line (CI on the base timed out, or merge says it could not write the story), find the
+PR pair that broke it (this PR and one merged before it, each green alone), open the fix or list it
+for the lead, and say so in your report.
 EOF
 }
 
@@ -261,9 +278,12 @@ reply_sentence() {
 }
 
 # story_path <slug> <src> — the story file as its builder names it: relative to the worktree when the
-# board is in the repo it builds (the copy it reads, and its PR deletes), else the board's own.
+# board is in the repo it builds and git tracks the story (the copy it reads, and its PR deletes),
+# else the board's own: an untracked one (fix_main's) is not in the worktree.
 story_path() {
-  if [[ ${BOARD_IN_REPO} == 1 && "$2" == "${PROJECT_DIR}" ]]; then echo "${BOARD#"${PROJECT_DIR}/"}/stories/$1.md"
+  if [[ ${BOARD_IN_REPO} == 1 && "$2" == "${PROJECT_DIR}" ]] \
+    && git -C "${PROJECT_DIR}" ls-files --error-unmatch -- "${BOARD}/stories/$1.md" >/dev/null 2>&1; then
+    echo "${BOARD#"${PROJECT_DIR}/"}/stories/$1.md"
   else echo "${BOARD}/stories/$1.md"; fi
 }
 
@@ -345,7 +365,7 @@ story_brief() {
   local slug="$1" src="$2" base="$3" story_ref cleanup rel epic check rules trailers
   story_ref="$(story_path "${slug}" "${src}")"
   epic="$(fm "${BOARD}/stories/${slug}.md" epic)"
-  if [[ "${src}" == "${PROJECT_DIR}" && ${BOARD_IN_REPO} == 1 ]]; then
+  if [[ "${story_ref}" != /* ]]; then
     # The board is in this repo: the PR takes the story off it, and the epic with its last story.
     rel="${BOARD#"${PROJECT_DIR}/"}"
     if [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && ! epic_has_stories "${epic}" "${slug}"; then
@@ -354,7 +374,8 @@ story_brief() {
       cleanup="Delete ${rel}/stories/${slug}.md in your PR, and nothing else under ${rel}/stories/."
     fi
   else
-    # The board is elsewhere: read the story there, and leave it for the lead.
+    # The board is elsewhere, or git does not track the story: read it there, and leave it for the
+    # lead (reconcile deletes an untracked one once its PR merges).
     story_ref="${story_ref} (this worktree is $(basename "${src}"))"
     cleanup="Do not touch the story file; the lead takes it off the board after your PR merges."
   fi
