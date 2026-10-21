@@ -563,6 +563,9 @@ PATH="${GH_RED}:${PATH}" expect "a main-green of another base does not" "fix-mai
 PATH="${GH_GREEN}:${PATH}" expect "a red main whose base is green now (a revert, a re-run) holds nothing" "story fix-main-aaaaaaa" \
   "${RED}" "${FIXER}"
 PATH="${GH_RED}:${PATH}" expect "a red main whose fix-main story has left the board is not named" "done" "${RED}"
+PATH="${GH_RED}:${PATH}" expect "a newer red main of another base with no fix-main story leaves the older one's fix first" \
+  "fix-main fix-main-aaaaaaa" "${RED}" "${FIXER}" \
+  "printf '2026-10-18T12:00:00Z\tmain-red\tdddddddddddddddddddddddddddddddddddddddd\t-\to/r dev e2e (failure)\n' >> .swarm/events.tsv"
 # shellcheck disable=SC2016 # expanded by expect's eval, in the board's directory
 PATH="${GH_RED}:${PATH}" expect "a red main whose fix has started is resumed, not started again" "resume fix-main-aaaaaaa" "${RED}" "${FIXER}" \
   'mkdir -p "../$(basename "${PWD}")-wt/fix-main-aaaaaaa"'

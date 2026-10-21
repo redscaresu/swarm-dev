@@ -341,12 +341,17 @@ green_mains() {
   done <<< "$(red_mains)"
 }
 
-# main_red — "<sha> <owner/repo> <base> <checks>" for the newest red main (red_mains) while its
-# fix-main story is on the board; nothing once main is green or the story left the board.
+# main_red — "<sha> <owner/repo> <base> <checks>" for the newest red main (red_mains) whose
+# fix-main story is ready with no build and whose base is not green now (base_green); nothing when
+# no red main of any repo and base has such a fix.
 main_red() {
-  local line; line="$(red_mains | tail -1)"
-  [[ -n "${line}" && -f "${BOARD}/stories/fix-main-${line:0:7}.md" ]] || return 0
-  echo "${line}"
+  local line pick="" sha repo base
+  while read -r line; do
+    read -r sha repo base _ <<< "${line}"
+    [[ -n "${sha}" && "$(fm "${BOARD}/stories/fix-main-${sha:0:7}.md" status)" == ready ]] || continue
+    ! one_off_started "fix-main-${sha:0:7}" && ! base_green "${repo}" "${base}" > /dev/null && pick="${line}"
+  done <<< "$(red_mains)"
+  [[ -z "${pick}" ]] || echo "${pick}"
 }
 
 # within <seconds> <command>... — the command in its own process group, the group KILLed after
