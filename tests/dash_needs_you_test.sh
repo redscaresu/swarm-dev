@@ -34,7 +34,7 @@ REALPATH="${PATH}"
 export PATH="${ROOT}/size:${PATH}" CLAUDE_PROJECTS_DIR="${ROOT}/projects" TMPDIR="${ROOT}/tmp"
 mkdir -p "${TMPDIR}"
 # fresh — drop dash's one-minute cache of gh and cost, so the next run asks again.
-fresh() { rm -f "${TMPDIR}"/swarm-dash-*; }
+fresh() { rm -rf "${TMPDIR}"/swarm-dash-*; }
 # Claude Code's sessions: the conductor (sess-1) and s-three's builder (sess-today) are busy, and
 # s-one's builder waits on a permission prompt.
 printf '[{"sessionId":"sess-1","status":"busy"},{"sessionId":"sess-2","status":"waiting","waitingFor":"input"},{"sessionId":"sess-today","status":"busy"}]' > "${ROOT}/claude.json"
@@ -47,8 +47,8 @@ ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.
 cat > "${ROOT}/bin/herdr" <<'STUB'
 #!/bin/sh
 case "$1 $2" in
-  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"},{"name":"plan-e9","agent_status":"working","pane_id":"w2:p9"}]}}' ;;
-  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"},{"pane_id":"w2:p9"}]}}' ;;
+  "agent list") echo '{"result":{"agents":[{"name":"conduct-e1","agent_status":"working","pane_id":"w1:p1","agent_session":{"value":"sess-1"}},{"name":"conduct-e2","agent_status":"idle","pane_id":"w1:p8"},{"name":"s-one","agent_status":"blocked","pane_id":"w1:p2"},{"name":"foreign","agent_status":"working","pane_id":"w9:p1"},{"name":"old-done","agent_status":"idle","pane_id":"w1:p4"},{"name":"odd","agent_status":"idle","pane_id":"w1:p5","agent_session":"not-an-object"},{"name":"prose","agent_status":"working","pane_id":"w1:p6"},{"name":"halfway","agent_status":"working","pane_id":"w1:p7"},{"name":"s-three","agent_status":"done","pane_id":"w1:p9"},{"name":"aaaaaaaaaa-bbbbbbbbbb-cccccccccc","agent_status":"working","pane_id":"w1:p10"},{"name":"s-two","agent_status":"starting","pane_id":"w1:p11"},{"name":"s-re-done","agent_status":"idle","pane_id":"w2:p1"},{"name":"s-re","agent_status":"'"${RE_HERDR:-working}"'","pane_id":"w2:p2"},{"name":"s-lost","agent_status":"idle","pane_id":"w2:p3"},{"name":"s-odd","agent_status":"working","pane_id":"w2:p4"},{"name":"cx","agent_status":"blocked","pane_id":"w2:p5"},{"name":"s-dash","agent_status":"working","pane_id":"w2:p6"},{"name":"s-auth","agent_status":"idle","pane_id":"w2:p7"},{"name":"x-esc","agent_status":"working","pane_id":"w2:p8"},{"name":"plan-e9","agent_status":"working","pane_id":"w2:p9"},{"name":"s-limit","agent_status":"working","pane_id":"w2:p10"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"},{"pane_id":"w1:p3"},{"pane_id":"w9:p1"},{"pane_id":"w1:p4"},{"pane_id":"w1:p5"},{"pane_id":"w1:p6"},{"pane_id":"w1:p7"},{"pane_id":"w1:p8"},{"pane_id":"w1:p9"},{"pane_id":"w1:p10"},{"pane_id":"w1:p11"},{"pane_id":"w2:p1"},{"pane_id":"w2:p2"},{"pane_id":"w2:p3"},{"pane_id":"w2:p4"},{"pane_id":"w2:p5"},{"pane_id":"w2:p6"},{"pane_id":"w2:p7"},{"pane_id":"w2:p8"},{"pane_id":"w2:p9"},{"pane_id":"w2:p10"}]}}' ;;
   "agent wait") echo "$*" >> "${WAIT_LOG:-/dev/null}"
     [ -z "${WAIT_TIMES:-}" ] || python3 -c 'import time; print(int(time.time() * 1000))' >> "${WAIT_TIMES}"
     [ -z "${WAIT_SLEEP:-}" ] || sleep "${WAIT_SLEEP}"
@@ -60,6 +60,9 @@ case "$1 $2" in
       *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${WAIT_MODE:-done}\"}}}" ;;
     esac ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent read") [ "$3" = w2:p10 ] || exit 0   # s-limit's pane: the usage-limit dialog, or with LIMIT_WAITING the line after it
+    if [ -n "${LIMIT_WAITING:-}" ]; then printf '%s\n' '⏺ Working on it.' '⚠ Usage limit reached · limit resets 3pm' '  Continuing shortly'
+    else printf '%s\n' '⏺ Working on it.' '❯ 1. Stop and wait for limit to reset' '  2. Wait here, then continue automatically'; fi ;;
   "workspace list") echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"2026-01-01-x"},{"workspace_id":"w9","label":"other"}]}}' ;;
   *) exit 1 ;;
 esac
@@ -88,12 +91,12 @@ chmod +x "${ROOT}/bin/herdr" "${ROOT}/nobin/herdr" "${ROOT}/bin/gh" "${ROOT}/nob
 # no session recorded (s-dash) show herdr's word. herdr says s-re is RE_HERDR, the opposite of its
 # newer session each time. s-auth is idle, and its transcript ends on an expired login: auth, not idle.
 S="${ROOT}/s"; mkdir -p "${S}/.swarm/state" "${S}/docs/stories"; git -C "${S}" init -q; touch "${S}/docs/stories/README.md"
-printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\nw2:p7 s-auth\n' > "${S}/.swarm/state/t"
+printf 'w2:p1 s-re\nw2:p2 s-re\nw2:p3 s-lost\nw2:p4 s-odd\nw2:p5 cx\nw2:p6 s-dash\nw2:p7 s-auth\nw2:p10 s-limit\n' > "${S}/.swarm/state/t"
 cp "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/login-expired.jsonl" "${ROOT}/projects/p/auth.jsonl"
 printf '2026-10-13\tcode\t%s\t%s\t%s\thigh\t%s\n' s-re claude opus re-old s-re claude opus re-new s-lost claude sonnet lost \
-  s-odd claude haiku odd cx codex gpt - s-dash claude fable - s-auth claude opus auth > "${S}/.swarm/agents.tsv"
+  s-odd claude haiku odd cx codex gpt - s-dash claude fable - s-auth claude opus auth s-limit claude opus limit > "${S}/.swarm/agents.tsv"
 sdash() { # <re-old status> <re-new status> <herdr's s-re status> — dash --tree in S
-  printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"},{"sessionId":"auth","status":"idle"}]' "$1" "$2" > "${ROOT}/s.json"
+  printf '[{"sessionId":"re-old","status":"%s"},{"sessionId":"re-new","status":"%s"},{"sessionId":"odd","status":"compacting"},{"sessionId":"auth","status":"idle"},{"sessionId":"limit","status":"busy"}]' "$1" "$2" > "${ROOT}/s.json"
   fresh; (cd "${S}" || exit 1; CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR="$3" PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --tree 2>&1 || true)
 }
 out="$(sdash busy idle working)"
@@ -104,6 +107,13 @@ check "needs you lists an agent whose session is gone" has "! look at s-lost: se
 check "needs you lists an agent whose session state is unknown" has "! look at s-odd: no session state" "${needs}"
 check "an idle agent whose login expired is ! auth, not idle" grep -qE '! s-auth .* auth: login expired' <<< "${out}"
 check "needs you lists an agent whose login expired, with /login" has "! auth: run /login (s-auth's login expired), then /swarm-dev:swarm tells it to resume" "${needs}"
+check "a working agent whose pane is on the usage-limit dialog is usage-limit, not working" grep -qE '⏸ s-limit .* usage-limit' <<< "${out}"
+check "an agent on the usage limit is not in needs you" lacks s-limit "${needs}"
+st="$(cd "${S}" || exit 1; HERDR_ENV=1 CLAUDE_STUB_AGENTS="${ROOT}/s.json" RE_HERDR=working PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1 || true)"
+check "status shows usage-limit for an agent on the usage limit" grep -qE '^  s-limit +usage-limit  \[' <<< "${st}"
+sed 's/"limit","status":"busy"/"limit","status":"idle"/' "${ROOT}/s.json" > "${ROOT}/s-idle.json"
+st="$(cd "${S}" || exit 1; HERDR_ENV=1 LIMIT_WAITING=1 CLAUDE_STUB_AGENTS="${ROOT}/s-idle.json" RE_HERDR=working PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status --all 2>&1 || true)"
+check "an idle agent under the usage-limit waiting line is idle in status" grep -qE '^  s-limit +idle: ' <<< "${st}"
 check "a reused name shows the newer session (older busy, newer idle)" grep -qE '✓ s-re +code .* idle' <<< "${out}"
 check "a retired pane is retired, whatever its name's newest session says" grep -qE '✓ s-re-done .* retired' <<< "${out}"
 check "a codex agent herdr says is blocked is ! waiting" grep -qE '! cx .* waiting on a prompt' <<< "${out}"

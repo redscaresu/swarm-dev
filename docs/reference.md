@@ -188,6 +188,7 @@ The table in [the guide](method.md) lists every key. The rules the table leaves 
 - `queue_minutes` (default `30`): a story PR is queued when its head is green by `ci_gate`'s rule (every check run on every page and every commit status passed, at least one run), the last of them finished this many minutes ago, the PR is open and mergeable, its story is one an agent builds (never a `lead` story's), and that head has no review agent's review. A review counts when its findings file for the head is a pass (`## Findings`, no `head moved:`), or while the agent started on it (`.swarm/reviews/<slug>.head`) is still open in herdr with no file written: one that crashed, was closed or was tidied is no review. `watch` returns `queued: <repo> #<n> <branch> green <m>m with no review on <sha>` once per head, after it has reported the head's checks finished. `next`, while conductors work, prints the same line after its step's why for each such PR of every working conductor, ending in `(<conductor>)`, the one to send it to. A head is sent once: `watch` and `swarm.sh tell <conductor> note` (for each such line in the note) both record `queued <sha>` in `.swarm/state/watch-seen`, and neither `watch` nor `next` prints a recorded head again. `dash` and `status` do not look
 - `sonnet_share` (default `0`): `N`: one in N `kind: code` stories marked `easy: true` and without `risk: high` is built on Sonnet (role `code-sonnet`), so `swarm.sh outcomes` can compare it with Opus. The pick is the `cksum` of the slug mod N, so a slug always gets the same model. Only a story's first build is picked: a retry is built on Opus, or on Fable once `escalate_after` applies. `0` is off (§ Model and effort)
 - `escalate_after` (default `2`): `N`: a story an agent builds whose `attempts:` has reached N is built on Fable (role `escalate`), whatever its kind, risk or `sonnet_share` pick. An absent `attempts:` is 0, and a value that is not a whole number is refused. `0` is off (§ Model and effort)
+- `escalate_ladder` (default empty): models from low to high, separated by commas, such as `sonnet,opus,fable`. Each must be one of the models building roles run on (`haiku`, `sonnet`, `opus`, `fable`), named once and in that order (a skipped rung is fine, as in `opus,fable`), or the config is refused, so a step-up never steps down or comes back to a model. Empty is off, and `swarm.sh step-up` refuses (§ The escalation ladder)
 - `builder_subagent_model` (default empty): a model such as `haiku`: the agents that build a story start with `CLAUDE_CODE_SUBAGENT_MODEL` set to it and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, so their subagents (an Explore search, say) run on it. Planners and conductors are unchanged. Empty leaves Claude Code's choice
 - `goal` (default `off`): `N`, such as `goal = 5`: `swarm.sh story` writes each builder a goal condition beside its brief, in `.swarm/briefs/<slug>.goal.md`. It refers to the story by the path its brief gives (relative to the worktree when the board is in the repo it builds): every item under **Done when** and **From review**, if any, holds. Then it adds the reply the brief asks for, a way out (reply `IMPOSSIBLE: <why>` and stop) and `or stop after N more turns`. Claude Code queues a long paste as a prompt instead of running it as `/goal`, so a `/goal` message over `GOAL_SEND_MAX` characters stops `story` before it makes a branch or worktree. Needs Claude Code 2.1.269 or later. Once the brief is taken up, `story` sends the builder the goal and fails if its session log does not show it set (§ Building, **The goal.**)
 - `codex_minutes` (default `10`): `swarm.sh codex-review <base>`, which every brief and the lead use to run codex's review, stops codex after this many minutes: TERM to its whole process tree, a few seconds' grace, then KILL to whatever is left. It then prints `codex skipped: timed out after <N> min` and exits non-zero, and its events.tsv line says the same. It ships on (§ Scoping an epic)
@@ -433,10 +434,39 @@ Code's "Login expired · Please run /login", with no message sent to it since, i
 waited on: `wait` prints `auth` at once,
 with a line on stderr naming it, for a builder and a conductor alike. Only the user's `/login` clears
 it. Once they have run it, tell the agent to resume (`swarm.sh tell`), and a conductor tells the same
-to each builder whose `wait` printed `auth`. `wait` does not read the pane. `wait --stall
+to each builder whose `wait` printed `auth`.
+A turn can also stop on an API error while the session still reads busy, because background shells
+the agent opened are still running. When herdr says the agent is `done` or `idle` and the last thing
+in its pane is Claude Code's own error line (`⏺ API Error: ...` at the left margin, with no reply or
+submitted prompt after it; the input box, which may hold a suggestion, is not read), `wait` sends it "Your last turn stopped on an API error; carry on where you
+stopped." and waits again. It logs each one as a nudge, conductors included. After three such stops
+in a row (a turn that ends any other way resets the count), or if the message is not taken up, `wait`
+prints `stuck: api error` and exits 4. A pane that still shows the old error after a resume (the
+message has not shown yet) is no new stop. An idle session still on that same pane a slice later
+never took the message up. With `goal` on it never resumes a builder: it returns
+`stuck: api error` at once, so the transcript still ends on the error for the goal rule. A conductor
+or review agent is resumed either way. When the transcript ends on an expired login, `wait` prints
+`auth` instead, busy session or not, and resumes nothing. `tell`
+treats such an agent as idle and delivers, and `next` names a conductor's stop. Any `wait` also
+prints `stuck: no output for <N>m (<pane>)` and exits 4 when a busy agent (its session busy, or
+herdr's working for one herdr answers for) has not changed its pane for `stall_minutes` and its
+transcript shows no background task still running (a shell, an async subagent or a monitor it
+started, with no `<task-notification>` carrying a `<status>` for it since). It sends nothing then: read the pane. `stuck` is
+not a stall, and no close follows from it. When an agent's pane shows Claude Code's usage-limit dialog
+("Stop and wait for limit to reset" / "Wait here, then continue automatically"), `wait` picks
+"Wait here, then continue automatically" (the user's standing choice) once per dialog (a keypress
+herdr fails to send is tried again on the next pass), logs one
+`usage-limit` event for the agent in events.tsv, and keeps waiting. Only the live dialog counts: its
+options among the pane's last lines with no input box under them, so a prompt quoting it sends nothing. A pane already waiting after that choice ("Usage
+limit reached" with "limit resets" or "Continuing shortly") is handled the same way, with no keys
+sent, while the session is busy or waiting; an idle session under that line is idle. Neither counts as a nudge or a resume, and neither turns into `stuck: no output` however long
+it sits; at its timeout `wait` prints `usage-limit` and exits 1. Until the pane moves on, `status`
+and `dash` show `usage-limit` for the agent in place of working or idle. `wait --stall
 <slug>` also returns, with exit code 3 and `stalled: working <N> min with no commit, edit, session-log write or PR update`, when the
 builder (busy, as above) has shown no sign of life (a worktree commit, an uncommitted edit in the
-worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began. `watch` is what the lead waits on: it
+worktree, a write to its session log, a PR update, a swarm action on its story) for `stall_minutes` since that wait began.
+So `wait` exits 0 when the agent settles (idle, waiting, gone or `auth`), 1 at the timeout or when
+herdr's wait fails, 3 on a stall (`--stall` only) and 4 when stuck. `watch` is what the lead waits on: it
 exits when a story PR's checks finish, when it conflicts with its base, when its head has had no checks
 for 10 minutes, when it is queued (green and mergeable for `queue_minutes` with no review agent on
 its head, reported once per head), or when an agent's session is waiting, and it names what the agent waits for. A codex
@@ -1196,6 +1226,64 @@ it again (once per story), or drops it. Then it tells you what it chose and why.
 can stop to ask your consent to spend usage credits. The conductor accepts it for you, so a third
 build can spend Fable usage credits. `swarm.sh dash` shows who is on call, how many builds
 escalated today, which attempt each Fable builder is on, and each escalation step in the recent panel.
+
+### The escalation ladder
+
+A step-up keeps the work done so far, where `escalate_after` clears a failed attempt away and the
+next build starts from the base. With `escalate_ladder = sonnet,opus,fable`,
+`swarm.sh step-up <slug> <trigger>` closes the story's builder without counting an attempt and starts
+the ladder's next model in the same worktree and on the same `story/<slug>` branch, with any open PR
+left as it is. The trigger says why: `findings-3` (a third round of review findings), `ci-red-2` (CI
+red twice), `stalled`, or `no-pr` (the builder stopped with no PR). The build is the newest
+agents.tsv line for its builder, and the next model is the ladder's first one above that build's
+model, so a chore on Haiku steps to the first rung. The new builder keeps its build's role family. On
+the escalate role's model (Fable) it runs as `escalate`. Otherwise a code build runs as `code-sonnet`
+on Sonnet and as `code` on Opus, and a docs or chore build keeps its role, and that role's effort, on
+the new model. `escalate_ladder` changes nothing about `escalate_after`: a step-up counts no
+attempt, while a close that counts a build as failed raises `attempts:` and clears the build as
+before, and the next `swarm.sh story` build is on Fable once `attempts:` reaches `escalate_after`.
+The Fable rung is an `escalate` build, though, so a close that counts it as failed hands the story to
+the lead, as after any failed escalate build, whatever `attempts:` says.
+Nothing is closed when the ladder is empty, when the build is at or above the ladder's top rung, when
+the story is not `ready`, not of a kind an agent builds, held for review as a stacked child
+(`held_by:`), or has no worktree, when a PR on `story/<slug>` has merged or is set to auto-merge (the
+build is done, as `close` also judges), when gh cannot list those PRs, when its `env:` names a
+variable not set here, or when the build's role is one nothing starts now (a past `verify` build).
+
+The old builder is closed first, since the new one takes its name, and only then is the handover
+brief written, so it holds everything the old builder did. If closing it left a git step unfinished
+in the worktree (an `index.lock`, or a merge, rebase, cherry-pick or revert in progress), step-up
+stops and names it: finish or abort it there, then resume. If the start fails, step-up stops at the
+step that failed, with that step's message, and logs nothing as an escalation. A new builder that
+never took up its brief has not started: it is closed and loses its agents.tsv line, so the rung is
+on record once, when it starts. The worktree, branch and step-up marker are kept, and
+`swarm.sh step-up --resume <slug>` writes the brief afresh and starts the rung once the cause is
+fixed. A resume that starts logs the step-up and sends the `/goal` as step-up would have.
+
+The new builder's brief is the usual one with a handover after it. The handover says why it took
+over, and gives the story as the board holds it, since the last builder may have deleted the file
+from its worktree. Next comes the diff: committed and uncommitted changes and untracked files, from
+the build's merge-base with the base, so the base's newer commits are not in it. It stops at 400
+lines, and the fence around it is longer than any run of backticks inside it. For a story stacked
+on parents whose PRs are still open, the diff starts at their branches instead, and the handover
+carries build_story's `Merge after <PRs>` note. When a parent's PR has merged (squashed, its commits
+are on the base under other ids), the diff is of `origin/<base>` to the branch as if the base were
+merged in, and the handover says to merge it in before pushing. If that merge would conflict, the
+diff stays the one from the merge-base, with the parent's commits in it, and the handover says to
+merge the base in and resolve it first. Then come the review agent's findings from
+`.swarm/reviews/<slug>.md`, pasted only when their `head:` line is the branch's HEAD. Findings of an
+older head may be fixed already, so the handover only names the file. Last come the open PR's
+failing checks. With none listed, it says that none are failing, that the PR has no checks
+reported, or that gh could not read them. The handover also tells the builder to put a `Models:` line in the PR body naming
+every model that worked on the story, in order.
+
+A step-up is logged as `escalate` with `ok (<trigger>: <from> -> <to>)`. Only a step to the
+escalate role's model starts an escalate build, so `outcomes` pairs only those (and build_story's
+`ok (attempt N)`) with an escalate build, and `dash` counts only those among today's escalations. A
+Fable builder that got there by a step-up shows `from <model> · <time>` in `dash` where a third
+build shows its attempt, and `dash` times each rung from its own step-up. In `outcomes` a
+target's step-ups, in order, take its builds in agents.tsv order. The rungs of one build are one
+attempt, and each replaced build has a close, with the cause `step-up:<trigger>`.
 
 `swarm.sh close` keeps a copy of each closed agent's session log in `.swarm/sessions/`, because
 Claude Code deletes them after 30 days. The copy is not redacted, so it can hold secrets the session

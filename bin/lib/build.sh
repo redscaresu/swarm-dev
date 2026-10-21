@@ -421,8 +421,23 @@ story_role() {
   fi
 }
 
+# goal_preflight <slug> <src> — before a builder starts: with goal off, require_claude and an empty
+# PREFLIGHT_GOAL; else PREFLIGHT_GOAL is the story's goal condition, refused when its /goal message is
+# over GOAL_SEND_MAX or Claude Code is older than GOAL_MIN_CLAUDE. Run in the caller's shell, so a die
+# is the command's own.
+goal_preflight() {
+  local msg
+  PREFLIGHT_GOAL=""
+  if [[ "${CFG_goal}" == off ]]; then require_claude; return; fi
+  PREFLIGHT_GOAL="$(goal_condition "$1" "$2")" || die "${PREFLIGHT_GOAL}"
+  msg="$(goal_message "${PREFLIGHT_GOAL}")"
+  (( ${#msg} <= GOAL_SEND_MAX )) \
+    || die "$1: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
+  require_claude "${GOAL_MIN_CLAUDE}"
+}
+
 build_story() {
-  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" msg parents names
+  local slug="$1" strict="${2:-}" story="${BOARD}/stories/$1.md" kind repo src role wt branch prompt base epic goal="" parents names
   [[ -f "${story}" ]] || die "no story ${story}"
   [[ "$(fm "${story}" status)" == ready ]] || die "${slug} is not status: ready"
   kind="$(fm "${story}" kind)"; kind="${kind:-code}"
@@ -440,13 +455,7 @@ build_story() {
   src="$(repo_dir "${repo}")" || die "${slug}: ${src}"
   # Before the worktree exists, so a refusal leaves nothing to clean up.
   require_trusted "${src}"
-  if [[ "${CFG_goal}" == off ]]; then require_claude; else
-    goal="$(goal_condition "${slug}" "${src}")" || die "${goal}"
-    msg="$(goal_message "${goal}")"
-    (( ${#msg} <= GOAL_SEND_MAX )) \
-      || die "${slug}: its /goal message is ${#msg} characters, over GOAL_SEND_MAX (${GOAL_SEND_MAX}), past which Claude Code pastes it as text and never runs it; shorten its board path or slug"
-    require_claude "${GOAL_MIN_CLAUDE}"
-  fi
+  goal_preflight "${slug}" "${src}"; goal="${PREFLIGHT_GOAL}"
   base="$(base_for "${src}")"
   branch="story/${slug}"; wt="$(worktree_for "${src}" "${slug}")"
   if build_exists "${src}" "${slug}"; then
@@ -825,13 +834,22 @@ never dismiss an alert. $(wait_pr_rule "on exit 1 or a conflict, send the story'
 EOF
 }
 
-# auth_rule — what a conductor does when `wait` on a builder prints auth.
+# auth_rule — what a conductor does when `wait` on a builder prints auth, or a stuck: line.
 auth_rule() {
   cat <<EOF
 A builder whose \`swarm.sh wait\` prints \`auth\` stopped on an expired login, which only the user's
 /login clears: do not tell it, nudge it or wait on it again. Note it, and once you are told your
 login is renewed, tell each such builder to resume (\`swarm.sh tell <slug> resume <file>\`) and wait on it
 again with \`swarm.sh wait <slug>\` in the background.
+
+A \`wait\` that prints a line starting \`stuck:\` (exit 4) is not a stall: never close the builder as
+stalled for it. \`stuck: api error\` is a turn that stopped on an API error after wait told it to carry
+on three times: read the pane (\`herdr agent read <pane>\`), then tell it to resume once more and
+wait on it again, or list it for the lead. \`stuck: no output for <N>m (<pane>)\` is a busy session
+whose pane has not changed that long with no background task running; \`tell\` refuses a busy
+session, so do not tell it: read the pane and list it for the lead. With goal on, wait never tells a
+builder to carry on: its \`stuck: api error\` is the goal rule's to read, and the goal rule's close
+for it stands.
 EOF
 }
 
@@ -859,7 +877,7 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
   story for the lead (\`kind: lead\`, \`held_for: paused\`): list it for the lead, as for cleared-on-error.
 - cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
   stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
-  ends on an API error; or \`swarm.sh story\` failed on a refused goal.
+  ends on an API error (wait prints \`stuck: api error\` for it); or \`swarm.sh story\` failed on a refused goal.
   Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
   the lead, who decides whether to build it again. The close holds the story for the lead
   (\`kind: lead\`, \`held_for: cleared-on-error\`), so no wave builds it until the lead lifts the hold.
