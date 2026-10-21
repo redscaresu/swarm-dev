@@ -5,16 +5,15 @@ depends_on: [sonnet-share]
 touches: []
 ---
 
-# Turn on `sonnet_share = 4` for infrafactory and read the first results
+# Turn on `sonnet_share = 4` for swarm-dev and read the first results
 
-The user approved the experiment on 2026-10-13 ("I am ok with you experimenting a bit"). After the
-release carrying sonnet-share, the lead sets `sonnet_share = 4` in infrafactory's
-`.claude/swarm/config` (one line, its own PR), and after roughly 20 sampled builds compares
+The user approved the experiment on 2026-10-13 ("I am ok with you experimenting a bit"). On 2026-10-22 the user moved the trial to swarm-dev, whose board is busy while infrafactory is paused, and asked for the comparison after 20 Sonnet builds. The lead set `sonnet_share = 4` in swarm-dev's
+`.claude/swarm/config` (one line, its own PR, ahead of config-switch-ons so the ladder does not mix into the first results), and after 20 sampled builds compares
 `swarm.sh outcomes` rows for `code-sonnet` and `code-opusplan` (if built) against `code`: merged or not, review rounds (tells_findings),
 findings fixed, closes per story, cost. The lead posts the comparison for the user.
 
 **Phase 2, after the user's phase 1 decision (user, 2026-10-13):** the lead sets
-`builder_subagent_model = haiku` in infrafactory's config (its own PR), so builders' search and test
+`builder_subagent_model = haiku` in swarm-dev's config (its own PR), so builders' search and test
 subagents run on Haiku. First check that it took: sonnet-share passes the variables through `--settings`
 (herdr cannot pass environment variables), which the spike did not test, so read the first such builder's
 .jsonl and confirm its subagent turns (`parent_tool_use_id` set) show a Haiku `message.model`; if not, stop and file a fix. Never with phase 1 still running: changing both at once would hide which change
