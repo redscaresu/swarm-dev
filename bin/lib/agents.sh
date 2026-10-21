@@ -574,16 +574,18 @@ pane_text() { herdr agent read "$1" --source recent-unwrapped 2>/dev/null || tru
 pane_sum() { printf '%s' "$(pane_text "$1")" | cksum; }
 
 # PANE_DIR: per agent, a file kept by pane_check and read by dash: its pane's checksum, when status or
-# wait first saw the pane so (epoch seconds), and `stop` once the stop its turn ended on is logged. It
+# wait first saw the pane so (epoch seconds), and the id of the logged stop its turn ended on (stop_id). It
 # moves with the agent when it retires (retire_agent), so its renamed pane logs nothing again, and goes
 # when a new agent takes its name.
 PANE_DIR="${PROJECT_DIR}/.swarm/panes"
 
-# pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<line>" for the stop its last
-# turn ended on: no reply (⏺ or ●) and no submitted prompt (`> text`) after it. The stop is Claude
-# Code's `API Error:` line, after ⏺ or ● at the margin or in a tool result (⎿) (api-error), or a tool
-# result saying it was "denied by the Claude Code auto mode classifier" (auto-denied). An agent's own
-# indented text is neither. The input box at the bottom is not read: a suggestion or half-typed text
+# pane_stop — read pane text on stdin and print "<line number>\t<kind>\t<prompt>\t<line>" for the stop
+# its last turn ended on: no reply (⏺ or ●) and no submitted prompt (`> text`) after it. <prompt> is
+# the line number of the last submitted prompt above it, 0 for none. The stop is Claude Code's `API
+# Error:` line, after ⏺ or ● at the margin or in a tool result (⎿) (api-error), or the tool result
+# Claude Code gives for a denial, `Error: Permission for this action was denied by the Claude Code auto
+# mode classifier.` (auto-denied). An agent's own indented text, or a tool result quoting the phrase,
+# is neither. The input box at the bottom is not read: a suggestion or half-typed text
 # there is no prompt. It is the last two border lines (─ at the margin) with no reply from the upper
 # one down; a box higher up (a banner, a dialog) is read as any line.
 pane_stop() {
@@ -593,10 +595,12 @@ pane_stop() {
       if (t) { n = t - 1; for (i = t; i <= NR; i++) if (l[i] ~ /^(⏺|●)/) n = NR }
       for (i = 1; i <= n; i++) {
         if (l[i] ~ /^(⏺|●)[[:space:]]*API Error:|^[[:space:]]*⎿[[:space:]]*API Error:/) { s = i; k = "api-error" }
-        else if (l[i] ~ /^[[:space:]]*(⏺|●)/ || l[i] ~ /^(>|❯) +[^ ]/) s = 0
-        else if (l[i] ~ /^[[:space:]]*⎿.*denied by the Claude Code auto mode classifier/) { s = i; k = "auto-denied" }
+        else if (l[i] ~ /^[[:space:]]*(⏺|●)/) s = 0
+        else if (l[i] ~ /^(>|❯) +[^ ]/) { s = 0; q = i }
+        else if (l[i] ~ /^[[:space:]]*⎿[[:space:]]*Error: Permission for this action was denied by the Claude Code auto mode classifier/) { s = i; k = "auto-denied" }
+        if (s == i) p = q + 0
       }
-      if (s) { x = l[s]; sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", x); print s "\t" k "\t" x }
+      if (s) { x = l[s]; sub(/^[[:space:]]*(⎿|⏺|●)?[[:space:]]*/, "", x); print s "\t" k "\t" p "\t" x }
     }'
 }
 
@@ -604,19 +608,28 @@ pane_stop() {
 # after a stop: background shells it left open keep it so.
 turn_ended() { [[ "$(agent_status "$1")" =~ ^(done|idle)$ ]]; }
 
+# stop_id <text> <n> <prompt> <line> — a stop's id, <turn>/<line>: the checksum of <text>'s lines from
+# the prompt above the stop to the stop (n), `-` with no prompt (0), and the checksum of its line.
+stop_id() {
+  local turn=-
+  [[ "$3" -eq 0 ]] || turn="$(sed -n "$3,$2p" <<< "$1" | cksum | tr ' ' -)"
+  printf '%s/%s\n' "${turn}" "$(printf '%s' "$4" | cksum | tr ' ' -)"
+}
+
 # pane_check <name> <target> [<sum>] — read <target>'s pane once, keep PANE_DIR/<name>, and set the
 # caller's pane_at (when the pane last changed; with no file yet, when the wait began, or now) and
 # pane_kind (the stop its turn ended on, pane_stop, once turn_ended; else empty). With <sum> (the pane's
 # checksum when wait last resumed it, pane_sum), a pane still that same text is no new stop: the resume
 # has not shown yet. A stop is logged as an api-error or auto-denied incident for <name> with its line
-# when the record has no `stop`; the record keeps `stop` until a read finds none (a reply or a new
-# prompt came after it). The read and the write are under PANE_DIR/<name>.lock (mkdir), so of
+# unless the record holds it already: the record keeps the stop's id (stop_id) until a read finds no
+# stop. It is the same stop when its turn is, or, with no prompt above it left in the window (the
+# window scrolled), when its line is. So a stop after a new prompt (a resume) is logged even with no
+# stop-free read between. The read and the write are under PANE_DIR/<name>.lock (mkdir), so of
 # concurrent readers one logs and the rest only read. Only status and wait call it. An empty read sets
 # both empty.
-# ponytail: a stop, a resume and a second stop all between two reads are one event; a lock a killed
-# reader left is broken after a minute.
+# ponytail: a lock a killed reader left is broken after a minute.
 pane_check() {
-  local f="${PANE_DIR}/$1" lock="${PANE_DIR}/$1.lock" text sum seen="" logged="" hit line now t
+  local f="${PANE_DIR}/$1" lock="${PANE_DIR}/$1.lock" text sum seen="" logged="" hit n p line now t new=""
   pane_kind="" pane_at=""
   [[ -n "$1" ]] || return 0
   mkdir -p "${PANE_DIR}" 2>/dev/null || true
@@ -629,11 +642,12 @@ pane_check() {
     elif [[ "${sum}" != "${seen}" || -z "${pane_at}" ]]; then pane_at="$(date +%s)"; fi
     hit="$(pane_stop <<< "${text}")"; now="${logged}"; [[ -n "${hit}" ]] || now=""
     if [[ -n "${hit}" ]] && turn_ended "$1" && [[ -z "${3:-}" || "${sum}" != "$3" ]]; then
-      IFS=$'\t' read -r _ pane_kind line <<< "${hit}"; now=stop
+      IFS=$'\t' read -r n pane_kind p line <<< "${hit}"; now="$(stop_id "${text}" "${n}" "${p}" "${line}")"
+      [[ -n "${logged}" && ( "${now%/*}" == "${logged%/*}" || ( "${now%/*}" == - && "${now#*/}" == "${logged#*/}" ) ) ]] || new=1
     fi
     if [[ -n "${lock}" ]]; then
       { t="$(mktemp "${f}.XXXXXX")" && printf '%s\t%s\t%s\n' "${sum}" "${pane_at}" "${now}" > "${t}" && mv -f "${t}" "${f}"; } 2>/dev/null || true
-      [[ -z "${pane_kind}" || "${logged}" == stop ]] || record_event incident "$1" "${pane_kind}: ${line}"
+      [[ -z "${new}" ]] || record_event incident "$1" "${pane_kind}: ${line}"
     fi
   fi
   [[ -z "${lock}" ]] || rmdir "${lock}" 2>/dev/null || true

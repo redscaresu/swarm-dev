@@ -45,7 +45,7 @@ printf 'w:1 s-err\nw:2 s-deny\nw:3 s-ok\nw:4 s-mid\nw:5 s-prose\nw:6 s-again\n' 
 # indented text mentions the classifier and an `API Error:` line. foreign is another project's agent, whose pane must not be read.
 printf '%s\n' '⏺ Running the tests.' '  ⎿  API Error: Connection error (ECONNRESET)' '' '> ' > "${ROOT}/pane-w:1"
 deny=('⏺ Reading the story.' '  ⎿  Read 40 lines' '⏺ Applying the plan.' '⏺ Bash(terraform apply)'
-  '  ⎿  Error: Permission for this action has been denied by the Claude Code auto mode classifier.' '     Reason: real cloud' '> ')
+  '  ⎿  Error: Permission for this action was denied by the Claude Code auto mode classifier.' '     Reason: real cloud' '> ')
 printf '%s\n' "${deny[@]}" > "${ROOT}/pane-w:2"
 printf '%s\n' '  ⎿  API Error: 529 overloaded' '⏺ Carrying on.' > "${ROOT}/pane-w:3"
 printf '%s\n' '⏺ Retrying.' '  ⎿  API Error: 529 overloaded' > "${ROOT}/pane-w:4"
@@ -57,7 +57,7 @@ incidents() { cut -f2,3,5 "${P}/.swarm/events.tsv" 2>/dev/null | grep '^incident
 status; status
 check "two status runs log one event per stopped pane" test "$(incidents)" = "$(printf '%s\n' \
   $'incident\ts-err\tapi-error: API Error: Connection error (ECONNRESET)' \
-  $'incident\ts-deny\tauto-denied: Error: Permission for this action has been denied by the Claude Code auto mode classifier.')"
+  $'incident\ts-deny\tauto-denied: Error: Permission for this action was denied by the Claude Code auto mode classifier.')"
 check "a pane ending on an API error mid-turn (herdr working) logs nothing" test "$(incidents | grep -c 's-mid')" = 0
 check "an agent's own text naming the classifier or an API Error: line logs nothing" test "$(incidents | grep -c 's-prose')" = 0
 check "status notes when each own pane last changed" test -s "${P}/.swarm/panes/s-ok" -a ! -e "${P}/.swarm/panes/foreign"
@@ -122,6 +122,21 @@ check "after a tell to a long slug, a new stop with the same lines above it logs
 printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' '> ' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
 printf '%s\n' '  ⎿  API Error: 500' '> ' '' > "${ROOT}/t-top"; pc l-top "${ROOT}/t-top"
 check "a stop near the window's top that scrolls logs nothing more" test "$(stops l-top)" = 1
+# A resume and a second API error both land before the next read: the second stop follows a new
+# prompt, so it is logged too.
+printf '%s\n' '⏺ API Error: first' > "${ROOT}/t-two"; pc l-two "${ROOT}/t-two"
+printf '%s\n' '⏺ API Error: first' '> carry on' '⏺ API Error: second' > "${ROOT}/t-two"; pc l-two "${ROOT}/t-two"
+check "a resume and a second API error before the next read log both stops" \
+  test "$(grep $'\tl-two\t' "${L}/.swarm/events.tsv" | cut -f5)" = "$(printf '%s\n' 'api-error: API Error: first' 'api-error: API Error: second')"
+# A stop whose prompt scrolls out of the window is the same stop.
+printf '%s\n' '> go' '⏺ Running.' '  ⎿  API Error: 500' > "${ROOT}/t-off"; pc l-off "${ROOT}/t-off"
+printf '%s\n' '⏺ Running.' '  ⎿  API Error: 500' '' > "${ROOT}/t-off"; pc l-off "${ROOT}/t-off"
+check "a stop whose prompt scrolls out of the window logs nothing more" test "$(stops l-off)" = 1
+# A turn that ends on a tool result quoting the denial phrase (a grep over the docs) is no denial.
+printf '%s\n' '⏺ Bash(grep -n classifier docs/reference.md)' \
+  '  ⎿  706:saying "denied by the Claude Code auto mode classifier", it writes api-error or' '> ' > "${ROOT}/t-quote"
+pc l-quote "${ROOT}/t-quote"
+check "a tool result quoting the denial phrase logs nothing" test "$(stops l-quote)" = 0
 # Eight reads of one stopped pane at once (status and a background wait, say) log it once.
 R="${ROOT}/race"; mkdir -p "${R}"
 n="$(PROJECT_DIR="${R}" bash -c 'source "$1/../bin/lib/agents.sh"

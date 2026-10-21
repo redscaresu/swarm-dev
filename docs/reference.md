@@ -701,16 +701,18 @@ none, so one stuck builder is one incident. `swarm.sh intervene <kind> "<one lin
 target `-` and the outcome `<kind>: <line>`, for each time a person had to step in: `lead-hand`
 when the lead did by hand what a command should have, `user-caught` when the user found a problem
 first. Any other kind, or an empty line, fails and writes nothing, and so does an events.tsv it cannot write. When `status` or `wait` reads an agent's pane, herdr
-says its turn ended (idle or done), and the turn ended on an `API Error:` line or a tool result
-saying "denied by the Claude Code auto mode classifier", it writes `api-error` or `auto-denied` with
-that line, once per stop. An `API Error:` line counts after `⏺` or `●` at the margin or in a tool
-result (`⎿`); an agent's own indented text does not. `next` and `tell` only read. `status` and
-`wait` keep `.swarm/panes/<agent>`: the pane's checksum, when they last saw it change (which `dash`
-shows), and whether its stop is logged. A stop is logged only when the record has no logged stop, and
-the record keeps the stop until a read of the pane shows a reply or a new prompt after it. Reading the
-same stopped pane again, after it scrolls or after a resume it has not shown yet, adds nothing. A stop
-after the agent carried on is a new one. A stop, a resume and a second stop that all
-fall between two reads are one event. A retired agent's record moves to its new name, and a new
+says its turn ended (idle or done), and the turn ended on an `API Error:` line or on the tool result
+Claude Code gives for a denial (`Error: Permission for this action was denied by the Claude Code auto
+mode classifier.`), it writes `api-error` or `auto-denied` with that line, once per stop. An `API
+Error:` line counts after `⏺` or `●` at the margin or in a tool result (`⎿`). An agent's own indented
+text does not count, and neither does a tool result that only quotes the phrase. `next` and `tell`
+only read. `status` and `wait` keep `.swarm/panes/<agent>`: the pane's checksum, when they last saw it
+change (which `dash` shows), and which stop was logged last. Stops are told apart by the lines from
+the last prompt above the stop down to it, or by the stop's line alone once that prompt has scrolled
+out of the window.
+The record drops it when a read of the pane shows no stop. Reading the same stopped pane again, after
+it scrolls or after a resume it has not shown yet, adds nothing. A stop after a new prompt is a new
+one, even when the resume and the second error both come between two reads. A retired agent's record moves to its new name, and a new
 agent of the name starts with none. The stall rule skips incident lines as it skips nudges. A `tell` is logged as `tell:<kind>` with the slug as
 its target, or as plain `tell` when the kind is missing or wrong. One that reached the builder counts as a swarm action on the story. The stall rule
 skips `tell:nudge`, since it is a nudge too, and any tell that ended other than `ok`, since it never
