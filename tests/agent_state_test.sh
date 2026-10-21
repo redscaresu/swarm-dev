@@ -30,6 +30,7 @@ read_state      the reader's herdr fallback for tell and free_agent_name: codex,
 herdr_wait      wait's herdr fallback: codex, or no session recorded
 herdr_step      herdr_wait's step, its stream or herdr agent wait: codex, or no session recorded
 herdr_events    herdr_wait's event stream (herdr_events.py): codex, or no session recorded
+close_lists     close's guard, read once per close: herdr's word for an agent no session answers for
 turn_ended      an API-error or auto-denied stop: herdr's done or idle, while open background shells keep the session busy
 "
 # Allowed anywhere, with no list entry:
