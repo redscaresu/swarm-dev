@@ -11,6 +11,15 @@ def pr_key(pr):
     m = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", pr) or re.fullmatch(r"\s*([^/\s#]+/[^/\s#]+)#(\d+)\s*", pr)
     return f"{m.group(1).lower()}#{m.group(2)}" if m else pr.strip().rstrip("/")
 
+# A step-up's escalate line: ok (<trigger>: <from> -> <to>).
+STEP_UP = re.compile(r"ok \(([a-z0-9-]+): (\S+) -> (\S+)\)")
+
+def escalate_build(result, model):
+    # An escalate line that started an escalate build, on <model> (the escalate role's): build_story's
+    # ok (attempt N), or a step-up to <model>. A step-up to a lower rung started none.
+    m = STEP_UP.fullmatch(result)
+    return re.fullmatch(r"ok \(attempt \d+\)", result) is not None or (m is not None and m.group(3) == model)
+
 def agent_name(n):
     # bash agent_name: the name agents.tsv keeps for a slug (lowercase, [a-z0-9_-], a letter first, 32 at most).
     n = re.sub(r"[^a-z0-9_-]", "-", n.lower())
