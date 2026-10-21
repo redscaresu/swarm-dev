@@ -1,4 +1,4 @@
-import json, re, subprocess, sys, time, urllib.parse
+import calendar, json, re, subprocess, sys, time, urllib.parse
 OK = ("success", "skipped", "neutral")
 READ_TRIES = 3   # main_ci's reads in a row that may fail before the wait ends in error
 
@@ -51,9 +51,11 @@ def judge(runs, red, wait, ok):
         else:
             ok.append("%s (%s)" % (r.get("name"), r.get("conclusion")))
 
-def checks(repo, sha, required=(), need_run=True):
+def checks(repo, sha, required=(), need_run=True, done=None):
     runs = pages("repos/%s/commits/%s/check-runs?per_page=100" % (repo, sha), "check_runs")
     sts = pages("repos/%s/commits/%s/status?per_page=100" % (repo, sha), "statuses")
+    if done is not None:   # when each run and status last finished or changed, for age
+        done += [r.get("completed_at") for r in runs] + [s.get("updated_at") for s in sts]
     red, wait, ok = [], ([] if runs or not need_run else ["no check runs"]), []
     judge(runs, red, wait, ok)
     for s in sts:
@@ -301,6 +303,18 @@ try:
         print("; ".join(red + wait or ok))
         if red or wait:
             sys.exit(1 if red else 2)
+    elif mode == "age":
+        # head's rule; once green, the whole minutes since its last run or status finished.
+        done = []
+        red, wait, ok = checks(repo, args[0], done=done)
+        if red or wait:
+            print("; ".join(red + wait))
+            sys.exit(1 if red else 2)
+        try:
+            last = max(calendar.timegm(time.strptime(t, "%Y-%m-%dT%H:%M:%SZ")) for t in done)
+        except (TypeError, ValueError):
+            raise Err("unreadable finish time on " + args[0])
+        print(int(time.time() - last) // 60)
     elif mode == "admin":
         why = admin(repo, args[0], args[1], args[2])
         if why:

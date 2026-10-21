@@ -162,7 +162,7 @@ for arm in ${RO_EXPECTED}; do
 done
 for arm in ${arms}; do
   [[ "${arm}" == reconcile || "${arm}" == unblock || "${arm}" == init ]] && continue
-  args=(); [[ "${arm}" == tidy ]] && args=(--yes)
+  args=(); [[ "${arm}" == tidy ]] && args=(--yes); [[ "${arm}" == intervene ]] && args=(lead-hand x)
   n=0; [[ "${ro}" == *" ${arm} "* ]] || n=1
   before="$(LOG="${Q}/.swarm/events.tsv" lines)"
   (cd "${Q}" || exit 1; env -u HERDR_ENV PATH="${ROOT}/nobin:${PATH}" bash "${SWARM}" "${arm}" ${args[@]+"${args[@]}"} </dev/null >/dev/null 2>&1) || true
