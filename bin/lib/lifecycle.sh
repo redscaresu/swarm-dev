@@ -1095,8 +1095,8 @@ close_stories() {
 live_agents() {
   local panes pane st who name s f src rc
   LIVE=""
-  # The ids one per line or space-separated (two tabs can share a label), matched as " <id> ".
-  panes="$(awk -v t=" $(tr '\n' ' ' <<< "$1") " 'index(t, " " $2 " ") { print $1 }' <<< "${CLOSE_PANES}")"
+  # The ids space-separated (two tabs can share a label; close_tabs joins them), matched as " <id> ".
+  panes="$(awk -v t=" $1 " 'index(t, " " $2 " ") { print $1 }' <<< "${CLOSE_PANES}")"
   [[ -n "${panes}" || ! -f "$2" ]] || panes="$(awk '{ print $1 }' "$2")"
   while read -r pane; do
     [[ -n "${pane}" && "${pane}" != "${3:-}" ]] || continue
