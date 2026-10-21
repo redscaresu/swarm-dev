@@ -723,7 +723,10 @@ def running_view():
 # finished on the last 7 calendar days, today's among them, each on the day of its newest finish (finish, or reconcile's "finished" once a PR merged; a drop or a
 # rescope writes neither), and two lights, each lit (!) when its count is above 0: the items waiting on you or the lead (every
 # needs-you and lead's-queue row, and the stories behind +N more) with how long the oldest has
-# waited, and the escaped defects logged in the last 7 days. A board item waits from its newest
+# waited, and the escaped defects logged in the last 7 days. A third light, shown only when lit, counts
+# the times a person stepped in on those days (`swarm.sh intervene`'s incident lines, of the kinds
+# swarm.sh passes): on the speedometer's line when it fits, else on its own line, which a cut frame
+# gives up last of the lines under the speedometer (after the sparkline, the gauges and the idle line). A board item waits from its newest
 # review, close:<cause> or escalated line in events.tsv, else from its file's last commit.
 def waited_from(item):
     d, slug = item
@@ -732,9 +735,12 @@ def waited_from(item):
     got = subprocess.run(["git", "-C", E["DASH_BOARD_DIR"], "log", "-1", "--format=%ct", "--", f"{d}/{slug}.md"], capture_output=True, text=True)
     return float(got.stdout) if got.returncode == 0 and got.stdout.strip().isdigit() else None
 
-moved, done_at = {}, {}   # done_at: slug -> its newest finish, so it counts once, on that day
+INTERVENE_KINDS = E.get("DASH_INTERVENE_KINDS", "").split()   # swarm.sh's INTERVENE_KINDS
+moved, done_at, stepped_in = {}, {}, 0   # done_at: slug -> its newest finish, so it counts once, on that day
 for f in read_tsv(E["DASH_EVENTS"], 5):
     t = epoch(f[0])
+    if t is not None and f[1] == "incident" and f[4].partition(":")[0].strip() in INTERVENE_KINDS:
+        stepped_in += (TODAY - datetime.date.fromtimestamp(t)).days in range(7)
     # ponytail: an epic finished by its own PR counts too; tell them apart if epic PRs come back.
     if t is not None and ((f[1] == "finish" and f[4] == "ok") or (f[1] == "reconcile" and f[4].startswith("ok (finished"))):
         done_at[f[2]] = max(t, done_at.get(f[2], t))
@@ -759,6 +765,7 @@ speed = [(f"{last7 / 7:.1f}", "b"), (" merged/day over 7 days", "")]
 for n, words in ((n_waiting, f"waiting on {'you or the lead' if LEAD else 'you'}" + (f", oldest {dur(NOW - min(since))}" if since else "")),
                  (escaped, "escaped in 7 days")):
     speed += [(" · ", "dim"), (f"! {n} {words}", "bad") if n else (f"✓ 0 {words}", "dim")]
+stepped = [(f"! {stepped_in} intervention{'' if stepped_in == 1 else 's'} in 7 days", "bad")] if stepped_in else []
 
 # Under the speedometer from 60 columns: the stories finished per day over 14 days (done_at's days) as
 # a sparkline, oldest first, then today's count and the average of its last 7 days. From 100
@@ -875,8 +882,10 @@ if WIDE:
 if sum(len(t) for t, _ in head) > W - len(right) - 1:
     head = head[:1] + head[4:]   # narrow: the version and merge mode go before next is cut
 out.append(fit(head, W - len(right) - 1) + " " + paint(right, "dim"))
-out.append(fit(speed, W))
-under = pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else [], idle_gauge() if W >= 100 else []) if g], W)
+# The interventions light's own line, when it has one, heads the lines under the speedometer.
+speed_line, *stepped_line = pack([(SEP, speed), (SEP, stepped)] if stepped else [(SEP, speed)], W)
+out.append(speed_line)
+under = stepped_line + pack([(SEP, g) for g in (sparkline() if W >= 60 else [], gauges() if W >= 100 else [], idle_gauge() if W >= 100 else []) if g], W)
 n_active = sum(b[2] == "active" for b in epics.values())
 n_working = sum(r["state"] in ("working", "stalled") for r in recs)   # status calls a stalled agent working too
 summary = [(f"{n_active} epics active", ""), (" · ", "dim"), (f"{n_working} agents working", "ok" if n_working else ""), (" · ", "dim"),
@@ -928,9 +937,9 @@ ladder = E.get("DASH_LADDER") == "1"
 def make_room(room, spare=H):
     # The lines under the speedometer (under) take recent's rows; a cut frame keeps RECENT_MIN of them
     # (or the ladder, when even those do not fit) and, from 140 columns, the whole left column (spare:
-    # the rows under it) first, dropping the sparkline's line, then the gauges.
+    # the rows under it) first, dropping the sparkline's line, then the gauges, the idle line, then the interventions light's.
     while under and FIT and H and (room - len(under) < RECENT_MIN or spare < len(under)):
-        under.pop(0)
+        under.pop(len(stepped_line) if len(under) > len(stepped_line) else 0)
     return room - len(under)
 
 if WIDE:

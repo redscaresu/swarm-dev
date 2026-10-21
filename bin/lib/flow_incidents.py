@@ -1,5 +1,6 @@
 # Incidents, a flow section (flow_report.py gives its globals): events.tsv's incident lines (outcome
-# `<kind>: <detail>`) counted per local day and kind, whatever the kind. --epic does not narrow it: an
+# `<kind>: <detail>`) counted per local day and kind, whatever the kind: `swarm.sh intervene`'s lead-hand and
+# user-caught among them, whose sum over the last 7 days is dash's interventions light. --epic does not narrow it: an
 # incident's target is an agent name, which may be cut short of its slug. Then, after a blank line,
 # the agent stops (api-error and auto-denied) per epic and kind: the agent's epic is the one outcomes'
 # rows give its story (a builder, or review-<slug>), or for conduct-<epic> its `conduct <epic>` start
