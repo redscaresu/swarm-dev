@@ -15,7 +15,10 @@ BIN="${ROOT}/bin"; P="${ROOT}/proj"; LIMIT=2; GRACE=3
 trap 'pkill -KILL -f "${BIN}/" 2>/dev/null || true; rm -rf "${ROOT}"' EXIT
 export CLAUDE_CONFIG_DIR="${ROOT}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
-ln -s "$(command -v sleep)" "${BIN}/stubsleep"   # the stub's child, named so pgrep -f can tell it
+# The stub's child: one process with its own path in its command line, so pgrep -f can tell it. Not a
+# symlink to sleep, which uutils coreutils (ubuntu 26.04) refuse to run under another name.
+# shellcheck disable=SC2016 # the stub's own $1 and $0, expanded when it runs
+printf '#!/bin/sh\nexec perl -e "select undef, undef, undef, shift" "$1" "$0"\n' > "${BIN}/stubsleep"; chmod +x "${BIN}/stubsleep"
 export PATH="${BIN}:${PATH}"
 fails=0
 
