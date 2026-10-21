@@ -601,22 +601,27 @@ done
 release_pr; echo feature > "${FX}/base"; cp "${FX}/wf.plugin.json.main" "${FX}/wf.plugin.json.feature"
 merge --release "${URL}"; refused "--release for a PR into another branch" "goes into feature, not main, the project's base"
 # A release ships its docs: bin/, commands/ or hooks/ changed since origin's tag needs README.md,
-# AGENTS.md, docs/ or commands/*.md changed too, or a "Docs: none — <reason>" line in the PR body.
-# The board is docs/ here, and none of it counts as docs: not its stories, Board.base or hld/.
+# AGENTS.md or docs/ changed too, or a "Docs: none — <reason>" line in the PR body; a commands/*.md
+# change answers for itself only. The board is docs/ here: its own paths (stories, epics, hld,
+# Board.base, .obsidian) are not docs, and the rest of docs/ is.
 commit() { # <file>... — a commit on main that changes each file, pushed to origin
   local f; for f in "$@"; do mkdir -p "$(dirname "${P}/${f}")"; echo x >> "${P}/${f}"; git -C "${P}" add -f "${f}"; done
   git -C "${P}" -c user.name=t -c user.email=t@t commit -q -m "$*"; git -C "${P}" push -q origin HEAD:refs/heads/main
 }
 retag() { git -C "${P}" tag -f v1.2.0 >/dev/null; git -C "${P}" push -q -f origin v1.2.0; } # v1.2.0 on main's head
-commit bin/x.sh docs/stories/x.md docs/Board.base docs/hld/x.md docs/reference.md
-release_pr; merge --release "${URL}"; refused "--release with bin/ and only board files changed" "bin/x.sh changed since v1.2.0 but README.md, AGENTS.md, docs/ and commands/*.md did not"
-check "--release's refusal says the forms a Docs: none line takes" said "a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet"
-for b in 'Bumps the version.\r\nDocs: none \u2014 a typo in a comment\r\n' '- Docs: none -- only tests changed' '* Docs: none - a comment'; do
+commit bin/x.sh docs/stories/x.md docs/epics/x.md docs/hld/x.md docs/Board.base docs/.obsidian/app.json
+release_pr; merge --release "${URL}"; refused "--release with bin/ and only board files changed" "bin/x.sh changed since v1.2.0 but README.md, AGENTS.md and docs/ did not"
+check "--release's refusal says the forms a Docs: none line takes" said "a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do; not in a \`\`\` block or a > quote)"
+# shellcheck disable=SC2016 # the backticks are a markdown fence
+for b in 'Bumps the version.\r\nDocs: none \u2014 a typo in a comment\r\n' '- Docs: none -- only tests changed' '* Docs: none - a comment' \
+  '```sh\nx\n```\nDocs: none \u2014 after a fence'; do
   release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
   is "--release with bin/ changed and '${b}': exits 0" 0 "${rc}"
 done
+# shellcheck disable=SC2016 # the backticks are a markdown fence
 for b in 'Docs: none' 'Docs: none \u2014\r\nmore' 'Docs: none \u2014 \r\nmore' 'Docs: none --' 'Docs: none -- ' \
-  'Docs: none \u2014 <reason>' 'Docs: none - -' 'Docs: none \u2014 x' '  Docs: none \u2014 indented'; do
+  'Docs: none \u2014 <reason>' 'Docs: none - -' 'Docs: none \u2014 x' '  Docs: none \u2014 indented' \
+  'Template:\n```\nDocs: none \u2014 inside a fence\n```' '> Docs: none \u2014 quoted from another PR'; do
   release_pr; printf '"%s"\n' "${b}" > "${FX}/body"; merge --release "${URL}"
   refused "--release with '${b}' and no reason" "bin/x.sh changed since v1.2.0"
 done
@@ -630,9 +635,11 @@ merge --release "${URL}"; refused "--release with the base's tag off the base" "
 git -C "${P}" tag -f v1.2.0 HEAD >/dev/null; local_tag="$(git -C "${P}" rev-parse v1.2.0)"
 release_pr; merge --release "${URL}"; refused "--release with a local tag that differs from origin's" "bin/x.sh changed since v1.2.0"
 is "--release leaves the local tag where it was" "${local_tag}" "$(git -C "${P}" rev-parse v1.2.0)"
-# With the board elsewhere, docs/ counts.
-release_pr; echo "board_dir = board" >> "${P}/.claude/swarm/config"; mkdir -p "${P}/board/stories"; merge --release "${URL}"
-is "--release with the board in board/ and docs/ changed: exits 0" 0 "${rc}"
+commit docs/method.md
+release_pr; merge --release "${URL}"
+is "--release with bin/ and docs/method.md beside the board in docs/ changed: exits 0" 0 "${rc}"
+retag; commit bin/y.sh commands/y.md
+release_pr; merge --release "${URL}"; refused "--release with bin/ and commands/*.md changed and no other docs" "bin/y.sh, commands/y.md changed since v1.2.0"
 retag; commit hooks/x.sh
 release_pr; merge --release "${URL}"; refused "--release with only hooks/ changed" "hooks/x.sh changed since v1.2.0"
 retag; commit commands/x.sh

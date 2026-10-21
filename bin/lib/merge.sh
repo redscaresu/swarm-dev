@@ -657,7 +657,7 @@ wait_pr() {
 # sorted JSON text, so true and 1 differ), since hooks, mcpServers and command paths there run code,
 # that version is MAJOR.MINOR.PATCH and greater than the base's, and release_docs passes.
 release_check() {
-  local want old new why
+  local want old new why body
   want="$(base_for "${PROJECT_DIR}")" || merge_fail "--release: cannot tell the project's base branch"
   [[ "$2" == "${want}" ]] || merge_fail "--release: ${MERGE_TARGET} goes into $2, not ${want}, the project's base"
   old="$(gh api -H "Accept: application/vnd.github.raw" "repos/$1/contents/.claude-plugin/plugin.json?ref=$2")" \
@@ -677,19 +677,20 @@ elif json.dumps(o, sort_keys=True) != json.dumps(n, sort_keys=True):
     print("it changes more of .claude-plugin/plugin.json than its version; if %s changed plugin.json after the release branch was cut, merge origin/%s into it and retry" % (e["BASE"], e["BASE"]))' 2>/dev/null)" \
     || why="cannot read .claude-plugin/plugin.json as JSON"
   [[ -z "${why}" ]] || merge_fail "--release: ${MERGE_TARGET}: ${why}"
-  why="$(gh pr view "$4" --repo "$1" --json body | json "d.get('body') or ''")" \
+  body="$(gh pr view "$4" --repo "$1" --json body | json "d.get('body') or ''")" \
     || merge_fail "--release: gh cannot read the body of ${MERGE_TARGET}"
-  release_docs "${why}" "$2" "$(plugin_version <<< "${old}")"
+  release_docs "${body}" "$2" "$(plugin_version <<< "${old}")"
 }
 
 # release_docs <pr-body> <base> <version> — a release ships its docs: refuse when bin/, commands/ or
-# hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md, docs/
-# and commands/*.md did not, naming the changed paths, unless docs_none finds a reason in the PR
-# body. commands/*.md is code and docs both: the commands' text is what a user reads. The board is
-# not docs (board_exclude, as release_due), even when it is docs/. origin's tag is compared by its
-# SHA, so a local tag is never fetched over; a tag missing on origin or off origin/<base> refuses.
+# hooks/ changed between origin's tag v<version> and origin/<base> but README.md, AGENTS.md and docs/
+# did not, naming the changed paths, unless docs_none finds a reason in the PR body. A change to
+# commands/*.md is the commands' own text, so it answers for itself, and only when nothing else in
+# the code changed. The board's own paths (board_paths) are not docs, even when the board is docs/.
+# origin's tag is compared by its commit's SHA, so a local tag is never fetched over; a tag missing
+# on origin or off origin/<base> refuses.
 release_docs() {
-  local tag code docs rc=0 ex
+  local tag code docs p rc=0 ex=()
   ! docs_none <<< "$1" || return 0
   fetch_branch "${PROJECT_DIR}" "$2" || merge_fail "--release: cannot fetch origin/$2 to check the docs changed since v$3"
   # An annotated tag's commit is its peeled ref (^{}): the tag object may never have been fetched.
@@ -702,18 +703,22 @@ release_docs() {
   code="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- bin commands hooks)" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -n "${code}" ]] || return 0
-  ex="$(board_exclude)"
-  docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- README.md AGENTS.md docs 'commands/*.md' ${ex:+"${ex}"})" \
+  grep -qv '^commands/.*\.md$' <<< "${code}" || return 0
+  while IFS= read -r p; do ex+=(":(exclude)${p%/}"); done < <(board_paths)
+  docs="$(git -C "${PROJECT_DIR}" diff --name-only "${tag}" "origin/$2" -- README.md AGENTS.md docs ${ex[@]+"${ex[@]}"})" \
     || merge_fail "--release: git cannot diff v$3 with origin/$2"
   [[ -z "${docs}" ]] || return 0
-  merge_fail "--release: ${code//$'\n'/, } changed since v$3 but README.md, AGENTS.md, docs/ and commands/*.md did not: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
+  merge_fail "--release: ${code//$'\n'/, } changed since v$3 but README.md, AGENTS.md and docs/ did not: land a docs PR first, or give the PR body ${DOCS_NONE_FORMS}"
 }
 
-DOCS_NONE_FORMS="a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do)"
+DOCS_NONE_FORMS="a line 'Docs: none — ' and why no doc changes (a '- ' or '* ' bullet before it, or - or -- for the dash, also do; not in a \`\`\` block or a > quote)"
 # docs_none — true when stdin has a "Docs: none — <reason>" line (bulleted or not; —, - or --) whose
-# reason is two or more characters and not a <placeholder> like the one the docs show.
+# reason is two or more characters and not a <placeholder> like the one the docs show. Lines in a
+# ``` fence are someone else's text, so they never count; nor does a > quote, which ^ already skips.
 docs_none() {
   awk '{ sub(/\r$/, "") }
+       /^ *```/ { fence = !fence; next }
+       fence { next }
        match($0, /^([-*] +)?Docs: none +(—|--?) +/) {
          r = substr($0, RSTART + RLENGTH); sub(/[ \t]+$/, "", r)
          if (length(r) > 1 && r !~ /^<[^>]*>$/) found = 1

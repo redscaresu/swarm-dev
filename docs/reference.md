@@ -1128,13 +1128,15 @@ under the board instead. With `--release`, for a release PR, the PR must be in t
 repo and go into its base, and it may change only `"version"` in `.claude-plugin/plugin.json`, since
 hooks, MCP servers and command paths there run code. The new version must be MAJOR.MINOR.PATCH and
 greater than the base's. When `bin/`, `commands/` or `hooks/` changed between the tag
-`v<base version>` and the base but README.md, AGENTS.md, `docs/` and `commands/*.md` did not, it
-refuses and names the changed paths, unless the PR body has a `Docs: none — <reason>` line. That
-line may be a `- ` or `* ` list item and may use `-` or `--` for the dash. The reason must be at
-least two characters, and a placeholder such as `<reason>` does not count. A change to
-`commands/*.md` counts as docs too, since that is the text a user reads. Nothing on the board counts
-as docs, so when the board is `docs/`, only README.md, AGENTS.md and `commands/*.md` do. It compares
-against origin's tag by its SHA and never fetches over your local tag. It refuses when origin has no
+`v<base version>` and the base but README.md, AGENTS.md and `docs/` did not, it refuses and names
+the changed paths, unless the PR body has a `Docs: none — <reason>` line. That line may be a `- `
+or `* ` list item and may use `-` or `--` for the dash. The reason must be at least two characters,
+and a placeholder such as `<reason>` does not count, nor does a line inside a ```` ``` ```` fence or
+a `>` quote. A change to `commands/*.md` is the text a user reads, so it covers itself when nothing
+else in the code changed; next to a `bin/` or `hooks/` change it does not. The board's own paths
+(`stories/`, `epics/`, `hld/`, `Board.base`, `.obsidian/`) are not docs, even when the board is
+`docs/`; the rest of `docs/` is. It compares against origin's tag by its SHA and never fetches
+over your local tag. It refuses when origin has no
 such tag or the tag is not on the base. No story or epic need list it.
 The head must be green: at least one check run, every run
 completed as success, skipped or neutral, and every commit status a success. It reads every page,

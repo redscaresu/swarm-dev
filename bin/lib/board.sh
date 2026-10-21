@@ -487,16 +487,13 @@ dep_holds() {
 # has .claude-plugin/plugin.json, the tag v<its version> exists here and is on origin/<base>, and
 # commits since it change a file outside the board (when the board is in the repo); else nothing.
 # Local refs only: reconcile has just pulled.
-# board_exclude — the git pathspec that leaves the whole board out when it is in the repo, else nothing.
-board_exclude() { [[ ${BOARD_IN_REPO} != 1 ]] || echo ":(exclude)${BOARD#"${PROJECT_DIR}"/}"; }
-
 release_due() {
   local base version ex="" n
   base="$(git -C "${PROJECT_DIR}" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)" || return 0
   base="${base#origin/}"
   version="$(git -C "${PROJECT_DIR}" show "origin/${base}:.claude-plugin/plugin.json" 2>/dev/null | plugin_version 2>/dev/null)" || return 0
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "refs/tags/v${version}" "origin/${base}" 2>/dev/null || return 0
-  ex="$(board_exclude)"
+  [[ ${BOARD_IN_REPO} != 1 ]] || ex=":(exclude)${BOARD#"${PROJECT_DIR}"/}"
   n="$(git -C "${PROJECT_DIR}" rev-list --count "v${version}..origin/${base}" -- . ${ex:+"${ex}"})" || return 0
   [[ ${n} -eq 0 ]] || echo "${n} v${version} ${base}"
 }
