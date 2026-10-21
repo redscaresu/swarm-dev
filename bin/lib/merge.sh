@@ -27,7 +27,7 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # .github/workflows at <sha>) has a run on <sha>, and every workflow run on <sha> is green. A failed
 # read is a missed poll; three in a row end it. Prints ok (0), red <checks> (1), timeout (<what it
 # waited on>) (2) or error <why> (3); YAML it does not read is an error, never a skipped workflow.
-# ci_gate admin <owner/repo> <base> <sha> <method> [past-queue] — for merge_admin, since --admin skips every rule on
+# ci_gate admin <owner/repo> <base> <sha> <method> — for merge_admin, since --admin skips every rule on
 # <base>, not just the approving review: succeed when <sha> has every status check <base>'s rulesets
 # and branch protection require, is up to date with <base> when they say strict, and <base> has no
 # rule --admin would skip besides the review (merge queue, required workflows, signatures, the
@@ -46,8 +46,6 @@ WAIT_PR_TRANSIENT='rate limit|timeout|timed out|connection reset|connection refu
 # off and taken the PR out of the queue first, and its second line says so.
 # ci_gate pushed <owner/repo> <base> <commit> <wait> — the base's head once it holds <commit> (a merge
 # queue pushes a batch at its last commit), else <commit>.
-# ci_gate other <owner/repo> <base> <pr> — the number of a PR other than <pr> in <base>'s merge queue,
-# 0 when there is none; 3 when the read fails.
 # ci_gate stop <owner/repo> <pr> — turn the PR's auto-merge off and take it out of the queue, saying
 # what it did: for a signal that lands before ci_gate queued can do it.
 ci_gate() {
@@ -106,7 +104,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # Merge with the repo's method (squash, else merge, else rebase), --match-head-commit and, only with
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
-# --release, which merges past an empty queue with --admin (ci_gate admin ... past-queue). Then wait for CI on the merge commit and, without --board or --release, run
+# --release, which refuses there (only --admin merges past a queue). Then wait for CI on the merge commit and, without --board or --release, run
 # reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error, then
@@ -197,16 +195,10 @@ merge_pr() {
     queue="$(ci_gate queue "${repo}" "${base}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")" \
       || merge_fail "could not read whether ${base} has a merge queue: ${queue}"
   fi
-  if [[ "${queue}" == yes && "${only}" == --release ]]; then
-    # A release never joins the queue, where a PR queued behind it could share its push and its
-    # tag: it merges past it, directly (--admin), once nothing else is queued, re-checked last.
-    why="$(ci_gate admin "${repo}" "${base}" "${head}" "${method}" past-queue)" \
-      || merge_fail "--release: --admin may not merge ${head:0:7} past ${base}'s merge queue: ${why}"
-    why="$(ci_gate other "${repo}" "${base}" "${n}")" || merge_fail "--release: cannot read ${base}'s merge queue: ${why}"
-    [[ "${why}" == 0 ]] || merge_fail "--release: #${why} is in ${base}'s merge queue; merge the release once the queue is empty"
-    echo "--release: ${base}'s merge queue holds no other PR, so #${n} merges past it, directly"
-    admin=(--admin); queue=no
-  fi
+  # A release never joins the queue, where a PR queued behind it could share its push and its tag,
+  # and a base that requires one takes no direct merge but --admin's, which merge_admin = off rules out.
+  [[ "${queue}" != yes || "${only}" != --release ]] \
+    || merge_fail "--release: ${base} requires a merge queue, which a release must not join (a PR queued behind it could share its tag) and which only --admin merges past, with merge_admin = off; merge ${url} yourself once the queue is empty"
   if [[ "${queue}" == yes ]]; then
     # The conductor's brief keys on this line: every PR goes through the queue at once.
     echo "merge queue: ${base} has one, so #${n} goes through it"

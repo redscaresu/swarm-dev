@@ -67,7 +67,6 @@ case "$1 $2" in
     sha="${path#*/commits/}"; sha="${sha%%/*}"
     case "${path}" in
       # The merge queue's read of the PR (api graphql); a read that says merged marks the PR so.
-      *"entries("*) serve mqfirst ;;       # the PR first in the base's merge queue
       *"mergeQueue(branch"*) serve mq ;;   # whether the base has a merge queue
       # Turning auto-merge off and dequeuing: they succeed, unless ${FX}/mutation.fail.
       *"mutation("*) [ ! -e "${FX}/mutation.fail" ] || { echo "gh: HTTP 502" >&2; exit 1; }; echo '{"data":{}}' ;;
@@ -780,27 +779,12 @@ check "a TERM during the enqueue: auto-merge off and out of the queue, logged as
 # A null repository on the queue read is a failed read, tried again, not a crash.
 fresh; echo '{"data":{"repository":null}}' > "${FX}/mq.1"; merge "${URL}"
 is "a null repository on the queue read: read again, then merges" "0|2" "${rc}|$(grep -c mergeQueue "${ROOT}/gh.log")"
-# --release on a base with a merge queue goes through only alone: refused while the queue holds a PR,
-# and taken out if another is first in it while the release is queued.
-rqfresh() {
-  release_pr; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"; echo '[{"type":"merge_queue"}]' > "${FX}/rules"
-  checks "${FX}/${G}.checks" "$(run test completed success)"; statuses "${FX}/${G}.status"
-}
-mqfirst() { # <file> [pr]... — the merge queue's first entries, in order: each <pr>, or none
-  local f="$1" e="" x; shift
-  for x in "$@"; do e="${e:+${e},}{\"pullRequest\":{\"number\":${x}}}"; done
-  printf '{"data":{"repository":{"mergeQueue":{"entries":{"nodes":[%s]}}}}}\n' "${e}" > "${f}"
-}
-rqfresh; mqfirst "${FX}/mqfirst" 9; merge --release "${URL}"
-refused "--release while the queue holds another PR" "#9 is in main's merge queue; merge the release once the queue is empty"
-rqfresh; mqfirst "${FX}/mqfirst" 7 9; merge --release "${URL}"
-refused "--release while a PR is in the queue behind an earlier enqueue of it" "#9 is in main's merge queue; merge the release once the queue is empty"
-rqfresh; mqfirst "${FX}/mqfirst"; merge --release "${URL}"
-is "--release past an empty merge queue: merges directly, no reconcile" "0|merge ${URL} ok|main-ci ${URL} ok" "${rc}|$(events | paste -sd'|' -)"
-check "--release past a merge queue: never enqueued, so no PR queued behind it can share its commit, and the queue is read just before the merge" \
-  bash -c "! grep -q -- '--auto' '${ROOT}/gh.log' && grep -B1 '^pr merge' '${ROOT}/gh.log' | head -1 | grep -q 'entries(' && grep -qxF 'pr merge 7 --repo o/r --squash --match-head-commit ${H1} --admin' '${ROOT}/gh.log'"
-rqfresh; mqfirst "${FX}/mqfirst"; echo '[{"type":"merge_queue"},{"type":"code_scanning"}]' > "${FX}/rules"; merge --release "${URL}"
-refused "--release past a merge queue with another rule --admin would skip" "--admin may not merge 1111111 past main's merge queue: ruleset rule code_scanning, which --admin would skip"
+# --release on a base with a merge queue, merge_admin off: refused, naming the queue, with no merge,
+# no enqueue and never --admin.
+release_pr; echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"; echo '[{"type":"merge_queue"}]' > "${FX}/rules"
+merge --release "${URL}"
+refused "--release on a base with a merge queue, merge_admin off" "--release: main requires a merge queue, which a release must not join"
+check "--release on a base with a merge queue, merge_admin off: never passes --admin" bash -c "! grep -q -- '--admin' '${ROOT}/gh.log'"
 # A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
 fresh; touch "${FX}/mq.fail"; merge "${URL}"
 refused "a queue that cannot be read" "could not read whether main has a merge queue"

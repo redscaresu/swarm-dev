@@ -1150,11 +1150,10 @@ unconfirmed (`stopped by SIGTERM` for a signal), naming anything it could not un
 hand; running `merge` again enqueues it again. A PR that never reads as queued after gh failed on
 the enqueue is a refusal instead. If the queue cannot be read (three tries), `merge` refuses and merges nothing: on a
 base with a queue, a direct merge would enqueue the PR with nothing watching its head. `--release`
-never joins the queue, where a PR queued behind it could share its push and so its tag. It merges
-past the queue, directly with `--admin`, and only when `ci_gate admin` finds nothing else that
-`--admin` would skip (the review and the queue may be skipped) and a read made just before the merge
-finds no other PR in the queue. It needs a token that may bypass the queue; without one, gh refuses
-the merge and nothing merges. With no
+never joins the queue, where a PR queued behind it could share its push and so its tag, and a base
+that requires a queue takes no direct merge but `--admin`'s, which `merge_admin = off` rules out. So
+`merge --release` refuses there, naming the queue, and the release is yours to merge once the queue
+is empty. With no
 queue the path is the one above. ci.yml and zizmor.yml run on
 `merge_group`, and ci.yml's gate reads the base's copy of board-only.sh from the merge group's base,
 so the required checks report on each group. infrafactory keeps no queue: its ruleset needs an approving review, and `merge_admin = on`

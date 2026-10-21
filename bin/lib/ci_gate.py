@@ -118,11 +118,10 @@ def base_rules(repo, base, method):
             skip.append("branch protection " + k)
     return req, strict or bool(rsc.get("strict")), skip
 
-def admin(repo, base, sha, method, past_queue=False):
+def admin(repo, base, sha, method):
     """Why --admin may not merge sha into base with method, or nothing: it must stand in for the
-    review only, and with past_queue (a release merged past an empty merge queue) the queue too."""
+    review only."""
     req, strict, skip = base_rules(repo, base, method)
-    skip = [r for r in skip if not (past_queue and r == "ruleset rule merge_queue")]
     why = ["%s, which --admin would skip" % r for r in skip]
     red, wait, _ = checks(repo, sha, req)
     why += red + wait
@@ -157,16 +156,6 @@ def has_queue(repo, base, wait):
             if i == READ_TRIES - 1:
                 raise
             time.sleep(wait)
-
-def other_in_queue(repo, base, n):
-    """The number of a PR other than n in base's merge queue, ahead of it or behind, or 0 when there
-    is none: of its first two entries, at most one is n. A failed read raises."""
-    owner, name = repo.split("/")
-    q = graphql("query($o: String!, $r: String!, $b: String!) { repository(owner: $o, name: $r) { mergeQueue(branch: $b) "
-                "{ entries(first: 2) { nodes { pullRequest { number } } } } } }", o=owner, r=name, b=base)["mergeQueue"]
-    nodes = ((q or {}).get("entries") or {}).get("nodes") or []
-    nums = [int(((e or {}).get("pullRequest") or {}).get("number") or 0) for e in nodes]
-    return next((x for x in nums if x and x != int(n)), 0)
 
 def pushed(repo, base, oid, wait):
     """The base's head once it holds oid, the commit a merge queue's batch was pushed at, where the
@@ -537,7 +526,7 @@ try:
             raise Err("unreadable finish time on " + args[0])
         print(int(time.time() - last) // 60)
     elif mode == "admin":
-        why = admin(repo, args[0], args[1], args[2], len(args) > 3 and args[3] == "past-queue")
+        why = admin(repo, args[0], args[1], args[2])
         if why:
             print("; ".join(why))
             sys.exit(1)
@@ -545,8 +534,6 @@ try:
         print("yes" if has_queue(repo, args[0], float(args[1])) else "no")
     elif mode == "pushed":
         print(pushed(repo, args[0], args[1], float(args[2])))
-    elif mode == "other":
-        print(other_in_queue(repo, args[0], args[1]))
     elif mode == "stop":
         print(stop_pr(repo, args[0]))
     elif mode == "queued":
