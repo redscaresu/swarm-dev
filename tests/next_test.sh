@@ -512,6 +512,8 @@ expect_conductor() { # <name> <want> <write the report?> [epic] [glob next's why
   [[ "$3" == yes ]] && echo report > "${dir}/.swarm/conduct-${epic}.report.md"
   for step in "${@:6}"; do (cd "${dir}" && eval "${step}"); done
   got="$(cd "${dir}" && HERDR_ENV=1 PATH="${dir}/bin:${PATH}" bash "${SWARM}" next)"; out="${got}"
+  # next only reads: it never writes a pane record or logs a stop (pane_check is status's and wait's).
+  if [[ -e "${dir}/.swarm/panes" ]] || grep -q $'\tincident\t' "${dir}/.swarm/events.tsv" 2>/dev/null; then got="next wrote a pane record or an incident: ${got}"; fi
   # shellcheck disable=SC2053 # the why is a glob
   [[ "$(sed -n 2p <<< "${got}")" == ${why} ]] || got="${got%%$'\n'*} (why: $(sed -n 2p <<< "${got}"))"
   got="${got%%$'\n'*}"
