@@ -254,7 +254,8 @@ queue_merge() {
     6) record_event merge "${MERGE_TARGET}" "${why}"
        echo "merge: #$1 ${why}"
        QUEUE_BAD="#$1 ${why}: review what merged"; return 0 ;;
-    *) merge_fail "unconfirmed (${why%%$'\n'*}): #$1 did not merge; ${why#*$'\n'}" ;;
+    *) [[ "${why}" == *$'\n'* ]] || why="${why:-error (exit ${rc})}"$'\n'"auto-merge and the queue may still hold it: check it by hand"
+       merge_fail "unconfirmed (${why%%$'\n'*}): #$1 did not merge; ${why#*$'\n'}" ;;
   esac
   record_event merge "${MERGE_TARGET}" ok
   echo "merged: #$1 through the merge queue (head ${3:0:7}, merge commit ${oid:0:7})"

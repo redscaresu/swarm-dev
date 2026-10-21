@@ -578,13 +578,14 @@ check "merge_admin = on, only the review and push rules: --admin" grep -q -- "^p
 
 # --- A merge queue on the base: enqueue the pinned head, wait for the queue, no main-ci wait.
 G=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb   # the merge group's commit
-NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# now — the time a fixture is written: ci_gate counts only events within SKEW (30 s) of the enqueue.
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # qread <file> <state> <in queue> <auto-merge> <group|-> <merge commit|-> [reason [when]] — one graphql
 # read of the PR, its head ${QHEAD:-H1}; a reason is a removal from the queue at <when> (default now).
 qread() {
   local g=null m=null r=""
   [[ "$5" == - ]] || g="{\"headCommit\":{\"oid\":\"$5\"}}"; [[ "$6" == - ]] || m="{\"oid\":\"$6\"}"
-  [[ -z "${7:-}" ]] || r="{\"reason\":\"$7\",\"createdAt\":\"${8:-${NOW}}\"}"
+  [[ -z "${7:-}" ]] || r="{\"reason\":\"$7\",\"createdAt\":\"${8:-$(now)}\"}"
   printf '{"data":{"repository":{"pullRequest":{"id":"PR_7","state":"%s","headRefOid":"%s","isInMergeQueue":%s,"autoMergeRequest":%s,"mergeCommit":%s,"mergeQueueEntry":%s,"timelineItems":{"nodes":[%s]}}}}}\n' \
     "$2" "${QHEAD:-${H1}}" "$3" "$4" "${m}" "${g}" "${r}" > "$1"
 }
@@ -610,9 +611,10 @@ merge "${URL}"
 is "dequeue: exits non-zero" 1 "${rc}"
 check "dequeue: names the failing check on the merge group's commit" said "dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}"
 is "dequeue: one merge line naming the check, no reconcile" "merge s dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}" "$(events)"
+check "dequeue: the story stays on the board" test -e "${S}"
 # In and out of the queue between two reads: the group commit is found from its merge_group run.
 qfresh; qread "${FX}/queue.1" OPEN false "${WAITING}" - -; qread "${FX}/queue.2" OPEN false null - - "MERGE_QUEUE_STATUS_CHECK_FAILED"
-printf '{"workflow_runs":[{"head_branch":"gh-readonly-queue/main/pr-7-%s-%s","head_sha":"%s","created_at":"%s"}]}\n' "${H1}" "${M}" "${G}" "${NOW}" > "${FX}/mgruns"
+printf '{"workflow_runs":[{"head_branch":"gh-readonly-queue/main/pr-7-%s-%s","head_sha":"%s","created_at":"%s"}]}\n' "${H1}" "${M}" "${G}" "$(now)" > "${FX}/mgruns"
 merge "${URL}"
 check "a dequeue between two reads: names the check on the group commit its run names" said "dequeued (MERGE_QUEUE_STATUS_CHECK_FAILED): ${LINT}"
 # In and out before the first read: a removal since the enqueue is a dequeue, not "never queued".
@@ -657,8 +659,8 @@ check "a queue that never merges: unconfirmed, auto-merge off and out of the que
 check "a queue that never merges: both calls made" bash -c "grep -q disablePullRequestAutoMerge '${ROOT}/gh.log' && grep -q dequeuePullRequest '${ROOT}/gh.log'"
 qfresh; touch "${FX}/mutation.fail"; qread "${FX}/queue" OPEN true null "${G}" -
 merge SWARM_MERGE_CI_SECONDS=1 SWARM_MERGE_POLL=1 "${URL}"
-check "a timeout whose dequeue fails: says to do it by hand" said "dequeuePullRequest failed (gh api graphql"
-check "a timeout whose dequeue fails: ... by hand" said "take it out of the merge queue and turn auto-merge off by hand"
+check "a timeout whose dequeue fails: names it, and says to do it by hand" \
+  bash -c "grep -qF 'dequeuePullRequest failed (gh api graphql' '${ROOT}/out' && grep -qF 'take it out of the merge queue and turn auto-merge off by hand' '${ROOT}/out'"
 # A queue that cannot be read (three tries) refuses: a direct merge would enqueue unwatched.
 fresh; touch "${FX}/mq.fail"; merge "${URL}"
 refused "a queue that cannot be read" "could not read whether main has a merge queue"
