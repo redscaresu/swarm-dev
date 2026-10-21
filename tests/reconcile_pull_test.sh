@@ -315,6 +315,14 @@ echo "a local note" >> "${ROOT}/rx/stories/x.md"
 rc=0; out="$(at rx reconcile)" || rc=$?
 check "a root board: a hand edit the pull changes too is named as a board file" "1|yes" \
   "${rc}|$(has "board files are changed here: stories/x.md; land each edit through swarm.sh board-pr" "${out}")"
+# --- One reconcile at a time: a die inside frees the lock and is still the logged outcome, and a held
+# lock makes the next one wait, then stop naming it.
+check "a reconcile that dies frees its lock, and logs why" "gone|yes" \
+  "$(gone "${ROOT}/rx/.swarm/reconcile.lock")|$(has "reconcile: cannot pull" "$(tail -1 "${ROOT}/rx/.swarm/events.tsv")")"
+mkdir "${ROOT}/ra/.swarm/reconcile.lock"
+rc=0; out="$(SWARM_RECONCILE_WAIT=1 at ra reconcile)" || rc=$?
+check "a reconcile while another holds the lock waits, then stops naming it" "1|yes|there" \
+  "${rc}|$(has "${ROOT}/ra/.swarm/reconcile.lock is still there after 1s" "${out}")|$([[ -d "${ROOT}/ra/.swarm/reconcile.lock" ]] && echo there || echo gone)"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

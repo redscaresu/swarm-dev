@@ -214,7 +214,8 @@ EOF
 }
 
 # pinned_merge_rule <review args> — with merge = agent, how a conductor merges a reviewed PR: put the
-# item in review, then swarm.sh merge pinned to the head it reviewed, one at a time, which reconciles.
+# item in review, then swarm.sh merge pinned to the head it reviewed, which reconciles: all at once on a
+# base with a merge queue, so the queue batches them, else one at a time.
 pinned_merge_rule() {
   cat <<EOF
 Merge a PR only when it is green and reviewed, and only through \`swarm.sh merge\`: run
@@ -227,9 +228,13 @@ with a merge queue it enqueues that head with \`--auto --match-head-commit\` ins
 queue, which tests it on top of the base and the PRs ahead of it. A PR the queue drops prints
 \`dequeued (<reason>): <checks>\` and merged nothing: handle it like a red check. Send the failing
 checks to the builder with \`swarm.sh tell <slug> findings <file>\`, telling it to merge
-origin/<base> in, fix what broke and push; then review the new head and merge it again. Run one
-\`swarm.sh merge\` at a time: start the next only after the previous one has exited, its base CI and
-reconcile done. Run it in the background (Bash \`run_in_background\`)
+origin/<base> in, fix what broke and push; then review the new head and merge it again. The first
+\`swarm.sh merge\` shows whether the base has a merge queue. Where it prints \`queued:\`, the base has a merge
+queue: start \`swarm.sh merge\` for every PR whose latest head passed review as soon as it passes,
+without waiting for the ones before it to merge, so the queue tests them together and merges them in
+batches. Where it prints \`merged: <PR URL> (...); waiting for CI on <base>\`, or before any merge has
+printed either, run one \`swarm.sh merge\` at a time: start the next only after the previous one has
+exited, its base CI and reconcile done. Run each in the background (Bash \`run_in_background\`)
 and wait for it: it waits up to $((MERGE_CI_SECONDS / 60)) minutes for CI on the merge commit on the
 base, then runs \`swarm.sh reconcile\`, never a plain \`git pull\`, which pulls the board and finishes the item. If
 it exits non-zero, read why: a refusal before \`gh pr merge\` ran merged nothing; \`unconfirmed\`

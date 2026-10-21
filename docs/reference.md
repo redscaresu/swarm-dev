@@ -1026,7 +1026,9 @@ repo, reconcile never deletes a tracked file in the main checkout. An item whose
 its file on the board is marked `done` in its state after a pull, or at once when the checkout's
 branch has no upstream (there is nothing to pull), and stays on the board until
 `swarm.sh finish <slug>` takes it off through a board PR. When reconcile holds the pull because it
-cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged. `swarm.sh unblock` then readies a
+cannot read a PR in review, the item stays in review until a later reconcile pulls. On a board outside the repo it deletes the file of the item that merged.
+Reconciles in one project run one at a time (merges through a merge queue run side by side): one
+waits up to 300 seconds (`SWARM_RECONCILE_WAIT`) for `.swarm/reconcile.lock`, then stops naming it. `swarm.sh unblock` then readies a
 blocked story once every slug in its `depends_on` is finished. It leaves an old `blocked_by` line as it is, since nothing reads it. With `merge = agent` the conductor merges instead, only through `swarm.sh merge`, except for a story with `costs: money`: `swarm.sh merge` holds a PR whose story, or a story it stacks on, has `costs: money` or any other value but `none` for you, on every route (`held: <slug> costs money`). A `costs:` of `none` or empty merges, and an unreadable board story holds every PR (it fails closed). The conductor reviews a held PR, closes its builder and leaves it for your merge. Only the conductor merges. Every agent, the conductor included, still starts unable to run `gh pr merge`. The head a review passed is the `head:` line of the
 story's findings file; once the review passes, the conductor reads the PR's head again, and if it is
 not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
@@ -1034,8 +1036,11 @@ not that SHA, it reviews the new head. Then it runs `swarm.sh review <slug>
 with `--match-head-commit`, never `--auto`, waits for CI on the base, and runs `swarm.sh reconcile`.
 That pulls the board the way it does for you, and finishes
 the story, closing its builder. The conductor never closes the builder before that, because closing
-a story that is still `ready` counts a failed build. It runs one `swarm.sh merge` at a time, and starts
-the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
+a story that is still `ready` counts a failed build. Its first `swarm.sh merge` shows whether the
+base has a merge queue. Where it prints `queued:`, the base has a merge queue, and the conductor starts `swarm.sh
+merge` for every PR whose latest head passed review as soon as it passes, without waiting for the
+ones before it to merge, so the queue tests them together and merges them in batches. Otherwise it
+runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
 run, starts each story of the epic that unblock printed as `ready:` and that clashes with no
 running one (§ Building, Pick the wave). A build cleared on error or given up on stops that: it starts nothing more in
 the wave. It reports once no story of the epic that it may start is ready and none is running. If
@@ -1145,8 +1150,9 @@ Your own session has no `SWARM_AGENT`, so only the `cd` and `git checkout` rules
 rules fail open: an error in them never refuses a call, even one whose command also says merge, and
 a command that says `git` or `cd` but not merge passes when the check cannot run at all.
 
-**Merge one at a time.** After each merge, merge the base branch into every other open wave branch before
-trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang.
+**Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
+trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang. A merge queue
+tests each PR on top of the ones ahead of it, so there every reviewed PR can be enqueued at once.
 
 **Keep with the lead:** real-cloud runs, credentials, and anything that changes permissions.
 
