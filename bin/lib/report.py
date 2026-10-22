@@ -173,18 +173,25 @@ LIMIT = [""]   # gh's error once the hourly limit is spent
 
 FETCH_SECONDS = 60
 
-def git_fetch(root, *args, seconds=FETCH_SECONDS):
-    # git fetch -q <args> in root, never prompting: no stdin, no terminal prompt, and ssh in batch mode
-    # (the user's GIT_SSH_COMMAND or core.sshCommand with -o BatchMode=yes after it), stopped after
-    # seconds. "" once it fetched, else why not.
-    ssh = os.environ.get("GIT_SSH_COMMAND") or subprocess.run(["git", "-C", root, "config", "core.sshCommand"],
-                                                             capture_output=True, text=True).stdout.strip() or "ssh"
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=ssh + " -o BatchMode=yes")
+@functools.lru_cache(maxsize=None)
+def batch_ssh(root):
+    # The user's GIT_SSH_COMMAND or core.sshCommand, with -o BatchMode=yes after it.
+    return (os.environ.get("GIT_SSH_COMMAND") or subprocess.run(["git", "-C", root, "config", "core.sshCommand"],
+            capture_output=True, text=True).stdout.strip() or "ssh") + " -o BatchMode=yes"
+
+def quiet_git(root, *args, seconds=FETCH_SECONDS):
+    # git <args> in root that never prompts, even when a partial clone fetches on demand: no stdin, no
+    # terminal prompt, and ssh in batch mode, stopped after seconds (exit 124, "over <seconds> s").
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=batch_ssh(root))
     try:
-        got = subprocess.run(["git", "-C", root, "fetch", "-q", *args], stdin=subprocess.DEVNULL, capture_output=True,
-                             text=True, timeout=seconds, env=env)
+        return subprocess.run(["git", "-C", root, *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=seconds, env=env)
     except subprocess.TimeoutExpired:
-        return f"over {seconds} s"
+        return subprocess.CompletedProcess(args, 124, "", f"over {seconds} s")
+
+def git_fetch(root, *args):
+    # git fetch -q <args> in root, never prompting (quiet_git). "" once it fetched, else why not.
+    got = quiet_git(root, "fetch", "-q", *args)
     said = [l.strip() for l in got.stderr.splitlines() if l.strip()]
     return "" if got.returncode == 0 else said[-1] if said else f"exit {got.returncode}"
 

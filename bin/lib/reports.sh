@@ -335,7 +335,7 @@ dataset_report() {
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
-# the PR heads merge_ins fetches.
+# the PR heads merge_ins fetches and the trees and blobs its git merge-tree writes into each repo.
 # SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {

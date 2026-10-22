@@ -4,15 +4,16 @@
 # the window is the 30 days up to --until or today, as each PR costs 2 gh calls. gh's REST API lists each
 # PR's commits; a merge-in is one whose headline merges the base in, by outcomes' main_merges rule. git
 # re-merges its two parents with merge-tree in its story's repo (SWARM_REPO_DIRS), fetching the PR's
-# refs/pull/<n>/head from origin once when a merge-in is not there (a `merge ins: fetched` line says so):
+# refs/pull/<n>/head once when a merge-in is not there and origin is the PR's repo (a `merge ins: fetched`
+# line says so); every git call runs with no prompt and a time limit (report.quiet_git):
 # conflict when they conflict, or when the commit's tree differs from git's clean merge on a path the
 # PR changes against the base (a hand fix; a difference elsewhere is another merge strategy); behind
 # when they merge clean and the base had commits the branch lacked; neither when it had none. unread
 # counts the rest: a PR gh could not read, the merge-ins main_merges counted that gh does not list, a
 # sha or commit git cannot read, and a one-parent "merge" (a squash, a rebase); a `merge ins: left out
 # <url>: <why>` line names each. TSV cause merge_ins prs, then, after a blank line, file conflicts: the
-# three files conflicts hit most.
-import collections, datetime, os, re, subprocess
+# three files conflicts hit most; or none conflicted, or none read when it read no merge-in.
+import collections, datetime, os, re
 from report import *
 
 DAYS = 30
@@ -21,8 +22,13 @@ SHA = re.compile(r"[0-9a-f]{40}")   # a fork's PR is not ours to pass to git as 
 project = os.path.dirname(os.path.dirname(events))   # events is <project>/.swarm/events.tsv
 repos = {s: d.strip() for s, _, d in (l.partition("\t") for l in os.environ.get("SWARM_REPO_DIRS", "").splitlines())}
 
-def git(root, *args):
-    return subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+git = quiet_git
+ORIGIN = re.compile(r"(?:https://|ssh://git@|git@)github\.com[/:]([^/]+/[^/]+?)(?:\.git)?/?")
+
+def origin(root):
+    # owner/repo of root's origin on github.com, lowercase; "" for any other origin.
+    m = ORIGIN.fullmatch(git(root, "config", "--get", "remote.origin.url").stdout.strip())
+    return m.group(1).lower() if m else ""
 
 def said(got):
     lines = [l.strip() for l in got.stderr.splitlines() if l.strip()]
@@ -120,7 +126,8 @@ for key, r in sorted(prs.items()):
         continue
     if len(oids) < want:
         tally(key, url, "unread", want - len(oids), reason=f"gh lists {len(oids)} of the {want} merge-ins outcomes counted")
-    fetched = {}
+    # A fork's or another repo's origin has no refs/pull/<n>/head of this PR: never fetch from it.
+    fetched = {} if origin(root) == m.group(1).lower() else {n: f": its origin is not github.com/{m.group(1)}"}
     for oid in oids:
         if not isinstance(oid, str) or not SHA.fullmatch(oid):
             tally(key, url, "unread", reason=f"gh gives {str(oid)[:40]!r} as a merge-in's sha")
@@ -132,7 +139,7 @@ for key, r in sorted(prs.items()):
 print("cause\tmerge_ins\tprs")
 for c in CAUSES:
     print(f"{c}\t{counts[c]}\t{len(by_cause[c])}")
-print("\nfile\tconflicts" if files else "\nnone conflicted")
+print("\nfile\tconflicts" if files else "\nnone conflicted" if counts["conflict"] + counts["behind"] + counts["neither"] else "\nnone read")
 for f, k in sorted(files.items(), key=lambda x: (-x[1], x[0]))[:3]:
     print(f"{f}\t{k}")
 if notes:

@@ -878,7 +878,7 @@ numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under 
 `ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
-the others. `flow` writes nothing, except that `merge_ins` may fetch a PR's head into its repo. For one release, the old `cost`, `features` and `review-yield`
+the others. `flow` writes nothing, except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
@@ -913,19 +913,20 @@ in: the PRs of the window's outcomes rows (or `--epic`'s), one row per PR, that 
 today), as each PR costs two `gh` calls, and a line says so. It reads each PR and its commits over gh's
 REST API, with `ci_health`'s retries and its stop once the hourly limit is spent. A merge-in is a commit
 whose headline merges the base in, the same rule `main_merges` counts by. `git merge-tree` re-merges the
-commit's two parents in its story's repo (its `repo:`, or the project). When the commit is not there,
-the section fetches the PR's `refs/pull/<n>/head` from origin once, as `dataset` fetches: with no
-prompt, ssh in batch mode, and a 60-second limit. A `merge ins: fetched` line says so. A merge that
-conflicts is `conflict`. So is one git merges clean but whose commit differs from that clean merge on a
-path the PR changes, a fix made by hand before committing; a difference on other paths comes from
-another merge strategy (GitHub's "Update branch", an older git) and counts as clean. A clean merge is
-`behind` when the base had commits the branch lacked, and `neither` when it had none. `unread` counts a
-PR `gh` cannot read or whose answer names no base branch, the merge-ins `main_merges` counted that `gh`
-does not list, a sha that is not 40 hex digits, a commit git cannot find, and a "merge" with one parent
-(a squash or a rebase); a `merge ins: left out <PR>: <why>` line names each. It prints TSV `cause
-merge_ins prs`, a row per cause (a PR with merge-ins of two causes counts in both), then `file
-conflicts`, the three files conflicts and hand fixes hit most (control characters dropped from the
-names), or `none conflicted`.
+commit's two parents in its story's repo (its `repo:`, or the project). When the commit is not there and
+the repo's origin is the PR's repo, the section fetches the PR's `refs/pull/<n>/head` from origin once,
+and a `merge ins: fetched` line says so. Every git call it makes runs as `dataset`'s fetch does: with no
+prompt, ssh in batch mode, and a 60-second limit. A merge that conflicts is `conflict`. So is one git
+merges clean but whose commit differs from that clean merge on a path the PR changes, a fix made by hand
+before committing; a difference on other paths comes from another merge strategy (GitHub's "Update
+branch", an older git) and counts as clean. A clean merge is `behind` when the base had commits the
+branch lacked, and `neither` when it had none. `unread` counts a PR `gh` cannot read or whose answer
+names no base branch, the merge-ins `main_merges` counted that `gh` does not list, a sha that is not 40
+hex digits, a commit git cannot find, and a "merge" with one parent (a squash or a rebase); a `merge
+ins: left out <PR>: <why>` line names each. It prints TSV `cause merge_ins prs`, a row per cause (a PR
+with merge-ins of two causes counts in both), then `file conflicts`, the three files conflicts and hand
+fixes hit most (control characters dropped from the names); or `none conflicted`, or `none read` when it
+read no merge-in.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,

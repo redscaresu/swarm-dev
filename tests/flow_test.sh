@@ -139,7 +139,9 @@ done
 # repo s2, where its merge-in conflicts on f. m8's (#8) merge-in is nowhere, so its fetch fails, and gh
 # gives an option as its second's sha. m9's (#9) says it merges main in, but has one parent. m10's (#10)
 # differs from git's clean merge only on x, a path it leaves as main has it: another strategy's merge,
-# behind. gh's answer for m11's PR (#11) has no base branch.
+# behind. gh's answer for m11's PR (#11) has no base branch. The project's origin is github.com/o/r, which
+# git reads from s.git. m12 (#12, epic e11) is a story of s2, whose origin is not: its missing merge-in is
+# not fetched. m13 (#13, epic e10) is m2's clean merge-in again.
 S="${dir}/s"; mkdir -p "${S}/.swarm" "${S}/docs/stories" "${dir}/sbin"
 g() { git -C "${S}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g2() { git -C "${dir}/s2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
@@ -157,20 +159,24 @@ g checkout -qb story/m10 main~1; echo x > "${S}/x"; g add x; g commit -qm x; g c
 g branch -f story/m10 "$(g commit-tree 'main^{tree}' -p story/m10 -p main -m "Merge branch 'main' into story/m10")"
 g checkout -qb story/m9 main; g commit -q --allow-empty -m "Merge branch 'main' into story/m9"
 g branch -f story/m3 "$(g commit-tree 'story/m3^{tree}' -p story/m3 -p main -m 'Merge origin/main into story/m3')"
-git clone -q --bare "${S}" "${dir}/s.git"; g remote add origin "${dir}/s.git"; git clone -q "${dir}/s.git" "${dir}/s2"
+git clone -q --bare "${S}" "${dir}/s.git"; g remote add origin https://github.com/o/r.git; g config url."${dir}/s.git".insteadOf https://github.com/o/r.git
+git clone -q "${dir}/s.git" "${dir}/s2"
 g2 checkout -qb story/m6 origin/main~1; echo six > "${dir}/s2/six"; g2 add six; g2 commit -qm six
 g2 merge -q -m "Merge remote-tracking branch 'origin/main' into story/m6" origin/main; g2 push -q origin story/m6:refs/pull/6/head
 g2 checkout -qb story/m7 origin/main~1; echo seven > "${dir}/s2/f"; g2 commit -qam seven
 g2 merge -q origin/main > /dev/null || true; echo 7m > "${dir}/s2/f"; g2 commit -qam "Merge branch 'main' into story/m7"
-for n in 1 2 3 4 5 6 7 8 9 10 11; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
+for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: s2\n---\n' > "${S}/docs/stories/m7.md"
-printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 > "${S}/.swarm/agents.tsv"
+printf -- '---\nkind: code\nstatus: ready\nepic: e11\nrepo: s2\n---\n' > "${S}/docs/stories/m12.md"
+printf -- '---\nkind: code\nstatus: ready\nepic: e10\n---\n' > "${S}/docs/stories/m13.md"
+printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 > "${S}/.swarm/agents.tsv"
 commits() { # <PR> <git function> <merge-in>: gh api's commits of the PR, its merge-in's parent and then its merge-in, whose message has a body
   printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s\\n\\nbody"}}]]' \
     "$("$2" rev-parse "$3^1")" "$("$2" rev-parse "$3")" "$("$2" log -1 --format=%s "$3")" > "${dir}/sbin/$1"
 }
 for n in 1 2 3 5 9 10; do commits "${n}" g "story/m${n}"; done
-commits 6 g2 story/m6; commits 7 g2 story/m7
+commits 6 g2 story/m6; commits 7 g2 story/m7; cp "${dir}/sbin/2" "${dir}/sbin/13"
+printf '[[{"sha":"fedcba9876543210fedcba9876543210fedcba98","commit":{"message":"Merge origin/main into story/m12"}}]]' > "${dir}/sbin/12"
 printf '[[{"sha":"0123456789abcdef0123456789abcdef01234567","commit":{"message":"Merge origin/main into story/m8"}},{"sha":"--output=x","commit":{"message":"Merge origin/main into story/m8"}}]]' > "${dir}/sbin/8"
 cat > "${dir}/sbin/gh" <<EOF
 #!/bin/sh
@@ -207,7 +213,15 @@ merge ins: left out '"${U}"$'/8: 0123456789ab: not in '"$(cd "${S}" && pwd -P)"$
 merge ins: left out '"${U}"$'/8: gh gives \'--output=x\' as a merge-in\'s sha
 merge ins: left out '"${U}"$'/9: '"$(g rev-parse --short=12 story/m9)"$': 1 parent(s), not a merge of two'
 check "merge_ins: under --epic with no --since, every PR of the epic, as epic_totals counts them" "$(mi --until 2026-12-31 | sed -n 1,2p)" $'cause\tmerge_ins\tprs\nconflict\t3\t3'
-check "merge_ins: with no PRs in the window, none conflicted" "$(mi --since 2026-10-02 | tail -1)" "none conflicted"
+check "merge_ins: with no PRs in the window, none read" "$(mi --since 2026-10-02 | tail -1)" "none read"
+check "merge_ins: a clean merge-in alone, none conflicted" "$(mi --since 2026-10-01 --epic e10 | tail -1)" "none conflicted"
+check "merge_ins: every merge-in unread, none read; an origin that is not the PR's repo is never fetched from" "$(mi --since 2026-10-01 --epic e11)" $'cause\tmerge_ins\tprs
+conflict\t0\t0
+behind\t0\t0
+neither\t0\t0
+unread\t1\t1
+none read
+merge ins: left out '"${U}"$'/12: fedcba987654: not in '"$(cd "${dir}/s2" && pwd -P)"$': its origin is not github.com/o/r'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
