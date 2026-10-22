@@ -258,6 +258,12 @@ merge_pr() {
       ( fix_main "${repo}" "${oid}" "${base}" "${why#red }" ) || echo "main red, and fix_main failed (exit $?)"
     fi
   fi
+  # A board PR can make stories ready: their conductor hears now, not on its next pass. In the
+  # background, so set -e holds inside it; it never fails the merge.
+  if [[ "${only}" == --board && -n "${oid}" ]]; then
+    ( set -e; ready_tell "${url}" ) &
+    wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
+  fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
     # shellcheck disable=SC2034 # read in another file
@@ -270,6 +276,47 @@ merge_pr() {
   fi
   [[ ${rc} -eq 0 ]] || die "merge: CI on ${base} at ${oid:0:7} is not green: $(ci_data <<< "${why}")"
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
+}
+
+# board_ready — each story next_step would build now (buildable_story), as "<slug> <epic>" lines, -
+# for no epic.
+board_ready() {
+  local f e
+  while IFS= read -r f; do
+    if buildable_story "${f}"; then e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"; fi
+  done < <(board stories)
+}
+
+# ready_tell <url> — once merge --board has landed <url>: pull the main checkout (pull_board_repo,
+# under reconcile's lock, as reconcile pulls it), then for each epic with stories buildable now that
+# were not before, send its running conductor (the backlog's, for stories with no epic) one note
+# naming them, to start them now. With no conductor running it says next will. A failed pull or
+# tell is a warning: the merge has landed either way.
+ready_tell() {
+  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" before new e name of slugs note
+  has_upstream || return 0
+  before="$(board_ready)"
+  # shellcheck disable=SC2064 # the path is fixed now
+  ( SWARM_LOCK_WAIT="${SWARM_RECONCILE_WAIT:-${RECONCILE_LOCK_WAIT}}" state_lock "${lock}"
+    trap "rmdir '${lock}' 2>/dev/null || true" EXIT
+    pull_board_repo || { echo "warning: cannot pull ${PROJECT_DIR}: ${PULL_WHY}"; exit 1; } ) &
+  wait $! || { echo "warning: the board was not pulled, so no conductor was told what $1 made ready"; return 0; }
+  new="$(comm -13 <(sort <<< "${before}") <(board_ready | sort))"
+  # On fd 3: herdr and the tell below must not read the list.
+  while read -r e <&3; do
+    [[ -n "${e}" ]] || continue
+    slugs="$(awk -v e="${e}" '$2 == e { print $1 }' <<< "${new}" | paste -sd' ' -)"
+    if [[ "${e}" == - ]]; then name="$(conductor_name backlog)"; of="with no epic"; else name="$(conductor_name "${e}")"; of="of epic ${e}"; fi
+    if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
+      echo "ready now: ${slugs} (${of}); no conductor runs for it, so swarm.sh next starts it"; continue
+    fi
+    note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
+    printf 'The board PR %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \
+      "$1" "${of}" "${slugs}" > "${note}"
+    ( set -e; tell_agent "${name}" note "${note}" ) &
+    wait $! || echo "warning: could not note ${name} that ${slugs} are ready (exit $?); it finds them on its next pass"
+    rm -f "${note}"
+  done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
 }
 
 # run_fail_lines <owner/repo> <run id> <end> — the FAIL lines of a run's failed jobs, ANSI colour and

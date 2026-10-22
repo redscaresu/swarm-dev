@@ -1180,6 +1180,41 @@ is "merge_admin = on, an unknown classic field disabled: exits 0" 0 "${rc}"
 fresh "merge_admin = on"; rm "${FX}/branch.404"
 merge "${URL}"; refused "merge_admin = on, branch protection Not Found" "Not Found (HTTP 404)"
 
+# --- A board merge that makes stories ready notes their epic's running conductor (conduct-e, the
+# herdr stub's) at once, through its inbox, once it has pulled the board. origin's main is P's HEAD
+# here; put and land commit board files to it from another clone, as a board PR's merge does.
+git clone -q "${ROOT}/origin.git" "${ROOT}/up"; git -C "${P}" fetch -q origin; git -C "${P}" branch -q -u origin/main
+INBOX="${P}/.swarm/inbox/conduct-e.md"; rm -rf "${P}/.swarm/inbox"
+put() { # <path> <front-matter line>... — a board file in that clone, staged
+  mkdir -p "$(dirname "${ROOT}/up/$1")"; { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${ROOT}/up/$1"; git -C "${ROOT}/up" add -f "$1"
+}
+land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
+# Already pulled: epic e, its story r0 ready and r2 blocked.
+put docs/epics/e.md "status: active"; put docs/stories/r0.md "status: ready" "kind: code" "epic: e"
+put docs/stories/r2.md "status: blocked" "kind: code" "epic: e"; land
+git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'
+# The board PR adds r1, readies r2, and adds b1 with no epic, whose backlog conductor is not running.
+put docs/stories/r1.md "status: ready" "kind: code" "epic: e"; put docs/stories/r2.md "status: ready" "kind: code" "epic: e"
+put docs/stories/b1.md "status: ready" "kind: code"; land
+fresh; rm "${S}"; merge --board "${URL}"
+is "a board merge that readies r1 and r2: exits 0" 0 "${rc}"
+is "a board merge that readies r1 and r2: one note to conduct-e" 1 "$(grep -c '^From the lead' "${INBOX}" 2>/dev/null || true)"
+check "a board merge that readies r1 and r2: the note names both, not r0" \
+  grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1 r2. Start them now" "${INBOX}"
+check "a board merge that readies r1 and r2: says it noted conduct-e" said "noted conduct-e"
+check "a board merge that readies a backlog story with no conductor: says next starts it" \
+  said "ready now: b1 (with no epic); no conductor runs for it, so swarm.sh next starts it"
+fresh; rm "${S}"; merge --board "${URL}"
+is "a board merge that readies nothing: exits 0" 0 "${rc}"
+is "a board merge that readies nothing: no note" 1 "$(grep -c '^From the lead' "${INBOX}")"
+check "a board merge that readies nothing: says nothing of ready stories" bash -c "! grep -q 'ready now' '${ROOT}/out'"
+put docs/stories/r3.md "status: ready" "kind: code" "epic: e"; land
+rm -rf "${P}/.swarm/inbox"; : > "${P}/.swarm/inbox"   # the note cannot be written
+fresh; rm "${S}"; merge --board "${URL}"
+is "a board merge whose tell fails: exits 0" 0 "${rc}"
+check "a board merge whose tell fails: warns" said "warning: could not note conduct-e that r3 are ready"
+rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
+
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
 # The release arm, on one line: a docs PR lands before the bump, and the release PR names it.
