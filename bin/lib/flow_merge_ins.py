@@ -1,14 +1,15 @@
 # Merge-ins, a flow section (flow_report.py gives its globals): why the PRs epic_totals counts under
 # main_merged (merged PRs of the outcomes rows dated in the window, or --epic's, whose main_merges is
 # above 0; without --since, the 30 days up to --until or today, as each PR costs 2 gh calls) merged
-# their base in. gh's REST API lists each PR's commits; a merge-in is one whose headline merges the
-# base in, by outcomes' main_merges rule. git re-merges its two parents with merge-tree in its story's
-# repo (SWARM_REPO_DIRS), fetching the PR's refs/pull/<n>/head from origin once when a merge-in is not
-# there: conflict when they conflict, or when the commit's tree is not git's clean merge (a hand fix);
-# behind when they merge clean and the base had commits the branch lacked; neither when it had none.
-# unread counts the rest: a PR gh could not read, the merge-ins main_merges counted that gh does not
-# list, and a commit git cannot find or merge; a `merge ins: left out <url>: <why>` line names each.
-# TSV cause merge_ins prs, then, after a blank line, file conflicts: the three files conflicts hit most.
+# their base in. gh's REST API lists each PR's commits; a merge-in is one whose headline merges the base
+# in, by outcomes' main_merges rule. git re-merges its two parents with merge-tree in its story's repo
+# (SWARM_REPO_DIRS), fetching the PR's refs/pull/<n>/head from origin once when a merge-in is not there:
+# conflict when they conflict, or when the commit's tree is not git's clean merge (a hand fix); behind
+# when they merge clean and the base had commits the branch lacked; neither when it had none. unread
+# counts the rest: a PR gh could not read, the merge-ins main_merges counted that gh does not list, a
+# commit git cannot find, and a one-parent "merge" (a squash, a rebase); a `merge ins: left out <url>:
+# <why>` line names each. TSV cause merge_ins prs, then, after a blank line, file conflicts: the three
+# files conflicts hit most.
 import collections, datetime, os, subprocess
 from report import *
 
@@ -56,10 +57,13 @@ def missing(root, oid, n, fetched):
 
 def cause(root, oid):
     # (cause, files, why unread) of one merge-in: its first parent is the branch, its second the base.
-    parents = git(root, "rev-parse", f"{oid}^1", f"{oid}^2", f"{oid}^{{tree}}")
-    if parents.returncode:
-        return "unread", [], f"{oid[:12]}: not a merge of two parents: {said(parents)}"
-    ours, base, tree = parents.stdout.split()
+    got = git(root, "log", "-1", "--format=%T %P", oid)
+    if got.returncode:
+        return "unread", [], f"{oid[:12]}: git log: {said(got)}"
+    tree, *parents = got.stdout.split()
+    if len(parents) != 2:   # a headline that says merge on a commit that is not one (a squash, a rebase)
+        return "unread", [], f"{oid[:12]}: {len(parents)} parent(s), not a merge of two"
+    ours, base = parents
     merged = git(root, "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", ours, base)
     if merged.returncode == 1:
         return "conflict", sorted(set(f for f in merged.stdout.split("\0")[1:] if f)), ""
