@@ -271,9 +271,10 @@ mutation_rule() {
   printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
 }
 
-# load_rule — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
+# load_rule <slug> — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
 load_rule() {
-  printf '%s' "If you load the machine on purpose (stress loops, parallel test repeats, containers), use at most 4 CPUs (\`docker --cpus 4\`, or that many loops), stop and remove what you started as soon as the check ends, never leave it running between steps, and say in the PR how you loaded the machine. Start every load process so it dies with the step (a trap that kills it on EXIT, INT and TERM, or a timeout), and before you end any turn check that none of your load processes or containers is still running."
+  local slug="$1"
+  printf '%s' "If you load the machine on purpose (stress loops, parallel test repeats, containers), use at most 4 CPUs (\`docker --cpus 4\`, or that many loops; set \`JOBS=4\`, or the runner's own knob, on any repeat loop of the test runner, whose default is every CPU), stop and remove what you started as soon as the check ends, never leave it running between steps, and say in the PR how you loaded the machine. Name and label every container (\`--name ${slug}-load --label swarm=${slug}\`) and \`docker rm -f\` it in the trap, or use \`--rm\` and still remove it by name: killing the \`docker run\` client leaves the container running. Start every load process so it dies with the step (a trap that kills it on EXIT, INT and TERM, or \`timeout <seconds>\`), and never start load with run_in_background, which outlives the step so its trap never fires, unless it is wrapped in \`timeout <seconds>\`. Record the PIDs you start, and before you end any turn check that none is still running (\`ps -p <pids>\`, \`docker ps --filter label=swarm=${slug}\`)."
 }
 
 # reply_sentence — what a builder replies, and when: the brief's rule on finishing, and what its goal
@@ -395,7 +396,7 @@ committing; fix real findings, decline nits with a reason, converge on one clean
 loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above." "say so in your reply") $(mutation_rule) Record it
-in the PR body. $(load_rule) $(reply_sentence)
+in the PR body. $(load_rule "${slug}") $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
