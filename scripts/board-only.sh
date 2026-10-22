@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# board-only.sh — CI's gate in the shellcheck, test and plugin-validate jobs. It prints why, and
+# board-only.sh — CI's gate in the shellcheck, test-shard and plugin-validate jobs. It prints why, and
 # writes board_only=true to $GITHUB_OUTPUT when the job's later steps may skip, else board_only=false.
 # ci.yml runs the base's copy when the base has one, so a PR is never judged by a gate it changed.
 # A pull request is board-only when every path it changes (git diff --no-renames, so a renamed file's

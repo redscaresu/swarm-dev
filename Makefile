@@ -17,7 +17,10 @@ hooks:
 TESTS ?= tests/*_test.sh
 SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_test.sh tests/wait_pr_test.sh \
   tests/dash_stalls_test.sh tests/sleep_scale_test.sh
+# SLOW: files that take minutes on their own, merge_test about 150 s and dash_check about 170 s. They
+# start first, and CI's SHARD=i/N split gives each SLOW and SERIAL file a shard of its own.
+SLOW ?= tests/merge_test.sh tests/dash_check_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 test:
-	@JOBS="$(JOBS)" SERIAL="$(SERIAL)" bash scripts/test.sh $(TESTS)
+	@JOBS="$(JOBS)" SERIAL="$(SERIAL)" SLOW="$(SLOW)" bash scripts/test.sh $(TESTS)

@@ -21,10 +21,11 @@ stop_group() {
 # recorded in <run dir>/jobs while it runs; its result is <log>.ok or <log>.failed, and it exits 1
 # when it failed, never xargs's 255. A TERM, INT or HUP stops the whole group: the test and whatever
 # it started; so does the test's end, so nothing it left running reaches a later file. The test does
-# not see make's JOBS, SERIAL or TESTS (make exports a command-line variable to every recipe), nor
-# HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a test's made-up panes.
+# not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
+# nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
+# test's made-up panes.
 if [[ "${1:-}" == --one ]]; then
-  unset JOBS SERIAL TESTS SHARD HERDR_SOCKET_PATH
+  unset JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
   run="$2" f="$3" t0=${SECONDS} rc=0 pid=""
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
@@ -46,11 +47,26 @@ if [[ "${1:-}" == --one ]]; then
   exit 1
 fi
 
-# SHARD=i/N keeps only the files whose place in the list, counted from 0, is i-1 mod N, so N runs
-# over the same list, i from 1 to N, run each file once (CI's test-shard jobs). test.sh --list
-# <file>... prints the files it would run and stops.
+# Every run takes the files in one order: sorted (LC_ALL=C, whatever the shell's glob order), the
+# SLOW ones first, then the SERIAL ones, then the rest, so the slowest start first. SHARD=i/N keeps
+# the files whose place in that order, counted from 0, is i-1 mod N, so N runs over the same list, i
+# from 1 to N, run each file once (CI's test-shard jobs), and while SLOW and SERIAL hold no more than
+# N files, each of them lands on a shard of its own. It says how many files it kept, and fails when
+# it keeps none. test.sh --list <file>... prints the files it would run, in order, and stops.
 list=""
 [[ "${1:-}" != --list ]] || { list=1; shift; }
+# rank <file>... — each file after its rank: 0 for SLOW, 1 for SERIAL, 2 for the rest.
+rank() {
+  local f
+  for f in "$@"; do
+    case " ${SLOW:-} " in *" ${f} "*) printf '0\t%s\n' "${f}"; continue ;; esac
+    case " ${SERIAL:-} " in *" ${f} "*) printf '1\t%s\n' "${f}"; continue ;; esac
+    printf '2\t%s\n' "${f}"
+  done
+}
+files=()
+while IFS=$'\t' read -r _ f; do files+=("${f}"); done < <(rank "$@" | LC_ALL=C sort)
+set -- "${files[@]+"${files[@]}"}"
 if [[ -n "${SHARD:-}" ]]; then
   if ! [[ "${SHARD}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || ((BASH_REMATCH[1] > BASH_REMATCH[2])); then
     echo "test.sh: SHARD=${SHARD} is not i/N with 1 <= i <= N" >&2
@@ -60,7 +76,9 @@ if [[ -n "${SHARD:-}" ]]; then
   for f in "$@"; do
     ((k++ % n == i)) && kept+=("${f}")
   done
-  set -- "${kept[@]+"${kept[@]}"}"
+  echo "shard ${SHARD}: ${#kept[@]} of $# files" >&2
+  [[ ${#kept[@]} -gt 0 ]] || { echo "test.sh: shard ${SHARD} keeps no file" >&2; exit 1; }
+  set -- "${kept[@]}"
 fi
 if [[ -n "${list}" ]]; then
   [[ $# -eq 0 ]] || printf '%s\n' "$@"
