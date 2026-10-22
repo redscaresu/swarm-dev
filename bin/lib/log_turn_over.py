@@ -16,7 +16,7 @@ def ended(path):
             d = json.loads(l.decode("utf-8", "replace"))
         except ValueError:
             continue
-        if not isinstance(d, dict) or d.get("type") not in ("assistant", "user"):
+        if not isinstance(d, dict) or d.get("type") not in ("assistant", "user") or d.get("isSidechain"):   # a Task subagent's entry is not the session's turn
             continue
         m = d.get("message") if isinstance(d.get("message"), dict) else {}
         return d["type"] == "assistant" and m.get("model") != "<synthetic>" and m.get("stop_reason") == "end_turn"

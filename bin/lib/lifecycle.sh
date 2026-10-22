@@ -1782,7 +1782,7 @@ upgrade_told() {
   local f then="If you were waiting on the conductor, end your turn; otherwise carry on where you stopped." rc=0
   [[ -z "${4:-}" ]] || then="$4"
   f="$(mktemp "${TMPDIR:-/tmp}/swarm-upgrade.XXXXXX")" || die "$1: restarted on $3, but could not tell it the new swarm.sh path"
-  printf '%s\n' "swarm.sh upgrade restarted you on swarm-dev $3. Its swarm.sh is ${SWARM_HOME}/bin/swarm.sh: use that path wherever your brief names another. The restart stopped any background command you had running (a wait-pr, a codex-review, a watch): start again any you still need. ${then}" > "${f}"
+  printf '%s\n' "swarm.sh upgrade restarted you on swarm-dev $3. Its swarm.sh is ${SWARM_HOME}/bin/swarm.sh: use that path wherever your brief names another. The restart stopped any background command, subagent or monitor you had running (a wait-pr, a codex-review, a watch): start again any you still need. ${then}" > "${f}"
   (deliver_prompt "$1" "${f}" "$2") || rc=$?
   rm -f "${f}"
   [[ ${rc} -eq 0 ]] || die "$1: restarted on $3, but was not told the new swarm.sh path; run swarm.sh upgrade again"
@@ -1914,8 +1914,8 @@ print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("
 }
 
 # turn_over <session> — succeed when <session>'s log ends on an assistant message that ended its turn
-# (turn_ended.py); fails with no session or log.
-turn_over() { [[ -n "$1" ]] && python3 "${SWARM_HOME}/bin/lib/turn_ended.py" "${CLAUDE_PROJECTS}" "$1"; }
+# (log_turn_over.py); fails with no session or log.
+turn_over() { [[ -n "$1" ]] && python3 "${SWARM_HOME}/bin/lib/log_turn_over.py" "${CLAUDE_PROJECTS}" "$1"; }
 
 # upgrade_idle <name> <pane> <end-ms> — succeed once <name> is idle (upgrade_state; herdr's wait is
 # only the wake-up, as for settle); a busy one is waited on at least once, and fails when it is

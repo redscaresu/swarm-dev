@@ -1382,7 +1382,7 @@ it to check. Claude Code also reports `busy` for a session whose turn is over bu
 shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
 read from its log too: when its last assistant entry has ended its turn, with no tool call waiting
 for a result and no user entry after it (a prompt, a scheduled one included, or a tool result), it counts as idle and is restarted, its
-background commands stopped (it is told to start them again). A turn still in progress, one
+background commands, subagents and monitors stopped (it is told to start them again). A subagent's own entries in the main log are not the session's turn. A turn still in progress, one
 waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
 busy, are never interrupted and wait for a later round. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
@@ -1392,7 +1392,7 @@ claude exits. It then starts claude again in the same pane: a fresh allowlisted 
 agent list`), and gives herdr that command, as a first start does, so a herdr restart keeps its
 guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
-since its brief names the old one, and that the restart stopped its background commands (a
+since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
 restarted and which were left: restarted and told to carry on, or, if it was already on the new
 version or its restart failed before its claude exited, only told to carry on.

@@ -41,7 +41,7 @@ tmp="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
 [ -d "${tmp}" ] || { echo "mktemp -d failed" >&2; exit 1; }
 H="$(cd "${tmp}" && pwd -P)"
 trap 'rm -rf "${H}"' EXIT
-export CLAUDE_CONFIG_DIR="${H}/claude-config"
+export CLAUDE_CONFIG_DIR="${H}/claude-config" CLAUDE_PROJECTS_DIR="${H}/claude-config/projects"
 P="${H}/my proj"; LOG="${H}/herdr.log"
 NEW="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "${REPO}/.claude-plugin/plugin.json")"
 mkdir -p "${P}/docs/epics" "${P}/docs/stories" "${P}/.swarm/state" "${P}/.swarm/versions" "${H}/bin" "${H}/old/0.21.0/bin"
@@ -158,7 +158,7 @@ check "herdr gets each restarted agent's resume command, as at its start" "yes" 
   "$(has "pane report-agent w:b1 --source swarm --agent claude --state idle --seq" "$(calls 'pane report-agent w:b1')")"
 check "and that command resumes its session with its flags" "yes" \
   "$(has "--agent-session-id s1 -- python3 -I ${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.py claude --resume s1 --model sonnet" "$(calls 'pane report-agent w:b1')")"
-check "each restarted agent is told its background commands were stopped" "3" "$(calls 'agent prompt' | grep -c 'stopped any background command')"
+check "each restarted agent is told its background commands, subagents and monitors were stopped" "3" "$(calls 'agent prompt' | grep -c 'stopped any background command, subagent or monitor')"
 check "SWARM_RESUME reaches the restarted agent" "yes" "$(has "export SWARM_RESUME=$(printf %q "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.argv")" "$(cat "${H}/launch-w:b1")")"
 check "it prints each agent's old and new version" "b1: 0.21.0 -> ${NEW}|b2: 0.21.0 -> ${NEW}|conduct-e: 0.21.0 -> ${NEW}" \
   "$(grep -- ' -> ' "${H}/out" | paste -sd'|' -)"
@@ -179,14 +179,14 @@ check "b1's version is still the old one" "0.21.0" "$(cat "${P}/.swarm/versions/
 # --- b1 reads busy (background shells), but its log says its turn is over: restarted, and told to
 # start its background commands again. A log ending in a tool call with no result, and a session
 # waiting on a prompt, stay busy and are left alone.
-LOGDIR="${CLAUDE_CONFIG_DIR}/projects/p"; mkdir -p "${LOGDIR}"
+LOGDIR="${CLAUDE_PROJECTS_DIR}/p"; mkdir -p "${LOGDIR}"
 entry() { printf '{"type":"assistant","message":{"model":"m","stop_reason":"%s","content":[{"type":"%s"}]}}\n' "$1" "$2"; }
 entry end_turn text > "${LOGDIR}/s1.jsonl"; printf '{"type":"system","subtype":"turn_duration"}\n' >> "${LOGDIR}/s1.jsonl"
 echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle busy idle
 upgrade e
 check "a busy session whose turn ended is restarted and told its background commands stopped" "0|keys w:b1|start b1|prompt w:b1" \
   "${rc}|$(order | tr '|' '\n' | grep -E '(keys|start|prompt) w?:?b1|w:b1' | paste -sd'|' -)"
-check "it is told its background commands were stopped" "1" "$(calls 'agent prompt w:b1' | grep -c 'stopped any background command')"
+check "it is told its background commands were stopped" "1" "$(calls 'agent prompt w:b1' | grep -c 'stopped any background command, subagent or monitor')"
 entry tool_use tool_use > "${LOGDIR}/s1.jsonl"
 echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
 WAIT_MS=200 upgrade e
@@ -199,6 +199,10 @@ entry end_turn text > "${LOGDIR}/s1.jsonl"; printf '{"type":"user","isMeta":true
 echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
 WAIT_MS=200 upgrade e
 check "a scheduled prompt after the ended turn starts a new one: b1 is busy and left alone" "pane send-keys w:b2 ctrl+c ctrl+c " "$(calls 'pane send-keys')"
+entry tool_use tool_use > "${LOGDIR}/s1.jsonl"; entry end_turn text | sed 's/^{/{"isSidechain":true,/' >> "${LOGDIR}/s1.jsonl"; claude_list idle busy idle
+echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
+WAIT_MS=200 upgrade e
+check "a subagent's ended turn after the parent's tool call is not the session's: b1 is busy and left alone" "pane send-keys w:b2 ctrl+c ctrl+c " "$(calls 'pane send-keys')"
 rm -rf "${LOGDIR}"
 
 # --- Both back on their old version, b1 busy for Claude Code's first reads: idle b2 goes first, and
