@@ -678,14 +678,14 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. When herdr sent the
 # prompt, or its reply could not be read, but named no status the agent reached, the agent's own
-# status decides (settled_status): working or blocked took it; idle or done took it too when its
-# state changed since the prompt (took_it), else it gets the prompt once more; an agent herdr gives
-# no status for is never sent it twice. A prompt herdr did not send is sent once more; agent_blocked
-# after one that was sent means the agent is blocked on a question about it.
+# status decides (settled_status): working or blocked took it; idle or done took it too when a turn
+# finished since the prompt (took_it), else it gets the prompt once more; an agent herdr gives no
+# status for is never sent it again. A prompt herdr refused before sending (agent_not_found) is sent
+# once more; agent_blocked after one that was sent means the agent is blocked on a question about it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" target="${3:-}" reply status seq before try sent=0
+  local name="$1" prompt_file="$2" target="${3:-}" reply status turn before try sent=0 unread=0
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
@@ -693,72 +693,95 @@ deliver_prompt() {
     return
   fi
   for try in 1 2; do
-    read -r _ before <<< "$(agent_info "${target}")"; before="${before#-}"
+    read -r status turn <<< "$(agent_info "${target}")"; turn="${turn#-}"
+    if [[ $((sent + unread)) -gt 0 ]]; then   # the last prompt, taken late: working, or a turn finished since
+      case "${status}" in working|blocked) return 0 ;; idle|done) ! took_it "${before}" "${status}" "${turn}" || return 0 ;; esac
+    fi
+    before="${turn}"; [[ "${status}" != - ]] || before="?"   # no read before it: no baseline to compare with
     reply="$(prompt_once "${target}" "${prompt_file}")"
     case "${reply}" in
       working|blocked) return 0 ;;
-      sent|unread) sent=$((sent + 1)) ;;
+      sent) sent=$((sent + 1)) ;;
+      unread) unread=$((unread + 1)) ;;
       agent_blocked) [[ ${sent} -eq 0 ]] || return 0
-        die "${name}: herdr sent it nothing: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
+        die "${name}: $(sent_note "${sent}" "${unread}"): it is blocked on a question, so herdr refused the brief (agent_blocked); answer it, see herdr agent read ${name}" ;;
       *) if [[ ${try} -eq 1 ]]; then nap 5; continue; fi
-         if [[ ${sent} -eq 0 ]]; then die "${name}: herdr could not send it the brief after 2 attempts (${reply}); see herdr agent read ${name}"; fi
-         die "${name}: herdr sent it the brief once, and could not send it again (${reply}); see herdr agent read ${name}" ;;
+         die "${name}: $(sent_note "${sent}" "${unread}") in 2 tries, the last failing with ${reply}; see herdr agent read ${name}" ;;
     esac
-    read -r status seq <<< "$(settled_status "${target}")"; status="${status#-}"; seq="${seq#-}"
+    read -r status turn <<< "$(settled_status "${target}")"; status="${status#-}"; turn="${turn#-}"
     case "${status}" in
       working|blocked) return 0 ;;
-      idle|done) ! took_it "${before}" "${status}" "${seq}" || return 0 ;;
-      *) die "${name}: $(no_status_why "${reply}") gave no status for it${status:+ (it reads ${status})}, so it was not sent again; it may have it: see herdr agent read ${name}" ;;
+      idle|done) ! took_it "${before}" "${status}" "${turn}" || return 0 ;;
+      *) die "${name}: $(sent_note "${sent}" "${unread}"), then herdr gave no status for it${status:+ (it reads ${status})}, so it was not sent again; see herdr agent read ${name}" ;;
     esac
   done
-  die "${name}: the brief was not taken up: herdr sent it $(times "${sent}"), and reads it ${status} with no change since; see herdr agent read ${name}"
+  die "${name}: the brief was not taken up: $(sent_note "${sent}" "${unread}"), and herdr reads it ${status} with no turn finished since; see herdr agent read ${name}"
 }
 
-# times <n> — once or twice.
-times() { if [[ "$1" -eq 1 ]]; then echo once; else echo twice; fi; }
+# count_word <n> — once or twice.
+count_word() { if [[ "$1" -eq 1 ]]; then echo once; else echo twice; fi; }
 
-# no_status_why <reply> — the start of deliver_prompt's message when herdr gives no status after the
-# prompt: herdr took it (sent), or its reply could not be read (unread), so it may not have.
-no_status_why() {
-  if [[ "$1" == unread ]]; then echo "herdr's reply to the brief could not be read, and herdr"; else echo "herdr took the brief but"; fi
+# sent_note <sent> <unread> — what deliver_prompt knows went out: the prompts herdr sent, and those
+# whose reply could not be read (sent or not, no one knows).
+sent_note() {
+  if [[ "$1" -gt 0 && "$2" -gt 0 ]]; then echo "herdr sent it the brief once, and its reply to the other try could not be read"
+  elif [[ "$1" -gt 0 ]]; then echo "herdr sent it the brief $(count_word "$1")"
+  elif [[ "$2" -gt 0 ]]; then echo "herdr's reply to the brief could not be read $(count_word "$2")"
+  else echo "herdr sent it nothing"; fi
 }
 
-# took_it <seq-before> <status> <seq-after> — whether an agent idle or done after a prompt took it:
-# its state changed since the prompt (herdr's state_change_seq moved), so it took the prompt and
-# finished; unchanged, it never moved. With no seq on either side, only done counts: a short message
-# may be done already, and an idle agent gets it once more.
+# took_it <turn-before> <status> <turn-after> — whether an agent idle or done after a prompt took it:
+# a turn finished since the prompt (herdr's completion_seq, set when a turn completes, moved). A status
+# change alone is not enough: a hook reporting idle or a slow starter settling moves state_change_seq
+# with no turn. With no completion_seq after (an older herdr), only done counts: a short message may be
+# done already, and an idle agent gets it once more. The same holds when the read before the prompt
+# failed (<turn-before> ?): a completion_seq an idle agent kept from an earlier turn proves nothing.
 took_it() {
-  if [[ -z "$1" || -z "$3" ]]; then [[ "$2" == "done" ]]; return; fi
+  if [[ -z "$3" || "$1" == "?" ]]; then [[ "$2" == "done" ]]; return; fi
   [[ "$1" != "$3" ]]
 }
 
 # prompt_once <target> <prompt-file> — submit the prompt once, wait for it to be taken up, and print
-# what came of it: working or blocked; sent, when herdr sent it but named no status it reached (the
-# reply could not be read, the timeout passed, or agent_prompt_stalled: the agent did not start within
-# herdr's 5 s); unread, when herdr failed with no error it could read (it may be down: whether it sent
-# anything is unknown); else herdr's error code, when it sent nothing (agent_blocked: the agent was
-# already blocked on a question; agent_not_found, ...).
-# herdr writes one JSON object, its reply on stdout or its error on stderr, so both are read together:
-# no temp file for a TERM to leave behind.
+# what came of it: working or blocked; agent_blocked or agent_not_found, herdr's rejections before it
+# sends anything; sent, for any other error (timeout, agent_prompt_stalled, agent_prompt_failed or a
+# code a newer herdr adds: herdr may have sent it) or a reply with no status; unread, when herdr
+# failed with no error it could read (it may be down: whether it sent anything is unknown).
+# herdr's reply (stdout) or error (stderr) is the last JSON line of the two read together: no temp
+# file for a TERM to leave behind, and a line herdr adds (warning:, server_binary_stale:) is skipped.
 prompt_once() {
-  local all out code rc=0
+  local all r rc=0
   all="$(herdr agent prompt "$1" "$(cat "$2")" --wait --until working --until blocked \
     --timeout "${PROMPT_TIMEOUT_MS}" 2>&1)" || rc=$?
-  out="$(json "d.get('result',{}).get('agent',{}).get('agent_status','')" <<< "${all}" 2>/dev/null)" || out=""
-  code="$(json "d.get('error',{}).get('code','')" <<< "${all}" 2>/dev/null)" || code=""
-  case "${out}:${code}" in
-    working:*|blocked:*) echo "${out}" ;;
-    *:timeout|*:agent_prompt_stalled) echo sent ;;
-    *:) if [[ ${rc} -eq 0 ]]; then echo sent; else echo unread; fi ;;
-    *) echo "${code}" ;;
+  r="$(last_json "${all}")"
+  case "${r}" in
+    working:*|blocked:*) echo "${r%%:*}" ;;
+    *:agent_blocked|*:agent_not_found) echo "${r#*:}" ;;
+    :) if [[ ${rc} -eq 0 ]]; then echo sent; else echo unread; fi ;;
+    *) echo sent ;;
   esac
 }
 
-# agent_info <target> — "<status> <state_change_seq>" from herdr agent get, either one - when herdr
-# gives none (so read keeps them apart).
+# last_json <text> — "<agent_status>:<error code>" from the last line of <text> that is a JSON object,
+# either part empty when it has none.
+last_json() {
+  python3 -I -c 'import json, sys
+r = {}
+for line in sys.argv[1].splitlines():
+    try:
+        o = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(o, dict):
+        r = o
+a, e = r.get("result") or {}, r.get("error") or {}
+print("%s:%s" % ((a.get("agent") or {}).get("agent_status") or "", e.get("code") or ""))' "$1" 2>/dev/null || echo :
+}
+
+# agent_info <target> — "<status> <completion_seq>" from herdr agent get, either one - when herdr gives
+# none (so read keeps them apart).
 agent_info() {
   local s seq
-  read -r s seq <<< "$(herdr agent get "$1" 2>/dev/null | json "'%s %s' % (d['result']['agent'].get('agent_status') or '-', d['result']['agent'].get('state_change_seq', '-'))" 2>/dev/null)"
+  read -r s seq <<< "$(herdr agent get "$1" 2>/dev/null | json "'%s %s' % (d['result']['agent'].get('agent_status') or '-', '-' if d['result']['agent'].get('completion_seq') is None else d['result']['agent']['completion_seq'])" 2>/dev/null)"
   echo "${s:--} ${seq:--}"
 }
 
