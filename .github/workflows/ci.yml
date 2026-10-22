@@ -40,8 +40,13 @@ jobs:
         # shellcheck is preinstalled on GitHub's ubuntu runners.
         run: shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
 
-  test:
+  # make test in shards: each runs the files scripts/test.sh's SHARD=i/N split gives it.
+  test-shard:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     permissions:
       contents: read
       checks: read     # the gate reads main's check runs for a release PR
@@ -64,9 +69,22 @@ jobs:
       - name: Compile bin/lib/*.py
         if: steps.gate.outputs.board_only != 'true'
         run: python3 -m py_compile bin/lib/*.py
-      - name: Run every tests/*_test.sh (make test)
+      - name: Run this shard's tests/*_test.sh (make test)
         if: steps.gate.outputs.board_only != 'true'
+        env:
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: make test
+
+  # The required check: one name, green only when every shard passed (or skipped its steps).
+  test:
+    needs: test-shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.test-shard.result }}
+        run: '[ "${RESULT}" = success ]'
 
   plugin-validate:
     runs-on: ubuntu-latest

@@ -24,7 +24,7 @@ stop_group() {
 # not see make's JOBS, SERIAL or TESTS (make exports a command-line variable to every recipe), nor
 # HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a test's made-up panes.
 if [[ "${1:-}" == --one ]]; then
-  unset JOBS SERIAL TESTS HERDR_SOCKET_PATH
+  unset JOBS SERIAL TESTS SHARD HERDR_SOCKET_PATH
   run="$2" f="$3" t0=${SECONDS} rc=0 pid=""
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
@@ -44,6 +44,27 @@ if [[ "${1:-}" == --one ]]; then
   : > "${log}.failed"
   echo "FAIL ${f} $((SECONDS - t0))s"
   exit 1
+fi
+
+# SHARD=i/N keeps only the files whose place in the list, counted from 0, is i-1 mod N, so N runs
+# over the same list, i from 1 to N, run each file once (CI's test-shard jobs). test.sh --list
+# <file>... prints the files it would run and stops.
+list=""
+[[ "${1:-}" != --list ]] || { list=1; shift; }
+if [[ -n "${SHARD:-}" ]]; then
+  if ! [[ "${SHARD}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || ((BASH_REMATCH[1] > BASH_REMATCH[2])); then
+    echo "test.sh: SHARD=${SHARD} is not i/N with 1 <= i <= N" >&2
+    exit 1
+  fi
+  i=$((BASH_REMATCH[1] - 1)) n=${BASH_REMATCH[2]} k=0 kept=()
+  for f in "$@"; do
+    ((k++ % n == i)) && kept+=("${f}")
+  done
+  set -- "${kept[@]+"${kept[@]}"}"
+fi
+if [[ -n "${list}" ]]; then
+  [[ $# -eq 0 ]] || printf '%s\n' "$@"
+  exit 0
 fi
 
 run="$(mktemp -d)" || exit 1
