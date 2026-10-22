@@ -45,9 +45,9 @@ case "$1 $2" in
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
     left="$(cat "${FX}/readback-left" 2>/dev/null || echo 0)"
     if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
-    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s}\n' \
+    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
       "$(cat "${FX}/state.${3##*/}" 2>/dev/null || cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
-      "$(cat "${FX}/body" 2>/dev/null || echo null)" ;;
+      "$(cat "${FX}/body" 2>/dev/null || echo null)" "$(cat "${FX}/commits" 2>/dev/null || echo '[{}]')" ;;
   "pr merge")
     case " $* " in *" --disable-auto "*) exit 0 ;; esac
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
@@ -1266,6 +1266,48 @@ put docs/stories/o1.md "status: ready" "kind: code"; land
 bfresh; merge --board "${URL}"
 check "a board merge that readies o1, already started: says nothing of o1" bash -c "! grep -q 'ready now: o1' '${ROOT}/out'"
 rm -rf "${ROOT}/proj-wt"
+# Board PR A, merged and never pulled here, sets epic g active and readies r12; this PR, B, only
+# edits g's and r12's files. What was ready is the board at B's first parent, so B names neither.
+put docs/epics/g.md "status: draft"; put docs/stories/g1.md "status: ready" "kind: code" "epic: g"
+put docs/stories/r12.md "status: blocked" "kind: code" "epic: e"; land; pulled
+put docs/epics/g.md "status: active"; put docs/stories/r12.md "status: ready" "kind: code" "epic: e"; land
+put docs/epics/g.md "status: active" "title: g2"; put docs/stories/r12.md "status: ready" "kind: code" "epic: e" "estimate_lines: 1"; land
+bfresh; merge --board "${URL}"
+check "a board merge after an unpulled one: names neither g1 nor r12" bash -c "! grep -qE 'g1|r12' '${ROOT}/out' && ! grep -q r12 '${INBOX}'"
+# conduct-e has written its report: it has finished, so it gets no note, and next starts r13.
+put docs/stories/r13.md "status: ready" "kind: code" "epic: e"; land
+bfresh; touch "${P}/.swarm/conduct-e.report.md"; merge --board "${URL}"; rm "${P}/.swarm/conduct-e.report.md"
+check "a board merge whose conductor has reported: says next starts r13" said "ready now: r13 (of epic e); no conductor runs for it, so swarm.sh next starts it"
+check "a board merge whose conductor has reported: no note names r13" bash -c "! grep -q r13 '${INBOX}'"
+# r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
+put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
+put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land
+bfresh; merge --board "${URL}"
+check "a board merge that moves ready r15 into active epic e: notes it" grep -qF "these stories of epic e are ready now: r15." "${INBOX}"
+# Through a merge queue, in one push with a later PR (its commit Y, the batch's tip): what was ready
+# is read at the parent of this PR's own merge commit X, not at Y's, where r14 is ready already.
+put docs/stories/r14.md "status: ready" "kind: code" "epic: e"; land; X="$(git -C "${ROOT}/up" rev-parse HEAD)"
+put docs/stories/r0.md "status: ready" "kind: code" "epic: e" "estimate_lines: 4"; land
+bfresh; echo '[{"filename":"docs/stories/r14.md","status":"added"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"; checks "${FX}/${G}.checks" "$(run test completed success)"; statuses "${FX}/${G}.status"
+qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${X}"
+printf '{"commit":{"sha":"%s"}}\n' "${OID}" > "${FX}/basehead"; echo '{"status":"ahead"}' > "${FX}/compare"; merge --board "${URL}"
+check "a queued board merge batched with a later PR: notes r14" grep -qF "these stories of epic e are ready now: r14." "${INBOX}"
+# A two-commit PR rebased onto main: the first readies r16, the second edits it. The board before
+# it is two commits back, where r16 did not exist.
+put docs/stories/r16.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r16.md "status: ready" "kind: code" "epic: e" "estimate_lines: 5"; land
+bfresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":false,"rebaseMergeAllowed":true}' > "${FX}/repo"; echo '[{},{}]' > "${FX}/commits"
+merge --board "${URL}"
+check "a rebased two-commit board PR: notes r16" grep -qF "these stories of epic e are ready now: r16." "${INBOX}"
+# This PR (P) only edits blocked r17; a later PR readies it, and the pull brings both: P made
+# nothing live, so it names nothing.
+put docs/stories/r17.md "status: blocked" "kind: code" "epic: e"; land; pulled
+put docs/stories/r17.md "status: blocked" "kind: code" "epic: e" "estimate_lines: 6"; land; PC="$(git -C "${ROOT}/up" rev-parse HEAD)"
+put docs/stories/r17.md "status: ready" "kind: code" "epic: e" "estimate_lines: 6"; land
+bfresh; echo "${PC}" > "${FX}/oid"; checks "${FX}/${PC}.checks" "$(run test completed success)"; statuses "${FX}/${PC}.status"
+wfruns "${FX}/${PC}.runs" "$(run ci completed success "${PC}")"; merge --board "${URL}"
+check "a board merge pulled with a later PR that readies r17: names r17 nowhere" bash -c "! grep -q r17 '${ROOT}/out' && ! grep -q r17 '${INBOX}'"
 # herdr cannot list its agents: no ready now: line, which would say no conductor runs.
 put docs/stories/r7.md "status: ready" "kind: code" "epic: e"; land
 bfresh; touch "${ROOT}/agents.fail"; merge --board "${URL}"; rm "${ROOT}/agents.fail"
@@ -1295,7 +1337,7 @@ check "a board merge whose tell fails: warns" said "warning: could not note cond
 # Leave P, origin and the clone as the block found them.
 rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,b1,f1,o1,q,z} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,b1,f1,g1,o1,q,z} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

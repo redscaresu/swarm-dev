@@ -127,7 +127,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue ready="" files=""
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue ready="" files="" moid="" prev k
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -223,7 +223,7 @@ merge_pr() {
     # The conductor's brief keys on this line: every PR goes through the queue at once.
     echo "merge queue: ${base} has one, so #${n} goes through it"
     queue_merge "${n}" "${repo}" "${head}" "${base}"
-    oid="${QUEUE_OID}"
+    oid="${QUEUE_OID}"; moid="${oid}"   # the PR's own merge commit, for ready_tell: oid becomes the batch's
     # A batch is pushed at its last commit, and the push-only workflows run there alone.
     [[ -z "${oid}" ]] || oid="$(ci_gate pushed "${repo}" "${base}" "${oid}" "${SWARM_MERGE_READ_WAIT:-${MERGE_READ_WAIT}}")"
   else
@@ -265,7 +265,13 @@ merge_pr() {
   # A board PR can make stories ready: their conductor hears now, not on its next pass. In the
   # background, so set -e holds inside it; it never fails the merge.
   if [[ "${only}" == --board && -n "${oid}" && ${rc} -eq 0 ]]; then
-    ( set -e; ready_tell "${url}" "${oid}" "${files}" "${ready}" ) &
+    # The board before the PR: its merge commit's first parent, or, for a rebase, as many commits
+    # back as the PR has. ponytail: a queue that rebases is read at ^1; ask gh its method if one does.
+    prev="${moid:-${oid}}^1"
+    if [[ "${method}" == rebase && -z "${moid}" ]]; then
+      k="$(gh pr view "${n}" --repo "${repo}" --json commits | json "len(d['commits'])")" && [[ "${k}" =~ ^[1-9][0-9]*$ ]] && prev="${oid}~${k}"
+    fi
+    ( set -e; ready_tell "${url}" "${moid:-${oid}}" "${files}" "${ready}" "${prev}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
   if [[ -z "${only}" ]]; then
@@ -285,7 +291,7 @@ merge_pr() {
 # board_ready [--review] — each story next_step would build now (buildable_story) whose build has
 # not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no epic. With
 # --review, each story in review too, worktree or not (reconcile may send one back to ready, which no
-# board PR did), and an "@<epic>" line for each active epic.
+# board PR did).
 board_ready() {
   local f e
   while IFS= read -r f; do
@@ -293,24 +299,33 @@ board_ready() {
       e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"
     fi
   done < <(board stories)
-  [[ -n "${1:-}" ]] || return 0
-  while IFS= read -r f; do
-    if [[ "$(fm "${f}" status)" == active ]]; then echo "@$(basename "${f}" .md)"; fi
-  done < <(board epics)
 }
 
-# ready_tell <url> <oid> <files> <before> — once merge --board has landed <url> at the merge commit
+# at_rev <rev> <path> <key> — <key>'s first value in the board file <path> at <rev>, or nothing.
+at_rev() { { git -C "${PROJECT_DIR}" show "$1:$2" 2>/dev/null || true; } | sed -n "s/^$3: *//p" | head -1 || true; }
+
+# live_at <rev> <path> — true when the board file <path> at <rev> is an active epic, or a story
+# buildable_story would build there: ready, an agent's kind, with no epic or an active one.
+live_at() {
+  local e
+  if [[ "${2%/*}" == *epics ]]; then [[ "$(at_rev "$1" "$2" status)" == active ]]; return; fi
+  [[ "$(at_rev "$1" "$2" status)" == ready ]] && agent_kind "$(at_rev "$1" "$2" kind)" || return 1
+  e="$(at_rev "$1" "$2" epic)"
+  [[ -z "${e}" || "$(at_rev "$1" "${2%stories/*}epics/${e}.md" status)" == active ]]
+}
+
+# ready_tell <url> <oid> <files> <before> <prev> — once merge --board has landed <url> at the merge commit
 # <oid>: run reconcile, which clears any merged build before it pulls the main checkout. New are the
 # stories buildable now (board_ready) that <before> (its --review lines before the merge) does not list and
-# whose file, or whose epic's when <before> has that epic inactive, is among <files>, the paths <url>
-# changes: not one reconcile sent back to ready, a
-# fix-main story merge wrote, nor one another board PR merged beside it readied. For each epic with new stories, send its running conductor (the
+# whose file, or whose epic's, is among <files>, the paths <url> changes, and <url> made live (live_at):
+# not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
+# fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
 # say next will. With no upstream nothing is pulled, so nothing is new. A failed reconcile (logged
 # as merge logs one), a checkout still without <oid>, a herdr that cannot list its agents, or a
 # failed tell is a warning: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note
+  local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
@@ -328,13 +343,18 @@ ready_tell() {
     echo "warning: reconcile did not pull ${oid:0:7} into ${PROJECT_DIR}, so no conductor was told what ${url} made ready; run swarm.sh reconcile"
     return 0
   }
-  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | BEFORE="$4" CHANGED="$3" DIR="${BOARD#"${PROJECT_DIR}"/}/stories/" EPICS="${BOARD#"${PROJECT_DIR}"/}/epics/" awk '
-    BEGIN { n = split(ENVIRON["BEFORE"], b, "\n"); for (i = 1; i <= n; i++) if (b[i] ~ /^@/) was[substr(b[i], 2)] = 1
-      n = split(ENVIRON["CHANGED"], c, "\n"); d = ENVIRON["DIR"]; ed = ENVIRON["EPICS"]
+  # Each board file <url> changes, and 0 when <url> made it live (live_at): not at <prev>, but at
+  # <oid>, so not a later PR pulled with it.
+  while IFS= read -r p; do
+    [[ "${p}" == "${d}stories/"*.md || "${p}" == "${d}epics/"*.md ]] || continue
+    if ! live_at "$5" "${p}" && live_at "${oid}" "${p}"; then was+="${p}"$'\t'0$'\n'; else was+="${p}"$'\t'1$'\n'; fi
+  done <<< "$3"
+  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | WAS="${was}" DIR="${d}stories/" EPICS="${d}epics/" awk '
+    BEGIN { n = split(ENVIRON["WAS"], c, "\n"); d = ENVIRON["DIR"]; ed = ENVIRON["EPICS"]
       for (i = 1; i <= n; i++) {
-        f = c[i]; sub(/\.md$/, "", f)
-        if (index(f, d) == 1) ch[substr(f, length(d) + 1)] = 1
-        if (index(f, ed) == 1 && !(substr(f, length(ed) + 1) in was)) ep[substr(f, length(ed) + 1)] = 1 } }
+        split(c[i], kv, "\t"); f = kv[1]; sub(/\.md$/, "", f)
+        if (index(f, d) == 1 && kv[2] != 1) ch[substr(f, length(d) + 1)] = 1
+        if (index(f, ed) == 1 && kv[2] != 1) ep[substr(f, length(ed) + 1)] = 1 } }
     $1 in ch || $2 in ep')"
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
@@ -344,7 +364,8 @@ ready_tell() {
     if ! herdr agent list >/dev/null 2>&1; then
       echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
     fi
-    if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
+    # One that has written its report has finished (conductors_queued): nobody reads its inbox.
+    if [[ -z "$(agent_field "${name}" pane_id)" || -f "$(conductor_report "${name}")" ]]; then
       echo "ready now: ${slugs} (${of}); no conductor runs for it, so swarm.sh next starts it"; continue
     fi
     note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
