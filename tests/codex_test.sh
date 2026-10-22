@@ -21,6 +21,10 @@ mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
 printf '#!/bin/sh\nexec perl -e "select undef, undef, undef, shift" "$1" "$0"\n' > "${BIN}/stubsleep"; chmod +x "${BIN}/stubsleep"
 # The same under another name, for a child a case leaves running on purpose, so left can tell it.
 cp "${BIN}/stubsleep" "${BIN}/orphansleep"
+# stubchain <n> — a chain of n sh processes, each waiting on the next, and a perl sleeping at its end.
+# shellcheck disable=SC2016 # the chain's own $1 and $0
+printf '#!/bin/sh\nif [ "$1" -gt 0 ]; then "$0" $(($1 - 1)); else exec perl -e "select undef, undef, undef, 60" "$0"; fi\n' > "${BIN}/stubchain"
+chmod +x "${BIN}/stubchain"
 export PATH="${BIN}:${PATH}"
 fails=0
 
@@ -115,6 +119,14 @@ review
 check "a codex that keeps starting children is stopped within the limit plus the grace" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
 left "the forking case"
+
+# --- One whose TERM trap starts a chain 10 deep in the grace is KILLed to the chain's end: the freeze
+# walks every level of the tree, and the chain's deepest processes are not left as orphans.
+stub "trap '\"\${d}/stubchain\" 10 &' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+review
+check "a codex whose TERM trap starts a deep chain times out" "fails|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "codex skipped: timed out" "${out}")"
+left "the deep chain case"
 
 # --- The grace is real: with a grace of 6 s, a codex that exits on its own 3 s after TERM is not
 # KILLed. The other 3 s are for a loaded machine, where the trap starts late; a grace cut under 3 s

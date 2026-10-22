@@ -503,12 +503,13 @@ tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}
 # frozen <pid>... — STOP each process and everything under it, and print them all, children first. Each
 # pass STOPs the pids it found, then reads the process table once for their children: a parent is
 # stopped before the read, so one that loops (a stub's while, codex's own) cannot start a child behind
-# it, as it could behind a KILL to its children. Passes go on until a read finds no new child, but at
-# most FREEZE_PASSES (a process that forks on would hold codex-review for good): kill(2) returns once
-# the STOP is pending, so a process on another CPU may fork before it stops. A pid the STOP fails on is
+# it, as it could behind a KILL to its children. Passes go on until a read finds no new child, one per
+# level of the tree, but at most FREEZE_PASSES (a process that forks on would hold codex-review for
+# good); what the last pass found is KILLed unstopped. kill(2) returns once the STOP is pending, so a
+# process on another CPU may fork before it stops. A pid the STOP fails on is
 # dropped: it died in the grace, and the pid may be another process's by now. Children first, so no
 # stopped child is orphaned (a group of its own gets HUP and CONT then) before its own KILL.
-FREEZE_PASSES=5
+FREEZE_PASSES=20   # ponytail: a tree deeper than this loses what is under its last level; raise it if codex ever nests deeper
 frozen() {
   local out="" new="$*" got p i
   for ((i = 0; i < FREEZE_PASSES && ${#new} > 0; i++)); do
@@ -517,7 +518,7 @@ frozen() {
     out="${got} ${out}"
     new="$(ps -Ao pid=,ppid= | awk -v have=" ${out} " 'index(have, " " $2 " ") && !index(have, " " $1 " ") { print $1 }')"
   done
-  echo "${out}"
+  echo "${new} ${out}"
 }
 
 # stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then freeze
