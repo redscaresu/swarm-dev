@@ -114,7 +114,7 @@ person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, 
 dash shows the 7-day count beside the speedometer), then the agents that stopped on an API error or
 an auto mode denial, per epic. `ci_health` also gives each repo's median CI time per PR and its
 slowest job, beside the same figures for the window before; dash shows this week's against last
-week's on one line. Its
+week's on one line. When gh cannot read a PR, it names the gh call and gh's error. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
 money waits on you, so only those count. Its `model_fit` section sets cost against results for each

@@ -1,6 +1,6 @@
 import datetime, fcntl, json, os, re, signal, stat, subprocess, sys, time
 FIELDS = "statusCheckRollup,mergeStateStatus,updatedAt,state"
-# The ci line runs flow's ci_health over two weeks of PRs, 3 gh calls each, so at most every 6 hours:
+# The ci line runs flow's ci_health over two weeks of PRs, 4 gh calls each, so at most every 6 hours:
 # a week's median barely moves in that time. A refresh that fails is tried again after CI_RETRY, and
 # one still running after CI_TIMEOUT is stopped. ponytail: every PR is read again each time; keep a
 # closed PR's ci_time if the calls ever crowd gh's rate limit.

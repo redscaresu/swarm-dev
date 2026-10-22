@@ -255,14 +255,16 @@ dataset_report() {
 #     the median minutes per head SHA from its first run created to its last updated, red runs
 #     (failure, timed_out or startup_failure) per PR and flakes (a red run, then a green one of the
 #     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
-#     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
-#     10 s prints `ci health: gh failed` and no numbers. Then, per repo, a PR's CI time (its newest
+#     runs of each PR's branch whose head is one of its commits (all over REST, not GraphQL). A PR
+#     a gh call fails on or takes over 10 s for (a reset connection or a 5xx tried 3 times; after an
+#     hourly rate limit, no more calls) is left out, and a line says how many, then one each names
+#     it, the call and gh's error. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from that
 #     attempt's jobs listing less those a rerun carried over, its control characters dropped): its PRs, the median minutes, of the
 #     jobs that were a PR's slowest the one with the highest median minutes and that median, the same
 #     for the window of as many days before it (a PR built in both counts in the later), and the
 #     change in minutes. A PR gh cannot read is left out, and a line says how many (and how many of
-#     the window's own). dash's ci line is
+#     the window's own), then a line each names it and the error that dropped it. dash's ci line is
 #     its origin repo's row of `flow --since <6 days ago>`, run with SWARM_CI_TIME_ONLY, which skips
 #     the row above.
 #   cost: tokens and estimated cost per role, for every agent this project's swarm started in the
