@@ -256,7 +256,7 @@ merge ins: left out '"${U}"$'/15: '"$(g rev-parse --short=12 story/m15)"$': git 
 # with no FAIL tests/<file> line; run 23 green the first time. On 10-02, main's run 30 was red twice
 # (c_test.sh both times, d_test.sh's TIMEOUT the second), then green. So c_test.sh 3 (runs 24 and 30
 # once each), then by the newest d, f, a and e. Run 30's log also has a check that quotes a FAIL
-# tests/z_test.sh line, which is not test.sh's own. t3's PR (#3, epic e1) is a retry on t1's branch,
+# tests/z_test.sh line, and an indented and a diffed FAIL tests/y_test.sh line, none test.sh's own. t3's PR (#3, epic e1) is a retry on t1's branch,
 # so under --epic runs 10 and 11 are its too, counted once. t4's and t5's PRs (#4, #5, epic e2) share
 # t4's branch and its one green run 40. A project u, its origin o/z, has u1's PR #9 on o/r, built
 # 10-06, when o/r's run 90 is a rerun.
@@ -292,13 +292,15 @@ listing 2026-10-01..2026-10-03 12 "$(arun 11 a1 CI pull_request failure 2 2026-1
   "$(arun 24 b1 CI merge_group success 4 2026-10-01T12:00:00Z)" "$(arun 25 b1 test schedule failure 3 2026-10-01T13:00:00Z)" \
   "$(arun 26 b1 docs pull_request success 2 2026-10-01T14:00:00Z)" "$(arun 27 b1 go pull_request success 2 2026-10-01T08:00:00Z)" "${r30}"
 listing 2026-10-02..2026-10-03 1 "${r30}"
+listing 2026-10-08..2026-10-08 5 "$(arun 60 e6 CI push success 1 2026-10-08T10:00:00Z)"   # 1 of 5 listed, none flaky
 listing 2026-10-07..2026-10-07 1 "$(arun 50 e5 CI push success 2 2026-10-07T10:00:00Z)"   # its first attempt gh cannot read
 listing 2026-10-06..2026-10-06 1 "$(arun 90 c9 CI push success 2 2026-10-06T10:00:00Z)"; echo '{"conclusion":"failure"}' > "${TG}/attempt-90-1"
 for a in 10-1 11-1 30-1 30-2 20-1 21-1 22-1 24-1 24-3 25-1 27-1; do echo '{"conclusion":"failure"}' > "${TG}/attempt-${a}"; done
 for a in 24-2 25-2; do echo '{"conclusion":"success"}' > "${TG}/attempt-${a}"; done
 F=$'test-shard (1)\tRun this shard\'s tests\t2026-10-01T10:05:00Z'
 printf '%s\n' "${F} FAIL tests/a_test.sh 3s" "${F} FAIL a check in it" "${F} FAIL tests/a_test.sh: its job ended without a result" > "${TG}/log-10-1"
-printf '%s\n' "${F} FAIL tests/c_test.sh 4s" "${F} FAIL a check: want 'FAIL tests/z_test.sh 3s', got ''" > "${TG}/log-30-1"; for a in 21-1 24-1 24-3; do cp "${TG}/log-30-1" "${TG}/log-${a}"; done
+printf '%s\n' "${F} FAIL tests/c_test.sh 4s" "${F} FAIL a check: want 'FAIL tests/z_test.sh 3s', got ''" "${F}   FAIL tests/y_test.sh 3s" \
+  "${F} > FAIL tests/y_test.sh 3s" > "${TG}/log-30-1"; for a in 21-1 24-1 24-3; do cp "${TG}/log-30-1" "${TG}/log-${a}"; done
 printf '%s\n' "${F} FAIL tests/c_test.sh 5s" "${F} TIMEOUT tests/d_test.sh after 600s" > "${TG}/log-30-2"
 printf '%s\n' "${F} FAIL tests/b_test.sh 2s" > "${TG}/log-20-1"; cp "${TG}/log-20-1" "${TG}/log-20-2"
 printf '%s\n' "${F} FAIL tests/e_test.sh 2s" > "${TG}/log-11-1"; cp "${TG}/log-11-1" "${TG}/log-11-2"
@@ -318,7 +320,8 @@ echo "$*" >> "$G/gh.log"
 RL="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
 case "$*" in
   "pr list --head story/u1"*) printf 'https://github.com/o/r/pull/9\tMERGED\t2026-10-06T12:00:00Z\t2026-10-06T10:00:00Z\t0\n' ;;
-  "api repos/o/r/pulls/9") [ "${LIMITED:-}" != pulls ] || { echo "$RL" >&2; exit 1; }; cat "$G/pull-9" ;;
+  "api repos/o/r/pulls/9") [ "${LIMITED:-}" != pulls ] || { echo "$RL" >&2; exit 1; }
+    [ "${LIMITED:-}" != pull404 ] || { echo 'HTTP 404: Not Found' >&2; exit 1; }; cat "$G/pull-9" ;;
   "api --paginate --slurp repos/o/z/actions/runs?created="*) [ "${LIMITED:-}" != listing ] || { echo "$RL" >&2; exit 1; }; echo '[]' ;;
   "pr list --head story/t"*) printf 'https://github.com/o/r/pull/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t0\n' "${4#story/t}" ;;
   "pr view "*) echo 2026-10-01T10:00:00Z ;;
@@ -372,11 +375,15 @@ flaky tests: stopped at gh\'s rate limit (gh: API rate limit exceeded for user I
 check "ci_health: and make no call after it" "$(grep -cE 'runs/200[12]' "${TG}/gh.log" || true)" 0
 check "ci_health: a run whose attempts gh cannot read leaves no none line" "$(flaky --since 2026-10-07 --until 2026-10-07)" \
   "flaky tests: left out ${L}/50: gh api repos/o/r/actions/runs/50/attempts/1: HTTP 404: Not Found"
+check "ci_health: a listing cut short leaves no none line" "$(flaky --since 2026-10-08 --until 2026-10-08)" \
+  "flaky tests: gh listed 1 of the 5 runs of o/r created 2026-10-08..2026-10-08, the newest; the rest are left out"
+check "ci_health: the repo of a PR gh could not read is still listed" "$(FP="${U}" LIMITED=pull404 flaky --since 2026-10-06 --until 2026-10-06)" \
+  "flaky tests: could not read ${L}/90/attempts/1: gh run view 90 -R o/r --attempt 1 --log-failed: HTTP 404: Not Found"
 check "ci_health: a rate limit while listing a later repo keeps the earlier repo's runs, and says which repo it did not list" \
   "$(FP="${U}" LIMITED=listing flaky --since 2026-10-06 --until 2026-10-06)" \
   "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/z not listed; 1 of 1 runs that may be flaky not read in full"
-check "ci_health: a rate limit health spent leaves the listing unread, and no none line" "$(FP="${U}" LIMITED=pulls flaky --since 2026-10-06 --until 2026-10-06)" \
-  "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/z not listed"
+check "ci_health: a rate limit health spent leaves the listings unread, and no none line" "$(FP="${U}" LIMITED=pulls flaky --since 2026-10-06 --until 2026-10-06)" \
+  "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/r, o/z not listed"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
