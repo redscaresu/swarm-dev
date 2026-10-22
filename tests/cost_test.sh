@@ -74,7 +74,7 @@ usage m4 claude-opus-5-5 0 0 0 1000000 > "${C}/p/s-code.jsonl"
 out="$(cost --since 2026-09-15)"
 check "with both the live log and close's copy, the live log wins" "| code | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
 rm "${C}/p/s-code.jsonl" "${C}/p/s-survey.jsonl"
-snap() { (cd "${R}/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
+snap() { (cd "${R}/.swarm" && find . | sort && find . -type f ! -name gh-calls.tsv -exec cksum {} + | sort); }   # gh-calls.tsv: gh-shim logs its gh calls
 before="$(snap)"
 same "with only close's copies, the same totals as the live logs" "$(cost --since 2026-09-15)" "${live}"
 same "reading creates no file and no events.tsv line" "$(snap)" "${before}"
