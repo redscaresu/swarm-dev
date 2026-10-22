@@ -49,7 +49,7 @@
 #   story_for(name, stories) -> the slug whose agent is <name> (cut at 32 characters, any -doneN
 #     dropped), preferring a story not done; stories are (slug, agent name, status). None if none.
 #   sign_time(f) -> an events.tsv line's (fields) epoch when it is a sign of life, else None. A
-#     nudge is not one, so `nudge` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
+#     nudge is not one, so `nudge` and `resume` (wait's) and `tell:nudge` (the lead's) lines are skipped, as are
 #     `tell:note` lines (a note the lead left a conductor says nothing about whether it works), and so
 #     is any other tell whose outcome is not ok: it never reached the builder. A `board-pr:<step>`
 #     line is the lead's board edit, whose name may be a story's slug, so it is never one either, and
@@ -1092,7 +1092,7 @@ settle() {
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
 # An agent whose turn stopped on an API error (settle's "api error", or idle and pane_check's) is sent
-# API_RESUME_MSG and waited on again, logged as a nudge, up to API_RESUMES stops in a row (a turn that
+# API_RESUME_MSG and waited on again, logged as a resume (not a nudge: the API failed, the builder did not stop short), up to API_RESUMES stops in a row (a turn that
 # ends otherwise resets the count); the next one, or a resume not taken up, returns "stuck: api error"
 # (wait keeps the pane's checksum from each resume, resumed_sum: until the pane moves past it, the old
 # error is no new stop, and an idle session still on it a slice later never took the resume up)
@@ -1162,7 +1162,7 @@ wait_agent() {
         echo "stuck: api error"; return "${WAIT_STUCK}"
       fi
       resumes=$((resumes + 1)); wake=1
-      record_event nudge "${name}"
+      record_event resume "${name}"
       echo "swarm: ${name}: its turn stopped on an API error; told it to carry on (${resumes}/${API_RESUMES})" >&2
       continue
     fi

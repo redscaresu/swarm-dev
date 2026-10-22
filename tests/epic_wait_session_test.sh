@@ -258,9 +258,12 @@ check "a resume the pane shows only a moment later is one resume, not three, and
 session "${ROOT}/claude.json" sess-a2=idle; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; session "${ROOT}/claude.json" sess-a2=busy
 check "an idle pane unchanged since its resume: one resume, then stuck: api error" "stuck: api error|exit 4|1" "${got%|*}|$(prompts)"
-printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
 check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
+# The resume is logged as `resume`, never `nudge`: the API failed, the builder did not stop short.
+check "an API-error resume is a resume line in events.tsv, and no nudge line" "1|0" \
+  "$(grep -c $'\tresume\ta\t' "${p}/.swarm/events.tsv" || true)|$(grep -c $'\tnudge\ta\t' "${p}/.swarm/events.tsv" || true)"
 # A tool the agent ran printed an API error (its result, ⎿, ends the turn): no stop, so no resume.
 printf '%s\n' '⏺ Bash(curl -s localhost:8080/health)' '  ⎿  API Error: 500 upstream' '' '> ' > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"

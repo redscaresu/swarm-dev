@@ -443,7 +443,7 @@ A turn can also stop on an API error while the session still reads busy, because
 the agent opened are still running. When herdr says the agent is `done` or `idle` and the last thing
 in its pane is Claude Code's own error line (`⏺ API Error: ...` at the left margin, with no reply or
 submitted prompt after it; the input box, which may hold a suggestion, is not read), `wait` sends it "Your last turn stopped on an API error; carry on where you
-stopped." and waits again. It logs each one as a nudge, conductors included. After three such stops
+stopped." and waits again. It logs each one as a `resume` line, not a nudge, conductors included. After three such stops
 in a row (a turn that ends any other way resets the count), or if the message is not taken up, `wait`
 prints `stuck: api error` and exits 4. A pane that still shows the old error after a resume (the
 message has not shown yet) is no new stop. An idle session still on that same pane a slice later
