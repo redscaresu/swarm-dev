@@ -116,6 +116,7 @@ case "$*" in
   [ -z "${BADJSON:-}" ] || { echo 'not json'; exit 0; }
   cat "$G/runs-b" ;;
 "run list -R "[oO]"/r --branch story/"*) [ -z "${FAIL:-}" ] || exit 1; [ -z "${FAILWEEK:-}" ] || [ "${6##*/}" = g ] || exit 1; cat "$G/runs-${6##*/}${FAILATTEMPT:+3}" ;;
+"run list -R o/r --created "*) echo '[]' ;;   # no reruns: flow_test.sh has the flaky tests
 "api --paginate --slurp repos/"[oO]"/r/actions/runs/"*"/attempts/"*"/jobs?per_page=100") cat "$G/jobs-$(echo "$4" | cut -d/ -f6,8 | tr / -)" ;;
 "api repos/"[oO]"/r/actions/runs/"*) [ -z "${FAILATTEMPT:-}" ] || [ "$2" != repos/o/r/actions/runs/32/attempts/1 ] || { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
   cat "$G/attempt-$(echo "$2" | cut -d/ -f6,8 | tr / -)" ;;

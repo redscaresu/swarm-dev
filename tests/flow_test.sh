@@ -246,5 +246,65 @@ none read
 merge ins: left out '"${U}"$'/14: '"$(g rev-parse --short=12 story/m14)"$': git diff: ...
 merge ins: left out '"${U}"$'/15: '"$(g rev-parse --short=12 story/m15)"$': git diff: fatal: stub: no diff'
 
+# ci_health's flaky tests: a fifth project, its PRs #1 (t1, epic e1) and #2 (t2) on o/r. Of o/r's runs
+# created on 10-01, run 10 (t1's PR) was red, then green on its rerun, its failed log naming a_test.sh
+# twice; run 21 (push) red on c_test.sh, then green; run 24 red, green, red (c_test.sh both times) and
+# green; run 20 red on both attempts (b_test.sh); run 22 red, then green, its log one gh cannot read;
+# run 23 green the first time. On 10-02, main's run 30 was red twice (c_test.sh both times, d_test.sh's
+# TIMEOUT the second), then green. gh cannot list 10-03's. So c_test.sh 3 (runs 24 and 30 once each),
+# then d_test.sh 1 and a_test.sh 1, the newer first. t1's PR also has run 11, red on both attempts
+# (e_test.sh) before run 10 on the same head, workflow and event: under --epic it is no flake either.
+# t3's PR (#3, epic e1) is a retry on t1's branch, so it has runs 10 and 11 too, counted once.
+T="${dir}/t"; TG="${dir}/tgh"; mkdir -p "${T}/.swarm" "${T}/docs/stories" "${TG}/bin"; git -C "${T}" init -q
+for s in t1 t3; do printf -- '---\nkind: code\nstatus: ready\nepic: e1\n---\n' > "${T}/docs/stories/${s}.md"; done
+printf -- '---\nkind: code\nstatus: ready\n---\n' > "${T}/docs/stories/t2.md"
+printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' t1 t2 t3 > "${T}/.swarm/agents.tsv"
+trun() { # <id> <head> <workflow> <event> <conclusion> <attempt> <created> — a run, as gh run list gives it
+  printf '{"databaseId":%s,"headSha":"%s","workflowName":"%s","event":"%s","status":"completed","conclusion":"%s","attempt":%s,"createdAt":"%s","startedAt":"%s","updatedAt":"%s"}' \
+    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$7" "$7"
+}
+for n in 1 2; do echo "{\"head\":{\"ref\":\"story/t${n}\"}}" > "${TG}/pull-${n}"; done; cp "${TG}/pull-1" "${TG}/pull-3"
+echo '[[{"sha":"a1"}]]' > "${TG}/commits-1"; cp "${TG}/commits-1" "${TG}/commits-3"; echo '[[{"sha":"b1"}]]' > "${TG}/commits-2"
+r10="$(trun 10 a1 CI pull_request success 2 2026-10-01T10:00:00Z)"
+echo "[$(trun 11 a1 CI pull_request failure 2 2026-10-01T09:00:00Z),${r10}]" > "${TG}/runs-story-t1"; echo '[]' > "${TG}/runs-story-t2"
+echo "[${r10},$(trun 20 b1 CI pull_request failure 2 2026-10-01T10:00:00Z),$(trun 21 b1 CI push success 2 2026-10-01T11:00:00Z),
+  $(trun 22 b1 lint pull_request success 2 2026-10-01T10:00:00Z),$(trun 23 b1 zizmor pull_request success 1 2026-10-01T10:00:00Z),
+  $(trun 24 b1 CI merge_group success 4 2026-10-01T12:00:00Z)]" > "${TG}/runs-2026-10-01"
+echo "[$(trun 30 m1 CI push success 3 2026-10-02T09:00:00Z)]" > "${TG}/runs-2026-10-02"
+for a in 10-1 11-1 30-1 30-2 20-1 21-1 22-1 24-1 24-3; do echo '{"conclusion":"failure"}' > "${TG}/attempt-${a}"; done
+echo '{"conclusion":"success"}' > "${TG}/attempt-24-2"
+F=$'test-shard (1)\tRun this shard\'s tests\t2026-10-01T10:05:00Z'
+printf '%s\n' "${F} FAIL tests/a_test.sh 3s" "${F} FAIL a check in it" "${F} FAIL tests/a_test.sh: its job ended without a result" > "${TG}/log-10-1"
+printf '%s\n' "${F} FAIL tests/c_test.sh 4s" > "${TG}/log-30-1"; for a in 21-1 24-1 24-3; do cp "${TG}/log-30-1" "${TG}/log-${a}"; done
+printf '%s\n' "${F} FAIL tests/c_test.sh 5s" "${F} TIMEOUT tests/d_test.sh after 600s" > "${TG}/log-30-2"
+printf '%s\n' "${F} FAIL tests/b_test.sh 2s" > "${TG}/log-20-1"; cp "${TG}/log-20-1" "${TG}/log-20-2"
+printf '%s\n' "${F} FAIL tests/e_test.sh 2s" > "${TG}/log-11-1"; cp "${TG}/log-11-1" "${TG}/log-11-2"
+{ echo '#!/bin/sh'; echo "G=${TG}"; cat <<'EOF'; } > "${TG}/bin/gh"
+case "$*" in
+  "pr list --head story/t"*) printf 'https://github.com/o/r/pull/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t0\n' "${4#story/t}" ;;
+  "pr view "*) echo 2026-10-01T10:00:00Z ;;
+  "api repos/o/r/pulls/"*) cat "$G/pull-${2##*/}" ;;
+  "api --paginate --slurp repos/o/r/pulls/"*) n="${4#repos/o/r/pulls/}"; cat "$G/commits-${n%%/*}" ;;
+  "run list -R o/r --branch story/"*) cat "$G/runs-$(echo "$6" | tr / -)" ;;
+  "run list -R o/r --created "*) cat "$G/runs-$6" 2> /dev/null || { echo 'HTTP 404: Not Found' >&2; exit 1; } ;;
+  "api repos/o/r/actions/runs/"*) cat "$G/attempt-$(echo "$2" | cut -d/ -f6,8 | tr / -)" ;;
+  "run view "*) cat "$G/log-$3-$7" 2> /dev/null || { echo 'HTTP 404: Not Found' >&2; exit 1; } ;;
+esac
+EOF
+chmod +x "${TG}/bin/gh"
+# shellcheck disable=SC2016 # awk's own $0
+flaky() { (cd "${T}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=ci_health CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${TG}/bin:${PATH}" \
+  bash "${SWARM}" flow --since 2026-10-01 --until 2026-10-03 "$@" 2>&1 | awk '/^## / { f = $0 == "## ci_health"; next } f' | sed -n '/^test_file/,/^$/p'); }
+FH=$'test_file\tflaky_runs\tlast_seen\texample_run'
+check "ci_health: the test files a rerun's red attempts failed, once per run, worst first; a run red on every attempt is not one, and a log or a day gh cannot read is named" \
+  "$(flaky)" "${FH}"$'
+tests/c_test.sh\t3\t2026-10-02\thttps://github.com/o/r/actions/runs/30/attempts/1
+tests/d_test.sh\t1\t2026-10-02\thttps://github.com/o/r/actions/runs/30/attempts/2
+tests/a_test.sh\t1\t2026-10-01\thttps://github.com/o/r/actions/runs/10/attempts/1
+flaky tests: left out the runs of o/r created 2026-10-03: gh run list -R o/r --created 2026-10-03 --status success --limit 1000: HTTP 404: Not Found
+flaky tests: could not read https://github.com/o/r/actions/runs/22/attempts/1: gh run view 22 -R o/r --attempt 1 --log-failed: HTTP 404: Not Found'
+check "ci_health: with --epic, the flaky tests of its PRs' own runs alone, a run red on every attempt not among them, and a run two PRs share once" "$(flaky --epic e1)" "${FH}"$'
+tests/a_test.sh\t1\t2026-10-01\thttps://github.com/o/r/actions/runs/10/attempts/1'
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

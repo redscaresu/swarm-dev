@@ -2,11 +2,15 @@
 # PRs of the outcomes rows dated in the window (with --epic, that epic's; without --since, the 30
 # days up to --until or today, as each PR costs 3 or more gh calls). gh's REST API (not GraphQL, whose
 # hourly limit a swarm spends first) gives each PR's branch and commits and its branch's workflow
-# runs; a run counts when its head is one of the PR's commits. Then per repo, the CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
+# runs; a run counts when its head is one of the PR's commits. Then the test files that failed in a
+# rerun that went green, in those PRs' repos (flaky_tests). Then per repo, the CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
 import datetime, functools, os, re, statistics
 from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
+LOG_SECONDS = 60   # gh run view --log-failed downloads the attempt's whole log
+FAILED = re.compile(r"\b(?:FAIL|TIMEOUT) (tests/[^\s:]+)")   # scripts/test.sh's line for a test file that failed
+RUN_FIELDS = "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt"
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)")
 WHY = {}   # a PR gh could not read: the error that dropped it
 gh = functools.partial(gh, seconds=GH_SECONDS)
@@ -36,25 +40,38 @@ def head_runs(url):
     shas = [c.get("sha") for page in pages if isinstance(page, list) for c in page if isinstance(c, dict)] if isinstance(pages, list) else []
     if not shas:
         return drop(url, None if pages is None else f"gh api repos/{repo}/pulls/{n}/commits: no commits")
-    runs = gh("run", "list", "-R", repo, "--branch", branch, "--limit", "200", "--json",
-              "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt")
+    runs = gh("run", "list", "-R", repo, "--branch", branch, "--limit", "200", "--json", RUN_FIELDS)
     if not isinstance(runs, list):
         return drop(url)
     return shas[-1], [r for r in runs if isinstance(r, dict) and r.get("headSha") in shas and r.get("status") == "completed"]
 
+@functools.lru_cache(maxsize=None)
 def pr_runs(url):
-    # head_runs, each with its conclusions first attempt first (gh run list gives a rerun's last
-    # attempt alone, so the earlier ones come from /attempts/<n>), or None when gh cannot read them.
-    repo, got = GITHUB.match(url).group(1), head_runs(url)
+    # head_runs, with their conclusions (attempts), or None when gh cannot read them; read once per PR.
+    got = head_runs(url)
     if got is None:
         return None
-    runs = got[1]
+    runs = attempts(GITHUB.match(url).group(1), got[1])
+    return drop(url) if runs is None else runs
+
+def reruns(repo, day):
+    # The repo's runs created on day whose last attempt, not their first, went green, with their
+    # conclusions (attempts); None when gh cannot read them. gh lists at most 1000 runs a query.
+    runs = gh("run", "list", "-R", repo, "--created", day, "--status", "success", "--limit", "1000", "--json", RUN_FIELDS)
+    if not isinstance(runs, list):
+        return None
+    return attempts(repo, [r for r in runs if isinstance(r, dict) and r.get("conclusion") == "success"
+                           and isinstance(r.get("attempt"), int) and r["attempt"] > 1])
+
+def attempts(repo, runs):
+    # The runs, each with its conclusions first attempt first (gh run list gives a rerun's last
+    # attempt alone, so the earlier ones come from /attempts/<n>), or None when gh cannot read them.
     for r in runs:
         earlier = []
         for n in range(1, r["attempt"]):
             earlier.append(gh("api", f"repos/{repo}/actions/runs/{r['databaseId']}/attempts/{n}"))
             if earlier[-1] is None:
-                return drop(url)
+                return None
         r["conclusions"] = [a.get("conclusion") if isinstance(a, dict) else None for a in earlier] + [r["conclusion"]]
     return runs
 
@@ -69,6 +86,44 @@ def tally(r, seen):
             seen.add(key)
             red += 1
     return red, flakes
+
+def red_then_green(r):
+    # The numbers of a run's red attempts before its last green one: none for a run never green.
+    last = max((n for n, c in enumerate(r["conclusions"], 1) if c == "success"), default=0)
+    return [n for n, c in enumerate(r["conclusions"][:last], 1) if c in RED]
+
+def failed_files(repo, r, n):
+    # Attempt n of run r's URL, and the test files its failed steps' log names (FAILED), or None when gh
+    # cannot read the log.
+    log = gh("run", "view", str(r["databaseId"]), "-R", repo, "--attempt", str(n), "--log-failed", seconds=LOG_SECONDS, parse=str)
+    return (f"https://github.com/{repo}/actions/runs/{r['databaseId']}/attempts/{n}",
+            None if log is None else {CONTROL.sub("", f) for f in FAILED.findall(log)})
+
+def flaky_tests(urls, days):
+    # Per test file on a FAIL or TIMEOUT line of the red attempts before a run's last green one (gh run
+    # view --log-failed), worst first: its runs (each counted once per file), the day its last one was
+    # created and that one's attempt; and a line each for a day's runs or a log gh could not read. The
+    # runs are the reruns created on the days, in the repos of the PRs health read (main's and a lead
+    # PR's too), or with --epic its PRs' own runs.
+    files, unread, runs = {}, [], []   # files: test file -> [(createdAt, attempt URL)], one per run
+    read = [u for u in urls if pr_runs(u) is not None]
+    if epic:
+        runs = [(GITHUB.match(u).group(1), pr_runs(u)) for u in read]
+    for repo in [] if epic else sorted({GITHUB.match(u).group(1).lower() for u in read}):
+        for day in days:
+            got = reruns(repo, day)
+            unread.extend([f"flaky tests: left out the runs of {repo} created {day}: {CONTROL.sub('', ERROR[0])}"] if got is None else [])
+            runs.append((repo, got or []))
+    for (repo, _), r in {(repo, r["databaseId"]): r for repo, rs in runs for r in rs}.items():   # a run once, whichever PRs share it
+        named = set()
+        for n in red_then_green(r):
+            link, got = failed_files(repo, r, n)
+            unread.extend([f"flaky tests: could not read {link}: {CONTROL.sub('', ERROR[0])}"] if got is None else [])
+            for name in (got or set()) - named:
+                files.setdefault(name, []).append((r["createdAt"], link))
+                named.add(name)
+    rows = sorted(files.items(), key=lambda f: (len(f[1]), max(f[1])), reverse=True)
+    return [[name, str(len(seen)), max(seen)[0][:10], max(seen)[1]] for name, seen in rows], unread
 
 def health(urls):
     # The row over the PRs gh could read, and the PRs it could not, which are left out.
@@ -167,6 +222,13 @@ if __name__ == "__main__":
         if unread:
             print(f"ci health: gh could not read {len(unread)} of {len(now)} PRs, left out")
             print("\n".join(f"ci health: left out {url}: {WHY[url]}" for url in unread))
+        first, last = datetime.date.fromisoformat(since), min(end, datetime.date.today())
+        days = [(first + datetime.timedelta(days=i)).isoformat() for i in range((last - first).days + 1)]
+        tests, unread = flaky_tests(now, days)   # not rows: windowed reads the outcomes rows below
+        if tests or unread:
+            print()
+            print("test_file\tflaky_runs\tlast_seen\texample_run")
+            print("\n".join(["\t".join(t) for t in tests] + unread))
     # The window before: as many days, up to the day before since; a PR built in both windows counts
     # in this one alone, by its latest build. A PR gh cannot read is left out here, so the PRs that
     # answered still count (dash's ci line reads this table).
