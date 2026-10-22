@@ -8,9 +8,12 @@ import datetime, functools, os, re, statistics, subprocess, urllib.parse
 from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
-FLAKY_CALLS = 100   # flaky_tests' gh calls at most: a repo's runs listing, earlier attempts and logs
+FLAKY_CALLS = 100   # flaky_tests' gh invocations at most (listings, earlier attempts, logs); not REST requests: a
+                    # listing pages up to 10, a log download is several, and gh() tries a 5xx up to 3 times
 LOG_SECONDS = 60   # gh run view --log-failed downloads the attempt's whole log
-FAILED = re.compile(r"\b(?:FAIL|TIMEOUT) (tests/[^\s:]+)")   # scripts/test.sh's line for a test file that failed
+# scripts/test.sh's own lines for a test file that failed (FAIL <file> <n>s, FAIL <file>: its job ended
+# without a result, TIMEOUT <file> after <n>s), whole, so a test's own output that quotes one does not count
+FAILED = re.compile(r"(?:^|\s)(?:FAIL (tests/\S+?)(?: \d+s|: its job ended without a result)|TIMEOUT (tests/\S+) after \d+s)\s*$", re.M)
 RUN_FIELDS = "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt"
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)")
 WHY = {}   # a PR gh could not read: the error that dropped it
@@ -88,17 +91,17 @@ def tally(r, seen):
 class Stop(Exception):
     pass   # flaky_tests spent FLAKY_CALLS, or gh's hourly rate limit is spent: why
 
-SPENT = [0]   # flaky_tests' gh calls so far
+FLAKY_SPENT = [0]   # flaky_tests' gh invocations so far
 
 def capped(*args, **kw):
-    # gh, for flaky_tests: at most FLAKY_CALLS calls, and none once gh's hourly rate limit is spent
+    # gh, for flaky_tests: at most FLAKY_CALLS invocations, and none once gh's hourly rate limit is spent
     # (Stop says which, the call that hit the limit included).
-    if not LIMIT[0] and SPENT[0] < FLAKY_CALLS:
-        SPENT[0] += 1
+    if not LIMIT[0] and FLAKY_SPENT[0] < FLAKY_CALLS:
+        FLAKY_SPENT[0] += 1
         got = gh(*args, **kw)
         if not LIMIT[0]:
             return got
-    raise Stop(f"gh's rate limit ({CONTROL.sub('', LIMIT[0])})" if LIMIT[0] else f"its cap of {FLAKY_CALLS} gh calls")
+    raise Stop(f"gh's rate limit ({CONTROL.sub('', LIMIT[0])})" if LIMIT[0] else f"its cap of {FLAKY_CALLS} gh invocations")
 
 def origin():
     # The project's origin repo on github.com (owner/name, lowercased), in a list; [] for none.
@@ -110,13 +113,13 @@ def origin():
 def window_runs(repo, created, lines):
     # The repo's completed runs created in the window (created, gh's syntax), one paginated call, by
     # gh run list's names, with a run's last conclusion; a line in lines when gh lists fewer than it
-    # has (GitHub's 1000) or cannot list them, which leaves []. Raises Stop.
+    # has (GitHub's 1000) or cannot list them, which returns None. Raises Stop.
     pages = capped("api", "--paginate", "--slurp", f"repos/{repo}/actions/runs?created={urllib.parse.quote(created)}&per_page=100",
                    seconds=LOG_SECONDS)
     pages = [p for p in pages if isinstance(p, dict)] if isinstance(pages, list) else None
     if pages is None:
         lines.append(f"flaky tests: left out the runs of {repo} created {created}: {CONTROL.sub('', ERROR[0])}")
-        return []
+        return None
     got = [r for p in pages for r in p.get("workflow_runs") or [] if isinstance(r, dict)]
     total = max([p["total_count"] for p in pages if isinstance(p.get("total_count"), int)] + [len(got)])
     lines.extend([f"flaky tests: gh listed {len(got)} of the {total} runs of {repo} created {created}, the newest; the rest are left out"] if len(got) < total else [])
@@ -126,10 +129,10 @@ def window_runs(repo, created, lines):
             and isinstance(r.get("created_at"), str)]
 
 def suspects(runs):
-    # runs ((repo, run) pairs, a run once) by (repo, sha, workflow, event), each group oldest first; the
-    # groups that may hold a flake (a rerun, or a red run beside a green one), newest first.
+    # runs ({(repo, run id): run}) by (repo, sha, workflow, event), each group oldest first; the groups
+    # that may hold a flake (a rerun, or a red run beside a green one), newest first.
     groups = {}
-    for (repo, _), r in {(repo, r["databaseId"]): r for repo, r in runs}.items():
+    for (repo, _), r in runs.items():
         groups.setdefault((repo, r["headSha"], r["workflowName"], r["event"]), []).append(r)
     maybe = [(key[0], sorted(g, key=lambda r: r["createdAt"])) for key, g in groups.items()
              if any(r["attempt"] > 1 for r in g) or ("success" in {r["conclusion"] for r in g} and RED & {r["conclusion"] for r in g})]
@@ -140,7 +143,7 @@ def failed_files(repo, r, n):
     # cannot read the log. Raises Stop.
     log = capped("run", "view", str(r["databaseId"]), "-R", repo, "--attempt", str(n), "--log-failed", seconds=LOG_SECONDS, parse=str)
     return (f"https://github.com/{repo}/actions/runs/{r['databaseId']}/attempts/{n}",
-            None if log is None else {CONTROL.sub("", f) for f in FAILED.findall(log)})
+            None if log is None else {CONTROL.sub("", m.group(1) or m.group(2)) for m in FAILED.finditer(log)})
 
 def group_files(repo, group, lines, out):
     # Adds to out the flaky runs of one suspects group (tally's, as health counts them: a red attempt a
@@ -172,31 +175,53 @@ def flaky_tests(urls, created):
     # worst first: its flaky runs (a run once per file), the day the last one was created and its
     # attempt; and lines for what was read and what was not. The runs are those created in the window
     # (created) in the repos of the PRs health read and the project's origin (so main's and the lead's
-    # PRs' too), or with --epic its PRs' own runs; at most FLAKY_CALLS gh calls, stopping at gh's rate
-    # limit.
-    files, lines, runs, groups, flaky, done = {}, [], [], [], [], 0   # files: test file -> [(createdAt, attempt URL)], one per run
+    # PRs' too), or with --epic its PRs' own runs, a run once; at most FLAKY_CALLS gh invocations,
+    # stopping at gh's rate limit with what it read so far.
+    lines, runs, groups, flaky, done, unlisted, whole = [], {}, [], [], 0, [], True   # runs: (repo, run id) -> run
     read = [u for u in urls if pr_runs(u) is not None]
+    known = {r["databaseId"]: r["conclusions"] for u in read for r in pr_runs(u)}   # what health read already
     try:
         if epic:
-            runs = [(GITHUB.match(u).group(1), r) for u in read for r in pr_runs(u)]
+            runs = {(GITHUB.match(u).group(1), r["databaseId"]): r for u in read for r in pr_runs(u)}
         else:
-            repos = sorted({GITHUB.match(u).group(1).lower() for u in read} | set(origin()))
-            runs = [(repo, r) for repo in repos for r in window_runs(repo, created, lines)]
+            unlisted = sorted({GITHUB.match(u).group(1).lower() for u in read} | set(origin()))
+            while unlisted:
+                repo = unlisted[0]
+                got = window_runs(repo, created, lines)
+                whole = whole and got is not None
+                runs.update({(repo, r["databaseId"]): r for r in got or []})
+                unlisted.pop(0)
+            for r in runs.values():
+                if len(known.get(r["databaseId"]) or ()) == r["attempt"]:
+                    r["conclusions"] = known[r["databaseId"]]
         groups = suspects(runs)
         for repo, group in groups:
             group_files(repo, group, lines, flaky)
             done += 1
     except Stop as why:
-        left = sum(len(g) for _, g in groups[done:])
-        lines.append(f"flaky tests: stopped at {why}: {left} of {sum(len(g) for _, g in groups)} runs that may be flaky not read in full")
+        whole, groups = False, groups or suspects(runs)   # a Stop while listing: the groups of the repos listed
+        said = [f"the runs of {', '.join(unlisted)} not listed"] if unlisted else []
+        said += [f"{sum(len(g) for _, g in groups[done:])} of {sum(len(g) for _, g in groups)} runs that may be flaky not read in full"] if groups or not said else []
+        lines.append(f"flaky tests: stopped at {why}: {'; '.join(said)}")
+    whole = whole and all(r.get("conclusions") is not None for _, g in groups for r in g)   # no run's attempts left unread
+    return flaky_rows(flaky), lines + summary_lines(runs, flaky, whole)
+
+def flaky_rows(flaky):
+    # flaky_tests' rows from group_files' flaky runs: per test file, its runs, worst first.
+    files = {}   # test file -> [(createdAt, attempt URL)], one per run
     for r, named, _ in flaky:
         for name, link in named.items():
             files.setdefault(name, []).append((r["createdAt"], link))
-    unnamed = sum(1 for _, named, was_read in flaky if was_read and not named)
-    lines.extend([f"flaky tests: none in the {len(runs)} runs read"] if not flaky and done == len(groups) else [])
-    lines.extend([f"flaky tests: {unnamed} of {len(flaky)} flaky runs' failed logs have no FAIL or TIMEOUT tests/<file> line"] if unnamed else [])
     rows = sorted(files.items(), key=lambda f: (len(f[1]), max(f[1])), reverse=True)
-    return [[name, str(len(seen)), max(seen)[0][:10], max(seen)[1]] for name, seen in rows], lines
+    return [[name, str(len(seen)), max(seen)[0][:10], max(seen)[1]] for name, seen in rows]
+
+def summary_lines(runs, flaky, whole):
+    # A line when none of the runs (each once) was flaky, read whole (no stop, every listing read); and
+    # one counting the flaky runs whose logs were read and name no test file.
+    logged = [named for _, named, was_read in flaky if was_read]
+    unnamed = sum(1 for named in logged if not named)
+    return ([f"flaky tests: none in the {len(runs)} runs read"] if whole and not flaky else []) + \
+           ([f"flaky tests: {unnamed} of the {len(logged)} flaky runs whose failed logs were read have no FAIL or TIMEOUT tests/<file> line"] if unnamed else [])
 
 def health(urls):
     # The row over the PRs gh could read, and the PRs it could not, which are left out.

@@ -255,13 +255,18 @@ merge ins: left out '"${U}"$'/15: '"$(g rev-parse --short=12 story/m15)"$': git 
 # green, its log one gh cannot read; run 26's first attempt gh cannot read; run 27's log is go test's,
 # with no FAIL tests/<file> line; run 23 green the first time. On 10-02, main's run 30 was red twice
 # (c_test.sh both times, d_test.sh's TIMEOUT the second), then green. So c_test.sh 3 (runs 24 and 30
-# once each), then by the newest d, f, a and e. t3's PR (#3, epic e1) is a retry on t1's branch, so
-# under --epic runs 10 and 11 are its too, counted once.
+# once each), then by the newest d, f, a and e. Run 30's log also has a check that quotes a FAIL
+# tests/z_test.sh line, which is not test.sh's own. t3's PR (#3, epic e1) is a retry on t1's branch,
+# so under --epic runs 10 and 11 are its too, counted once. t4's and t5's PRs (#4, #5, epic e2) share
+# t4's branch and its one green run 40. A project u, its origin o/z, has u1's PR #9 on o/r, built
+# 10-06, when o/r's run 90 is a rerun.
 T="${dir}/t"; TG="${dir}/tgh"; mkdir -p "${T}/.swarm" "${T}/docs/stories" "${TG}/bin"; git -C "${T}" init -q
 git -C "${T}" remote add origin https://github.com/o/r.git
-for s in t1 t3; do printf -- '---\nkind: code\nstatus: ready\nepic: e1\n---\n' > "${T}/docs/stories/${s}.md"; done
+for s in t1:e1 t3:e1 t4:e2 t5:e2; do printf -- '---\nkind: code\nstatus: ready\nepic: %s\n---\n' "${s#*:}" > "${T}/docs/stories/${s%:*}.md"; done
 printf -- '---\nkind: code\nstatus: ready\n---\n' > "${T}/docs/stories/t2.md"
-printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' t1 t2 t3 > "${T}/.swarm/agents.tsv"
+printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' t1 t2 t3 t4 t5 > "${T}/.swarm/agents.tsv"
+U="${dir}/u"; mkdir -p "${U}/.swarm" "${U}/docs/stories"; git -C "${U}" init -q; git -C "${U}" remote add origin https://github.com/o/z.git
+printf -- '---\nkind: code\nstatus: ready\n---\n' > "${U}/docs/stories/u1.md"; printf '2026-10-06\tcode\tu1\tclaude\topus\thigh\t-\n' > "${U}/.swarm/agents.tsv"
 trun() { # <id> <head> <workflow> <event> <conclusion> <attempt> <created> — a run, as gh run list gives it
   printf '{"databaseId":%s,"headSha":"%s","workflowName":"%s","event":"%s","status":"completed","conclusion":"%s","attempt":%s,"createdAt":"%s","startedAt":"%s","updatedAt":"%s"}' \
     "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$7" "$7"
@@ -273,7 +278,10 @@ listing() { # <created> <total_count> <run>... — GitHub's runs for that create
   local c="$1" n="$2"; shift 2
   local IFS=,; echo "[{\"total_count\":${n},\"workflow_runs\":[$*]}]" > "${TG}/runs-${c}"
 }
-for n in 1 2; do echo "{\"head\":{\"ref\":\"story/t${n}\"}}" > "${TG}/pull-${n}"; done; cp "${TG}/pull-1" "${TG}/pull-3"
+for n in 1 2 4 9; do echo "{\"head\":{\"ref\":\"story/$([ "${n}" = 9 ] && echo u1 || echo "t${n}")\"}}" > "${TG}/pull-${n}"; done
+cp "${TG}/pull-1" "${TG}/pull-3"; cp "${TG}/pull-4" "${TG}/pull-5"
+for n in 4 5 9; do echo '[[{"sha":"c4"}]]' > "${TG}/commits-${n}"; done
+echo "[$(trun 40 c4 CI pull_request success 1 2026-10-01T10:00:00Z)]" > "${TG}/runs-story-t4"; echo '[]' > "${TG}/runs-story-u1"
 echo '[[{"sha":"a1"}]]' > "${TG}/commits-1"; cp "${TG}/commits-1" "${TG}/commits-3"; echo '[[{"sha":"b1"}]]' > "${TG}/commits-2"
 echo "[$(trun 11 a1 CI pull_request failure 2 2026-10-01T09:00:00Z),$(trun 10 a1 CI pull_request success 2 2026-10-01T10:00:00Z)]" > "${TG}/runs-story-t1"
 echo '[]' > "${TG}/runs-story-t2"
@@ -284,11 +292,13 @@ listing 2026-10-01..2026-10-03 12 "$(arun 11 a1 CI pull_request failure 2 2026-1
   "$(arun 24 b1 CI merge_group success 4 2026-10-01T12:00:00Z)" "$(arun 25 b1 test schedule failure 3 2026-10-01T13:00:00Z)" \
   "$(arun 26 b1 docs pull_request success 2 2026-10-01T14:00:00Z)" "$(arun 27 b1 go pull_request success 2 2026-10-01T08:00:00Z)" "${r30}"
 listing 2026-10-02..2026-10-03 1 "${r30}"
+listing 2026-10-07..2026-10-07 1 "$(arun 50 e5 CI push success 2 2026-10-07T10:00:00Z)"   # its first attempt gh cannot read
+listing 2026-10-06..2026-10-06 1 "$(arun 90 c9 CI push success 2 2026-10-06T10:00:00Z)"; echo '{"conclusion":"failure"}' > "${TG}/attempt-90-1"
 for a in 10-1 11-1 30-1 30-2 20-1 21-1 22-1 24-1 24-3 25-1 27-1; do echo '{"conclusion":"failure"}' > "${TG}/attempt-${a}"; done
 for a in 24-2 25-2; do echo '{"conclusion":"success"}' > "${TG}/attempt-${a}"; done
 F=$'test-shard (1)\tRun this shard\'s tests\t2026-10-01T10:05:00Z'
 printf '%s\n' "${F} FAIL tests/a_test.sh 3s" "${F} FAIL a check in it" "${F} FAIL tests/a_test.sh: its job ended without a result" > "${TG}/log-10-1"
-printf '%s\n' "${F} FAIL tests/c_test.sh 4s" > "${TG}/log-30-1"; for a in 21-1 24-1 24-3; do cp "${TG}/log-30-1" "${TG}/log-${a}"; done
+printf '%s\n' "${F} FAIL tests/c_test.sh 4s" "${F} FAIL a check: want 'FAIL tests/z_test.sh 3s', got ''" > "${TG}/log-30-1"; for a in 21-1 24-1 24-3; do cp "${TG}/log-30-1" "${TG}/log-${a}"; done
 printf '%s\n' "${F} FAIL tests/c_test.sh 5s" "${F} TIMEOUT tests/d_test.sh after 600s" > "${TG}/log-30-2"
 printf '%s\n' "${F} FAIL tests/b_test.sh 2s" > "${TG}/log-20-1"; cp "${TG}/log-20-1" "${TG}/log-20-2"
 printf '%s\n' "${F} FAIL tests/e_test.sh 2s" > "${TG}/log-11-1"; cp "${TG}/log-11-1" "${TG}/log-11-2"
@@ -305,7 +315,11 @@ for i in 2001 2002 2003 2004; do echo '{"conclusion":"failure"}' > "${TG}/attemp
 printf '%s\n' "${F} FAIL tests/g_test.sh 2s" > "${TG}/log-2003-1"
 { echo '#!/bin/sh'; echo "G=${TG}"; cat <<'EOF'; } > "${TG}/bin/gh"
 echo "$*" >> "$G/gh.log"
+RL="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
 case "$*" in
+  "pr list --head story/u1"*) printf 'https://github.com/o/r/pull/9\tMERGED\t2026-10-06T12:00:00Z\t2026-10-06T10:00:00Z\t0\n' ;;
+  "api repos/o/r/pulls/9") [ "${LIMITED:-}" != pulls ] || { echo "$RL" >&2; exit 1; }; cat "$G/pull-9" ;;
+  "api --paginate --slurp repos/o/z/actions/runs?created="*) [ "${LIMITED:-}" != listing ] || { echo "$RL" >&2; exit 1; }; echo '[]' ;;
   "pr list --head story/t"*) printf 'https://github.com/o/r/pull/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t0\n' "${4#story/t}" ;;
   "pr view "*) echo 2026-10-01T10:00:00Z ;;
   "api repos/o/r/pulls/"*) cat "$G/pull-${2##*/}" ;;
@@ -319,10 +333,11 @@ esac
 EOF
 chmod +x "${TG}/bin/gh"
 # shellcheck disable=SC2016 # awk's own $0
-flaky() { (cd "${T}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=ci_health CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${TG}/bin:${PATH}" \
+flaky() { (cd "${FP:-${T}}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=ci_health CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${TG}/bin:${PATH}" \
   bash "${SWARM}" flow "$@" 2>&1 | awk '/^## / { f = $0 == "## ci_health"; next } f' | grep -E '^(test_file|tests/|flaky tests:)'); }
 FH=$'test_file\tflaky_runs\tlast_seen\texample_run'
 L=https://github.com/o/r/actions/runs
+: > "${TG}/gh.log"
 check "ci_health: the test files a head's red attempts failed before a green one, as the row counts flakes, a run once per file, worst first; what gh did not list or could not read is named, and logs with no test file line counted" \
   "$(flaky --since 2026-10-01 --until 2026-10-03)" "${FH}"$'
 tests/c_test.sh\t3\t2026-10-02\t'"${L}"$'/30/attempts/1
@@ -333,25 +348,35 @@ tests/e_test.sh\t1\t2026-10-01\t'"${L}"$'/11/attempts/1
 flaky tests: gh listed 11 of the 12 runs of o/r created 2026-10-01..2026-10-03, the newest; the rest are left out
 flaky tests: left out '"${L}"$'/26: gh api repos/o/r/actions/runs/26/attempts/1: HTTP 404: Not Found
 flaky tests: could not read '"${L}"$'/22/attempts/1: gh run view 22 -R o/r --attempt 1 --log-failed: HTTP 404: Not Found
-flaky tests: 1 of 8 flaky runs\' failed logs have no FAIL or TIMEOUT tests/<file> line'
+flaky tests: 1 of the 7 flaky runs whose failed logs were read have no FAIL or TIMEOUT tests/<file> line'
+check "ci_health: the flaky tests reuse the attempts health read: runs 10's and 11's, once for each of t1's and t3's PRs" \
+  "$(grep -cE '^api repos/o/r/actions/runs/1[01]/attempts/1$' "${TG}/gh.log")" 4
 check "ci_health: with --epic, the flaky tests of its PRs' own runs alone, a run two PRs share once" "$(flaky --since 2026-10-01 --until 2026-10-03 --epic e1)" "${FH}"$'
 tests/a_test.sh\t1\t2026-10-01\t'"${L}"$'/10/attempts/1
 tests/e_test.sh\t1\t2026-10-01\t'"${L}"$'/11/attempts/1'
+check "ci_health: with --epic and no flaky run, none in the runs read, a run two PRs share once" "$(flaky --since 2026-10-01 --until 2026-10-03 --epic e2)" \
+  "flaky tests: none in the 1 runs read"
 check "ci_health: with no PR in the window, the project's origin is still read" "$(flaky --since 2026-10-02 --until 2026-10-03)" "${FH}"$'
 tests/d_test.sh\t1\t2026-10-02\t'"${L}"$'/30/attempts/2
 tests/c_test.sh\t1\t2026-10-02\t'"${L}"$'/30/attempts/1'
-check "ci_health: with no --until, runs created on --since's UTC day and after; what gh cannot list is named, and none read says so" \
-  "$(TZ=Etc/GMT-14 flaky --since 2026-10-01)" "flaky tests: left out the runs of o/r created >=2026-10-01: gh api --paginate --slurp repos/o/r/actions/runs?created=%3E%3D2026-10-01&per_page=100: HTTP 404: Not Found
-flaky tests: none in the 0 runs read"
+check "ci_health: with no --until, runs created on --since's UTC day and after; what gh cannot list is named, and no none line after it" \
+  "$(TZ=Etc/GMT-14 flaky --since 2026-10-01)" "flaky tests: left out the runs of o/r created >=2026-10-01: gh api --paginate --slurp repos/o/r/actions/runs?created=%3E%3D2026-10-01&per_page=100: HTTP 404: Not Found"
 : > "${TG}/gh.log"
-check "ci_health: the flaky tests stop at their cap of 100 gh calls and say how many runs they left" "$(flaky --since 2026-10-04 --until 2026-10-04)" \
-  "flaky tests: stopped at its cap of 100 gh calls: 2 of 101 runs that may be flaky not read in full"
-check "ci_health: the cap's 100 calls: the listing and 99 runs' attempts" "$(grep -c '^api ' "${TG}/gh.log")" 100
+check "ci_health: the flaky tests stop at their cap of 100 gh invocations and say how many runs they left" "$(flaky --since 2026-10-04 --until 2026-10-04)" \
+  "flaky tests: stopped at its cap of 100 gh invocations: 2 of 101 runs that may be flaky not read in full"
+check "ci_health: the cap's 100 invocations: the listing and 99 runs' attempts" "$(grep -c '^api ' "${TG}/gh.log")" 100
 : > "${TG}/gh.log"
 check "ci_health: the flaky tests stop at gh's rate limit, keeping what they read, a group's first log too" "$(flaky --since 2026-10-05 --until 2026-10-05)" "${FH}"$'
 tests/g_test.sh\t1\t2026-10-05\t'"${L}"$'/2003/attempts/1
 flaky tests: stopped at gh\'s rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): 4 of 4 runs that may be flaky not read in full'
 check "ci_health: and make no call after it" "$(grep -cE 'runs/200[12]' "${TG}/gh.log" || true)" 0
+check "ci_health: a run whose attempts gh cannot read leaves no none line" "$(flaky --since 2026-10-07 --until 2026-10-07)" \
+  "flaky tests: left out ${L}/50: gh api repos/o/r/actions/runs/50/attempts/1: HTTP 404: Not Found"
+check "ci_health: a rate limit while listing a later repo keeps the earlier repo's runs, and says which repo it did not list" \
+  "$(FP="${U}" LIMITED=listing flaky --since 2026-10-06 --until 2026-10-06)" \
+  "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/z not listed; 1 of 1 runs that may be flaky not read in full"
+check "ci_health: a rate limit health spent leaves the listing unread, and no none line" "$(FP="${U}" LIMITED=pulls flaky --since 2026-10-06 --until 2026-10-06)" \
+  "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/z not listed"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
