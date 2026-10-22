@@ -20,15 +20,22 @@ stop_group() {
 # test.sh --one <run dir> <file> — one file, as above, in a process group of its own, which is
 # recorded in <run dir>/jobs while it runs; its result is <log>.ok or <log>.failed, and it exits 1
 # when it failed, never xargs's 255. A TERM, INT or HUP stops the whole group: the test and whatever
-# it started; so does the test's end, so nothing it left running reaches a later file. The test does
+# it started; so does the test's end, so nothing it left running reaches a later file. A watchdog
+# stops the group the same way once the file has run TEST_FILE_TIMEOUT seconds (a whole number, default
+# 600; three times that for a file in SLOW; bash 3.2 and macOS have no timeout): the job then prints
+# "TIMEOUT <file> after <n>s", n being the seconds it ran, and its log is cut to the file's last 20
+# lines. SWARM_SLEEP_SCALE defaults to 0.01 here as in the Makefile, so a direct run is as fast. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
 # test's made-up panes.
+export SWARM_SLEEP_SCALE="${SWARM_SLEEP_SCALE:-0.01}"
+limit="${TEST_FILE_TIMEOUT:-600}"
 if [[ "${1:-}" == --one ]]; then
-  unset JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
-  run="$2" f="$3" t0=${SECONDS} rc=0 pid=""
+  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd=""
+  case " ${SLOW:-} " in *" ${f} "*) limit=$((limit * 3)) ;; esac   # the files that take minutes alone
+  unset TEST_FILE_TIMEOUT JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
-  trap '[[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
+  trap '[[ -z "${wd}" ]] || kill "${wd}" 2>/dev/null; [[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
   : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts
   echo "run  ${f}"
   # Inside the run dir, so it goes with it even if this job is KILLed.
@@ -38,12 +45,32 @@ if [[ "${1:-}" == --one ]]; then
   pid=$!
   set +m
   echo "${pid}" > "${run}/jobs/$$"
+  # The watchdog sleeps the limit; it signals and writes the marker only if this job (a KILLed job
+  # would leave a PGID that may be reused) and the group are still there then.
+  (
+    sp=""
+    trap '[[ -z "${sp}" ]] || kill "${sp}" 2>/dev/null; exit 0' TERM
+    sleep "${limit}" & sp=$!
+    wait "${sp}"; sp=""
+    kill -0 "$$" 2>/dev/null && kill -0 -- "-${pid}" 2>/dev/null || exit 0
+    : > "${log}.timeout"
+    stop_group "${pid}" 2
+  ) > /dev/null 2>&1 &
+  wd=$!
   wait "${pid}" || rc=$?
+  elapsed=$((SECONDS - t0))
+  kill "${wd}" 2>/dev/null; wait "${wd}" 2>/dev/null; wd=""   # reaped, so no later kill can hit a recycled PID
   stop_group "${pid}" 2
   rm -rf "${tmp}" "${run}/jobs/$$"
-  if [[ ${rc} -eq 0 ]]; then : > "${log}.ok"; echo "ok   ${f} $((SECONDS - t0))s"; exit 0; fi
+  if [[ -e "${log}.timeout" ]]; then
+    : > "${log}.failed"
+    { echo "TIMEOUT ${f} after ${elapsed}s (last 20 lines)"; tail -n 20 "${log}"; } > "${log}.tail"; mv "${log}.tail" "${log}"
+    echo "TIMEOUT ${f} after ${elapsed}s"
+    exit 1
+  fi
+  if [[ ${rc} -eq 0 ]]; then : > "${log}.ok"; echo "ok   ${f} ${elapsed}s"; exit 0; fi
   : > "${log}.failed"
-  echo "FAIL ${f} $((SECONDS - t0))s"
+  echo "FAIL ${f} ${elapsed}s"
   exit 1
 fi
 
@@ -83,6 +110,10 @@ fi
 if [[ -n "${list}" ]]; then
   [[ $# -eq 0 ]] || printf '%s\n' "$@"
   exit 0
+fi
+if ! [[ "${limit}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "test.sh: TEST_FILE_TIMEOUT=${limit} is not a whole number of seconds, 1 or more" >&2
+  exit 1
 fi
 
 run="$(mktemp -d)" || exit 1

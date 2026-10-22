@@ -2,7 +2,7 @@
 kind: docs
 status: blocked
 epic: safer-faster-swarm
-depends_on: [board-prep, env-allowlist-spike, board-state-out-of-git, escalated-block-out-of-git, reconcile-drops-backup, pr-removes-story, board-state-dash-readers, after-key, sonnet-easy-only, plan-epic-size-cap, epic-command, plan-epic-child-epics, remove-plan-hld, fold-reports, flow-epic-totals, subagent-cost, model-fit-table, time-in-state, ci-health, incidents, lead-queue-wait, rework, dataset, prediction-scores, recurring-kinds, remove-lessons, merge-guard-hook, wait-pr, fallback-reviewer, escalate-ladder-step-up, escalate-ladder-triggers, init-like-infrafactory, ci-board-fast-path, tests-fast, split-slow-tests, dash-project-anywhere, dash-three-defects, dash-golden-frames, dash-merge-gauges, dash-check, agent-entry-points, doc-check, env-allowlist]
+depends_on: [board-prep, env-allowlist-spike, board-state-out-of-git, escalated-block-out-of-git, reconcile-drops-backup, pr-removes-story, board-state-dash-readers, after-key, sonnet-easy-only, plan-epic-size-cap, epic-command, plan-epic-child-epics, remove-plan-hld, fold-reports, flow-epic-totals, subagent-cost, model-fit-table, time-in-state, ci-health, incidents, lead-queue-wait, rework, dataset, recurring-kinds, remove-lessons, merge-guard-hook, wait-pr, fallback-reviewer, escalate-ladder-step-up, escalate-ladder-triggers, init-like-infrafactory, ci-board-fast-path, tests-fast, split-slow-tests, dash-project-anywhere, dash-three-defects, dash-golden-frames, dash-merge-gauges, dash-check, agent-entry-points, doc-check, env-allowlist]
 touches: [docs/*.md, commands/*.md, templates/, docs/assets/*, tests/doc_check_known.txt:docs, commands and templates entries]
 easy: false
 estimate_lines: 280
