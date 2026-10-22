@@ -373,6 +373,8 @@ archive_session() {
 CLOSE_CAUSE_WORDS="met impossible stalled bound paused cleared-on-error"
 is_close_cause() { [[ "$1" =~ ^[a-z-]+$ && " ${CLOSE_CAUSE_WORDS} " == *" $1 "* ]]; }
 CLOSE_CAUSES="${CLOSE_CAUSE_WORDS// /, }"; CLOSE_CAUSES="${CLOSE_CAUSES%, *} or ${CLOSE_CAUSES##*, }"
+# CLOSE_DROP: set by close --drop, which clears a build whose PR is open (close_agent).
+CLOSE_DROP=""
 
 # shut_agent <name> — archive <name>'s session log, close what was opened for it (close_panes) and
 # remove its ZDOTDIR (clean_env's), unless its pane could not be closed (CLOSE_PANE_KEPT). close_agent
@@ -387,7 +389,58 @@ shut_agent() {
   [[ -n "${CLOSE_PANE_KEPT}" ]] || rm -rf "${PROJECT_DIR}/.swarm/zdotdir/$(agent_name "$1")"
 }
 
+# NOT_CLOSED: what a close prints when the builder's pane could not be closed (<name> is the name).
+NOT_CLOSED="not closed: <name>'s pane is still open, so nothing was counted or cleared; close it again once herdr answers"
+
+# keep_build <slug> <cause> <urls> <heads> — a bare close of a story's builder whose PRs <urls> are
+# open (<heads> their head SHAs, - for one gh did not give). A give-up's PR may be red or unreviewed:
+# its heads' checks (heads_green, read fresh) and review (review_pass) are read once, and what has not
+# passed goes in the note. The story then goes in review with those PRs as review puts it
+# (review_state), or is held as review holds it, with kept: <date> <close> (<note>) so nothing takes it
+# for reviewed: waiting_on_user and lead_queue list it as kept, never merge, and review clears the
+# line. It is logged as kept, never review, so no report counts a give-up as a hand-off. The state is
+# written before the builder closes (shut_agent), so a state_set that dies leaves the builder open;
+# when the pane could not be closed, the state goes back to ready (NOT_CLOSED). The worktree and
+# branches stay, and nothing is counted.
+keep_build() {
+  local f="${BOARD}/stories/$1.md" head rc=0 reviewed=1 note="" money=""
+  mkdir -p "${LEAD_DIR}"   # heads_green records a green head beside LEAD_GREEN
+  # shellcheck disable=SC2086 # one URL per word
+  LEAD_FRESH=1 heads_green $3 || rc=$?
+  case "${rc}" in 0) ;; 2) note="checks not read" ;; *) note="not green" ;; esac
+  for head in $4; do [[ "${head}" != - ]] && review_pass "$1" "${head}" || reviewed=0; done
+  [[ ${reviewed} == 1 ]] || note="${note:+${note}, }not reviewed"
+  # shellcheck disable=SC2086 # one URL per word
+  review_state "${f}" "$(date +%F) close${2:+ $2}${note:+ (${note})}" $3
+  shut_agent "$1"
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    state_set "${f}" status ready prs "" held_by "" kept ""
+    echo "${NOT_CLOSED/<name>/$1}"; return 0
+  fi
+  record_event kept "$1" "ok ($3${note:+; ${note}})"
+  if [[ -n "${REVIEW_HELD}" ]]; then
+    # A parent that costs money waits on the user's merge (money_walk), as mark_review says.
+    [[ -z "$(money_walk "${REVIEW_HELD}")" ]] || money=" (costs money)"
+    echo "kept${note:+ (${note})}: $1's PR $3, its branch story/$1 and its worktree stay, and nothing was counted or cleared; held: it waits for ${REVIEW_HELD}${money} to merge, as review holds it. swarm.sh close $1 ${2:+$2 }--drop closes the PR and clears the build"
+    return 0
+  fi
+  echo "kept${note:+ (${note})}: $1 is in review with its PR $3, its branch story/$1 and its worktree, and nothing was counted or cleared; it is not offered to merge until swarm.sh review $1 $3 marks it reviewed. swarm.sh close $1 ${2:+$2 }--drop closes the PR and sends the story back to ready"
+}
+
+# back_to_ready <slug> — a story in review that --drop clears goes back to ready, its PRs no longer
+# its. Called once the close's hold or count is written, so a step that fails first leaves it in review.
+back_to_ready() {
+  local f="${BOARD}/stories/$1.md"
+  [[ "$(fm "${f}" status)" != review ]] || state_set "${f}" status ready prs "" kept ""
+}
+
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
+# A close that would end a failed build whose PR is still open closes the builder alone and puts the
+# story in review with that PR (keep_build); impossible, paused and cleared-on-error, which would hand
+# the story on, are refused instead. Only with CLOSE_DROP set (close --drop) does it go on to clear
+# the build, printing what it dropped (clear_build). A bare impossible close whose PRs failed_build
+# did not list is refused, since its clear_build would delete story/<name> on origin and so close
+# any PR still open there, and so is any impossible close while a PR merged or is merging.
 # An unknown cause is refused before anything closes, and so, with goal on, is a missing one while
 # <name>'s story is still ready (its builder is giving up), and so is impossible for a story that
 # cannot be handed on (impossible_refused). A close that ends a failed build (failed_build, decided
@@ -401,7 +454,7 @@ shut_agent() {
 # the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible);
 # with escalate_ladder set, that close then steps the build up (ladder_step no-pr) instead, if it can.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc open="" heads=""
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -411,8 +464,27 @@ close_agent() {
   if [[ "${cause}" == impossible ]] && why="$(impossible_refused "$1")"; then
     die "close: $1 cannot be closed impossible, because ${why}; nothing was closed"
   fi
-  if prs="$(failed_build "$1")"; then
+  rc=0; prs="$(failed_build "$1")" || rc=$?
+  if [[ ${rc} == 0 ]]; then
     counted=1
+    # The open PRs' URLs, then their heads, on two lines. A list that cannot be read keeps
+    # everything: nothing has closed yet.
+    [[ -n "${CLOSE_DROP}" ]] || open="$(json "' '.join(p['url'] for p in d if p['state'] == 'OPEN') + '\n' + ' '.join(p.get('headRefOid') or '-' for p in d if p['state'] == 'OPEN')" <<< "${prs}")" \
+      || die "close: $1's PR list could not be read, so nothing was closed or counted"
+    heads="${open#*$'\n'}"; open="${open%%$'\n'*}"
+  elif [[ "${cause}" == impossible && ${rc} == "${BUILD_MERGING}" ]]; then
+    die "close: a PR on story/$1 merged or is merging (auto-merge set), so $1 cannot be closed impossible: clearing its build would delete the branch under that PR; nothing was closed"
+  elif [[ "${cause}" == impossible && -z "${CLOSE_DROP}" ]]; then
+    # Clearing the build would delete story/$1 on origin, which closes any PR still open on it.
+    die "close: $1's PRs were not listed (no builder open, or gh could not list them), so a PR may be open: swarm.sh close $1 impossible --drop clears its build anyway; nothing was closed"
+  fi
+  if [[ -n "${open}" ]]; then
+    [[ ! "${cause}" =~ ^(impossible|paused|cleared-on-error)$ ]] \
+      || die "close: $1's PR ${open} is open, and a ${cause} close hands the story to the lead and clears its build, closing that PR: run swarm.sh close $1 ${cause} --drop for that, or close it with no cause (met, stalled or bound with goal on) to keep the PR in review; nothing was closed"
+    keep_build "$1" "${cause}" "${open}" "${heads}"
+    return 0
+  fi
+  if [[ ${counted} == 1 ]]; then
     if [[ ! "${cause}" =~ ^(stalled|paused|cleared-on-error|impossible)$ && "$(json "any(p['state'] != 'CLOSED' for p in d)" <<< "${prs}")" != True ]]; then
       record_event incident "$1" "idle-no-pr: closed (${cause:-no cause}) with no open or merged PR on story/$1"
       # With the ladder on, the next model takes the build over instead: no attempt, nothing cleared.
@@ -428,11 +500,11 @@ close_agent() {
   # Its pane could not be closed (close_pane said why): the builder may still be working in its
   # worktree, so nothing is counted, held, handed on or cleared.
   if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
-    echo "not closed: $1's pane is still open, so nothing was counted or cleared; close it again once herdr answers"
+    echo "${NOT_CLOSED/<name>/$1}"
     return 0
   fi
   if [[ "${cause}" == impossible ]]; then
-    # The build is cleared even when failed_build declined (a builder gone, gh down),
+    # With --drop, the build is cleared even when failed_build declined (a builder gone, gh down),
     # so the story builds again after reset; only PRs failed_build listed are closed.
     # Handed on first, for the same reason as a hold below.
     impossible_story "$1" "${prs}" "${counted}"
@@ -447,19 +519,25 @@ close_agent() {
     # not left ready with its build cleared for the next conductor to start again.
     if [[ ${counted} == 1 ]]; then
       held_story "$1" "${cause}" "${prs:-[]}"
+      back_to_ready "$1"
       clear_build "$1" "the build of $1 stopped (${cause}), which is not an attempt" "${prs:-[]}"
     elif ! impossible_refused "$1" >/dev/null; then
       echo "not held: $1 (${cause}) ended no build here (no builder open, a PR merged or merging, or gh could not list its PRs), so its story is as it was: list it for the lead and do not start it again"
     fi
     return 0 ;;
   esac
-  [[ ${counted} == 1 ]] || return 0
+  if [[ ${counted} != 1 ]]; then
+    [[ -z "${CLOSE_DROP}" || ! -f "${f}" ]] \
+      || echo "not dropped: $1 has no build this close can drop (it is neither ready nor in review or held with a PR open, its builder is closed with no PR open, a PR merged or is merging, or gh could not list its PRs)"
+    return 0
+  fi
   n="$(get_fm "${f}" attempts)"
   # Checked before the arithmetic, which would evaluate it.
   [[ "${n}" =~ ^(0|[1-9][0-9]*)?$ ]] \
     || { echo "swarm: ${f}: attempts must be a non-negative whole number, not '${n}'; this failed build is not counted or cleared" >&2; return 0; }
   n=$((${n:-0} + 1))
   set_fm "${f}" attempts "${n}"
+  back_to_ready "$1"
   clear_build "$1" "attempt ${n} at $1 failed" "${prs}"
   escalate_story "$1" "${n}" "${prs}"
 }
@@ -927,55 +1005,81 @@ lead_block() {
 # failed_build <name> — succeed when closing <name> ends a failed build, and print gh's list of the
 # PRs on story/<name>: <name> is a story on the board, still ready, of kind code, docs or chore,
 # whose builder this project has open in herdr under that name (not closed by hand, not already
-# retired), and none of its PRs merged or is open with auto-merge set: with merge = agent a close
+# retired), and none of its PRs merged or is open with auto-merge set (else it fails with
+# BUILD_MERGING). With CLOSE_DROP set, a story in review or a held child (blocked, held_by:), or one whose builder is closed, will do
+# while a PR on story/<name> is open, so a build a bare close kept (keep_build) can be dropped. With merge = agent a close
 # that comes before the board is pulled, or while the merge waits on auto-merge, finds the story still
 # ready, so only the PR tells. One gh call answers both; when it fails, nothing is counted or cleared,
 # and stderr says so.
+BUILD_MERGING=3
 failed_build() {
-  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging
-  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" && "$(fm "${f}" status)" == ready ]] || return 1
+  local slug="$1" f="${BOARD}/stories/$1.md" src url prs merging st need_open=""
+  [[ "${slug}" =~ ^[a-z0-9-]+$ && -f "${f}" ]] || return 1
+  st="$(fm "${f}" status)"
+  # A held child (blocked, held_by:) is one a bare close kept, as review holds it.
+  [[ "${st}" == ready || ( -n "${CLOSE_DROP}" && ( "${st}" == review || ( "${st}" == blocked && -n "$(get_fm "${f}" held_by)" ) ) ) ]] || return 1
+  [[ "${st}" == ready ]] || need_open=1
   case "$(fm "${f}" kind)" in ""|code|docs|chore) ;; *) return 1 ;; esac
-  [[ -n "$(agent_field "$(agent_name "${slug}")" pane_id)" ]] || return 1
+  if [[ -z "$(agent_field "$(agent_name "${slug}")" pane_id)" ]]; then
+    [[ -n "${CLOSE_DROP}" ]] || return 1
+    need_open=1
+  fi
   src="$(repo_dir "$(fm "${f}" repo)")" \
     || { echo "swarm: ${slug}: ${src}, so this close counts no failed build and clears nothing" >&2; return 1; }
   if ! url="$(git -C "${src}" remote get-url origin)" \
-     || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url,autoMergeRequest)" \
+     || ! prs="$(gh pr list -R "${url}" --head "story/${slug}" --state all --json number,state,url,autoMergeRequest,headRefOid)" \
      || ! merging="$(json "any(p['state'] == 'MERGED' or (p['state'] == 'OPEN' and p.get('autoMergeRequest')) for p in d)" <<< "${prs}")"; then
     echo "swarm: ${slug}: could not list the PRs on story/${slug}, so this close counts no failed build and clears nothing" >&2
     return 1
   fi
-  [[ "${merging}" == False ]] || return 1
+  [[ "${merging}" == False ]] || return "${BUILD_MERGING}"
+  [[ -z "${need_open}" || "$(json "any(p['state'] == 'OPEN' for p in d)" <<< "${prs}")" == True ]] || return 1
   printf '%s\n' "${prs}"
 }
 
 # clear_build <slug> <why> <prs> — clear a build away (a failed one, or one reconcile found merged or
 # closed), so the next one starts fresh: in
 # the story's repo, its worktree and story/<slug>; each of <prs> (failed_build's gh list) still open,
-# closed unmerged with a comment saying <why> (the attempt, or the cause); then story/<slug> on origin. A step that fails
+# closed unmerged with a comment saying <why> (the attempt, or the cause); then story/<slug> on origin. With
+# CLOSE_DROP set (close --drop), each step that succeeds is printed as dropped:, with the head SHA of
+# each branch (read before it goes) and each PR. A step that fails
 # is said on stderr, and the rest still run. A held child (held_by:) loses the hold and its prs: line,
 # so it no longer counts as open in touches_rows.
 clear_build() {
-  local slug="$1" b="story/$1" src wt url
+  local slug="$1" b="story/$1" src wt url head sha
   src="$(repo_dir "$(fm "${BOARD}/stories/$1.md" repo)")" || { echo "swarm: ${slug}: ${src}; nothing cleared" >&2; return 0; }
   wt="$(worktree_for "${src}" "${slug}")"
-  if [[ -e "${wt}" ]]; then git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2; fi
+  if [[ -e "${wt}" ]]; then
+    git -C "${src}" worktree remove --force "${wt}" || echo "swarm: ${slug}: could not remove ${wt}" >&2
+    [[ -z "${CLOSE_DROP}" || -e "${wt}" ]] || echo "dropped: the worktree ${wt}"
+  fi
   # A worktree whose directory went by hand is still registered, and would keep the branch.
   git -C "${src}" worktree prune || echo "swarm: ${slug}: could not prune ${src}'s worktrees" >&2
-  if git -C "${src}" show-ref -q --verify "refs/heads/${b}"; then
-    git -C "${src}" branch -q -D "${b}" || echo "swarm: ${slug}: could not delete ${b} in ${src}" >&2
+  if sha="$(git -C "${src}" rev-parse -q --verify "refs/heads/${b}")"; then
+    if git -C "${src}" branch -q -D "${b}"; then
+      [[ -z "${CLOSE_DROP}" ]] || echo "dropped: ${b} in ${src}, head ${sha}"
+    else
+      echo "swarm: ${slug}: could not delete ${b} in ${src}" >&2
+    fi
   fi
-  while IFS= read -r url; do
+  while read -r url head; do
     [[ -n "${url}" ]] || continue
     gh pr close "${url}" --comment "swarm.sh close: $2, so this PR is closed unmerged and the next build starts fresh." >/dev/null \
-      || echo "swarm: ${slug}: gh could not close ${url}" >&2
-  done < <(json "'\n'.join(p['url'] for p in d if p['state'] == 'OPEN')" <<< "${3:-[]}")
-  if git -C "${src}" ls-remote --exit-code origin "refs/heads/${b}" >/dev/null 2>&1; then
-    git -C "${src}" push -q origin --delete "${b}" || echo "swarm: ${slug}: could not delete ${b} on origin" >&2
+      || { echo "swarm: ${slug}: gh could not close ${url}" >&2; continue; }
+    [[ -z "${CLOSE_DROP}" ]] || echo "dropped: ${url}, closed unmerged, head ${head:-unknown} (git push origin ${head:-<sha>}:refs/heads/${b} and reopen it to restore)"
+  done < <(json "'\n'.join(p['url'] + ' ' + p.get('headRefOid', '') for p in d if p['state'] == 'OPEN')" <<< "${3:-[]}")
+  if sha="$(git -C "${src}" ls-remote --exit-code origin "refs/heads/${b}" 2>/dev/null)"; then
+    if git -C "${src}" push -q origin --delete "${b}"; then
+      [[ -z "${CLOSE_DROP}" ]] || echo "dropped: ${b} on origin, head ${sha%%[[:space:]]*}"
+    else
+      echo "swarm: ${slug}: could not delete ${b} on origin" >&2
+    fi
   fi
-  # A held child's hold goes with its build, and so does the prs: line the hold kept.
+  # A held child's hold goes with its build, and so does the prs: line the hold kept; so does a kept: line.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
     state_set "${BOARD}/stories/$1.md" held_by "" prs ""
   fi
+  [[ -z "$(get_fm "${BOARD}/stories/$1.md" kept)" ]] || state_set "${BOARD}/stories/$1.md" kept ""
 }
 
 # close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
@@ -1524,6 +1628,8 @@ lead_queue() {
   : > "${LEAD_GREEN}.new"
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
+    # A kept story (a give-up's PR, not reviewed) is the lead's to look at, never one to merge.
+    if [[ "${line}" == "  kept: "* ]]; then echo "${line#  }"; continue; fi
     # With merge = agent only a costs: money item waits on the user: merge holds it for them.
     # shellcheck disable=SC2154 # assigned in another file
     [[ "${CFG_merge}" == human || "${line}" == "  awaiting your merge (costs money): "* ]] || continue

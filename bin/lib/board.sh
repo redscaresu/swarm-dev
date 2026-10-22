@@ -592,7 +592,9 @@ waiting_on_user() {
       ready) agent_kind "${kind}" || is_escalated "${f}" || waiting+="  ${kind}: ${slug}"$'\n' ;;
       blocked) waiting+="  blocked: ${slug} ($(blocked_why "${f}"))"$'\n' ;;
       later) waiting+="  later story: ${slug}"$'\n' ;;
-      review) waiting+="  awaiting your merge$(costs_tag "${f}"): ${slug} $(fm "${f}" prs)"$'\n' ;;
+      # A story a close kept (its PR not reviewed) is not one to merge yet.
+      review) if [[ -n "$(get_fm "${f}" kept)" ]]; then waiting+="  kept: ${slug} $(fm "${f}" prs) (not reviewed)"$'\n'
+              else waiting+="  awaiting your merge$(costs_tag "${f}"): ${slug} $(fm "${f}" prs)"$'\n'; fi ;;
     esac
   done < <(board stories)
   while IFS= read -r f; do
@@ -876,7 +878,7 @@ set_status() { state_set "$1" status "$2" prs "${3:-}"; }
 # too, which review and unblock write, held_by, which review writes on a stacked story it holds, and
 # an epic's unasked_plan, which plan-unasked writes.
 # They live in BOARD_STATE_DIR, never in a tracked file.
-SET_FM_KEYS="attempts kind escalated_from held_for held_by status prs unasked_plan"
+SET_FM_KEYS="attempts kind escalated_from held_for held_by kept status prs unasked_plan"
 
 # set_fm <file> <key> [value] — set <key> of a story or epic on the board to <value> (state_set);
 # an empty <value> clears it. <key> must be one of SET_FM_KEYS.
@@ -965,15 +967,31 @@ mark_review() {
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+$ ]] || die "review: not a PR URL: ${url}"
   done
-  [[ "${f}" != "${BOARD}/stories/"* ]] || held="$(open_parents "${f}")"
-  if [[ -n "${held:-}" ]]; then
-    state_set "${f}" status blocked prs "$*" held_by "${held}"
+  review_state "${f}" "" "$@"; held="${REVIEW_HELD}"
+  if [[ -n "${held}" ]]; then
     # A parent that costs money waits on the user's merge (money_walk), maybe for days.
     [[ -z "$(money_walk "${held}")" ]] || held+=" (costs money)"
     die "held: $(basename "${f}" .md) waits for ${held} to merge; once it has, act on the Stacked line swarm.sh status prints for it, then review it again"
   fi
-  state_set "${f}" status review prs "$*" held_by ""
   echo "review: $(basename "${f}" .md) $*"
+}
+
+# review_state <file> <kept> <pr-url>... — mark_review's state: the item in review with prs:
+# <pr-url>..., or, for a story whose depends_on parents are still open, blocked with held_by: <parents>
+# and that prs: line, with REVIEW_HELD set to <parents> (else empty); either way with kept: <kept>,
+# which review passes empty (a reviewed item is not a kept one) and close's keep_build fills.
+# Called directly, never in $(...), so a state_set that dies does it at the command's own level,
+# where main logs why.
+REVIEW_HELD=""
+review_state() {
+  local f="$1" kept="$2"; shift 2
+  REVIEW_HELD=""
+  [[ "${f}" != "${BOARD}/stories/"* ]] || REVIEW_HELD="$(open_parents "${f}")"
+  if [[ -n "${REVIEW_HELD}" ]]; then
+    state_set "${f}" status blocked prs "$*" held_by "${REVIEW_HELD}" kept "${kept}"
+  else
+    state_set "${f}" status review prs "$*" held_by "" kept "${kept}"
+  fi
 }
 
 # builder_state <slug> — open when this project's builder for <slug> is open in herdr, none when it is

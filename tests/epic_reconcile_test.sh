@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# epic_reconcile_test.sh — close counts a failed build and clears it away; reconcile clears a
+# epic_reconcile_test.sh — close --drop counts a failed build and clears it away; reconcile clears a
 # story's build before the pull.
 # herdr is a stub on PATH that hands out pane ids in order and remembers tab labels; the repo is a
 # local bare remote. gh is a stub too, so a close's PR lookup never reaches the real gh.
@@ -147,7 +147,7 @@ closes() { if grep -qE '^(pane|tab) close' "${ROOT}/herdr.log"; then echo closed
 # dev is origin's default, so every story here branches from it.
 git -C "${ROOT}/svc.git" symbolic-ref HEAD refs/heads/dev
 
-# --- close counts a failed build: story, close, story, close, story on one ready code story builds it
+# --- close --drop counts a failed build: story, close, story, close, story on one ready code story builds it
 # as code, code, then escalate, each in a fresh worktree. Before each close the builder has committed
 # and pushed story/x1, left an untracked file and opened a PR; the close clears them all away.
 gh_stub; : > "${ROOT}/gh.log"
@@ -166,7 +166,7 @@ for i in 1 2 3; do
   "${GIT[@]}" -C "${wt}" commit -q --allow-empty -m "attempt ${i}" && "${GIT[@]}" -C "${wt}" push -q origin story/x1
   touch "${wt}/untracked"
   echo "[{\"number\":${i},\"state\":\"OPEN\",\"url\":\"https://github.com/o/svc/pull/${i}\"}]" > "${ROOT}/prs.json"
-  run close x1 >/dev/null
+  run close x1 --drop >/dev/null
   cleared+="$(left x1)|"
 done
 check "story, close, story, close, story builds code, code, then escalate" "code code escalate" \
