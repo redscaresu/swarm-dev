@@ -303,6 +303,9 @@ launch_file() {
       printf 'export %s=%q\n' "${n}" "${v}"
     done
     printf 'export SHELL=%q ZDOTDIR=%q\n' "${AGENT_SHELL%% *}" "$4"
+    # The agent's name (its ZDOTDIR's): gh-shim logs its calls under it, and not as the starting
+    # command's (its SWARM_GH_VIA, which only swarm.sh's own calls carry).
+    printf 'export SWARM_GH_CALLER=%q\nunset SWARM_GH_VIA\n' "${4##*/}"
     # shellcheck disable=SC2016 # the wrapper's own bash expands them
     printf '%s\n' 't="$(tty 2>/dev/null)" && export GPG_TTY="${t}"' \
       "for n in ${HERDR_PANE_ENV}; do [ -n \"\${!n}\" ] || unset \"\${n}\"; done"
@@ -377,9 +380,10 @@ RESUME_DIR="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/swarm-dev/resume"
 # <wrapper> claude --resume ...). A restored pane's shell holds the user's whole environment, so the
 # wrapper keeps only the variables clean_env's agent starts with (AGENT_ENV, AGENT_PREFIXES', herdr's
 # and <names>), with the restored pane's own values, so no value is written down or put on a command
-# line; sets AGENT_SET as launch_file does, with SWARM_PROJECT and SWARM_RESUME; and execs its
-# arguments. Python, not bash, so neither a BASH_ENV nor an exported function in that environment
-# runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
+# line; sets AGENT_SET as launch_file does, with SWARM_PROJECT, SWARM_RESUME and gh-shim's
+# SWARM_GH_LOG and SWARM_GH_CALLER (its folder first on PATH, so the agent's gh calls log; no
+# SWARM_GH_VIA); and execs its arguments. Python, not bash, so neither a BASH_ENV nor an exported
+# function in that environment runs before the scrub or changes it, as none can on a first start through env -i. It also makes the
 # session's own ZDOTDIR (<session>.zdotdir) afresh at 0700 with clean_env's two files, so nothing
 # written there since runs in the restored agent's shells; it empties the folder rather than
 # removing it, so two restores at once both finish, and a folder that is not this user's, or holds
@@ -394,9 +398,9 @@ resume_file() {
     printf '%s\n' "$@" > "${RESUME_DIR}/${session}.argv"
     python3 -I - "${RESUME_DIR}/${session}.py" "HERDR_ENV ${HERDR_PANE_ENV} ${AGENT_ENV} ${names}" "${AGENT_PREFIXES}" \
       "${HERDR_PANE_ENV}" "${PROJECT_DIR}" "${RESUME_DIR}/${session}.argv" "${AGENT_SHELL%% *}" "${RESUME_DIR}/${session}.zdotdir" \
-      "${ZDOT_ENV}" "${ZDOT_PROFILE}" <<'PY'
+      "${ZDOT_ENV}" "${ZDOT_PROFILE}" "${name}" "${SWARM_GH_LOG:-}" "${SWARM_HOME}/bin/gh-shim" <<'PY'
 import sys
-path, keep, prefixes, pane, project, resume, shell, zdotdir, zshenv, zprofile = sys.argv[1:]
+path, keep, prefixes, pane, project, resume, shell, zdotdir, zshenv, zprofile, name, gh_log, gh_shim = sys.argv[1:]
 open(path, "w").write(f"""# swarm.sh's restore wrapper (resume_file): the session's ZDOTDIR made afresh, as clean_env makes an
 # agent's, and its allowlisted environment, then its arguments.
 import os, shutil, stat, sys
@@ -427,7 +431,9 @@ if set(os.listdir(z)) - {{".zprofile", ".zshenv"}}:
 os.umask(old)
 keep = {sorted(set(keep.split()))!r}
 env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(prefixes.split())!r})}}
-env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r})
+env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r},
+           SWARM_GH_LOG={gh_log!r}, SWARM_GH_CALLER={name!r}, PATH=":".join(p for p in ({gh_shim!r}, env.get("PATH", "")) if p))
+env.pop("SWARM_GH_VIA", None)
 try:
     env["GPG_TTY"] = os.ttyname(0)
 except OSError:
