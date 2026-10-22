@@ -148,8 +148,8 @@ is "close o2 stalled keeps the PR and names the cause in its --drop" "1|review" 
   "$(grep -c "swarm.sh close o2 stalled --drop closes the PR" "${ROOT}/close.out")|$(fmv o2 status)"
 echo "${U}/1 MERGED" > "${ROOT}/pr-states"
 (cd "${P}" && PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile >"${ROOT}/close.out" 2>&1) || true
-is "when o2's kept PR merges, reconcile finishes o2 and clears its build" "gone|" \
-  "$([[ -f "${P}/docs/stories/o2.md" && "$(fmv o2 status)" != done ]] && echo "$(fmv o2 status)" || echo gone)|$(left o2)"
+o2st=gone; [[ ! -f "${P}/docs/stories/o2.md" ]] || o2st="$(fmv o2 status)"; [[ "${o2st}" != "done" ]] || o2st=gone
+is "when o2's kept PR merges, reconcile finishes o2 and clears its build" "gone|" "${o2st}|$(left o2)"
 : > "${ROOT}/pr-states"
 # paused, cleared-on-error and impossible would hand the story on and close the PR: refused while it
 # is open, before anything closes.
