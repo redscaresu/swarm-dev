@@ -47,7 +47,8 @@ printf '#!/bin/sh\nH="%s"\n' "${ROOT}" > "${STUB_BIN}/gh"
 cat >> "${STUB_BIN}/gh" <<'EOF'
 case "$*" in
   "pr list"*"--state all"*) cat "$H/prs.json" ;;
-  "pr list"*"--state open --json number"*) echo "5 $(cat "$H/head") story/s1 MERGEABLE 10" ;;
+  "api --paginate repos/"*"/pulls?"*) echo "5 $(cat "$H/head") story/s1 $(($(date +%s) - 10))" ;;
+  "api repos/"*"/pulls/5 "*) echo MERGEABLE ;;
   "repo view"*other*) echo o/other ;;
   "repo view"*) echo o/proj ;;
   "api --paginate"*check-runs*) sha=$(echo "$*" | sed 's|.*/commits/\([^/]*\)/.*|\1|'); c=$(cat "$H/runs-$sha" 2>/dev/null || echo failure)

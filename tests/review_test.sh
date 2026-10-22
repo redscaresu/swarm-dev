@@ -41,6 +41,7 @@ cat > "${ROOT}/bin/gh" <<EOF
 F="${ROOT}/gh"
 EOF
 cat >> "${ROOT}/bin/gh" <<'EOF'
+echo "$*" >> "$F/calls"
 case "$1 $2" in
   "pr view") case " $* " in *" headRefOid "*) cat "$F/head"; exit 0 ;; esac
              case " $* " in *" body,url "*) echo '{"body":"","url":"https://github.com/o/svc/pull/7"}'; exit 0 ;; esac
@@ -53,8 +54,16 @@ case "$1 $2" in
              # into the closed pipe (SIGPIPE ignored, as on CI) would print an error into its output.
              out="$(jq -r "$q" "$F/prlist.json")"; printf '%s\n' "${out}"; exit 0 ;;
 esac
+# watch's REST reads (watch_rows), from prlist.json too: the list, and each PR's mergeable state.
+case "$2 $3" in
+  "--paginate repos/o/svc/pulls?"*) while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+             out="$(jq '[.[] | {number, head: {ref: .headRefName, sha: .headRefOid}, updated_at: .updatedAt}]' "$F/prlist.json" | jq -r "$q")"
+             printf '%s\n' "${out}"; exit 0 ;;
+esac
 case "$2" in
   repos/o/svc/pulls/7) echo '{"head":{"sha":"abc1234def"}}' ;;
+  repos/o/svc/pulls/*) n="${2##*/}"; while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+             jq ".[] | select(.number == ${n}) | {mergeable: {MERGEABLE: true, CONFLICTING: false}[.mergeable]}" "$F/prlist.json" | jq -r "$q" ;;
   repos/o/svc/commits/abc1234def/check-runs*) cat "$F/runs.json" ;;
   repos/o/svc/check-runs/1/annotations*) cat "$F/annotations.json" ;;
   repos/o/svc/code-scanning/alerts*) cat "$F/alerts.json" ;;
@@ -563,10 +572,14 @@ cat > "${ROOT}/gh/prlist.json" <<'EOF'
  {"number": 3, "headRefName": "story/a", "headRefOid": "head3", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"},
  {"number": 4, "headRefName": "story/c", "headRefOid": "head4", "mergeable": "MERGEABLE", "updatedAt": "2026-01-01T00:00:00Z"}]
 EOF
+# Each watch is bounded, so one that polls on fails here rather than hangs the run.
 check "watch --backlog reports a no-epic story's PR and skips every epic story's PR in the same repo" "o/svc #4 story/c checks finished on head4" \
-  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --backlog 2>&1)"
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --backlog 2>&1)"
+: > "${ROOT}/gh/calls"
 check "watch --epic skips another epic's PR and the epic/<slug> head in the same repo" "o/svc #3 story/a checks finished on head3" \
-  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic mine 2>&1)"
+  "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1)"
+check "watch --epic reads the mergeable state of its own story's PR alone" "api repos/o/svc/pulls/3" \
+  "$(grep -o '^api repos/o/svc/pulls/[0-9]*' "${ROOT}/gh/calls" | tr '\n' ' ' | sed 's/ $//')"
 # A fix-main story has no epic, but every conductor builds and merges it: an epic's watch wakes for
 # its PR too. Bounded, so a watch that skips it fails here rather than polling on.
 item "${w}/docs" stories/fix-main-abcdef1.md "status: review" "kind: code" "repo: svc"

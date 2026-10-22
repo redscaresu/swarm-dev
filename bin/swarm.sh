@@ -33,7 +33,7 @@
 #   swarm.sh review <slug> <pr-url>...                      a story or epic whose PRs are green and reviewed now waits on a human merge
 #   swarm.sh reconcile                                      finish each review item whose PRs all merged; a closed one goes back to ready
 #   swarm.sh merge [--board|--release] [--head <sha>] <pr-url>  merge a green PR in review with its head pinned, wait for CI on the merge commit, then reconcile; with merge = agent, by any route, held for the user when a story listing it, or one it stacks on, has costs: money (or any value but none); --board: a board-only PR; --release: a PR into the project's base that changes only the version in .claude-plugin/plugin.json, no reconcile
-#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800)
+#   swarm.sh wait-pr [--timeout <seconds>] <pr-url>        wait for a PR's checks on its head: print the head SHA and each check; exit 0 green, 1 red, 2 on a gh error (a transient one is retried 3 times; a spent API budget is waited out once, to its printed reset, unless that is past --timeout), a PR that conflicts with its base, no check runs within 5 minutes, or still pending after <seconds> (default 1800)
 #   swarm.sh board-pr start <name>                          a worktree <repo>-wt/_board-<name> on a new board/<name> from origin/<base>, for a board edit; prints its path
 #   swarm.sh board-pr open <name> "<title>" <body-file>     commit (only board files may change), push and open the board PR; prints its URL
 #   swarm.sh board-pr done <name>                           remove board/<name> on origin and here, and the worktree, once its PR merged or closed (or with no PR, nothing past the base)
@@ -477,6 +477,7 @@ dispatch() {
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
 # The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends.
+# outcomes (and flow, dataset and dash, which run it) also appends to .swarm/outcomes-prs.tsv, its cache of finished stories' PRs.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
 READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime _step-up _step"

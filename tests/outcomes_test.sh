@@ -94,6 +94,31 @@ check "one row per builder: full slug, kind and risk (from git once deleted), co
 check "--since leaves earlier rows out, and attempts still count them" \
   "$(outcomes "${dir}/bin" --since 2026-10-03)" "$(printf '%s\n' "${HEAD}" "${R3}")"
 nopr() { awk -F'\t' -v OFS='\t' '{ $14 = $33 = 0; $15 = $16 = $31 = $32 = $34 = $35 = "" } 1' <<< "$1"; }
+# A finished story's PR rows (its file off the board, every PR merged or closed) come from gh once, then
+# from .swarm/outcomes-prs.tsv, so a failing gh still gives them; a story on the board asks gh each run.
+check "a finished story's PRs come from the cache when gh fails, a story on the board's do not" \
+  "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nopr "${R2}")" "${R3}")"
+check "the cache holds the finished story alone, once" "$(cut -f1 "${P}/.swarm/outcomes-prs.tsv")" "${LONG}"
+# A rebuild of the story, here one whose session log has no timestamp (its start falls back to its
+# day) on the day of the last one, changes the key, so the line cached before it is not read.
+session s4 "${LONG}" claude-opus-5-5 0 0 > "${dir}/projects/p/s4.jsonl"
+cp "${P}/.swarm/agents.tsv" "${dir}/agents.keep"; printf '2026-10-04\tcode\t%s\tclaude\topus\thigh\ts4\n' "${CUT}" >> "${P}/.swarm/agents.tsv"
+check "a rebuilt story's PRs are not read from the line cached before it" \
+  "$(outcomes "${dir}/nobin" 2>/dev/null | awk -F'\t' -v s="${LONG}" '$2 == s { print $15 }' | sort -u)" ""
+mv "${dir}/agents.keep" "${P}/.swarm/agents.tsv"; rm "${dir}/projects/p/s4.jsonl" "${P}/.swarm/outcomes-prs.tsv"
+# The write is best effort: a cache that cannot be written is said, and the report still prints.
+mkdir "${P}/.swarm/outcomes-prs.tsv"
+check "a cache that cannot be written is said, and every row still prints" \
+  "$(outcomes "${dir}/bin" 2>&1 >/dev/null | grep -c "^swarm: outcomes: cannot write ")|$(outcomes "${dir}/bin" 2>/dev/null | wc -l | tr -d ' ')" "1|4"
+rmdir "${P}/.swarm/outcomes-prs.tsv"
+# A PR merged with a check still running is not cached: that check's times are not in yet.
+mkdir -p "${dir}/pendbin"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncase "$4" in\n  story/%s) printf "https://github.com/o/r/pull/7\\tMERGED\\t2026-10-03T10:00:00Z\\t\\t\\t\\t\\t\\t1\\n" ;;\n  o/r) echo "[]" ;;\nesac\n' "${LONG}" > "${dir}/pendbin/gh"
+chmod +x "${dir}/pendbin/gh"
+outcomes "${dir}/pendbin" > /dev/null 2>&1
+check "a finished story with a check still running is not cached" "$(cat "${P}/.swarm/outcomes-prs.tsv" 2>/dev/null)" ""
+rm -f "${P}/.swarm/outcomes-prs.tsv"
 check "a failing gh leaves pr, pr_state, merged_at, story_merged and the findings empty, keeps epic, and still prints every row" \
   "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "$(nopr "${R1}")" "$(nopr "${R2}")" "$(nopr "${R3}")")"
 if outcomes "${dir}/bin" --since yesterday >/dev/null 2>&1; then
