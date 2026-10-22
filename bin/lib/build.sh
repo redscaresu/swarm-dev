@@ -137,7 +137,9 @@ conduct_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
     [[ -n "${backlog}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
-\`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge."
+\`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge.
+A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR unreviewed,
+so review it (and run \`swarm.sh review <slug> <PR URL>\` once it passes) first."
     cat <<EOF
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
 When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
@@ -156,7 +158,8 @@ the last story merged and the epic's **Done when** holds; on a board in the repo
 which you land with the \`swarm.sh merge --board\` line it prints. Never finish the epic while a story
 of it is still in review (a \`costs: money\` one waits for the user's merge): once the Done when will
 hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\` instead, and the
-epic leaves the board once they all merge."
+epic leaves the board once they all merge. A story \`swarm.sh status\` lists as \`kept:\` does not count
+as in review: a close kept its PR unreviewed, so review it first."
     cat <<EOF
 A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
 as with merge = human. When its PR is green and reviewed,
@@ -914,27 +917,27 @@ to 32 characters. That line is the current build. Read the reply first: \`IMPOSS
 the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the cause:
 - met: the story's reply is there. Review it as below; the closes after review or merge stay bare.
 - impossible: the reply starts \`IMPOSSIBLE:\`.
-  Run \`swarm.sh close <slug> impossible\`, which makes the story \`kind: lead\`, and list it for the lead.
+  Run \`swarm.sh close <slug> impossible --drop\`, which makes the story \`kind: lead\`, and list it for the lead.
 - stalled: \`wait --stall\` returned stalled.$([[ -z "${CFG_escalate_ladder:-}" ]] || echo " (With escalate_ladder set, a stall it steps up prints \`stepped up:\` instead: wait on the builder again, and close nothing.)")
   When its line names a hung command (\`longest-running: pid ...\`), stop it as the give-up rule
   below says and wait on the builder again. When nothing is named, or it stalls again after that,
-  close it: Run \`swarm.sh close <slug> stalled\` and start the story again in a later wave.
+  close it: Run \`swarm.sh close <slug> stalled --drop\` and start the story again in a later wave.
 - bound: the reply is not there, and the met entry's reason says the stop-after clause applied.
-  Run \`swarm.sh close <slug> bound\` and start the story again in a later wave.
+  Run \`swarm.sh close <slug> bound --drop\` and start the story again in a later wave.
 - paused: the goal is still set, with no met entry since, and the builder is idle.
   Send it one \`swarm.sh tell <slug> resume <file>\` and wait on it again.
-  If it stops paused again, run \`swarm.sh close <slug> paused\`. It counts nothing and holds the
+  If it stops paused again, run \`swarm.sh close <slug> paused --drop\`. It counts nothing and holds the
   story for the lead (\`kind: lead\`, \`held_for: paused\`): list it for the lead, as for cleared-on-error.
 - cleared-on-error: the transcript holds a \`/goal\` refusal (a \`system\` \`local_command\` entry whose
   stdout refuses \`/goal\`, with no \`goal_status\` after it), or the goal is gone and the transcript
   ends on an API error (wait prints \`stuck: api error\` for it); or \`swarm.sh story\` failed on a refused goal.
-  Run \`swarm.sh close <slug> cleared-on-error\`, start nothing more in this wave, and list it for
+  Run \`swarm.sh close <slug> cleared-on-error --drop\`, start nothing more in this wave, and list it for
   the lead, who decides whether to build it again. The close holds the story for the lead
   (\`kind: lead\`, \`held_for: cleared-on-error\`), so no wave builds it until the lead lifts the hold.
   If either close prints no \`held:\` line (it prints \`not held:\` instead), the story stays \`ready\`
   with nothing on it to say so: do not start it again in a later wave. It waits for the lead.
 - none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose
-  reason is not the stop-after clause): run \`swarm.sh close <slug> stalled\`, which counts the
+  reason is not the stop-after clause): run \`swarm.sh close <slug> stalled --drop\`, which counts the
   attempt so escalate_after bounds the retries, and start the story again in a later wave.
 EOF
 }
@@ -943,10 +946,10 @@ EOF
 # answers Fable's usage-credits consent, which is not giving up. With goal on, an idle builder is the
 # goal rule's, and the stall close names its cause.
 give_up_rule() {
-  local retry idle="when it is idle with no PR after wait's nudges, " close="\`swarm.sh close <slug>\`" one="That is the one close before a review passes." goal=""
+  local retry idle="when it is idle with no PR after wait's nudges, " close="\`swarm.sh close <slug> --drop\`" one="That is the one close before a review passes." goal=""
   if [[ "${CFG_goal}" != off ]]; then
     idle=""
-    close="\`swarm.sh close <slug> stalled\` for a stall, or \`swarm.sh close <slug> met\` when review has not converged"
+    close="\`swarm.sh close <slug> stalled --drop\` for a stall, or \`swarm.sh close <slug> met --drop\` when review has not converged"
     one="Those and the goal rule's closes are the only ones before a review passes."
     goal="
 A builder idle short of its reply is not one to give up on here: it is the goal rule's, which picks
@@ -962,7 +965,7 @@ its close and whether the story is started again."
 Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled with no hung command to
 stop (below), or stalls again after you stopped one, ${idle}or when review has not converged in the
 rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
-counts the attempt and clears its worktree, branch and PR. ${one} Start the story again in a later
+counts the attempt and clears its worktree, branch and PR (a bare close keeps an open PR). ${one} Start the story again in a later
 wave with \`swarm.sh story --strict <slug>\`, and never choose a model: ${retry}${goal}
 A stalled line ends \`; longest-running: ...\`, and after \`stepped up:\` the same text is a line of
 its own. \`pid <PID>, <N> min: <program> (under <parents>)\` names what the builder's foreground Bash
@@ -1010,7 +1013,7 @@ leave the rest to their own conductor.
   the new head. The line stays until the child pushes the merge, so send each merge once: until the
   child's builder replies to that tell (or brief), skip a line for the same child and ref.
 - \`<child>: lost story/<p>\`: on a ready child whose builder is open, run \`swarm.sh close <child>
-  paused\`, which holds it for the lead. If the line ends \`(no builder)\`, or close prints
+  paused --drop\`, which holds it for the lead. If the line ends \`(no builder)\`, or close prints
   \`not held:\`, the child stays ready on a dead parent: do not start it, and list it in your report
   for the lead. A lost line on a held (blocked) child goes in your report too.
 - \`<child>: could not check <what>\`: a gh or git call failed, so nothing is known: read status

@@ -131,8 +131,8 @@ is "status: the story awaits your merge, the epic no longer does" "yes|no" \
 is "after review, merge and reconcile, git status is clean" "" "$(clean)"
 
 # --- close impossible (lead_block) hands c to the lead in state; story refuses it as kind: lead.
-lead close c impossible
-is "close c impossible: exits 0, kind: lead in state" "0|lead" "${rc}|$(sed -n 's/^kind: //p' "${ST}/stories/c")"
+lead close c impossible --drop
+is "close c impossible --drop: exits 0, kind: lead in state" "0|lead" "${rc}|$(sed -n 's/^kind: //p' "${ST}/stories/c")"
 lead story c
 is "story c: refused as kind: lead" "1|yes" "${rc}|$(said 'c is kind: lead' && echo yes)"
 is "c's tracked file still says kind: code" "code" "$(sed -n 's/^kind: //p' "${P}/board/stories/c.md")"

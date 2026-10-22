@@ -262,7 +262,7 @@ check "story refuses the readied held child, saying what to do, and starts no se
 run review child "${URL}/9" >/dev/null || true
 check "and review child puts it in review, its hold cleared" "review|${URL}/9|" "$(st child)|$(fm child prs)|$(fm child held_by)"
 
-# --- A held child whose build is cleared (a counted close once it is ready again) is held no more.
+# --- A held child whose build is cleared (a counted close --drop once it is ready again) is held no more.
 item "${b}" stories/hp.md "status: ready" "kind: code" "repo: svc"
 item "${b}" stories/hc.md "status: blocked" "kind: code" "repo: svc" "depends_on: [hp]" "touches: [bin/z.sh:h]"
 parent hp hp.txt hp open
@@ -273,10 +273,10 @@ run review hc "${URL}/12" >/dev/null || true
 held="$(fm hc held_by)|$(fm hc prs)"
 rm "${b}/stories/hp.md"
 run unblock >/dev/null || true
-run close hc >/dev/null || true
+run close hc --drop >/dev/null || true
 item "${b}" stories/ov2.md "status: ready" "kind: code" "repo: svc" "epic: e2" "touches: [bin/z.sh:h]"
 rc=0; run story --strict ov2 >/dev/null || rc=$?
-check "a counted close of a readied held child drops held_by: and its prs:, so it no longer holds other stories back" \
+check "a counted close --drop of a readied held child drops held_by: and its prs:, so it no longer holds other stories back" \
   "hp|${URL}/12|1||no|0" "${held}|$(fm hc attempts)|$(fm hc held_by)$(fm hc prs)|$(exists "${ROOT}/svc-wt/hc")|${rc}"
 
 # --- The conductor briefs: start stacked stories, hold, and close (human) or keep (agent) the builder.

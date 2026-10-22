@@ -182,6 +182,17 @@ check "a green review item whose head cannot be read for a poll does not wake it
 check "a cached green head outlives a poll that could not read it" test "$(grep -c "${H2}/check-runs" "${ROOT}/gh.log")" == 1
 stop
 
+# A story a close kept (kept:, its PR not reviewed) is listed as kept, never offered to merge, though
+# its head is green; once review clears kept:, it is.
+fresh "merge = human"; lead 1000   # a first run only records what it saw
+again; item k "kind: code" "status: review" "prs: ${URL}" "kept: 2026-10-22 close stalled (not reviewed)"
+lead 5000
+check "a kept green PR wakes it as kept: <slug> <url> (not reviewed), never as merge:" \
+  test "$(grep -c "^kept: k ${URL} (not reviewed)$" "${ROOT}/out")|$(grep -c '^merge: k' "${ROOT}/out")" == "1|0"
+(cd "${P}" && env -u SWARM_PROJECT bash "${SWARM}" review k "${URL}" >/dev/null 2>&1) || true
+again; lead 5000
+check "once review k clears kept:, it is offered to merge" test "$(out)|$(rc)" == "merge: k ${URL}|0"
+
 fresh "merge = human"; echo "${H2}" > "${FX}/head.8"; checks pending "${H2}"
 item r "kind: code" "status: review" "prs: ${URL} ${URL%/*}/8"
 start 20000

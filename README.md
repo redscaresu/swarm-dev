@@ -90,7 +90,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
-| an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it |
+| an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
 
 ## Watching it
 
@@ -98,7 +98,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 |---|---|
 | `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
 | `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build), and how each model did. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
+| `swarm.sh flow` | Cost, CI health and the flaky tests, where stories spent their time (including how long a ready story waited for its build), how each model did, and which agents spend GitHub's API budget. Finished GitHub history is cached in `.swarm/gh-cache/`, so a second run asks GitHub only for what is open or new (`--no-cache` reads it all again). |
 
 The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
 lists them all.

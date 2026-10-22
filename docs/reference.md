@@ -115,15 +115,37 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   contradictions no one can reconcile. A story whose `attempts:` has reached `escalate_after` (2 by
   default) is built as `escalate`, on Fable at `xhigh`, ahead of `risk: high` and `sonnet_share`.
   A `kind: lead` story never escalates, since no agent builds it. `swarm.sh close <slug>` counts a
-  failed build of a code, docs or chore story. When the story is still `ready`, its builder is still open and no PR on `story/<slug>` has merged or is open with auto-merge set, it raises
-  `attempts:` by one and clears the attempt away: it removes the worktree and `story/<slug>`, here
-  and on origin, and closes each open PR unmerged with a comment naming the attempt. The next build
-  then starts fresh, and the third runs on Fable. A close after `review`, after a merge or after
-  the builder has gone counts nothing, and `reconcile` sending a story back to `ready` never
-  counts. If gh cannot list the PRs, the close counts and clears nothing and says why on stderr.
-  `swarm.sh close <slug> <cause>` also says why the builder stopped: `met`, `stalled` and `bound`
-  count as above, while `impossible`, `paused` and `cleared-on-error` are not attempts and leave
-  `attempts:` as it was. `impossible` clears the build away whenever it hands the story on (below).
+  failed build of a code, docs or chore story. When the story is still `ready`, its builder is still
+  open and no PR on `story/<slug>` has merged or is open with auto-merge set, it raises `attempts:`
+  by one and clears the attempt away: it removes the worktree and `story/<slug>`, here and on
+  origin. The next build then starts fresh, and the third runs on Fable.
+
+  While a PR on `story/<slug>` is open, a bare close closes the builder alone and puts the story in
+  review with that PR, as `swarm.sh review` does (held instead, as review holds it, while a parent
+  is open). The PR, its branch and worktree stay, nothing is counted, and close prints `kept:`
+  naming the PR. It reads the head's checks and review once, and prints `kept (not green)` (or
+  `checks not read` when gh could not tell), `kept (not reviewed)` or both when they have not
+  passed. The story's state gets a `kept: <date> close <cause> (<what has not passed>)` line, so
+  nothing takes it for reviewed: `status` and `wait --lead` list it as `kept: <slug> <PR URL> (not
+  reviewed)`, never as one to merge, a conductor does not count it as in review for its epic's end,
+  and `swarm.sh review <slug> <PR URL>` clears the line once it passes. It is logged as a `kept`
+  event, never a `review`, so no report counts a give-up as a hand-off. The state is written before
+  the builder closes, and goes back to `ready` when its pane cannot be closed. Reconcile then finishes the story when the PR merges, or sends it back to `ready`
+  when it closes unmerged. `swarm.sh close <slug> [cause] --drop` clears the attempt even then,
+  including after a bare close kept it (in review, or held) and its builder has gone, as long as the
+  PR is open. It counts the attempt, sends a story in review back to `ready` once the count or hold
+  is written (a step that fails first leaves it in review with its PR), closes each open PR unmerged with a
+  comment naming the attempt, and prints each step that succeeded as `dropped:`, with the head SHA
+  of each branch (read before it is deleted) and of each PR, so the work can be restored.
+
+  Any other close after `review` or a merge, or after the builder has gone, counts nothing, and
+  `reconcile` sending a story back to `ready` never counts. If gh cannot list the PRs, the close
+  counts and clears nothing and says why on stderr; if its list cannot be read, nothing closes.
+  `swarm.sh close <slug> <cause> [--drop]` also says why the builder stopped: `met`, `stalled` and
+  `bound` count as above, while `impossible`, `paused` and `cleared-on-error` are not attempts and
+  leave `attempts:` as it was. Those three hand the story to the lead and clear its build, so while
+  its PR is open they are refused without `--drop`, before anything closes. `impossible` clears the
+  build away whenever it hands the story on (below).
   `paused` and `cleared-on-error` clear it when the close ends a build under the same conditions; otherwise they clear nothing and print
   `not held:`. An unknown cause
   is refused before anything closes, and with `goal` on, so is a close with no cause while the story
@@ -138,10 +160,11 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   any story still `ready` of a kind an agent builds, and clears its worktree and
   `story/<slug>` here and on origin so a reset builds it again. When the close lists the story's PRs,
   it closes each open one with `gh pr close`. When it lists none (its builder is gone, gh cannot list
-  them), it runs no `gh pr close`, but deleting `story/<slug>` on origin makes
-  GitHub close any PR still open on that branch. The block then says the PRs were not listed, so the
-  lead looks before resetting. Any other story, and a name with no story file, is refused before
-  anything closes.
+  them), a bare close is refused before anything closes, because deleting `story/<slug>` on origin
+  makes GitHub close any PR still open on that branch. With `--drop` it goes ahead, running no
+  `gh pr close`, and the block says the PRs were not listed, so the lead looks before resetting.
+  While a PR merged or is merging (auto-merge set), `impossible` is refused, `--drop` or not. Any
+  other story, and a name with no story file, is refused before anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
   had no `kind:` line), still `ready`, and a block with the attempts' PRs (from the same `gh pr
@@ -330,7 +353,7 @@ files in `/etc` (`zshenv`, `zprofile`, `zshrc`, `zlogin`) still run, and a login
 put back as it was given after them.
 
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
-`escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
+`escalated_from`, `held_for`, `held_by` and `kept`) out of tracked story and epic files. `review`, `unblock`,
 `close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to
 `.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
 the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
@@ -514,7 +537,7 @@ no goal.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
-when review has not converged in the rounds it allows. It runs `swarm.sh close <slug>`, which, on a
+when review has not converged in the rounds it allows. It runs `swarm.sh close <slug> --drop`, which, on a
 code, docs or chore story still `ready`, counts the attempt and clears its worktree, branch and PR,
 and starts the story again in a later wave with
 `swarm.sh story --strict <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
@@ -522,7 +545,7 @@ builds (2 by default). With `escalate_after = 0` it reports a story that has fai
 instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
 the user's. With `goal` on, a builder idle short of its reply is not nudged: the conductor reads the
 cause from its reply and the last met `goal_status` entry's `reason` in its session log, closes it with
-`swarm.sh close <slug> <cause>` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
+`swarm.sh close <slug> <cause> --drop` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
 in the wave and lists the story for the lead. A Fable builder can stop on its usage-credits consent, which `wait` prints as
 `waiting: dialog open`. Only for an escalate build, and only once `herdr agent read` shows that
 consent, the conductor accepts it with `herdr pane send-keys` in the builder's pane, runs
@@ -883,10 +906,10 @@ no sign that an agent is alive.
 
 `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` prints the project's
 numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under a `## <name>` line:
-`ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
+`ci_health`, `cost`, `epic_totals`, `features`, `gh_calls`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
-the others. `flow` writes nothing but its cache (below), except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
+the others. `flow` writes nothing but its own gh calls' lines in `.swarm/gh-calls.tsv` and its cache (below), except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
 
 GitHub history that is finished never changes, so `flow` reads it from `gh` once and keeps it in
@@ -973,6 +996,37 @@ fails or runs out of time, and a "merge" with one parent (a squash or a rebase);
 of two causes counts in both), then `file conflicts`, the three files conflicts and hand fixes hit most
 (control characters dropped from the names); or `none conflicted`, or `none read` when it read no
 merge-in.
+The `gh_calls` section shows how the swarm spends GitHub's two hourly budgets (5000 GraphQL points
+and 5000 REST requests). swarm.sh puts `bin/gh-shim` first on its own PATH and on every agent's, a
+restored agent's too. The lead's own gh calls outside swarm.sh, and a person's, do not go through it
+and are not counted. The shim runs the real `gh` with the same arguments, stdin and exit code (an
+INT ends it and exits 130, as an interrupted gh would), then appends a line to the project's
+`.swarm/gh-calls.tsv`: the UTC time; the agent (its name, or `-` outside any agent); the via
+(`swarm.sh <command>` when swarm.sh made the call, a builder's `swarm.sh wait-pr` among them, else
+`-`; the outermost command's, so what a command runs through another swarm.sh, such as `dash
+--check`'s status or `merge`'s wait, counts as the command that caused it, while an agent's own
+swarm.sh starts afresh); the subcommand (`pr view`, `api graphql`, or `api <path>` with the query
+and any host cut off and each path segment that holds a digit shown as `:id`, flags before either
+word skipped); the budget (`graphql` for `api graphql`, `status`, `label list` and the `pr` (except
+`pr diff`), `issue`, `repo` and `project` groups; `none` for a run that spends neither budget:
+`config`, `alias`, `completion`, `browse`, `help`, `--version`, any `--help`, a bare `gh`, `auth
+token`, `auth git-credential`, `auth setup-git`, `api rate_limit` and `search`, which has a limit of
+its own; `rest` for everything else); `many` (`paginate` for `--paginate`, `watch` for `--watch` and
+`run watch`, else `-`); and the exit code. It logs nothing past the subcommand and API path, so
+never a token, body or header, and a log it cannot write never fails the call. The read-only
+commands (`dash`, `wait-pr`, `watch` and the others) log their gh calls there too; it is the one
+file they write under `.swarm`. A row counts gh runs, not API requests: a `many` run spends several
+requests, and a GraphQL query costs a point or more, so the share is a floor. The section prints a
+line saying so, and that role `-` is a call outside any agent and share `-` a `none` run; then TSV
+`hour api role runs many share`: for each local hour in the window and budget, an `(all)` row, then
+one row per role (the agent's `agents.tsv` role; an agent it does not name as itself; `-` outside
+any agent), most runs first, with how many were `many` runs and the share of the 5000 (`<0.1%` below
+that, and `-` for `none`). After a blank line it prints the same per subcommand, `via swarm.sh
+<command>` added when swarm.sh ran it. With no log yet, or no lines in the window, it prints a line
+that says which. The section reads the log from the end and stops two days before `--since`. The
+shim keeps the log from growing without end: about one call in 1000 counts its lines, and past
+50,000 keeps the newest 50,000. GitHub's hour starts at a budget's first call, not on the clock, so
+one hour here can straddle two of GitHub's. `--epic` does not narrow it.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
@@ -1459,12 +1513,15 @@ tests each PR on top of the ones ahead of it, so there every reviewed PR can be 
 
 **Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and
 removes its worktree and `story/<slug>`, here and on origin (§ Merging). By hand,
-`swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there), and
+`swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there) and keeps
+its open PR, branch and worktree, putting a `ready` story in review with that PR (`kept:`). `--drop`
+clears them on a `ready` story, one in review, or a held child (`blocked` with `held_by:`) whose PR
+is open (§ Model and effort); on any other story it prints `not dropped:`.
 `swarm.sh close conduct-<epic>` closes the epic's tabs. herdr closes a tab without asking, so close
 first checks each tab's panes. It keeps a tab that holds an agent that is working or waiting, or
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
-`swarm.sh close <name> [cause] --all` closes the kept tabs as well.
+`swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 
 ## Releases
 
@@ -1505,7 +1562,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
 
 ## Cleanup, escalation and session logs
 
@@ -1515,8 +1572,10 @@ touch real cloud or credentials. By default no agent merges; with `merge = agent
 does.
 
 When `swarm.sh close` closes the builder of a code, docs or chore story that is still `ready`, it
-counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
-`story/<slug>` branch here and on origin, and any open PR, closed unmerged. `swarm.sh reconcile`
+counts a failed build in the story's `attempts:` and clears the attempt away: its worktree and its
+`story/<slug>` branch here and on origin. While the story's PR is open it does neither: it closes the
+builder alone and puts the story in review with the PR, unless it is `swarm.sh close <slug> --drop`,
+which also closes the PR unmerged and prints the head SHAs it dropped. `swarm.sh reconcile`
 removes the same worktree and branches once a story's PR merges, closing its builder first if it is
 open. When a PR closes unmerged, it removes them only if no builder is open. That leaves nothing to
 clean up by hand, unless reconcile prints `build kept: <slug>` or `build cleared: <slug>`, which say

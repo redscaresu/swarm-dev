@@ -236,8 +236,8 @@ check "an escalate build's start logs escalate x1, ok (attempt 3)" logged escala
 check "and the build itself, story x1 ok" logged story x1 ok
 run story y1 || true
 check "a code build's start logs no escalate line" bash -c "grep -q \$'\tstory\ty1\tw:me\tok\$' '${LOG}' && ! grep -q \$'\tescalate\ty1\t' '${LOG}'"
-run close x1 || true
-check "its failed close logs escalated x1, ok (attempts 3, 2 PRs)" logged escalated x1 "ok (attempts 3, 2 PRs)"
+run close x1 --drop || true
+check "its failed close --drop logs escalated x1, ok (attempts 3, 2 PRs)" logged escalated x1 "ok (attempts 3, 2 PRs)"
 appends "reset with no reason fails, naming it" 1 reset x1 "reset: <reason> is missing" reset x1
 appends "drop with a blank reason fails, naming it" 1 drop x1 "drop: <reason> is missing" drop x1 " "
 appends "reset logs the lead's reason" 1 reset x1 "ok (re-scoped to the parser alone)" reset x1 re-scoped to the parser alone

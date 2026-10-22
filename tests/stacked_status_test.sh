@@ -175,7 +175,7 @@ for mode in e backlog; do
       '`<child>: could not check <what>`' 'so send each merge once: until the child'"'"'s builder replies to that tell (or brief), skip a line for the same child and ref.' 'and after a builder opens a PR, run `swarm.sh unblock`' 'run `swarm.sh status` and read its Stacked lines' \
       'saying to merge <ref> into its branch, re-run the tests and push, and send it with `swarm.sh tell <child> nudge <file>`' \
       'On a line that ends `(no builder)`, first start a builder in the child'"'"'s worktree' '`swarm.sh agent <tab> <child> <worktree> <role> <brief>`' \
-      'review the new head' 'run `swarm.sh close <child> paused`'; do
+      'review the new head' 'run `swarm.sh close <child> paused --drop`'; do
     grep -qF -- "${want}" <<< "${b}" || { echo "  conduct-${mode} lacks: ${want}"; n=$((n + 1)); }
   done
   is "the ${mode} conductor brief carries the stacked rule" 0 "${n}"

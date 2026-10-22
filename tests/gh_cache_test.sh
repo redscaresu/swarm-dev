@@ -75,7 +75,8 @@ esac
 EOF
 chmod +x "${dir}/bin/gh"
 
-flow() { : > "${G}/gh.log"; (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow --since "${since}" "$@" 2>/dev/null); }
+flow() { : > "${G}/gh.log"; (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" bash "${SWARM}" flow --since "${since}" "$@" 2>/dev/null) \
+  | awk '/^## / { f = $0 != "## gh_calls" } f'; }   # less gh_calls, which counts each run's own calls
 fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
