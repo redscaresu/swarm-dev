@@ -946,7 +946,7 @@ mark_review() {
   for url in "$@"; do
     [[ "${url}" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+$ ]] || die "review: not a PR URL: ${url}"
   done
-  held="$(review_state "${f}" "$@")"
+  review_state "${f}" "$@"; held="${REVIEW_HELD}"
   if [[ -n "${held}" ]]; then
     # A parent that costs money waits on the user's merge (money_walk), maybe for days.
     [[ -z "$(money_walk "${held}")" ]] || held+=" (costs money)"
@@ -957,15 +957,18 @@ mark_review() {
 
 # review_state <file> <pr-url>... — mark_review's state: the item in review with prs: <pr-url>..., or,
 # for a story whose depends_on parents are still open, blocked with held_by: <parents> and that prs:
-# line, printing <parents>.
+# line, with REVIEW_HELD set to <parents> (else empty). Called directly, never in $(...), so a
+# state_set that dies does it at the command's own level, where main logs why.
+REVIEW_HELD=""
 review_state() {
-  local f="$1" held=""; shift
-  [[ "${f}" != "${BOARD}/stories/"* ]] || held="$(open_parents "${f}")"
-  if [[ -n "${held}" ]]; then
-    state_set "${f}" status blocked prs "$*" held_by "${held}"
-    echo "${held}"; return 0
+  local f="$1"; shift
+  REVIEW_HELD=""
+  [[ "${f}" != "${BOARD}/stories/"* ]] || REVIEW_HELD="$(open_parents "${f}")"
+  if [[ -n "${REVIEW_HELD}" ]]; then
+    state_set "${f}" status blocked prs "$*" held_by "${REVIEW_HELD}"
+  else
+    state_set "${f}" status review prs "$*" held_by ""
   fi
-  state_set "${f}" status review prs "$*" held_by ""
 }
 
 # builder_state <slug> — open when this project's builder for <slug> is open in herdr, none when it is

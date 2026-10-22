@@ -15,19 +15,22 @@ never given to a swarm agent. A `lead` story says what it needs from you, and ma
 that is yours with **You:** (swarm-dev `docs/method.md` § Who does what).
 
 `attempts: <n>` is how many builds of the story failed. Only `swarm.sh close` writes it, when it
-closes the builder of a code, docs or chore story that is still `ready`; once it reaches `escalate_after` (2 by default) the
+closes the builder of a code, docs or chore story that is still `ready` with no open PR, or when
+`swarm.sh close <slug> --drop` clears a build whose PR is open (a bare close keeps that PR and puts
+the story in review with it); once it reaches `escalate_after` (2 by default) the
 story is built on Fable (swarm-dev `docs/reference.md` § Model and effort). `swarm.sh close <slug> <cause>`
 says why the builder stopped (`met`, `impossible`, `stalled`, `bound`, `paused` or `cleared-on-error`;
 with `goal` on, closing a `ready` story's builder needs one). `impossible`, `paused` and
-`cleared-on-error` are not counted in `attempts:`.
+`cleared-on-error` are not counted in `attempts:`, and while the story's PR is open they are refused
+without `--drop`, since they hand the story on and close that PR.
 
 When the builder says the **Done when** cannot be met (`impossible`), the story becomes `kind: lead`
 with `escalated_from: <its kind>`, and a block with the lead's choices: re-scope the **Done when** and
 run `swarm.sh reset <slug> <reason>`, or drop it. As with a failed Fable build, the lead decides,
 so the block has no **You:** step.
 
-When `swarm.sh close <slug> paused` or `cleared-on-error` closes a builder whose close would count
-a failed build, the story is held the same way: `kind: lead`, `escalated_from: <its kind>`, `held_for: <cause>`, and a block with
+When `swarm.sh close <slug> paused --drop` or `cleared-on-error --drop` closes a builder whose
+close would count a failed build, the story is held the same way: `kind: lead`, `escalated_from: <its kind>`, `held_for: <cause>`, and a block with
 the lead's choices, so no conductor or `/swarm-dev:swarm` run builds it again. `attempts:` stays as it was.
 The lead drops it, or lifts the hold with `swarm.sh reset <slug> <reason>`, which puts the kind
 back and removes `held_for:`, `escalated_from:` and the block but keeps `attempts:`. Lifting a hold

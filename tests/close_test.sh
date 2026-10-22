@@ -135,22 +135,39 @@ item o1 "status: ready" "kind: code"; started o1 w:p1
 close o1
 is "close o1, its PR open: its pane closes, no PR is closed, attempts: unset, its build kept, the PR named" \
   "closed|0||worktree branch origin|1" \
-  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept: o1 is in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
-is "and o1 is in review with prs: its PR, logged as a review" "review|${U}/1|1" \
-  "$(fmv o1 status)|$(fmv o1 prs)|$(grep -c $'\treview\to1\tw:me\tok ('"${U}"'/1)$' "${P}/.swarm/events.tsv")"
+  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept (not green, not reviewed): o1 is in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
+is "and o1 is in review with prs: its PR, logged as a review that says the head is not green or reviewed" "review|${U}/1|1" \
+  "$(fmv o1 status)|$(fmv o1 prs)|$(grep -c $'\treview\to1\tw:me\tok ('"${U}"'/1; kept by close: not green, not reviewed)$' "${P}/.swarm/events.tsv")"
 # Its builder closed, the build kept: close o1 --drop still finds the open PR, and clears it all away.
 close o1 --drop
 is "close o1 --drop after the bare close closes its PR, counts the attempt, clears its build, and o1 is ready again with no prs:" "1|1||ready|" \
   "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at o1" "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(fmv o1 status)|$(fmv o1 prs)"
 # With a cause, the kept line's --drop names it. Once the kept PR merges, reconcile finishes the story.
-item o2 "status: ready" "kind: code"; started o2 w:p17; close o2 stalled
-is "close o2 stalled keeps the PR and names the cause in its --drop" "1|review" \
-  "$(grep -c "swarm.sh close o2 stalled --drop closes the PR" "${ROOT}/close.out")|$(fmv o2 status)"
+# A review that passed on the PR's head leaves only the checks to say.
+item o2 "status: ready" "kind: code"; started o2 w:p17
+mkdir -p "${P}/.swarm/reviews"; printf 'head: feed1\n\n## Findings\n\nnone\n' > "${P}/.swarm/reviews/o2.md"
+close o2 stalled
+is "close o2 stalled keeps the PR, says only that it is not green, and names the cause in its --drop" "1|1|review" \
+  "$(grep -c "^kept (not green): o2 is in review" "${ROOT}/close.out")|$(grep -c "swarm.sh close o2 stalled --drop closes the PR" "${ROOT}/close.out")|$(fmv o2 status)"
 echo "${U}/1 MERGED" > "${ROOT}/pr-states"
 (cd "${P}" && PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile >"${ROOT}/close.out" 2>&1) || true
 o2st=gone; [[ ! -f "${P}/docs/stories/o2.md" ]] || o2st="$(fmv o2 status)"; [[ "${o2st}" != "done" ]] || o2st=gone
 is "when o2's kept PR merges, reconcile finishes o2 and clears its build" "gone|" "${o2st}|$(left o2)"
 : > "${ROOT}/pr-states"
+# A stacked child whose parent is open is held by a bare close, as review holds it; --drop still
+# clears it, the hold and prs: line with it.
+item hp2 "status: review" "kind: code"; item hc2 "status: ready" "kind: code" "depends_on: [hp2]"; started hc2 w:p23
+close hc2
+is "close hc2, its parent open: held with its PR, the kept line naming --drop" "blocked|hp2|${U}/1|1|worktree branch origin" \
+  "$(fmv hc2 status)|$(fmv hc2 held_by)|$(fmv hc2 prs)|$(grep -c "held: it waits for hp2 to merge, .*swarm.sh close hc2 --drop" "${ROOT}/close.out")|$(left hc2)"
+: > "${ROOT}/gh.log"; close hc2 --drop
+is "close hc2 --drop closes its PR, counts the attempt and clears its build, hold and prs:" "1|1|||" \
+  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at hc2" "${ROOT}/gh.log")|$(attempts hc2)|$(left hc2)|$(fmv hc2 held_by)|$(fmv hc2 prs)"
+rm -f "${P}/docs/stories/hp2.md"
+# A --drop of a story in review whose count cannot be written leaves it in review with its PR.
+item rv "status: ready" "kind: code" "attempts: x"; started rv w:p24; close rv; close rv --drop
+is "close rv --drop with a bad attempts: leaves rv in review with its PR and build" "review|${U}/1|worktree branch origin|1" \
+  "$(fmv rv status)|$(fmv rv prs)|$(left rv)|$(grep -c "attempts must be a non-negative whole number, not 'x'" "${ROOT}/close.out")"
 # paused, cleared-on-error and impossible would hand the story on and close the PR: refused while it
 # is open, before anything closes.
 item o3 "status: ready" "kind: code" "attempts: 1"; started o3 w:p18

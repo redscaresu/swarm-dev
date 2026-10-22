@@ -123,10 +123,13 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   While a PR on `story/<slug>` is open, a bare close closes the builder alone and puts the story in
   review with that PR, as `swarm.sh review` does (held instead, as review holds it, while a parent
   is open). The PR, its branch and worktree stay, nothing is counted, and close prints `kept:`
-  naming the PR. Reconcile then finishes the story when the PR merges, or sends it back to `ready`
+  naming the PR. It reads the head's checks and review once, and prints `kept (not green)`,
+  `kept (not reviewed)` or both when they have not passed. The review event it logs says the same,
+  so the lead knows a give-up's PR is not one to merge as it stands. Reconcile then finishes the story when the PR merges, or sends it back to `ready`
   when it closes unmerged. `swarm.sh close <slug> [cause] --drop` clears the attempt even then,
-  including after a bare close kept it and its builder has gone, as long as the PR is open. It
-  counts the attempt, sends a story in review back to `ready`, closes each open PR unmerged with a
+  including after a bare close kept it (in review, or held) and its builder has gone, as long as the
+  PR is open. It counts the attempt, sends a story in review back to `ready` once the count or hold
+  is written (a step that fails first leaves it in review with its PR), closes each open PR unmerged with a
   comment naming the attempt, and prints each step that succeeded as `dropped:`, with the head SHA
   of each branch (read before it is deleted) and of each PR, so the work can be restored.
 
