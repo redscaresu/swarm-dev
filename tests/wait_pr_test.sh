@@ -224,8 +224,10 @@ is "grace after a retried head read: exits 0" 0 "${rc}"
 is "grace after a retried head read: two check reads" 2 "$(reads)"
 
 # --- A check that stays pending ends at the deadline, naming it (red from the 6th read, so no
-# deadline shows as exit 1, not a hang); --timeout sets it, else SWARM_MERGE_CI_SECONDS.
-fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr --timeout 0
+# deadline shows as exit 1, not a hang); --timeout sets it, else SWARM_MERGE_CI_SECONDS. 3s, not 0:
+# a read gets the time left, at least 1s (within), and a loaded CI runner can take that to start
+# gh, which ends the wait as a hung read with nothing read.
+fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr SWARM_MERGE_POLL=30 --timeout 3
 is "stays pending past --timeout: exits 2" 2 "${rc}"
 check "stays pending past --timeout: names what is pending" said "still pending: test (queued)"
 is "stays pending past --timeout: one read" 1 "$(reads)"
