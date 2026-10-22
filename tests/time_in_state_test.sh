@@ -108,6 +108,10 @@ E="${P}/.swarm/events.tsv"; cp "${E}" "${dir}/events.full"
 sed 's|\treview\te1\tw:1\tok (https://github.com/o/r/pull/5 https://github.com/o/r/pull/1)$|\treview\ttis\tw:1\tok|' "${dir}/events.full" > "${E}"
 check "a review that names no PR hands over its slug's one open PR" "$(out="$(outcomes)" rebuild review_wait_min merge_wait_min)" "35 15"
 cp "${dir}/events.full" "${E}"
+# A kept event (a give-up close kept the PR, unreviewed) after the PR opened is no hand-off.
+{ cat "${dir}/events.full"; printf '%s\n' "${D}11:05:00Z"$'\tkept\ttis\tw:1\tok (https://github.com/o/r/pull/1; not green, not reviewed)'; } > "${E}"
+check "a kept event is no hand-off to the merger" "$(out="$(outcomes)" rebuild review_wait_min merge_wait_min)" "35 15"
+cp "${dir}/events.full" "${E}"
 check "a PR with two review rounds splits its time in review into CI, review wait, fixing and merge wait" \
   "$(rebuild ci_min review_wait_min fixing_min merge_wait_min pr_to_merge_min | awk '{ print $1, $2, $3, $4, "=", $1 + $2 + $3 + $4, "of", $5 }')" \
   "15 35 25 15 = 90 of 90"

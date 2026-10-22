@@ -137,7 +137,9 @@ conduct_merge_rule() {
   if [[ "${CFG_merge}" == human ]]; then
     [[ -n "${backlog}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
-\`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge."
+\`swarm.sh review <epic> <every PR URL still waiting>\`: the epic leaves the board once they all merge.
+A story \`swarm.sh status\` lists as \`kept:\` is not in review for this: a close kept its PR unreviewed,
+so review it (and run \`swarm.sh review <slug> <PR URL>\` once it passes) first."
     cat <<EOF
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
 When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
@@ -156,7 +158,8 @@ the last story merged and the epic's **Done when** holds; on a board in the repo
 which you land with the \`swarm.sh merge --board\` line it prints. Never finish the epic while a story
 of it is still in review (a \`costs: money\` one waits for the user's merge): once the Done when will
 hold when they merge, run \`swarm.sh review <epic> <every PR URL still waiting>\` instead, and the
-epic leaves the board once they all merge."
+epic leaves the board once they all merge. A story \`swarm.sh status\` lists as \`kept:\` does not count
+as in review: a close kept its PR unreviewed, so review it first."
     cat <<EOF
 A story whose front matter says \`costs: money\` (merging it can spend money) is the user's to merge,
 as with merge = human. When its PR is green and reviewed,

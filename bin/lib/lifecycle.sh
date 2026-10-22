@@ -392,43 +392,46 @@ shut_agent() {
 # NOT_CLOSED: what a close prints when the builder's pane could not be closed (<name> is the name).
 NOT_CLOSED="not closed: <name>'s pane is still open, so nothing was counted or cleared; close it again once herdr answers"
 
-# keep_build <slug> <cause> <prs> — a bare close of a story's builder whose PR is open (in <prs>,
-# failed_build's list): the builder closes alone (shut_agent), and the story goes in review with its
-# open PRs as review puts it (review_state), logged as a review, so reconcile finishes it once they
-# merge, or sends it back to ready when one closes unmerged. Its worktree and branches stay, and
-# nothing is counted. A give-up's PR may be red or unreviewed: each head's checks (ci_gate head) and
-# review (review_pass) are read once, and what is missing is said on the kept line and in the review
-# event. When the pane could not be closed, nothing changes (NOT_CLOSED).
+# keep_build <slug> <cause> <urls> <heads> — a bare close of a story's builder whose PRs <urls> are
+# open (<heads> their head SHAs, - for one gh did not give). A give-up's PR may be red or unreviewed:
+# its heads' checks (heads_green, read fresh) and review (review_pass) are read once, and what has not
+# passed goes in the note. The story then goes in review with those PRs as review puts it
+# (review_state), or is held as review holds it, with kept: <date> <close> (<note>) so nothing takes it
+# for reviewed: waiting_on_user and lead_queue list it as kept, never merge, and review clears the
+# line. It is logged as kept, never review, so no report counts a give-up as a hand-off. The state is
+# written before the builder closes (shut_agent), so a state_set that dies leaves the builder open;
+# when the pane could not be closed, the state goes back to ready (NOT_CLOSED). The worktree and
+# branches stay, and nothing is counted.
 keep_build() {
-  local urls url head green=1 reviewed=1 note=""
-  urls="$(json "' '.join(p['url'] for p in d if p['state'] == 'OPEN')" <<< "$3")"
-  shut_agent "$1"
-  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then echo "${NOT_CLOSED/<name>/$1}"; return 0; fi
-  while read -r url head; do
-    if [[ "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/ && -n "${head}" ]]; then
-      ci_gate head "${BASH_REMATCH[1]}" "${head}" >/dev/null 2>&1 || green=0
-      review_pass "$1" "${head}" || reviewed=0
-    else
-      green=0; reviewed=0
-    fi
-  done < <(json "'\n'.join(p['url'] + ' ' + p.get('headRefOid', '') for p in d if p['state'] == 'OPEN')" <<< "$3")
-  [[ ${green} == 1 ]] || note="not green"
+  local f="${BOARD}/stories/$1.md" head rc=0 reviewed=1 note="" money=""
+  mkdir -p "${LEAD_DIR}"   # heads_green records a green head beside LEAD_GREEN
+  # shellcheck disable=SC2086 # one URL per word
+  LEAD_FRESH=1 heads_green $3 || rc=$?
+  case "${rc}" in 0) ;; 2) note="checks not read" ;; *) note="not green" ;; esac
+  for head in $4; do [[ "${head}" != - ]] && review_pass "$1" "${head}" || reviewed=0; done
   [[ ${reviewed} == 1 ]] || note="${note:+${note}, }not reviewed"
   # shellcheck disable=SC2086 # one URL per word
-  review_state "${BOARD}/stories/$1.md" ${urls}
+  review_state "${f}" "$(date +%F) close${2:+ $2}${note:+ (${note})}" $3
+  shut_agent "$1"
+  if [[ -n "${CLOSE_PANE_KEPT}" ]]; then
+    state_set "${f}" status ready prs "" held_by "" kept ""
+    echo "${NOT_CLOSED/<name>/$1}"; return 0
+  fi
+  record_event kept "$1" "ok ($3${note:+; ${note}})"
   if [[ -n "${REVIEW_HELD}" ]]; then
-    echo "kept${note:+ (${note})}: $1's PR ${urls}, its branch story/$1 and its worktree stay, and nothing was counted or cleared; held: it waits for ${REVIEW_HELD} to merge, as review holds it. swarm.sh close $1 ${2:+$2 }--drop closes the PR and clears the build"
+    # A parent that costs money waits on the user's merge (money_walk), as mark_review says.
+    [[ -z "$(money_walk "${REVIEW_HELD}")" ]] || money=" (costs money)"
+    echo "kept${note:+ (${note})}: $1's PR $3, its branch story/$1 and its worktree stay, and nothing was counted or cleared; held: it waits for ${REVIEW_HELD}${money} to merge, as review holds it. swarm.sh close $1 ${2:+$2 }--drop closes the PR and clears the build"
     return 0
   fi
-  record_event review "$1" "ok (${urls}; kept by close${note:+: ${note}})"
-  echo "kept${note:+ (${note})}: $1 is in review with its PR ${urls}, its branch story/$1 and its worktree, and nothing was counted or cleared; swarm.sh close $1 ${2:+$2 }--drop closes the PR and sends the story back to ready"
+  echo "kept${note:+ (${note})}: $1 is in review with its PR $3, its branch story/$1 and its worktree, and nothing was counted or cleared; it is not offered to merge until swarm.sh review $1 $3 marks it reviewed. swarm.sh close $1 ${2:+$2 }--drop closes the PR and sends the story back to ready"
 }
 
 # back_to_ready <slug> — a story in review that --drop clears goes back to ready, its PRs no longer
 # its. Called once the close's hold or count is written, so a step that fails first leaves it in review.
 back_to_ready() {
   local f="${BOARD}/stories/$1.md"
-  [[ "$(fm "${f}" status)" != review ]] || state_set "${f}" status ready prs ""
+  [[ "$(fm "${f}" status)" != review ]] || state_set "${f}" status ready prs "" kept ""
 }
 
 # close_agent <name> [cause] — close what was opened for <name> (shut_agent).
@@ -451,7 +454,7 @@ back_to_ready() {
 # the builder did not stop of itself (stalled, paused or cleared-on-error) or handed it on (impossible);
 # with escalate_ladder set, that close then steps the build up (ladder_step no-pr) instead, if it can.
 close_agent() {
-  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc open=""
+  local cause="${2:-}" f="${BOARD}/stories/$1.md" prs counted=0 n why rc open="" heads=""
   # The message never repeats the word: main logs a die's first line.
   [[ -z "${cause}" ]] || is_close_cause "${cause}" \
     || die "close: the cause must be ${CLOSE_CAUSES} (swarm.sh close <name> [cause])"
@@ -464,9 +467,11 @@ close_agent() {
   rc=0; prs="$(failed_build "$1")" || rc=$?
   if [[ ${rc} == 0 ]]; then
     counted=1
-    # A list that cannot be read keeps everything: nothing has closed yet.
-    [[ -n "${CLOSE_DROP}" ]] || open="$(json "' '.join(p['url'] for p in d if p['state'] == 'OPEN')" <<< "${prs}")" \
+    # The open PRs' URLs, then their heads, on two lines. A list that cannot be read keeps
+    # everything: nothing has closed yet.
+    [[ -n "${CLOSE_DROP}" ]] || open="$(json "' '.join(p['url'] for p in d if p['state'] == 'OPEN') + '\n' + ' '.join(p.get('headRefOid') or '-' for p in d if p['state'] == 'OPEN')" <<< "${prs}")" \
       || die "close: $1's PR list could not be read, so nothing was closed or counted"
+    heads="${open#*$'\n'}"; open="${open%%$'\n'*}"
   elif [[ "${cause}" == impossible && ${rc} == "${BUILD_MERGING}" ]]; then
     die "close: a PR on story/$1 merged or is merging (auto-merge set), so $1 cannot be closed impossible: clearing its build would delete the branch under that PR; nothing was closed"
   elif [[ "${cause}" == impossible && -z "${CLOSE_DROP}" ]]; then
@@ -476,7 +481,7 @@ close_agent() {
   if [[ -n "${open}" ]]; then
     [[ ! "${cause}" =~ ^(impossible|paused|cleared-on-error)$ ]] \
       || die "close: $1's PR ${open} is open, and a ${cause} close hands the story to the lead and clears its build, closing that PR: run swarm.sh close $1 ${cause} --drop for that, or close it with no cause (met, stalled or bound with goal on) to keep the PR in review; nothing was closed"
-    keep_build "$1" "${cause}" "${prs}"
+    keep_build "$1" "${cause}" "${open}" "${heads}"
     return 0
   fi
   if [[ ${counted} == 1 ]]; then
@@ -1070,10 +1075,11 @@ clear_build() {
       echo "swarm: ${slug}: could not delete ${b} on origin" >&2
     fi
   fi
-  # A held child's hold goes with its build, and so does the prs: line the hold kept.
+  # A held child's hold goes with its build, and so does the prs: line the hold kept; so does a kept: line.
   if [[ -n "$(get_fm "${BOARD}/stories/$1.md" held_by)" ]]; then
     state_set "${BOARD}/stories/$1.md" held_by "" prs ""
   fi
+  [[ -z "$(get_fm "${BOARD}/stories/$1.md" kept)" ]] || state_set "${BOARD}/stories/$1.md" kept ""
 }
 
 # close_panes <name> — close <name>'s pane, or its tab when that was the tab's last pane. A
@@ -1622,6 +1628,8 @@ lead_queue() {
   : > "${LEAD_GREEN}.new"
   # waiting_on_user's last line has no newline.
   while IFS= read -r line || [[ -n "${line}" ]]; do
+    # A kept story (a give-up's PR, not reviewed) is the lead's to look at, never one to merge.
+    if [[ "${line}" == "  kept: "* ]]; then echo "${line#  }"; continue; fi
     # With merge = agent only a costs: money item waits on the user: merge holds it for them.
     # shellcheck disable=SC2154 # assigned in another file
     [[ "${CFG_merge}" == human || "${line}" == "  awaiting your merge (costs money): "* ]] || continue

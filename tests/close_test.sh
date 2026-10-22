@@ -130,14 +130,19 @@ attempts() { fmv "$1" attempts 2>/dev/null || true; }
 U="https://github.com/o/proj/pull"
 echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\",\"headRefOid\":\"feed1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
 # A bare close of a builder whose PR is open closes the builder alone and puts the story in review
-# with the PR, logged as a review: no PR closed, the branch and worktree kept, nothing counted.
+# with the PR and a kept: line, logged as kept (never review): no PR closed, the branch and worktree
+# kept, nothing counted. gh gives no head here, so its checks are not read.
+st() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" status 2>&1) || true; }
 item o1 "status: ready" "kind: code"; started o1 w:p1
 close o1
 is "close o1, its PR open: its pane closes, no PR is closed, attempts: unset, its build kept, the PR named" \
   "closed|0||worktree branch origin|1" \
-  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept (not green, not reviewed): o1 is in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
-is "and o1 is in review with prs: its PR, logged as a review that says the head is not green or reviewed" "review|${U}/1|1" \
-  "$(fmv o1 status)|$(fmv o1 prs)|$(grep -c $'\treview\to1\tw:me\tok ('"${U}"'/1; kept by close: not green, not reviewed)$' "${P}/.swarm/events.tsv")"
+  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept (checks not read, not reviewed): o1 is in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
+is "and o1 is in review with prs: its PR and a dated kept: line, logged as kept, not review" "review|${U}/1|yes|1|0" \
+  "$(fmv o1 status)|$(fmv o1 prs)|$([[ "$(fmv o1 kept)" == "$(date +%F) close (checks not read, not reviewed)" ]] && echo yes)|$(grep -c $'\tkept\to1\tw:me\tok ('"${U}"'/1; checks not read, not reviewed)$' "${P}/.swarm/events.tsv")|$(grep -c $'\treview\to1\t' "${P}/.swarm/events.tsv")"
+out="$(st)"
+is "status lists o1 as kept, not reviewed, and never as awaiting your merge" "1|0" \
+  "$(grep -cx "  kept: o1 ${U}/1 (not reviewed)" <<< "${out}")|$(grep -c "awaiting your merge.*: o1 " <<< "${out}")"
 # Its builder closed, the build kept: close o1 --drop still finds the open PR, and clears it all away.
 close o1 --drop
 is "close o1 --drop after the bare close closes its PR, counts the attempt, clears its build, and o1 is ready again with no prs:" "1|1||ready|" \
@@ -147,8 +152,12 @@ is "close o1 --drop after the bare close closes its PR, counts the attempt, clea
 item o2 "status: ready" "kind: code"; started o2 w:p17
 mkdir -p "${P}/.swarm/reviews"; printf 'head: feed1\n\n## Findings\n\nnone\n' > "${P}/.swarm/reviews/o2.md"
 close o2 stalled
-is "close o2 stalled keeps the PR, says only that it is not green, and names the cause in its --drop" "1|1|review" \
-  "$(grep -c "^kept (not green): o2 is in review" "${ROOT}/close.out")|$(grep -c "swarm.sh close o2 stalled --drop closes the PR" "${ROOT}/close.out")|$(fmv o2 status)"
+is "close o2 stalled keeps the PR, says only that its checks were not read, and names the cause in its --drop" "1|1|review" \
+  "$(grep -c "^kept (checks not read): o2 is in review" "${ROOT}/close.out")|$(grep -c "swarm.sh close o2 stalled --drop closes the PR" "${ROOT}/close.out")|$(fmv o2 status)"
+# Once it is reviewed, review clears kept:, and status offers it to merge.
+(cd "${P}" && bash "${SWARM}" review o2 "${U}/1" >/dev/null 2>&1) || true; out="$(st)"
+is "review o2 clears kept:, and status lists o2 as awaiting your merge" "|1|0" \
+  "$(fmv o2 kept)|$(grep -c "awaiting your merge: o2 ${U}/1" <<< "${out}")|$(grep -c "kept: o2" <<< "${out}")"
 echo "${U}/1 MERGED" > "${ROOT}/pr-states"
 (cd "${P}" && PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile >"${ROOT}/close.out" 2>&1) || true
 o2st=gone; [[ ! -f "${P}/docs/stories/o2.md" ]] || o2st="$(fmv o2 status)"; [[ "${o2st}" != "done" ]] || o2st=gone
@@ -164,6 +173,11 @@ is "close hc2, its parent open: held with its PR, the kept line naming --drop" "
 is "close hc2 --drop closes its PR, counts the attempt and clears its build, hold and prs:" "1|1|||" \
   "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at hc2" "${ROOT}/gh.log")|$(attempts hc2)|$(left hc2)|$(fmv hc2 held_by)|$(fmv hc2 prs)"
 rm -f "${P}/docs/stories/hp2.md"
+# A parent that costs money is said on the held line, as review says it.
+item hp3 "status: review" "kind: code" "costs: money"; item hc3 "status: ready" "kind: code" "depends_on: [hp3]"; started hc3 w:p25
+close hc3
+is "close hc3, its parent costing money: the held line says so" "1" "$(grep -c "held: it waits for hp3 (costs money) to merge" "${ROOT}/close.out")"
+rm -f "${P}/docs/stories/hp3.md"
 # A --drop of a story in review whose count cannot be written leaves it in review with its PR.
 item rv "status: ready" "kind: code" "attempts: x"; started rv w:p24; close rv; close rv --drop
 is "close rv --drop with a bad attempts: leaves rv in review with its PR and build" "review|${U}/1|worktree branch origin|1" \
@@ -178,8 +192,15 @@ is "and main logs the refusal, not close:paused ok" "0|1" \
   "$(grep -c $'\tclose:paused\to3\tw:me\tok$' "${P}/.swarm/events.tsv")|$(grep -c $'\tclose:paused\to3\tw:me\tclose: o3\'s PR ' "${P}/.swarm/events.tsv")"
 # A pane that cannot be closed keeps the story as it was, and says so.
 touch "${ROOT}/paneclosefail"; close o3; rm "${ROOT}/paneclosefail"
-is "with its pane not closing, close o3 prints not closed: and leaves o3 ready" "1|ready" \
-  "$(grep -c "^not closed: o3's pane is still open" "${ROOT}/close.out")|$(fmv o3 status)"
+is "with its pane not closing, close o3 prints not closed: and leaves o3 ready, with no prs: or kept:" "1|ready||" \
+  "$(grep -c "^not closed: o3's pane is still open" "${ROOT}/close.out")|$(fmv o3 status)|$(fmv o3 prs)|$(fmv o3 kept)"
+# The kept state is written before the builder closes: a state_set that dies (its lock held) leaves the
+# builder's pane open and the story as it was, and main logs why, not a bare exit status.
+item o6 "status: ready" "kind: code"; started o6 w:p26; mkdir -p "${P}/.swarm/board-state/stories/o6.lock"
+rc=0; (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_LOCK_WAIT=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close o6 >"${ROOT}/close.out" 2>&1) || rc=$?
+rmdir "${P}/.swarm/board-state/stories/o6.lock"
+is "close o6 with its state locked fails, its pane open and o6 ready, and main logs the lock" "1|open|ready|1" \
+  "${rc}|$([[ -e "${P}/.swarm/state/o6" ]] && echo open || echo closed)|$(fmv o6 status)|$(grep -c $'\tclose\to6\tw:me\tboard state: .*o6 is locked' "${P}/.swarm/events.tsv")"
 # --drop with no local branch still names origin's head, read before it is deleted.
 item o4 "status: ready" "kind: code"; started o4 w:p21
 osha="$(git -C "${ROOT}/origin.git" rev-parse story/o4)"

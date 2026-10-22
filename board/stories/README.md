@@ -29,8 +29,8 @@ with `escalated_from: <its kind>`, and a block with the lead's choices: re-scope
 run `swarm.sh reset <slug> <reason>`, or drop it. As with a failed Fable build, the lead decides,
 so the block has no **You:** step.
 
-When `swarm.sh close <slug> paused --drop` or `cleared-on-error --drop` closes a builder whose
-close would count a failed build, the story is held the same way: `kind: lead`, `escalated_from: <its kind>`, `held_for: <cause>`, and a block with
+When `swarm.sh close <slug> paused` or `cleared-on-error` closes a builder whose close would count
+a failed build (a bare close when no PR is open; with an open PR it needs `--drop`, which closes it), the story is held the same way: `kind: lead`, `escalated_from: <its kind>`, `held_for: <cause>`, and a block with
 the lead's choices, so no conductor or `/swarm-dev:swarm` run builds it again. `attempts:` stays as it was.
 The lead drops it, or lifts the hold with `swarm.sh reset <slug> <reason>`, which puts the kind
 back and removes `held_for:`, `escalated_from:` and the block but keeps `attempts:`. Lifting a hold

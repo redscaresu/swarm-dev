@@ -123,9 +123,14 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   While a PR on `story/<slug>` is open, a bare close closes the builder alone and puts the story in
   review with that PR, as `swarm.sh review` does (held instead, as review holds it, while a parent
   is open). The PR, its branch and worktree stay, nothing is counted, and close prints `kept:`
-  naming the PR. It reads the head's checks and review once, and prints `kept (not green)`,
-  `kept (not reviewed)` or both when they have not passed. The review event it logs says the same,
-  so the lead knows a give-up's PR is not one to merge as it stands. Reconcile then finishes the story when the PR merges, or sends it back to `ready`
+  naming the PR. It reads the head's checks and review once, and prints `kept (not green)` (or
+  `checks not read` when gh could not tell), `kept (not reviewed)` or both when they have not
+  passed. The story's state gets a `kept: <date> close <cause> (<what has not passed>)` line, so
+  nothing takes it for reviewed: `status` and `wait --lead` list it as `kept: <slug> <PR URL> (not
+  reviewed)`, never as one to merge, a conductor does not count it as in review for its epic's end,
+  and `swarm.sh review <slug> <PR URL>` clears the line once it passes. It is logged as a `kept`
+  event, never a `review`, so no report counts a give-up as a hand-off. The state is written before
+  the builder closes, and goes back to `ready` when its pane cannot be closed. Reconcile then finishes the story when the PR merges, or sends it back to `ready`
   when it closes unmerged. `swarm.sh close <slug> [cause] --drop` clears the attempt even then,
   including after a bare close kept it (in review, or held) and its builder has gone, as long as the
   PR is open. It counts the attempt, sends a story in review back to `ready` once the count or hold
@@ -348,7 +353,7 @@ files in `/etc` (`zshenv`, `zprofile`, `zshrc`, `zlogin`) still run, and a login
 put back as it was given after them.
 
 **Board state.** swarm.sh keeps the front-matter keys it writes (`status`, `prs`, `attempts`, `kind`,
-`escalated_from`, `held_for` and `held_by`) out of tracked story and epic files. `review`, `unblock`,
+`escalated_from`, `held_for`, `held_by` and `kept`) out of tracked story and epic files. `review`, `unblock`,
 `close`, `reset`, `reconcile` and `conduct` write them as `key: value` lines to
 `.swarm/board-state/stories/<slug>` or `.swarm/board-state/epics/<slug>`, so a story and an epic with
 the same slug keep separate state, and `git status` in the main checkout stays clean. Every command
@@ -1426,9 +1431,9 @@ tests each PR on top of the ones ahead of it, so there every reviewed PR can be 
 **Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and
 removes its worktree and `story/<slug>`, here and on origin (§ Merging). By hand,
 `swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there) and keeps
-its open PR, branch and worktree, putting a `ready` story in review with that PR. `--drop` clears
-them on a `ready` story or one in review whose PR is open (§ Model and effort); on any other story
-it prints `not dropped:`.
+its open PR, branch and worktree, putting a `ready` story in review with that PR (`kept:`). `--drop`
+clears them on a `ready` story, one in review, or a held child (`blocked` with `held_by:`) whose PR
+is open (§ Model and effort); on any other story it prints `not dropped:`.
 `swarm.sh close conduct-<epic>` closes the epic's tabs. herdr closes a tab without asking, so close
 first checks each tab's panes. It keeps a tab that holds an agent that is working or waiting, or
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
