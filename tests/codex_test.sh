@@ -22,7 +22,7 @@ printf '#!/bin/sh\nexec perl -e "select undef, undef, undef, shift" "$1" "$0"\n'
 # The same under another name, for a child a case leaves running on purpose, so left can tell it.
 cp "${BIN}/stubsleep" "${BIN}/orphansleep"
 # stubchain <n> — a chain of n sh processes, each waiting on the next, and a perl sleeping at its end,
-# which touches chained as it starts.
+# which touches chained beside it as it starts (printf makes the %% in ${0%%/*} one %: its dirname).
 # shellcheck disable=SC2016 # the chain's own $1 and $0
 printf '#!/bin/sh\nif [ "$1" -gt 0 ]; then "$0" $(($1 - 1)); else touch "${0%%/*}/chained"; exec perl -e "select undef, undef, undef, 60" "$0"; fi\n' > "${BIN}/stubchain"
 chmod +x "${BIN}/stubchain"
@@ -48,7 +48,7 @@ stub() {
 REVIEW_CAP=20
 review() {
   local t0=${SECONDS} spid
-  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY ${STORY:+"SWARM_STORY=${STORY}"} SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main \
+  (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY ${STORY:+"SWARM_STORY=${STORY}"} SWARM_CODEX_SECONDS="${LIMIT}" bash "${SWARM}" codex-review main \
     <<< "typed at the prompt" > "${ROOT}/out" 2>&1) &
   spid=$!; finish "${spid}"
   took=$((SECONDS - t0)); out="$(cat "${ROOT}/out")"
@@ -267,7 +267,7 @@ left "a child holding the output case" "${BIN}/(codex|stubsleep)"
 # shellcheck disable=SC2016 # the stub's variable
 stub '( "${d}/orphansleep" 60 & ); "${d}/stubsleep" 60'
 t0=${SECONDS}
-(cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main 2>&1 \
+(cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY SWARM_CODEX_SECONDS="${LIMIT}" bash "${SWARM}" codex-review main 2>&1 \
   < /dev/null | cat > "${ROOT}/out") &
 spid=$!; finish "${spid}"
 check "a timed-out codex whose grandchild holds its output still ends codex-review's stdout within the grace" "yes|yes" \
