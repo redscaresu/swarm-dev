@@ -55,8 +55,8 @@ Three parties do the work, and the plan decides which one does each step, not th
 
 - **You** agree each epic, approve the stories, merge PRs (with `merge = human`), say go
   before each `lead` story, and do its **You:** steps.
-- **The lead** is your own Claude Code session, the one you run `/swarm-dev:swarm` in. It
-  supervises, reviews, and runs `lead` stories while you watch.
+- **The lead** is your Claude Code session, the one you run `/swarm-dev:swarm` in. It supervises, reviews
+  and runs `lead` stories. If it stops while `next` names a step it has not started, a hook sends it back once.
 - **Agents** plan, conduct and build everything else, each in its own pane; builders also get
   their own worktree.
 

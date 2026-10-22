@@ -46,8 +46,10 @@ the run stops whenever a decision is yours.
 
 Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
 the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
-are marked **You:**. Everything lives in plain Markdown files (the board), so a run can stop
-anywhere and the next `/swarm-dev:swarm` picks up where it left off.
+are marked **You:**. When `swarm.sh next` names a step the lead has not started, a plugin hook
+sends it back once before its turn ends, to start the step or tell you why it can't. Everything
+lives in plain Markdown files (the board), so a run can stop anywhere and the next
+`/swarm-dev:swarm` picks up where it left off.
 
 ## Requirements
 
