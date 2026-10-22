@@ -35,13 +35,12 @@ case "$1 $2" in
   "pr list")   f="$F/prlist.json"; [ "$r" = o/svc ] || f="$F/prlist-${r#o/}.json"; jq -r "$q" "$f"; exit 0 ;;
 esac
 # watch's REST reads, from the same fixture: the list, and each PR's mergeable state (null for UNKNOWN).
-# With list-fails the list fails as gh does, its error JSON on stdout; with pr-fails each PR read past
-# the first two fails.
+# With list-fails the list fails as gh does, its error JSON on stdout; with pr-fails each PR read fails.
 f="$F/prlist.json"; r="${path#repos/}"; r="${r%%/pulls*}"; [ "$r" = o/svc ] || f="$F/prlist-${r#o/}.json"
 case "${path}" in
   repos/o/*/pulls) [ ! -f "$F/list-fails" ] || { echo '{"message":"Forbidden","status":"403"}'; echo 'gh: Forbidden (HTTP 403)' >&2; exit 1; }
     jq '[.[] | {number, head: {ref: .headRefName, sha: .headRefOid}, updated_at: .updatedAt}]' "$f" | jq -r "$q" ;;
-  repos/o/*/pulls/*) if [ -f "$F/pr-fails" ]; then n=$(($(cat "$F/pr-reads" 2>/dev/null || echo 0) + 1)); echo "$n" > "$F/pr-reads"; [ "$n" -le 2 ] || exit 1; fi
+  repos/o/*/pulls/*) [ ! -f "$F/pr-fails" ] || { echo '{"message":"Server Error"}'; exit 1; }
     jq ".[] | select(.number == ${path##*/}) | {mergeable: {MERGEABLE: true, CONFLICTING: false}[.mergeable]}" "$f" | jq -r "$q" ;;
   repos/o/*/commits/*/check-runs) f="$F/runs-$(basename "${path%/check-runs}").json"
     if [ -n "$q" ]; then jq -r "$q" "$f" | head -1; else cat "$f"; fi ;;
@@ -121,12 +120,12 @@ watchrun > /dev/null
 check "watch reads no mergeable state of another epic's PR" 0 "$(calls 'api repos/o/svc/pulls/5 ')"
 printf 'conflict h1\nqueued h1\n' >> "${p}/.swarm/state/watch-seen"
 check "watch reads no mergeable state of a head whose conflict it reported" "(still watching)|0" "$(watchrun)|$(calls 'api repos/o/svc/pulls/3 ')"
-# A failed read keeps the head's last state read, and says so (a second poll, so naps cut short); a
-# failed list is said, and read as no PR.
-green 10; touch "${ROOT}/pr-fails"
-check "watch keeps a PR's last mergeable state when its read fails, and says so" "(still watching)|yes" \
-  "$(SWARM_SLEEP_SCALE=0.01 watchrun)|$(grep -q "^swarm: watch: gh cannot read o/svc #3's mergeable state; keeping the last known (MERGEABLE)" "${ROOT}/watch.out" && echo yes)"
-rm -f "${ROOT}/pr-fails" "${ROOT}/pr-reads"; touch "${ROOT}/list-fails"
+# A failed read is UNKNOWN, said once a poll: a head green 31 minutes is not queued on it. A failed
+# list is said, and read as no PR.
+green 31; touch "${ROOT}/pr-fails"
+check "watch reads a failed mergeable read as UNKNOWN, queues nothing on it, and says so" "(still watching)|yes" \
+  "$(watchrun)|$(grep -q "^swarm: watch: gh cannot read o/svc #3's mergeable state; reading it as UNKNOWN this poll" "${ROOT}/watch.out" && echo yes)"
+rm -f "${ROOT}/pr-fails"; touch "${ROOT}/list-fails"
 check "watch says a failed list on stderr, reads no row from it, and polls on" "(still watching)|yes|no" \
   "$(watchrun)|$(grep -q "^swarm: watch: gh cannot list o/svc's open PRs: gh: Forbidden (HTTP 403)" "${ROOT}/watch.out" && echo yes)|$(grep -q 'unbound' "${ROOT}/watch.out" && echo yes || echo no)"
 rm -f "${ROOT}/list-fails"
@@ -136,6 +135,7 @@ check "watch reports a PR green and mergeable for 31 minutes with no review agen
 # watch polls through REST, whose budget is apart from GraphQL's: no gh pr list.
 check "watch lists the open PRs through REST" 1 "$(calls 'api --paginate repos/o/svc/pulls?state=open&per_page=100')"
 check "watch reads #3's mergeable state through REST" 1 "$(calls 'api repos/o/svc/pulls/3 ')"
+check "watch reads no mergeable state past the PR it reports" 0 "$(calls 'api repos/o/svc/pulls/4 ')"
 check "watch makes no GraphQL gh pr list" 0 "$(extra_lists)"
 check "watch reports a queued head once, lists PRs only in its own poll, and reads no CI for a head it has reported" "(still watching)|0|0" \
   "$(watchrun)|$(extra_lists)|$(calls 'commits/h1/')"

@@ -118,7 +118,7 @@ cost_report() {
 }
 
 # A finished story's PR rows, read once: its file off the board, every PR merged or closed and every
-# check on them completed, they never change. Each line <slug> TAB <its newest build's start> TAB <prs>
+# check on them completed, they never change. Each line <slug> TAB <its newest build's day>/<builds that day> TAB <prs>
 # (outcomes' join), so a rebuild reads gh again; per story gh was flow's, dataset's and dash's top
 # GraphQL caller, at one gh pr list per story ever built on every run.
 OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
@@ -178,8 +178,9 @@ outcomes_report() {
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
     finished=""; [[ -f "${BOARD}/stories/${slug}.md" || -z "${text}" ]] || finished=1
-    # The cache's key: its newest build's start (its session log's first timestamp, else its day).
-    built="$(awk -F'\t' -v s="${slug}" '$2 == s { k = ($14 != "" ? $14 : $1); if (k > m) m = k } END { print m }' <<< "${rows}")"
+    # The cache's key: its newest build's agents.tsv day and the builds that day, `<day>/<count>`, so a
+    # rebuild changes it, with or without a session log; --since never drops the newest day's builds.
+    built="$(awk -F'\t' -v s="${slug}" '$2 == s { if ($1 > m) { m = $1; c = 0 } if ($1 == m) c++ } END { if (m != "") print m "/" c }' <<< "${rows}")"
     # shellcheck disable=SC2016 # $b is jq's
     if [[ -n "${finished}" ]] && prs="$(awk -F'\t' -v s="${slug}" -v k="${built}" '$1 == s && $2 == k { print $3; f = 1; exit } END { exit !f }' "${OUTCOMES_PRS_CACHE}" 2>/dev/null)"; then
       asked=1
@@ -197,10 +198,10 @@ outcomes_report() {
       # past a pending check, or a step-up closing mid-CI, would keep the gap. Two runs at once lose
       # none, and the first line of a slug and build is the one read.
       if [[ -n "${finished}" && -n "${prs}" ]] && awk -F'\t' '$2 == "OPEN" || $9 > 0 { o = 1 } END { exit o }' <<< "${got}"; then
-        mkdir -p "${OUTCOMES_PRS_CACHE%/*}"; printf '%s\t%s\t%s\n' "${slug}" "${built}" "${prs}" >> "${OUTCOMES_PRS_CACHE}"
+        # Best effort: a read-only report never fails on a write it does only to save a gh call.
+        { mkdir -p "${OUTCOMES_PRS_CACHE%/*}" && printf '%s\t%s\t%s\n' "${slug}" "${built}" "${prs}" >> "${OUTCOMES_PRS_CACHE}"; } 2>/dev/null \
+          || echo "swarm: outcomes: cannot write ${OUTCOMES_PRS_CACHE}; ${slug}'s PRs are read from gh again next run" >&2
       fi
-    else
-      prs=""
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'
