@@ -47,12 +47,12 @@ for raw in backwards(log) if os.path.exists(log) else ():
     f = raw.decode("utf-8", "ignore").split("\t")
     if len(f) != 7:
         continue
-    if f[0][:10] < stop:
-        break
     try:
         t = datetime.datetime.fromisoformat(f[0].replace("Z", "+00:00")).astimezone()
     except ValueError:
-        continue
+        continue   # a torn or hand-edited line: skipped, never taken for the stop
+    if f[0][:10] < stop:
+        break
     if not since <= t.date().isoformat() <= until:
         continue
     hour, agent, via, sub, api, heavy = t.strftime("%Y-%m-%d %H:00"), f[1], f[2], f[3], f[4], f[5] != "-"
@@ -66,7 +66,8 @@ if not os.path.exists(log):
 elif not by["role"]:
     print(f"no gh calls logged in the window ({since} to {until})")
 else:
-    print("# gh runs, not API requests: a run with many > 0 (--paginate, --watch) spends several, and GraphQL counts points")
+    print("# gh runs, not API requests: a run with many > 0 (--paginate, --watch) spends several, and GraphQL counts points;"
+          " role - is a call outside any agent, and share - a none run, which spends neither budget")
     for i, key in enumerate(by):
         print(("\n" if i else "") + f"hour\tapi\t{key}\truns\tmany\tshare")
         for (hour, api, name), n in sorted(by[key].items(), key=lambda kv: (kv[0][:2], kv[0][2] != ALL, -kv[1], kv[0][2])):

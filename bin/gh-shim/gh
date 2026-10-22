@@ -4,7 +4,7 @@
 # to SWARM_GH_LOG (unset: none): time; agent (SWARM_GH_CALLER, else SWARM_AGENT, else -); via
 # (SWARM_GH_VIA, `swarm.sh <command>` when swarm.sh made the call, else -); the subcommand (`pr view`,
 # `api graphql`, `api <path>` with each segment holding a digit as :id); the budget it spends (graphql
-# or rest, or none for one that calls no API: config, alias, completion, browse, help, --version); many
+# or rest, or none for one that spends neither: config, auth token, search, --version and the like); many
 # (paginate or watch for a run that spends many requests, else -); and the exit code. Nothing past the
 # subcommand and the API path is logged, so no token, body or header; and a log that cannot be
 # written never fails the call. flow's gh_calls section reads the log.
@@ -25,17 +25,24 @@ done
 # ends after the shim's `go` but without its `ok` (the shim killed) it ends gh. One process, no
 # polling. A pipe that cannot open (a sandbox that refuses /dev/fd, as codex's does) never sends go,
 # so its watcher leaves gh alone, and the call runs on without one.
+# The traps are set before gh starts, so a signal that lands first still reaches it. gh runs as a
+# background job, which bash starts with INT ignored: an INT reaches it as TERM, and the shim then
+# exits 130, as an interrupted gh in the foreground would.
+sig="" cut=0 watch="" pid=""
+# shellcheck disable=SC2329 # the traps below call it
+on_sig() { sig="$1"; cut=1; [[ -z "${pid}" ]] || kill "-$2" "${pid}" 2>/dev/null; }
+trap 'on_sig INT TERM' INT; trap 'on_sig TERM TERM' TERM; trap 'on_sig HUP HUP' HUP
 "${real}" "$@" <&0 &
 pid=$!
-sig=0 watch=""
-trap 'sig=1; kill -TERM "${pid}" 2>/dev/null' TERM INT HUP
+[[ -z "${sig}" ]] || kill -TERM "${pid}" 2>/dev/null   # a signal before $! was known
 { exec 3> >(exec > /dev/null 2>&1; read -r _ || exit 0; read -r ok || ok=""; [[ -n "${ok}" ]] || kill -TERM "${pid}"); } 2>/dev/null \
   && watch=1 && echo go 2>/dev/null >&3
 # A trapped signal cuts the wait short (over 128): wait again, for gh's own code. Never kill -0, which
 # a recycled PID could answer once gh is reaped.
 wait "${pid}"; rc=$?
-while [[ ${sig} == 1 && ${rc} -gt 128 ]]; do sig=0; wait "${pid}"; rc=$?; done
+while [[ ${cut} == 1 && ${rc} -gt 128 ]]; do cut=0; wait "${pid}"; rc=$?; done
 trap - TERM INT HUP   # gh is done: a signal now ends the shim
+[[ "${sig}" != INT || ${rc} != 143 ]] || rc=130
 # Only to a watcher's pipe: where it could not open, fd 3 is still the caller's.
 [[ -z "${watch}" ]] || { echo ok 2>/dev/null >&3; exec 3>&-; }
 
@@ -57,8 +64,10 @@ word() {
 }
 many=- help="" ver=""
 for a in "$@"; do case "${a}" in --paginate) many=paginate ;; --watch) many=watch ;; --help|-h) help=1 ;; --version) ver=1 ;; esac; done
+bare=$((! $#))
 word "$@"; shift "${skip}"; sub="${w}" api=rest
 [[ "${sub}" != "?" || -z "${ver}" ]] || sub=version
+[[ ${bare} == 0 ]] || sub=gh
 case "${sub}" in
   api)
     path=""
@@ -90,7 +99,12 @@ case "${sub}" in
     case "${sub}" in "pr diff") ;; pr\ *|issue\ *|repo\ *|project\ *|"label list") api=graphql ;; esac
     [[ "${sub}" != "run watch" ]] || many=watch ;;
 esac
-case "${sub}" in config\ *|alias\ *|completion|browse|help|version|"extension list"|"extension remove") api=none ;; esac
+# None of the two budgets: local commands, auth's own (a token, git's credential helper), the rate
+# limit itself, and search (a limit of its own).
+case "${sub}" in
+  config\ *|alias\ *|completion|browse|help|version|gh|"extension list"|"extension remove"|"auth token"|"auth git-credential"|"auth setup-git"|"api rate_limit"|search\ *)
+    api=none ;;
+esac
 [[ -z "${help}" ]] || api=none
 agent="${SWARM_GH_CALLER:-${SWARM_AGENT:--}}" via="${SWARM_GH_VIA:--}"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${agent//[$'\t\n\r']/ }" "${via//[$'\t\n\r']/ }" \
@@ -102,7 +116,7 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${agent/
 every="${SWARM_GH_TRIM_EVERY:-1000}" keep="${SWARM_GH_LOG_KEEP:-50000}"
 [[ "${every}" =~ ^[1-9][0-9]*$ ]] || every=1000
 [[ "${keep}" =~ ^[1-9][0-9]*$ ]] || keep=50000
-if (( RANDOM % every == 0 )) && n="$(wc -l < "${SWARM_GH_LOG}" 2>/dev/null)" && (( n > keep )); then
+if (( RANDOM % every == 0 )) && n="$(wc -l 2>/dev/null < "${SWARM_GH_LOG}")" && (( n > keep )); then
   { tail -n "${keep}" "${SWARM_GH_LOG}" > "${SWARM_GH_LOG}.$$" && mv -f "${SWARM_GH_LOG}.$$" "${SWARM_GH_LOG}"; } 2>/dev/null \
     || rm -f "${SWARM_GH_LOG}.$$"
 fi

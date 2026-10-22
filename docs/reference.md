@@ -955,23 +955,28 @@ merge-in.
 The `gh_calls` section shows how the swarm spends GitHub's two hourly budgets (5000 GraphQL points
 and 5000 REST requests). swarm.sh puts `bin/gh-shim` first on its own PATH and on every agent's, a
 restored agent's too. The lead's own gh calls outside swarm.sh, and a person's, do not go through it
-and are not counted. The shim runs the real `gh` with the same arguments, stdin and exit code, then
-appends a line to the project's `.swarm/gh-calls.tsv`: the UTC time; the agent (its name, or `-`
-outside any agent); the via (`swarm.sh <command>` when swarm.sh made the call, a builder's `swarm.sh
-wait-pr` among them, else `-`); the subcommand (`pr view`, `api graphql`, or `api <path>` with the
-query and any host cut off and each path segment that holds a digit shown as `:id`, flags before
-either word skipped); the budget (`graphql` for `api graphql`, `status`, `label list` and the `pr`
-(except `pr diff`), `issue`, `repo` and `project` groups; `none` for a run that calls no API:
-`config`, `alias`, `completion`, `browse`, `help`, `--version` and any `--help`; `rest` for
-everything else); `many` (`paginate` for `--paginate`, `watch` for `--watch` and `run watch`, else
-`-`); and the exit code. It logs nothing past the subcommand and API path, so never a token, body or
-header, and a log it cannot write never fails the call. The read-only commands (`dash`, `wait-pr`,
-`watch` and the others) log their gh calls there too; it is the one file they write under `.swarm`.
-A row counts gh runs, not API requests: a `many` run spends several requests, and a GraphQL query
-costs a point or more, so the share is a floor. The section prints a line saying so, then TSV `hour
-api role runs many share`: for each local hour in the window and budget, an `(all)` row, then one
-row per role (the agent's `agents.tsv` role; an agent it does not name as itself; `-` outside any
-agent), most runs first, with how many were `many` runs and the share of the 5000 (`<0.1%` below
+and are not counted. The shim runs the real `gh` with the same arguments, stdin and exit code (an
+INT ends it and exits 130, as an interrupted gh would), then appends a line to the project's
+`.swarm/gh-calls.tsv`: the UTC time; the agent (its name, or `-` outside any agent); the via
+(`swarm.sh <command>` when swarm.sh made the call, a builder's `swarm.sh wait-pr` among them, else
+`-`; the outermost command's, so what a command runs through another swarm.sh, such as `dash
+--check`'s status or `merge`'s wait, counts as the command that caused it, while an agent's own
+swarm.sh starts afresh); the subcommand (`pr view`, `api graphql`, or `api <path>` with the query
+and any host cut off and each path segment that holds a digit shown as `:id`, flags before either
+word skipped); the budget (`graphql` for `api graphql`, `status`, `label list` and the `pr` (except
+`pr diff`), `issue`, `repo` and `project` groups; `none` for a run that spends neither budget:
+`config`, `alias`, `completion`, `browse`, `help`, `--version`, any `--help`, a bare `gh`, `auth
+token`, `auth git-credential`, `auth setup-git`, `api rate_limit` and `search`, which has a limit of
+its own; `rest` for everything else); `many` (`paginate` for `--paginate`, `watch` for `--watch` and
+`run watch`, else `-`); and the exit code. It logs nothing past the subcommand and API path, so
+never a token, body or header, and a log it cannot write never fails the call. The read-only
+commands (`dash`, `wait-pr`, `watch` and the others) log their gh calls there too; it is the one
+file they write under `.swarm`. A row counts gh runs, not API requests: a `many` run spends several
+requests, and a GraphQL query costs a point or more, so the share is a floor. The section prints a
+line saying so, and that role `-` is a call outside any agent and share `-` a `none` run; then TSV
+`hour api role runs many share`: for each local hour in the window and budget, an `(all)` row, then
+one row per role (the agent's `agents.tsv` role; an agent it does not name as itself; `-` outside
+any agent), most runs first, with how many were `many` runs and the share of the 5000 (`<0.1%` below
 that, and `-` for `none`). After a blank line it prints the same per subcommand, `via swarm.sh
 <command>` added when swarm.sh ran it. With no log yet, or no lines in the window, it prints a line
 that says which. The section reads the log from the end and stops two days before `--since`. The

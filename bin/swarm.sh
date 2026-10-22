@@ -163,10 +163,12 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 # Every gh call this command makes, and every agent it starts (launch_file passes PATH and SWARM_*
 # on), goes through bin/gh-shim, which logs it to this project's .swarm/gh-calls.tsv for flow's
 # gh_calls section, with the agent that ran it (SWARM_GH_CALLER, which launch_file sets) and, for
-# this command's own calls, `swarm.sh <command>` as its via. A dash --project runs swarm.sh again for
-# each project, so each one's calls land in its own log.
+# this command's own calls, `swarm.sh <command>` as its via: the outermost command's, so what a
+# command runs through another swarm.sh (dash --check's status, merge's wait) counts as the command
+# that caused it. launch_file drops the via, so an agent's own swarm.sh starts afresh. A dash
+# --project runs swarm.sh again for each project, so each one's calls land in its own log.
 GH_VIA="${1:-}"
-export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_VIA="swarm.sh ${GH_VIA//[^a-z-]/}"
+export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_VIA="${SWARM_GH_VIA:-swarm.sh ${GH_VIA//[^a-z-]/}}"
 # First, not just present: a folder with a gh before it would take swarm.sh's calls past the shim.
 GH_SHIM="${SWARM_HOME}/bin/gh-shim"
 if [[ "${PATH}" != "${GH_SHIM}" && "${PATH}" != "${GH_SHIM}:"* ]]; then
