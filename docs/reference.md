@@ -894,14 +894,19 @@ flake. `gh run list` shows only a rerun's last attempt, so the section reads eac
 conclusion from `gh api`. A run whose times do not parse adds no minutes. It reads each PR over gh's REST API, whose hourly limit is separate from the GraphQL one a swarm's `gh pr` commands spend. A reset connection or a 5xx is tried three times, 1 and then 2 seconds apart. Any other error is not tried again, and after `API rate limit exceeded` the section makes no more `gh` calls. A PR that `gh` cannot read, or whose call takes over 10 seconds, is left out of the row. A line under the row says how many, and a `ci health: left out <PR>: <the gh call>: <gh's last line of error>` line names each one. The ci time table below does the same with `ci time:` lines.
 
 Under the row, a `test_file flaky_runs last_seen example_run` table names the test files that
-fail and then pass on the same commit, worst first. It reads every run created in the window, one
-`gh run list` a day, in the repos of the PRs the row read, so runs on main and on the lead's own PRs
-count too. With `--epic`, it reads only that epic's PRs' runs. For each run whose last attempt went
-green after a red one, `gh run view --log-failed` gives each red attempt's failed steps, and each
-`FAIL tests/<file>` or `TIMEOUT tests/<file>` line counts that file once for the run. `last_seen` is
-the day the file's latest such run was created, and `example_run` links that run's attempt. A day's
-runs or a log that `gh` cannot read gets a `flaky tests: left out` or `flaky tests: could not read`
-line naming it and the error. With no such run, the section prints no table.
+fail and then pass on the same commit, worst first. It lists the runs created in the window, one
+`gh api` call over GitHub's UTC days, in the repos of the PRs the row read and in the project's
+origin, so runs on main and on the lead's own PRs count too. With `--epic`, it reads only that epic's
+PRs' runs. A flaky run is the one `flakes` counts: a red attempt that a green one on the same head,
+workflow and event follows, in the same run or a later one. For each one, `gh run view --log-failed`
+gives its red attempts' failed steps, and each `FAIL tests/<file>` or `TIMEOUT tests/<file>` line
+counts that file once for the run. `last_seen` is the day the file's latest flaky run was created,
+and `example_run` links that run's attempt. The table reads at most 100 `gh` calls, newest runs
+first, and stops at `API rate limit exceeded`; a `flaky tests: stopped at` line says how many runs it
+left. Lines starting `flaky tests:` also say when GitHub listed fewer runs than the window has (it
+lists at most 1000), name each run or log `gh` could not read, count flaky runs whose logs have no
+such line (`go test` or `pytest` output, say), and print `none in the <n> runs read` when nothing
+was flaky.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
