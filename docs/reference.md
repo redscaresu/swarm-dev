@@ -1243,7 +1243,21 @@ files the PR changes must have a run on that commit, and every run and check the
 commit needs no check run of its own when no workflow is expected on it, but then it waits a minute
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. Without
-`--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged. It
+`--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
+With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
+reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
+has not started building, and has a file the board PR itself changes that wasn't buildable on the
+board the PR merged onto (the first parent of the PR's own merge commit, even when a merge queue
+pushed it with others; for a rebase merge, the commit below the PR's first) and is at that merge
+commit, or an epic file that the PR changes for an epic that wasn't `active` there and is at the
+merge commit. A story reconcile sent back to ready doesn't count, nor
+does a `fix-main` story, or one readied by an earlier board PR that merged but was not pulled here yet. For each epic with newly ready
+stories, it sends the epic's running conductor one note naming them (`swarm.sh tell conduct-<epic>
+note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
+builder limits. A conductor that has written its report has finished and counts as not running. When no conductor runs, it prints a `ready now:` line saying `next` will start
+them. It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
+as a `reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
+cannot list its agents, or when a note fails. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
 one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
 `touches: [.]`: the fix may change whatever turns the base green) into
