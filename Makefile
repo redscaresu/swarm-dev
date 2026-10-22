@@ -12,14 +12,15 @@ hooks:
 # file failed. swarm.sh's fixed sleeps run at a hundredth (SWARM_SLEEP_SCALE, unless set).
 # SERIAL: files whose timing does not hold up beside the others: dash_watch's pty frames and
 # dash_wait's millisecond slices are timed against a render or a poll that slows under load,
-# review_agent's fast waits and dash_stalls' stall times against a timeout, wait_pr's --timeout 0
-# against one whole second, and sleep_scale's own make test runs against a 5 s bound.
+# review_agent's fast waits and dash_stalls' stall times against a timeout, and sleep_scale's own
+# make test runs against a 5 s bound.
 TESTS ?= tests/*_test.sh
-SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_test.sh tests/wait_pr_test.sh \
+SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_test.sh \
   tests/dash_stalls_test.sh tests/sleep_scale_test.sh
-# SLOW: files that take minutes on their own, merge_test about 150 s and dash_check about 170 s. They
-# start first, and CI's SHARD=i/N split gives each SLOW and SERIAL file a shard of its own.
-SLOW ?= tests/merge_test.sh tests/dash_check_test.sh
+# SLOW: files that take minutes on their own, merge_test about 150 s, dash_check about 170 s and
+# wait_pr about 230 s, most of it waiting out deadlines, graces and pauses with seconds of room. They start first, and
+# CI's SHARD=i/N split gives each SLOW and SERIAL file a shard of its own.
+SLOW ?= tests/merge_test.sh tests/dash_check_test.sh tests/wait_pr_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
 test:
