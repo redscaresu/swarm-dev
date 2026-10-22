@@ -51,13 +51,15 @@ for day, kind, pr, _, outcome, reviewer in finding_rows(findings, ("fixed", "dec
 def split_epic(pr):
     # The epic a split's board PR split: board-pr names its branch board/scope-<epic>. None when gh fails.
     repo, _, n = pr_key(pr).partition("#")
-    try:
-        got = subprocess.run(["gh", "pr", "view", n, "-R", repo, "--json", "headRefName", "--jq", ".headRefName"],
-                             capture_output=True, text=True, timeout=GH_SECONDS)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    head = got.stdout.strip()
-    return None if got.returncode else head[len("board/scope-"):] if head.startswith("board/scope-") else ""
+    def read():
+        try:
+            got = subprocess.run(["gh", "pr", "view", n, "-R", repo, "--json", "headRefName", "--jq", ".headRefName"],
+                                 capture_output=True, text=True, timeout=GH_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return None if got.returncode else got.stdout.strip()
+    head = gh_cache.cached(repo, f"head/{n}", read, lambda h: isinstance(h, str)) if n else read()   # a PR's branch never changes
+    return None if head is None else head[len("board/scope-"):] if head.startswith("board/scope-") else ""
 
 def board_git(*a):
     try:

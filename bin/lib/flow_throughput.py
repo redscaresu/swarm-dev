@@ -81,9 +81,12 @@ def chain(slugs):
     return max((depth(s, frozenset()) for s in slugs), default=0)
 
 def created_at(url):
-    # Its createdAt from gh, or "" when gh cannot read it.
-    got = subprocess.run(["gh", "pr", "view", url, "--json", "createdAt", "--jq", ".createdAt"], capture_output=True, text=True)
-    return got.stdout.strip() if got.returncode == 0 else ""
+    # Its createdAt from gh, cached as it never changes, or "" when gh cannot read it.
+    def read():
+        got = subprocess.run(["gh", "pr", "view", url, "--json", "createdAt", "--jq", ".createdAt"], capture_output=True, text=True)
+        return got.stdout.strip() if got.returncode == 0 else ""
+    repo, _, n = pr_key(url).partition("#")
+    return gh_cache.cached(repo, f"created/{n}", read, bool) if n else read()
 created = {u: created_at(u) for u in {b["pr"] for b in (groups[epic] if epic else project)} if u.startswith("https://")}
 def waits(bs):
     wait, proxy = [], []

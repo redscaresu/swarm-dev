@@ -16,6 +16,7 @@
 # none conflicted, or none read when it read no merge-in.
 import collections, datetime, os, re
 from report import *
+from gh_cache import commits, pull
 
 DAYS = 30
 CAUSES = ("conflict", "behind", "neither", "unread")
@@ -49,13 +50,13 @@ def names(got):
 
 def merge_ins(repo, n):
     # The shas of PR n's merge-ins and "", or None and why gh's answer cannot be read.
-    pr = gh("api", f"repos/{repo}/pulls/{n}")
+    pr = pull(repo, n, gh)
     if pr is None:
         return None, ERROR[0]
     base = pr.get("base") if isinstance(pr, dict) else None
     if not isinstance(base, dict) or not isinstance(base.get("ref"), str):
         return None, f"gh api repos/{repo}/pulls/{n}: an answer with no base branch"
-    pages = gh("api", "--paginate", "--slurp", f"repos/{repo}/pulls/{n}/commits?per_page=100")
+    pages = commits(repo, n, pr, gh)
     try:
         return [c["sha"] for page in pages for c in page if base_merge(c["commit"]["message"].split("\n")[0], base["ref"])], ""
     except (TypeError, KeyError, AttributeError):

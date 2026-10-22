@@ -122,6 +122,9 @@ cost_report() {
 # (outcomes' join), so a rebuild reads gh again; per story gh was flow's and dash's top GraphQL caller,
 # at one gh pr list per story ever built on every run (dataset still lists each merged story's own).
 OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
+# The other finished GitHub records outcomes and flow read (bin/lib/gh_cache.py). Empty (flow
+# --no-cache, or SWARM_GH_CACHE set empty) reads both caches' records from gh again.
+GH_CACHE="${SWARM_GH_CACHE-${PROJECT_DIR}/.swarm/gh-cache}"
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
@@ -182,7 +185,7 @@ outcomes_report() {
     # rebuild changes it, with or without a session log; --since never drops the newest day's builds.
     built="$(awk -F'\t' -v s="${slug}" '$2 == s { if ($1 > m) { m = $1; c = 0 } if ($1 == m) c++ } END { if (m != "") print m "/" c }' <<< "${rows}")"
     # shellcheck disable=SC2016 # $b is jq's
-    if [[ -n "${finished}" ]] && prs="$(awk -F'\t' -v s="${slug}" -v k="${built}" '$1 == s && $2 == k { print $3; f = 1; exit } END { exit !f }' "${OUTCOMES_PRS_CACHE}" 2>/dev/null)"; then
+    if [[ -n "${finished}" && -n "${GH_CACHE}" ]] && prs="$(awk -F'\t' -v s="${slug}" -v k="${built}" '$1 == s && $2 == k { print $3; f = 1; exit } END { exit !f }' "${OUTCOMES_PRS_CACHE}" 2>/dev/null)"; then
       asked=1
     elif src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
@@ -209,7 +212,7 @@ outcomes_report() {
   # SWARM_REWORK_SINCE: flow's --since, which bounds rework's gh search (outcomes' own --since otherwise).
   SWARM_REWORK_SINCE="${SWARM_REWORK_SINCE:-${since}}" \
     SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_META="${meta}" SWARM_ROWS="${rows}" SWARM_BACKLOG_CONDUCTOR="$(conductor_name backlog)" \
-    python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
+    SWARM_GH_CACHE="${GH_CACHE}" python3 "${SWARM_HOME}/bin/lib/outcomes_join.py" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" "${BOARD}" "${EVENTS_LOG}"
 }
 
 # dataset — write .swarm/dataset.jsonl, one JSON line per finished story (a PR of story/<slug> merged),
@@ -283,7 +286,7 @@ dataset_report() {
 #     test.sh FAIL or TIMEOUT tests/<file> lines of each flaky run's red attempts (a red attempt a green one on
 #     the same head, workflow and event follows, as flakes counts them), from gh run view --log-failed,
 #     a file once per run, worst first, over the runs created in the window in the repos of the window's PRs
-#     and the project's origin (one gh api call each; with --epic, its PRs' runs), at most 100 gh
+#     and the project's origin (one gh api call each, or with the cache one per UTC day not cached yet; with --epic, its PRs' runs), at most 100 gh
 #     invocations (not REST requests) and none past the hourly rate limit, with flaky tests: lines for what was cut, left out or unparsed,
 #     or that none was flaky. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from that
@@ -363,9 +366,10 @@ dataset_report() {
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%; then
 #     ready_wait's median and p90 minutes over the first builds dated in the window, merged or not.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
-# the PR heads merge_ins fetches and the trees and blobs its git merge-tree writes into each repo.
+# its cache of finished GitHub records (GH_CACHE, bin/lib/gh_cache.py; --no-cache reads them all from
+# gh again), the PR heads merge_ins fetches and the trees and blobs its git merge-tree writes into each repo.
 # SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
-FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
+FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>] [--no-cache]"
 flow_report() {
   local since="" until="" epic="" rows=""
   while [[ $# -gt 0 ]]; do
@@ -373,6 +377,7 @@ flow_report() {
       --since) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${FLOW_USAGE}"; since="$2"; shift 2 ;;
       --until) [[ "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "${FLOW_USAGE}"; until="$2"; shift 2 ;;
       --epic) [[ "${2:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "${FLOW_USAGE}"; epic="$2"; shift 2 ;;
+      --no-cache) GH_CACHE=""; shift ;;
       *) die "${FLOW_USAGE}" ;;
     esac
   done
@@ -406,7 +411,7 @@ flow_sections() {
     dir="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" || dir="!${dir}"
     repos+="${slug}"$'\t'"${dir//[$'\t\n']/ }"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_BOARD="${BOARD}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_BOARD="${BOARD}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" SWARM_GH_CACHE="${GH_CACHE}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }

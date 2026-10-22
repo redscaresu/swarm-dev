@@ -223,8 +223,8 @@ lo = rework_from(os.environ.get("SWARM_REWORK_SINCE", ""))
 judged = {pr_key(r[6]): r[8] for r in rows if r[4] and r[6] and r[7] == "MERGED" and r[8]
           and not (lo and merge_time(r[8]) and local_day(merge_time(r[8])) < lo)}
 days = sorted(t.date() for t in map(merge_time, judged.values()) if t)
-search = f"merged:{days[0]}..{days[-1] + datetime.timedelta(days=REWORK_DAYS + 1)}" if days else ""
-got = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], search) if days else ({}, {})
+got = merged_prs([r[6] for r in rows if pr_key(r[6]) in judged], days[0].isoformat(),
+                 (days[-1] + datetime.timedelta(days=REWORK_DAYS + 1)).isoformat()) if days else ({}, {})
 gh_failed = got is None
 if gh_failed:
     print("rework: gh failed, so rework is left empty.", file=sys.stderr)
