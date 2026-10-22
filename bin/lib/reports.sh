@@ -119,8 +119,8 @@ cost_report() {
 
 # A finished story's PR rows, read once: its file off the board, every PR merged or closed and every
 # check on them completed, they never change. Each line <slug> TAB <its newest build's day>/<builds that day> TAB <prs>
-# (outcomes' join), so a rebuild reads gh again; per story gh was flow's, dataset's and dash's top
-# GraphQL caller, at one gh pr list per story ever built on every run.
+# (outcomes' join), so a rebuild reads gh again; per story gh was flow's and dash's top GraphQL caller,
+# at one gh pr list per story ever built on every run (dataset still lists each merged story's own).
 OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
 
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs

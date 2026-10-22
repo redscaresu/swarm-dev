@@ -565,11 +565,11 @@ within() {
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 
-# rate_reset <seconds> — when gh's REST or GraphQL budget is spent, print the epoch and UTC time the later
-# of them resets; else nothing, as when the read takes over <seconds> (within). gh api rate_limit counts
-# against neither budget.
+# rate_reset <seconds> <core|graphql> — when that budget of gh's (REST's is core) is spent, print the epoch
+# and UTC time it resets; else nothing, as when the read takes over <seconds> (within). gh api rate_limit
+# counts against neither budget.
 rate_reset() {
-  within "$1" gh api rate_limit --jq '[(.resources.core, .resources.graphql) | select(.remaining == 0) | .reset] | max // empty | "\(.) \(todate)"' \
+  within "$1" gh api rate_limit --jq ".resources.$2"' | select(.remaining == 0) | "\(.reset) \(.reset | todate)"' \
     </dev/null 2>/dev/null || true
 }
 
@@ -584,7 +584,8 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
-# A rate limit with a budget spent (rate_reset) is waited out once, to its reset, printed, and the default
+# A rate limit with its budget spent (rate_reset: GraphQL's or REST's, whichever the error came from) is
+# waited out once, to its reset, printed, the transient-error count starting over, and the default
 # deadline and the no-check grace move by that wait; past a --timeout deadline it ends at once, naming
 # the reset. A later one, or one with the budget left (GitHub's secondary limit), is a transient error,
 # retried after WAIT_PR_RETRY and up to half again; the budget is not read for those. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
@@ -595,7 +596,7 @@ wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
-  local spent bounded=""
+  local spent budget bounded=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -648,13 +649,15 @@ wait_pr() {
       142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
          # The budget is read once, while the one reset wait is unspent, and never on a secondary limit,
-         # whose own words say the budget is not what ran out.
+         # whose own words say the budget is not what ran out: GraphQL's for a GraphQL error, else REST's.
          spent=""
          if [[ -z "${reset}" ]] && grep -qi 'rate limit' <<< "${err}" && ! grep -qi 'secondary rate limit' <<< "${err}"; then
-           read -r spent at < <(rate_reset "$((limit - (SECONDS - start)))") || true
+           budget=core; if grep -qi graphql <<< "${err}"; then budget=graphql; fi
+           read -r spent at < <(rate_reset "$((limit - (SECONDS - start)))" "${budget}") || true
          fi
          if [[ "${spent}" =~ ^[0-9]+$ ]]; then
-           reset=${spent}; pause=$((reset - $(date +%s) + 1)); (( pause > 0 )) || pause=1
+           # The wait is no transient error's: the retries count again after it.
+           reset=${spent}; missed=0; pause=$((reset - $(date +%s) + 1)); (( pause > 0 )) || pause=1
            what="rate limited until ${at}"
            # The grace for a head with no check runs pauses with the wait: the budget ran out, not CI.
            [[ -z "${empty}" ]] || empty=$((empty + pause))
@@ -880,15 +883,26 @@ watch_prs() {
   fi
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   # warned: a mergeable read failed this poll, said once. Each PR's state is read only where a branch
-  # below uses it, so a watch that returns at one PR reads none past it.
-  local warned
+  # below uses it, so a watch that returns at one PR reads none past it. unlisted: the repos whose list
+  # failed, said once until it next succeeds.
+  local warned unlisted=" " rows
   while :; do
     warned=""
     for repo in "${repos[@]}"; do
+      if ! rows="$(watch_rows "${repo}")"; then
+        if [[ "${unlisted}" != *" ${repo} "* ]]; then
+          echo "swarm: watch: gh cannot list ${repo}'s open PRs: ${rows##*$'\n'}" >&2; unlisted+="${repo} "
+        fi
+        continue
+      fi
+      unlisted="${unlisted// ${repo} / }"
       while read -r n sha br age; do
+        [[ -n "${n}" ]] || continue
         [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
         mergeable=""
-        if ! grep -qx "conflict ${sha}" "${seen}"; then
+        # No conflict read on a head already reported conflicting, or finished and queued: nothing
+        # more is said of it.
+        if ! grep -qx "conflict ${sha}" "${seen}" && ! { grep -qx "done ${sha}" "${seen}" && grep -qx "queued ${sha:0:7}" "${seen}"; }; then
           watch_mergeable
           if [[ "${mergeable}" == CONFLICTING ]]; then
             echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
@@ -913,7 +927,7 @@ watch_prs() {
         if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
-      done < <(watch_rows "${repo}")
+      done <<< "${rows}"
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local agents sessions now e news="" tmp
@@ -951,14 +965,14 @@ for a in json.load(sys.stdin)["result"]["agents"]:
 }
 
 # watch_rows <owner/repo> — watch's list: each open story/* PR as `<number> <head sha> <head ref>
-# <seconds since its last update>`, through REST, whose budget is apart from GraphQL's (gh pr list spent
-# that dry under a swarm). A failed list is said on stderr and gives no rows; so does a row that does not
-# parse, as gh's error JSON on stdout. One write, as gh makes: watch stops reading at the PR it reports.
+# <seconds since its last update>` (0 when the local clock is behind GitHub's), through REST, whose budget
+# is apart from GraphQL's (gh pr list spent that dry under a swarm). A row that does not parse is left
+# out. When gh fails it fails, printing gh's output, its last line the error.
 watch_rows() {
   local list
   list="$(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
-    -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \(now - (.updated_at|fromdateiso8601) | floor)"' 2>&1)" \
-    || { echo "swarm: watch: gh cannot list $1's open PRs: $(tail -1 <<< "${list}")" >&2; return 0; }
+    -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \([now - (.updated_at|fromdateiso8601), 0] | max | floor)"' 2>&1)" \
+    || { printf '%s\n' "${list}"; return 1; }
   awk '$1 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && NF == 4' <<< "${list}"
 }
 
