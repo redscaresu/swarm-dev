@@ -676,16 +676,16 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
-# (or blocked on a question), and fails loudly rather than reporting success. When herdr sent the
-# prompt, or its reply could not be read, but named no status the agent reached, the agent's own
-# status decides (settled_status): working or blocked took it; idle or done took it too when a turn
-# finished since the prompt (took_it), else it gets the prompt once more; an agent herdr gives no
-# status for is never sent it again. A prompt herdr refused before sending (agent_not_found) is sent
-# once more; agent_blocked after one that was sent means the agent is blocked on a question about it.
+# (or blocked on a question), and fails loudly rather than reporting success. It reports the
+# prompt taken only on evidence (herdr's reply, or prompt_settle: working, blocked, or a turn
+# finished since), and sends it again only on evidence it was not: herdr rejected it before sending
+# (agent_not_found), or prompt_settle found the agent idle with no turn finished since. Anything
+# else (no read before the prompt, no status, an agent still done from an earlier turn) fails
+# saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" target="${3:-}" reply status turn before try sent=0 unread=0
+  local name="$1" prompt_file="$2" target="${3:-}" reply verdict status before="?" try sent=0 unread=0
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
@@ -693,29 +693,29 @@ deliver_prompt() {
     return
   fi
   for try in 1 2; do
-    read -r status turn <<< "$(agent_info "${target}")"; turn="${turn#-}"
-    if [[ $((sent + unread)) -gt 0 ]]; then   # the last prompt, taken late: working, or a turn finished since
-      case "${status}" in working|blocked) return 0 ;; idle|done) ! took_it "${before}" "${status}" "${turn}" || return 0 ;; esac
+    if [[ $((sent + unread)) -eq 0 ]]; then   # the baseline: completion_seq before anything went out
+      read -r status before <<< "$(agent_info "${target}")"
+      case "${status}" in -|unknown) before="?" ;; esac
     fi
-    before="${turn}"; [[ "${status}" != - ]] || before="?"   # no read before it: no baseline to compare with
     reply="$(prompt_once "${target}" "${prompt_file}")"
     case "${reply}" in
       working|blocked) return 0 ;;
       sent) sent=$((sent + 1)) ;;
       unread) unread=$((unread + 1)) ;;
-      agent_blocked) [[ ${sent} -eq 0 ]] || return 0
-        die "${name}: $(sent_note "${sent}" "${unread}"): it is blocked on a question, so herdr refused the brief (agent_blocked); answer it, see herdr agent read ${name}" ;;
+      agent_blocked) [[ $((sent + unread)) -eq 0 ]] || return 0   # blocked on a question about the last one
+        die "${name}: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
       *) if [[ ${try} -eq 1 ]]; then nap 5; continue; fi
-         die "${name}: $(sent_note "${sent}" "${unread}") in 2 tries, the last failing with ${reply}; see herdr agent read ${name}" ;;
+         [[ $((sent + unread)) -gt 0 ]] || die "${name}: herdr could not send it the brief after 2 tries (${reply}); see herdr agent read ${name}"
+         die "${name}: $(sent_note "${sent}" "${unread}"), then could not send it again (${reply}); see herdr agent read ${name}" ;;
     esac
-    read -r status turn <<< "$(settled_status "${target}")"; status="${status#-}"; turn="${turn#-}"
-    case "${status}" in
-      working|blocked) return 0 ;;
-      idle|done) ! took_it "${before}" "${status}" "${turn}" || return 0 ;;
-      *) die "${name}: $(sent_note "${sent}" "${unread}"), then herdr gave no status for it${status:+ (it reads ${status})}, so it was not sent again; see herdr agent read ${name}" ;;
+    verdict="$(prompt_settle "${target}" "${before}")"
+    case "${verdict}" in
+      taken) return 0 ;;
+      idle) ;;
+      *) die "${name}: it may or may not have the brief: $(sent_note "${sent}" "${unread}"), then ${verdict#unsure }; it was not sent again, see herdr agent read ${name}" ;;
     esac
   done
-  die "${name}: the brief was not taken up: $(sent_note "${sent}" "${unread}"), and herdr reads it ${status} with no turn finished since; see herdr agent read ${name}"
+  die "${name}: the brief was not taken up: $(sent_note "${sent}" "${unread}"), and herdr reads it idle with no turn finished since; see herdr agent read ${name}"
 }
 
 # count_word <n> — once or twice.
@@ -728,17 +728,6 @@ sent_note() {
   elif [[ "$1" -gt 0 ]]; then echo "herdr sent it the brief $(count_word "$1")"
   elif [[ "$2" -gt 0 ]]; then echo "herdr's reply to the brief could not be read $(count_word "$2")"
   else echo "herdr sent it nothing"; fi
-}
-
-# took_it <turn-before> <status> <turn-after> — whether an agent idle or done after a prompt took it:
-# a turn finished since the prompt (herdr's completion_seq, set when a turn completes, moved). A status
-# change alone is not enough: a hook reporting idle or a slow starter settling moves state_change_seq
-# with no turn. With no completion_seq after (an older herdr), only done counts: a short message may be
-# done already, and an idle agent gets it once more. The same holds when the read before the prompt
-# failed (<turn-before> ?): a completion_seq an idle agent kept from an earlier turn proves nothing.
-took_it() {
-  if [[ -z "$3" || "$1" == "?" ]]; then [[ "$2" == "done" ]]; return; fi
-  [[ "$1" != "$3" ]]
 }
 
 # prompt_once <target> <prompt-file> — submit the prompt once, wait for it to be taken up, and print
@@ -785,20 +774,30 @@ agent_info() {
   echo "${s:--} ${seq:--}"
 }
 
-# OWN_READS: how many times settled_status reads an agent's own status, 5 s apart, while herdr names none.
-OWN_READS=3
+# SETTLE_READS: how many times prompt_settle reads an agent, 5 s apart: a minute, as long as a
+# prompt has to be taken up, so a slow starter still idle after herdr's 5 s is not sent it again.
+SETTLE_READS=12
 
-# settled_status <target> — agent_info, read until herdr names a status (working, blocked, idle or
-# done), at most OWN_READS times; else what the last read gave (unknown, or nothing when herdr did
-# not answer).
-settled_status() {
-  local s="" seq="" i
-  for ((i = 1; i <= OWN_READS; i++)); do
+# prompt_settle <target> <completion-before> — after a prompt that went out (or may have) with no
+# status in herdr's reply, read the agent (agent_info) until it shows it took it, and print what came
+# of it.
+# <completion-before> is completion_seq before the prompt: - for null, ? when that read failed. herdr
+# 0.9.5 sets completion_seq when a turn completes (done) and nulls it while working. taken: working,
+# blocked, or completion_seq moved from a known baseline (a turn finished since). idle: the last read
+# idle, completion_seq the same known one: it never took it. Else "unsure <why>": no status, no
+# baseline, or an agent still done from an earlier turn.
+prompt_settle() {
+  local s="-" c i
+  for ((i = 1; i <= SETTLE_READS; i++)); do
     nap 5
-    read -r s seq <<< "$(agent_info "$1")"
-    case "${s}" in working|blocked|idle|done) break ;; esac
+    read -r s c <<< "$(agent_info "$1")"
+    case "${s}" in working|blocked) echo taken; return ;; esac
+    if [[ "$2" != "?" && "${c}" != - && "${c}" != "$2" ]]; then echo taken; return; fi
   done
-  echo "${s:--} ${seq:--}"
+  if [[ "$2" != "?" && "${s}" == idle && "${c}" == "$2" ]]; then echo idle
+  elif [[ "${s}" == - ]]; then echo "unsure herdr gave no status for it"
+  elif [[ "$2" == "?" ]]; then echo "unsure herdr reads it ${s}, with no read before the prompt to compare it with"
+  else echo "unsure herdr reads it ${s} with no turn finished since"; fi
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
