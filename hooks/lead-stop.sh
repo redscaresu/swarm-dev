@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
 # lead-stop.sh — the plugin's Stop hook for the lead (hooks/hooks.json). A Claude Code session acts
 # only when a message or a notification wakes it, so a lead that ends its turn promising the step
-# `next` names leaves that step waiting until the user asks. In the lead's session (SWARM_AGENT
-# unset, in a swarm project: $SWARM_PROJECT, else the hook input's cwd mapped to its main checkout as
-# swarm.sh's find_project does, holding a .claude/swarm/) it runs `swarm.sh next`. When the first
-# line is plan-epic, story, resume, collect or conduct and the step has not started, it prints a
+# `next` names leaves that step waiting until the user asks. It runs in the lead's session alone:
+# SWARM_AGENT unset, a cwd outside any worktree (the user's own worktree sessions and an agent's
+# nested `claude -p` are not the lead), and a swarm project ($SWARM_PROJECT, else the nearest folder
+# at or above the cwd with .claude/swarm/config, as find_project looks). It reads next's step with
+# `swarm.sh _step`, next_step alone: next adds gh calls (conductors_queued) for lines past the first.
+# When the step is plan-epic, story, resume, collect or conduct and has not started, it prints a
 # block decision naming the line; any other step allows the stop. collect is the lead's own step, so
 # it always blocks. Another step has started when herdr runs an agent in one of the project's panes
 # (.swarm/state) named as agent_name names it (the subject, or conduct-<epic> for conduct; for story
 # and resume, the backlog conductor too, not a retired one), or for plan-epic any agent in tab
 # scope-<epic> or scope-<epic>-<n>. A pane with no agent, or one herdr calls unknown, is no agent.
 # The stops the lead makes to wait on the user count as started too: plan-epic once its plan is
-# drafted (a .swarm/<epic>/*.json newer than the epic that parses, or the board/scope-<epic>
-# branch); story once the backlog conductor's report is newer than every story and epic
-# (commands/swarm.md); and resume once that holds or the report lists the slug under `not
-# started:`. stop_hook_active (the turn was blocked once already) allows the stop, so a lead with a
-# reason not to act says so and stops. The whole hook runs within LEAD_STOP_SECONDS (times
-# SWARM_SLEEP_SCALE, as make test sets it; 1 at least), under hooks.json's 60: `next` alone takes
-# up to half a minute on a busy board, so nothing else here runs next_step again. Every verdict
-# after next ran is one events.tsv line, `lead-stop <step> blocked|allowed`. Any error (no swarm.sh
-# or python3, no herdr, a lookup that fails, the deadline) allows the stop, with nothing on stdout.
+# reported (the critic's answer in .swarm/<epic>/, newer than the epic and parsing, or stories
+# committed on the board/scope-<epic> branch, the small path's); story once the backlog conductor's
+# report is newer than every story and epic (commands/swarm.md); and resume once that holds or the
+# report lists the slug under `not started:`. stop_hook_active (the turn was blocked once already)
+# allows the stop, so a lead with a reason not to act says so and stops. The whole hook runs within
+# LEAD_STOP_SECONDS (times SWARM_SLEEP_SCALE, as make test sets it; 1 at least), under hooks.json's
+# 60: next_step alone takes up to half a minute on a busy board, so nothing here runs it twice.
+# Every verdict after the step was read is one events.tsv line, `lead-stop <step> blocked|allowed`.
+# Any error (no swarm.sh or python3, no herdr, a lookup that fails, the deadline) allows the stop,
+# with nothing on stdout.
 set -uo pipefail
 LEAD_STOP_SECONDS=45
 
@@ -43,19 +46,16 @@ EOF
 deadline="$(perl -MTime::HiRes=time -e 'my $s = shift() * shift(); printf "%.3f", time + ($s < 1 ? 1 : $s)' \
   "${LEAD_STOP_SECONDS}" "${SWARM_SLEEP_SCALE:-1}")" || exit 0
 
-# main_checkout <dir> — swarm.sh's main_checkout: <dir> as it sits in its repo's main checkout.
-main_checkout() {
-  local common top d
-  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
-    && top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
-  d="$(cd "$1" && pwd -P)" || return 1
-  echo "$(dirname "${common}")${d#"${top}"}"
-}
-
+d="${cwd:-${PWD}}"
+# A worktree's git dir is not the common one: the session is not the lead.
+dirs="$(git -C "${d}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" \
+  && [[ "${dirs%%$'\n'*}" != "${dirs#*$'\n'}" ]] && exit 0
 if [[ -n "${SWARM_PROJECT:-}" ]]; then project="${SWARM_PROJECT}"
-else d="${cwd:-${PWD}}"; project="$(main_checkout "${d}")" || project="${d}"
+else
+  project="$(cd "${d}" 2>/dev/null && pwd -P)" || exit 0
+  while [[ "${project}" != / && ! -f "${project}/.claude/swarm/config" ]]; do project="$(dirname "${project}")"; done
 fi
-[[ -d "${project}/.claude/swarm" ]] || exit 0
+[[ -f "${project}/.claude/swarm/config" ]] || exit 0
 sw="$(cd "$(dirname "$0")/.." && pwd)/bin/swarm.sh"
 [[ -x "${sw}" ]] || exit 0
 
@@ -117,7 +117,7 @@ for path in glob.glob(os.path.join(state, "*")):
         if a is None or a.get("agent_status") in (None, "unknown"):
             continue
         n = a.get("name") or (f[1] if len(f) > 1 else "")
-        if n == name or backlog == "1" and n.startswith("conduct-backlog-") and not re.search(r"-done[0-9]*$", n):
+        if name and n == name or backlog == "1" and n.startswith("conduct-backlog-") and not re.search(r"-done[0-9]*$", n):
             sys.exit(0)
         if tab and (t == tab or re.fullmatch(re.escape(tab) + r"-[0-9]+", t)):
             sys.exit(0)
@@ -148,28 +148,32 @@ backlog_stopped() {
   [[ -z "$(find "${b}/stories" "${b}/epics" \( -name '*.md' -o -type d \) -newer "${REPORT}" 2>/dev/null)" ]]
 }
 
-# plan_drafted <epic> — the plan waits on the user: the board-PR branch the lead plans a small epic
-# in, or a planner's answer in .swarm/<epic>/ that parses as JSON and is newer than the epic (an
-# older one belongs to a previous plan, as /plan-epic reads it).
+# plan_drafted <epic> — the plan is reported and waits on the user: the critic's answer (verify's,
+# the last a planner writes) parses as JSON and is newer than the epic (an older one belongs to a
+# previous plan, as /plan-epic reads it), or the small path's stories are committed on the
+# board/scope-<epic> branch, past origin's default branch (board-pr start makes the branch empty).
 plan_drafted() {
-  local b
-  git -C "${project}" show-ref -q --verify "refs/heads/board/scope-$1" 2>/dev/null && return 0
+  local b base past
+  if git -C "${project}" show-ref -q --verify "refs/heads/board/scope-$1" 2>/dev/null; then
+    base="$(git -C "${project}" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" || allow
+    past="$(git -C "${project}" rev-list -n 1 "${base}..refs/heads/board/scope-$1" 2>/dev/null)" || allow
+    [[ -z "${past}" ]] || return 0
+  fi
   b="$(board)" || allow
   python3 -I -c '
-import glob, json, os, sys
+import json, os, sys
 try:
     t = os.path.getmtime(sys.argv[2])
 except OSError:
     t = 0
-for f in glob.glob(os.path.join(sys.argv[1], "*.json")):
-    try:
-        if os.path.getmtime(f) > t:
-            with open(f) as h:
-                json.load(h)
-            sys.exit(0)
-    except (OSError, ValueError):
-        pass
-sys.exit(1)' "${project}/.swarm/$1" "${b}/epics/$1.md" 2>/dev/null
+try:
+    if os.path.getmtime(sys.argv[1]) > t:
+        with open(sys.argv[1]) as h:
+            json.load(h)
+        sys.exit(0)
+except (OSError, ValueError):
+    pass
+sys.exit(1)' "${project}/.swarm/$1/critic.json" "${b}/epics/$1.md" 2>/dev/null
 }
 
 # started — the step next names is under way, or is a stop that waits on the user.
@@ -185,7 +189,7 @@ started() {
 }
 
 step=-
-line="$(swarm next | sed -n 1p)" && [[ -n "${line}" ]] || allow
+line="$(swarm _step | sed -n 1p)" && [[ -n "${line}" ]] || allow
 read -r step subject _ <<< "${line}"
 subject="${subject:-}"
 if started; then log "${step}" allowed; exit 0; fi

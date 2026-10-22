@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lead_stop_test.sh — hooks/lead-stop.sh against stubs. The hook is copied beside a bin/swarm.sh stub
-# that prints $STUB_NEXT for next and $STUB_BOARD for config (next sleeps $STUB_SLEEP first, or exits
-# 1 after with STUB_FAIL; config sleeps $STUB_CONFIG_SLEEP, or fails with STUB_CONFIG_FAIL), and a
+# that prints $STUB_NEXT for _step (next's step) and $STUB_BOARD for config (_step sleeps $STUB_SLEEP
+# first, or exits 1 after with STUB_FAIL; config sleeps $STUB_CONFIG_SLEEP, or fails with STUB_CONFIG_FAIL), and a
 # herdr stub (HERDR_BIN_PATH) whose agent list is $STUB_AGENTS. `agents` writes the project's
 # .swarm/state panes and STUB_AGENTS together. Each stub records the command it ran; every case
 # checks the hook's stdout and, in run, the events.tsv line it left.
@@ -14,12 +14,13 @@ root="$(cd "${root}" && pwd -P)"   # as git prints it, so paths compare
 export CLAUDE_CONFIG_DIR="${root}/claude-config"   # under its own root, so parallel runs share no ~/.claude
 project="${root}/project"
 mkdir -p "${root}/plugin/hooks" "${root}/plugin/bin" "${project}/.claude/swarm" "${project}/docs/stories" "${project}/docs/epics"
+: > "${project}/.claude/swarm/config"
 cp "${HOOK}" "${root}/plugin/hooks/lead-stop.sh"
 cat > "${root}/plugin/bin/swarm.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "$1" >> "${STUB_RAN}"; echo "${SWARM_PROJECT}" > "${STUB_RAN}.project"
 case "$1" in
-  next) [[ -z "${STUB_SLEEP:-}" ]] || sleep "${STUB_SLEEP}"
+  _step) [[ -z "${STUB_SLEEP:-}" ]] || sleep "${STUB_SLEEP}"
         printf '%s\nwhy\n' "${STUB_NEXT}"
         [[ -z "${STUB_FAIL:-}" ]] || exit 1 ;;   # after its line, so only the exit status says it failed
   config) [[ -z "${STUB_CONFIG_SLEEP:-}" ]] || sleep "${STUB_CONFIG_SLEEP}"
@@ -127,20 +128,30 @@ check "plan-epic with an agent in scope-X-2 allows" [ -z "${out}" ]
 agents critic scope-X2 working other scope-X-y working
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with agents in scope-X2 and scope-X-y only blocks" blocked "plan-epic X"
+agents "" other working
+STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
+check "plan-epic with only a nameless agent elsewhere blocks" blocked "plan-epic X"
+
+CWD="${project}/docs/stories" STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
+check "from a folder inside the project it blocks as at its root" blocked "plan-epic X"
+check "and runs swarm.sh on the project" [ "$(cat "${STUB_RAN}.project")" = "${project}" ]
 
 agents survey scope-X idle
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic allowed"
 check "plan-epic with survey idle in scope-X allows" [ -z "${out}" ]
 mkdir -p "${project}/.swarm/X"; echo '{}' > "${project}/.swarm/X/survey.json"
 echo "# X" > "${project}/docs/epics/X.md"; touch -t 202001010000 "${project}/docs/epics/X.md"
+STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
+check "plan-epic with only survey's answer (the plan not yet verified) blocks" blocked "plan-epic X"
+echo '{}' > "${project}/.swarm/X/critic.json"
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic allowed"
-check "plan-epic with its planners closed and their answers in .swarm/X allows" [ -z "${out}" ]
+check "plan-epic with its planners closed and the critic's answer in .swarm/X allows" [ -z "${out}" ]
 STUB_NEXT="plan-epic X" STUB_CONFIG_FAIL=1 run "lead-stop plan-epic allowed"
 check "plan-epic when config board_dir fails allows" [ -z "${out}" ]
-touch -t 201901010000 "${project}/.swarm/X/survey.json"
+touch -t 201901010000 "${project}/.swarm/X/critic.json"
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with only an answer older than the epic (a previous plan) blocks" blocked "plan-epic X"
-echo '{"cut' > "${project}/.swarm/X/survey.json"
+echo '{"cut' > "${project}/.swarm/X/critic.json"
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
 check "plan-epic with only an answer that is not JSON blocks" blocked "plan-epic X"
 rm -rf "${project}/.swarm/X" "${project}/docs/epics/X.md"
@@ -150,18 +161,26 @@ STUB_NEXT="plan-epic X" STUB_SLEEP=1.5 STUB_CONFIG_SLEEP=1.5 run "lead-stop plan
 check "next and config board_dir past the one deadline together allow" [ -z "${out}" ]
 check "that deadline ends the hook within 5 seconds" [ $(($(date +%s) - start)) -lt 5 ]
 
-echo keep > "${project}/.claude/swarm/config"
-git -C "${project}" init -q && git -C "${project}" add .claude && git -C "${project}" -c user.name=t -c user.email=t@t commit -q -m init \
-  && git -C "${project}" branch board/scope-X
+g() { git -C "${project}" -c user.name=t -c user.email=t@t "$@"; }
+g init -q && g add .claude && g commit -q -m init && g branch board/scope-X   # board-pr start: no stories yet
 STUB_NEXT="plan-epic X" run "lead-stop plan-epic allowed"
-check "plan-epic with no agent and the board/scope-X branch (planned alone) allows" [ -z "${out}" ]
+check "plan-epic with board/scope-X and no origin/HEAD to compare (a lookup error) allows" [ -z "${out}" ]
+g update-ref refs/remotes/origin/main HEAD && g symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+STUB_NEXT="plan-epic X" run "lead-stop plan-epic blocked"
+check "plan-epic with board/scope-X at the base (started, no stories) blocks" blocked "plan-epic X"
+g update-ref refs/heads/board/scope-X "$(g commit-tree -p HEAD -m stories "HEAD^{tree}")"
+STUB_NEXT="plan-epic X" run "lead-stop plan-epic allowed"
+check "plan-epic with stories committed on board/scope-X (planned alone, waiting on approval) allows" [ -z "${out}" ]
 STUB_NEXT="plan-epic Y" run "lead-stop plan-epic blocked"
 check "plan-epic Y with only board/scope-X blocks" blocked "plan-epic Y"
-git -C "${project}" worktree add -q "${root}/wt" -b wt
-CWD="${root}/wt" STUB_NEXT="plan-epic Y" run "lead-stop plan-epic blocked"
-check "from a worktree it runs swarm.sh on the main checkout" [ "$(cat "${STUB_RAN}.project")" = "${project}" ]
-check "and logs to the main checkout, not the worktree" [ ! -e "${root}/wt/.swarm/events.tsv" ]
-git -C "${project}" worktree remove --force "${root}/wt"
+g worktree add -q "${root}/wt" -b wt
+CWD="${root}/wt" STUB_NEXT="plan-epic Y" run ""
+check "from a worktree (not the lead) it allows" [ -z "${out}" ]
+check "and runs nothing" [ -z "${ran}" ]
+check "and logs nothing in the worktree" [ ! -e "${root}/wt/.swarm/events.tsv" ]
+CWD="${root}/wt/.claude" STUB_NEXT="plan-epic Y" SWARM_PROJECT="${project}" run ""
+check "from a worktree folder with SWARM_PROJECT set it runs nothing" [ -z "${out}${ran}" ]
+g worktree remove --force "${root}/wt"
 rm -rf "${project}/.git"
 
 agents conduct-e safer working
@@ -197,7 +216,7 @@ rm -f "${report}" "${project}/docs/stories/s3.md"
 for step in "wait conduct-E" gate "done"; do
   STUB_NEXT="${step}" run "lead-stop ${step%% *} allowed"
   check "${step} allows" [ -z "${out}" ]
-  check "${step} looks up nothing else" [ "${ran}" = "next " ]
+  check "${step} looks up nothing else" [ "${ran}" = "_step " ]
 done
 
 STUB_NEXT="plan-epic X" run "" true
@@ -228,10 +247,19 @@ STUB_NEXT="plan-epic X" run ""
 check "outside a swarm project it allows and runs nothing" [ -z "${out}${ran}" ]
 STUB_NEXT="plan-epic X" SWARM_PROJECT="${root}/elsewhere" run ""
 check "a SWARM_PROJECT that is not one changes nothing" [ -z "${out}${ran}" ]
-mkdir -p "${root}/other/.claude/swarm"
+mkdir -p "${root}/other/.claude/swarm"; : > "${root}/other/.claude/swarm/config"
 STUB_NEXT="plan-epic X" SWARM_PROJECT="${root}/other" run ""
 check "a SWARM_PROJECT that is one runs the hook there" blocked "plan-epic X"
 check "it logs to that project" [ "$(cut -f2,3,5 "${root}/other/.swarm/events.tsv" | tr '\t' ' ')" = "lead-stop plan-epic blocked" ]
 mv "${project}/.claude-off" "${project}/.claude"
+
+# The hook's name is swarm.sh's agent_name copied: a drift would let a builder run unseen, and the lead
+# start it again.
+eval "$(sed -n '/^name() {/,/^}/p' "${HOOK}")"
+SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
+for slug in "${long}" Big_Slug 9lives "fix main/sha:1.2" "conduct-${long}" "a.b,c" "x"; do
+  check "the hook's name and swarm.sh's agent_name agree on '${slug}'" \
+    [ "$(name "${slug}")" = "$(SWARM_PROJECT="${project}" "${SWARM}" _name "${slug}")" ]
+done
 
 [ "${fails}" -eq 0 ] || { echo "${fails} failed"; exit 1; }
