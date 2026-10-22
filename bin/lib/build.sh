@@ -187,9 +187,9 @@ EOF
 # startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
 # in scope with no build, not only the ones this unblock readied: a board PR can add one already ready.
 startable_rule() {
-  local arg="$1" scope="of this epic"
-  [[ "$1" != backlog ]] || { arg=--backlog; scope="with no epic"; }
-  printf '%s' "run \`swarm.sh unblock --startable ${arg}\`, and start each story it prints as \`startable:\` (every ready story ${scope} with no build yet, whether or not this unblock readied it) that clashes with no running one, with \`swarm.sh story --strict <slug>\`. Skip a story you closed in this run, one the give-up rule says not to start again, and one a \`not held:\` line left \`ready\` for the lead."
+  local arg="$1" which="story of this epic"
+  [[ "$1" != backlog ]] || { arg=--backlog; which="backlog story"; }
+  printf '%s' "run \`swarm.sh unblock --startable ${arg}\`, and start each story it prints as \`startable:\` (every ready ${which} whose build has not started, whether or not this unblock readied it) that clashes with no running one, with \`swarm.sh story --strict <slug>\`. It reads the board as reconcile last left it, and never pulls. Skip a story you closed in this wave (the give-up rule starts it again in a later one), one the give-up rule says not to start again, and one a \`not held:\` line left \`ready\` for the lead. Never start a line that ends \`(its PR <url> was closed unmerged)\`: list it in your report for the lead."
 }
 
 # costs_wait_rule — with merge = agent, a story --strict refusal that ends (costs money) (touches_overlap):

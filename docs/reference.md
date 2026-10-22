@@ -1209,12 +1209,15 @@ ones before it to merge, so the queue tests them together and merges them in bat
 runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each merge, and after each wait once it has
 read its inbox, it runs `swarm.sh unblock --startable <epic>` (`--backlog` for the backlog conductor) and,
 in the same run, starts each story printed as `startable:` that clashes with no running one (§
-Building, Pick the wave). `--startable` first fast-forwards the main checkout when it is behind its upstream,
-quietly (reconcile stays merge's job), then runs unblock, then prints `startable: <slug>` for every `ready` story in that scope with no worktree
-yet, whether or not this unblock readied it. A story that a board PR adds already `ready` starts the
-same way. A build cleared on error or given up on stops that: it starts nothing more in
-the wave. Once the epic's file is gone (its last story's PR deletes it), `--startable` prints nothing. The
-conductor skips a story it closed in this run, one its give-up rule says not to start again, and one
+Building, Pick the wave). `--startable` runs unblock, then prints `startable: <slug>` for every `ready` story in that
+scope with no worktree yet, whether or not this unblock readied it. A story that a board PR adds
+already `ready` starts the same way. It reads the board as reconcile last left it and never pulls:
+pulling is reconcile's job, which `swarm.sh merge` runs. A line ends `(stacked on <parents>)` while
+the story's `depends_on` has open stories, and `(its PR <url> was closed unmerged)` when reconcile
+last sent it back to ready; the conductor leaves that one for the lead. A build cleared on error or given up on stops that: it starts nothing more in
+the wave. Once the epic's file is gone (its last story's PR deletes it), `--startable` still runs unblock
+but lists nothing. The
+conductor skips a story it closed in this wave (it may start it again in a later one), one its give-up rule says not to start again, and one
 a `not held:` line left `ready` for the lead. If the last inbox pass before its report reads a note,
 it runs `--startable` once more, and if that starts a builder, it goes back to waiting instead of
 reporting. It reports once no story of the epic that it may start is ready and none is running. If

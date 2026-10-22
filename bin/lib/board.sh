@@ -738,24 +738,32 @@ unblock() {
   done < <(board stories)
 }
 
-# unblock_startable <epic>|--backlog — fast-forward the main checkout when it is behind its upstream (a
-# board PR merged on GitHub may add a ready story; reconcile stays merge's), unblock, then a startable:
-# line per story of that epic (--backlog: with no epic) that next would build (board_ready: ready, its
-# build not started), whether or not this unblock readied it: unblock never prints a story a board PR
-# added already ready. An epic whose file is gone has finished: nothing is startable.
+# unblock_startable <epic>|--backlog — unblock, then a startable: line per story of that epic (--backlog:
+# with no epic) that next would build (board_ready: ready, its build not started), whether or not this
+# unblock readied it: unblock never prints a story a board PR added already ready. It reads the board as
+# reconcile last left it and never pulls: pulling is reconcile's. An epic whose file is gone has
+# finished, so after unblock (its last merge may ready another epic's stories) nothing is startable. A
+# line ends (stacked on <parents>) while depends_on has open stories, as story stacks it, and (its PR
+# <url> was closed unmerged) when the story's last event is reconcile's reopen, for the lead.
 unblock_startable() {
-  local want="$1" slug e
-  if behind_upstream && ! git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}' >/dev/null 2>&1; then
-    echo "warning: cannot fast-forward ${PROJECT_DIR}, so the board may be behind its upstream" >&2
-  fi
+  local want="$1" slug e f open why
+  unblock
   if [[ "${want}" == --backlog ]]; then want=-
   else [[ -f "${BOARD}/epics/${want}.md" ]] || return 0; fi
-  unblock
   while read -r slug e; do
     [[ "${e}" == "${want}" ]] || continue
-    echo "startable: ${slug}"
+    f="${BOARD}/stories/${slug}.md"; why=""
+    open="$(open_deps "$(story_deps "${f}")")"
+    [[ -z "${open}" ]] || why="stacked on ${open}"
+    if [[ "$(last_event "${slug}")" == $'reconcile	ok (reopened)' ]]; then
+      why="its PR$(fm "${f}" prs | sed 's/^./ &/') was closed unmerged"
+    fi
+    echo "startable: ${slug}${why:+ (${why})}"
   done < <(board_ready)
 }
+
+# last_event <slug> — the command and outcome of the last events.tsv line for <slug>, tab-separated.
+last_event() { awk -F'\t' -v s="$1" '$3 == s { last = $2 "\t" $5 } END { print last }' "${EVENTS_LOG}" 2>/dev/null || true; }
 
 # delete_item <file> — delete a story or epic's file where it is, and its state file (state_drop), so
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.
