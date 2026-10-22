@@ -3,7 +3,7 @@ kind: code
 status: ready
 epic: safer-faster-swarm
 depends_on: []
-touches: [bin/lib/build.sh:conduct_brief, tests/build_test.sh]
+touches: [bin/lib/build.sh:conduct_brief, tests/epic_briefs_test.sh, tests/backlog_test.sh, docs/reference.md:Merging]
 easy: true
 estimate_lines: 60
 ---
@@ -15,5 +15,5 @@ User, 2026-10-22: "i dont understand why if something is ready you dont just pic
 Change both places in the brief, and the backlog conductor's: after every merge, and after reading every inbox note, start each `ready` story in scope that has no build yet and clashes with no running one, whether or not unblock printed it. List them with a swarm.sh call that already exists, or add a `--startable` mode to an existing command, not a new command. docs/reference.md § Merging (line ~1155) says the same.
 
 **Done when:**
-- tests/build_test.sh: the conduct brief, epic and backlog, says to start every ready story in scope with no build that clashes with no running one, after a merge and after a note. It no longer limits starts to the stories unblock printed.
+- tests/epic_briefs_test.sh and tests/backlog_test.sh: the conduct brief, epic and backlog, says to start every ready story in scope with no build that clashes with no running one, after a merge and after a note. It no longer limits starts to the stories unblock printed.
 - A test with a fixture board, where one story is ready with no build and one is running, shows the command the brief names lists only the first.
