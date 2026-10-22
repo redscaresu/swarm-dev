@@ -1126,12 +1126,23 @@ esac
 STUB
 chmod +x "${dir}/bin/herdr"
 nextb() { : > "${dir}/agents.log"; (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next 2>/dev/null); }
+# collected <conductor>: the lead collected its report (collect ends with swarm.sh close, logged ok).
+collected() { printf '%s\tclose\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${dir}/.swarm/events.tsv"; }
 echo report > "${dir}/.swarm/conduct-backlog.report.md"; touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"
+collected "$(cd "${dir}" && bash "${SWARM}" _conductor backlog)"
 out="$(nextb)"
 if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conductor started: no story or epic changed after"* ]] \
     && ! grep -q '^agent start' "${dir}/agents.log"; then
   echo "ok   next with the backlog report newer than the board starts no backlog conductor, says why, and waits"; else
   echo "FAIL next with the backlog report newer than the board: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# A state write for s1, epic e1's story, as state_set makes it (its file, a lock made and removed
+# beside it): no change to the backlog's stories, so the stop holds.
+mkdir -p "${dir}/.swarm/board-state/stories"; echo "status: review" > "${dir}/.swarm/board-state/stories/s1"
+mkdir "${dir}/.swarm/board-state/stories/s1.lock"; rmdir "${dir}/.swarm/board-state/stories/s1.lock"
+out="$(nextb)"
+if [[ "${out}" == *"no backlog conductor started: no story or epic changed after"* ]] && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next after another epic's state write keeps the backlog's stop"; else
+  echo "FAIL next after another epic's state write: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
 rm "${dir}/.swarm/conduct-backlog.report.md"
 out="$(nextb)"
 if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"started: conduct-backlog-"*"(swarm.sh conduct --backlog)"* ]] \
@@ -1167,6 +1178,13 @@ rm "${dir}/agents.screen.w:9" "${dir}"/.swarm/state/conduct-backlog-*; echo "con
 (cd "${dir}" && item epics/e2.md 'status: active' && item stories/s2.md 'status: ready' 'kind: code' 'epic: e2' \
   && item stories/s6.md 'status: blocked' 'kind: code' 'epic: e2' 'depends_on: [gone]')
 touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"; echo report > "${dir}/.swarm/conduct-e2.report.md"
+# Nobody collected it, and its pane is gone: no conductor starts over it; the lead reads it first.
+out="$(nextb)"
+if [[ "${out}" == *"no conductor started: conduct-e2 is gone, and nobody collected "*"/.swarm/conduct-e2.report.md; read it, then delete it"* ]] \
+    && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then
+  echo "ok   next with an uncollected report and no pane starts no conductor over it, and names the report"; else
+  echo "FAIL next with an uncollected report and no pane: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+rm "${dir}"/.swarm/state/conduct-backlog-*; echo "conduct-e1 w:7" > "${dir}/agents"; collected conduct-e2
 out="$(nextb)"
 if [[ "${out}" == *"no conductor for epic e2 started: no story or epic changed after"* && "${out}" == *"started: conduct-backlog-"* ]] \
     && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then

@@ -300,12 +300,16 @@ Conductors also start on their own, the backlog's and an epic's alike: after `sw
 builds (`kind` code, docs or chore) and no conductor running, it runs `swarm.sh conduct <epic>`; for
 such stories with no epic, `swarm.sh conduct --backlog`. A conductor still in its pane counts as
 running. When it has written its report, it prints `no conductor started: <conductor> has reported;
-collect it first`: a new start would delete that report before the lead reads it. When another
+collect it first`: a new start would delete that report before the lead reads it. A conductor whose
+pane is gone (closed by hand, a herdr restart, a crash) and whose report nobody collected (no `close`
+of it in `events.tsv` since the report, as collect's `swarm.sh close` logs) gets `no conductor started:
+<conductor> is gone, and nobody collected <report>; read it, then delete it`. When another
 project's agent holds the conductor's name, it says so and starts none. A draft, `later` or `split` epic's stories start nothing, and
 neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
 for an epic or the backlog, and it says why, while that conductor's report is newer than every story
-and epic, and than every change swarm.sh keeps for them in `.swarm/board-state` (an `unblock` or a
-`reset` readies a story there): a new one would stop as the last did. Nor does a backlog conductor start while its report
+and epic file, and than the state files swarm.sh keeps in `.swarm/board-state` for that epic and its
+ready stories (an `unblock` or a `reset` readies a story there): a new one would stop as the last did.
+Another epic's state writes do not count. Nor does a backlog conductor start while its report
 lists a one-off whose worktree is still there under `not started:` (the stops above). Nothing starts
 while a working conductor has stopped on an expired login or an API error, which would stop a new one
 too, or while herdr cannot list its agents, since what runs is then not known; each prints why.

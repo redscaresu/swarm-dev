@@ -308,8 +308,9 @@ group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conduc
 # conduct_ready — start a conductor, as swarm.sh conduct does, for each group of buildable stories
 # (board_ready --started: an active epic's, or with no epic the backlog's) whose conductor
 # (group_conductor) is not in herdr. One still in its pane is skipped, and named when it has written its
-# report: that report is the lead's to collect, and a start would delete it. One whose name another
-# project's agent holds is skipped and named. fix-main stories are left out: every conductor builds
+# report: that report is the lead's to collect, and a start would delete it. So is one whose pane is
+# gone (closed by hand, a herdr restart, a crash) with a report nobody collected (report_collected).
+# One whose name another project's agent holds is skipped and named. fix-main stories are left out: every conductor builds
 # one first, and next names it. Nothing starts while herdr cannot list
 # its agents, since what runs is not known, nor while a working conductor stopped on an expired login
 # or an API error (conductor_stop), which would stop a new one too. No conductor starts for a group
@@ -318,7 +319,7 @@ group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conduc
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
 conduct_ready() {
-  local e name arg ready log c why todo rc=0
+  local e name arg ready log c why todo report rc=0
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
   if ! herdr agent list >/dev/null 2>&1; then
@@ -340,6 +341,10 @@ conduct_ready() {
       continue
     fi
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || { echo "no conductor started: another project's agent holds the name ${name}"; continue; }
+    report="$(conductor_report "${name}")"
+    if [[ -f "${report}" ]] && ! report_collected "${name}" "${report}"; then
+      echo "no conductor started: ${name} is gone, and nobody collected ${report}; read it, then delete it"; continue
+    fi
     # shellcheck disable=SC2046 # slugs, [a-z0-9-]
     if conduct_stop "${e}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"); then continue; fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
@@ -361,19 +366,32 @@ conduct_ready() {
   return "${rc}"
 }
 
+# report_collected <conductor> <report> — the lead collected <report>: events.tsv has an ok close of
+# <conductor> (swarm.sh close, collect's last step) at or after the report's time.
+report_collected() {
+  local t
+  t="$(date -u -r "$2" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
+  awk -F'\t' -v n="$1" -v t="${t}" '$2 ~ /^close/ && $3 == n && $5 == "ok" && $1 >= t { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+}
+
 # conduct_stop <epic> <slug>... — prints why no conductor may start for these ready stories of <epic>
 # (board_ready's column: - for the backlog) and returns 0, as /swarm-dev:swarm's story and resume
 # steps stop (docs/reference.md § The backlog conductor): its conductor's report (conductor_report) is
-# newer than every story and epic, and every state file swarm.sh keeps for them (BOARD_STATE_DIR), so a new one would stop as the last did; or, for the backlog, the
+# newer than every story and epic file, and than the state files (BOARD_STATE_DIR) of the group's epic
+# and of <slug>..., so a new one would stop as the last did; or, for the backlog, the
 # report lists one whose worktree is still there under not started: (a build that died). Returns 1
 # when one may start.
 conduct_stop() {
-  local report what="conductor for epic $1" s
+  local report what="conductor for epic $1" s newer=""
   report="$(conductor_report "$(group_conductor "$1")")"
   [[ "$1" != - ]] || what="backlog conductor"
   [[ -f "${report}" ]] || return 1
-  # The state files too: unblock and reset ready a story there, never in its file.
-  if [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" "${BOARD_STATE_DIR}/stories" "${BOARD_STATE_DIR}/epics" -newer "${report}" 2>/dev/null)" ]]; then
+  [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" \( -name '*.md' -o -type d \) -newer "${report}" 2>/dev/null)" ]] || newer=1
+  # And the group's own state files, where unblock and reset ready a story: never the state dirs, whose
+  # time every state write moves (its lock), nor another group's items.
+  [[ "$1" == - || ! "${BOARD_STATE_DIR}/epics/$1" -nt "${report}" ]] || newer=1
+  for s in "${@:2}"; do [[ ! "${BOARD_STATE_DIR}/stories/${s}" -nt "${report}" ]] || newer=1; done
+  if [[ -z "${newer}" ]]; then
     echo "no ${what} started: no story or epic changed after ${report}, so a new one would stop as the last did; read it"; return 0
   fi
   [[ "$1" == - ]] || return 1
