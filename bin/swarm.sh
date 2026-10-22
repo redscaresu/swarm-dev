@@ -496,25 +496,32 @@ kill_tree() {
   kill -TERM "$1" 2>/dev/null || true
 }
 
-CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it is KILLed
+CODEX_GRACE="${SWARM_CODEX_GRACE:-3}"   # seconds a TERMed codex has to exit before what is left of it is KILLed (SWARM_CODEX_GRACE overrides it, for tests)
 
 # tree_pids <pid> — a process and everything under it, children first.
 tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
-# freeze_tree <pid> — STOP a process, then everything under it, and print them all, children first:
-# each is sent STOP before its children are read, so a parent that loops (a stub's while, codex's own)
-# cannot start one behind the read, as it could behind a KILL to its children.
-freeze_tree() { local c; kill -STOP "$1" 2>/dev/null; for c in $(pgrep -P "$1" 2>/dev/null); do freeze_tree "${c}"; done; echo "$1"; }
-# frozen <pid>... — freeze_tree each, read again until a read finds what the last did: kill(2) returns
-# once the STOP is pending, so a process on another CPU may fork before it stops. Children first, so
-# no stopped child is left orphaned (a group of its own gets HUP and CONT then) before its KILL.
+# frozen <pid>... — STOP each process and everything under it, and print them all, children first. Each
+# pass STOPs the pids it found, then reads the process table once for their children: a parent is
+# stopped before the read, so one that loops (a stub's while, codex's own) cannot start a child behind
+# it, as it could behind a KILL to its children. Passes go on until a read finds no new child, but at
+# most FREEZE_PASSES (a process that forks on would hold codex-review for good): kill(2) returns once
+# the STOP is pending, so a process on another CPU may fork before it stops. A pid the STOP fails on is
+# dropped: it died in the grace, and the pid may be another process's by now. Children first, so no
+# stopped child is orphaned (a group of its own gets HUP and CONT then) before its own KILL.
+FREEZE_PASSES=5
 frozen() {
-  local was="" now p
-  while now="$(for p in "$@"; do freeze_tree "${p}"; done)"; [[ "${now}" != "${was}" ]]; do was="${now}"; done
-  echo "${now}"
+  local out="" new="$*" got p i
+  for ((i = 0; i < FREEZE_PASSES && ${#new} > 0; i++)); do
+    got=""
+    for p in ${new}; do kill -STOP "${p}" 2>/dev/null && got="${got} ${p}"; done
+    out="${got} ${out}"
+    new="$(ps -Ao pid=,ppid= | awk -v have=" ${out} " 'index(have, " " $2 " ") && !index(have, " " $1 " ") { print $1 }')"
+  done
+  echo "${out}"
 }
 
 # stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then freeze
-# each process left and whatever is under it by then (a TERM trap can start more), and KILL them. The
+# each process left and whatever is under it by then (a TERM trap can start more) and KILL them. The
 # tree is read before the TERM, since a child whose parent dies leaves it. Stderr is off, so bash
 # prints no "Terminated" line for the job.
 stop_codex() {

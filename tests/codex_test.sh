@@ -19,6 +19,8 @@ mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
 # symlink to sleep, which uutils coreutils (ubuntu 26.04) refuse to run under another name.
 # shellcheck disable=SC2016 # the stub's own $1 and $0, expanded when it runs
 printf '#!/bin/sh\nexec perl -e "select undef, undef, undef, shift" "$1" "$0"\n' > "${BIN}/stubsleep"; chmod +x "${BIN}/stubsleep"
+# The same under another name, for a child a case leaves running on purpose, so left can tell it.
+cp "${BIN}/stubsleep" "${BIN}/orphansleep"
 export PATH="${BIN}:${PATH}"
 fails=0
 
@@ -76,7 +78,7 @@ gone() {
 # starts clean and a failure is the case's that left it; with <pattern>, that the KILL took the
 # case's own orphan too.
 left() {
-  check "$1 leaves no ${2:+codex }stub process" "yes" "$(gone 2 "${2:-}")"
+  check "$1 leaves no stub process${2:+ but its orphan}" "yes" "$(gone 2 "${2:-}")"
   pkill -KILL -f "${BIN}/" 2>/dev/null || true
   [[ -z "${2:-}" ]] || check "$1 ends with its orphan KILLed" "yes" "$(gone)"
 }
@@ -105,19 +107,20 @@ left "the TERM-trapping timeout case"
 
 # --- One that traps TERM and starts a child every few ms is KILLed with every child it started: its
 # tree is frozen before the KILL, so it cannot start one behind the read, as it could behind a KILL to
-# the children first (reading ~15 children outlasts its next fork). Each child exits after 0.5 s,
+# the children first (reading its children outlasts its next fork). Each child exits after 0.2 s,
 # which keeps the tree small, unless its parent is gone: one the KILL missed sleeps on, to be seen.
 # shellcheck disable=SC2016 # perl's variables and the stub's $0
-stub 'trap : TERM; while :; do perl -e '\''$p = getppid; select undef, undef, undef, 0.5; sleep 60 if getppid != $p'\'' "$0" & sleep 0.02; done'
+stub 'trap : TERM; while :; do perl -e '\''$p = getppid; select undef, undef, undef, 0.2; sleep 60 if getppid != $p'\'' "$0" & sleep 0.02; done'
 review
-check "a codex that keeps starting children times out" "fails|yes" \
-  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "codex skipped: timed out" "${out}")"
+check "a codex that keeps starting children is stopped within the limit plus the grace" "fails|yes|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
 left "the forking case"
 
-# --- The grace is real: a codex that exits on its own 1.5 s after TERM is not KILLed. CODEX_GRACE
-# is 3 s, and the 1.5 s to spare is for a loaded machine, where the trap starts late.
-stub "trap 'sleep 1.5; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
-review
+# --- The grace is real: with a grace of 6 s, a codex that exits on its own 3 s after TERM is not
+# KILLed. The other 3 s are for a loaded machine, where the trap starts late; a grace cut under 3 s
+# fails it.
+stub "trap 'sleep 3; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+SWARM_CODEX_GRACE=6 review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
 left "the grace case"
@@ -141,6 +144,13 @@ rm -f "${BIN}/ready"
 (cd "${P}" && exec python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
   env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY SWARM_CODEX_SECONDS=60 bash "${SWARM}" codex-review main < /dev/null > "${ROOT}/out" 2>&1) &
 spid=$!; up="$(started)"
+# As a careful harness does, it STOPs the group until a read finds what the last did, then KILLs it:
+# XNU's killpg can miss a member forked while it walks the group, as the looping stub's next child is.
+was=""
+for ((i = 0; i < 10; i++)); do
+  kill -STOP -- "-${spid}" 2>/dev/null || true
+  now="$(pgrep -g "${spid}" || true)"; [[ "${now}" != "${was}" ]] || break; was="${now}"
+done
 kill -KILL -- "-${spid}"; finish "${spid}"
 check "a KILL to codex-review's process group leaves neither the stub nor its child" "yes|yes" "${up}|$(gone 2)"
 left "the group KILL case"
@@ -219,26 +229,27 @@ left "the usage limit case"
 # --- A child of codex left holding its output does not hold codex-review: tee gets the grace after
 # codex exits, then is stopped, and what codex printed comes through.
 # shellcheck disable=SC2016 # the stub's variable
-stub '"${d}/stubsleep" 60 & echo "P2: y.sh:1 leaks"; exit 0'
+stub '"${d}/orphansleep" 60 & echo "P2: y.sh:1 leaks"; exit 0'
 review
 check "a codex whose child keeps its output open returns within the grace, its findings through" "0|yes|yes" \
   "${rc}|$([[ ${took} -le $((GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "P2: y.sh:1 leaks" "${out}")"
-# Its sleep is the case's own orphan, left on purpose: only the stub itself must be gone.
-left "a child holding the output case" "${BIN}/codex"
+# Its orphansleep is the case's own orphan, left on purpose: every other stub process must be gone.
+left "a child holding the output case" "${BIN}/(codex|stubsleep)"
 
 # --- On the timeout too, tee is stopped: a grandchild of codex that left its tree (so stop_codex
 # misses it) and holds codex's output cannot keep codex-review's stdout open. Read through a pipe,
 # as a caller's $(...) would.
 # shellcheck disable=SC2016 # the stub's variable
-stub '( "${d}/stubsleep" 60 & ); "${d}/stubsleep" 60'
+stub '( "${d}/orphansleep" 60 & ); "${d}/stubsleep" 60'
 t0=${SECONDS}
 (cd "${P}" && exec env -u SWARM_PROJECT -u HERDR_ENV -u SWARM_STORY SWARM_CODEX_SECONDS=${LIMIT} bash "${SWARM}" codex-review main 2>&1 \
   < /dev/null | cat > "${ROOT}/out") &
 spid=$!; finish "${spid}"
 check "a timed-out codex whose grandchild holds its output still ends codex-review's stdout within the grace" "yes|yes" \
   "$([[ $((SECONDS - t0)) -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(has "codex skipped: timed out" "$(cat "${ROOT}/out")")"
-# Its grandchild sleep left the tree on purpose: only the stub and what stayed under it must be gone.
-left "a grandchild holding the output case" "${BIN}/codex"
+# Its grandchild orphansleep left the tree on purpose: the stub and its stubsleep, still in the tree
+# stop_codex stops, must be gone.
+left "a grandchild holding the output case" "${BIN}/(codex|stubsleep)"
 
 # --- codex's log and fifo are in a directory of the run's own, mode 700, gone once it ends.
 mkdir -p "${ROOT}/tmp"
