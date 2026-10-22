@@ -923,11 +923,12 @@ before committing; a difference on other paths comes from another merge strategy
 branch", an older git) and counts as clean. A clean merge is `behind` when the base had commits the
 branch lacked, and `neither` when it had none. `unread` counts a PR `gh` cannot read or whose answer
 names no base branch, the merge-ins `main_merges` counted that `gh` does not list, a sha that is not 40
-hex digits, a commit git cannot find, and a "merge" with one parent (a squash or a rebase); a `merge
-ins: left out <PR>: <why>` line names each. It prints TSV `cause merge_ins prs`, a row per cause (a PR
-with merge-ins of two causes counts in both), then `file conflicts`, the three files conflicts and hand
-fixes hit most (control characters dropped from the names); or `none conflicted`, or `none read` when it
-read no merge-in.
+hex digits, a commit git cannot find, a merge-in whose `git log`, `merge-tree`, `diff` or `merge-base`
+fails or runs out of time, and a "merge" with one parent (a squash or a rebase); a `merge ins: left out
+<PR>: <why>` line names each. It prints TSV `cause merge_ins prs`, a row per cause (a PR with merge-ins
+of two causes counts in both), then `file conflicts`, the three files conflicts and hand fixes hit most
+(control characters dropped from the names); or `none conflicted`, or `none read` when it read no
+merge-in.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,

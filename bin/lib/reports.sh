@@ -327,9 +327,9 @@ dataset_report() {
 #     its parents with git merge-tree in its story's repo, fetching refs/pull/<n>/head once when it is
 #     not there, as conflict (a conflict, or a tree that is not git's clean merge), behind (clean, and
 #     the base had commits the branch lacked) or neither; unread for a PR gh cannot read, a merge-in gh
-#     does not list, a commit git cannot find, or a one-parent "merge", each named on a `merge ins: left
-#     out` line. Then, after a blank line, TSV file conflicts: the top three files, or `none
-#     conflicted`.
+#     does not list, a commit git cannot find, a merge-in whose git log, merge-tree, diff or merge-base
+#     fails, or a one-parent "merge", each named on a `merge ins: left out` line. Then, after a blank
+#     line, TSV file conflicts: the top three files, or `none conflicted`.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
