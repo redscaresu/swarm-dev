@@ -3,7 +3,7 @@
 # days up to --until or today, as each PR costs 3 or more gh calls). gh's REST API (not GraphQL, whose
 # hourly limit a swarm spends first) gives each PR's branch and commits and its branch's workflow
 # runs; a run counts when its head is one of the PR's commits. Then per repo, the CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
-import datetime, functools, json, os, re, statistics, subprocess, time
+import datetime, functools, os, re, statistics
 from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10

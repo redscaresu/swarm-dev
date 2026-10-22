@@ -3,7 +3,6 @@ from report import *
 from touches_rows import deps, entries, front_text
 board, agents, events, findings, projects, archive, out = sys.argv[1:8]
 EASY_MAX_LINES = 100   # was_easy rule 1: a diff under this many lines
-FETCH_SECONDS = 60
 project_dir = os.path.dirname(os.path.dirname(findings))
 
 def git(repo, *args):
@@ -15,21 +14,13 @@ def default_ref(repo):
 
 fetched = set()
 def fetch(repo):
-    # git fetch origin, once a run per repo, never prompting: no stdin, and ssh in batch mode (the
-    # user's GIT_SSH_COMMAND or core.sshCommand with -o BatchMode=yes after it). A fetch that fails or
+    # git fetch origin, once a run per repo, never prompting (report.git_fetch). A fetch that fails or
     # hangs leaves the history as it was, and says so on stderr.
     top = os.path.realpath(git(repo, "rev-parse", "--show-toplevel").strip() or repo)
     if top in fetched:
         return
     fetched.add(top)
-    ssh = os.environ.get("GIT_SSH_COMMAND") or git(top, "config", "core.sshCommand").strip() or "ssh"
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=ssh + " -o BatchMode=yes")
-    try:
-        ok = subprocess.run(["git", "-C", top, "fetch", "-q", "origin"], stdin=subprocess.DEVNULL, capture_output=True,
-                            timeout=FETCH_SECONDS, env=env).returncode == 0
-    except subprocess.TimeoutExpired:
-        ok = False
-    if not ok:
+    if git_fetch(top, "origin"):
         print(f"dataset: git fetch origin failed in {top}, so its origin/HEAD may be stale", file=sys.stderr)
 
 def planned(slug):

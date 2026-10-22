@@ -171,6 +171,23 @@ PASSES = re.compile(r"connection reset|unexpected EOF|i/o timeout|TLS handshake 
 SPENT = re.compile(r"API rate limit (already )?exceeded")   # the hourly limit: no more calls this run
 LIMIT = [""]   # gh's error once the hourly limit is spent
 
+FETCH_SECONDS = 60
+
+def git_fetch(root, *args, seconds=FETCH_SECONDS):
+    # git fetch -q <args> in root, never prompting: no stdin, no terminal prompt, and ssh in batch mode
+    # (the user's GIT_SSH_COMMAND or core.sshCommand with -o BatchMode=yes after it), stopped after
+    # seconds. "" once it fetched, else why not.
+    ssh = os.environ.get("GIT_SSH_COMMAND") or subprocess.run(["git", "-C", root, "config", "core.sshCommand"],
+                                                             capture_output=True, text=True).stdout.strip() or "ssh"
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_SSH_COMMAND=ssh + " -o BatchMode=yes")
+    try:
+        got = subprocess.run(["git", "-C", root, "fetch", "-q", *args], stdin=subprocess.DEVNULL, capture_output=True,
+                             text=True, timeout=seconds, env=env)
+    except subprocess.TimeoutExpired:
+        return f"over {seconds} s"
+    said = [l.strip() for l in got.stderr.splitlines() if l.strip()]
+    return "" if got.returncode == 0 else said[-1] if said else f"exit {got.returncode}"
+
 def gh(*args, seconds=GH_SECONDS):
     # Its JSON, or None when gh fails, takes over seconds or answers something else; ERROR[0] says
     # which call and why. A reset connection or a 5xx is tried again, 1 s then 2 s later (times

@@ -134,9 +134,12 @@ done
 # so did main, so its merge-in conflicts on f; m2 (#2) changed only b, so it merged in clean while
 # behind; m3 (#3) branched from main's tip and its merge-in (made by hand) brought nothing, and
 # outcomes counts 2 merge-ins where gh lists 1. gh cannot read m4's PR (#4). m5 (#5) merged main in
-# clean, then the builder changed h before committing. m6's merge-in (#6, behind) is only in origin's
-# refs/pull/6/head, so it is fetched; m7 (#7) is a story of repo s2, where its merge-in conflicts on
-# f. m8's (#8) merge-in is nowhere, so its fetch fails. m9's (#9) says it merges main in, but has one parent.
+# clean, then the builder changed h and added a file whose name holds a tab before committing. m6's
+# merge-in (#6, behind) is only in origin's refs/pull/6/head, so it is fetched; m7 (#7) is a story of
+# repo s2, where its merge-in conflicts on f. m8's (#8) merge-in is nowhere, so its fetch fails, and gh
+# gives an option as its second's sha. m9's (#9) says it merges main in, but has one parent. m10's (#10)
+# differs from git's clean merge only on x, a path it leaves as main has it: another strategy's merge,
+# behind. gh's answer for m11's PR (#11) has no base branch.
 S="${dir}/s"; mkdir -p "${S}/.swarm" "${S}/docs/stories" "${dir}/sbin"
 g() { git -C "${S}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g2() { git -C "${dir}/s2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
@@ -148,7 +151,10 @@ g checkout -q main; echo m > "${S}/f"; g commit -qam m
 g checkout -qb story/m3; echo n > "${S}/n"; g add n; g commit -qm n
 g checkout -q story/m1; g merge -q main > /dev/null || true; echo cm > "${S}/f"; g commit -qam "Merge branch 'main' into story/m1"
 g checkout -q story/m2; g merge -q -m "Merge remote-tracking branch 'origin/main' into story/m2" main
-g checkout -q story/m5; g merge -q --no-commit main 2> /dev/null; echo hand > "${S}/h"; g commit -qam "Merge branch 'main' into story/m5"
+g checkout -q story/m5; g merge -q --no-commit main 2> /dev/null; echo hand > "${S}/h"; echo e > "${S}/e"$'\t'vil; g add -A
+g commit -qm "Merge branch 'main' into story/m5"
+g checkout -qb story/m10 main~1; echo x > "${S}/x"; g add x; g commit -qm x; g checkout -q main
+g branch -f story/m10 "$(g commit-tree 'main^{tree}' -p story/m10 -p main -m "Merge branch 'main' into story/m10")"
 g checkout -qb story/m9 main; g commit -q --allow-empty -m "Merge branch 'main' into story/m9"
 g branch -f story/m3 "$(g commit-tree 'story/m3^{tree}' -p story/m3 -p main -m 'Merge origin/main into story/m3')"
 git clone -q --bare "${S}" "${dir}/s.git"; g remote add origin "${dir}/s.git"; git clone -q "${dir}/s.git" "${dir}/s2"
@@ -156,16 +162,16 @@ g2 checkout -qb story/m6 origin/main~1; echo six > "${dir}/s2/six"; g2 add six; 
 g2 merge -q -m "Merge remote-tracking branch 'origin/main' into story/m6" origin/main; g2 push -q origin story/m6:refs/pull/6/head
 g2 checkout -qb story/m7 origin/main~1; echo seven > "${dir}/s2/f"; g2 commit -qam seven
 g2 merge -q origin/main > /dev/null || true; echo 7m > "${dir}/s2/f"; g2 commit -qam "Merge branch 'main' into story/m7"
-for n in 1 2 3 4 5 6 7 8 9; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
+for n in 1 2 3 4 5 6 7 8 9 10 11; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: s2\n---\n' > "${S}/docs/stories/m7.md"
-printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 > "${S}/.swarm/agents.tsv"
+printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 > "${S}/.swarm/agents.tsv"
 commits() { # <PR> <git function> <merge-in>: gh api's commits of the PR, its merge-in's parent and then its merge-in, whose message has a body
   printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s\\n\\nbody"}}]]' \
     "$("$2" rev-parse "$3^1")" "$("$2" rev-parse "$3")" "$("$2" log -1 --format=%s "$3")" > "${dir}/sbin/$1"
 }
-for n in 1 2 3 5 9; do commits "${n}" g "story/m${n}"; done
+for n in 1 2 3 5 9 10; do commits "${n}" g "story/m${n}"; done
 commits 6 g2 story/m6; commits 7 g2 story/m7
-printf '[[{"sha":"0123456789abcdef0123456789abcdef01234567","commit":{"message":"Merge origin/main into story/m8"}}]]' > "${dir}/sbin/8"
+printf '[[{"sha":"0123456789abcdef0123456789abcdef01234567","commit":{"message":"Merge origin/main into story/m8"}},{"sha":"--output=x","commit":{"message":"Merge origin/main into story/m8"}}]]' > "${dir}/sbin/8"
 cat > "${dir}/sbin/gh" <<EOF
 #!/bin/sh
 n="\${4#story/m}"; n="\${n#repos/o/r/pulls/}"; n="\${n%%/*}"; p="\${2#repos/o/r/pulls/}"
@@ -173,6 +179,7 @@ case "\$1 \$2 \$3 \$4" in
   "pr list --head story/m"[34]) printf '${U}/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t2\n' "\$n" ;;
   "pr list --head story/m"*) printf '${U}/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t1\n' "\$n" ;;
   "api repos/o/r/pulls/4 "*) echo "HTTP 404: Not Found" >&2; exit 1 ;;
+  "api repos/o/r/pulls/11 "*) echo '{"base":{}}' ;;
   "api repos/o/r/pulls/"*) echo '{"base":{"ref":"main"}}' ;;
   "api --paginate --slurp repos/o/r/pulls/"*/commits*) cat "${dir}/sbin/\$n" ;;
   "api "*) exit 1 ;;
@@ -182,19 +189,24 @@ chmod +x "${dir}/sbin/gh"
 # shellcheck disable=SC2016 # awk's own $0
 mi() { (cd "${S}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=merge_ins CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/sbin:${PATH}" \
   bash "${SWARM}" flow --epic e9 "$@" 2>&1 | awk '/^## / { f = $0 == "## merge_ins"; next } f && NF'); }
-check "merge_ins: a conflict or a hand fix names its files, a clean one behind (one fetched), one that brought nothing, in its story's repo; why each is unread, a one-parent merge among them" \
+check "merge_ins: a conflict or a hand fix names its files (control characters dropped), a clean one behind (one fetched, one another strategy's), one that brought nothing, in its story's repo; why each is unread, a one-parent merge, an option for a sha and no base branch among them" \
   "$(mi --since 2026-10-01)" $'cause\tmerge_ins\tprs
 conflict\t3\t3
-behind\t2\t2
+behind\t3\t3
 neither\t1\t1
-unread\t5\t4
+unread\t7\t5
 file\tconflicts
 f\t2
+evil\t1
 h\t1
+merge ins: left out '"${U}"$'/11: gh api repos/o/r/pulls/11: an answer with no base branch
 merge ins: left out '"${U}"$'/3: gh lists 1 of the 2 merge-ins outcomes counted
 merge ins: left out '"${U}"$'/4: gh api repos/o/r/pulls/4: HTTP 404: Not Found
+merge ins: fetched refs/pull/6/head into '"$(cd "${S}" && pwd -P)"$'
 merge ins: left out '"${U}"$'/8: 0123456789ab: not in '"$(cd "${S}" && pwd -P)"$': git fetch origin refs/pull/8/head: fatal: couldn\'t find remote ref refs/pull/8/head
+merge ins: left out '"${U}"$'/8: gh gives \'--output=x\' as a merge-in\'s sha
 merge ins: left out '"${U}"$'/9: '"$(g rev-parse --short=12 story/m9)"$': 1 parent(s), not a merge of two'
+check "merge_ins: under --epic with no --since, every PR of the epic, as epic_totals counts them" "$(mi --until 2026-12-31 | sed -n 1,2p)" $'cause\tmerge_ins\tprs\nconflict\t3\t3'
 check "merge_ins: with no PRs in the window, none conflicted" "$(mi --since 2026-10-02 | tail -1)" "none conflicted"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
