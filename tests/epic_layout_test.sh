@@ -40,7 +40,7 @@ para() { awk -v pat="$1" 'index($0, pat) { on = 1 } on && /^$/ { exit } on' <<< 
 # no other dialog or prompt answered, and an escalated story the lead's.
 gives_up() {
   # shellcheck disable=SC2016 # the backticks are the brief's
-  printf '%s|' "$(has 'Run `swarm.sh close <slug>`: on a code, docs or chore story still `ready` it' "$1")" \
+  printf '%s|' "$(has 'Run `swarm.sh close <slug> --drop`: on a code, docs or chore story still `ready` it' "$1")" \
     "$(has 'model: swarm.sh picks Fable for build 3 (escalate_after = 2).' "$1")" "$(has 'waiting: dialog open' "$1")" \
     "$(has 'only when it is an escalate build (`swarm.sh _role <slug>` prints `escalate`)' "$1")" \
     "$(has 'herdr pane send-keys <pane>' "$1")" "$(has 'swarm.sh dialog <slug> accepted' "$1")" \
@@ -70,9 +70,9 @@ goal_on() {
     "$(grep -qF 'with `failed`' <<< "$1" && echo failed || echo "no failed")"
   # shellcheck disable=SC2016 # the backticks are the brief's
   for c in '- met: ' '- impossible: ' '- stalled: ' '- bound: ' '- paused: ' '- cleared-on-error: ' \
-    'Run `swarm.sh close <slug> impossible`' 'Send it one `swarm.sh tell <slug> resume <file>`' \
-    'If it stops paused again, run `swarm.sh close <slug> paused`.' \
-    'Run `swarm.sh close <slug> cleared-on-error`, start nothing more in this wave' 'Run `swarm.sh close <slug> stalled`'; do
+    'Run `swarm.sh close <slug> impossible --drop`' 'Send it one `swarm.sh tell <slug> resume <file>`' \
+    'If it stops paused again, run `swarm.sh close <slug> paused --drop`.' \
+    'Run `swarm.sh close <slug> cleared-on-error --drop`, start nothing more in this wave' 'Run `swarm.sh close <slug> stalled --drop`'; do
     printf '%s|' "$(has "${c}" "$1")"
   done
   grep -qF "after wait's nudges" <<< "$1" && echo nudges || echo "no nudges"
@@ -95,7 +95,7 @@ inbox_rule() {
 goal_off() {
   printf '%s|' "$(has "after wait's nudges" "$1")" "$(grep -qF cleared-on-error <<< "$1" && echo yes || echo no)"
   # shellcheck disable=SC2016 # the backticks are the brief's
-  grep -qF 'close <slug> impossible`' <<< "$1" && echo yes || echo no
+  grep -qF 'close <slug> impossible --drop`' <<< "$1" && echo yes || echo no
 }
 
 item() { # <board> <path> <front-matter line>... — a fresh item: its file, and no state file
