@@ -63,7 +63,7 @@ printf '{"type":"user","cwd":"/x"}\n' > "${CLAUDE_CONFIG_DIR}/projects/p/sx.json
 printf '{"type":"user","cwd":"/l"}\n' > "${CLAUDE_CONFIG_DIR}/projects/p/lx.jsonl"
 printf '%s\n' $'2026-10-01\tplan\tscope-x\tclaude\topus\thigh\told' $'2026-10-02\tplan\tscope-x\tclaude\topus\thigh\tsx' \
   $'2026-10-02\tlead\tlead-x\tclaude\topus\thigh\tlx' $'2026-10-02\tcodex\tcodex-y\tcodex\tdefault\thigh\t-' > "${P}/.swarm/agents.tsv"
-close() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "$1" >"${ROOT}/close.out" 2>&1) || true; }
+close() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "$@" >"${ROOT}/close.out" 2>&1) || true; }
 
 close scope-x
 
@@ -99,7 +99,7 @@ rm -f "${P}/.swarm/state/epic-x"
 
 # --- A close that ends a failed build: the story is ready, of an agent's kind, its builder is open
 # under its name and none of its PRs merged. attempts: goes up by one, and the worktree, local and
-# origin story/<slug> and the open PR go. Any other close counts and clears nothing.
+# origin story/<slug> go, and with --drop the open PR too. Any other close counts and clears nothing.
 is() { if [[ "$3" == "$2" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=$((fails + 1)); fi; }
 GIT=(git -c user.name=t -c user.email=t@t)
 "${GIT[@]}" init -q --bare "${ROOT}/origin.git"
@@ -128,13 +128,28 @@ left() { # <slug> — which of its worktree, local story/<slug> and origin's are
 }
 attempts() { fmv "$1" attempts 2>/dev/null || true; }
 U="https://github.com/o/proj/pull"
-echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
+echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\",\"headRefOid\":\"feed1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
+# A bare close of a builder whose PR is open closes the builder alone: no PR closed, the branch and
+# worktree kept, nothing counted, and the PR named.
+item o1 "status: ready" "kind: code"; started o1 w:p1
+close o1
+is "close o1, its PR open: its pane closes, no PR is closed, attempts: unset, its build kept, the PR named" \
+  "closed|0||worktree branch origin|1" \
+  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept: o1 stays in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
+# Its builder closed, the build kept: close o1 --drop still finds the open PR, and clears it all away.
+close o1 --drop
+is "close o1 --drop after the bare close closes its PR, counts the attempt and clears its build" "1|1|" \
+  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at o1" "${ROOT}/gh.log")|$(attempts o1)|$(left o1)"
+: > "${ROOT}/gh.log"
 item s1 "status: ready" "kind: code"; started s1 w:p1
-close s1
+sha="$(git -C "${P}" rev-parse story/s1)"
+close s1 --drop
+is "close s1 --drop prints the PR it closed with its head, and the branch it deleted with its head" "1|1" \
+  "$(grep -c "^dropped: ${U}/1, closed unmerged, head feed1 " "${ROOT}/close.out")|$(grep -c "^dropped: story/s1 in ${P}, head ${sha}$" "${ROOT}/close.out")"
 is "closing a ready story's open builder writes attempts: 1" "1" "$(attempts s1)"
 is "and removes its worktree, local story/s1 and origin's" "" "$(left s1)"
 is "and closes its open PR, and only that one, with a comment naming the attempt" "1|0|yes" \
-  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at s1" "${ROOT}/gh.log")|$(grep -c "^pr close ${U}/2" "${ROOT}/gh.log")|$(grep -q "^pr list -R ${ROOT}/origin.git --head story/s1 --state all --json number,state,url,autoMergeRequest$" "${ROOT}/gh.log" && echo yes)"
+  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at s1" "${ROOT}/gh.log")|$(grep -c "^pr close ${U}/2" "${ROOT}/gh.log")|$(grep -q "^pr list -R ${ROOT}/origin.git --head story/s1 --state all --json number,state,url,autoMergeRequest,headRefOid$" "${ROOT}/gh.log" && echo yes)"
 close s1
 is "closing it again leaves 1" "1" "$(attempts s1)"
 echo '[]' > "${ROOT}/prs.json"
@@ -154,6 +169,9 @@ close b1
 is "a body line 'attempts: 3' is not the count: the first failure writes attempts: 1" "1|yes" \
   "$(attempts b1)|$(grep -qx 'attempts: 3' "${P}/docs/stories/b1.md" && echo yes)"
 item r1 "status: review" "kind: code"; started r1 w:p3
+item rd "status: review" "kind: code"; started rd w:p16; close rd --drop
+is "close rd --drop on a story in review drops nothing and says so" "worktree branch origin|1" \
+  "$(left rd)|$(grep -c '^not dropped: rd has no build this close can drop' "${ROOT}/close.out")"
 item m1 "status: ready" "kind: code"; started m1 w:p4
 item g1 "status: ready" "kind: code"; started g1 w:p5
 item n1 "status: ready" "kind: code"; started n1
@@ -205,9 +223,9 @@ state() { echo "$(fmv "$1" kind)|$(fmv "$1" escalated_from)|$(fmv "$1" attempts)
 block() { cat "${P}/.swarm/escalated/$1" 2>/dev/null || true; }
 echo "[{\"number\":7,\"state\":\"CLOSED\",\"url\":\"${U}/7\"},{\"number\":8,\"state\":\"OPEN\",\"url\":\"${U}/8\"}]" > "${ROOT}/prs.json"
 item e1 "status: ready" "kind: code"; cp "${P}/docs/stories/e1.md" "${ROOT}/e1.orig"
-for i in 1 2; do started e1 "w:p3${i}"; built e1 code; close e1; done
+for i in 1 2; do started e1 "w:p3${i}"; built e1 code; close e1 --drop; done
 is "a counted close of a code build at attempts: 1 leaves kind: code" "code||2|ready" "$(state e1)"
-started e1 w:p33; built e1 escalate; close e1
+started e1 w:p33; built e1 escalate; close e1 --drop
 is "a counted close of an escalate build at attempts: 2: kind: lead, escalated_from: code, attempts: 3, still ready" \
   "lead|code|3|ready" "$(state e1)"
 b="$(block e1)"
@@ -223,29 +241,29 @@ is "reset is logged with its reason" "1" "$(grep -c $'\treset\te1\tw:me\tok (re-
 item e1 "status: ready" "kind: lead" "attempts: 3" "escalated_from: code"; rc=0; out="$(sw reset e1 again)" || rc=$?
 is "a second reset of e1 fails, naming the first, and leaves it kind: lead" "1|yes|lead" \
   "${rc}|$(grep -qF 'reset: e1 was reset already, at ' <<< "${out}" && echo yes)|$(fmv e1 kind)"
-item e1 "status: ready" "kind: code" "attempts: 2"; built e1 escalate; started e1 w:p39; close e1; b="$(block e1)"
+item e1 "status: ready" "kind: code" "attempts: 2"; built e1 escalate; started e1 w:p39; close e1 --drop; b="$(block e1)"
 is "escalated again after its reset, e1's block offers only drop" "yes|0|yes" \
   "$(grep -qF 'It was reset once already' <<< "${b}" && echo yes)|$(grep -c 'swarm.sh reset e1' <<< "${b}")|$(grep -qF 'swarm.sh drop e1 <reason>' <<< "${b}" && echo yes)"
 item n2 "status: ready" "kind: code"; rc=0; out="$(sw reset n2 why)" || rc=$?
 is "reset of a story with neither attempts: nor escalated_from: fails, naming it" "1|yes" \
   "${rc}|$(grep -qF 'reset: n2 has neither attempts: nor escalated_from:' <<< "${out}" && echo yes)"
 # The role decides, not the count: a code build at attempts: 2 (an older escalate line before it) stays code.
-item c2 "status: ready" "kind: code" "attempts: 2"; built c2 escalate; built c2 code; started c2 w:p34; close c2
+item c2 "status: ready" "kind: code" "attempts: 2"; built c2 escalate; built c2 code; started c2 w:p34; close c2 --drop
 is "a code build closed at attempts: 2 writes attempts: 3 and no kind: lead or block" "code||3|ready|" "$(state c2)|$(block c2)"
 # A chore round-trips, and so does a story with no kind: line (escalated_from: code (default)).
 item ch "status: ready" "kind: chore"; cp "${P}/docs/stories/ch.md" "${ROOT}/ch.orig"
-put ch "attempts: 2"; built ch escalate; started ch w:p35; close ch
+put ch "attempts: 2"; built ch escalate; started ch w:p35; close ch --drop
 is "a chore escalates from chore" "lead|chore|3|ready" "$(state ch)"
 sw reset ch why >/dev/null
 is "and reset returns it as it was" "" "$(diff "${ROOT}/ch.orig" "${P}/docs/stories/ch.md")"
 item nk "status: ready"; cp "${P}/docs/stories/nk.md" "${ROOT}/nk.orig"
-put nk "attempts: 2"; built nk escalate; started nk w:p36; close nk
+put nk "attempts: 2"; built nk escalate; started nk w:p36; close nk --drop
 is "a story with no kind: line escalates from code (default)" "lead|code (default)|3|ready" "$(state nk)"
 sw reset nk why >/dev/null
 is "and reset returns it byte for byte, with no kind: line" "" "$(diff "${ROOT}/nk.orig" "${P}/docs/stories/nk.md")"
 # The lead re-scoped the kind in the file itself (the board outside the repo), which still says
 # code (kind: lead is in the state file): reset keeps it.
-item rk "status: ready" "kind: code" "attempts: 2"; built rk escalate; started rk w:p40; close rk
+item rk "status: ready" "kind: code" "attempts: 2"; built rk escalate; started rk w:p40; close rk --drop
 awk '{ sub(/^kind: code$/, "kind: docs") } 1' "${P}/docs/stories/rk.md" > "${ROOT}/rk.tmp" && mv "${ROOT}/rk.tmp" "${P}/docs/stories/rk.md"
 sw reset rk why >/dev/null
 is "a kind the lead set itself survives reset; escalated_from: and attempts: go" "docs|||ready" "$(state rk)"
@@ -267,7 +285,7 @@ is "with gh failing the close counts nothing: no attempt, no kind: lead, no bloc
 cs() { (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close "$@" 2>&1); }
 CAUSES="met, impossible, stalled, bound, paused or cleared-on-error"
 echo "[{\"number\":9,\"state\":\"OPEN\",\"url\":\"${U}/9\"}]" > "${ROOT}/prs.json"
-item i1 "status: ready" "kind: code" "attempts: 1"; started i1 w:p41; cs i1 impossible >/dev/null
+item i1 "status: ready" "kind: code" "attempts: 1"; started i1 w:p41; cs i1 impossible --drop >/dev/null
 is "close i1 impossible, its builder open: kind: lead, escalated_from: code, attempts: 1, still ready" "lead|code|1|ready" "$(state i1)"
 b="$(block i1)"
 # shellcheck disable=SC2016 # the backticks are the block's
@@ -281,13 +299,20 @@ is "and its build is cleared away" "" "$(left i1)"
 # anything closes.
 unlisted() { grep -qxF "swarm.sh did not list the PRs on story/$1, so look at them before you reset it: \`gh pr list --head story/$1 --state all\` in its repo." <<< "$(block "$1")" && echo yes; }
 closed_prs="$(grep -c '^pr close' "${ROOT}/gh.log")"
+# A bare close impossible that could not list the PRs is refused: deleting story/<slug> on origin
+# would close a PR still open there.
+item i5 "status: ready" "kind: code" "attempts: 1"; started i5
+rc=0; out="$(cs i5 impossible)" || rc=$?
+is "close i5 impossible with no builder open is refused, naming --drop, and keeps its build and story" "1|1|worktree branch origin|code" \
+  "${rc}|$(grep -c 'swarm.sh close i5 impossible --drop clears its build anyway; nothing was closed' <<< "${out}")|$(left i5)|$(fmv i5 kind)"
+echo '[]' > "${ROOT}/prs.json"
 item i2 "status: ready" "kind: code" "attempts: 1"; started i2
-rc=0; cs i2 impossible >/dev/null || rc=$?
-is "close i2 impossible with no builder open hands it on and clears its build; the block says its PRs were not listed" \
+rc=0; cs i2 impossible --drop >/dev/null || rc=$?
+is "close i2 impossible --drop with no builder open hands it on and clears its build; the block says its PRs were not listed" \
   "0|lead|code|1|ready|yes|" "${rc}|$(state i2)|$(unlisted i2)|$(left i2)"
 item i3 "status: ready" "kind: code" "attempts: 1"; started i3 w:p57; touch "${ROOT}/ghfail"
-rc=0; out="$(cs i3 impossible)" || rc=$?; rm "${ROOT}/ghfail"
-is "with gh failing, close i3 impossible closes its pane, hands it on and clears its build; stderr says gh failed" \
+rc=0; out="$(cs i3 impossible --drop)" || rc=$?; rm "${ROOT}/ghfail"
+is "with gh failing, close i3 impossible --drop closes its pane, hands it on and clears its build; stderr says gh failed" \
   "0|closed|lead|code|1|ready|yes|yes|" \
   "${rc}|$([[ -e "${P}/.swarm/state/i3" ]] && echo open || echo closed)|$(state i3)|$(grep -qF 'i3: could not list the PRs on story/i3' <<< "${out}" && echo yes)|$(unlisted i3)|$(left i3)"
 item v1 "status: ready" "kind: verify" "attempts: 1"; echo "w:p14 v1" > "${P}/.swarm/state/v1"
@@ -312,7 +337,7 @@ is "and the stories are as they were: ir in review, il kind: lead with no escala
   "$(fmv ir status)|$(fmv il kind)|$(fmv il escalated_from)|$(block il)"
 n=42
 for c in met stalled bound paused cleared-on-error; do
-  item "c-${c}" "status: ready" "kind: code" "attempts: 1"; started "c-${c}" "w:p${n}"; n=$((n + 1)); cs "c-${c}" "${c}" >/dev/null
+  item "c-${c}" "status: ready" "kind: code" "attempts: 1"; started "c-${c}" "w:p${n}"; n=$((n + 1)); cs "c-${c}" "${c}" --drop >/dev/null
 done
 is "met, stalled and bound raise attempts: by one; paused and cleared-on-error leave it" "2|2|2|1|1" \
   "$(attempts c-met)|$(attempts c-stalled)|$(attempts c-bound)|$(attempts c-paused)|$(attempts c-cleared-on-error)"
@@ -346,15 +371,15 @@ done
 rs() { (cd "${P}" && bash "${SWARM}" reset "$@" 2>&1); }
 item hr "status: ready" "kind: code" "attempts: 1"; got=""
 for i in 1 2; do
-  started hr "w:p7${i}"; cs hr paused >/dev/null; got+="$(state hr)/$(fmv hr held_for)/"
+  started hr "w:p7${i}"; cs hr paused --drop >/dev/null; got+="$(state hr)/$(fmv hr held_for)/"
   rc=0; rs hr lifted >/dev/null || rc=$?; got+="${rc}|$(state hr)|$(fmv hr held_for)|$(block hr) "
 done
 is "hr paused, reset, paused, reset: each reset succeeds, attempts: stays 1, kind: code again with no hold or block" \
   "lead|code|1|ready/paused/0|code||1|ready|| lead|code|1|ready/paused/0|code||1|ready|| " "${got}"
-started hr w:p73; cs hr met >/dev/null
+started hr w:p73; cs hr met --drop >/dev/null
 is "a failed build after the lifted holds counts from there: attempts: 2" "2" "$(attempts hr)"
 rc=0; rs hr re-scoped >/dev/null || rc=$?
-started hr w:p74; cs hr met >/dev/null; rc2=0; out="$(rs hr again)" || rc2=$?
+started hr w:p74; cs hr met --drop >/dev/null; rc2=0; out="$(rs hr again)" || rc2=$?
 is "the holds did not use hr's one reset: the first real reset succeeds and a second is refused" "0|1|yes" \
   "${rc}|${rc2}|$(grep -qF 'reset: hr was reset already' <<< "${out}" && echo yes)"
 item u1 "status: ready" "kind: code" "attempts: 1"; started u1 w:p50
@@ -376,8 +401,8 @@ done
 is "with goal = 5 and no cause, a story in review, a name with no story file, conduct-, hld- and plan- close" \
   "0closed 0closed 0closed 0closed 0closed " "${got}"
 : > "${P}/.claude/swarm/config"
-rc=0; cs g5 >/dev/null || rc=$?
-is "with goal off, close g5 with no cause closes and counts as today" "0|2|" "${rc}|$(attempts g5)|$(left g5)"
+rc=0; cs g5 --drop >/dev/null || rc=$?
+is "with goal off, close g5 --drop with no cause closes and counts as today" "0|2|" "${rc}|$(attempts g5)|$(left g5)"
 
 # --- A tab close never takes a live agent: one working or waiting (its session's state, or herdr's
 # with no session), one whose state cannot be read, or one whose story has an open PR (or whose PRs gh

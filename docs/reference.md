@@ -117,13 +117,17 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   A `kind: lead` story never escalates, since no agent builds it. `swarm.sh close <slug>` counts a
   failed build of a code, docs or chore story. When the story is still `ready`, its builder is still open and no PR on `story/<slug>` has merged or is open with auto-merge set, it raises
   `attempts:` by one and clears the attempt away: it removes the worktree and `story/<slug>`, here
-  and on origin, and closes each open PR unmerged with a comment naming the attempt. The next build
-  then starts fresh, and the third runs on Fable. A close after `review`, after a merge or after
+  and on origin. The next build then starts fresh, and the third runs on Fable. While a PR on
+  `story/<slug>` is open, a bare close closes the builder alone. The PR, its branch and worktree
+  stay, nothing is counted, and close prints `kept:` naming the PR the story stays in review with. `swarm.sh close <slug> --drop` clears the attempt even then: it closes each open PR
+  unmerged with a comment naming the attempt, and prints each thing it closed or deleted as
+  `dropped:`, with the head SHA of the branch and of each PR, so the work can be restored. It also
+  drops a build that a bare close kept, after its builder has closed, as long as its PR is open. A close after `review`, after a merge or after
   the builder has gone counts nothing, and `reconcile` sending a story back to `ready` never
   counts. If gh cannot list the PRs, the close counts and clears nothing and says why on stderr.
-  `swarm.sh close <slug> <cause>` also says why the builder stopped: `met`, `stalled` and `bound`
+  `swarm.sh close <slug> <cause> [--drop]` also says why the builder stopped: `met`, `stalled` and `bound`
   count as above, while `impossible`, `paused` and `cleared-on-error` are not attempts and leave
-  `attempts:` as it was. `impossible` clears the build away whenever it hands the story on (below).
+  `attempts:` as it was. With any cause, an open PR stays unless `--drop` is given. `impossible` clears the build away whenever it hands the story on (below).
   `paused` and `cleared-on-error` clear it when the close ends a build under the same conditions; otherwise they clear nothing and print
   `not held:`. An unknown cause
   is refused before anything closes, and with `goal` on, so is a close with no cause while the story
@@ -138,9 +142,9 @@ Every agent's model and effort come from its role, set in one place: `policy()` 
   any story still `ready` of a kind an agent builds, and clears its worktree and
   `story/<slug>` here and on origin so a reset builds it again. When the close lists the story's PRs,
   it closes each open one with `gh pr close`. When it lists none (its builder is gone, gh cannot list
-  them), it runs no `gh pr close`, but deleting `story/<slug>` on origin makes
-  GitHub close any PR still open on that branch. The block then says the PRs were not listed, so the
-  lead looks before resetting. Any other story, and a name with no story file, is refused before
+  them), a bare close is refused before anything closes, because deleting `story/<slug>` on origin
+  makes GitHub close any PR still open on that branch. With `--drop` it goes ahead, running no
+  `gh pr close`, and the block says the PRs were not listed, so the lead looks before resetting. Any other story, and a name with no story file, is refused before
   anything closes.
 - **After Fable, the lead decides.** When the build a counted close ends was `escalate`, the close
   hands the story to the lead: `kind: lead`, `escalated_from:` its kind (`code (default)` when it
@@ -514,7 +518,7 @@ no goal.
 
 **Giving up on a builder.** A conductor gives up on a builder when `wait --stall` returns stalled,
 when it is idle with no PR after wait's nudges, or
-when review has not converged in the rounds it allows. It runs `swarm.sh close <slug>`, which, on a
+when review has not converged in the rounds it allows. It runs `swarm.sh close <slug> --drop`, which, on a
 code, docs or chore story still `ready`, counts the attempt and clears its worktree, branch and PR,
 and starts the story again in a later wave with
 `swarm.sh story --strict <slug>`; swarm.sh picks the model, Fable once the story has failed `escalate_after`
@@ -522,7 +526,7 @@ builds (2 by default). With `escalate_after = 0` it reports a story that has fai
 instead. A story that comes back `kind: lead` with `escalated_from:` is the lead's to decide, never
 the user's. With `goal` on, a builder idle short of its reply is not nudged: the conductor reads the
 cause from its reply and the last met `goal_status` entry's `reason` in its session log, closes it with
-`swarm.sh close <slug> <cause>` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
+`swarm.sh close <slug> <cause> --drop` (`stalled` for a stall), and on `cleared-on-error` starts nothing more
 in the wave and lists the story for the lead. A Fable builder can stop on its usage-credits consent, which `wait` prints as
 `waiting: dialog open`. Only for an escalate build, and only once `herdr agent read` shows that
 consent, the conductor accepts it with `herdr pane send-keys` in the builder's pane, runs
@@ -1393,12 +1397,14 @@ tests each PR on top of the ones ahead of it, so there every reviewed PR can be 
 
 **Clean up.** After each merge, `swarm.sh reconcile` closes the story's builder if it is open and
 removes its worktree and `story/<slug>`, here and on origin (§ Merging). By hand,
-`swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there), and
+`swarm.sh close <slug>` closes a story's pane (its tab, when it was the last pane there) and keeps
+its open PR, branch and worktree; on a `ready` story `--drop` clears them (§ Model and effort), and
+on any other it prints `not dropped:`.
 `swarm.sh close conduct-<epic>` closes the epic's tabs. herdr closes a tab without asking, so close
 first checks each tab's panes. It keeps a tab that holds an agent that is working or waiting, or
 whose story has an open PR, and it keeps one when it cannot read an agent's state or gh cannot list
 its PRs. It prints each of those agents as `kept`, and still closes the conductor's own pane.
-`swarm.sh close <name> [cause] --all` closes the kept tabs as well.
+`swarm.sh close <name> [cause] [--drop] --all` closes the kept tabs as well.
 
 ## Releases
 
@@ -1449,8 +1455,10 @@ touch real cloud or credentials. By default no agent merges; with `merge = agent
 does.
 
 When `swarm.sh close` closes the builder of a code, docs or chore story that is still `ready`, it
-counts a failed build in the story's `attempts:` and clears the attempt away: its worktree, its
-`story/<slug>` branch here and on origin, and any open PR, closed unmerged. `swarm.sh reconcile`
+counts a failed build in the story's `attempts:` and clears the attempt away: its worktree and its
+`story/<slug>` branch here and on origin. While the story's PR is open it does neither and closes the
+builder alone, unless it is `swarm.sh close <slug> --drop`, which also closes the PR unmerged and
+prints the head SHAs it dropped. `swarm.sh reconcile`
 removes the same worktree and branches once a story's PR merges, closing its builder first if it is
 open. When a PR closes unmerged, it removes them only if no builder is open. That leaves nothing to
 clean up by hand, unless reconcile prints `build kept: <slug>` or `build cleared: <slug>`, which say
