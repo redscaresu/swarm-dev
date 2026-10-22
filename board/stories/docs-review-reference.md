@@ -16,3 +16,4 @@ Needs every other pre-release story of the epic merged. Review docs/*.md, comman
 - tests/doc_check_test.sh passes with tests/doc_check_known.txt empty of docs/, commands/ and templates/ entries.
 - The PR body lists each file reviewed with what changed.
 - grep finds no /hld, /plan-hld or HLD step in docs/*.md, commands/*.md or the diagram sources in docs/assets, and every commands/*.md description names a request.
+- #365 follow-ups (backlog conductor, 2026-10-23): `next` is no longer read-only, since it starts conductors, and `merge --board` no longer only notes. AGENTS.md:64, skills/swarm-dev/SKILL.md:43, README.md and docs/method.md:26 say otherwise; fix them, and take `next` out of READ_ONLY_COMMANDS in bin/swarm.sh. commands/swarm.md's wait step handles `next`'s `started:`, `no conductor started:` and start-warning lines, and says when the lead deletes an uncollected report.
