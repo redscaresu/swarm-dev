@@ -658,8 +658,13 @@ or `resume`) is required and goes in the audit log. `tell` sends only to an idle
 refuses a builder that is still working, waiting on a prompt (it names what the prompt is), or whose
 session is gone or unknown. To reach a busy conductor, the lead runs
 `swarm.sh tell conduct-<epic> note <file>`. It appends the file under a timestamped header to
-`.swarm/inbox/conduct-<epic>.md`, without sending a prompt or reading the conductor's state, and
-only for a live conductor of this project. After each `wait` or `watch` returns, the conductor moves the
+`.swarm/inbox/conduct-<epic>.md`, and only for a live conductor of this project. A conductor
+whose turn has ended (idle, or busy only with background jobs, as `upgrade` reads it) also gets a
+short prompt telling it to read its inbox now, act on it, delete it and go back to its waits, since
+a wait can run a long time before it returns. `tell` sends the prompt once and returns without
+waiting for it to be taken up. One conductor gets at most one such prompt a minute, even from notes
+sent at once (`conduct-<epic>.md.woke` holds the last one's time). A conductor mid-turn gets no
+prompt. After each `wait` or `watch` returns, the conductor moves the
 inbox with `mv` to `conduct-<epic>.reading.md` beside it (so a note added meanwhile starts a new
 file), reads that copy, acts on it and deletes it. A copy already there is a read that was cut off,
 so the conductor reads and deletes it first. It does all of this once more just before it writes its

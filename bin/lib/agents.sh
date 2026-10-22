@@ -1274,6 +1274,46 @@ wait_conductor() {
 # is_tell_kind <word> — true for a kind tell takes: findings, nudge, resume or note.
 is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; return 1; }
 
+# NOTE_WAKE_SECS: the least time between two prompts note_wake sends one conductor, so a burst of
+# notes wakes it once.
+NOTE_WAKE_SECS=60
+
+# note_wake <name> <inbox> — prompt the conductor <name> to read <inbox> now when its turn has ended
+# (upgrade_state's idle: idle, or busy only with background jobs), at most once each NOTE_WAKE_SECS
+# (note_wake_claim); its waits can run long before one returns. Sent once, not confirmed, so tell
+# returns at once. One mid-turn reads the inbox when its wait returns, as before. A prompt that fails
+# is warned of and gives its claim back: the note is in the inbox either way.
+note_wake() {
+  local pane f rc=0
+  note_wake_due "$2" || return 0
+  pane="$(agent_field "$1" pane_id)"
+  [[ "$(upgrade_state "$1" "${pane}")" == idle ]] || return 0
+  (note_wake_claim "$2") || return 0
+  f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")" || return 0
+  printf 'From swarm: the lead left you a note in %s. Read your inbox now, act on it, delete it, then go back to your waits.\n' "$2" > "${f}"
+  (deliver_prompt "$1" "${f}" "${pane}" once) || rc=$?
+  rm -f "${f}"
+  [[ ${rc} -eq 0 ]] || { rm -f "$2.woke"; echo "warning: ${1} was not prompted to read its inbox; it reads it after its wait" >&2; }
+}
+
+# note_wake_due <inbox> — succeed when no wake prompt for <inbox> was claimed in the last NOTE_WAKE_SECS.
+note_wake_due() {
+  local last
+  last="$(cat "$1.woke" 2>/dev/null)" || last=0
+  [[ "${last}" =~ ^[0-9]+$ ]] || last=0
+  (( $(date +%s) - last >= NOTE_WAKE_SECS ))
+}
+
+# note_wake_claim <inbox> — claim the next wake prompt for <inbox>: under its lock, so of two notes at
+# once only one sends it, record now in <inbox>.woke when one is due (note_wake_due); fails otherwise.
+note_wake_claim() {
+  local rc=0
+  state_lock "$1.woke.lock"
+  { note_wake_due "$1" && date +%s > "$1.woke"; } 2>/dev/null || rc=1
+  rmdir "$1.woke.lock"
+  return "${rc}"
+}
+
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
 # retries, and counts a permission prompt as taken up). <kind> says why (findings, nudge or resume;
 # main logs it as tell:<kind>). A header line comes first, so findings that begin with '-' are never
@@ -1284,8 +1324,9 @@ is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; retu
 # With escalate_ladder set, a builder's STEP_UP_FINDINGS-th findings since its build started, or any
 # after (findings_told), are not sent: the build is stepped up (ladder_step findings-<N>) with them in
 # the handover brief, and the tell fails, saying so; a step-up that closed nothing sends them as usual.
-# A note goes only to a live conductor of this project, and never as a prompt: it is appended to
-# .swarm/inbox/<name>.md, which the conductor reads after each wait (conduct_brief), busy or not.
+# A note goes only to a live conductor of this project: it is appended to .swarm/inbox/<name>.md,
+# which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
+# is also prompted to read it now (note_wake).
 tell_agent() {
   local kind="$2" f="$3" name msg state since inbox rc
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
@@ -1304,6 +1345,7 @@ tell_agent() {
     msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
     printf '%s\n\n' "${msg}" >> "${inbox}"
     queued_sent "${f}"   # a queued: line sent is one watch and next send no more
+    note_wake "${name}" "${inbox}"
     echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
