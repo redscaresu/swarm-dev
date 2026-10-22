@@ -785,16 +785,16 @@ SETTLE_READS=$((PROMPT_TIMEOUT_MS / 5000 > 1 ? PROMPT_TIMEOUT_MS / 5000 : 1))
 # read with no completion_seq, or done with the same completion_seq. Else "unsure <why>": two failed
 # reads in a row (herdr down), no baseline, or anything else.
 prompt_settle() {
-  local s="-" c="-" i fails=0 known=yes
+  local s="-" c="-" i misses=0 known=yes
   case "$2" in idle|done|working|blocked) ;; *) known="" ;; esac
   for ((i = 1; i <= SETTLE_READS; i++)); do
     nap 5
     read -r s c <<< "$(agent_info "$1")"
     case "${s}" in
       working|blocked) echo taken; return ;;
-      -) fails=$((fails + 1)); if [[ ${fails} -ge 2 ]]; then break; fi; continue ;;
+      -) misses=$((misses + 1)); if [[ ${misses} -ge 2 ]]; then break; fi; continue ;;
     esac
-    fails=0
+    misses=0
     if [[ -n "${known}" && "${c}" != - && "${c}" != "$3" ]]; then echo taken; return; fi
   done
   if [[ -n "${known}" && "${c}" == "$3" ]] && [[ ( "${s}" == idle && "$2" == idle ) || ( "${s}" == "done" && "${c}" != - ) ]]; then echo "again ${s}"
