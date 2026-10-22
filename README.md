@@ -131,7 +131,7 @@ Restart Claude Code afterwards. Agents already running stay on the old version u
 - [Reference](docs/reference.md): every rule, setting, command and log.
 - [AGENTS.md](AGENTS.md) for working on swarm-dev itself, and [SECURITY.md](SECURITY.md) for
   reporting a vulnerability.
-- `make test` stops a test file that runs past `TEST_FILE_TIMEOUT` seconds (300 unless set) and fails it as
+- `make test` stops a test file that runs past `TEST_FILE_TIMEOUT` seconds (300 unless set, three times that for the files in `SLOW`) and fails it as
   `TIMEOUT <file> after <n>s`, with the file's last 20 lines of output.
 - On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
   see [reference.md § Building](docs/reference.md#building).

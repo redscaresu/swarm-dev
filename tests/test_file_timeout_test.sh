@@ -25,14 +25,33 @@ t0=${SECONDS}
 out="$(TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/hang_test.sh" 2>&1)" && rc=0 || rc=$?
 secs=$((SECONDS - t0))
 check "a file past the limit fails" "${rc}" 1
-check "it is named TIMEOUT with the file and the limit" "$(grep -Ec "^TIMEOUT ${ROOT}/hang_test.sh after [0-9]+s$" <<< "${out}")" 1
+# timeout_secs <output> <file> — the seconds in the "TIMEOUT <file> after <n>s" line, or nothing.
+timeout_secs() { local l; l="$(grep -F "TIMEOUT $2 after " <<< "$1" | head -1)"; l="${l##* after }"; l="${l%s}"; [[ "${l}" =~ ^[0-9]+$ ]] && echo "${l}"; return 0; }
+n="$(timeout_secs "${out}" "${ROOT}/hang_test.sh")"
+check "it is named TIMEOUT with the file and at least the limit's seconds" "$([[ -n "${n}" && ${n} -ge 2 ]] && echo yes)" yes
 check "its output so far is printed" "$(grep -c '^before-hang$' <<< "${out}")" 1
 check "it ends within 10 seconds" "$([[ ${secs} -lt 10 ]] && echo yes)" yes
 pgrep -f "^${marker}\$" > /dev/null && left=found || left=$?   # 1: no match; 2 or more: pgrep itself failed
 check "nothing it started is left running" "${left}" 1
 
 out="$(TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/term0_test.sh" 2>&1)" && rc=0 || rc=$?
-check "a file that exits 0 on TERM past the limit still fails as TIMEOUT" "${rc}/$(grep -Ec "^TIMEOUT ${ROOT}/term0_test.sh after [0-9]+s$" <<< "${out}")" "1/1"
+n="$(timeout_secs "${out}" "${ROOT}/term0_test.sh")"
+check "a file that exits 0 on TERM past the limit still fails as TIMEOUT" "${rc}/$([[ -n "${n}" && ${n} -ge 2 ]] && echo yes)" "1/yes"
+
+# A file in SLOW gets three times the limit: 2 s of work passes at 1 s x 3, and times out at 1 s alone.
+printf '#!/usr/bin/env bash\nsleep 2\n' > "${ROOT}/two_test.sh"
+TEST_FILE_TIMEOUT=1 SLOW="${ROOT}/two_test.sh" bash "${REPO}/scripts/test.sh" "${ROOT}/two_test.sh" > /dev/null 2>&1 && rc=0 || rc=$?
+check "a SLOW file gets three times the limit" "${rc}" 0
+out="$(TEST_FILE_TIMEOUT=1 bash "${REPO}/scripts/test.sh" "${ROOT}/two_test.sh" 2>&1)" && rc=0 || rc=$?
+check "the same file outside SLOW times out at the limit" "${rc}/$([[ -n "$(timeout_secs "${out}" "${ROOT}/two_test.sh")" ]] && echo yes)" "1/yes"
+
+# test.sh run directly defaults SWARM_SLEEP_SCALE to 0.01, as the Makefile does, and keeps one that is set.
+# shellcheck disable=SC2016 # the fixture's own shell expands it
+printf '#!/usr/bin/env bash\necho "${SWARM_SLEEP_SCALE-unset}" > "%s/scale.seen"\n' "${ROOT}" > "${ROOT}/scale_test.sh"
+env -u SWARM_SLEEP_SCALE bash "${REPO}/scripts/test.sh" "${ROOT}/scale_test.sh" > /dev/null 2>&1
+check "SWARM_SLEEP_SCALE defaults to 0.01" "$(cat "${ROOT}/scale.seen")" 0.01
+SWARM_SLEEP_SCALE=0.5 bash "${REPO}/scripts/test.sh" "${ROOT}/scale_test.sh" > /dev/null 2>&1
+check "a SWARM_SLEEP_SCALE that is set is kept" "$(cat "${ROOT}/scale.seen")" 0.5
 
 for bad in 0 1.5 abc 10m; do
   check "TEST_FILE_TIMEOUT=${bad} is refused" "$(TEST_FILE_TIMEOUT="${bad}" bash "${REPO}/scripts/test.sh" "${ROOT}/quick_test.sh" 2>&1; echo "rc=$?")" \
