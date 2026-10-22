@@ -928,15 +928,17 @@ for a in json.load(sys.stdin)["result"]["agents"]:
 # watch_rows <owner/repo> — watch's poll: each open story/* PR as `<number> <head sha> <head ref> <mergeable>
 # <seconds since its last update>`, through REST, whose budget is apart from GraphQL's (gh pr list
 # spent that dry under a swarm). The list has no mergeable state, so each PR's own read gives it:
-# null (GitHub still computing it) or a failed read is UNKNOWN.
+# null (GitHub still computing it) or a failed read is UNKNOWN. One write, as gh makes: watch stops
+# reading at the PR it reports, and a later write would fail on the closed pipe.
 watch_rows() {
-  local n sha br t m
+  local n sha br t m rows=""
   while read -r n sha br t; do
     [[ -n "${n}" ]] || continue
     m="$(gh api "repos/$1/pulls/${n}" -q 'if .mergeable == null then "UNKNOWN" elif .mergeable then "MERGEABLE" else "CONFLICTING" end' 2>/dev/null)" || m=UNKNOWN
-    echo "${n} ${sha} ${br} ${m:-UNKNOWN} $(($(date +%s) - t))"
+    rows+="${n} ${sha} ${br} ${m:-UNKNOWN} $(($(date +%s) - t))"$'\n'
   done < <(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
     -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \(.updated_at|fromdateiso8601)"')
+  printf '%s' "${rows}"
 }
 
 # RED_HEADS: `<slug> <sha> <time> <seen|red|green|cancelled|refused>`: each PR head a watch saw,
