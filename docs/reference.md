@@ -884,7 +884,7 @@ created to its last run updated. `red_runs_per_pr` is the red runs (a failure, a
 start; a cancelled or skipped run is not red) over the PRs. `flakes` counts each red run followed by a green one of the
 same workflow and event on the same head, so a workflow red on push and green on pull_request is no
 flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
-conclusion from `gh api`. A run whose times do not parse adds no minutes. When a `gh` call fails or takes over 10 seconds, it prints `ci health: gh failed` and no numbers.
+conclusion from `gh api`. A run whose times do not parse adds no minutes. A `gh` call that fails is tried three times, 1 and then 2 seconds apart, since a reset connection or a secondary rate limit soon passes. When one still fails, or takes over 10 seconds, the section prints `ci health: gh failed on <PR>, so no numbers: <the gh call>: <gh's last line of error>`. The ci time table below it leaves out the PRs gh could not read, says how many, and gives each one a `ci time: left out <PR>: <error>` line.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local

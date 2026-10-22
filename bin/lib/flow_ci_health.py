@@ -3,20 +3,40 @@
 # days up to --until or today, as each PR costs 2 or more gh calls). gh gives each PR's commits and
 # its branch's workflow runs; a run counts when its head is one of the PR's commits. Then per repo, the
 # CI time of these PRs and of the window's length before it (ci_time); dash_slow.py reads it too.
-import datetime, functools, json, os, re, statistics, subprocess
+import datetime, functools, json, os, re, statistics, subprocess, time
 from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # a job name is a PR's (a fork's) to set: no escapes or line breaks
+ERROR = [""]   # the last gh call that failed, and why
+WHY = {}   # a PR gh could not read: the error that dropped it
 
 def gh(*args):
-    # Its JSON, or None when gh fails, takes over GH_SECONDS or answers something else.
-    try:
-        got = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=GH_SECONDS)
-        return json.loads(got.stdout) if got.returncode == 0 else None
-    except (subprocess.TimeoutExpired, ValueError):
-        return None
+    # Its JSON, or None when gh fails three times (1 s, then 2 s apart, times SWARM_SLEEP_SCALE: a
+    # reset connection or a secondary rate limit passes), takes over GH_SECONDS (not tried again, or
+    # a hung gh costs 30 s a call) or answers something else; ERROR[0] says which call and why.
+    call = "gh " + " ".join(args[:args.index("--json")] if "--json" in args else args)
+    ERROR[0] = f"{call}: an answer it could not read"
+    for wait in (1, 2, 0):
+        try:
+            got = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=GH_SECONDS)
+            if got.returncode == 0:
+                return json.loads(got.stdout)
+            said = [l for l in got.stderr.splitlines() if l.strip()]
+            ERROR[0] = f"{call}: {said[-1].strip()}" if said else f"{call}: exit {got.returncode}"
+        except subprocess.TimeoutExpired:
+            ERROR[0] = f"{call}: over {GH_SECONDS} s"
+            return None
+        except ValueError:
+            return None
+        time.sleep(wait * float(os.environ.get("SWARM_SLEEP_SCALE") or 1))
+    return None
+
+def drop(url, why=None):
+    # None, noting why gh could not read url's PR: why, or the gh call that just failed.
+    WHY[url] = CONTROL.sub("", why or ERROR[0])
+    return None
 
 def secs(t):
     # A time in epoch seconds; None when it does not parse.
@@ -30,15 +50,15 @@ def head_runs(url):
     # The PR's newest commit (the last of its commits) and its completed runs on its own commits, or
     # None when gh cannot read them or answers without a branch or commits; read once per PR.
     repo = GITHUB.match(url).group(1)
-    pr = gh("pr", "view", url, "--json", "headRefName,commits")
-    pr = pr if isinstance(pr, dict) else {}
+    got = gh("pr", "view", url, "--json", "headRefName,commits")
+    pr = got if isinstance(got, dict) else {}
     shas = [c.get("oid") for c in pr.get("commits") or [] if isinstance(c, dict)]
     if not shas or not pr.get("headRefName"):
-        return None
+        return drop(url, None if got is None else f"gh pr view {url}: no branch or commits")
     runs = gh("run", "list", "-R", repo, "--branch", pr["headRefName"], "--limit", "200", "--json",
               "databaseId,headSha,workflowName,event,status,conclusion,attempt,createdAt,startedAt,updatedAt")
     if not isinstance(runs, list):
-        return None
+        return drop(url)
     return shas[-1], [r for r in runs if isinstance(r, dict) and r.get("headSha") in shas and r.get("status") == "completed"]
 
 def pr_runs(url):
@@ -49,9 +69,11 @@ def pr_runs(url):
         return None
     runs = got[1]
     for r in runs:
-        earlier = [gh("api", f"repos/{repo}/actions/runs/{r['databaseId']}/attempts/{n}") for n in range(1, r["attempt"])]
-        if None in earlier:
-            return None
+        earlier = []
+        for n in range(1, r["attempt"]):
+            earlier.append(gh("api", f"repos/{repo}/actions/runs/{r['databaseId']}/attempts/{n}"))
+            if earlier[-1] is None:
+                return drop(url)
         r["conclusions"] = [a.get("conclusion") if isinstance(a, dict) else None for a in earlier] + [r["conclusion"]]
     return runs
 
@@ -100,7 +122,7 @@ def ci_time(url):
     start, end, run = max(timed, key=lambda t: t[1] - t[0])
     got = gh("api", "--paginate", "--slurp", f"repos/{GITHUB.match(url).group(1)}/actions/runs/{run['databaseId']}/attempts/{run['attempt']}/jobs?per_page=100")
     if not isinstance(got, list):
-        return None
+        return drop(url)
     jobs = [(secs(j.get("completed_at")) - secs(j.get("started_at")), CONTROL.sub("", j["name"]))
             for page in got if isinstance(page, dict) for j in page.get("jobs") or []
             if isinstance(j, dict) and isinstance(j.get("name"), str) and j.get("run_attempt") == run["attempt"]
@@ -124,12 +146,12 @@ def summary(times):
 def trend(now, before):
     # One TSV row per repo (lowercased, as pr_key has it) of the PRs in now or before: its PRs, median CI minutes, slowest job and its
     # median minutes in now, the same in before, and the change in CI minutes; and how many PRs of
-    # each window gh could not read, which are left out.
-    times, unread = {}, [0, 0]
+    # each window gh could not read, which are left out, in a list each.
+    times, unread = {}, ([], [])
     for i, urls in enumerate((now, before)):
         for url in urls:
             t = ci_time(url)
-            unread[i] += t is None
+            unread[i].extend([url] if t is None else [])
             if t:
                 times.setdefault(GITHUB.match(url).group(1).lower(), ([], []))[i].append(t)
     rows = []
@@ -159,7 +181,8 @@ if __name__ == "__main__":
         print("prs\theads\tci_min_median\tred_runs_per_pr\tflakes")
         print("\t".join(got))
     elif not os.environ.get("SWARM_CI_TIME_ONLY"):
-        print("ci health: gh failed")
+        url, why = next(iter(WHY.items()))   # health stops at the first PR it cannot read
+        print(f"ci health: gh failed on {url}, so no numbers: {why}")
     # The window before: as many days, up to the day before since; a PR built in both windows counts
     # in this one alone, by its latest build. A PR gh cannot read is left out here, so the PRs that
     # answered still count (dash's ci line reads this table).
@@ -171,5 +194,6 @@ if __name__ == "__main__":
     print("repo\tprs\tci_min_median\tslowest_job\tslowest_job_min_median\tprev_prs\tprev_ci_min_median"
           "\tprev_slowest_job\tprev_slowest_job_min_median\tci_min_change")
     print("\n".join("\t".join(r) for r in rows))
-    if sum(unread):
-        print(f"ci time: gh could not read {sum(unread)} of {len(now) + len(before)} PRs ({unread[0]} of {len(now)} in this window), left out")
+    if unread[0] or unread[1]:
+        print(f"ci time: gh could not read {len(unread[0]) + len(unread[1])} of {len(now) + len(before)} PRs ({len(unread[0])} of {len(now)} in this window), left out")
+        print("\n".join(f"ci time: left out {url}: {WHY[url]}" for url in unread[0] + unread[1]))
