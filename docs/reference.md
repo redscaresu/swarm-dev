@@ -1259,16 +1259,20 @@ missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
-has not started building, and has a file the board PR itself changes, or an epic file that the
-PR changes for an epic that wasn't active before the merge. A story reconcile sent back
-to ready doesn't count, nor does a `fix-main` story or one another board PR merged beside it readied. For each epic with newly ready
+has not started building, and has a file the board PR itself changes that wasn't buildable on the
+board the PR merged onto (the first parent of the PR's own merge commit, even when a merge queue
+pushed it with others; for a rebase merge, the commit below the PR's first) and is at that merge
+commit, or an epic file that the PR changes for an epic that wasn't `active` there and is at the
+merge commit. A story reconcile sent back to ready doesn't count, nor
+does a `fix-main` story, or one readied by an earlier board PR that merged but was not pulled here yet. For each epic with newly ready
 stories, it sends the epic's running conductor one note naming them (`swarm.sh tell conduct-<epic>
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
-builder limits. When no conductor runs, it prints a `ready now:` line, then starts one (§ The
-backlog conductor says when). It prints a warning, and the merge's exit status stays the same, when
-reconcile fails (logged as a `reconcile` line, as merge logs one), when reconcile did not pull the
-merge commit, when herdr cannot list its agents, or when a note or a start fails. After the first
-two it starts no conductor either, since the board was not pulled. It
+builder limits. A conductor that has written its report has finished and counts as not running.
+When no conductor runs, it prints a `ready now:` line, then starts one (§ The backlog conductor says
+when). It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
+as a `reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
+cannot list its agents, or when a note or a start fails. After the first two it starts no conductor
+either, since the board was not pulled. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
 one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
 `touches: [.]`: the fix may change whatever turns the base green) into
