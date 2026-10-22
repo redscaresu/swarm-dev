@@ -60,6 +60,8 @@ case "$1 $2" in
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "$(cat "${FX}/oid" 2>/dev/null || echo "${M}")" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
+    # ${FX}/on-merge runs once the PR has merged: another command's work during merge's CI wait.
+    [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
@@ -1208,6 +1210,11 @@ fresh; rm "${S}"; merge --board "${URL}"
 is "a board merge that readies nothing: exits 0" 0 "${rc}"
 is "a board merge that readies nothing: no note" 1 "$(grep -c '^From the lead' "${INBOX}")"
 check "a board merge that readies nothing: says nothing of ready stories" bash -c "! grep -q 'ready now' '${ROOT}/out'"
+# A reconcile pulls the board during the CI wait: what was ready is read before the merge.
+put docs/stories/r4.md "status: ready" "kind: code" "epic: e"; land
+fresh; rm "${S}"; echo "git -C '${P}' fetch -q && git -C '${P}' merge -q --ff-only '@{upstream}'" > "${FX}/on-merge"; merge --board "${URL}"
+check "a board merge whose board a reconcile pulled during the CI wait: still notes r4" \
+  grep -qF "these stories of epic e are ready now: r4." "${INBOX}"
 put docs/stories/r3.md "status: ready" "kind: code" "epic: e"; land
 rm -rf "${P}/.swarm/inbox"; : > "${P}/.swarm/inbox"   # the note cannot be written
 fresh; rm "${S}"; merge --board "${URL}"

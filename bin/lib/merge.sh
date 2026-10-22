@@ -126,7 +126,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue ready=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -215,6 +215,8 @@ merge_pr() {
   # and a base that requires one takes no direct merge but --admin's, which merge_admin = off rules out.
   [[ "${queue}" != yes || "${only}" != --release ]] \
     || merge_fail "--release: ${base} requires a merge queue, which a release must not join (a PR queued behind it could share its tag) and which only --admin merges past, with merge_admin = off; merge ${url} yourself once the queue is empty"
+  # What is ready before the merge, for ready_tell: a reconcile during the CI wait may pull the board.
+  [[ "${only}" != --board ]] || ready="$(board_ready)"
   if [[ "${queue}" == yes ]]; then
     # The conductor's brief keys on this line: every PR goes through the queue at once.
     echo "merge queue: ${base} has one, so #${n} goes through it"
@@ -261,7 +263,7 @@ merge_pr() {
   # A board PR can make stories ready: their conductor hears now, not on its next pass. In the
   # background, so set -e holds inside it; it never fails the merge.
   if [[ "${only}" == --board && -n "${oid}" ]]; then
-    ( set -e; ready_tell "${url}" ) &
+    ( set -e; ready_tell "${url}" "${ready}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
   if [[ -z "${only}" ]]; then
@@ -287,21 +289,20 @@ board_ready() {
   done < <(board stories)
 }
 
-# ready_tell <url> — once merge --board has landed <url>: pull the main checkout (pull_board_repo,
-# under reconcile's lock, as reconcile pulls it), then for each epic with stories buildable now that
-# were not before, send its running conductor (the backlog's, for stories with no epic) one note
+# ready_tell <url> <before> — once merge --board has landed <url>: pull the main checkout
+# (pull_board_repo, under reconcile's lock, as reconcile pulls it), then for each epic with stories
+# buildable now that <before> (board_ready's lines, read before the merge) does not list, send its running conductor (the backlog's, for stories with no epic) one note
 # naming them, to start them now. With no conductor running it says next will. A failed pull or
 # tell is a warning: the merge has landed either way.
 ready_tell() {
-  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" before new e name of slugs note
+  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" new e name of slugs note
   has_upstream || return 0
-  before="$(board_ready)"
   # shellcheck disable=SC2064 # the path is fixed now
   ( SWARM_LOCK_WAIT="${SWARM_RECONCILE_WAIT:-${RECONCILE_LOCK_WAIT}}" state_lock "${lock}"
     trap "rmdir '${lock}' 2>/dev/null || true" EXIT
     pull_board_repo || { echo "warning: cannot pull ${PROJECT_DIR}: ${PULL_WHY}"; exit 1; } ) &
   wait $! || { echo "warning: the board was not pulled, so no conductor was told what $1 made ready"; return 0; }
-  new="$(comm -13 <(sort <<< "${before}") <(board_ready | sort))"
+  new="$(comm -13 <(sort <<< "$2") <(board_ready | sort))"
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
