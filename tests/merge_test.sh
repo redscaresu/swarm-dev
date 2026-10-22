@@ -1246,11 +1246,16 @@ bfresh; echo CLOSED > "${FX}/state.11"; merge --board "${URL}"
 check "a board merge whose reconcile reopens z: z is back to ready" said "back to ready: z"
 check "a board merge whose reconcile reopens z: the note names r8 alone" grep -qF "these stories of epic e are ready now: r8." "${INBOX}"
 rm -f "${P}/docs/stories/z.md" "${P}/.swarm/board-state/stories/z"
-# A red main: merge writes a fix-main story before the note, and no note or ready now: line names it.
+# A red main: no conductor is told to start builds on it, not even of r11, which this PR readies.
+put docs/stories/r11.md "status: ready" "kind: code" "epic: e"; land
 bfresh; checks "${FX}/${OID}.checks" "$(run test completed failure)"; merge --board "${URL}"
-check "a board merge onto a red main: its fix-main story is written, and no ready now: line names it" \
-  bash -c "[ -e '${P}/docs/stories/fix-main-${OID:0:7}.md' ] && ! grep -q 'ready now: fix-main' '${ROOT}/out'"
+check "a board merge onto a red main: tells no conductor of r11" bash -c "! grep -q 'ready now' '${ROOT}/out' && ! grep -q r11 '${INBOX}'"
 rm -f "${P}/docs/stories/fix-main-${OID:0:7}.md"
+# A PR that only sets epic f active readies f1, ready already: f has no conductor, so next starts it.
+put docs/epics/f.md "status: draft"; put docs/stories/f1.md "status: ready" "kind: code" "epic: f"; land; pulled
+put docs/epics/f.md "status: active"; land
+bfresh; merge --board "${URL}"
+check "a board merge that sets epic f active: says next starts f1" said "ready now: f1 (of epic f); no conductor runs for it, so swarm.sh next starts it"
 # o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
 put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
 put docs/stories/o1.md "status: ready" "kind: code"; land
@@ -1286,7 +1291,7 @@ check "a board merge whose tell fails: warns" said "warning: could not note cond
 # Leave P, origin and the clone as the block found them.
 rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,b1,o1,q} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,b1,f1,o1,q} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

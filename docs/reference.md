@@ -1243,9 +1243,9 @@ commit needs no check run of its own when no workflow is expected on it, but the
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
-With `--board`, when the main checkout has an upstream, it runs `swarm.sh reconcile` too, which
-pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
-has not started building, and has a file the board PR itself changes. A story reconcile sent back
+With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
+reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
+has not started building, and has a file, or an epic file, that the board PR itself changes. A story reconcile sent back
 to ready doesn't count, nor does a `fix-main` story or one another board PR merged beside it readied. For each epic with newly ready
 stories, it sends the epic's running conductor one note naming them (`swarm.sh tell conduct-<epic>
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its

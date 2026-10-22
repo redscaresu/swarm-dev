@@ -121,7 +121,8 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge_admin = on, --admin; never --auto, unless (merge_admin off) GitHub says the base has a merge
 # queue (a ruleset's or classic protection's): then queue_merge enqueues the head instead, except with
 # --release, which refuses there (only --admin merges past a queue). Then wait for CI on the merge commit and, without --board or --release, run
-# reconcile, even after a red main, since the PR has merged. Each step is one events.tsv line, under
+# reconcile, even after a red main, since the PR has merged; with --board, on a green main with an
+# upstream, ready_tell reconciles and notes conductors of the stories the PR made ready. Each step is one events.tsv line, under
 # the slug (or the URL with --board or --release): merge <why> for a refusal, merge unconfirmed (...) when gh pr
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
@@ -263,7 +264,7 @@ merge_pr() {
   fi
   # A board PR can make stories ready: their conductor hears now, not on its next pass. In the
   # background, so set -e holds inside it; it never fails the merge.
-  if [[ "${only}" == --board && -n "${oid}" ]]; then
+  if [[ "${only}" == --board && -n "${oid}" && ${rc} -eq 0 ]]; then
     ( set -e; ready_tell "${url}" "${oid}" "${files}" "${ready}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
@@ -293,32 +294,38 @@ board_ready() {
 # ready_tell <url> <oid> <files> <before> — once merge --board has landed <url> at the merge commit
 # <oid>: run reconcile, which clears any merged build before it pulls the main checkout. New are the
 # stories buildable now (board_ready) that <before> (its lines before the merge) does not list and
-# whose file is among <files>, the paths <url> changes: not one reconcile sent back to ready, a
+# whose file, or whose epic's, is among <files>, the paths <url> changes: not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR merged beside it readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
 # say next will. With no upstream nothing is pulled, so nothing is new. A failed reconcile (logged
 # as merge logs one), a checkout still without <oid>, a herdr that cannot list its agents, or a
 # failed tell is a warning: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why e name of slugs note
+  local url="$1" oid="$2" new rc why dief e name of slugs note
   has_upstream || return 0
+  # A die file of its own: reconcile's die line must not become the merge's logged outcome.
+  dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
   # shellcheck disable=SC2034 # read in another file
-  ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
+  ( DIE_FILE="${dief}"; DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
   wait $! || {
-    rc=$?; why="$(head -1 "${DIE_FILE:-/dev/null}" 2>/dev/null || true)"
+    rc=$?; why="$(head -1 "${dief}" 2>/dev/null || true)"; [[ "${dief}" == /dev/null ]] || rm -f "${dief}"
     record_event reconcile - "${why:-failed (exit ${rc})}"
     echo "warning: reconcile failed after the merge (${why:-exit ${rc}}), so no conductor was told what ${url} made ready; run swarm.sh reconcile"
     return 0
   }
+  [[ "${dief}" == /dev/null ]] || rm -f "${dief}"
   # reconcile exits 0 without pulling when it cannot fetch, or holds the pull for a PR it cannot read.
   git -C "${PROJECT_DIR}" merge-base --is-ancestor "${oid}" HEAD 2>/dev/null || {
     echo "warning: reconcile did not pull ${oid:0:7} into ${PROJECT_DIR}, so no conductor was told what ${url} made ready; run swarm.sh reconcile"
     return 0
   }
-  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | CHANGED="$3" DIR="${BOARD#"${PROJECT_DIR}"/}/stories/" awk '
-    BEGIN { n = split(ENVIRON["CHANGED"], c, "\n"); d = ENVIRON["DIR"]
-      for (i = 1; i <= n; i++) if (index(c[i], d) == 1) { f = substr(c[i], length(d) + 1); sub(/\.md$/, "", f); ch[f] = 1 } }
-    $1 in ch')"
+  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | CHANGED="$3" DIR="${BOARD#"${PROJECT_DIR}"/}/stories/" EPICS="${BOARD#"${PROJECT_DIR}"/}/epics/" awk '
+    BEGIN { n = split(ENVIRON["CHANGED"], c, "\n"); d = ENVIRON["DIR"]; ed = ENVIRON["EPICS"]
+      for (i = 1; i <= n; i++) {
+        f = c[i]; sub(/\.md$/, "", f)
+        if (index(f, d) == 1) ch[substr(f, length(d) + 1)] = 1
+        if (index(f, ed) == 1) ep[substr(f, length(ed) + 1)] = 1 } }
+    $1 in ch || $2 in ep')"
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
