@@ -10,7 +10,8 @@
 # state in ${FX}/state, else OPEN;
 # with ${FX}/head.hang or ${FX}/checks.hang, that read hangs 8s before it answers, ignoring SIGALRM
 # as gh (a Go program) does with ${FX}/ignore-alrm;
-# commit statuses come from ${FX}/status, else none.
+# commit statuses come from ${FX}/status, else none; api rate_limit answers ${FX}/reset ("<epoch> <time>"
+# of a spent budget's reset), else nothing, 8s late with ${FX}/reset.hang.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -39,6 +40,7 @@ case "$*" in
   *check-runs*)
     fail checks; [ ! -e "${FX}/checks.hang" ] || sleep 8
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
+  "api rate_limit"*) [ ! -e "${FX}/reset.hang" ] || sleep 8; cat "${FX}/reset" 2>/dev/null || true ;;
   */status*) cat "${FX}/status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
   *) echo "stub: unexpected gh $*" >&2; exit 1 ;;
 esac
@@ -98,6 +100,30 @@ fresh; for n in 1 2 3 4; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait
 is "rate limit four times: exits 2" 2 "${rc}"
 is "rate limit four times: four reads" 4 "$(reads)"
 check "rate limit four times: says why" grep -q "^swarm: wait-pr: .*rate limit" "${ROOT}/out"
+
+# --- With a budget spent, a rate limit waits once until it resets, printing when, then reads again;
+# a second waits no more, as a transient error.
+LIMIT="GraphQL: API rate limit already exceeded for user ID 1."
+fresh; echo "${LIMIT}" > "${FX}/head.1.err"; echo "$(($(date +%s) + 2)) 2030-01-01T00:00:02Z" > "${FX}/reset"
+wait_pr SWARM_WAIT_PR_RETRY=30
+is "rate limit with a spent budget: exits 0" 0 "${rc}"
+check "rate limit with a spent budget: prints the reset time" said "rate limited: GitHub's API budget resets at 2030-01-01T00:00:02Z; waiting until then"
+check "rate limit with a spent budget: waits until the reset" test "${took}" -ge 2 -a "${took}" -lt 10
+is "rate limit with a spent budget: reads the head again" 2 "$(grep -c "^pr view" "${ROOT}/gh.log")"
+fresh; for n in 1 2; do echo "${LIMIT}" > "${FX}/checks.${n}.err"; done; echo "$(date +%s) 2030-01-01T00:00:00Z" > "${FX}/reset"
+wait_pr
+is "two rate limits with a spent budget: exits 0" 0 "${rc}"
+is "two rate limits with a spent budget: one wait" 1 "$(grep -c "^rate limited" "${ROOT}/out")"
+check "two rate limits with a spent budget: the second is retried" said "retrying after"
+is "two rate limits with a spent budget: three reads" 3 "$(reads)"
+# The wait moves the deadline: a reset past --timeout is still waited for.
+fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + 3)) 2030-01-01T00:00:03Z" > "${FX}/reset"
+wait_pr --timeout 2
+is "rate limit resetting past --timeout: exits 0" 0 "${rc}"
+# The read of the reset time is bounded by the deadline too: one that hangs ends the wait there.
+fresh; echo "${LIMIT}" > "${FX}/head.1.err"; : > "${FX}/reset.hang"; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout 2
+is "a reset read hanging past --timeout: exits 2" 2 "${rc}"
+check "a reset read hanging past --timeout: returns at the deadline" test "${took}" -lt 5
 
 # --- The head read is retried the same way: a rate limit twice then a head goes on; any other error ends it.
 fresh; echo "${RATE}" > "${FX}/head.1.err"; cp "${FX}/head.1.err" "${FX}/head.2.err"; wait_pr

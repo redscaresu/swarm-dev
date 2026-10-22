@@ -138,9 +138,14 @@ cost_report() {
 # with no log, the slug's PR when it has exactly one.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
 # read from close's copy of the session log once Claude Code deleted it.
+# A finished story's PR rows, read once: its file off the board and every PR merged or closed, they
+# never change. Each line <slug> TAB <prs> (outcomes' join); per story gh was flow's, dataset's and dash's
+# top GraphQL caller, at one gh pr list per story ever built on every run.
+OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
+
 # shellcheck disable=SC2120 # another file's callers pass it
 outcomes_report() {
-  local since="" rows meta="" slug text kind from src prs story_epic got asked
+  local since="" rows meta="" slug text kind from src prs story_epic got asked finished
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
@@ -171,8 +176,11 @@ outcomes_report() {
     [[ -z "${text}" ]] || kind="${kind:-code}"
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
+    finished=""; [[ -f "${BOARD}/stories/${slug}.md" || -z "${text}" ]] || finished=1
     # shellcheck disable=SC2016 # $b is jq's
-    if src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
+    if [[ -n "${finished}" ]] && prs="$(awk -F'\t' -v s="${slug}" '$1 == s { print $2; f = 1; exit } END { exit !f }' "${OUTCOMES_PRS_CACHE}" 2>/dev/null)"; then
+      asked=1
+    elif src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
         --json url,state,mergedAt,createdAt,baseRefName,commits,statusCheckRollup,closedAt --jq 'def base_merge($b): .messageHeadline | startswith("Merge ") and ((ltrimstr("Merge ")
           | ltrimstr("remote-tracking ") | ltrimstr("branch ") | split(" ")[0] | ltrimstr("\u0027") | rtrimstr("\u0027")
@@ -181,6 +189,12 @@ outcomes_report() {
           ([.statusCheckRollup[]? | select(.startedAt and .completedAt) | .startedAt + "/" + .completedAt] | join(";")),
           ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";")), .closedAt // ""] | @tsv') 2>/dev/null)"; then
       prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
+      # One short line, appended: two runs at once lose none, and the first line of a slug is the one read.
+      if [[ -n "${finished}" && -n "${prs}" ]] && awk -v RS=, '$2 == "OPEN" { o = 1 } END { exit o }' <<< "${prs}"; then
+        mkdir -p "${OUTCOMES_PRS_CACHE%/*}"; printf '%s\t%s\n' "${slug}" "${prs}" >> "${OUTCOMES_PRS_CACHE}"
+      fi
+    else
+      prs=""
     fi
     meta+="${slug}"$'\t'"${kind}"$'\t'"$(sed -n 's/^risk: *//p' <<< "${text}" | head -1)"$'\t'"${prs}"
     meta+=$'\t'"${story_epic}"$'\t'"${asked}"$'\n'

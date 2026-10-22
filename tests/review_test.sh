@@ -53,8 +53,16 @@ case "$1 $2" in
              # into the closed pipe (SIGPIPE ignored, as on CI) would print an error into its output.
              out="$(jq -r "$q" "$F/prlist.json")"; printf '%s\n' "${out}"; exit 0 ;;
 esac
+# watch's REST reads (watch_rows), from prlist.json too: the list, and each PR's mergeable state.
+case "$2 $3" in
+  "--paginate repos/o/svc/pulls?"*) while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+             out="$(jq '[.[] | {number, head: {ref: .headRefName, sha: .headRefOid}, updated_at: .updatedAt}]' "$F/prlist.json" | jq -r "$q")"
+             printf '%s\n' "${out}"; exit 0 ;;
+esac
 case "$2" in
   repos/o/svc/pulls/7) echo '{"head":{"sha":"abc1234def"}}' ;;
+  repos/o/svc/pulls/*) n="${2##*/}"; while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+             jq ".[] | select(.number == ${n}) | {mergeable: {MERGEABLE: true, CONFLICTING: false}[.mergeable]}" "$F/prlist.json" | jq -r "$q" ;;
   repos/o/svc/commits/abc1234def/check-runs*) cat "$F/runs.json" ;;
   repos/o/svc/check-runs/1/annotations*) cat "$F/annotations.json" ;;
   repos/o/svc/code-scanning/alerts*) cat "$F/alerts.json" ;;

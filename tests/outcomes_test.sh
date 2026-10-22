@@ -94,6 +94,12 @@ check "one row per builder: full slug, kind and risk (from git once deleted), co
 check "--since leaves earlier rows out, and attempts still count them" \
   "$(outcomes "${dir}/bin" --since 2026-10-03)" "$(printf '%s\n' "${HEAD}" "${R3}")"
 nopr() { awk -F'\t' -v OFS='\t' '{ $14 = $33 = 0; $15 = $16 = $31 = $32 = $34 = $35 = "" } 1' <<< "$1"; }
+# A finished story's PR rows (its file off the board, every PR merged or closed) come from gh once, then
+# from .swarm/outcomes-prs.tsv, so a failing gh still gives them; a story on the board asks gh each run.
+check "a finished story's PRs come from the cache when gh fails, a story on the board's do not" \
+  "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nopr "${R2}")" "${R3}")"
+check "the cache holds the finished story alone, once" "$(cut -f1 "${P}/.swarm/outcomes-prs.tsv")" "${LONG}"
+rm "${P}/.swarm/outcomes-prs.tsv"
 check "a failing gh leaves pr, pr_state, merged_at, story_merged and the findings empty, keeps epic, and still prints every row" \
   "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "$(nopr "${R1}")" "$(nopr "${R2}")" "$(nopr "${R3}")")"
 if outcomes "${dir}/bin" --since yesterday >/dev/null 2>&1; then

@@ -34,7 +34,11 @@ case "$1 $2" in
   "repo view") [ -n "$3" ] || exit 1; echo "${3#https://github.com/}"; exit 0 ;;
   "pr list")   f="$F/prlist.json"; [ "$r" = o/svc ] || f="$F/prlist-${r#o/}.json"; jq -r "$q" "$f"; exit 0 ;;
 esac
+# watch's REST reads, from the same fixture: the list, and each PR's mergeable state (null for UNKNOWN).
+f="$F/prlist.json"; r="${path#repos/}"; r="${r%%/pulls*}"; [ "$r" = o/svc ] || f="$F/prlist-${r#o/}.json"
 case "${path}" in
+  repos/o/*/pulls) jq '[.[] | {number, head: {ref: .headRefName, sha: .headRefOid}, updated_at: .updatedAt}]' "$f" | jq -r "$q" ;;
+  repos/o/*/pulls/*) jq ".[] | select(.number == ${path##*/}) | {mergeable: {MERGEABLE: true, CONFLICTING: false}[.mergeable]}" "$f" | jq -r "$q" ;;
   repos/o/*/commits/*/check-runs) f="$F/runs-$(basename "${path%/check-runs}").json"
     if [ -n "$q" ]; then jq -r "$q" "$f" | head -1; else cat "$f"; fi ;;
   repos/o/*/commits/*/status) f="$F/status-$(basename "${path%/status}").json"
@@ -101,13 +105,17 @@ nextq() {
   grep '^queued: ' <<< "${out}" || echo "(none)"
 }
 calls() { grep -c "$1" "${ROOT}/gh.log" || true; }
-# extra_lists — gh pr list calls other than watch's own poll (which alone asks for updatedAt).
-extra_lists() { grep 'pr list' "${ROOT}/gh.log" | grep -vc updatedAt || true; }
+# extra_lists — gh pr list calls: watch polls through REST (watch_rows), so each is another read.
+extra_lists() { grep -c 'pr list' "${ROOT}/gh.log" || true; }
 Q31="queued: o/svc #3 story/s1 green 31m with no review on h1"
 QN="${Q31} (conduct-e1)"   # next's line names the conductor to send it to
 
 green 31
 check "watch reports a PR green and mergeable for 31 minutes with no review agent, naming its repo, branch and head" "${Q31}" "$(watchrun)"
+# watch polls through REST, whose budget is apart from GraphQL's: no gh pr list.
+check "watch lists the open PRs through REST" 1 "$(calls 'api --paginate repos/o/svc/pulls?state=open&per_page=100')"
+check "watch reads #3's mergeable state through REST" 1 "$(calls 'api repos/o/svc/pulls/3 ')"
+check "watch makes no GraphQL gh pr list" 0 "$(extra_lists)"
 check "watch reports a queued head once, lists PRs only in its own poll, and reads no CI for a head it has reported" "(still watching)|0|0" \
   "$(watchrun)|$(extra_lists)|$(calls 'commits/h1/')"
 check "next leaves out a head watch has reported" "(none)" "$(nextq)"

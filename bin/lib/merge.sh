@@ -565,6 +565,14 @@ within() {
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@"
 }
 
+# rate_reset <seconds> — when gh's REST or GraphQL budget is spent, print the epoch and UTC time the later
+# of them resets; else nothing, as when the read takes over <seconds> (within). gh api rate_limit counts
+# against neither budget.
+rate_reset() {
+  within "$1" gh api rate_limit --jq '[(.resources.core, .resources.graphql) | select(.remaining == 0) | .reset] | max // empty | "\(.) \(todate)"' \
+    </dev/null 2>/dev/null || true
+}
+
 # wait_pr_fail <why> — wait-pr's end for anything but green or red: exit 2, so a caller tells it from red.
 wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 
@@ -576,14 +584,15 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
-# A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
+# A rate limit with a budget spent (rate_reset) is waited out once, to its reset, printed, and the deadline
+# moves by that wait; a later one is a transient error. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
 # That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
 # and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks.
 wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
-  local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown=""
+  local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
@@ -635,11 +644,16 @@ wait_pr() {
          last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
       142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
-         if ! grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "${err}" || ((++missed > WAIT_PR_TRIES)); then
+         if [[ -z "${reset}" ]] && grep -qi 'rate limit' <<< "${err}" && read -r reset at < <(rate_reset "$((limit - (SECONDS - start)))") && [[ "${reset}" =~ ^[0-9]+$ ]]; then
+           pause=$((reset - $(date +%s) + 1)); (( pause > 0 )) || pause=1
+           limit=$((limit + pause)); what="rate limited until ${at}"
+           echo "rate limited: GitHub's API budget resets at ${at}; waiting until then"
+         elif grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "${err}" && ((++missed <= WAIT_PR_TRIES)); then
+           echo "retrying after ${why}"
+           what="last error: ${why}"; pause=${retry}
+         else
            wait_pr_fail "${why:-ci_gate failed (exit ${rc})}"
-         fi
-         echo "retrying after ${why}"
-         what="last error: ${why}"; pause=${retry} ;;
+         fi ;;
     esac
     # A pause that would reach the deadline is cut to it, and the wait ends there with no more reads:
     # a read after it could be green and exit 0 past the deadline.
@@ -874,8 +888,7 @@ watch_prs() {
         if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
-      done < <(gh pr list -R "${repo}" --state open --json number,headRefName,headRefOid,mergeable,updatedAt \
-        -q '.[]|select(.headRefName|startswith("story/"))|"\(.number) \(.headRefOid) \(.headRefName) \(.mergeable) \((now - (.updatedAt|fromdateiso8601))|floor)"')
+      done < <(watch_rows "${repo}")
     done
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local agents sessions now e news="" tmp
@@ -910,6 +923,20 @@ for a in json.load(sys.stdin)["result"]["agents"]:
     fi
     nap 60
   done
+}
+
+# watch_rows <owner/repo> — watch's poll: each open story/* PR as `<number> <head sha> <head ref> <mergeable>
+# <seconds since its last update>`, through REST, whose budget is apart from GraphQL's (gh pr list
+# spent that dry under a swarm). The list has no mergeable state, so each PR's own read gives it:
+# null (GitHub still computing it) or a failed read is UNKNOWN.
+watch_rows() {
+  local n sha br t m
+  while read -r n sha br t; do
+    [[ -n "${n}" ]] || continue
+    m="$(gh api "repos/$1/pulls/${n}" -q 'if .mergeable == null then "UNKNOWN" elif .mergeable then "MERGEABLE" else "CONFLICTING" end' 2>/dev/null)" || m=UNKNOWN
+    echo "${n} ${sha} ${br} ${m:-UNKNOWN} $(($(date +%s) - t))"
+  done < <(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
+    -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \(.updated_at|fromdateiso8601)"')
 }
 
 # RED_HEADS: `<slug> <sha> <time> <seen|red|green|cancelled|refused>`: each PR head a watch saw,
