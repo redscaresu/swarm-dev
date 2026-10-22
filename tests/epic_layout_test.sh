@@ -66,7 +66,7 @@ goal_on() {
     "$(has 'an s in front unless it starts with a letter, then cut' "$1")" \
     "$(has '- none of the above fits (no reply, no refusal, no stall, and no goal entry, or a met entry whose' "$1")" \
     "$(has '`held_for: paused`): list it for the lead, as for cleared-on-error.' "$1")" \
-    "$(has 'returns stalled, or when review has' "$1")" "$(has "it is the goal rule's, which picks" "$1")" \
+    "$(has 'returns stalled with no hung command to' "$1")" "$(has "it is the goal rule's, which picks" "$1")" \
     "$(grep -qF 'with `failed`' <<< "$1" && echo failed || echo "no failed")"
   # shellcheck disable=SC2016 # the backticks are the brief's
   for c in '- met: ' '- impossible: ' '- stalled: ' '- bound: ' '- paused: ' '- cleared-on-error: ' \
