@@ -24,7 +24,7 @@
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog]                       after claude plugin update: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's); one still busy after SWARM_UPGRADE_WAIT_MS (30 minutes) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
-#   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again
+#   swarm.sh unblock [--startable <epic>|--backlog]         mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again; --startable: then print startable: <slug> for each ready story of that epic (--backlog: with no epic) whose build has not started, readied now or before, as reconcile last left the board (it never pulls), with (stacked on <parents>) or (its PR <url> was closed unmerged) when that applies; nothing once the epic's file is gone
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
@@ -440,7 +440,10 @@ dispatch() {
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
-    unblock) unblock ;;
+    unblock) if [[ "${1:-}" == --startable ]]; then
+               [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
+               unblock_startable "$2"
+             else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
     next)   next_report ;;
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;

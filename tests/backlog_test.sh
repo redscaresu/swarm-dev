@@ -66,6 +66,43 @@ item "${b}" stories/s1.md "status: ready" "kind: code" "epic: e"
 item "${b}" stories/o1.md "status: ready" "kind: code"
 brief="${p}/.swarm/briefs/conduct-backlog.md"
 
+# --- unblock --startable: o1 is running (its worktree exists) and o2 is ready with no build, as a board
+# PR adds one: unblock readies neither, so it prints no ready: line.
+mkdir -p "${ROOT}/proj-wt/o1"
+item "${b}" stories/o2.md "status: ready" "kind: code"
+check "unblock --startable --backlog lists the ready story with no epic and no build, not the running one" "startable: o2" \
+  "$(run unblock --startable --backlog)"
+check "unblock --startable <epic> lists only that epic's ready stories with no build" "startable: s1" "$(run unblock --startable e)"
+check "unblock --startable with no scope is refused" "yes" "$(has "--startable takes <epic> or --backlog" "$(run unblock --startable || true)")"
+check "unblock --startable refuses a third argument and a slug that is not [a-z0-9-]" "yes|yes" \
+  "$(has "--startable takes <epic> or --backlog" "$(run unblock --startable e --backlog || true)")|$(has "--startable takes <epic> or --backlog" "$(run unblock --startable ../e || true)")"
+# An epic whose file is gone has finished: unblock still runs (bx, blocked on the finished fin, is
+# readied), then nothing is startable; a bare backlog is such an epic, never --backlog.
+item "${b}" stories/bx.md "status: blocked" "kind: code" "epic: other" "depends_on: [fin]"
+check "unblock --startable of an epic whose file is gone runs unblock, then lists nothing and exits 0; a bare backlog is that, not --backlog" "ready: bx|0|" \
+  "$(run unblock --startable gone)|$(run unblock --startable gone >/dev/null; echo $?)|$(run unblock --startable backlog)"
+# st depends on o1, still open (running): it starts stacked on it. rp's last event is reconcile's reopen
+# (its PR closed unmerged), which the lead decides on.
+item "${b}" stories/st.md "status: ready" "kind: code" "depends_on: [o1]"
+item "${b}" stories/rp.md "status: ready" "kind: code" "prs: https://github.com/o/r/pull/9"
+printf '2026-10-22T10:00:00Z\treconcile\trp\t-\tok (reopened)\n' >> "${p}/.swarm/events.tsv"
+check "unblock --startable marks a story stacked on an open parent, and one whose PR closed unmerged" \
+  "startable: o2|startable: rp (its PR https://github.com/o/r/pull/9 was closed unmerged)|startable: st (stacked on o1)" \
+  "$(run unblock --startable --backlog | paste -sd'|' -)"
+rm -r "${ROOT}/proj-wt/o1" "${b}/stories/o2.md" "${b}/stories/bx.md" "${b}/stories/st.md" "${b}/stories/rp.md"
+# A board PR merged on GitHub: --startable reads the board as reconcile last left it and never fetches,
+# so the upstream's new n1 is not listed and the checkout's upstream ref has not moved.
+g() { git -c user.name=t -c user.email=t@t "$@"; }
+git init -q --bare "${ROOT}/up.git"; g clone -q "${ROOT}/up.git" "${ROOT}/up"
+mkdir -p "${ROOT}/up/.claude/swarm" "${ROOT}/up/docs/stories"; : > "${ROOT}/up/.claude/swarm/config"
+g -C "${ROOT}/up" add -A; g -C "${ROOT}/up" commit -qm init; g -C "${ROOT}/up" push -q origin HEAD
+g clone -q "${ROOT}/up.git" "${ROOT}/ff"
+item "${ROOT}/up/docs" stories/n1.md "status: ready" "kind: code"
+g -C "${ROOT}/up" add -A; g -C "${ROOT}/up" commit -qm "board PR"; g -C "${ROOT}/up" push -q origin HEAD
+was="$(git -C "${ROOT}/ff" rev-parse '@{upstream}')"
+check "unblock --startable never fetches or pulls: the upstream's new story is not listed and the upstream ref is unchanged" "|same" \
+  "$(cd "${ROOT}/ff" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" unblock --startable --backlog 2>/dev/null)|$([[ "$(git -C "${ROOT}/ff" rev-parse '@{upstream}')" == "${was}" ]] && echo same || echo moved)"
+
 # --- A board with an epic named backlog: conduct --backlog starts nothing.
 item "${b}" epics/backlog.md "status: active"
 out="$(run conduct --backlog || echo "exit $?")"
@@ -99,6 +136,14 @@ check "with merge = human, the backlog brief hands over with swarm.sh review, ne
 check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
   "$(has "Report the
 refused story as \`not started: <slug> (waits on <other>'s merge)\`." "${bl}")"
+# startable_bl <brief> — the startable rule after a merge, after an inbox note and after each wait, and
+# no wording that starts only what unblock readied.
+startable_bl() {
+  local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  echo "$(grep -oF 'run `swarm.sh unblock --startable --backlog`, and start each story it prints as `startable:` (every ready backlog story whose build has not started, whether or not this unblock readied it) that clashes with no running one, with `swarm.sh story --strict <slug>`. It reads the board as reconcile last left it, and never pulls. Skip a story you closed in this wave (the give-up rule starts it again in a later one), one the give-up rule says not to start again, and one a `not held:` line left `ready` for the lead. Never start a line that ends `(its PR <url> was closed unmerged)`: list it in your report for the lead.' <<< "${b}" | wc -l | tr -d ' ')|$(has 'If that last pass read a note, then run `swarm.sh unblock --startable --backlog`' "${b}")|$(grep -qE 'start what it readies|it prints as `ready:`|starts? (only )?(the )?stories (its own )?unblock readie' <<< "${b}" && echo limited || echo no)"
+}
+check "with merge = human, the backlog conductor starts every ready story with no epic and no build after a merge and after a note" "3|yes|no" "$(startable_bl "${bl}")"
 check "the backlog conductor reports to conduct-backlog.report.md" "yes" "$(has "${p}/.swarm/conduct-backlog.report.md" "${bl}")"
 nx="$(run next)"
 check "with the backlog conductor alive, next waits on it" "wait ${bn}" "${nx%%$'\n'*}"
@@ -134,8 +179,9 @@ check "with merge = agent, the backlog conductor also stops when CI on the base 
   "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")|$(has 'On `fix-main`, start its builder at once' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
-  "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
+  "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story it prints as `startable:` (every ready backlog story whose build has not started' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
 
+check "with merge = agent, the backlog conductor starts every ready story with no epic and no build after a merge and after a note" "3|yes|no" "$(startable_bl "${bl}")"
 run close "${bn}" >/dev/null
 run conduct e >/dev/null
 # shellcheck disable=SC2016 # the backticks are the brief's
