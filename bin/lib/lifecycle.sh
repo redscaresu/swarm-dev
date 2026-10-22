@@ -1782,7 +1782,7 @@ upgrade_told() {
   local f then="If you were waiting on the conductor, end your turn; otherwise carry on where you stopped." rc=0
   [[ -z "${4:-}" ]] || then="$4"
   f="$(mktemp "${TMPDIR:-/tmp}/swarm-upgrade.XXXXXX")" || die "$1: restarted on $3, but could not tell it the new swarm.sh path"
-  printf '%s\n' "swarm.sh upgrade restarted you on swarm-dev $3. Its swarm.sh is ${SWARM_HOME}/bin/swarm.sh: use that path wherever your brief names another. The restart stopped any background command you had running (a wait-pr, a codex-review, a watch): start again any you still need. ${then}" > "${f}"
+  printf '%s\n' "swarm.sh upgrade restarted you on swarm-dev $3. Its swarm.sh is ${SWARM_HOME}/bin/swarm.sh: use that path wherever your brief names another. The restart stopped any background command, subagent or monitor you had running (a wait-pr, a codex-review, a watch): start again any you still need. ${then}" > "${f}"
   (deliver_prompt "$1" "${f}" "$2") || rc=$?
   rm -f "${f}"
   [[ ${rc} -eq 0 ]] || die "$1: restarted on $3, but was not told the new swarm.sh path; run swarm.sh upgrade again"
@@ -1888,7 +1888,9 @@ upgrade_flags() {
 # upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
 # on its own: Claude Code's own state for the session herdr has in <pane> now (the one upgrade_one
 # resumes; a /clear moves it from the one agents.tsv recorded), else read_state's; a turn stopped on
-# an API error is idle, as tell reads it (api_stopped), and one waiting on a prompt busy.
+# an API error is idle, as tell reads it (api_stopped), as is one whose last assistant entry ended its
+# turn though background shells keep Claude Code saying busy (turn_over); one waiting on a prompt,
+# or on a tool call's result, is busy.
 upgrade_state() {
   local s sid
   sid="$(session_for_pane "$2" </dev/null)"
@@ -1906,10 +1908,14 @@ print("unknown" if not isinstance(d, list) else "gone" if e is None else e.get("
   case "${s}" in
     idle|herdr:idle|herdr:done) echo idle ;;
     gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
-    busy|herdr:working) if api_stopped "$1" "$2" </dev/null; then echo idle; else echo busy; fi ;;
+    busy|herdr:working) if api_stopped "$1" "$2" </dev/null || turn_over "${sid}"; then echo idle; else echo busy; fi ;;
     *) echo busy ;;
   esac
 }
+
+# turn_over <session> — succeed when <session>'s log ends on an assistant message that ended its turn
+# (log_turn_over.py); fails with no session or log.
+turn_over() { [[ -n "$1" ]] && python3 "${SWARM_HOME}/bin/lib/log_turn_over.py" "${CLAUDE_PROJECTS}" "$1"; }
 
 # upgrade_idle <name> <pane> <end-ms> — succeed once <name> is idle (upgrade_state; herdr's wait is
 # only the wake-up, as for settle); a busy one is waited on at least once, and fails when it is
