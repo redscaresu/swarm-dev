@@ -1811,15 +1811,17 @@ upgrade_agents() {
   about="Builders restarted on swarm-dev ${new}:${moved:- none}. Left on their old version:${left:- none}."
   while IFS=$'\t' read -r name pane e hand cur names; do
     [[ -n "${name}" ]] || continue
-    rm -f "$(upgrade_paused "${name}")"   # told to carry on next, whichever way
+    # Its pause marker goes once it has been told to carry on, whichever way, so no note wakes it before.
     if [[ "${cur}" == new ]]; then
       if upgrade_say "${name}" "${pane}" "swarm.sh upgrade is done with your builders. ${about} Your handover is ${hand}. Carry on where you stopped." </dev/null; then
         echo "${name}: already on ${new}, told to carry on"
       else echo "${name}: could not be told to carry on; tell it by hand"; rc=1; fi
-      continue
+      rm -f "$(upgrade_paused "${name}")"; continue
     fi
-    ( upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
-      upgrade_told "${name}" "${pane}" "${new}" "Your handover is ${hand}. ${about} Carry on where you stopped." ) </dev/null && continue
+    if ( upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
+      upgrade_told "${name}" "${pane}" "${new}" "Your handover is ${hand}. ${about} Carry on where you stopped." ) </dev/null; then
+      rm -f "$(upgrade_paused "${name}")"; continue
+    fi
     rc=1
     # Its restart failed: one still running claude ended its turn for upgrade, so it is told to carry
     # on; one whose claude exited got its resume hint from upgrade_one.
@@ -1827,6 +1829,7 @@ upgrade_agents() {
       upgrade_say "${name}" "${pane}" "swarm.sh upgrade could not restart you, so you stay on the version you run. ${about} Your handover is ${hand}. Carry on where you stopped." </dev/null \
         || echo "${name}: could not be told to carry on; tell it by hand"
     fi
+    rm -f "$(upgrade_paused "${name}")"
   done <<< "${ready}"
   [[ ${rc} -eq 0 ]] || echo "Run swarm.sh upgrade${epic:+ ${epic}} again once the agents named above are idle."
   return "${rc}"
@@ -1937,7 +1940,7 @@ upgrade_handover() {
 
 # upgrade_paused <conductor> — the file that says upgrade asked <conductor> for a handover and has not
 # yet told it to carry on (upgrade_handover).
-upgrade_paused() { echo "$(conductor_inbox "$1").md.upgrade"; }
+upgrade_paused() { echo "$(conductor_inbox "$1").upgrade"; }
 
 # UPGRADE_HINT: what upgrade_one's EXIT trap prints once the agent's claude has exited, set then.
 UPGRADE_HINT=""

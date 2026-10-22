@@ -1274,37 +1274,82 @@ wait_conductor() {
 # is_tell_kind <word> — true for a kind tell takes: findings, nudge, resume or note.
 is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; return 1; }
 
-# note_wake <name> <inbox> <pane> — prompt the conductor <name> to process <inbox> now, as its brief
-# says, when its turn has ended (upgrade_state's idle: idle, or busy only with background jobs): its
-# waits can run long before one returns. Once per inbox: the first note to find its turn ended claims
-# <inbox>.woke, and the note that starts a new inbox clears it (tell_agent), each under note_lock, so
-# of two notes at once one wins. Sent once, not confirmed, so tell returns at once. None goes to one mid-turn
-# (it reads the inbox when its wait returns), one that wrote its report (nobody reads its inbox), or
-# one paused for upgrade's handover (<inbox>.upgrade, under an hour old). A prompt that fails is warned
-# of and gives the claim back: the note is in the inbox either way.
-note_wake() {
-  local f rc=0
-  [[ ! -f "$(conductor_report "$1")" && -z "$(find "$2.upgrade" -mmin -60 2>/dev/null)" && ! -e "$2.woke" ]] || return 0
+# NOTE_WAKE_SECS: the least time between two wake prompts to one conductor (note_wake), so a burst of
+# notes wakes it once.
+NOTE_WAKE_SECS="${SWARM_NOTE_WAKE_SECS:-60}"
+
+# note_wake <name> <base> <pane> — after a note to the conductor <name> (its inbox <base>.md): wake it
+# now (note_wake_now), and keep one later check pending (note_wake_later), so a note held back by the
+# minute, or a wake that was dropped or answered without reading, is not left for a wait to find. A
+# lock held past note_lock's wait means another note is at it: that one keeps the check.
+note_wake() { local rc=0; note_wake_now "$@" || rc=$?; [[ ${rc} -eq 2 ]] || note_wake_later "$1" "$2"; }
+
+# note_wake_now <name> <base> <pane> — prompt the conductor <name> to process <base>.md now, as its
+# brief says, when the inbox is there, no wake went out in the last NOTE_WAKE_SECS (<base>.woke holds the
+# last one's time, set under note_lock, so of two notes at once one wins) and its turn has ended
+# (upgrade_state's idle: idle, or busy only with background jobs, whose waits can run long before one
+# returns). Sent once, not confirmed, so tell returns at once. None goes to one mid-turn (it reads the
+# inbox when its wait returns), one that wrote its report (nobody reads its inbox), or one paused for
+# upgrade's handover (<base>.upgrade, under an hour old). A lock it cannot take (exit 2), or a prompt that
+# fails, is warned of, and the failed one's stamp is taken back: the note is in the inbox either way.
+note_wake_now() {
+  local t f rc=0
+  [[ -f "$2.md" && ! -f "$(conductor_report "$1")" && -z "$(find "$2.upgrade" -mmin -60 2>/dev/null)" ]] || return 0
+  note_wake_due "$2" || return 0
   [[ "$(upgrade_state "$1" "$3")" == idle ]] || return 0
-  note_lock "$2" || return 0
-  (set -C; : > "$2.woke") 2>/dev/null || rc=1
+  note_lock "$2" || { echo "warning: ${1} was not prompted to read its inbox (${2}.lock is held); it reads it after its wait" >&2; return 2; }
+  t="$(date +%s)"
+  { note_wake_due "$2" && echo "${t}" > "$2.woke"; } 2>/dev/null || rc=1
   rmdir "$2.lock"
   [[ ${rc} -eq 0 ]] || return 0
   if f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")"; then
-    printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then go back to your waits.\n' "$2" "${2%.md}.reading.md" "${2%.md}.reading.md" > "${f}"
-    (deliver_prompt "$1" "${f}" "$3" once) || rc=$?
+    printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then end your turn, leaving any wait or watch you have running alone; start one only if none runs.\n' "$2.md" "$2.reading.md" "$2.reading.md" > "${f}"
+    (deliver_prompt "$1" "${f}" "$3" once) 2>/dev/null || rc=$?
     rm -f "${f}"
   else rc=1; fi
-  [[ ${rc} -eq 0 ]] || { rm -f "$2.woke"; echo "warning: ${1} was not prompted to read its inbox; it reads it after its wait" >&2; }
+  [[ ${rc} -ne 0 ]] || return 0
+  if note_lock "$2"; then [[ "$(cat "$2.woke" 2>/dev/null)" != "${t}" ]] || rm -f "$2.woke"; rmdir "$2.lock"; fi
+  echo "warning: ${1} was not prompted to read its inbox; it reads it after its wait" >&2
 }
 
-# note_lock <inbox> — take <inbox>.lock (mkdir through perl, as state_lock), clearing one a killed tell
+# note_wake_due <base> — succeed when no wake went out in the last NOTE_WAKE_SECS (<base>.woke).
+note_wake_due() {
+  local last
+  last="$(cat "$1.woke" 2>/dev/null)" || last=0
+  [[ "${last}" =~ ^[0-9]+$ ]] || last=0
+  (( $(date +%s) - last >= NOTE_WAKE_SECS ))
+}
+
+# note_wake_later <name> <base> — unless one is pending already (<base>.later; one over two minutes
+# old was killed), start one check in the background, its output dropped: once NOTE_WAKE_SECS have
+# passed since the last wake (or from now, with none due), note_wake_now on the pane that holds <name>
+# then, so a conductor started meanwhile is the one woken, never the one it replaced. That wakes only
+# if the inbox is still there and no wake went out meanwhile. It never starts another, and removes
+# <base>.later only while that still holds its own token: a new conduct may have cleared it.
+note_wake_later() {
+  local rc=0 left tok
+  tok="$(date +%s).${RANDOM}"
+  note_lock "$2" || return 0
+  find "$2.later" -mmin +2 -exec rm -f {} \; 2>/dev/null || true
+  (set -C; echo "${tok}" > "$2.later") 2>/dev/null || rc=1
+  rmdir "$2.lock"
+  [[ ${rc} -eq 0 ]] || return 0
+  left=$(( $(cat "$2.woke" 2>/dev/null || echo 0) + NOTE_WAKE_SECS - $(date +%s) ))
+  (( left > 0 && left <= NOTE_WAKE_SECS )) || left="${NOTE_WAKE_SECS}"
+  # shellcheck disable=SC2064 # expand now
+  ( trap "[[ \"\$(cat '$2.later' 2>/dev/null)\" != '${tok}' ]] || rm -f '$2.later'" EXIT
+    sleep "${left}"
+    pane="$(agent_field "$1" pane_id)"
+    [[ -z "${pane}" ]] || note_wake_now "$1" "$2" "${pane}" ) </dev/null >/dev/null 2>&1 &
+}
+
+# note_lock <base> — take <base>.lock (mkdir through perl, as state_lock), clearing one a killed tell
 # left over a minute ago; fails after 5 s.
 note_lock() {
   local i
   for ((i = 0; i < 50; i++)); do
     perl -e 'mkdir shift or exit 1' "$1.lock" && return 0
-    find "$1.lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null
+    find "$1.lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null || true
     sleep 0.1
   done
   return 1
@@ -1324,7 +1369,7 @@ note_lock() {
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc pane locked
+  local kind="$2" f="$3" name msg state since inbox rc pane
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
@@ -1340,15 +1385,9 @@ tell_agent() {
     # Built first, then one append: the conductor's mv between the open and a slow write would
     # take the note into a copy it has already read.
     msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
-    # A note alone in the inbox once appended started a new one (the conductor moved the last away
-    # to read it, before or during this append), which no wake was sent for (note_wake). Under the
-    # lock no other note writes it. Without the lock the note still lands, and wakes no one.
-    locked=""; ! note_lock "${inbox}" || locked=1
     printf '%s\n\n' "${msg}" >> "${inbox}"
-    [[ $(wc -c < "${inbox}" 2>/dev/null || echo 0) -ne $(printf '%s\n\n' "${msg}" | wc -c) ]] || rm -f "${inbox}.woke"
-    [[ -z "${locked}" ]] || rmdir "${inbox}.lock"
     queued_sent "${f}"   # a queued: line sent is one watch and next send no more
-    [[ -z "${locked}" ]] || note_wake "${name}" "${inbox}" "${pane}"
+    note_wake "${name}" "${inbox%.md}" "${pane}"
     echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
