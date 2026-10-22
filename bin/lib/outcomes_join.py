@@ -199,16 +199,16 @@ def held(slug, epic, start):
     return str(round((s - max(ready, run)) / 60))
 
 # ready_wait: the minutes from a story's ready time (as held reads it, unclipped by any conductor run)
-# to its first build's start; 0 for a story readied only after its build started, empty when start or
-# the ready time is unknown.
+# to its first build's start; 0 when no ready signal came before the start (it was readied only after),
+# empty when start or the ready time is unknown (a ready, then a block, before the start, as held).
 def ready_wait(slug, start):
     s = secs(start)
     if s is None:
         return ""
+    if not any(t <= s for t in ready_at[slug]):
+        return "0" if ready_at[slug] else ""
     ready = ready_time(slug, s)
-    if ready is None:
-        return "0" if any(t > s for t in ready_at[slug]) else ""
-    return str(round((s - ready) / 60))
+    return "" if ready is None else str(round((s - ready) / 60))
 
 # Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
 # PRs of these builds from rework_from(SWARM_REWORK_SINCE) on (flow's --since, else outcomes' own), with

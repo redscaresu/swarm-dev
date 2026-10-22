@@ -2,8 +2,8 @@
 # with --epic, that epic's row alone. The five phases sum over the outcomes rows whose phase minutes
 # are known (a merged PR): each PR counts once, by its build that started first, as a retried PR
 # repeats its phases on every build, and in the window when that build is dated in it: never by a
-# retry's partial minutes. held is over the same PRs: each of their stories' held_min (on its first
-# build, attempts 1) once, so the six states share one population. A row gives its PRs, the hours in
+# retry's partial minutes. held is over the same PRs: each of their stories' held_min (on its earliest
+# build, as a step-up rung keeps attempts 1 and its own held_min) once, so the six states share one population. A row gives its PRs, the hours in
 # all six states, and each state as <state>:<hours>h/<share of those hours>%, largest first (a tie in
 # outcomes' column order, held last). Last, ready_wait's median and p90 (nearest rank) in minutes, over
 # the stories whose first build (the slug's earliest started, as a step-up rung keeps attempts 1 and its
@@ -27,11 +27,11 @@ for r in rows:
         if k not in first or r["started"] < first[k]["started"]:
             first[k] = r
 window = [r for r in first.values() if since <= r["date"] <= until]
-held = {r["slug"]: int(r["held_min"]) for r in rows if r.get("held_min")}
 earliest = {}
 for r in rows:
     if r["started"] and (r["slug"] not in earliest or r["started"] < earliest[r["slug"]]["started"]):
         earliest[r["slug"]] = r
+held = {s: int(r["held_min"]) for s, r in earliest.items() if r.get("held_min")}
 waits = [r for r in earliest.values() if r.get("ready_wait_min") and since <= r["date"] <= until]
 groups = {r["epic"]: [] for r in waits if r["epic"]}
 for r in window:

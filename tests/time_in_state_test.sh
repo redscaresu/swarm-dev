@@ -162,10 +162,11 @@ board_commit ready 07:30
 check "a story readied by a board commit is held from that commit, not from its add" "$(first_held)" 90
 board_commit blocked 08:00
 check "a story blocked by a board commit after its last ready signal has no known ready time" "$(first_held)" ""
-# Readied again at 11:00, after its 09:00 build started: it waited 0 for that build, not unknown.
+# Readied again at 11:00 (as reconcile does when a PR closes unmerged), after its 09:00 build started:
+# a ready signal came before the start, so its wait stays unknown, as held does, not a measured 0.
 board_commit ready 11:00
-check "a story readied again only after its build started, past a block, waited 0" \
-  "$(outcomes | awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } { print $at["ready_wait_min"]; exit }')" 0
+check "a story ready, then blocked, before its build stays unknown though readied again after the start" \
+  "$(outcomes | awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } { print "[" $at["ready_wait_min"] "]"; exit }')" "[]"
 cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 
@@ -181,6 +182,10 @@ check "a PR counts by its first build, in the window only when that build is" "$
 # Another story of e1 that waited 3 h too but whose PR never merged: its held is not the merged PRs'.
 other="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["slug"] = "other"; print }' <<< "${out}")"
 check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
+# A step-up rung of tis at 13:00 keeps attempts 1 and its own held_min (60) and ready_wait_min (480):
+# held and ready_wait both still come from tis's earliest build.
+rung="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["started"] = "'"${D}"'13:00:00Z"; $at["held_min"] = 60; $at["ready_wait_min"] = 480; print }' <<< "${out}")"
+check "held and ready_wait count a stepped-up story by its earliest build, not its rung" "$(out="${out}"$'\n'"${rung}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
 check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi

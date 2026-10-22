@@ -830,8 +830,10 @@ events.tsv, `ok (<UTC time>)`. A build that started after its run ended, or with
 `held_min` is empty when the build has no `started` or the story has no ready time by then, and on a
 retry, whose own wait is not counted. After it, `ready_wait_min`, also on a first build alone, is the
 whole wait from that ready time to the build's start, with or without a conductor running. A story
-readied only after its build started waited 0. It is empty where `held_min` is
-for want of a ready time, unless the story was readied after the start. A story the lead holds after an escalation (`kind: lead` with
+with no ready signal before its build started (it was readied only after) waited 0. Otherwise it is
+empty where `held_min` is for want of a ready time. A step-up rung keeps attempts at 1, so it carries
+its own `held_min` and `ready_wait_min`, timed to its own start; `flow`'s `time_in_state` counts each
+story once, by its earliest build. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
@@ -1030,7 +1032,7 @@ The `time_in_state` section prints TSV `epic prs hours largest_first ready_wait_
 `outcomes` rows dated in the window that have the phase columns (their PR merged). Each PR counts
 once, by its build that started first, since a retried PR repeats its phases on every build, and is
 in the window only when that build's date is. `held` is over the same PRs: the `held_min` of each of
-their stories, once. `hours` is all six together, and `largest_first` gives each as
+their stories, once, from its earliest build. `hours` is all six together, and `largest_first` gives each as
 `<state>:<hours>h/<share>%`, the largest first, where the share is of `hours`. So
 `held:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%`
 says the epic's stories spent most of their time waiting to start. The last two columns,
