@@ -44,6 +44,9 @@ When the user has updated the plugin while an epic's conductor runs, run `swarm.
 in the background for each such epic and wait for it. It moves the epic's agents to the new version
 with `--resume`, so each keeps its context, and prints each one's old and new version. If it exits 1,
 show the user the agents it names as left on their old version, and run it again once they are idle.
+While it runs, upgrade stops the conductor, so your background `swarm.sh wait --until-report` on that
+conductor may return. Ignore that return until upgrade exits: do not restart or nudge the conductor,
+and do not start a second `conduct`. Then wait on the conductor again.
 
 Repeat until a step below says stop:
 

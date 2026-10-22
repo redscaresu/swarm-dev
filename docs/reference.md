@@ -1308,22 +1308,27 @@ command. Each hook calls herdr in the background, so a herdr that hangs never ho
 **Moving a running epic to a new version.** A running agent keeps the plugin version it started
 on. After `swarm.sh update` (or `claude plugin update`) and a restart of your own session, run
 `swarm.sh upgrade <epic>` to move that epic's agents (its conductor, builders and review agents) to
-the installed version. With no epic it moves every agent the project started. First the conductor
-writes a handover to `.swarm/handover-<epic>-<date>.md`: each open PR with its review round, what
-its builder still owes, and findings it has not sent. Then it ends its turn. An idle conductor is
-asked by prompt; a busy one gets a note in its inbox, which it reads when its wait returns. Then
-upgrade waits for each agent, builders first, until herdr has it idle (`herdr agent wait`), and
-never interrupts one. It sends ctrl+c until claude exits, then starts it again in the same pane: a fresh
-allowlisted environment whose `PATH` starts at the new version's `bin/` (an older version's is
-dropped), and `claude --resume <session>` with the flags its claude ran with (`herdr pane
-process-info`; the session from `herdr agent list`). A resumed session keeps its context, so only
-the plugin root changes. upgrade then gives each restarted agent the new `swarm.sh` path, since
-its brief names the old one, and tells the conductor to carry on. It never touches a worktree, so uncommitted and unpushed work stays as it is. It prints each agent as
-`<name>: <old> -> <new>`, and `swarm.sh version` in a pane confirms it. An agent still busy after
-`SWARM_UPGRADE_WAIT_MS` (30 minutes, for the whole run) is named and left on its old version. So is
-a conductor that wrote no handover by then, and every builder with it. Idle means idle to Claude
-Code itself: herdr's wait only wakes upgrade to check. upgrade then exits 1. Run it again once they are
-idle; it skips the agents already on the new version.
+the installed version. With no epic it moves every agent the project started. upgrade first checks
+the conductor's `env:` names, as `conduct` does; if one is refused, it asks the conductor for
+nothing. Otherwise the conductor writes a handover to `.swarm/handover-<epic>-<date>.md` (each open
+PR with its review round, what its builder still owes, and findings it has not sent) and ends its
+turn. An idle conductor is asked by prompt; a busy one gets a note in its inbox, which it reads
+when its wait returns. upgrade waits for the file and for the conductor to go idle. Then, in rounds,
+it restarts every builder that Claude Code reports idle; herdr's wait only wakes it to check. A busy
+builder is never interrupted and waits for a later round. A restart sends ctrl+c twice at once
+(Claude Code exits only on a second press right after the first) until claude exits. It then starts
+claude again in the same pane: a fresh allowlisted environment whose `PATH` starts at the new
+version's `bin/` (an older plugin root's is dropped), and `claude --resume <session>` with the flags
+its claude ran with (`herdr pane process-info`; the session from `herdr agent list`). A resumed
+session keeps its context, so only the plugin root changes. Each restarted agent is told the new
+`swarm.sh` path, since its brief names the old one, and the conductor, restarted last, is told to
+carry on. upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. It
+prints each agent as `<name>: <old> -> <new>`, and `swarm.sh version` in a pane confirms it. If a
+restart fails once claude has exited, upgrade prints the `claude --resume <session>` that brings it
+back. An agent still busy after `SWARM_UPGRADE_WAIT_MS` (30 minutes, for the whole run) is named and
+left on its old version. A conductor with no handover by then, or still busy after writing one, gets
+a note to carry on as before, and every builder is held with it. upgrade then exits 1. Run it again
+once they are idle; it skips the agents already on the new version.
 
 **Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before
 trusting its CI; a branch that conflicts gets no CI at all, which looks like a hang. A merge queue

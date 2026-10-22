@@ -631,7 +631,10 @@ record_agent() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}" || rc=$?
   rmdir "${AGENTS_LOG}.lock"
   # The version it starts on, for upgrade to print; one it cannot write reads as unknown there.
-  { mkdir -p "${VERSIONS_DIR}" && plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json" > "${VERSIONS_DIR}/$2"; } 2>/dev/null || true
+  # Read first, so a failed read never leaves an empty file in place of the last one.
+  local v
+  v="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json" 2>/dev/null)" || v=""
+  [[ -z "${v}" ]] || { mkdir -p "${VERSIONS_DIR}" && echo "${v}" > "${VERSIONS_DIR}/$2"; } 2>/dev/null || true
   return "${rc}"
 }
 
