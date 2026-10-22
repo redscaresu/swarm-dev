@@ -338,9 +338,7 @@ conduct_ready() {
       if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
       continue
     fi
-    if [[ -n "$(agent_field "${name}" agent_status any)" ]]; then
-      echo "no conductor started: another project's agent holds the name ${name}"; continue
-    fi
+    [[ -z "$(agent_field "${name}" agent_status any)" ]] || { echo "no conductor started: another project's agent holds the name ${name}"; continue; }
     # shellcheck disable=SC2046 # slugs, [a-z0-9-]
     if conduct_stop "${e}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"); then continue; fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
