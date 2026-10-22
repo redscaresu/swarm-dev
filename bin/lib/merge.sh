@@ -1094,8 +1094,8 @@ watch_prs() {
   mkdir -p "${STATE_DIR}"; touch "${seen}"
   # warned: a mergeable read failed this poll, said once. Each PR's state is read only where a branch
   # below uses it, so a watch that returns at one PR reads none past it. unlisted: the repos whose list
-  # failed, said once until it next succeeds.
-  local warned unlisted=" " rows
+  # failed, said once until it next succeeds. unread: a check-runs read failed, said once until one succeeds.
+  local warned unlisted=" " rows runs unread=""
   while :; do
     warned=""
     for repo in "${repos[@]}"; do
@@ -1129,8 +1129,15 @@ watch_prs() {
           fi
           continue
         fi
-        read -r total pending < <(gh api "repos/${repo}/commits/${sha}/check-runs" \
-          -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"')
+        # A failed read (a spent rate limit prints an error body and exits 1) counts as unknown for this
+        # poll, said once until a read next succeeds.
+        if ! runs="$(gh api "repos/${repo}/commits/${sha}/check-runs" \
+          -q '"\(.check_runs|length) \([.check_runs[]|select(.status!="completed")]|length)"' 2>/dev/null)" \
+          || ! [[ "${runs}" =~ ^[0-9]+\ [0-9]+$ ]]; then
+          if [[ -z "${unread}" ]]; then echo "swarm: watch: gh cannot read ${repo} #${n}'s check runs; counting them as unknown until a read succeeds" >&2; fi
+          unread=1; continue
+        fi
+        unread=""; read -r total pending <<< "${runs}"
         if [[ "${total:-0}" -gt 0 && "${pending}" == 0 ]]; then
           echo "done ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} checks finished on ${sha:0:7}"; return 0
         fi

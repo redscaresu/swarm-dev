@@ -67,7 +67,8 @@ case "$2" in
   repos/o/svc/commits/abc1234def/check-runs*) cat "$F/runs.json" ;;
   repos/o/svc/check-runs/1/annotations*) cat "$F/annotations.json" ;;
   repos/o/svc/code-scanning/alerts*) cat "$F/alerts.json" ;;
-  repos/o/svc/commits/head*/check-runs) while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
+  repos/o/svc/commits/head*/check-runs) if [ -f "$F/runs-fail" ]; then cat "$F/runs-fail"; exit 1; fi
+             while [ $# -gt 0 ]; do [ "$1" = -q ] && q="$2"; shift; done
              out="$(echo '{"check_runs":[{"status":"completed"}]}' | jq -r "$q")"; printf '%s\n' "${out}" ;;
   *) echo "stub gh: unexpected $*" >&2; exit 1 ;;
 esac
@@ -589,6 +590,17 @@ cp "${ROOT}/gh/prlist.json" "${ROOT}/gh/prlist.keep"
 check "watch --epic wakes for a fix-main story's PR" "o/svc #5 story/fix-main-abcdef1 checks finished on head5" \
   "$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 10; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1)"
 mv "${ROOT}/gh/prlist.keep" "${ROOT}/gh/prlist.json"; rm -f "${w}/docs/stories/fix-main-abcdef1.md"
+
+# A check-runs read that fails (a spent rate limit: an error body, exit 1) is unknown for that poll: no
+# syntax error, said once, and watch polls on. Bounded at 3 s, polling every 0.12 s.
+sed 's/head3/head6/' "${ROOT}/gh/prlist.json" > "${ROOT}/gh/prlist.keep"; mv "${ROOT}/gh/prlist.json" "${ROOT}/gh/prlist.orig"; mv "${ROOT}/gh/prlist.keep" "${ROOT}/gh/prlist.json"
+echo '{"message":"API rate limit exceeded for user ID 1.","documentation_url":"https://docs.github.com/rest/overview/rate-limits"}' > "${ROOT}/gh/runs-fail"
+: > "${ROOT}/gh/calls"
+out="$(cd "${w}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_SLEEP_SCALE=0.002 PATH="${ROOT}/bin:${PATH}" perl -e 'alarm 3; exec @ARGV' bash "${SWARM}" watch --epic mine 2>&1 || true)"
+check "watch prints no syntax error on a rate-limited check-runs read" "no" "$(grep -q 'syntax error' <<< "${out}" && echo yes || echo no)"
+check "watch says a failed check-runs read failed once" "1" "$(grep -c "gh cannot read o/svc #3's check runs" <<< "${out}")"
+check "watch polls on after a failed check-runs read" "yes" "$([[ $(grep -c 'commits/head6/check-runs' "${ROOT}/gh/calls") -ge 2 ]] && echo yes || echo no)"
+rm -f "${ROOT}/gh/runs-fail"; mv "${ROOT}/gh/prlist.orig" "${ROOT}/gh/prlist.json"
 
 # watch reports this project's agents whose session is waiting, with what each waits for; herdr
 # lists every project's (lead, in w:6, is another's). A Claude agent's state is its session's (the
