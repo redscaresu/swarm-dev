@@ -6,8 +6,9 @@
 # build, attempts 1) once, so the six states share one population. A row gives its PRs, the hours in
 # all six states, and each state as <state>:<hours>h/<share of those hours>%, largest first (a tie in
 # outcomes' column order, held last). Last, ready_wait's median and p90 (nearest rank) in minutes, over
-# the stories whose first build is dated in the window with a ready_wait_min, merged or not (empty with
-# none); an epic with those alone still gets a row.
+# the stories whose first build (the slug's earliest started, as a step-up rung keeps attempts 1 and its
+# own ready_wait_min) is dated in the window and has a ready_wait_min, merged or not (empty with none);
+# an epic with those alone still gets a row.
 import statistics
 from report import PHASES, pr_key
 STATES = PHASES + ("held",)
@@ -27,7 +28,11 @@ for r in rows:
             first[k] = r
 window = [r for r in first.values() if since <= r["date"] <= until]
 held = {r["slug"]: int(r["held_min"]) for r in rows if r.get("held_min")}
-waits = [r for r in rows if r.get("ready_wait_min") and since <= r["date"] <= until]
+earliest = {}
+for r in rows:
+    if r["started"] and (r["slug"] not in earliest or r["started"] < earliest[r["slug"]]["started"]):
+        earliest[r["slug"]] = r
+waits = [r for r in earliest.values() if r.get("ready_wait_min") and since <= r["date"] <= until]
 groups = {r["epic"]: [] for r in waits if r["epic"]}
 for r in window:
     if r["epic"]:

@@ -162,6 +162,10 @@ board_commit ready 07:30
 check "a story readied by a board commit is held from that commit, not from its add" "$(first_held)" 90
 board_commit blocked 08:00
 check "a story blocked by a board commit after its last ready signal has no known ready time" "$(first_held)" ""
+# Readied again at 11:00, after its 09:00 build started: it waited 0 for that build, not unknown.
+board_commit ready 11:00
+check "a story readied again only after its build started, past a block, waited 0" \
+  "$(outcomes | awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } { print $at["ready_wait_min"]; exit }')" 0
 cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 

@@ -205,10 +205,10 @@ def ready_wait(slug, start):
     s = secs(start)
     if s is None:
         return ""
-    if not any(t <= s for t in ready_at[slug]):
-        return "0" if ready_at[slug] else ""
     ready = ready_time(slug, s)
-    return "" if ready is None else str(round((s - ready) / 60))
+    if ready is None:
+        return "0" if any(t > s for t in ready_at[slug]) else ""
+    return str(round((s - ready) / 60))
 
 # Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
 # PRs of these builds from rework_from(SWARM_REWORK_SINCE) on (flow's --since, else outcomes' own), with

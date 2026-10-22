@@ -92,6 +92,15 @@ check "ready_wait: a story readied at T and built at T+8 min waited 8; one built
 tis() { awk '/^## / { f = $0 == "## time_in_state"; next } f && NF' | cut -f1,5,6; } # epic and ready_wait
 check "ready_wait: time_in_state gives each epic's median and p90 (nearest rank) in minutes" \
   "$(run flow 2>/dev/null | tis | grep -E '^(epic|e1|all)')" $'epic\tready_wait_median\tready_wait_p90\ne1\t4\t8\nall\t4\t8'
+# A step-up rung of a at 11:00 keeps attempts at 1, so outcomes gives it a ready_wait of its own (68);
+# time_in_state counts each story once, by its earliest build, so the median and p90 stay 4 and 8.
+agents_before="$(cat "${P}/.swarm/agents.tsv")"
+session a 2026-10-01T11:00:00Z 2026-10-01T11:30:00Z > "${dir}/projects/p/sa2.jsonl"
+printf '%s\n' $'2026-10-01\tcode\ta\tclaude\tfable\thigh\tsa2' >> "${P}/.swarm/agents.tsv"
+printf '%s\n' $'2026-10-01T10:59:00Z\tescalate\ta\tw:1\tok (stalled: opus -> fable)' >> "${P}/.swarm/events.tsv"
+check "ready_wait: a stepped-up story counts once, by its first build, not again by its rung" \
+  "$(run flow 2>/dev/null | tis | grep -E '^(e1|all)')" $'e1\t4\t8\nall\t4\t8'
+printf '%s\n' "${agents_before}" > "${P}/.swarm/agents.tsv"; rm "${dir}/projects/p/sa2.jsonl"
 printf '%s\n' "${before}" > "${P}/.swarm/events.tsv"
 check "a bad flag prints the usage" "$(run flow --until yesterday 2>&1 || true)" \
   "swarm: usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
