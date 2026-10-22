@@ -182,16 +182,33 @@ def run_ends(epic):
     return ([t for n in names if n for t in closed[n]] + reported[epic or "--backlog"]
             + ([os.path.getmtime(report)] if os.path.exists(report) else []))
 
+def ready_time(slug, s):
+    # The story's ready time by s (secs), as held reads it; None when it has none.
+    ready = max((t for t in ready_at[slug] if t <= s), default=None)
+    return None if ready is None or any(ready < t <= s for t in blocked_at[slug]) else ready
+
 def held(slug, epic, start):
     # Whole minutes, as a string; empty when start or the story's ready time is unknown.
     s = secs(start)
-    ready = max((t for t in ready_at[slug] if t <= s), default=None) if s is not None else None
-    if ready is None or any(ready < t <= s for t in blocked_at[slug]):
+    ready = ready_time(slug, s) if s is not None else None
+    if ready is None:
         return ""
     run = max((t for t in conducting[epic or "--backlog"] if t <= s), default=None)
     if run is None or any(run < t <= s for t in run_ends(epic)):
         return "0"
     return str(round((s - max(ready, run)) / 60))
+
+# ready_wait: the minutes from a story's ready time (as held reads it, unclipped by any conductor run)
+# to its first build's start; 0 when no ready signal came before the start (it was readied only after),
+# empty when start or the ready time is unknown (a ready, then a block, before the start, as held).
+def ready_wait(slug, start):
+    s = secs(start)
+    if s is None:
+        return ""
+    if not any(t <= s for t in ready_at[slug]):
+        return "0" if ready_at[slug] else ""
+    ready = ready_time(slug, s)
+    return "" if ready is None else str(round((s - ready) / 60))
 
 # Rework, computed here alone (flow's reviewers and model_fit read this column): rework_of over the merged
 # PRs of these builds from rework_from(SWARM_REWORK_SINCE) on (flow's --since, else outcomes' own), with
@@ -230,7 +247,7 @@ print("date\tslug\tkind\trisk\trole\tmodel\teffort\tcost_usd\ttokens\ttells_find
       "\tescalate_at\tdialog_at\tdialog\tescalated_at\treset_at\tdrop_at"
       "\tepic\tmerged_at\tstory_merged\tfindings_declined\tfindings_fixed_by\tfindings_declined_by"
       "\tpr_created_at\tstart_to_pr_min\tpr_to_merge_min\tmain_merges\tsubagent_cost_usd\tsubagent_cost_by_model\tsubagent_tokens"
-      "\t" + "\t".join(p + "_min" for p in PHASES) + "\trework\theld_min")
+      "\t" + "\t".join(p + "_min" for p in PHASES) + "\trework\theld_min\tready_wait_min")
 for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(rows, found)):
     pr, state, merged, created, main_merges = the_pr[:5]
     day, slug, role, model, effort, cost, tokens, tf, tn, tr, closes, attempts = f[:12]
@@ -248,7 +265,7 @@ for i, ((f, kind, risk, story_epic, asked, prs, *the_pr), c) in enumerate(zip(ro
                      + [story_epic, merged, story_merged, str(declined), by(c, "fixed"), by(c, "declined"),
                         created, minutes(f[AS_IS], created), minutes(created, merged), main_merges] + f[SUBAGENT:TIMES]
                      + time_in_state(f[AS_IS], merged, the_pr, f[TIMES].split() + (named_reviews[pr_key(pr)] if pr else []))
-                     + [rework, held(slug, story_epic, f[AS_IS]) if attempts == "1" else ""]))
+                     + [rework] + ([held(slug, story_epic, f[AS_IS]), ready_wait(slug, f[AS_IS])] if attempts == "1" else ["", ""])))
 
 def check_story(kind):
     # The newest story with `checks: <kind>` that a merge deleted from the board (where story_text
