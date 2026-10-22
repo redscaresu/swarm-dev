@@ -4,9 +4,10 @@
 # to SWARM_GH_LOG (unset: none): time; agent (SWARM_GH_CALLER, else SWARM_AGENT, else -); via
 # (SWARM_GH_VIA, `swarm.sh <command>` when swarm.sh made the call, else -); the subcommand (`pr view`,
 # `api graphql`, `api <path>` with each segment holding a digit as :id); the budget it spends (graphql
-# or rest); many (paginate or watch for a run that spends many requests, else -); and the exit code.
-# Nothing past the subcommand and the API path is logged, so no token, body or header; and a log that
-# cannot be written never fails the call. flow's gh_calls section reads the log.
+# or rest, or none for one that calls no API: config, alias, completion, browse, help, --version); many
+# (paginate or watch for a run that spends many requests, else -); and the exit code. Nothing past the
+# subcommand and the API path is logged, so no token, body or header; and a log that cannot be
+# written never fails the call. flow's gh_calls section reads the log.
 set -u
 
 real=""
@@ -26,13 +27,17 @@ done
 # so its watcher leaves gh alone, and the call runs on without one.
 "${real}" "$@" <&0 &
 pid=$!
-trap 'kill -TERM "${pid}" 2>/dev/null' TERM INT HUP
+sig=0 watch=""
+trap 'sig=1; kill -TERM "${pid}" 2>/dev/null' TERM INT HUP
 { exec 3> >(exec > /dev/null 2>&1; read -r _ || exit 0; read -r ok || ok=""; [[ -n "${ok}" ]] || kill -TERM "${pid}"); } 2>/dev/null \
-  && echo go 2>/dev/null >&3
+  && watch=1 && echo go 2>/dev/null >&3
+# A trapped signal cuts the wait short (over 128): wait again, for gh's own code. Never kill -0, which
+# a recycled PID could answer once gh is reaped.
 wait "${pid}"; rc=$?
-while kill -0 "${pid}" 2>/dev/null; do wait "${pid}"; rc=$?; done
+while [[ ${sig} == 1 && ${rc} -gt 128 ]]; do sig=0; wait "${pid}"; rc=$?; done
 trap - TERM INT HUP   # gh is done: a signal now ends the shim
-echo ok 2>/dev/null >&3; exec 3>&-
+# Only to a watcher's pipe: where it could not open, fd 3 is still the caller's.
+[[ -z "${watch}" ]] || { echo ok 2>/dev/null >&3; exec 3>&-; }
 
 [[ -n "${SWARM_GH_LOG:-}" ]] || exit "${rc}"
 
@@ -50,9 +55,10 @@ word() {
     return
   done
 }
-many=-
-for a in "$@"; do case "${a}" in --paginate) many=paginate ;; --watch) many=watch ;; esac; done
+many=- help="" ver=""
+for a in "$@"; do case "${a}" in --paginate) many=paginate ;; --watch) many=watch ;; --help|-h) help=1 ;; --version) ver=1 ;; esac; done
 word "$@"; shift "${skip}"; sub="${w}" api=rest
+[[ "${sub}" != "?" || -z "${ver}" ]] || sub=version
 case "${sub}" in
   api)
     path=""
@@ -84,7 +90,20 @@ case "${sub}" in
     case "${sub}" in "pr diff") ;; pr\ *|issue\ *|repo\ *|project\ *|"label list") api=graphql ;; esac
     [[ "${sub}" != "run watch" ]] || many=watch ;;
 esac
+case "${sub}" in config\ *|alias\ *|completion|browse|help|version|"extension list"|"extension remove") api=none ;; esac
+[[ -z "${help}" ]] || api=none
 agent="${SWARM_GH_CALLER:-${SWARM_AGENT:--}}" via="${SWARM_GH_VIA:--}"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${agent//[$'\t\n\r']/ }" "${via//[$'\t\n\r']/ }" \
   "${sub}" "${api}" "${many}" "${rc}" 2>/dev/null >> "${SWARM_GH_LOG}"
+
+# ponytail: about one call in SWARM_GH_TRIM_EVERY (1000) counts the log's lines and, past
+# SWARM_GH_LOG_KEEP (50000, a few days of a busy swarm), keeps the newest that many; RANDOM costs no
+# fork, so the other calls pay nothing. A line another call appends during the copy is lost.
+every="${SWARM_GH_TRIM_EVERY:-1000}" keep="${SWARM_GH_LOG_KEEP:-50000}"
+[[ "${every}" =~ ^[1-9][0-9]*$ ]] || every=1000
+[[ "${keep}" =~ ^[1-9][0-9]*$ ]] || keep=50000
+if (( RANDOM % every == 0 )) && n="$(wc -l < "${SWARM_GH_LOG}" 2>/dev/null)" && (( n > keep )); then
+  { tail -n "${keep}" "${SWARM_GH_LOG}" > "${SWARM_GH_LOG}.$$" && mv -f "${SWARM_GH_LOG}.$$" "${SWARM_GH_LOG}"; } 2>/dev/null \
+    || rm -f "${SWARM_GH_LOG}.$$"
+fi
 exit "${rc}"

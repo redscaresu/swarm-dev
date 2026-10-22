@@ -149,6 +149,9 @@ check "restored, the agent keeps the allowlist and its story's name, with the re
   "$(var HOME)|$(var FAKE_SECRET)|$(var SWARM_X)|$(var HERDR_PANE_ID)|$(var SWARM_PROJECT)|$(var SWARM_RESUME)|$(var SHELL)|$(var ZDOTDIR)"
 check "restored, gh-shim is first on its PATH and logs its gh calls under its name, with no via" "${REPO}/bin/gh-shim:${ROOT}/restore-bin|a1|" \
   "$(var PATH | cut -d: -f1,2)|$(var SWARM_GH_CALLER)|$(var SWARM_GH_VIA)"
+# A pane with no PATH at all: the shim's folder alone, no empty entry (which would mean the cwd).
+check "restored from a pane with no PATH, its PATH is the shim's folder, with no empty entry" "${REPO}/bin/gh-shim" \
+  "$(cd "${ROOT}" && env -i HOME="${ROOT}/home" /usr/bin/python3 -I "${RDIR}/${S1}.py" /usr/bin/env | sed -n 's/^PATH=//p')"
 check "restored, its ZDOTDIR is made afresh at 0700 with clean_env's two files, the planted .zshrc gone" \
   "${S1}.zdotdir|.zprofile .zshenv|__swarm_path=\"\${PATH}\"|[[ -z \"\${__swarm_path}\" ]] || export PATH=\"\${__swarm_path}\"" \
   "$(find "${RDIR}" -name "${S1}.zdotdir" -type d -perm 700 -exec basename {} \;)|$(cd "${ZD}" && find . -type f | sed 's|^\./||' | sort | paste -sd' ' -)|$(

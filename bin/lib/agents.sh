@@ -432,7 +432,7 @@ os.umask(old)
 keep = {sorted(set(keep.split()))!r}
 env = {{k: v for k, v in os.environ.items() if k in keep or k.startswith({tuple(prefixes.split())!r})}}
 env.update(SWARM_PROJECT={project!r}, SWARM_RESUME={resume!r}, SHELL={shell!r}, ZDOTDIR={zdotdir!r},
-           SWARM_GH_LOG={gh_log!r}, SWARM_GH_CALLER={name!r}, PATH={gh_shim!r} + ":" + env.get("PATH", ""))
+           SWARM_GH_LOG={gh_log!r}, SWARM_GH_CALLER={name!r}, PATH=":".join(p for p in ({gh_shim!r}, env.get("PATH", "")) if p))
 env.pop("SWARM_GH_VIA", None)
 try:
     env["GPG_TTY"] = os.ttyname(0)

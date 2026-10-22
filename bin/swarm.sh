@@ -167,7 +167,12 @@ CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 # each project, so each one's calls land in its own log.
 GH_VIA="${1:-}"
 export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_VIA="swarm.sh ${GH_VIA//[^a-z-]/}"
-[[ ":${PATH}:" == *":${SWARM_HOME}/bin/gh-shim:"* ]] || export PATH="${SWARM_HOME}/bin/gh-shim:${PATH}"
+# First, not just present: a folder with a gh before it would take swarm.sh's calls past the shim.
+GH_SHIM="${SWARM_HOME}/bin/gh-shim"
+if [[ "${PATH}" != "${GH_SHIM}" && "${PATH}" != "${GH_SHIM}:"* ]]; then
+  GH_PATH=":${PATH}:"; GH_PATH="${GH_PATH//:${GH_SHIM}:/:}"; GH_PATH="${GH_PATH#:}"; GH_PATH="${GH_PATH%:}"
+  export PATH="${GH_SHIM}${GH_PATH:+:${GH_PATH}}"
+fi
 
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
 CFG_board_dir=docs

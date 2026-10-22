@@ -19,11 +19,11 @@ check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
 
-# The stub: with STUB_SLEEP, sleeps that long then touches STUB_MARK; prints its arguments and stdin,
-# exits with STUB_RC.
+# The stub: with STUB_SLEEP, sleeps that long then touches STUB_MARK; with STUB_TRAP, waits on a sleep
+# and exits 7 on TERM; prints its arguments and stdin, exits with STUB_RC.
 mkdir -p "${dir}/stub"
 # shellcheck disable=SC2016 # the stub expands them
-printf '#!/bin/sh\n[ -z "${STUB_SLEEP:-}" ] || { sleep "${STUB_SLEEP}"; touch "${STUB_MARK}"; }\necho "args: $*"\ncat\nexit "${STUB_RC:-0}"\n' > "${dir}/stub/gh"; chmod +x "${dir}/stub/gh"
+printf '#!/bin/sh\n[ -z "${STUB_SLEEP:-}" ] || { sleep "${STUB_SLEEP}"; touch "${STUB_MARK}"; }\n[ -z "${STUB_TRAP:-}" ] || { trap "exit 7" TERM; sleep 5 & wait $!; }\necho "args: $*"\ncat\nexit "${STUB_RC:-0}"\n' > "${dir}/stub/gh"; chmod +x "${dir}/stub/gh"
 LOG="${dir}/gh-calls.tsv"
 shim() { PATH="${REPO}/bin/gh-shim:${dir}/stub:${PATH}" SWARM_GH_LOG="${LOG}" SWARM_GH_CALLER=b1 "$@"; }
 
@@ -46,19 +46,35 @@ shim gh api --paginate --slurp repos/o/r/pulls/7/files < /dev/null > /dev/null
 shim gh pr checks 7 --watch < /dev/null > /dev/null
 shim gh run watch 9 < /dev/null > /dev/null
 SWARM_GH_VIA="swarm.sh wait-pr" shim gh api repos/o/r/commits/abc1234/check-runs < /dev/null > /dev/null
+shim gh config get editor < /dev/null > /dev/null
+shim gh --version < /dev/null > /dev/null
+shim gh pr view 3 --help < /dev/null > /dev/null
 rc=0; timeout -k 2 10 env PATH="${REPO}/bin/gh-shim:${dir}/stub:${PATH}" SWARM_GH_LOG="${LOG}" SWARM_GH_CALLER=b1 STUB_RC=2 gh api --header < /dev/null > /dev/null || rc=$?
 check "a flag missing its value ends the parse: gh's exit code, no hang" "${rc}" 2
 check "one line per call: agent, via, subcommand, API path with ids collapsed, budget, many, exit code" "$(cut -f2- "${LOG}")" "$(printf '%s\n' \
   $'b1\t-\tpr view\tgraphql\t-\t3' $'b1\t-\tapi repos/o/r/pulls/:id/comments\trest\t-\t0' $'b1\t-\tapi graphql\tgraphql\t-\t0' \
-  $'b1\t-\trun view\trest\t-\t0' $'b1\t-\tbrowse\trest\t-\t0' $'b1\t-\tpr diff\trest\t-\t0' $'b1\t-\tpr view\tgraphql\t-\t0' \
+  $'b1\t-\trun view\trest\t-\t0' $'b1\t-\tbrowse\tnone\t-\t0' $'b1\t-\tpr diff\trest\t-\t0' $'b1\t-\tpr view\tgraphql\t-\t0' \
   $'b1\t-\tpr view\tgraphql\t-\t0' $'b1\t-\tapi graphql\tgraphql\t-\t0' $'b1\t-\tstatus\tgraphql\t-\t0' $'b1\t-\tlabel list\tgraphql\t-\t0' \
   $'b1\t-\tapi repos/o/r/pulls/:id/files\trest\tpaginate\t0' $'b1\t-\tpr checks\tgraphql\twatch\t0' $'b1\t-\trun watch\trest\twatch\t0' \
-  $'b1\tswarm.sh wait-pr\tapi repos/o/r/commits/:id/check-runs\trest\t-\t0' $'b1\t-\tapi ?\trest\t-\t2')"
+  $'b1\tswarm.sh wait-pr\tapi repos/o/r/commits/:id/check-runs\trest\t-\t0' \
+  $'b1\t-\tconfig get\tnone\t-\t0' $'b1\t-\tversion\tnone\t-\t0' $'b1\t-\tpr view\tnone\t-\t0' $'b1\t-\tapi ?\trest\t-\t2')"
 check "no argument past the subcommand is logged" "$(grep -c SECRET "${LOG}" || true)" 0
 check "the time is UTC, to the second" "$(cut -f1 "${LOG}" | grep -cvE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || true)" 0
 
 rc=0; out="$(PATH="${REPO}/bin/gh-shim:${dir}/stub:${PATH}" SWARM_GH_LOG="${dir}/no/such/dir/log" gh auth status < /dev/null 2>&1)" || rc=$?
 check "an unwritable log still runs the call, quietly" "${rc} ${out}" "0 args: auth status"
+
+# A TERM to the shim reaches gh, and the shim waits for gh's own exit code (7 from its trap), not the
+# 143 of its cut-short wait. A simple command, not the shim function, so $! is the shim's own PID.
+PATH="${REPO}/bin/gh-shim:${dir}/stub:${PATH}" SWARM_GH_LOG="${LOG}" STUB_TRAP=1 gh pr view 15 < /dev/null > /dev/null 2>&1 &
+sh_pid=$!
+sleep 1; kill -TERM "${sh_pid}"; rc=0; wait "${sh_pid}" || rc=$?
+check "a signal to the shim waits for gh's own exit code, and logs it" "${rc}|$(tail -1 "${LOG}" | cut -f4,7)" $'7|pr view\t7'
+
+# Trimming: past SWARM_GH_LOG_KEEP lines, a call (here every one: SWARM_GH_TRIM_EVERY=1) keeps the newest.
+T="${dir}/trim.tsv"; for i in 1 2 3 4 5 6 7 8 9; do printf 'old %s\n' "${i}" >> "${T}"; done
+PATH="${REPO}/bin/gh-shim:${dir}/stub:${PATH}" SWARM_GH_LOG="${T}" SWARM_GH_LOG_KEEP=3 SWARM_GH_TRIM_EVERY=1 gh pr list < /dev/null > /dev/null
+check "a log past its size keeps its newest lines, this call's last" "$(head -2 "${T}" | tr '\n' ' ')$(wc -l < "${T}" | tr -d ' ')|$(tail -1 "${T}" | cut -f4)" "old 8 old 9 3|pr list"
 
 # A shim killed outright (a Python caller's timeout sends KILL) takes gh with it: gh never finishes.
 # A simple command, not the shim function, so $! is the shim's own PID.
@@ -78,9 +94,11 @@ fi
 # (Linux, or inside another sandbox) the check is skipped.
 NOFD='(version 1)(allow default)(deny file-write* (regex #"^/dev/fd/"))'
 if sandbox-exec -p '(version 1)(allow default)' /usr/bin/true 2>/dev/null; then
+  # fd 3 open in the caller, as it stays in the shim when the pipe cannot open: the shim's ok must not land there.
   rc=0; out="$(sandbox-exec -p "${NOFD}" env PATH="${REPO}/bin/gh-shim:${dir}/stub:${PATH}" SWARM_GH_LOG="${LOG}" STUB_SLEEP=1 STUB_MARK="${dir}/slow" \
-    gh pr view 14 < /dev/null 2>&1)" || rc=$?
+    gh pr view 14 < /dev/null 3> "${dir}/fd3" 2>&1)" || rc=$?
   check "a watcher pipe that cannot open leaves gh running, quietly" "${rc} ${out}" "0 args: pr view 14"
+  check "and writes nothing into the caller's fd 3" "$(cat "${dir}/fd3")" ""
 else
   echo "ok   a watcher pipe that cannot open leaves gh running, quietly (skipped: no sandbox-exec here)"
 fi
@@ -109,35 +127,47 @@ printf '%s\n' $'2026-10-01\tcode\tb1\tclaude\topus\thigh\ts1' $'2026-10-01\tcond
   for _ in 1 2 3 4; do printf '2026-10-01T10:06:00Z\tb1\tswarm.sh wait-pr\tapi graphql\tgraphql\t-\t0\n'; done
   for _ in 1 2 3 4; do printf '2026-10-01T10:10:00Z\tc1\t-\tpr checks\tgraphql\twatch\t0\n'; done
   printf '2026-10-01T10:20:00Z\t-\tswarm.sh merge\tapi repos/o/r/pulls/:id/files\trest\tpaginate\t0\n'
+  printf '2026-10-01T10:25:00Z\tall\t-\trun list\trest\t-\t0\n'   # an agent named all, apart from the (all) row
+  printf '2026-10-01T10:26:00Z\tb1\t-\tconfig get\tnone\t-\t0\n'   # no API call: no share
   for _ in 1 2 3 4 5 6 7 8; do printf '2026-10-01T11:00:00Z\tc1\t-\tpr view\tgraphql\t-\t1\n'; done
   printf 'garbage\n'
 } > "${P}/.swarm/gh-calls.tsv"
 # --until keeps out flow's own gh calls (outcomes' pr list, to the stub).
-check "flow's gh_calls: by role, then by subcommand, each hour's budget under its all row, most first" "$(flow)" "$(printf '%s\n' "## gh_calls" \
+check "flow's gh_calls: by role, then by subcommand, each hour's budget under its (all) row, most first, shares under 0.1% as <0.1%" "$(flow)" "$(printf '%s\n' "## gh_calls" \
   "# gh runs, not API requests: a run with many > 0 (--paginate, --watch) spends several, and GraphQL counts points" \
   $'hour\tapi\trole\truns\tmany\tshare' \
-  $'2026-10-01 10:00\tgraphql\tall\t14\t4\t0.3%' \
+  $'2026-10-01 10:00\tgraphql\t(all)\t14\t4\t0.3%' \
   $'2026-10-01 10:00\tgraphql\tcode\t10\t0\t0.2%' \
   $'2026-10-01 10:00\tgraphql\tconduct\t4\t4\t0.1%' \
-  $'2026-10-01 10:00\trest\tall\t1\t1\t0.0%' \
-  $'2026-10-01 10:00\trest\t-\t1\t1\t0.0%' \
-  $'2026-10-01 11:00\tgraphql\tall\t8\t0\t0.2%' \
+  $'2026-10-01 10:00\tnone\t(all)\t1\t0\t-' \
+  $'2026-10-01 10:00\tnone\tcode\t1\t0\t-' \
+  $'2026-10-01 10:00\trest\t(all)\t2\t1\t<0.1%' \
+  $'2026-10-01 10:00\trest\t-\t1\t1\t<0.1%' \
+  $'2026-10-01 10:00\trest\tall\t1\t0\t<0.1%' \
+  $'2026-10-01 11:00\tgraphql\t(all)\t8\t0\t0.2%' \
   $'2026-10-01 11:00\tgraphql\tconduct\t8\t0\t0.2%' \
   '' \
   $'hour\tapi\tsubcommand\truns\tmany\tshare' \
-  $'2026-10-01 10:00\tgraphql\tall\t14\t4\t0.3%' \
+  $'2026-10-01 10:00\tgraphql\t(all)\t14\t4\t0.3%' \
   $'2026-10-01 10:00\tgraphql\tpr view\t6\t0\t0.1%' \
   $'2026-10-01 10:00\tgraphql\tapi graphql via swarm.sh wait-pr\t4\t0\t0.1%' \
   $'2026-10-01 10:00\tgraphql\tpr checks\t4\t4\t0.1%' \
-  $'2026-10-01 10:00\trest\tall\t1\t1\t0.0%' \
-  $'2026-10-01 10:00\trest\tapi repos/o/r/pulls/:id/files via swarm.sh merge\t1\t1\t0.0%' \
-  $'2026-10-01 11:00\tgraphql\tall\t8\t0\t0.2%' \
+  $'2026-10-01 10:00\tnone\t(all)\t1\t0\t-' \
+  $'2026-10-01 10:00\tnone\tconfig get\t1\t0\t-' \
+  $'2026-10-01 10:00\trest\t(all)\t2\t1\t<0.1%' \
+  $'2026-10-01 10:00\trest\tapi repos/o/r/pulls/:id/files via swarm.sh merge\t1\t1\t<0.1%' \
+  $'2026-10-01 10:00\trest\trun list\t1\t0\t<0.1%' \
+  $'2026-10-01 11:00\tgraphql\t(all)\t8\t0\t0.2%' \
   $'2026-10-01 11:00\tgraphql\tpr view\t8\t0\t0.2%')"
 check "a window with no lines says so" "$(cd "${P}" && PATH="${dir}/stub:${PATH}" env -u HERDR_ENV -u SWARM_PROJECT -u SWARM_AGENT -u SWARM_GH_CALLER SWARM_FLOW_SECTIONS=gh_calls bash "${REPO}/bin/swarm.sh" flow --since 2026-10-05 --until 2026-10-05 | tail -1)" \
   "no gh calls logged in the window (2026-10-05 to 2026-10-05)"
 check "swarm.sh's own gh calls log with its command as via, outside any agent" "$(tail -1 "${P}/.swarm/gh-calls.tsv" | cut -f2,3,5)" $'-\tswarm.sh flow\tgraphql'
 flow SWARM_GH_CALLER=b1 > /dev/null
 check "a builder's swarm.sh keeps the builder as the agent, so its calls count under its role" "$(tail -1 "${P}/.swarm/gh-calls.tsv" | cut -f2,3)" $'b1\tswarm.sh flow'
+# The shim on PATH but behind a folder with a gh: swarm.sh puts it first, so its calls still log.
+before="$(wc -l < "${P}/.swarm/gh-calls.tsv")"
+(cd "${P}" && PATH="${dir}/stub:${REPO}/bin/gh-shim:${PATH}" env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=gh_calls bash "${REPO}/bin/swarm.sh" flow --since 2026-10-01 > /dev/null)
+check "swarm.sh puts the shim first when it is on PATH behind another gh" "$(( $(wc -l < "${P}/.swarm/gh-calls.tsv") > before ))" 1
 
 # A command run for another project (as dash --project runs swarm.sh for each) logs in that project's log.
 Q="${dir}/other"; mkdir -p "${Q}/.swarm" "${Q}/.claude/swarm"; : > "${Q}/.claude/swarm/config"; git -C "${Q}" init -q

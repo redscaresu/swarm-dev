@@ -5,11 +5,13 @@
 # counts points, so the share of 5000 is a floor. A caller's role is its agent's agents.tsv one (the
 # last line naming it), an agent agents.tsv does not name as itself, and - for a call outside any
 # agent; a subcommand swarm.sh ran says so (`via swarm.sh <command>`). Each hour's budget lists its
-# `all` row, then its rows, most runs first. The log only grows, so it is read from its end and the
+# `(all)` row (no agent, role or subcommand has parentheses), then its rows, most runs first. A share
+# under 0.1% shows as <0.1%; a `none` run (one that calls no API, such as gh config) has no share. The log only grows, so it is read from its end and the
 # reading stops two days before --since. --epic does not narrow it.
 import collections, datetime, os
 
 BUDGET = 5000
+ALL = "(all)"
 BLOCK = 1 << 16
 
 def backwards(path):
@@ -25,6 +27,10 @@ def backwards(path):
             tail = lines.pop(0)
             yield from reversed(lines)
         yield tail
+
+def share(api, n):
+    pct = 100 * n / BUDGET
+    return "-" if api == "none" else "<0.1%" if pct < 0.05 else f"{pct:.1f}%"
 
 role_of = {}
 for line in open(agents, errors="ignore") if os.path.exists(agents) else ():
@@ -51,7 +57,7 @@ for raw in backwards(log) if os.path.exists(log) else ():
         continue
     hour, agent, via, sub, api, heavy = t.strftime("%Y-%m-%d %H:00"), f[1], f[2], f[3], f[4], f[5] != "-"
     for key, name in (("role", role_of.get(agent, agent)), ("subcommand", sub if via == "-" else f"{sub} via {via}")):
-        for k in ((hour, api, "all"), (hour, api, name)):
+        for k in ((hour, api, ALL), (hour, api, name)):
             by[key][k] += 1
             many[key][k] += heavy
 
@@ -63,5 +69,5 @@ else:
     print("# gh runs, not API requests: a run with many > 0 (--paginate, --watch) spends several, and GraphQL counts points")
     for i, key in enumerate(by):
         print(("\n" if i else "") + f"hour\tapi\t{key}\truns\tmany\tshare")
-        for (hour, api, name), n in sorted(by[key].items(), key=lambda kv: (kv[0][:2], kv[0][2] != "all", -kv[1], kv[0][2])):
-            print(f"{hour}\t{api}\t{name}\t{n}\t{many[key][(hour, api, name)]}\t{100 * n / BUDGET:.1f}%")
+        for (hour, api, name), n in sorted(by[key].items(), key=lambda kv: (kv[0][:2], kv[0][2] != ALL, -kv[1], kv[0][2])):
+            print(f"{hour}\t{api}\t{name}\t{n}\t{many[key][(hour, api, name)]}\t{share(api, n)}")
