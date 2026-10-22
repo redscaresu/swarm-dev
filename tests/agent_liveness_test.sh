@@ -188,5 +188,121 @@ out="$(cd "${F}" || exit 1; env -u HERDR_ENV -u SWARM_PROJECT TZ=UTC PATH="${ROO
 check "flow counts api-error and auto-denied per epic" test "$(sed -n '/^epic	kind	stops$/,/^$/p' <<< "${out}" | sed '/^$/d')" = "$(printf '%s\n' \
   $'epic\tkind\tstops' $'-\tapi-error\t1' $'e1\tapi-error\t1' $'e1\tauto-denied\t2' $'e2\tapi-error\t1')"
 
+# wait --stall on s-hung, a busy builder whose story started 2 hours ago with nothing since. Its last
+# own work, a tool call, is 40 minutes old; its session wrote only compaction, summary and
+# task-notice entries after it: no sign of life. ps (stubbed, from PS_TREE) shows its pane's shell
+# (herdr's shell_pid 100) and the agent (200). Under the agent: an MCP server (250) and its worker,
+# caffeinate (270), a hook-started MCP server under sh -c (280), and two Bash tool shells: 330, a
+# run_in_background server started 90 minutes ago, and the newer 300, the foreground call, whose
+# make test (given a token) runs scripts/test.sh, which runs the hung sleep (400). Another pane's
+# tool shell runs an older sleep (590).
+H="${ROOT}/hung"; HB="${ROOT}/hung-bin"; mkdir -p "${H}/.swarm/state" "${H}/docs/stories" "${HB}" "${ROOT}/projects/p"
+touch "${H}/docs/stories/README.md"; git -C "${H}" init -q
+printf -- '---\nstatus: ready\nkind: code\n---\n\n# s-hung\n' > "${H}/docs/stories/s-hung.md"
+printf 'w:7 s-hung\n' > "${H}/.swarm/state/s-hung"
+printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n' > "${H}/.swarm/agents.tsv"
+ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"; }
+printf '%s\tstory\ts-hung\tw:me\tok\n' "$(ago 120 | cut -c1-19)Z" > "${H}/.swarm/events.tsv"
+printf '[{"sessionId":"sess-hung","status":"busy"}]' > "${ROOT}/hung.json"
+cp "${HERE}/claude_stub.sh" "${HB}/claude"
+# herdr's wait times out with HUNG_WAIT=timeout (a codex agent's wait goes through herdr alone).
+cat > "${HB}/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"s-hung","agent_status":"working","pane_id":"w:7"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w:7"}]}}' ;;
+  "pane process-info") [ "$4" = w:7 ] && echo '{"result":{"process_info":{"pane_id":"w:7","shell_pid":100}}}' ;;
+  "agent read") echo '⏺ Running the tests.' ;;
+  "agent wait") [ "${HUNG_WAIT:-}" = timeout ] && { echo '{"error":{"code":"timeout"}}' >&2; exit 1; }
+    echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
+  *) exit 1 ;;
+esac
+STUB
+# ps -o pid=,comm= prints ${PS_TREE}.comm when the test wrote one, else each command's first word.
+cat > "${HB}/ps" <<'STUB'
+#!/bin/sh
+case "$*" in
+  *comm=*) if [ -f "${PS_TREE}.comm" ]; then cat "${PS_TREE}.comm"; else awk '{ print $1, $4 }' "${PS_TREE}"; fi ;;
+  *) cat "${PS_TREE}" ;;
+esac
+STUB
+snap='/bin/zsh -c source /Users/u/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval'
+tree=('  100     1  02:00:00 -zsh' '  200   100  02:00:00 claude --session-id sess-hung'
+  '  250   200  01:59:30 node mcp-server.js' '  260   250  01:50:00 node worker.js' '  270   200     02:00 caffeinate -i -t 300'
+  '  280   200  01:59:50 sh -c start-mcp.sh' '  281   280  01:59:49 node mcp2.js'
+  "  300   200     45:03 ${snap} 'make test GH_TOKEN=SEKRIT'" '  310   300     45:02 make test GH_TOKEN=SEKRIT' '  320   310     45:01 bash scripts/test.sh'
+  '  400   320     45:00 sleep 2700' "  330   200  01:30:00 ${snap} 'node server.js'" '  331   330  01:29:59 node server.js'
+  "  590   999  1-03:00:01 ${snap} 'sleep 9999'" '  591   590  1-03:00:00 sleep 9999')
+export PS_TREE="${ROOT}/ps.tree"; printf '%s\n' "${tree[@]}" > "${PS_TREE}"
+chmod +x "${HB}/"*
+log() { printf '%s\n' "$@" > "${ROOT}/projects/p/sess-hung.jsonl"; }
+tool() { printf '{"type":"assistant","timestamp":"%s","message":{"model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Bash"}]}}' "$(ago "$1")"; }
+idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(ago 12)\"}"
+  "{\"type\":\"user\",\"isCompactSummary\":true,\"timestamp\":\"$(ago 11)\",\"message\":{\"role\":\"user\",\"content\":\"This session is being continued.\"}}"
+  "{\"type\":\"user\",\"timestamp\":\"$(ago 2)\",\"message\":{\"role\":\"user\",\"content\":\"<task-notification><task-id>b1</task-id></task-notification>\"}}"
+  '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
+hung_wait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
+  CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait --stall s-hung 3000 2>&1); }
+# Its last own work, a tool call 40 minutes ago, came after every tool shell started: none is the
+# foreground call, so the builder is hung outside Bash (an MCP call, a subagent, the API) and the old
+# background server is not named.
+log "$(tool 40)" "${idle[@]}"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "a builder whose newer log entries are only compaction and task notices is stalled?" grep -qE '^stalled: working 4[0-2] min' <<< "${out}"
+check "wait --stall on it exits 3" test "${rc}" = 3
+check "with no tool shell started since its last own work, nothing is named, and it says why" \
+  grep -qE '; longest-running: none named \(no foreground Bash call: every tool shell running a command started before its last own work\)$' <<< "${out}"
+# Its last own work 46 minutes ago, the tool call that started shell 300 a moment later: the sleep
+# under make and test.sh is named, by program name and never by argument.
+named='; longest-running: pid 400, 45 min: sleep \(under pid 310, 45 min: make > pid 320, 45 min: bash\)$'
+log "$(tool 46)" "${idle[@]}"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "the stalled line names the leaf of the foreground tool shell's chain" grep -qE "${named}" <<< "${out}"
+check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[6-8] min .*'"${named}" "${H}/.swarm/events.tsv"
+check "no argument (a token) reaches the stalled line or events.tsv" lacks 'SEKRIT|2700' "${out}$(cat "${H}/.swarm/events.tsv")"
+# With no own work in the log at all, the newest tool shell is the foreground one, not the older
+# background server.
+log "${idle[@]}"
+check "with no own work on record, the newest tool shell's leaf is named" grep -qE "${named}" <<< "$(hung_wait)"
+# ps's comm, not the command's first word, names a program whose path holds a space.
+log "$(tool 46)" "${idle[@]}"
+{ awk '{ print $1, $4 }' "${PS_TREE}" | grep -v '^400 '; echo '400 /Applications/Visual Studio Code.app/Contents/MacOS/Electron'; } > "${PS_TREE}.comm"
+check "a program whose path holds a space is named by ps's comm" grep -qE '; longest-running: pid 400, 45 min: Electron \(under' <<< "$(hung_wait)"
+rm "${PS_TREE}.comm"
+# With no tool shell (caffeinate and MCP servers only), nothing is named, and it says why.
+printf '%s\n' "${tree[@]:0:7}" > "${PS_TREE}"
+check "caffeinate and MCP servers with no tool shell name nothing" grep -qE '; longest-running: none named \(no Bash tool call is running a command\)$' <<< "$(hung_wait)"
+# A codex builder (its agents.tsv line, no session): node runs the native codex binary, which runs
+# the command. Its stalled line says no command is named.
+printf '%s\n' "${tree[@]:0:1}" '  200   100  02:00:00 node /opt/homebrew/bin/codex' \
+  '  210   200  02:00:00 /opt/homebrew/lib/node_modules/@openai/codex/vendor/codex/codex' '  400   210     45:00 sleep 2700' > "${PS_TREE}"
+printf '2026-10-22\tcode\ts-hung\tcodex\tgpt\thigh\t-\n' >> "${H}/.swarm/agents.tsv"
+check "a codex builder's stalled line says it names no command" grep -qE '; longest-running: none named \(a codex builder\)$' <<< "$(HUNG_WAIT=timeout hung_wait)"
+printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n' >> "${H}/.swarm/agents.tsv"
+printf '%s\n' "${tree[@]}" > "${PS_TREE}"
+# Its pane changed a minute ago (the record's checksum is not the pane's now), so it is not stuck either.
+log "$(tool 40)" "${idle[@]}" "$(tool 5)"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "the same log with a 5-minute-old tool call is no stall" test "${rc}:${out}" = "1:busy"
+# A tool result 5 minutes old whose text holds a raw U+2028 (Node's JSON writer leaves it unescaped)
+# is still one entry, and a sign of life.
+log "$(tool 40)" "${idle[@]}" "{\"type\":\"user\",\"timestamp\":\"$(ago 5)\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":\"a$(printf '\342\200\250')b\"}]}}"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "a tool result holding U+2028 is one entry, and a sign of life" test "${rc}:${out}" = "1:busy"
+# A tool call whose timestamp has no offset is dated by the log's mtime (just now), never read as local
+# time: in UTC+9 that would put it 9 hours back, a stall.
+log "$(tool 40)" "${idle[@]}" "$(tool 1 | sed 's/\.000Z"/"/')"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(TZ=Asia/Tokyo hung_wait)"; then rc=0; else rc=$?; fi
+check "a timestamp with no offset is dated by the log's mtime, not as local time" test "${rc}:${out}" = "1:busy"
+# The main log's own work 40 minutes old, a Task subagent's tool call 5 minutes ago: no stall.
+log "$(tool 40)" "${idle[@]}"
+mkdir -p "${ROOT}/projects/p/sess-hung/subagents"; tool 5 > "${ROOT}/projects/p/sess-hung/subagents/agent-a1.jsonl"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "a Task subagent's 5-minute-old tool call is a sign of life" test "${rc}:${out}" = "1:busy"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

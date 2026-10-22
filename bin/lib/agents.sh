@@ -57,8 +57,8 @@
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
-#     worktree's last commit or edit, an agent's session log write, the time a wait began) or ISO
-#     times (a PR's updatedAt). None when there is no sign at all.
+#     worktree's last commit or edit, an agent's newest own work in its session log or its subagents'
+#     logs, the time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
@@ -928,16 +928,35 @@ stall_py() {
   SWARM_STORY_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/stall_py.py" "${EVENTS_LOG}" "$@"
 }
 
-# session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
-# report.py's session_log), which the session writes on every turn and tool call; empty when it has none.
-# Never close's copy (SESSIONS_DIR): an archive says nothing about a live agent.
+# session_mtime <name> — the epoch of the newest entry in <name>'s Claude session log (its agents.tsv
+# session id, report.py's session_log) that is its own work: an assistant message, a tool call or a
+# tool result, in the log or its Task subagents' logs (<session>/subagents/*.jsonl). A compaction,
+# summary or background-task notice, which a hung session still writes, is no sign of life. Empty when
+# it has none. Never close's copy (SESSIONS_DIR): an archive says nothing
+# about a live agent.
 session_mtime() {
   python3 "${SWARM_HOME}/bin/lib/session_mtime.py" "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" || true
 }
 
+# longest_child <name> <target> — what a builder's foreground Bash tool call runs, from
+# longest_child.py over ps, herdr's process info for pane <target> and its last own work
+# (session_mtime): `longest-running: pid <PID>, <N> min: <program> (under <its parents>)`, program
+# names only, or `longest-running: none named (<why>)`: a codex builder (agents.tsv), whose commands
+# are not traced, no Bash tool call running a command, none started since its last own work, or a
+# process list that could not be read.
+longest_child() {
+  local out
+  if [[ "$(awk -F'\t' -v n="$1" '$3 == n { h = $4 } END { print h }' "${AGENTS_LOG}" 2>/dev/null)" == codex ]]; then
+    echo "longest-running: none named (a codex builder)"; return
+  fi
+  out="$(python3 "${SWARM_HOME}/bin/lib/longest_child.py" "$(herdr pane process-info --pane "$2" 2>/dev/null)" "$(session_mtime "$1")")" || true
+  echo "${out:-longest-running: none named (its processes could not be read)}"
+}
+
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
 # stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last commit
-# or edit (story_work_time) and its session log's mtime (session_mtime) as signs, print how many
+# or edit (story_work_time) and its newest own work across its session log and its subagents' logs
+# (session_mtime) as signs, print how many
 # minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
 # stalled, so gh is rarely called.
 agent_stalled() {
@@ -1014,7 +1033,7 @@ herdr_wait() {
     [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
+      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; return
     fi
     pane_check "${name}" "${target}"
     if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
@@ -1083,7 +1102,7 @@ settle() {
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
+      state="stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; break
     fi
     if [[ "${state}" == busy ]] && pane_quiet "${name}" "${target}"; then break; fi
     t0="$(now_ms)"
@@ -1101,9 +1120,11 @@ settle() {
 # nudged: a nudge would bury the reply and goal entry the conductor reads the cause from, so wait
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
-# for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
-# WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
-# step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
+# for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
+# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident
+# and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
+# step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
+# by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
 # An agent whose turn stopped on an API error (settle's "api error", or idle and pane_check's) is sent
@@ -1128,17 +1149,27 @@ settle() {
 # (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at
+  local answered="" resumed_sum="" pane_kind pane_at hung
   deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then
+      hung="$(longest_child "${name}" "${target}")"
+      [[ -z "${hung}" ]] || status="${status}; ${hung}"
+      record_event incident "${name}" "${status}"
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
-      [[ ${rc} != 0 ]] || { echo "${out}"; return 0; }
-      [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || { echo "${out}"; return 1; }
-      [[ ${rc} != "${STEP_UP_BUSY}" ]] || { echo "stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"; return 0; }
+      # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
+      # Another step-up still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"
+      if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
+        echo "${out}"
+        if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
+        else echo "${hung}"; fi
+        [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || return 1
+        return 0
+      fi
       echo "${status}"; return "${WAIT_STALLED}"
     fi
     if [[ "${status}" == stuck:* ]]; then echo "${status}"; return "${WAIT_STUCK}"; fi
@@ -1200,14 +1231,14 @@ wait_agent() {
 }
 
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
-# incident in events.tsv (an api-error or auto-denied one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
+# incident in events.tsv (an api-error, auto-denied or stalled one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
 # after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
 # --backlog through conductor_name (b).
 login_incident() {
   awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
-    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied):/ { login = $5 ~ /^login:/ }
+    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied|stalled):/ { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
     $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \
