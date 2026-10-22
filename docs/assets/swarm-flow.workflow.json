@@ -2,7 +2,7 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "How the swarm builds a design",
+    "title": "How the swarm builds an epic",
     "quality_profile": "showcase",
     "output": "docs/assets/swarm-flow.html"
   },
@@ -26,14 +26,14 @@
   ],
   "phases": [
     {
-      "id": "design",
-      "label": "Design",
+      "id": "setup",
+      "label": "Set up",
       "fromCol": 0,
       "toCol": 0
     },
     {
       "id": "planning",
-      "label": "Plan",
+      "label": "Write + plan",
       "fromCol": 1,
       "toCol": 2,
       "variant": "emphasis"
@@ -61,7 +61,7 @@
     {
       "id": "epic",
       "lane": "you",
-      "col": 0,
+      "col": 1,
       "type": "external",
       "label": "/swarm-dev:epic",
       "sublabel": "write it with a co-author",
@@ -154,7 +154,7 @@
       "col": 0,
       "type": "backend",
       "label": "swarm.sh init",
-      "sublabel": "once per project",
+      "sublabel": "first run, once",
       "width": 140
     },
     {
