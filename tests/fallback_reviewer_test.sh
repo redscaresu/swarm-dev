@@ -33,7 +33,7 @@ codex_says 1 "${LIMIT_MSG}" > "${BIN}/codex"
 # herdr: logs every call. Tab t:<n> holds pane w:<n>. agent start records "<name> <pane> <session>"
 # (failing with startfail, taking 20 s with slowstart); a tab create with panefail opens none; agent prompt writes the findings file the brief names and marks the agent
 # done, unless silent (it stays busy) or idle (it goes idle with no file; with late, it writes the
-# file 3 s later, as a background call of its own would), and with promptfail leaves the agent idle, so the brief is never taken up; a
+# file 3 s later, as a background call of its own would), and with promptfail leaves the agent idle (herdr's agent_prompt_stalled, and agent get reads idle with no completion_seq, as herdr 0.9.5 gives it), so the brief is never taken up; a
 # pane or tab close drops its agent. agent list and wait report it idle once done.
 cat > "${BIN}/herdr" <<EOF
 #!/bin/sh
@@ -58,7 +58,7 @@ case "$1 $2" in
                   rm -f "$H/done/$3"   # a new agent is busy until its brief is done
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
-  "agent prompt") [ -e "$H/promptfail" ] && { echo '{"result":{"agent":{"agent_status":"idle"}}}'; exit 0; }
+  "agent prompt") [ -e "$H/promptfail" ] && { echo '{"error":{"code":"agent_prompt_stalled"}}' >&2; exit 1; }
                   [ -e "$H/idle" ] && touch "$H/done/$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")" && "$H/sessions"
                   if [ -e "$H/late" ]; then
                     f=$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/fallback/[a-z0-9-]*\.md' | head -1)
@@ -70,6 +70,7 @@ case "$1 $2" in
                     touch "$H/done/$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")"; "$H/sessions"
                   fi
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent get")    [ -e "$H/promptfail" ] && echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent wait")   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list")   awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { s = system("test -e " d "/" $1) == 0 ? "idle" : "working"

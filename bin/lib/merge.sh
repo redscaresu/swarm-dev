@@ -288,17 +288,120 @@ merge_pr() {
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
 }
 
-# board_ready [--review] — each story next_step would build now (buildable_story) whose build has
-# not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no epic. With
-# --review, each story in review too, worktree or not (reconcile may send one back to ready, which no
-# board PR did).
+# board_ready [--review|--started] — each story next_step would build now (buildable_story) whose
+# build has not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no
+# epic. With --started, started ones too. With --review, each story in review too, worktree or not
+# (reconcile may send one back to ready, which no board PR did).
 board_ready() {
-  local f e
+  local f e mode="${1:-}"
   while IFS= read -r f; do
-    if [[ -n "${1:-}" && "$(fm "${f}" status)" == review ]] || { buildable_story "${f}" && ! one_off_started "$(basename "${f}" .md)"; }; then
+    if [[ "${mode}" == --review && "$(fm "${f}" status)" == review ]] \
+      || { buildable_story "${f}" && { [[ "${mode}" == --started ]] || ! one_off_started "$(basename "${f}" .md)"; }; }; then
       e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"
     fi
   done < <(board stories)
+}
+
+# group_conductor <epic> — the conductor of board_ready's epic column: - is the backlog's.
+group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conductor_name "$1"; fi; }
+
+# conduct_ready — start a conductor, as swarm.sh conduct does, for each group of buildable stories
+# (board_ready --started: an active epic's, or with no epic the backlog's) whose conductor
+# (group_conductor) is not in herdr. One still in its pane is skipped, and named when it has written its
+# report: that report is the lead's to collect, and a start would delete it. So is one whose pane is
+# gone (closed by hand, a herdr restart, a crash) with a report nobody collected (report_collected).
+# One whose name another project's agent holds is skipped and named. fix-main stories are left out: every conductor builds
+# one first, and next names it. Nothing starts while herdr cannot list
+# its agents, since what runs is not known, nor while a working conductor stopped on an expired login
+# or an API error (conductor_stop), which would stop a new one too. No conductor starts for a group
+# while conduct_stop says why not, and none outside herdr: it prints what to run instead. A start that
+# fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
+# logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
+# output is dropped, so next's first line stays the step even with stderr merged.
+conduct_ready() {
+  local e name arg ready log c why todo report rc=0
+  ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
+  [[ -n "${ready}" ]] || return 0
+  if ! herdr agent list >/dev/null 2>&1; then
+    echo "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"; return 0
+  fi
+  # On fd 3, as below: herdr and python must not read the list.
+  while read -r c <&3; do
+    [[ -n "${c}" && ! -f "$(conductor_report "${c}")" ]] || continue
+    case "$(conductor_stop "${c}")" in
+      auth) echo "no conductor started: ${c} stopped on an expired login, which would stop a new one too"; return 0 ;;
+      stuck) echo "no conductor started: ${c} stopped on an API error, which would stop a new one too"; return 0 ;;
+    esac
+  done 3<<< "$(running_conductors)"
+  while read -r e <&3; do
+    [[ -n "${e}" ]] || continue
+    name="$(group_conductor "${e}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
+    if [[ -n "$(agent_field "${name}" pane_id)" ]]; then
+      if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
+      continue
+    fi
+    [[ -z "$(agent_field "${name}" agent_status any)" ]] || { echo "no conductor started: another project's agent holds the name ${name}"; continue; }
+    report="$(conductor_report "${name}")"
+    if [[ -f "${report}" ]] && ! report_collected "${name}" "${report}"; then
+      echo "no conductor started: ${name} is gone, and nobody collected ${report}; read it, then delete it"; continue
+    fi
+    # shellcheck disable=SC2046 # slugs, [a-z0-9-]
+    if conduct_stop "${e}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"); then continue; fi
+    if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
+    log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
+    ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
+    # Logged as a dispatched swarm.sh conduct logs it, with its die line on a failure: outcomes builds
+    # its conductor runs from these lines.
+    if wait $!; then
+      record_event conduct "${arg}"; echo "started: ${name} (swarm.sh conduct ${arg})"
+    else
+      c=$?; why="$(tail -1 "${log}")"; record_event conduct "${arg}" "${why#swarm: }"
+      # An agent (a conductor's own board merge) has only its allowlisted env, which may be why: the
+      # lead's next starts it.
+      todo="run it yourself"; [[ -z "${SWARM_AGENT:-}" ]] || todo="the lead's swarm.sh next starts it"
+      echo "warning: swarm.sh conduct ${arg} failed (exit ${c}: ${why}); ${todo}"; rc=1
+    fi
+    rm -f "${log}"
+  done 3< <(awk '{ print $2 }' <<< "${ready}" | sort -u)
+  return "${rc}"
+}
+
+# report_collected <conductor> <report> — the lead collected <report>: events.tsv has an ok close of
+# <conductor> (swarm.sh close, collect's last step) at or after the report's time.
+report_collected() {
+  local t
+  t="$(date -u -r "$2" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
+  awk -F'\t' -v n="$1" -v t="${t}" '$2 ~ /^close/ && $3 == n && $5 == "ok" && $1 >= t { f = 1 } END { exit !f }' "${EVENTS_LOG}" 2>/dev/null
+}
+
+# conduct_stop <epic> <slug>... — prints why no conductor may start for these ready stories of <epic>
+# (board_ready's column: - for the backlog) and returns 0, as /swarm-dev:swarm's story and resume
+# steps stop (docs/reference.md § The backlog conductor): its conductor's report (conductor_report) is
+# newer than every story and epic file, and than the state files (BOARD_STATE_DIR) of the group's epic
+# and of <slug>..., so a new one would stop as the last did; or, for the backlog, the
+# report lists one whose worktree is still there under not started: (a build that died). Returns 1
+# when one may start.
+conduct_stop() {
+  local report what="conductor for epic $1" s newer=""
+  report="$(conductor_report "$(group_conductor "$1")")"
+  [[ "$1" != - ]] || what="backlog conductor"
+  [[ -f "${report}" ]] || return 1
+  [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" \( -name '*.md' -o -type d \) -newer "${report}" 2>/dev/null)" ]] || newer=1
+  # And the group's own state files, where unblock and reset ready a story: never the state dirs, whose
+  # time every state write moves (its lock), nor another group's items.
+  [[ "$1" == - || ! "${BOARD_STATE_DIR}/epics/$1" -nt "${report}" ]] || newer=1
+  for s in "${@:2}"; do [[ ! "${BOARD_STATE_DIR}/stories/${s}" -nt "${report}" ]] || newer=1; done
+  if [[ -z "${newer}" ]]; then
+    echo "no ${what} started: no story or epic changed after ${report}, so a new one would stop as the last did; read it"; return 0
+  fi
+  [[ "$1" == - ]] || return 1
+  shift
+  for s in "$@"; do
+    if one_off_started "${s}" && grep -qE "not started: ${s}([ (]|\$)" "${report}"; then
+      echo "no backlog conductor started: ${report} lists ${s} under not started: and its worktree is still there, so its build died; clear it first"; return 0
+    fi
+  done
+  return 1
 }
 
 # at_rev <rev> <path> <key> — <key>'s first value in the board file <path> at <rev>, or nothing.
@@ -321,9 +424,10 @@ live_at() {
 # not at <prev>, the board <url> merged onto, but at <oid>, its own merge commit (not a queue batch's tip): not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR, merged before it and never pulled here, readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
-# say next will. With no upstream nothing is pulled, so nothing is new. A failed reconcile (logged
-# as merge logs one), a checkout still without <oid>, a herdr that cannot list its agents, or a
-# failed tell is a warning: the merge has landed either way.
+# say so. Then conduct_ready starts the conductors ready work lacks. With no upstream nothing is
+# pulled, so nothing is new and nothing starts. A failed reconcile (logged as merge logs one), a
+# checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
+# and the first two start nothing either: the merge has landed either way.
 ready_tell() {
   local url="$1" oid="$2" new rc why dief e name of slugs note p was="" d="${BOARD#"${PROJECT_DIR}"/}/"
   has_upstream || return 0
@@ -360,13 +464,13 @@ ready_tell() {
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
     slugs="$(awk -v e="${e}" '$2 == e { print $1 }' <<< "${new}" | paste -sd' ' -)"
-    if [[ "${e}" == - ]]; then name="$(conductor_name backlog)"; of="with no epic"; else name="$(conductor_name "${e}")"; of="of epic ${e}"; fi
+    name="$(group_conductor "${e}")"; of="of epic ${e}"; [[ "${e}" != - ]] || of="with no epic"
     if ! herdr agent list >/dev/null 2>&1; then
       echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
     fi
     # One that has written its report has finished (conductors_queued): nobody reads its inbox.
     if [[ -z "$(agent_field "${name}" pane_id)" || -f "$(conductor_report "${name}")" ]]; then
-      echo "ready now: ${slugs} (${of}); no conductor runs for it, so swarm.sh next starts it"; continue
+      echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
     fi
     note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
     printf 'The board PR %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \
@@ -375,6 +479,7 @@ ready_tell() {
     wait $! || echo "warning: could not note ${name} that ${slugs} are ready (exit $?); it finds them on its next pass"
     rm -f "${note}"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
+  conduct_ready || true   # a failed start has printed its warning
 }
 
 # run_fail_lines <owner/repo> <run id> <end> — the FAIL lines of a run's failed jobs, ANSI colour and

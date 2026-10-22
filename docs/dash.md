@@ -221,7 +221,7 @@ holds names and paths, never the contents of a brief or a message.
 `--project` frame) with the command that owns it, prints one line per mismatch, such as
 `bravo: cost: dash shows 31.20, flow --since 2026-10-18 says 2.80`, and exits 1 if it found any.
 It checks the working agents and the running gauge against `swarm.sh status`, the header's next
-against `swarm.sh next`, and the epics waiting on their `depends_on` against the rule `next` plans
+against the first line of `swarm.sh next`, read without starting the conductors `next` starts, and the epics waiting on their `depends_on` against the rule `next` plans
 by. The cost is checked against the `cost` section of `swarm.sh flow --since <today>` with no calling
 session, read just before and just after the frame: anything between the two agrees, so agents
 spending while it runs is no mismatch. Merges today and the 7-day rate are checked against flow's

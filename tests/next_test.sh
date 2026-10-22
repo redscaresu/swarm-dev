@@ -569,7 +569,7 @@ if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t"$'\n'"also: le
 else echo "FAIL the wait's also: lines: ${out}"; fails=$((fails + 1)); fi
 expect_conductor "a working conductor's wait with no blocked dependant" "wait conduct-e1" no e1 "*" \
   "item stories/l.md 'status: ready' 'kind: lead'" \
-  "item stories/s.md 'status: ready' 'kind: code' 'depends_on: [l]'"
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: e1' 'depends_on: [l]'"
 if [[ "${out}" != *"also:"* ]]; then echo "ok   no also: line when no blocked story depends on the lead story"
 else echo "FAIL an also: line with no blocked story depending on the lead story: ${out}"; fails=$((fails + 1)); fi
 
@@ -1098,6 +1098,136 @@ if [[ "${waits}" == yes && "${out}" == *"epic e: could not write its state in "*
   echo "ok   conduct whose epic lock is held leaves the epic later, says why, and exits 0"; else
   echo "FAIL conduct whose epic lock is held: waits on you '${waits}': ${out}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+
+# next with an epic's conductor working and a ready story with no epic starts the backlog's conductor
+# (conduct, against a herdr stub that logs each call and lists the agents it started), and still waits
+# on the epic's. While the backlog report is newer than every story and epic, it starts none and says why.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p bin .swarm/state && item epics/e1.md 'status: active' \
+  && item stories/s1.md 'status: review' 'kind: code' 'epic: e1' && item stories/b1.md 'status: ready' 'kind: code')
+echo "w:7 conduct-e1" > "${dir}/.swarm/state/tab"; echo "conduct-e1 w:7" > "${dir}/agents"
+printf '#!/bin/sh\nA="%s"\n' "${dir}/agents" > "${dir}/bin/herdr"
+cat >> "${dir}/bin/herdr" <<'STUB'
+echo "$*" >> "$A.log"
+case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:8"}}}' ;;
+  "agent start") echo "$3 w:8" >> "$A" ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, ($3 == "" ? "working" : $3), $2 }
+                     END { print "]}}" }' "$A" ;;
+  "agent read") cat "$A.screen.$3" 2>/dev/null ;;
+esac
+STUB
+chmod +x "${dir}/bin/herdr"
+nextb() { : > "${dir}/agents.log"; (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next 2>/dev/null); }
+# collected <conductor>: the lead collected its report (collect ends with swarm.sh close, logged ok).
+collected() { printf '%s\tclose\t%s\t-\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "${dir}/.swarm/events.tsv"; }
+echo report > "${dir}/.swarm/conduct-backlog.report.md"; touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"
+collected "$(cd "${dir}" && bash "${SWARM}" _conductor backlog)"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conductor started: no story or epic changed after"* ]] \
+    && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next with the backlog report newer than the board starts no backlog conductor, says why, and waits"; else
+  echo "FAIL next with the backlog report newer than the board: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# A state write for s1, epic e1's story, as state_set makes it (its file, a lock made and removed
+# beside it): no change to the backlog's stories, so the stop holds.
+mkdir -p "${dir}/.swarm/board-state/stories"; echo "status: review" > "${dir}/.swarm/board-state/stories/s1"
+mkdir "${dir}/.swarm/board-state/stories/s1.lock"; rmdir "${dir}/.swarm/board-state/stories/s1.lock"
+out="$(nextb)"
+if [[ "${out}" == *"no backlog conductor started: no story or epic changed after"* ]] && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next after another epic's state write keeps the backlog's stop"; else
+  echo "FAIL next after another epic's state write: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+rm "${dir}/.swarm/conduct-backlog.report.md"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"started: conduct-backlog-"*"(swarm.sh conduct --backlog)"* ]] \
+    && grep -q '^agent start conduct-backlog-' "${dir}/agents.log"; then
+  echo "ok   next with an epic conductor working and a ready story with no epic starts the backlog conductor and still waits"; else
+  echo "FAIL next with a ready story with no epic and no backlog conductor: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" != *"conduct --backlog"* ]] && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next with the backlog conductor running starts no second one"; else
+  echo "FAIL next with the backlog conductor running: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# A report that lists b1 under not started: while b1's worktree is still there (its build died) stops
+# a new backlog conductor even once the board has changed.
+echo "conduct-e1 w:7" > "${dir}/agents"; mkdir -p "${dir}-wt/b1"
+echo "not started: b1 (build died)" > "${dir}/.swarm/conduct-backlog.report.md"; touch -t 202001010000 "${dir}/.swarm/conduct-backlog.report.md"; touch "${dir}/docs/stories/b1.md"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conductor started: "*" lists b1 under not started: and its worktree is still there"* ]] \
+    && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next with a died build of b1 in the backlog report starts no backlog conductor and says why"; else
+  echo "FAIL next with a died build of b1 in the backlog report: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# conduct-e1 works, but conduct-e3, also this project's, stopped on an API error: a backlog conductor
+# started now would stop on it too.
+rm -rf "${dir}-wt" "${dir}/.swarm/conduct-backlog.report.md"; echo "w:9 conduct-e3" >> "${dir}/.swarm/state/tab"
+printf 'conduct-e1 w:7\nconduct-e3 w:9 idle\n' > "${dir}/agents"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${dir}/agents.screen.w:9"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no conductor started: conduct-e3 stopped on an API error"* ]] \
+    && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next while another conductor is stopped on an API error starts no conductor"; else
+  echo "FAIL next while another conductor is stopped on an API error: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# Epic e2's conductor has reported and gone, and no story or epic changed since: a new one would stop
+# as it did. The backlog's starts (its earlier tab forgotten: the stub opens only new tabs).
+rm "${dir}/agents.screen.w:9" "${dir}"/.swarm/state/conduct-backlog-*; echo "conduct-e1 w:7" > "${dir}/agents"
+(cd "${dir}" && item epics/e2.md 'status: active' && item stories/s2.md 'status: ready' 'kind: code' 'epic: e2' \
+  && item stories/s6.md 'status: blocked' 'kind: code' 'epic: e2' 'depends_on: [gone]')
+touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"; echo report > "${dir}/.swarm/conduct-e2.report.md"
+# Nobody collected it, and its pane is gone: no conductor starts over it; the lead reads it first.
+out="$(nextb)"
+if [[ "${out}" == *"no conductor started: conduct-e2 is gone, and nobody collected "*"/.swarm/conduct-e2.report.md; read it, then delete it"* ]] \
+    && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then
+  echo "ok   next with an uncollected report and no pane starts no conductor over it, and names the report"; else
+  echo "FAIL next with an uncollected report and no pane: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+rm "${dir}"/.swarm/state/conduct-backlog-*; echo "conduct-e1 w:7" > "${dir}/agents"; collected conduct-e2
+out="$(nextb)"
+if [[ "${out}" == *"no conductor for epic e2 started: no story or epic changed after"* && "${out}" == *"started: conduct-backlog-"* ]] \
+    && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then
+  echo "ok   next with an epic's report newer than the board starts no conductor for it, and says why"; else
+  echo "FAIL next with an epic's report newer than the board: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# unblock readies s6 (its dependency is gone) in .swarm/board-state, not in its file: a board change
+# after the report all the same, so next starts e2's conductor. The report is put back for below.
+(cd "${dir}" && env -u HERDR_ENV bash "${SWARM}" unblock >/dev/null 2>&1)
+out="$(nextb)"
+if [[ "${out}" != *"no conductor for epic e2 started"* ]] && grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then
+  echo "ok   next after unblock readies a story of an epic whose report is older starts its conductor"; else
+  echo "FAIL next after unblock readies a story of an epic whose report is older: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+echo report > "${dir}/.swarm/conduct-e2.report.md"
+# conduct-e2 is still in its pane and has written its report, which the lead has not collected: no
+# conductor starts over it, though s2 changed since. conduct-e5's name is held by another project's
+# agent (a pane this project never opened). e4's start fails (its parent: is not a slug); the
+# backlog's, in the same run, still prints its started: line above the warnings.
+(cd "${dir}" && item epics/e4.md 'status: active' 'parent: Not_A_Slug' && item stories/s4.md 'status: ready' 'kind: code' 'epic: e4' \
+  && item epics/e5.md 'status: active' && item stories/s5.md 'status: ready' 'kind: code' 'epic: e5')
+rm "${dir}"/.swarm/state/conduct-backlog-*; printf 'conduct-e1 w:7\nconduct-e2 w:10 working\nconduct-e5 w:99\n' > "${dir}/agents"
+echo "w:10 conduct-e2" >> "${dir}/.swarm/state/tab"; touch "${dir}/docs/stories/s2.md"; rm -f "${dir}/.swarm/events.tsv"
+out="$(nextb)"
+if [[ "${out}" == *"no conductor started: conduct-e2 has reported; collect it first"* ]] && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log" \
+    && [[ -f "${dir}/.swarm/conduct-e2.report.md" ]]; then
+  echo "ok   next with a reported conductor in its pane starts none over its report, and says to collect it"; else
+  echo "FAIL next with a reported conductor in its pane: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+if [[ "${out}" == *"no conductor started: another project's agent holds the name conduct-e5"* ]] && ! grep -q '^agent start conduct-e5 ' "${dir}/agents.log"; then
+  echo "ok   next with a conductor's name held by another project's agent starts none, and says so"; else
+  echo "FAIL next with a conductor's name held by another project's agent: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+if [[ "${out}" == *"started: conduct-backlog-"*"warning: swarm.sh conduct e4 failed"*"warning: starting conductors for ready work failed"* ]]; then
+  echo "ok   next with one start failing keeps the started: lines of the others"; else
+  echo "FAIL next with one start failing: '${out}'"; fails=$((fails + 1)); fi
+# Each start is logged as a dispatched swarm.sh conduct logs it: ok, or its die line.
+ev="$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${dir}/.swarm/events.tsv" 2>/dev/null)"
+if grep -qx -- "--backlog ok" <<< "${ev}" && grep -qx "e4 e4: bad parent 'Not_A_Slug'" <<< "${ev}"; then
+  echo "ok   next logs each conductor start, ok or its die line, in events.tsv"; else
+  echo "FAIL next's conductor starts in events.tsv: '${ev}'"; fails=$((fails + 1)); fi
+# Run as an agent (a conductor, with its allowlisted env), a failed start is the lead's to retry.
+out="$(cd "${dir}" && SWARM_AGENT=conduct-e1 HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next 2>/dev/null)"
+if [[ "${out}" == *"warning: swarm.sh conduct e4 failed ("*"); the lead's swarm.sh next starts it"* && "${out}" != *"run it yourself"* ]]; then
+  echo "ok   next run by an agent leaves a failed start to the lead's next"; else
+  echo "FAIL next run by an agent, one start failing: '${out}'"; fails=$((fails + 1)); fi
+rm -rf "${dir}" "${dir}-wt"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
