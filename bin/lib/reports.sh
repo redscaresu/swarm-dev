@@ -312,10 +312,12 @@ dataset_report() {
 #     agents.tsv line of a `role:<role>` or `agent:<name>`, or a findings.tsv row of a
 #     `reviewer:<who>`. An `unlogged: <why>` feature (a read-only command leaves no events line)
 #     shows `-` and is judged on its metric alone.
-#   gh_calls: TSV hour api role calls share, bin/gh-shim's .swarm/gh-calls.tsv lines per local hour in
-#     the window and budget (graphql or rest), an all row and one per caller's agents.tsv role (swarm.sh
-#     <command> and an unknown caller as they are), most first, with the share of 5000; then, after a
-#     blank line, the same per subcommand. --epic does not narrow it.
+#   gh_calls: TSV hour api role runs many share, bin/gh-shim's .swarm/gh-calls.tsv lines per local hour
+#     in the window and budget (graphql or rest), an all row then one per caller's agents.tsv role
+#     (an unknown agent as itself, - outside any agent), most first, with the runs that paginate or
+#     watch and the share of 5000; then, after a blank line, the same per subcommand (via swarm.sh
+#     <command> when swarm.sh ran it). Runs, not requests, so the share is a floor. A line instead
+#     when there is no log or none in the window. --epic does not narrow it.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue

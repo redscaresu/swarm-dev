@@ -161,10 +161,12 @@ fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 
 # Every gh call this command makes, and every agent it starts (launch_file passes PATH and SWARM_*
-# on), goes through bin/gh-shim, which logs it to .swarm/gh-calls.tsv for flow's gh_calls section:
-# this command's own with `swarm.sh <command>` as the caller, an agent's with its name.
-GH_CALLER="${1:-}"
-export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_CALLER="swarm.sh ${GH_CALLER//[^a-z-]/}"
+# on), goes through bin/gh-shim, which logs it to this project's .swarm/gh-calls.tsv for flow's
+# gh_calls section, with the agent that ran it (SWARM_GH_CALLER, which launch_file sets) and, for
+# this command's own calls, `swarm.sh <command>` as its via. A dash --project runs swarm.sh again for
+# each project, so each one's calls land in its own log.
+GH_VIA="${1:-}"
+export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_VIA="swarm.sh ${GH_VIA//[^a-z-]/}"
 [[ ":${PATH}:" == *":${SWARM_HOME}/bin/gh-shim:"* ]] || export PATH="${SWARM_HOME}/bin/gh-shim:${PATH}"
 
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.

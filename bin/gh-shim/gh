@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # gh, as swarm.sh puts it first on its own PATH and every agent's: runs the real gh (the next gh on
 # PATH outside any gh-shim folder) with the same arguments, stdin and exit code, then appends one line
-# to SWARM_GH_LOG (unset: none): time, caller (SWARM_GH_CALLER, else SWARM_AGENT, else -), the
-# subcommand (`pr view`, `api graphql`, `api <path>` with each segment holding a digit as :id), the
-# budget it spends (graphql or rest) and the exit code. Nothing past the subcommand and the API path
-# is logged, so no token, body or header; and a log that cannot be written never fails the call.
-# flow's gh_calls section reads the log.
+# to SWARM_GH_LOG (unset: none): time; agent (SWARM_GH_CALLER, else SWARM_AGENT, else -); via
+# (SWARM_GH_VIA, `swarm.sh <command>` when swarm.sh made the call, else -); the subcommand (`pr view`,
+# `api graphql`, `api <path>` with each segment holding a digit as :id); the budget it spends (graphql
+# or rest); many (paginate or watch for a run that spends many requests, else -); and the exit code.
+# Nothing past the subcommand and the API path is logged, so no token, body or header; and a log that
+# cannot be written never fails the call. flow's gh_calls section reads the log.
 set -u
 
 real=""
@@ -19,28 +20,41 @@ done
 
 # In the background with stdin kept, so a TERM, INT or HUP that lands here reaches gh too, not an
 # orphan left holding the caller's pipe. A KILL cannot be trapped (a Python caller's timeout sends
-# one), so a watchdog, its stdio off the caller's pipes, ends gh within a second of the shim.
+# one): a watcher blocks on a pipe only this shim holds (gh starts before it opens), and when the pipe
+# ends after the shim's `go` but without its `ok` (the shim killed) it ends gh. One process, no
+# polling. A pipe that cannot open (a sandbox that refuses /dev/fd, as codex's does) never sends go,
+# so its watcher leaves gh alone, and the call runs on without one.
 "${real}" "$@" <&0 &
 pid=$!
 trap 'kill -TERM "${pid}" 2>/dev/null' TERM INT HUP
-(while kill -0 "$$" 2>/dev/null; do sleep 1; done; kill -TERM "${pid}" 2>/dev/null) < /dev/null > /dev/null 2>&1 &
-dog=$!; disown "${dog}"   # so its end prints no "Terminated" on gh's stderr
+{ exec 3> >(exec > /dev/null 2>&1; read -r _ || exit 0; read -r ok || ok=""; [[ -n "${ok}" ]] || kill -TERM "${pid}"); } 2>/dev/null \
+  && echo go 2>/dev/null >&3
 wait "${pid}"; rc=$?
 while kill -0 "${pid}" 2>/dev/null; do wait "${pid}"; rc=$?; done
 trap - TERM INT HUP   # gh is done: a signal now ends the shim
-kill "${dog}" 2>/dev/null
+echo ok 2>/dev/null >&3; exec 3>&-
 
 [[ -n "${SWARM_GH_LOG:-}" ]] || exit "${rc}"
 
-# The subcommand: one word for a command without subcommands (or a user's alias), two for gh's
-# command groups, and api's path, its query cut off, each segment holding a digit as :id.
-word() { [[ "${1:-}" =~ ^[a-z][a-z-]*$ ]] && echo "$1" || echo "?"; }
-# Flags before the command (gh -R o/r pr view) are skipped, -R's value with them.
-while [[ "${1:-}" == -* ]]; do case "$1" in -R|--repo) shift 2 || break ;; *) shift ;; esac; done
-sub="$(word "${1:-}")" api=rest
+# word <arg>... — the first argument that is not a flag (-R/--repo's value skipped with it) as w ("?"
+# when it is not a plain lowercase word, so no argument is logged), and in skip how many to shift
+# past it. No $(...), so no fork.
+word() {
+  local a v=""
+  w="?"; skip=0
+  for a in "$@"; do
+    skip=$((skip + 1))
+    [[ -z "${v}" ]] || { v=""; continue; }
+    case "${a}" in -R|--repo) v=1; continue ;; -*) continue ;; esac
+    [[ ! "${a}" =~ ^[a-z][a-z-]*$ ]] || w="${a}"
+    return
+  done
+}
+many=-
+for a in "$@"; do case "${a}" in --paginate) many=paginate ;; --watch) many=watch ;; esac; done
+word "$@"; shift "${skip}"; sub="${w}" api=rest
 case "${sub}" in
   api)
-    shift
     path=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
@@ -49,18 +63,28 @@ case "${sub}" in
         *) path="$1"; break ;;
       esac
     done
+    # A full URL (https://api.github.com/graphql, a GHES host's /api/v3/... or /api/graphql) as its path.
+    if [[ "${path}" == *://* ]]; then
+      path="${path#*://}"; path="${path#*/}"; path="${path#api/v3/}"; [[ "${path}" != api/graphql* ]] || path="${path#api/}"
+    fi
     path="${path%%\?*}"; path="${path#/}"
     if [[ "${path}" == graphql ]]; then api=graphql
     elif [[ "${path}" =~ ^[A-Za-z0-9_.{}/-]+$ ]]; then
-      path="$(printf '%s\n' "${path}" | awk -F/ -v OFS=/ '{ for (i = 1; i <= NF; i++) if ($i ~ /[0-9]/) $i = ":id"; print }')"
+      IFS=/ read -r -a segs <<< "${path}"; path=""
+      for s in ${segs[@]+"${segs[@]}"}; do [[ "${s}" != *[0-9]* ]] || s=":id"; path+="/${s}"; done
+      path="${path#/}"
     else path="?"; fi
     sub="api ${path:-?}" ;;
-  # ponytail: pr (but pr diff, a REST download), issue, repo and project go through GraphQL and the
-  # rest through REST, gh 2.x's split as a rule of thumb; a gh that moves one shows as the wrong budget.
-  pr|issue|repo|project) sub+=" $(word "${2:-}")"; [[ "${sub}" == "pr diff" ]] || api=graphql ;;
-  run|workflow|release|gist|auth|search|secret|variable|label|cache|codespace|config|extension|gpg-key|ssh-key|org|ruleset|attestation|alias)
-    sub+=" $(word "${2:-}")" ;;
+  # ponytail: pr (but pr diff, a REST download), issue, repo, project, status and label list go
+  # through GraphQL and the rest through REST, gh 2.x's split as a rule of thumb; a gh that moves one
+  # shows as the wrong budget.
+  status) api=graphql ;;
+  pr|issue|repo|project|run|workflow|release|gist|auth|search|secret|variable|label|cache|codespace|config|extension|gpg-key|ssh-key|org|ruleset|attestation|alias)
+    word "$@"; sub+=" ${w}"
+    case "${sub}" in "pr diff") ;; pr\ *|issue\ *|repo\ *|project\ *|"label list") api=graphql ;; esac
+    [[ "${sub}" != "run watch" ]] || many=watch ;;
 esac
-caller="${SWARM_GH_CALLER:-${SWARM_AGENT:--}}"
-printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${caller//[$'\t\n\r']/ }" "${sub}" "${api}" "${rc}" 2>/dev/null >> "${SWARM_GH_LOG}"
+agent="${SWARM_GH_CALLER:-${SWARM_AGENT:--}}" via="${SWARM_GH_VIA:--}"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${agent//[$'\t\n\r']/ }" "${via//[$'\t\n\r']/ }" \
+  "${sub}" "${api}" "${many}" "${rc}" 2>/dev/null >> "${SWARM_GH_LOG}"
 exit "${rc}"

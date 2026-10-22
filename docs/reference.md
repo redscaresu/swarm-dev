@@ -929,22 +929,30 @@ fails or runs out of time, and a "merge" with one parent (a squash or a rebase);
 of two causes counts in both), then `file conflicts`, the three files conflicts and hand fixes hit most
 (control characters dropped from the names); or `none conflicted`, or `none read` when it read no
 merge-in.
-The `gh_calls` section shows who spends GitHub's two hourly budgets (5000 GraphQL calls and 5000
-REST). swarm.sh puts `bin/gh-shim` first on its own PATH and on every agent's, a restored agent's
-too. The shim runs the real `gh` with the same arguments, stdin and exit code, then appends a line
-to `.swarm/gh-calls.tsv`: the UTC time; the caller (the agent's name, or `swarm.sh <command>` for
-swarm.sh's own calls, including an agent's `swarm.sh wait-pr`); the subcommand (`pr view`,
-`api graphql`, or `api <path>` with the query cut off and each path segment that holds a digit
-shown as `:id`); the budget (`graphql` for `api graphql` and the `pr` (except `pr diff`), `issue`,
-`repo` and `project` groups, `rest` for everything else); and the exit code. It logs nothing past
-the subcommand and API path, so never a token, body or header, and a log it cannot write never
-fails the call. The read-only commands (`dash`, `wait-pr`, `watch` and the others) log their gh
-calls there too; it is the one file they write under `.swarm`. The section prints TSV
-`hour api role calls share`: the log's lines per local hour in the window and budget, an `all` row
-and one row per caller's role (its `agents.tsv` role; `swarm.sh <command>` and an unknown caller
-stay as they are), most calls first, with the share of the 5000. After a blank line it prints the
-same per subcommand. GitHub's hour starts at a budget's first call, not on the clock, so one hour
-here can straddle two of GitHub's. `--epic` does not narrow it.
+The `gh_calls` section shows how the swarm spends GitHub's two hourly budgets (5000 GraphQL points
+and 5000 REST requests). swarm.sh puts `bin/gh-shim` first on its own PATH and on every agent's,
+a restored agent's too. The lead's own gh calls outside swarm.sh, and a person's, do not go through
+it and are not counted. The shim runs the real `gh` with the same arguments, stdin and exit code,
+then appends a line to the project's `.swarm/gh-calls.tsv`: the UTC time; the agent (its name, or
+`-` outside any agent); the via (`swarm.sh <command>` when swarm.sh made the call, a builder's
+`swarm.sh wait-pr` among them, else `-`); the subcommand (`pr view`, `api graphql`, or
+`api <path>` with the query and any host cut off and each path segment that holds a digit shown as
+`:id`, flags before either word skipped); the budget (`graphql` for `api graphql`, `status`,
+`label list` and the `pr` (except `pr diff`), `issue`, `repo` and `project` groups, `rest` for
+everything else); `many` (`paginate` for `--paginate`, `watch` for `--watch` and `run watch`, else
+`-`); and the exit code. It logs nothing past the subcommand and API path, so never a token, body
+or header, and a log it cannot write never fails the call. The read-only commands (`dash`,
+`wait-pr`, `watch` and the others) log their gh calls there too; it is the one file they write
+under `.swarm`. A row counts gh runs, not API requests: a `many` run spends several requests, and a
+GraphQL query costs a point or more, so the share is a floor. The section prints a line saying so,
+then TSV `hour api role runs many share`: for each local hour in the window and budget, an `all`
+row, then one row per role (the agent's `agents.tsv` role; an agent it does not name as itself;
+`-` outside any agent), most runs first, with how many were `many` runs and the share of the 5000.
+After a blank line it prints the same per subcommand, `via swarm.sh <command>` added when swarm.sh
+ran it. With no log yet, or no lines in the window, it prints a line that says which. The log only
+grows, so the section reads it from the end and stops two days before `--since`. GitHub's hour
+starts at a budget's first call, not on the clock, so one hour here can straddle two of GitHub's.
+`--epic` does not narrow it.
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row
 for each pair with any. An incident's target is an agent name, which can be cut short of its slug,
@@ -1455,7 +1463,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh calls per hour by agent role and by subcommand, GraphQL and REST apart, each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
 
 ## Cleanup, escalation and session logs
 

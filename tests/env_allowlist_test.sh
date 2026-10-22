@@ -123,8 +123,8 @@ run conduct plain >/dev/null
 check "a conductor whose stories name no env: has no FAKE_SECRET" "" "$(var conduct-plain FAKE_SECRET)"
 check "PATH (gh-shim first), HOME and TERM reach it with swarm.sh's values" "${SWARM%/*}/gh-shim:${LEAD_PATH}|${TEST_HOME}|xterm-test" \
   "$(var conduct-plain PATH)|$(var conduct-plain HOME)|$(var conduct-plain TERM)"
-check "gh-shim logs its gh calls under its own name, not the command that started it" "conduct-plain|${p}/.swarm/gh-calls.tsv" \
-  "$(var conduct-plain SWARM_GH_CALLER)|$(var conduct-plain SWARM_GH_LOG)"
+check "gh-shim logs its gh calls under its own name, not as the command that started it" "conduct-plain|${p}/.swarm/gh-calls.tsv|" \
+  "$(var conduct-plain SWARM_GH_CALLER)|$(var conduct-plain SWARM_GH_LOG)|$(var conduct-plain SWARM_GH_VIA)"
 check "the swarm.sh variables reach it: HERDR_ENV, and herdr's own for its pane" "1|$(pane_of conduct-plain)|w|${ROOT}/sock" \
   "$(var conduct-plain HERDR_ENV)|$(var conduct-plain HERDR_PANE_ID)|$(var conduct-plain HERDR_WORKSPACE_ID)|$(var conduct-plain HERDR_SOCKET_PATH)"
 check "XDG_CONFIG_HOME, GH_CONFIG_DIR and GIT_CONFIG_GLOBAL reach it, so gh and git find their config" \
