@@ -1378,8 +1378,13 @@ which it reads when its wait returns. upgrade waits for the file and for the con
 (it stops waiting at once if the conductor's session is gone), then reads the agents again, so a builder the conductor started meanwhile is moved too. Then, in
 rounds, it restarts every builder that Claude Code reports idle, or whose turn stopped on an API
 error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
-it to check. A busy builder is never interrupted and waits for a
-later round. One whose session is gone or unknown is named at once and not restarted. A restart
+it to check. Claude Code also reports `busy` for a session whose turn is over but whose background
+shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
+read from its log too: when its last assistant entry has ended its turn, with no tool call waiting
+for a result and no user entry after it (a prompt, a scheduled one included, or a tool result), it counts as idle and is restarted, its
+background commands stopped (it is told to start them again). A turn still in progress, one
+waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
+busy, are never interrupted and wait for a later round. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume

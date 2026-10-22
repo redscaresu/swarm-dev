@@ -176,6 +176,31 @@ check "the conductor already on this version is paused for the restarts, then to
   "$(calls 'agent prompt w:c' | grep -c 'Write a handover')|$(calls 'agent prompt w:c' | grep -c "Builders restarted on swarm-dev ${NEW}: b2. Left on their old version: b1.")|$(has "conduct-e: already on ${NEW}, told to carry on" "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')"
 check "b1's version is still the old one" "0.21.0" "$(cat "${P}/.swarm/versions/b1")"
 
+# --- b1 reads busy (background shells), but its log says its turn is over: restarted, and told to
+# start its background commands again. A log ending in a tool call with no result, and a session
+# waiting on a prompt, stay busy and are left alone.
+LOGDIR="${CLAUDE_CONFIG_DIR}/projects/p"; mkdir -p "${LOGDIR}"
+entry() { printf '{"type":"assistant","message":{"model":"m","stop_reason":"%s","content":[{"type":"%s"}]}}\n' "$1" "$2"; }
+entry end_turn text > "${LOGDIR}/s1.jsonl"; printf '{"type":"system","subtype":"turn_duration"}\n' >> "${LOGDIR}/s1.jsonl"
+echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle busy idle
+upgrade e
+check "a busy session whose turn ended is restarted and told its background commands stopped" "0|keys w:b1|start b1|prompt w:b1" \
+  "${rc}|$(order | tr '|' '\n' | grep -E '(keys|start|prompt) w?:?b1|w:b1' | paste -sd'|' -)"
+check "it is told its background commands were stopped" "1" "$(calls 'agent prompt w:b1' | grep -c 'stopped any background command')"
+entry tool_use tool_use > "${LOGDIR}/s1.jsonl"
+echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
+WAIT_MS=200 upgrade e
+check "a log ending in a tool call with no result is busy, and b1 is left alone" "pane send-keys w:b2 ctrl+c ctrl+c " "$(calls 'pane send-keys')"
+entry end_turn text > "${LOGDIR}/s1.jsonl"; claude_list idle waiting idle
+echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
+WAIT_MS=200 upgrade e
+check "a session waiting on a prompt is left alone, its log aside" "pane send-keys w:b2 ctrl+c ctrl+c " "$(calls 'pane send-keys')"
+entry end_turn text > "${LOGDIR}/s1.jsonl"; printf '{"type":"user","isMeta":true,"message":{"role":"user","content":"A scheduled prompt."}}\n' >> "${LOGDIR}/s1.jsonl"; claude_list idle busy idle
+echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"
+WAIT_MS=200 upgrade e
+check "a scheduled prompt after the ended turn starts a new one: b1 is busy and left alone" "pane send-keys w:b2 ctrl+c ctrl+c " "$(calls 'pane send-keys')"
+rm -rf "${LOGDIR}"
+
 # --- Both back on their old version, b1 busy for Claude Code's first reads: idle b2 goes first, and
 # b1 is waited for and restarted once idle.
 echo 0.21.0 > "${P}/.swarm/versions/b1"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle busy idle
