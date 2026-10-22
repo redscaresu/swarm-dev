@@ -284,20 +284,26 @@ merge_pr() {
 
 # board_ready [--review] — each story next_step would build now (buildable_story) whose build has
 # not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no epic. With
-# --review, each story in review too: reconcile may send one back to ready, which no board PR did.
+# --review, each story in review too, worktree or not (reconcile may send one back to ready, which no
+# board PR did), and an "@<epic>" line for each active epic.
 board_ready() {
   local f e
   while IFS= read -r f; do
-    if { [[ -n "${1:-}" && "$(fm "${f}" status)" == review ]] || buildable_story "${f}"; } && ! one_off_started "$(basename "${f}" .md)"; then
+    if [[ -n "${1:-}" && "$(fm "${f}" status)" == review ]] || { buildable_story "${f}" && ! one_off_started "$(basename "${f}" .md)"; }; then
       e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"
     fi
   done < <(board stories)
+  [[ -n "${1:-}" ]] || return 0
+  while IFS= read -r f; do
+    if [[ "$(fm "${f}" status)" == active ]]; then echo "@$(basename "${f}" .md)"; fi
+  done < <(board epics)
 }
 
 # ready_tell <url> <oid> <files> <before> — once merge --board has landed <url> at the merge commit
 # <oid>: run reconcile, which clears any merged build before it pulls the main checkout. New are the
 # stories buildable now (board_ready) that <before> (its --review lines before the merge) does not list and
-# whose file, or whose epic's, is among <files>, the paths <url> changes: not one reconcile sent back to ready, a
+# whose file, or whose epic's when <before> has that epic inactive, is among <files>, the paths <url>
+# changes: not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR merged beside it readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
 # say next will. With no upstream nothing is pulled, so nothing is new. A failed reconcile (logged
@@ -322,12 +328,13 @@ ready_tell() {
     echo "warning: reconcile did not pull ${oid:0:7} into ${PROJECT_DIR}, so no conductor was told what ${url} made ready; run swarm.sh reconcile"
     return 0
   }
-  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | CHANGED="$3" DIR="${BOARD#"${PROJECT_DIR}"/}/stories/" EPICS="${BOARD#"${PROJECT_DIR}"/}/epics/" awk '
-    BEGIN { n = split(ENVIRON["CHANGED"], c, "\n"); d = ENVIRON["DIR"]; ed = ENVIRON["EPICS"]
+  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | BEFORE="$4" CHANGED="$3" DIR="${BOARD#"${PROJECT_DIR}"/}/stories/" EPICS="${BOARD#"${PROJECT_DIR}"/}/epics/" awk '
+    BEGIN { n = split(ENVIRON["BEFORE"], b, "\n"); for (i = 1; i <= n; i++) if (b[i] ~ /^@/) was[substr(b[i], 2)] = 1
+      n = split(ENVIRON["CHANGED"], c, "\n"); d = ENVIRON["DIR"]; ed = ENVIRON["EPICS"]
       for (i = 1; i <= n; i++) {
         f = c[i]; sub(/\.md$/, "", f)
         if (index(f, d) == 1) ch[substr(f, length(d) + 1)] = 1
-        if (index(f, ed) == 1) ep[substr(f, length(ed) + 1)] = 1 } }
+        if (index(f, ed) == 1 && !(substr(f, length(ed) + 1) in was)) ep[substr(f, length(ed) + 1)] = 1 } }
     $1 in ch || $2 in ep')"
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do

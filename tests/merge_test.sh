@@ -1234,19 +1234,22 @@ git -C "${ROOT}/up" rm -q docs/stories/q.md; put docs/stories/r5.md "status: rea
 bfresh; merge --board "${URL}"
 check "a board merge whose pull deletes q, in review: reconcile finishes q" logged "^reconcile q ok"
 check "a board merge whose pull deletes q, in review: still notes r5" grep -qF "these stories of epic e are ready now: r5." "${INBOX}"
-# Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone.
+# Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone,
+# though it also edits epic e, active already.
 put docs/stories/r9.md "status: ready" "kind: code" "epic: e"; land
-put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; put docs/epics/e.md "status: active" "title: e10"; land
 bfresh; merge --board "${URL}"
 check "a board merge beside another board PR: the note names its own r10, not r9" grep -qF "these stories of epic e are ready now: r10." "${INBOX}"
 # z's PR closed unmerged: reconcile sends z back to ready, which the PR did not do, so no note names it,
-# though the PR also edits z's epic.
-item z "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"
-put docs/stories/r8.md "status: ready" "kind: code" "epic: e"; put docs/epics/e.md "status: active" "title: e"; land
+# though the PR also edits z's file. z has a build's worktree, which reconcile removes.
+put docs/stories/z.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"; land; pulled
+git -C "${P}" worktree add -q -b story/z "${ROOT}/proj-wt/z"
+put docs/stories/r8.md "status: ready" "kind: code" "epic: e"
+put docs/stories/z.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11" "estimate_lines: 3"; land
 bfresh; echo CLOSED > "${FX}/state.11"; merge --board "${URL}"
 check "a board merge whose reconcile reopens z: z is back to ready" said "back to ready: z"
 check "a board merge whose reconcile reopens z: the note names r8 alone" grep -qF "these stories of epic e are ready now: r8." "${INBOX}"
-rm -f "${P}/docs/stories/z.md" "${P}/.swarm/board-state/stories/z"
+rm -rf "${ROOT}/proj-wt"; git -C "${P}" worktree prune
 # A red main: no conductor is told to start builds on it, not even of r11, which this PR readies.
 put docs/stories/r11.md "status: ready" "kind: code" "epic: e"; land
 bfresh; checks "${FX}/${OID}.checks" "$(run test completed failure)"; merge --board "${URL}"
@@ -1292,7 +1295,7 @@ check "a board merge whose tell fails: warns" said "warning: could not note cond
 # Leave P, origin and the clone as the block found them.
 rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,b1,f1,o1,q} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,b1,f1,o1,q,z} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
