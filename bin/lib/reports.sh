@@ -117,6 +117,12 @@ cost_report() {
   flow_sections "$1" 9999-12-30 "" "" "" cost
 }
 
+# A finished story's PR rows, read once: its file off the board, every PR merged or closed and every
+# check on them completed, they never change. Each line <slug> TAB <its newest build's start> TAB <prs>
+# (outcomes' join), so a rebuild reads gh again; per story gh was flow's, dataset's and dash's top
+# GraphQL caller, at one gh pr list per story ever built on every run.
+OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
+
 # outcomes [--since YYYY-MM-DD] — one TSV row per builder agent in agents.tsv, joining what the logs
 # already hold: the story it built (slug, kind, risk), its model and effort, its cost, the tells it
 # took by kind (findings, nudge, resume; a refused tell never reached it, so is not counted), the closes, the findings fixed on its PR, how the PR ended, and which attempt at the slug it was.
@@ -138,14 +144,9 @@ cost_report() {
 # with no log, the slug's PR when it has exactly one.
 # agents.tsv cuts names at 32 characters, so the slug is the session's worktree (its cwd's last part),
 # read from close's copy of the session log once Claude Code deleted it.
-# A finished story's PR rows, read once: its file off the board and every PR merged or closed, they
-# never change. Each line <slug> TAB <prs> (outcomes' join); per story gh was flow's, dataset's and dash's
-# top GraphQL caller, at one gh pr list per story ever built on every run.
-OUTCOMES_PRS_CACHE="${PROJECT_DIR}/.swarm/outcomes-prs.tsv"
-
 # shellcheck disable=SC2120 # another file's callers pass it
 outcomes_report() {
-  local since="" rows meta="" slug text kind from src prs story_epic got asked finished
+  local since="" rows meta="" slug text kind from src prs story_epic got asked finished built
   [[ -z "${1:-}" || ( "$1" == --since && "${2:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ) ]] \
     || die "usage: swarm.sh outcomes [--since YYYY-MM-DD]"
   [[ -z "${1:-}" ]] || since="$2"
@@ -177,8 +178,10 @@ outcomes_report() {
     [[ "${kind}" != lead || -z "${from}" ]] || kind="${from% (default)}"
     story_epic="$(sed -n 's/^epic: *//p' <<< "${text}" | head -1)"
     finished=""; [[ -f "${BOARD}/stories/${slug}.md" || -z "${text}" ]] || finished=1
+    # The cache's key: its newest build's start (its session log's first timestamp, else its day).
+    built="$(awk -F'\t' -v s="${slug}" '$2 == s { k = ($14 != "" ? $14 : $1); if (k > m) m = k } END { print m }' <<< "${rows}")"
     # shellcheck disable=SC2016 # $b is jq's
-    if [[ -n "${finished}" ]] && prs="$(awk -F'\t' -v s="${slug}" '$1 == s { print $2; f = 1; exit } END { exit !f }' "${OUTCOMES_PRS_CACHE}" 2>/dev/null)"; then
+    if [[ -n "${finished}" ]] && prs="$(awk -F'\t' -v s="${slug}" -v k="${built}" '$1 == s && $2 == k { print $3; f = 1; exit } END { exit !f }' "${OUTCOMES_PRS_CACHE}" 2>/dev/null)"; then
       asked=1
     elif src="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" \
       && got="$( (cd "${src}" && gh pr list --head "story/${slug}" --state all \
@@ -187,11 +190,14 @@ outcomes_report() {
           | ltrimstr("origin/")) == $b);
         .[] | .baseRefName as $b | [.url, .state, .mergedAt // "", .createdAt, ([.commits[] | select(base_merge($b))] | length),
           ([.statusCheckRollup[]? | select(.startedAt and .completedAt) | .startedAt + "/" + .completedAt] | join(";")),
-          ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";")), .closedAt // ""] | @tsv') 2>/dev/null)"; then
-      prs="$(tr '\t' ' ' <<< "${got}" | paste -sd, -)"; asked="${text:+1}"
-      # One short line, appended: two runs at once lose none, and the first line of a slug is the one read.
-      if [[ -n "${finished}" && -n "${prs}" ]] && awk -v RS=, '$2 == "OPEN" { o = 1 } END { exit o }' <<< "${prs}"; then
-        mkdir -p "${OUTCOMES_PRS_CACHE%/*}"; printf '%s\t%s\n' "${slug}" "${prs}" >> "${OUTCOMES_PRS_CACHE}"
+          ([.commits[] | select(base_merge($b) | not) | .committedDate] | join(";")), .closedAt // "",
+          ([.statusCheckRollup[]? | select((.status != null and .status != "COMPLETED") or .state == "PENDING" or .state == "EXPECTED")] | length)] | @tsv') 2>/dev/null)"; then
+      prs="$(cut -f1-8 <<< "${got}" | tr '\t' ' ' | paste -sd, -)"; asked="${text:+1}"
+      # One short line, appended, once no PR is open and no check runs (the 9th field): a human merge
+      # past a pending check, or a step-up closing mid-CI, would keep the gap. Two runs at once lose
+      # none, and the first line of a slug and build is the one read.
+      if [[ -n "${finished}" && -n "${prs}" ]] && awk -F'\t' '$2 == "OPEN" || $9 > 0 { o = 1 } END { exit o }' <<< "${got}"; then
+        mkdir -p "${OUTCOMES_PRS_CACHE%/*}"; printf '%s\t%s\t%s\n' "${slug}" "${built}" "${prs}" >> "${OUTCOMES_PRS_CACHE}"
       fi
     else
       prs=""

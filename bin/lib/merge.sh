@@ -584,8 +584,10 @@ wait_pr_fail() { echo "swarm: wait-pr: $1" >&2; exit 2; }
 # minutes; none WAIT_PR_GRACE after the first read that found none ends it, pending statuses or not.
 # At <seconds> (default MERGE_CI_SECONDS) it ends naming what it still waits on, with no read after
 # it: no pause runs past it, and each read runs within the time left, so one that hangs ends it too.
-# A rate limit with a budget spent (rate_reset) is waited out once, to its reset, printed, and the deadline
-# moves by that wait; a later one is a transient error. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
+# A rate limit with a budget spent (rate_reset) is waited out once, to its reset, printed, and the default
+# deadline moves by that wait; past a --timeout deadline it ends at once, naming the reset. A later one,
+# or one with the budget left (GitHub's secondary limit), is a transient error, retried after its
+# Retry-After or WAIT_PR_RETRY plus jitter. A check queued with no runner never settles. Exit 1 is only red (WAIT_PR_RED): swarm.sh's trap
 # turns any other failure into 2. It reads the head once, with the same retries: a later push is not followed.
 # That read also takes the PR's mergeable state: CONFLICTING ends it at once (exit 2, naming the base),
 # and UNKNOWN on an open PR (GitHub still computing it) is read again every poll, beside the checks.
@@ -593,11 +595,12 @@ wait_pr() {
   local url limit="${SWARM_MERGE_CI_SECONDS:-${MERGE_CI_SECONDS}}" grace="${SWARM_WAIT_PR_GRACE:-${WAIT_PR_GRACE}}"
   local poll="${SWARM_MERGE_POLL:-${MERGE_POLL}}" retry="${SWARM_WAIT_PR_RETRY:-${WAIT_PR_RETRY}}" v
   local repo n head="" why what="" err rc pause left missed=0 last="" empty="" start=${SECONDS} oid mergeable base state unknown="" reset="" at
+  local spent limited bounded=""
   # Whole seconds, checked here: sleep failing on 20s or 1m would exit 1, which reads as red.
   for v in SWARM_MERGE_CI_SECONDS SWARM_WAIT_PR_GRACE SWARM_MERGE_POLL SWARM_WAIT_PR_RETRY; do
     [[ -z "${!v:-}" || "${!v}" =~ ^[0-9]+$ ]] || wait_pr_fail "${v} is '${!v}', not whole seconds"
   done
-  if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; shift 2 || shift; fi
+  if [[ "${1:-}" == --timeout ]]; then limit="${2:-}"; bounded=1; shift 2 || shift; fi
   url="${1:-}"
   [[ "${limit}" =~ ^[0-9]+$ && $# -eq 1 && "${url}" =~ ^https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/pull/([0-9]+)$ ]] \
     || wait_pr_fail "usage: swarm.sh wait-pr [--timeout <seconds>] <pr-url>"
@@ -644,13 +647,27 @@ wait_pr() {
          last="${why}"; what="still pending: ${why}"; pause=${poll} ;;
       142) wait_pr_fail "timed out after $((SECONDS - start))s: a read of ${head:-the head of ${url}} did not return${what:+; ${what}}" ;;
       *) err="$(sed -E 's#[^[:space:]]*/[^[:space:]]*##g' <<< "${why}")"
-         if [[ -z "${reset}" ]] && grep -qi 'rate limit' <<< "${err}" && read -r reset at < <(rate_reset "$((limit - (SECONDS - start)))") && [[ "${reset}" =~ ^[0-9]+$ ]]; then
-           pause=$((reset - $(date +%s) + 1)); (( pause > 0 )) || pause=1
-           limit=$((limit + pause)); what="rate limited until ${at}"
+         spent=""; limited=""
+         if grep -qi 'rate limit' <<< "${err}"; then
+           limited=1; read -r spent at < <(rate_reset "$((limit - (SECONDS - start)))") || true
+         fi
+         if [[ -z "${reset}" && "${spent}" =~ ^[0-9]+$ ]]; then
+           reset=${spent}; pause=$((reset - $(date +%s) + 1)); (( pause > 0 )) || pause=1
+           what="rate limited until ${at}"
+           if [[ -z "${bounded}" ]]; then limit=$((limit + pause))
+           elif (( pause >= limit - (SECONDS - start) )); then
+             wait_pr_fail "rate limited: GitHub's API budget resets at ${at}, past --timeout ${limit}s"
+           fi
            echo "rate limited: GitHub's API budget resets at ${at}; waiting until then"
          elif grep -qiwE "${WAIT_PR_TRANSIENT}" <<< "${err}" && ((++missed <= WAIT_PR_TRIES)); then
            echo "retrying after ${why}"
            what="last error: ${why}"; pause=${retry}
+           # A rate limit with the budget left is GitHub's secondary (per-minute) limit, the same words:
+           # its Retry-After when gh shows one, else the retry pause and up to half again, so waits spread.
+           if [[ -n "${limited}" ]]; then
+             pause="$(grep -oiE 'retry-after:? *[0-9]+' <<< "${why}" | grep -oE '[0-9]+' | head -1 || true)"
+             pause=$((10#${pause:-$((retry + RANDOM % (retry / 2 + 1)))}))
+           fi
          else
            wait_pr_fail "${why:-ci_gate failed (exit ${rc})}"
          fi ;;
@@ -861,11 +878,14 @@ watch_prs() {
     done
   fi
   mkdir -p "${STATE_DIR}"; touch "${seen}"
+  # known: each head's last mergeable state read, `<sha>=<state>`, for a poll whose read of it fails.
+  local known="" fresh
   while :; do
+    fresh=""
     for repo in "${repos[@]}"; do
       while read -r n sha br mergeable age; do
         [[ -n "${n}" ]] || continue
-        [[ -z "${heads}" || " ${heads} " == *" ${br} "* ]] || continue
+        [[ "${mergeable}" == UNKNOWN ]] || fresh+=" ${sha}=${mergeable}"
         if [[ "${mergeable}" == CONFLICTING ]] && ! grep -qx "conflict ${sha}" "${seen}"; then
           echo "conflict ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} CONFLICTS with its base"; return 0
         fi
@@ -888,8 +908,9 @@ watch_prs() {
         if [[ "${total:-0}" == 0 && "${age}" -gt "${stall}" ]] && ! grep -qx "stall ${sha}" "${seen}"; then
           echo "stall ${sha}" >> "${seen}"; echo "${repo} #${n} ${br} has had no checks for ${age}s"; return 0
         fi
-      done < <(watch_rows "${repo}")
+      done < <(watch_rows "${repo}" "${heads}" "${seen}" "${known}")
     done
+    known="${fresh}"
     if [[ "${HERDR_ENV:-}" == 1 ]]; then
       local agents sessions now e news="" tmp
       # Only agents in panes this project opened: herdr lists every project's. Each one's state is
@@ -925,19 +946,33 @@ for a in json.load(sys.stdin)["result"]["agents"]:
   done
 }
 
-# watch_rows <owner/repo> — watch's poll: each open story/* PR as `<number> <head sha> <head ref> <mergeable>
-# <seconds since its last update>`, through REST, whose budget is apart from GraphQL's (gh pr list
-# spent that dry under a swarm). The list has no mergeable state, so each PR's own read gives it:
-# null (GitHub still computing it) or a failed read is UNKNOWN. One write, as gh makes: watch stops
-# reading at the PR it reports, and a later write would fail on the closed pipe.
+# watch_rows <owner/repo> <heads> <seen> <known> — watch's poll: each open story/* PR on one of <heads>
+# (any when empty) as `<number> <head sha> <head ref> <mergeable> <seconds since its last update>`,
+# through REST, whose budget is apart from GraphQL's (gh pr list spent that dry under a swarm). The list
+# has no mergeable state, so a PR's own read gives it, unless <seen> says watch is done with it on this
+# head (its conflict reported, and its green head queued or never finished): null (GitHub still
+# computing it) is UNKNOWN. A failed read keeps the head's state in <known> (`<sha>=<state>` words), else
+# UNKNOWN, said on stderr once a poll; a failed list is said there and gives no rows. One write, as gh
+# makes: watch stops reading at the PR it reports, and a later write would fail on the closed pipe.
 watch_rows() {
-  local n sha br t m rows=""
+  local n sha br t m re list rows="" warned=""
+  list="$(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
+    -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \(.updated_at|fromdateiso8601)"' 2>&1)" \
+    || { echo "swarm: watch: gh cannot list $1's open PRs: $(tail -1 <<< "${list}")" >&2; return 0; }
   while read -r n sha br t; do
-    [[ -n "${n}" ]] || continue
-    m="$(gh api "repos/$1/pulls/${n}" -q 'if .mergeable == null then "UNKNOWN" elif .mergeable then "MERGEABLE" else "CONFLICTING" end' 2>/dev/null)" || m=UNKNOWN
+    [[ "${n}" =~ ^[0-9]+$ && "${t}" =~ ^[0-9]+$ ]] || continue
+    [[ -z "$2" || " $2 " == *" ${br} "* ]] || continue
+    m=UNKNOWN
+    if grep -qx "conflict ${sha}" "$3" && { ! grep -qx "done ${sha}" "$3" || grep -qx "queued ${sha:0:7}" "$3"; }; then
+      :
+    elif ! m="$(gh api "repos/$1/pulls/${n}" -q 'if .mergeable == null then "UNKNOWN" elif .mergeable then "MERGEABLE" else "CONFLICTING" end' 2>/dev/null)" \
+      || [[ ! "${m}" =~ ^(MERGEABLE|CONFLICTING|UNKNOWN)$ ]]; then
+      re=" ${sha}=([A-Z]+) "; m=UNKNOWN; [[ " $4 " =~ ${re} ]] && m="${BASH_REMATCH[1]}"
+      [[ -n "${warned}" ]] || echo "swarm: watch: gh cannot read $1 #${n}'s mergeable state; keeping the last known (${m})" >&2
+      warned=1
+    fi
     rows+="${n} ${sha} ${br} ${m:-UNKNOWN} $(($(date +%s) - t))"$'\n'
-  done < <(gh api --paginate "repos/$1/pulls?state=open&per_page=100" \
-    -q '.[]|select(.head.ref|startswith("story/"))|"\(.number) \(.head.sha) \(.head.ref) \(.updated_at|fromdateiso8601)"')
+  done <<< "${list}"
   printf '%s' "${rows}"
 }
 

@@ -116,10 +116,26 @@ is "two rate limits with a spent budget: exits 0" 0 "${rc}"
 is "two rate limits with a spent budget: one wait" 1 "$(grep -c "^rate limited" "${ROOT}/out")"
 check "two rate limits with a spent budget: the second is retried" said "retrying after"
 is "two rate limits with a spent budget: three reads" 3 "$(reads)"
-# The wait moves the deadline: a reset past --timeout is still waited for.
+# The wait moves the default deadline: a reset past it is still waited for.
 fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + 3)) 2030-01-01T00:00:03Z" > "${FX}/reset"
-wait_pr --timeout 2
-is "rate limit resetting past --timeout: exits 0" 0 "${rc}"
+wait_pr SWARM_MERGE_CI_SECONDS=2
+is "rate limit resetting past the default deadline: exits 0" 0 "${rc}"
+# An explicit --timeout bounds it: a reset past that ends the wait at once, naming the reset time.
+fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + 30)) 2030-01-01T00:00:30Z" > "${FX}/reset"
+wait_pr --timeout 5
+is "rate limit resetting past --timeout: exits 2" 2 "${rc}"
+check "rate limit resetting past --timeout: names the reset time" said "resets at 2030-01-01T00:00:30Z, past --timeout 5s"
+check "rate limit resetting past --timeout: ends at once" test "${took}" -lt 3
+# With the budget left, the same words are GitHub's secondary limit: no wait for the reset, but the
+# Retry-After gh shows, else the retry pause and up to half again.
+fresh; echo "${LIMIT} Retry-After: 2" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=30
+is "secondary limit with a Retry-After: exits 0" 0 "${rc}"
+check "secondary limit with a Retry-After: waits for it, not the retry pause" test "${took}" -ge 2 -a "${took}" -lt 10
+check "secondary limit with a Retry-After: no reset wait" test "$(grep -c "^rate limited" "${ROOT}/out")" -eq 0
+fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=2
+is "secondary limit: exits 0" 0 "${rc}"
+check "secondary limit: backs off the retry pause, plus at most half again" test "${took}" -ge 2 -a "${took}" -le 4
+check "secondary limit: is retried" said "retrying after"
 # The read of the reset time is bounded by the deadline too: one that hangs ends the wait there.
 fresh; echo "${LIMIT}" > "${FX}/head.1.err"; : > "${FX}/reset.hang"; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout 2
 is "a reset read hanging past --timeout: exits 2" 2 "${rc}"

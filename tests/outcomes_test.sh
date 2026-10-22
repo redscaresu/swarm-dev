@@ -99,7 +99,20 @@ nopr() { awk -F'\t' -v OFS='\t' '{ $14 = $33 = 0; $15 = $16 = $31 = $32 = $34 = 
 check "a finished story's PRs come from the cache when gh fails, a story on the board's do not" \
   "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "${R1}" "$(nopr "${R2}")" "${R3}")"
 check "the cache holds the finished story alone, once" "$(cut -f1 "${P}/.swarm/outcomes-prs.tsv")" "${LONG}"
-rm "${P}/.swarm/outcomes-prs.tsv"
+# A rebuild of the story starts a newer build, so the line cached before it is not read.
+TS=2026-10-05T09:00:00Z session s4 "${LONG}" claude-opus-5-5 0 0 > "${dir}/projects/p/s4.jsonl"
+cp "${P}/.swarm/agents.tsv" "${dir}/agents.keep"; printf '2026-10-05\tcode\t%s\tclaude\topus\thigh\ts4\n' "${CUT}" >> "${P}/.swarm/agents.tsv"
+check "a rebuilt story's PRs are not read from the line cached before it" \
+  "$(outcomes "${dir}/nobin" 2>/dev/null | awk -F'\t' -v s="${LONG}" '$2 == s { print $15 }' | sort -u)" ""
+mv "${dir}/agents.keep" "${P}/.swarm/agents.tsv"; rm "${dir}/projects/p/s4.jsonl" "${P}/.swarm/outcomes-prs.tsv"
+# A PR merged with a check still running is not cached: that check's times are not in yet.
+mkdir -p "${dir}/pendbin"
+# shellcheck disable=SC2016 # the stub's own shell expands these
+printf '#!/bin/sh\n[ "$1 $2" = "pr list" ] || exit 1\ncase "$4" in\n  story/%s) printf "https://github.com/o/r/pull/7\\tMERGED\\t2026-10-03T10:00:00Z\\t\\t\\t\\t\\t\\t1\\n" ;;\n  o/r) echo "[]" ;;\nesac\n' "${LONG}" > "${dir}/pendbin/gh"
+chmod +x "${dir}/pendbin/gh"
+outcomes "${dir}/pendbin" > /dev/null 2>&1
+check "a finished story with a check still running is not cached" "$(cat "${P}/.swarm/outcomes-prs.tsv" 2>/dev/null)" ""
+rm -f "${P}/.swarm/outcomes-prs.tsv"
 check "a failing gh leaves pr, pr_state, merged_at, story_merged and the findings empty, keeps epic, and still prints every row" \
   "$(outcomes "${dir}/nobin" 2>/dev/null)" "$(printf '%s\n' "${HEAD}" "$(nopr "${R1}")" "$(nopr "${R2}")" "$(nopr "${R3}")")"
 if outcomes "${dir}/bin" --since yesterday >/dev/null 2>&1; then
