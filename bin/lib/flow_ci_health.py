@@ -8,40 +8,8 @@ from report import *
 RED = {"failure", "timed_out", "startup_failure"}   # never cancelled or skipped
 GH_SECONDS = 10
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)")
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # a job name is a PR's (a fork's) to set: no escapes or line breaks
-ERROR = [""]   # the last gh call that failed, and why
 WHY = {}   # a PR gh could not read: the error that dropped it
-PASSES = re.compile(r"connection reset|unexpected EOF|i/o timeout|TLS handshake timeout|HTTP 5\d\d", re.I)   # tried again
-SPENT = re.compile(r"API rate limit (already )?exceeded")   # the hourly limit: no more calls this run
-LIMIT = [""]   # gh's error once the hourly limit is spent
-
-def gh(*args):
-    # Its JSON, or None when gh fails, takes over GH_SECONDS or answers something else; ERROR[0] says
-    # which call and why. A reset connection or a 5xx is tried again, 1 s then 2 s later (times
-    # SWARM_SLEEP_SCALE); any other error is not (a secondary rate limit asks for a minute or more),
-    # and once the hourly rate limit is spent, every later call fails at once with that error.
-    call = "gh " + " ".join(args[:args.index("--json")] if "--json" in args else args)
-    if LIMIT[0]:
-        ERROR[0] = f"{call}: not tried: {LIMIT[0]}"
-        return None
-    for wait in (1, 2, 0):
-        try:
-            got = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=GH_SECONDS)
-            if got.returncode == 0:
-                ERROR[0] = f"{call}: an answer it could not read"   # when its caller finds no list or object
-                return json.loads(got.stdout)
-            said = [l.strip() for l in got.stderr.splitlines() if l.strip()]
-            ERROR[0] = f"{call}: {said[-1]}" if said else f"{call}: exit {got.returncode}"
-            LIMIT[0] = said[-1] if said and SPENT.search(said[-1]) else ""
-        except subprocess.TimeoutExpired:
-            ERROR[0] = f"{call}: over {GH_SECONDS} s"
-            return None
-        except ValueError:
-            ERROR[0] = f"{call}: an answer that is not JSON"
-            return None
-        if not wait or not PASSES.search(ERROR[0]):
-            return None
-        time.sleep(wait * float(os.environ.get("SWARM_SLEEP_SCALE") or 1))
+gh = functools.partial(gh, seconds=GH_SECONDS)
 
 def drop(url, why=None):
     # None, noting why gh could not read url's PR: why, or the gh call that just failed.

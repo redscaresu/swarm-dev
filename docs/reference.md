@@ -878,7 +878,7 @@ numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under 
 `ci_health`, `cost`, `epic_totals`, `features`, `incidents`, `lead_queue`, `merge_ins`, `merges`, `model_fit`, `reviewers`, `throughput` and `time_in_state`. Each section gets the window (`--since` and
 `--until`, which must be real dates, and `--epic`), the log paths and the `outcomes` rows, and calls
 `gh` itself if it needs to. A new section is a new file, so adding one changes neither `flow` nor
-the others. `flow` writes nothing. For one release, the old `cost`, `features` and `review-yield`
+the others. `flow` writes nothing, except that `merge_ins` may fetch a PR's head into its repo. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
@@ -908,13 +908,19 @@ The minutes sums skip empty cells: `outcomes` leaves `start_to_pr_min` empty for
 after its PR was created and for a build with no PR.
 
 The `merge_ins` section says why the PRs that `epic_totals` counts under `main_merged` merged their
-base in. It reads each PR's commits over gh's REST API, and a merge-in is a commit whose headline
-merges the base in, the same rule `main_merges` counts by. `git merge-tree` re-merges the commit's
-two parents in the project's repo. A merge that conflicts is `conflict`. A clean merge is `behind`
-when the base had commits the branch lacked, and `neither` when it had none. A PR `gh` cannot read,
-or a commit the repo does not have, counts as `unread`. It prints TSV `cause merge_ins prs`, a row per
-cause (a PR with merge-ins of two causes counts in both), then `file conflicts`, the three files
-conflicts hit most.
+base in. Without `--since` it reads the 30 days up to `--until` (or today), as each PR costs two `gh`
+calls, and a line says so. It reads each PR and its commits over gh's REST API, with `ci_health`'s
+retries and its stop once the hourly limit is spent. A merge-in is a commit whose headline merges
+the base in, the same rule `main_merges` counts by. `git merge-tree` re-merges the commit's two
+parents in its story's repo (its `repo:`, or the project). When the commit is not there, the section
+fetches the PR's `refs/pull/<n>/head` from origin once. A merge that conflicts is `conflict`, and so
+is one git merges clean but whose commit differs from that clean merge, a fix made by hand before
+committing. A clean merge is `behind` when the base had commits the branch lacked, and `neither` when
+it had none. `unread` counts a PR `gh` cannot read, the merge-ins `main_merges` counted that `gh`
+does not list, and a commit git cannot find or merge; a `merge ins: left out <PR>: <why>` line names
+each. It prints TSV `cause merge_ins prs`, a row per cause (a PR with merge-ins of two causes counts
+in both), then `file conflicts`, the three files conflicts and hand fixes hit most, or `none
+conflicted`.
 
 The `incidents` section prints TSV `day kind incidents`: the `incident` lines in events.tsv
 (§ Logs and outcomes) counted per local day in the window and per kind, whatever the kind, one row

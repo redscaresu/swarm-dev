@@ -1,4 +1,4 @@
-import datetime, functools, glob, gzip, json, os, re, subprocess, sys, zlib
+import datetime, functools, glob, gzip, json, os, re, subprocess, sys, time, zlib
 # ponytail: list prices per million tokens as of 2026-09 (input, cache write, cache read, output);
 # cache writes assume the 1-hour cache at 2x input. Update when prices change.
 PRICES = {"fable": (10, 20, 0.25, 20), "opus": (4, 8, 0.20, 20), "sonnet": (2, 4, 0.20, 10), "haiku": (1, 2, 0.10, 5)}
@@ -162,6 +162,42 @@ def rework_of(merged, findings, judged=None):
 GH_SECONDS = 30
 GH_LIMIT = 1000
 GITHUB = re.compile(r"https://github\.com/([^/]+/[^/]+)/pull/\d+")
+
+# gh over REST for flow's sections: one flow run shares ERROR and LIMIT, so once one section spends
+# the hourly limit, the later ones make no calls either.
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")   # gh's errors and a fork's job names are not ours to print raw
+ERROR = [""]   # the last gh call that failed, and why
+PASSES = re.compile(r"connection reset|unexpected EOF|i/o timeout|TLS handshake timeout|HTTP 5\d\d", re.I)   # tried again
+SPENT = re.compile(r"API rate limit (already )?exceeded")   # the hourly limit: no more calls this run
+LIMIT = [""]   # gh's error once the hourly limit is spent
+
+def gh(*args, seconds=GH_SECONDS):
+    # Its JSON, or None when gh fails, takes over seconds or answers something else; ERROR[0] says
+    # which call and why. A reset connection or a 5xx is tried again, 1 s then 2 s later (times
+    # SWARM_SLEEP_SCALE); any other error is not (a secondary rate limit asks for a minute or more),
+    # and once the hourly rate limit is spent, every later call fails at once with that error.
+    call = "gh " + " ".join(args[:args.index("--json")] if "--json" in args else args)
+    if LIMIT[0]:
+        ERROR[0] = f"{call}: not tried: {LIMIT[0]}"
+        return None
+    for wait in (1, 2, 0):
+        try:
+            got = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=seconds)
+            if got.returncode == 0:
+                ERROR[0] = f"{call}: an answer it could not read"   # when its caller finds no list or object
+                return json.loads(got.stdout)
+            said = [l.strip() for l in got.stderr.splitlines() if l.strip()]
+            ERROR[0] = f"{call}: {said[-1]}" if said else f"{call}: exit {got.returncode}"
+            LIMIT[0] = said[-1] if said and SPENT.search(said[-1]) else ""
+        except subprocess.TimeoutExpired:
+            ERROR[0] = f"{call}: over {seconds} s"
+            return None
+        except ValueError:
+            ERROR[0] = f"{call}: an answer that is not JSON"
+            return None
+        if not wait or not PASSES.search(ERROR[0]):
+            return None
+        time.sleep(wait * float(os.environ.get("SWARM_SLEEP_SCALE") or 1))
 
 def merged_prs(urls, search):
     # (pr_key -> (mergedAt, title and body, paths changed) for every merged PR of the repos the urls are
