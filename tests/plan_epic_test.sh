@@ -42,6 +42,19 @@ has child-epic-shape '`docs/epics/<child>\.md` per goal, with front matter `stat
 has child-not-on-parent 'plus any sibling it builds on, never the parent itself' "$step0"
 has parent-split 'Set the parent.s `status: split`: nothing plans a split epic, and it counts as done once none of its children is left' "$step0"
 has critic-in-step-3 'role `critic`' "$step3"
+# The large-epic path: one split critic before the board PR, its findings logged, and the gaps it missed
+# logged as escaped split-gaps. The medium path's steps start no split critic.
+large=$(printf '%s' "$step0" | grep -oE 'A large epic.*A medium epic' || true)
+has split-critic-step 'start one `split-critic` agent, role `critic` \(read-only\), on the parent and the drafted children' "$large"
+has split-critic-asks 'every parent \*\*Done when\*\* item maps to exactly one child.*`depends_on` order.*too big for one full plan' "$large"
+has split-critic-output '`\.swarm/\$1/split-critic\.json` `\{findings:\[\{kind, why, fix\}\]\}`' "$large"
+# Before the board PR: the critic starts first, and nothing before it opens the PR.
+has split-critic-then-pr 'start one `split-critic` agent.*open the board PR' "$large"
+hasnt split-critic-before-pr '[Oo]pen the board PR' "${large%%start one \`split-critic\` agent*}"
+has log-split-critic 'log-finding --reviewer split-critic <kind> <board PR URL>.*log-finding --declined <reason> --reviewer split-critic <kind> <board PR URL>' "$large"
+has split-critic-resume 'reuse its answer only when it is newer than the board PR.s worktree' "$large"
+has log-split-gap 'log-finding --reviewer escaped split-gap <split.s board PR URL>' "$large"
+hasnt medium-no-split-critic 'split-critic' "$(awk '/^\*\*1\. /{on=1} on' "$F")"
 has risk-clause 'real-cloud, teardown, credentials and safety' "$risk"
 if [ -n "$risk" ]; then hasnt risk-hygiene 'hygiene' "$risk"; else echo "FAIL risk-hygiene"; fails=$((fails + 1)); fi
 has one-survey 'one agent \(lands, constraints and overlaps together\) unless the epic.s text names another repo' "$flat"
