@@ -24,6 +24,8 @@ check() { # <name> <test...>
 # The bash functions that may read agent_status, each with its reason.
 ALLOWED="
 deliver_prompt  the taken-up gate: herdr's working or blocked after a prompt, for any agent (out of the epic's scope)
+prompt_once     deliver_prompt's prompt: herdr's working or blocked in its reply
+settled_status  deliver_prompt's own read, when herdr sent the prompt but named no status
 agent_field     the definition: the one reader of herdr's agent list
 agent_status    the definition: herdr's status for an agent, used only by the fallbacks here
 read_state      the reader's herdr fallback for tell and free_agent_name: codex, or no session recorded

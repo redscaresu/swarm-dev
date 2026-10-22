@@ -5,7 +5,7 @@
 # dash shows beside the agent. herdr and gh are stubs on PATH: herdr lists this project's agents (and
 # another project's) and prints ${ROOT}/pane-<pane> for `agent read`. Then flow counts both kinds per
 # epic. Last, deliver_prompt reads an agent's own status when the prompt's reply can't be read, and
-# sends the brief again only to an agent idle there.
+# sends the brief again only to an agent idle or done there.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -305,31 +305,56 @@ printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
 check "a Task subagent's 5-minute-old tool call is a sign of life" test "${rc}:${out}" = "1:busy"
 
-# deliver_prompt with a stub herdr: `agent prompt` answers ${PROMPT_REPLY} (garbage when "junk"),
-# `agent get` answers ${OWN}. dp prints "<rc>|<prompts sent>|<die message>".
+# deliver_prompt with a stub herdr. `agent prompt` answers ${PROMPT_REPLY}: a status, junk (an
+# unreadable reply), or err:<code> (herdr's error on stderr, exit 1). The nth `agent get` answers the
+# nth word of ${OWN} (the last word from then on); - is no answer. dp prints "<rc>|<prompts sent>|<own
+# reads>|<die message>".
 dp() {
-  local D="${ROOT}/dp"; rm -rf "${D}"; mkdir -p "${D}"
+  local D="${ROOT}/dp"; rm -rf "${D}"; mkdir -p "${D}"; : > "${D}/prompts"; : > "${D}/gets"
   PROJECT_DIR="${D}" SWARM_SLEEP_SCALE=0.01 bash -c 'source "$1/../bin/lib/agents.sh"
     die() { echo "$*" > "${PROJECT_DIR}/died"; exit 1; }
     json() { python3 -c "import json,os,sys; d=json.load(sys.stdin); e=os.environ; print($1)"; }
     herdr() {
+      local own n
       case "$1 $2" in
         "agent prompt") echo x >> "${PROJECT_DIR}/prompts"
-          if [[ "${PROMPT_REPLY}" == junk ]]; then echo "not json"; else echo "{\"result\":{\"agent\":{\"agent_status\":\"${PROMPT_REPLY}\"}}}"; fi ;;
-        "agent get") echo "{\"result\":{\"agent\":{\"agent_status\":\"${OWN}\"}}}" ;;
+          case "${PROMPT_REPLY}" in
+            junk) echo "not json" ;;
+            err:*) echo "{\"error\":{\"code\":\"${PROMPT_REPLY#err:}\"}}" >&2; return 1 ;;
+            *) echo "{\"result\":{\"agent\":{\"agent_status\":\"${PROMPT_REPLY}\"}}}" ;;
+          esac ;;
+        "agent get") echo x >> "${PROJECT_DIR}/gets"; n="$(wc -l < "${PROJECT_DIR}/gets")"
+          own="$(echo ${OWN} | awk -v n="${n}" "{ print (n <= NF ? \$n : \$NF) }")"
+          [[ "${own}" != - ]] || return 1
+          echo "{\"result\":{\"agent\":{\"agent_status\":\"${own}\"}}}" ;;
         *) return 1 ;;
       esac
     }
     echo brief > "${PROJECT_DIR}/brief"; deliver_prompt a "${PROJECT_DIR}/brief" w:1' _ "${HERE}" && rc=0 || rc=$?
-  echo "${rc}|$(wc -l < "${D}/prompts" | tr -d ' ')|$(cat "${D}/died" 2>/dev/null)"
+  echo "${rc}|$(wc -l < "${D}/prompts" | tr -d ' ')|$(wc -l < "${D}/gets" | tr -d ' ')|$(cat "${D}/died" 2>/dev/null)"
 }
+gaveup="herdr took the brief but gave no status for it"
+check "a prompt reply of working sends one prompt and reads no own status" test "$(PROMPT_REPLY=working OWN=idle dp)" = "0|1|0|"
 check "an unreadable prompt reply from an agent working on its own read is one prompt, and success" \
-  test "$(PROMPT_REPLY=junk OWN=working dp)" = "0|1|"
-check "an agent idle on both reads gets two prompts, then the failure naming its status and why" \
-  test "$(PROMPT_REPLY=idle OWN=idle dp)" = "1|2|a: the brief was not taken up: it was idle after 2 attempts (status 'idle'); see herdr agent read a"
-check "a prompt reply of working sends one prompt" test "$(PROMPT_REPLY=working OWN=idle dp)" = "0|1|"
-check "an unreadable reply and an unknown own status send no second prompt" \
-  test "$(PROMPT_REPLY=junk OWN=unknown dp)" = "1|1|a: the brief was not taken up: its status was not idle, so the brief was not sent again (status 'unknown'); see herdr agent read a"
+  test "$(PROMPT_REPLY=junk OWN=working dp)" = "0|1|1|"
+check "an unreadable prompt reply from an agent blocked on its own read is one prompt, and success" \
+  test "$(PROMPT_REPLY=junk OWN=blocked dp)" = "0|1|1|"
+check "an unreadable reply from an agent idle on both own reads gets two prompts, then the failure" \
+  test "$(PROMPT_REPLY=junk OWN=idle dp)" = "1|2|2|a: the brief was not taken up after 2 attempts: herdr reads it idle; see herdr agent read a"
+check "an agent done on its own read gets the brief again, like an idle one" \
+  test "$(PROMPT_REPLY=junk OWN='done working' dp)" = "0|2|2|"
+check "agent_prompt_stalled (sent; the agent slow to start) from an agent working on its own read is one prompt" \
+  test "$(PROMPT_REPLY=err:agent_prompt_stalled OWN=working dp)" = "0|1|1|"
+check "an own read of unknown is read again until herdr names a status" \
+  test "$(PROMPT_REPLY=junk OWN='unknown - working' dp)" = "0|1|3|"
+check "an own status herdr never gives (empty) sends no second prompt and says so" \
+  test "$(PROMPT_REPLY=junk OWN=- dp)" = "1|1|3|a: ${gaveup}, so it was not sent again; it may have it: see herdr agent read a"
+check "an own status that stays unknown sends no second prompt and says so" \
+  test "$(PROMPT_REPLY=junk OWN=unknown dp)" = "1|1|3|a: ${gaveup} (it reads unknown), so it was not sent again; it may have it: see herdr agent read a"
+check "agent_blocked (herdr sent nothing) fails at once, with no second prompt and no own read" \
+  test "$(PROMPT_REPLY=err:agent_blocked OWN=working dp)" = "1|1|0|a: herdr sent it nothing: it is blocked on a question (agent_blocked); answer it, see herdr agent read a"
+check "another herdr error (nothing sent) sends once more, then fails naming it" \
+  test "$(PROMPT_REPLY=err:agent_not_found OWN=working dp)" = "1|2|0|a: herdr could not send it the brief after 2 attempts (agent_not_found); see herdr agent read a"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

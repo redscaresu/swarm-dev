@@ -676,36 +676,74 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # `agent start` returns once the agent is ready, but a slow starter (Fable at xhigh) could
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
-# (or blocked on a question), retries once, and fails loudly rather than reporting success.
-# The prompt's reply alone is not enough: when it is empty or unreadable (status none), the brief may
-# still have landed, so the agent's own status is read. Only an agent idle there gets the brief again;
-# one working or blocked took it.
+# (or blocked on a question), and fails loudly rather than reporting success. When herdr sent the
+# prompt but named no status it reached (prompt_once's sent), the agent's own status decides
+# (settled_status): working or blocked took it, idle or done gets it once more, and an agent herdr
+# gives no status for is never sent it twice. A prompt herdr did not send is sent once more, except
+# to an agent blocked on a question.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" status target="${3:-}"
+  local name="$1" prompt_file="$2" target="${3:-}" reply status try
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
       || die "${name}: herdr could not send it the prompt; see herdr agent read ${name}"
     return
   fi
-  local st="d.get('result',{}).get('agent',{}).get('agent_status','')" why="it was idle after 2 attempts"
-  for _ in 1 2; do
-    status=$(herdr agent prompt "${target}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
-      --timeout "${PROMPT_TIMEOUT_MS}" 2>/dev/null | json "${st}" 2>/dev/null || true)
-    case "${status}" in
+  for try in 1 2; do
+    reply="$(prompt_once "${target}" "${prompt_file}")"
+    case "${reply}" in
       working|blocked) return 0 ;;
+      agent_blocked) die "${name}: herdr sent it nothing: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
+      sent) ;;
+      *) if [[ ${try} -eq 1 ]]; then nap 5; continue; fi
+         die "${name}: herdr could not send it the brief after 2 attempts (${reply}); see herdr agent read ${name}" ;;
     esac
-    nap 5
-    status=$(herdr agent get "${target}" 2>/dev/null | json "${st}" 2>/dev/null || true)
+    status="$(settled_status "${target}")"
     case "${status}" in
       working|blocked) return 0 ;;
-      idle) ;;
-      *) why="its status was not idle, so the brief was not sent again"; break ;;
+      idle|done) ;;
+      *) die "${name}: herdr took the brief but gave no status for it${status:+ (it reads ${status})}, so it was not sent again; it may have it: see herdr agent read ${name}" ;;
     esac
   done
-  die "${name}: the brief was not taken up: ${why} (status '${status:-none}'); see herdr agent read ${name}"
+  die "${name}: the brief was not taken up after 2 attempts: herdr reads it ${status}; see herdr agent read ${name}"
+}
+
+# prompt_once <target> <prompt-file> — submit the prompt once, wait for it to be taken up, and print
+# what came of it: working or blocked; sent, when herdr sent it but named no status it reached (the
+# reply could not be read, the timeout passed, agent_prompt_stalled: the agent did not start within
+# herdr's 5 s, or herdr's error could not be read either); else herdr's error code, when it sent
+# nothing (agent_blocked: the agent was already blocked on a question; agent_not_found, ...).
+prompt_once() {
+  local out code err
+  err="$(mktemp)" || err=/dev/null
+  out="$(herdr agent prompt "$1" "$(cat "$2")" --wait --until working --until blocked \
+    --timeout "${PROMPT_TIMEOUT_MS}" 2>"${err}")" || true
+  out="$(json "d.get('result',{}).get('agent',{}).get('agent_status','')" <<< "${out}" 2>/dev/null)" || out=""
+  code="$(json "d['error']['code']" < "${err}" 2>/dev/null)" || code=""
+  [[ "${err}" == /dev/null ]] || rm -f "${err}"
+  case "${out}:${code}" in
+    working:*|blocked:*) echo "${out}" ;;
+    *:|*:timeout|*:agent_prompt_stalled) echo sent ;;
+    *) echo "${code}" ;;
+  esac
+}
+
+# OWN_READS: how many times settled_status reads an agent's own status, 5 s apart, while herdr names none.
+OWN_READS=3
+
+# settled_status <target> — the agent's own status (herdr agent get), read until herdr names one
+# (working, blocked, idle or done), at most OWN_READS times; else what the last read gave (unknown,
+# or nothing when herdr did not answer).
+settled_status() {
+  local s="" i
+  for ((i = 1; i <= OWN_READS; i++)); do
+    nap 5
+    s="$(herdr agent get "$1" 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null)" || s=""
+    case "${s}" in working|blocked|idle|done) break ;; esac
+  done
+  echo "${s}"
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
