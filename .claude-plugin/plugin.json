@@ -1,6 +1,6 @@
 {
   "name": "swarm-dev",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Turn a design into merged PRs: epics, one-PR stories and parallel builds as a visible Claude Code swarm in herdr panes, with adversarial scoping and a per-role model policy",
   "keywords": ["swarm", "agents", "epics", "stories", "herdr", "claude-code", "parallel-builds"],
   "author": {
