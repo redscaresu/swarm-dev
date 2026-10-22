@@ -79,7 +79,7 @@ def parent_of(slug):
     return m.group(1) if m else ""
 
 # With --epic, the splits of that epic or of its parent.
-wanted = {epic, parent_of(epic)} - {""} if epic else set()
+wanted = {epic, parent_of(epic)} - {""} if epic and splits else set()
 shown, unknown = [], 0
 for s in splits.values():
     if since <= s["day"] <= until and epic:

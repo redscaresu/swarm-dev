@@ -73,10 +73,12 @@ board_pr() {
       while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
-      # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. Any
-      # other board PR starts no critic.
+      # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. A
+      # later board PR on an epic the base already has split (a missed child, a split-gap fix) is no
+      # new split, and neither is any other board PR: they start no critic.
       f="${wt}/${rel}epics/${name#scope-}.md"
-      if [[ "${name}" == scope-?* && -f "${f}" && "$(fm "${f}" status)" == split ]]; then
+      if [[ "${name}" == scope-?* && -f "${f}" && "$(fm "${f}" status)" == split ]] \
+        && [[ "$(git -C "${wt}" show "origin/${base}:${rel}epics/${name#scope-}.md" 2>/dev/null | sed -n 's/^status: *//p' | head -1)" != split ]]; then
         split="${PROJECT_DIR}/.swarm/${name#scope-}"
         [[ "$(json "isinstance(d.get('findings'), list)" 2>/dev/null < "${split}/split-critic.json")" == True ]] \
           || die "board-pr: ${name#scope-} is split, but .swarm/${name#scope-}/split-critic.json holds no {findings:[...]}; start the split critic first"

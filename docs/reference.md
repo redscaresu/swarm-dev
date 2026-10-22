@@ -26,9 +26,11 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   `done`, then `start` again. A PR counts as the branch's when its head came after the branch was
   started (the first entry in its reflog), so one from an earlier use of the name does not.
   `open scope-<epic>` also refuses when the worktree leaves `<epic>` at `status: split` (a large
-  epic split into child epics) and `.swarm/<epic>/split-critic.json` holds no `{findings:[...]}`, or
+  epic split into child epics, where the base has it at any other status) and `.swarm/<epic>/split-critic.json` holds no `{findings:[...]}`, or
   is older than the worktree (an abandoned draft's): the split critic answers before the board PR
-  opens. Once it opens, `.swarm/<epic>/split-pr` records its day and URL for `flow`.
+  opens. Once it opens, `.swarm/<epic>/split-pr` records its day and URL for `flow`. A later
+  `scope-<epic>` board PR on an epic the base already has split (a missed child, a split-gap fix)
+  needs no critic and leaves that record alone.
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
   on the branch's tip (the local one, or origin's when there is none here) has merged or closed. A
   PR left by an earlier use of the name does not count. With no PR it removes an abandoned start:

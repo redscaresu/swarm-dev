@@ -203,5 +203,11 @@ check "a kind named all is counted once, apart from the totals" \
   $'codex\tall\t2\t1\t1\t50%\t0' $'codex\tnit\t1\t0\t1\t100%\t0' $'codex\tall\t1\t1\t0\t0%\t0' \
   $'all\tnit\t1\t0\t1\t100%\t0' $'all\tall\t1\t1\t0\t0%\t0' $'all\tall\t2\t1\t1\t50%\t0' "" "${H2}" $'0\t0\t0\t0' "exit 0")"
 
+# --epic with no split rows reads no epic's history: a git on PATH logs every call.
+printf '#!/bin/sh\necho "$*" >> "%s/git.log"\nexec %s "$@"\n' "${dir}" "$(command -v git)" > "${dir}/bin/git"; chmod +x "${dir}/bin/git"
+yield_of "${R}" --epic e >/dev/null
+check "--epic with no splits runs no git log over the board's history" "$(grep -c -- '--diff-filter=D' "${dir}/git.log" || true)" "0"
+rm "${dir}/bin/git"
+
 if [[ "${fails}" -ne 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

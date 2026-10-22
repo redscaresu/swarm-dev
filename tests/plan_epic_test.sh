@@ -52,6 +52,7 @@ has split-critic-output '`\.swarm/\$1/split-critic\.json` `\{findings:\[\{kind, 
 has split-critic-then-pr 'start one `split-critic` agent.*open the board PR' "$large"
 hasnt split-critic-before-pr '[Oo]pen the board PR' "${large%%start one \`split-critic\` agent*}"
 has log-split-critic 'log-finding --reviewer split-critic <kind> <board PR URL>.*log-finding --declined <reason> --reviewer split-critic <kind> <board PR URL>' "$large"
+has split-critic-resume 'reuse its answer only when it is newer than the board PR.s worktree' "$large"
 has log-split-gap 'log-finding --reviewer escaped split-gap <split.s board PR URL>' "$large"
 hasnt medium-no-split-critic 'split-critic' "$(awk '/^\*\*1\. /{on=1} on' "$F")"
 has risk-clause 'real-cloud, teardown, credentials and safety' "$risk"

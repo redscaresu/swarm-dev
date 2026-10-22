@@ -310,6 +310,17 @@ is "a split's board PR opens once the split critic answered" "0 ${URL}" "${rc} $
 is "the split's board PR is recorded for flow, with its day" "$(date +%F)	${URL}" "$(cat "${P}/.swarm/big/split-pr")"
 echo "2026-01-01	${URL}" > "${P}/.swarm/big/split-pr"; bpr open scope-big "Split big" "${ROOT}/body.md"
 is "a second open of the split's PR keeps its first day" "2026-01-01	${URL}" "$(cat "${P}/.swarm/big/split-pr")"
+# A later board PR on an epic the base already has split (a missed child) is no new split: it opens
+# with no critic file, and leaves the first split's record as it was.
+git clone -q "${ROOT}/origin.git" "${ROOT}/old-split"; mkdir -p "${ROOT}/old-split/board/epics" "${P}/.swarm/old"
+printf -- '---\nstatus: split\n---\n\n# old\n' > "${ROOT}/old-split/board/epics/old.md"
+git -C "${ROOT}/old-split" add board/epics/old.md && git -C "${ROOT}/old-split" commit -qm "old is split" && git -C "${ROOT}/old-split" push -q origin HEAD:main
+git -C "${P}" fetch -q origin
+printf '2026-01-01\thttps://github.com/o/r/pull/1\n' > "${P}/.swarm/old/split-pr"
+bpr start scope-old; printf -- '---\nstatus: active\nparent: old\n---\n\n# old-b\n' > "${ROOT}/proj-wt/_board-scope-old/board/epics/old-b.md"
+reset_log; bpr open scope-old "Add old-b" "${ROOT}/body.md"
+is "a later board PR on an already-split epic opens with no split-critic.json" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
+is "it leaves the first split's record as it was" "2026-01-01	https://github.com/o/r/pull/1" "$(cat "${P}/.swarm/old/split-pr")"
 bpr start scope-med; mkdir -p "${ROOT}/proj-wt/_board-scope-med/board/epics"
 printf -- '---\nstatus: active\n---\n\n# med\n' > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
 echo story > "${ROOT}/proj-wt/_board-scope-med/board/stories/med-a.md"
