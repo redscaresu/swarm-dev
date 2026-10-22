@@ -224,40 +224,36 @@ def gh(*args, seconds=GH_SECONDS, parse=json.loads):
             return None
         time.sleep(wait * float(os.environ.get("SWARM_SLEEP_SCALE") or 1))
 
-DAY = re.compile(r"\d{4}-\d\d-\d\d")
-
 def merged_prs(urls, start, end):
     # (pr_key -> (mergedAt, title and body, paths changed) for every PR of the repos the urls are in
     # merged from start to end (YYYY-MM-DD, UTC, as gh's merged: search), and repo -> the oldest mergedAt
     # of each list that came back GH_LIMIT long, before which a fix may be missing), or None when gh
     # fails. files is read for rework_of's release PRs. A merged PR never changes, so each repo's are
-    # cached (gh_cache's merged), and gh lists only those merged from the day of the newest on.
+    # cached (gh_cache's Listing), and gh searches only from a day before the newest cached one's day
+    # (a PR GitHub's search lists late still comes).
     # ponytail: the last GH_LIMIT merged PRs per repo; page with gh api if a repo outgrows that within the window.
     out, oldest = {}, {}
     for repo in sorted({m.group(1) for m in map(GITHUB.match, urls) if m}):
-        have = gh_cache.get(repo, "merged")
-        if not (isinstance(have, dict) and isinstance(have.get("prs"), dict) and isinstance(have.get("next"), str)
-                and isinstance(have.get("from"), str) and have["from"] <= start and all(map(merged_pr, have["prs"].values()))):
-            have = {"from": start, "next": start, "prs": {}}
+        have = gh_cache.Listing(repo, "merged", start, merged_pr)
+        since = have.since(1)
         try:   # none to list when the cache holds every day up to end
             got = subprocess.run(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT), "--json", "url,mergedAt,title,body,files",
-                                  "--search", f"merged:{have['next']}..{end}"], capture_output=True, text=True, timeout=GH_SECONDS) if have["next"] <= end else None
+                                  "--search", f"merged:{since}..{end}"], capture_output=True, text=True, timeout=GH_SECONDS) if since <= end else None
             prs = [] if got is None else json.loads(got.stdout) if got.returncode == 0 else None
         except (subprocess.TimeoutExpired, ValueError, OSError):   # OSError: no gh on PATH
             prs = None
         if not isinstance(prs, list):
             return None
-        have["prs"].update({pr_key(p["url"]): [p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
-                                               sorted(f.get("path", "") for f in p.get("files") or [])] for p in prs})
+        have.items.update({pr_key(p["url"]): [p.get("mergedAt") or "", f"{p.get('title') or ''}\n{p.get('body') or ''}",
+                                              sorted(f.get("path", "") for f in p.get("files") or [])] for p in prs})
         if len(prs) >= GH_LIMIT:
             oldest[repo.lower()] = min((t for t in (merge_time(p.get("mergedAt") or "") for p in prs) if t), default=None)
             print(f"rework: gh listed {GH_LIMIT} merged PRs of {repo}, its limit, so rework is unknown for its PRs merged before"
                   f" {oldest[repo.lower()]}.", file=sys.stderr)
         else:   # ponytail: a list cut at GH_LIMIT is not cached, and is listed in full again next run
-            have["next"] = max([v[0][:10] for v in have["prs"].values() if DAY.match(v[0])] + [have["next"]])
-            gh_cache.put(repo, "merged", have)
+            have.save(max([v[0][:10] for v in have.items.values() if gh_cache.DAY.match(v[0])] + [have.state["next"]]))
         # A mergedAt that is no date stays in, for rework_of to count.
-        out.update({k: tuple(v) for k, v in have["prs"].items() if not DAY.match(v[0]) or start <= v[0][:10] <= end})
+        out.update({k: tuple(v) for k, v in have.items.items() if not gh_cache.DAY.match(v[0]) or start <= v[0][:10] <= end})
     return out, oldest
 
 def merged_pr(v):

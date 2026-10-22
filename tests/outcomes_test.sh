@@ -105,6 +105,8 @@ session s4 "${LONG}" claude-opus-5-5 0 0 > "${dir}/projects/p/s4.jsonl"
 cp "${P}/.swarm/agents.tsv" "${dir}/agents.keep"; printf '2026-10-04\tcode\t%s\tclaude\topus\thigh\ts4\n' "${CUT}" >> "${P}/.swarm/agents.tsv"
 check "a rebuilt story's PRs are not read from the line cached before it" \
   "$(outcomes "${dir}/nobin" 2>/dev/null | awk -F'\t' -v s="${LONG}" '$2 == s { print $15 }' | sort -u)" ""
+outcomes "${dir}/bin" > /dev/null 2>&1
+check "the rebuilt story's line takes the place of the one cached before it" "$(cut -f1,2 "${P}/.swarm/outcomes-prs.tsv")" "${LONG}"$'\t2026-10-04/2'
 mv "${dir}/agents.keep" "${P}/.swarm/agents.tsv"; rm "${dir}/projects/p/s4.jsonl" "${P}/.swarm/outcomes-prs.tsv"
 # The write is best effort: a cache that cannot be written is said, and the report still prints.
 mkdir "${P}/.swarm/outcomes-prs.tsv"
