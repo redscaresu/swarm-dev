@@ -123,6 +123,7 @@ make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py
 make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
+                                            # a file past TEST_FILE_TIMEOUT (600 s, 3x for SLOW) is killed and fails as TIMEOUT
 claude plugin validate .
 ```
 
