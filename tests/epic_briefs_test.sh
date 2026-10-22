@@ -145,6 +145,8 @@ run story f1 >/dev/null
 brief="$(cat "${p}/.swarm/briefs/f1.md")"
 check "an epic's story branches from the base (dev), opens its PR against it, runs the epic's check first, and asks for a mutation" "$(git -C "${ROOT}/svc.git" rev-parse dev)|yes|yes|yes" \
   "$(git -C "${ROOT}/svc-wt/f1" rev-parse HEAD)|$(has "Open the PR against \`dev\`" "${brief}")|$(has "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`make test\`" "${brief}")|$(has "prove each new or changed test can fail" "${brief}")"
+check "a builder's brief caps load at 4 CPUs, cleans up straight after, traps or times out every load process, checks at the end of a turn, and says the load in the PR" "yes|yes|yes|yes|yes" \
+  "$(has "use at most 4 CPUs (\`docker --cpus 4\`, or that many loops)" "${brief}")|$(has "stop and remove what you started as soon as the check ends, never leave it running between steps" "${brief}")|$(has "a trap that kills it on EXIT, INT and TERM, or a timeout" "${brief}")|$(has "before you end any turn check that none of your load processes or containers is still running" "${brief}")|$(has "say in the PR how you loaded the machine" "${brief}")"
 # A /goal message over GOAL_SEND_MAX, here through a long story path, is refused before the worktree
 # exists, and nothing is sent.
 printf '%s\n' "goal = 7" > "${p}/.claude/swarm/config"
