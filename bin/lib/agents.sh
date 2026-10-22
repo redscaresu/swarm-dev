@@ -677,6 +677,9 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), retries once, and fails loudly rather than reporting success.
+# The prompt's reply alone is not enough: when it is empty or unreadable (status none), the brief may
+# still have landed, so the agent's own status is read. Only an agent idle there gets the brief again;
+# one working or blocked took it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
@@ -687,15 +690,22 @@ deliver_prompt() {
       || die "${name}: herdr could not send it the prompt; see herdr agent read ${name}"
     return
   fi
+  local st="d.get('result',{}).get('agent',{}).get('agent_status','')" why="it was idle after 2 attempts"
   for _ in 1 2; do
     status=$(herdr agent prompt "${target}" "$(cat "${prompt_file}")" --wait --until working --until blocked \
-      --timeout "${PROMPT_TIMEOUT_MS}" 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null || true)
+      --timeout "${PROMPT_TIMEOUT_MS}" 2>/dev/null | json "${st}" 2>/dev/null || true)
     case "${status}" in
       working|blocked) return 0 ;;
     esac
     nap 5
+    status=$(herdr agent get "${target}" 2>/dev/null | json "${st}" 2>/dev/null || true)
+    case "${status}" in
+      working|blocked) return 0 ;;
+      idle) ;;
+      *) why="its status was not idle, so the brief was not sent again"; break ;;
+    esac
   done
-  die "${name}: the brief was not taken up after 2 attempts (status '${status:-none}'); see herdr agent read ${name}"
+  die "${name}: the brief was not taken up: ${why} (status '${status:-none}'); see herdr agent read ${name}"
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
