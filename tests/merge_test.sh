@@ -1255,23 +1255,33 @@ bfresh; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board
 is "a board merge that readies a draft epic's story: exits 0" 0 "${rc}"
 check "a board merge that readies a draft epic's story: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
 check "a board merge with the backlog conductor running: starts no second one" bash -c "! grep -qF 'conduct --backlog' '${ROOT}/out'"
-# Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone.
+# Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone,
+# though it also edits epic e, active already.
 put docs/stories/r9.md "status: ready" "kind: code" "epic: e"; land
-put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; put docs/epics/e.md "status: active" "title: e10"; land
 bfresh; merge --board "${URL}"
 check "a board merge beside another board PR: the note names its own r10, not r9" grep -qF "these stories of epic e are ready now: r10." "${INBOX}"
-# z's PR closed unmerged: reconcile sends z back to ready, which the pull did not do, so no note names it.
-item z "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"
-put docs/stories/r8.md "status: ready" "kind: code" "epic: e"; land
+# z's PR closed unmerged: reconcile sends z back to ready, which the PR did not do, so no note names it,
+# though the PR also edits z's file. z has a build's worktree, which reconcile removes.
+put docs/stories/z.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"; land; pulled
+git -C "${P}" worktree add -q -b story/z "${ROOT}/proj-wt/z"
+put docs/stories/r8.md "status: ready" "kind: code" "epic: e"
+put docs/stories/z.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11" "estimate_lines: 3"; land
 bfresh; echo CLOSED > "${FX}/state.11"; merge --board "${URL}"
 check "a board merge whose reconcile reopens z: z is back to ready" said "back to ready: z"
 check "a board merge whose reconcile reopens z: the note names r8 alone" grep -qF "these stories of epic e are ready now: r8." "${INBOX}"
-rm -f "${P}/docs/stories/z.md" "${P}/.swarm/board-state/stories/z"
-# A red main: merge writes a fix-main story before the note, and no note or ready now: line names it.
+rm -rf "${ROOT}/proj-wt"; git -C "${P}" worktree prune
+# A red main: no conductor is told to start builds on it, not even of r11, which this PR readies.
+put docs/stories/r11.md "status: ready" "kind: code" "epic: e"; land
 bfresh; checks "${FX}/${OID}.checks" "$(run test completed failure)"; merge --board "${URL}"
-check "a board merge onto a red main: its fix-main story is written, and no ready now: line names it" \
-  bash -c "[ -e '${P}/docs/stories/fix-main-${OID:0:7}.md' ] && ! grep -q 'ready now: fix-main' '${ROOT}/out'"
+check "a board merge onto a red main: tells no conductor of r11" bash -c "! grep -q 'ready now' '${ROOT}/out' && ! grep -q r11 '${INBOX}'"
 rm -f "${P}/docs/stories/fix-main-${OID:0:7}.md"
+# A PR that only sets epic f active readies f1, ready already: f has no conductor, so the merge says to start one.
+put docs/epics/f.md "status: draft"; put docs/stories/f1.md "status: ready" "kind: code" "epic: f"; land; pulled
+put docs/epics/f.md "status: active"; land
+bfresh; merge --board "${URL}"
+check "a board merge that sets epic f active: says f1 is ready with no conductor" said "ready now: f1 (of epic f); no conductor runs for it yet"
+check "a board merge that sets epic f active, outside herdr: says to run conduct f" said "no conductor: run swarm.sh conduct f for its ready stories"
 # o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
 put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
 put docs/stories/o1.md "status: ready" "kind: code"; land
@@ -1314,7 +1324,7 @@ check "a board merge whose tell fails: warns" said "warning: could not note cond
 # Leave P, origin and the clone as the block found them.
 rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,b1,o1,q,d1} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,b1,d1,f1,o1,q,z} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
