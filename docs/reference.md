@@ -1315,25 +1315,31 @@ Otherwise the conductor writes a handover to `.swarm/handover-<epic>-<date>.md` 
 its review round, what its builder still owes, and findings it has not sent) and ends its turn. A
 conductor already on the new version does this too whenever its builders will restart, so it never
 acts on one mid-restart. An idle conductor is asked by prompt; a busy one gets a note in its inbox,
-which it reads when its wait returns. upgrade waits for the file and for the conductor to go idle,
-then reads the agents again, so a builder the conductor started meanwhile is moved too. Then, in
+which it reads when its wait returns. upgrade waits for the file and for the conductor to go idle
+(it stops waiting at once if the conductor's session is gone), then reads the agents again, so a builder the conductor started meanwhile is moved too. Then, in
 rounds, it restarts every builder that Claude Code reports idle, or whose turn stopped on an API
-error; herdr's wait only wakes it to check. A busy builder is never interrupted and waits for a
+error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
+it to check. A busy builder is never interrupted and waits for a
 later round. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
 <session>` with the flags its claude ran with (`herdr pane process-info`; the session from `herdr
-agent list`). A resumed session keeps its context, so only the plugin root changes. Each restarted
-agent is told the new `swarm.sh` path, since its brief names the old one. The conductor goes last:
-restarted and told to carry on, or, if it was already on the new version, only told to carry on.
+agent list`), and gives herdr that command, as a first start does, so a herdr restart keeps its
+guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
+context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
+since its brief names the old one, and that the restart stopped its background commands (a
+`wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
+restarted and which were left: restarted and told to carry on, or, if it was already on the new
+version or its restart failed before its claude exited, only told to carry on.
 upgrade never touches a worktree, so uncommitted and unpushed work stays as it is. It prints each
 agent as `<name>: <old> -> <new>`, and `swarm.sh version` in a pane confirms it. If a restart fails
-once claude has exited, upgrade leaves the pane open and prints the `claude --resume <session>`
+from the first ctrl+c on, upgrade leaves the pane open and prints the `claude --resume <session>`
 that brings it back, and the folder to run it in. An agent still busy after `SWARM_UPGRADE_WAIT_MS`
 (30 minutes, for the whole run) is named and left on its old version. A conductor with no handover
-by then, or still busy after writing one, is told to carry on as before (by prompt when it is idle,
-else in its inbox), and every builder is held with it. upgrade then exits 1. Run it again once they
+by then, or still busy after writing one, is told to carry on as before: by prompt once it is idle
+(upgrade waits up to `SWARM_UPGRADE_GRACE_MS`, 5 minutes, more for that), else in its inbox. Every
+builder is held with it. upgrade then exits 1. Run it again once they
 are idle; it skips the agents already on the new version.
 
 **Merge one at a time, unless the base has a merge queue.** After each merge, merge the base branch into every other open wave branch before

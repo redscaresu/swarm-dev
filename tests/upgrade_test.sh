@@ -15,14 +15,21 @@
 # too. A conductor whose env: names are refused is asked
 # for nothing; one with no handover by the end of the wait, or still busy after writing it, gets a
 # note (a prompt when idle) to carry on as before, and is named; either way its builders are held.
-# upgrade backlog moves the backlog conductor and the stories with no epic. docs/reference.md and
+# upgrade backlog moves the backlog conductor and the stories with no epic. Round 3: idle is read
+# from the pane's current session; each restarted agent's resume command goes to herdr and it hears
+# its background commands were stopped; unreadable process-info leaves an agent alone; a claude
+# that ignores ctrl+c gets the resume hint; a conductor whose restart fails before its claude exits
+# is told to carry on; one whose session goes after the request is named at once; the conductor
+# hears which builders were restarted and which left. docs/reference.md and
 # commands/swarm.md describe it. An empty version record reads as unknown, and no message file is
 # left behind. claude agents --json is a stub printing ${H}/claude.json; with
-# ${H}/flip ("<n> <sed expression>"), its calls after the n-th print it through the expression.
+# ${H}/flip ("<n> <sed expression>"), its calls after the n-th print it through the expression, and
+# then through ${H}/flip2's, the same way.
 # herdr is a stub on PATH: agent list reads ${H}/agents ("<name> <pane> <session>" lines), agent wait
 # says idle at once, process-info shows ${H}/argv-<pane> (in folder "${H}/wt <pane>") until one
 # send-keys sends ctrl+c twice (then a shell), agent start reads a line of its stdin, brings claude back, runs
-# ${H}/onstart-<name> if there is one, pane run keeps the launch file it runs as ${H}/launch-<pane>,
+# ${H}/onstart-<name> if there is one (an agent whose session is - has none; process-info fails
+# while ${H}/pifail exists, and claude ignores ctrl+c while ${H}/noexit does), pane run keeps the launch file it runs as ${H}/launch-<pane>,
 # pane wait-output fails while ${H}/envfail exists, and an agent prompt asking for a handover writes
 # its file (not while ${H}/nohandover exists) and runs ${H}/onhandover if there is one; a prompt
 # telling an agent it was restarted fails while ${H}/promptfail exists. Every call is logged.
@@ -56,9 +63,10 @@ echo dirty >> "${WT}/f"; echo new > "${WT}/untracked"
 tree_state() { git -C "${WT}" rev-parse HEAD; git -C "${WT}" status --porcelain; cat "${WT}/f" "${WT}/untracked"; }
 BEFORE="$(tree_state)"
 
-# A project whose path holds a space. A conductor and two builders of epic e, and x1's builder of another epic.
+# A project whose path holds a space. A conductor and two builders of epic e (b1 recorded under s0,
+# its session before a /clear; herdr has s1 in its pane now), and x1's builder of another epic.
 printf 'w:c conduct-e\nw:b1 b1\nw:b2 b2\nw:x1 x1\nw:r review-b1\n' > "${P}/.swarm/state/e"
-printf '%s\n' $'2026-10-20\tconduct\tconduct-e\tclaude\topus\thigh\tsc' $'2026-10-20\tcode\tb1\tclaude\tsonnet\thigh\ts1' \
+printf '%s\n' $'2026-10-20\tconduct\tconduct-e\tclaude\topus\thigh\tsc' $'2026-10-20\tcode\tb1\tclaude\tsonnet\thigh\ts0' \
   $'2026-10-20\tcode\tb2\tclaude\tsonnet\thigh\ts2' $'2026-10-20\tcode\tx1\tclaude\tsonnet\thigh\tsx' \
   $'2026-10-20\treview\treview-b1\tclaude\tsonnet\thigh\tsr' $'2026-10-21\treview\treview-b1\tcodex\tdefault\thigh\t-' > "${P}/.swarm/agents.tsv"   # review-b1 is codex now
 printf 'conduct-e w:c sc\nb1 w:b1 s1\nb2 w:b2 s2\nx1 w:x1 sx\nreview-b1 w:r -\n' > "${H}/agents"
@@ -78,14 +86,14 @@ cat >> "${H}/bin/herdr" <<'STUB'
 { for a in "$@"; do printf '%s ' "$a"; done; echo; } >> "$H/herdr.log"
 case "$1 $2" in
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"idle\",\"agent_session\":{\"value\":\"%s\"}}", (NR > 1 ? "," : ""), $1, $2, $3 }
+                     { printf "%s{\"name\":\"%s\",\"pane_id\":\"%s\",\"agent_status\":\"idle\"%s}", (NR > 1 ? "," : ""), $1, $2, ($3 == "-" ? "" : ",\"agent_session\":{\"value\":\"" $3 "\"}") }
                      END { print "]}}" }' "$H/agents" ;;
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-  "pane process-info") p="$4"
+  "pane process-info") p="$4"; [ -e "$H/pifail" ] && exit 1
                 if [ -e "$H/exited-$p" ]; then echo '{"result":{"process_info":{"foreground_processes":[{"argv":["zsh"]}]}}}'
                 else python3 -c 'import json, sys; print(json.dumps({"result": {"process_info": {"foreground_processes": [{"argv": open(sys.argv[1]).read().splitlines(), "cwd": sys.argv[2]}]}}}))' "$H/argv-$p" "$H/wt $p"; fi ;;
   "pane send-keys") p="$3"; n=0; shift 3; for k in "$@"; do [ "$k" = ctrl+c ] && n=$((n + 1)); done
-                    [ "$n" -lt 2 ] || touch "$H/exited-$p" ;;   # claude exits on a second ctrl+c at once
+                    [ "$n" -lt 2 ] || [ -e "$H/noexit" ] || touch "$H/exited-$p" ;;   # claude exits on a second ctrl+c at once
   "pane wait-output") [ -e "$H/envfail" ] && exit 1 ;;
   "pane run") p="$3"; eval "set -- $4"; for f; do :; done; cp "$f" "$H/launch-$p" ;;   # the launch file, its last word
   "agent start") read -r -t 1 _ 2>/dev/null || true   # takes a line of its stdin, as a real command may
@@ -104,16 +112,19 @@ printf '#!/bin/sh\nH="%s"\n' "${H}" > "${H}/bin/claude"
 cat >> "${H}/bin/claude" <<'STUB'
 [ "$*" = "agents --json" ] || { echo "claude stub: unexpected call: $*" >&2; exit 1; }
 n=$(($(cat "$H/claude.count" 2>/dev/null || echo 0) + 1)); echo "$n" > "$H/claude.count"
-if [ -e "$H/flip" ] && [ "$n" -gt "$(cut -d' ' -f1 "$H/flip")" ]; then sed "$(cut -d' ' -f2- "$H/flip")" "$H/claude.json"; else cat "$H/claude.json"; fi
+j="$(cat "$H/claude.json")"
+[ ! -e "$H/flip" ] || [ "$n" -le "$(cut -d' ' -f1 "$H/flip")" ] || j="$(printf '%s' "$j" | sed "$(cut -d' ' -f2- "$H/flip")")"
+[ ! -e "$H/flip2" ] || [ "$n" -le "$(cut -d' ' -f1 "$H/flip2")" ] || j="$(printf '%s' "$j" | sed "$(cut -d' ' -f2- "$H/flip2")")"
+printf '%s\n' "$j"
 STUB
 chmod +x "${H}/bin/claude"
-claude_list() { printf '[{"sessionId":"sc","status":"%s"},{"sessionId":"s1","status":"%s"},{"sessionId":"s2","status":"%s"}]\n' "$@" > "${H}/claude.json"; rm -f "${H}/flip"; }
+claude_list() { printf '[{"sessionId":"sc","status":"%s"},{"sessionId":"s1","status":"%s"},{"sessionId":"s2","status":"%s"},{"sessionId":"s0","status":"idle"}]\n' "$@" > "${H}/claude.json"; rm -f "${H}/flip" "${H}/flip2"; }
 claude_list idle idle idle
 
 upgrade() { # [epic] — run upgrade from the project, its output in ${H}/out and exit code in rc
   : > "${LOG}"; rc=0; rm -f "${H}/claude.count" "${P}/.swarm/inbox/conduct-e.md"
   mkdir -p "${H}/tmp"
-  (cd "${P}" && TMPDIR="${H}/tmp" SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_SLEEP_SCALE=0.01 SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
+  (cd "${P}" && TMPDIR="${H}/tmp" SWARM_UPGRADE_GRACE_MS="${GRACE_MS:-200}" SWARM_PROJECT="${P}" HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_SLEEP_SCALE=0.01 SWARM_UPGRADE_WAIT_MS="${WAIT_MS:-60000}" \
     PATH="${H}/bin:${H}/old/0.21.0/bin:${H}/shared:${PATH}" bash "${SWARM}" upgrade "$@" > "${H}/out" 2>&1) || rc=$?
 }
 
@@ -131,7 +142,7 @@ check "the conductor wrote its handover, as asked, to .swarm/handover-e-<date>.m
 check "handover first, then each builder and last the conductor, each told the new path once restarted" \
   "prompt w:c|keys w:b1|start b1|prompt w:b1|keys w:b2|start b2|prompt w:b2|keys w:c|start conduct-e|prompt w:c" "$(order)"
 check "each restarted agent is told this version's swarm.sh path, the conductor its handover too" "3|yes" \
-  "$(calls 'agent prompt' | grep -c "Its swarm.sh is ${REPO}/bin/swarm.sh: use that path")|$(has "Your handover is ${HANDOVER}. Carry on" "$(calls 'agent prompt w:c')")"
+  "$(calls 'agent prompt' | grep -c "Its swarm.sh is ${REPO}/bin/swarm.sh: use that path")|$(has "Your handover is ${HANDOVER}. Builders restarted on swarm-dev ${NEW}: b1 b2. Left on their old version: none. Carry on" "$(calls 'agent prompt w:c')")"
 check "b1 restarts with --resume of herdr's session and its launch flags, no --session-id" \
   "agent start b1 --kind claude --pane w:b1 --timeout 60000 -- --resume s1 --model sonnet --effort high --permission-mode auto --disallowedTools Bash(gh pr merge:*) --settings {\"env\":{\"SWARM_AGENT\":\"b1\"}} " \
   "$(calls 'agent start b1')"
@@ -143,6 +154,11 @@ check "each restart's PATH starts at this version's bin, an older version's root
   "$(has "export PATH=$(printf %q "${REPO}/bin"):" "$(cat "${H}/launch-w:b1")")|$(grep -c 'old/0.21.0' "${H}/launch-w:b1" || true)|$(grep -c "${H}/shared" "${H}/launch-w:b1" || true)"
 check "the resume command is this version's, with --resume" "yes" \
   "$(has $'claude\n--resume\ns1\n--model' "$(cat "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.argv")")"
+check "herdr gets each restarted agent's resume command, as at its start" "yes" \
+  "$(has "pane report-agent w:b1 --source swarm --agent claude --state idle --seq" "$(calls 'pane report-agent w:b1')")"
+check "and that command resumes its session with its flags" "yes" \
+  "$(has "--agent-session-id s1 -- python3 -I ${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.py claude --resume s1 --model sonnet" "$(calls 'pane report-agent w:b1')")"
+check "each restarted agent is told its background commands were stopped" "3" "$(calls 'agent prompt' | grep -c 'stopped any background command')"
 check "SWARM_RESUME reaches the restarted agent" "yes" "$(has "export SWARM_RESUME=$(printf %q "${CLAUDE_CONFIG_DIR}/swarm-dev/resume/s1.argv")" "$(cat "${H}/launch-w:b1")")"
 check "it prints each agent's old and new version" "b1: 0.21.0 -> ${NEW}|b2: 0.21.0 -> ${NEW}|conduct-e: 0.21.0 -> ${NEW}" \
   "$(grep -- ' -> ' "${H}/out" | paste -sd'|' -)"
@@ -157,7 +173,7 @@ check "the busy builder is never interrupted or restarted; the idle builder afte
   "$(calls 'pane send-keys' | paste -sd'|' -)|$(calls 'agent start' | cut -d' ' -f3)"
 check "it is named as left on its old version" "yes" "$(has 'b1: still busy at the end of the wait, left on 0.21.0' "$(cat "${H}/out")")"
 check "the conductor already on this version is paused for the restarts, then told to carry on, never restarted" "1|1|yes|" \
-  "$(calls 'agent prompt w:c' | grep -c 'Write a handover')|$(calls 'agent prompt w:c' | grep -c 'has restarted your builders')|$(has "conduct-e: already on ${NEW}, told to carry on" "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')"
+  "$(calls 'agent prompt w:c' | grep -c 'Write a handover')|$(calls 'agent prompt w:c' | grep -c "Builders restarted on swarm-dev ${NEW}: b2. Left on their old version: b1.")|$(has "conduct-e: already on ${NEW}, told to carry on" "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')"
 check "b1's version is still the old one" "0.21.0" "$(cat "${P}/.swarm/versions/b1")"
 
 # --- Both back on their old version, b1 busy for Claude Code's first reads: idle b2 goes first, and
@@ -181,8 +197,19 @@ rm -f "${H}/promptfail"
 touch "${H}/envfail"
 upgrade e
 check "the failed restart keeps the pane and names the session and folder to resume it in" "1|yes|" \
-  "${rc}|$(has "b2: its claude has exited and was not started again; in pane w:b2, claude --resume s2, run in ${H}/wt w:b2, brings the session back" "$(cat "${H}/out")")|$(calls 'pane close')"
+  "${rc}|$(has "b2: not started again; if pane w:b2 shows a shell, claude --resume s2, run in ${H}/wt w:b2, brings the session back" "$(cat "${H}/out")")|$(calls 'pane close')"
 rm -f "${H}/envfail" "${H}/exited-w:b2"   # b2 resumed by hand, as the hint says
+
+# --- process-info that cannot be read leaves the agent alone; a claude that ignores ctrl+c gets the resume hint.
+echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle idle idle; touch "${H}/pifail"
+upgrade e
+check "with process-info unreadable b2 is named and sent no key" "1|yes|" \
+  "${rc}|$(has 'b2: herdr pane process-info could not be read, so it is left as it is' "$(cat "${H}/out")")|$(calls 'pane send-keys w:b2')"
+rm -f "${H}/pifail"; touch "${H}/noexit"
+upgrade e
+check "a claude that does not exit is named, with the resume hint" "1|yes|yes" \
+  "${rc}|$(has 'b2: claude did not exit on ctrl+c, left on 0.21.0' "$(cat "${H}/out")")|$(has 'b2: not started again; if pane w:b2 shows a shell, claude --resume s2' "$(cat "${H}/out")")"
+rm -f "${H}/noexit"
 
 # --- A builder whose Claude session is gone is named at once, not waited for.
 echo 0.21.0 > "${P}/.swarm/versions/b1"; echo '[{"sessionId":"sc","status":"idle"},{"sessionId":"s2","status":"idle"}]' > "${H}/claude.json"
@@ -205,6 +232,22 @@ upgrade e
 check "the new builder is restarted with the rest" "0|yes|yes" \
   "${rc}|$(has 'agent start b4 --kind claude --pane w:b4' "$(calls 'agent start b4')")|$(has "b4: 0.21.0 -> ${NEW}" "$(cat "${H}/out")")"
 rm -f "${H}/onhandover"
+
+# --- A conductor whose restart fails before its claude exits (herdr gives no session) is told to carry on.
+echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; claude_list idle idle idle
+sed -i.bak 's/^conduct-e w:c sc$/conduct-e w:c -/' "${H}/agents"
+upgrade e
+check "it is named, never sent a key, and told to carry on on the version it runs" "1|yes||1" \
+  "${rc}|$(has 'conduct-e: herdr gives no session for it' "$(cat "${H}/out")")|$(calls 'pane send-keys w:c')|$(calls 'agent prompt w:c' | grep -c 'could not restart you, so you stay on the version you run')"
+sed -i.bak 's/^conduct-e w:c -$/conduct-e w:c sc/' "${H}/agents"
+
+# --- A conductor whose session goes right after the request is named at once; its builders are held.
+echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; claude_list idle idle idle; touch "${H}/nohandover"
+echo '1 s/{"sessionId":"sc","status":"idle"},//' > "${H}/flip"
+SECONDS=0; upgrade e; took="${SECONDS}"
+check "it is named as gone well inside the wait, and nothing is restarted" "1|yes||yes" \
+  "${rc}|$(has 'conduct-e: its Claude session is gone, so it wrote no handover' "$(cat "${H}/out")")|$(calls 'pane send-keys')|$( ((took < 30)) && echo yes || echo "no, ${took}s")"
+rm -f "${H}/nohandover"
 
 # --- An idle conductor that writes no handover by the end of the wait is told to carry on by prompt.
 echo 0.21.0 > "${P}/.swarm/versions/conduct-e"; echo 0.21.0 > "${P}/.swarm/versions/b2"; claude_list idle idle idle; touch "${H}/nohandover"
@@ -230,6 +273,14 @@ claude_list idle idle idle; echo '1 s/"sc","status":"idle"/"sc","status":"busy"/
 WAIT_MS=300 upgrade e
 check "it was asked by prompt and wrote a handover, but is not restarted while busy" "1|1|yes|" \
   "${rc}|$(calls 'agent prompt' | grep -c 'Write a handover')|$(grep -q 'gave up waiting for your handover' "${P}/.swarm/inbox/conduct-e.md" 2>/dev/null && echo yes || echo no)|$(calls 'pane send-keys')"
+
+# --- One busy past the wait but idle within the grace gets the withdrawal by prompt, not in its inbox.
+claude_list idle idle idle; touch "${H}/nohandover"
+echo '1 s/"sc","status":"idle"/"sc","status":"busy"/' > "${H}/flip"; echo '40 s/"sc","status":"busy"/"sc","status":"idle"/' > "${H}/flip2"
+GRACE_MS=120000 WAIT_MS=300 upgrade e; echo "${rc}" > "${H}/rc"
+check "the withdrawal waits for it to go idle, then goes as a prompt" "1|1|no" \
+  "$(cat "${H}/rc")|$(calls 'agent prompt w:c' | grep -c 'gave up waiting for your handover')|$(grep -q 'gave up waiting' "${P}/.swarm/inbox/conduct-e.md" 2>/dev/null && echo yes || echo no)"
+rm -f "${H}/nohandover"
 
 # --- A conductor whose epic has an env: name not set here is asked for no handover, and holds its builders.
 claude_list idle idle idle; : > "${P}/.swarm/versions/conduct-e"   # an empty record reads as unknown
