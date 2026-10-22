@@ -3,10 +3,10 @@
 # (not a board README), fast-path for a version-only plugin.json bump on main's latest, green commit,
 # and the full suite for anything else, a change to the gate's own files included. Then ci.yml: only
 # the gated jobs may read checks and statuses, each one's checkout fetches the base, every step after
-# the gate runs only when the gate says no, and shellcheck covers the script. Last, the gate step run
-# as ci.yml has it: the base's copy of the gate judges the PR, or the PR's when the base has none. gh
-# is a stub on PATH answering main's latest commit from ${FX}/tip and each commit's check runs from
-# ${FX}/<sha>.checks.
+# the gate runs only when the gate says no, shellcheck covers the script, and the test job passes only
+# when every test-shard did. Last, the gate step run as ci.yml has it: the base's copy of the gate
+# judges the PR, or the PR's when the base has none. gh is a stub on PATH answering main's latest
+# commit from ${FX}/tip and each commit's check runs from ${FX}/<sha>.checks.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -169,7 +169,7 @@ def field(step, k):
             return "\n".join(block)
     return None
 
-GATED = ("shellcheck", "test", "plugin-validate")
+GATED = ("shellcheck", "test-shard", "plugin-validate")
 check("the workflow grants only contents: read", top.get("permissions") == ["contents: read"])
 check("gitleaks gets no checks or statuses",
       "gitleaks" in jobs and not {"checks: read", "statuses: read"} & set(jobs["gitleaks"]["head"]))
@@ -195,6 +195,11 @@ for name in GATED:
     check("%s: there are steps after the gate" % name, bool(rest))
     for s in rest:
         check("%s: '%s' runs only when %s" % (name, field(s, "name"), want), field(s, "if") == want)
+agg = jobs.get("test", {"head": [], "steps": []})
+check("test: needs every test-shard, runs always and passes only on their success",
+      {"needs: test-shard", "if: always()"} <= set(agg["head"])
+      and any("${{ needs.test-shard.result }}" in "\n".join(s) and field(s, "run") == "'[ \"${RESULT}\" = success ]'"
+              for s in agg["steps"]))
 check("the three gate steps run the same commands", len(runs) == len(GATED) and len(set(runs)) == 1)
 check("shellcheck: the shellcheck step names scripts/board-only.sh",
       any(re.search(r"^shellcheck .*\bscripts/board-only\.sh\b", field(s, "run") or "") for s in jobs.get("shellcheck", {}).get("steps", [])))

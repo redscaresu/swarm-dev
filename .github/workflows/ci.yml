@@ -39,9 +39,18 @@ jobs:
         if: steps.gate.outputs.board_only != 'true'
         # shellcheck is preinstalled on GitHub's ubuntu runners.
         run: shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
+      - name: Compile bin/lib/*.py
+        if: steps.gate.outputs.board_only != 'true'
+        run: python3 -m py_compile bin/lib/*.py
 
-  test:
+  # make test in shards: each runs the files scripts/test.sh's SHARD=i/N split gives it. The shard list
+  # is 1 to N, each once (tests/test_shard_test.sh).
+  test-shard:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     permissions:
       contents: read
       checks: read     # the gate reads main's check runs for a release PR
@@ -61,12 +70,22 @@ jobs:
         run: |
           git show "${BASE_SHA}:scripts/board-only.sh" > "${RUNNER_TEMP}/board-only.sh" || cp scripts/board-only.sh "${RUNNER_TEMP}/board-only.sh"
           bash "${RUNNER_TEMP}/board-only.sh"
-      - name: Compile bin/lib/*.py
+      - name: Run this shard's tests/*_test.sh (make test)
         if: steps.gate.outputs.board_only != 'true'
-        run: python3 -m py_compile bin/lib/*.py
-      - name: Run every tests/*_test.sh (make test)
-        if: steps.gate.outputs.board_only != 'true'
+        env:
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: make test
+
+  # The required check: one name, green only when every shard passed (or skipped its steps).
+  test:
+    needs: test-shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.test-shard.result }}
+        run: '[ "${RESULT}" = success ]'
 
   plugin-validate:
     runs-on: ubuntu-latest
