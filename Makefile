@@ -22,5 +22,8 @@ SERIAL ?= tests/dash_watch_test.sh tests/dash_wait_test.sh tests/review_agent_te
 SLOW ?= tests/merge_test.sh tests/dash_check_test.sh
 JOBS ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 export SWARM_SLEEP_SCALE ?= 0.01
+# A test file that runs past this many seconds is killed and fails as TIMEOUT (scripts/test.sh defaults to 300;
+# merge_test and dash_check took 250 to 275 s on a busy machine, so make allows twice that).
+export TEST_FILE_TIMEOUT ?= 600
 test:
 	@JOBS="$(JOBS)" SERIAL="$(SERIAL)" SLOW="$(SLOW)" bash scripts/test.sh $(TESTS)

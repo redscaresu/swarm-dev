@@ -173,7 +173,8 @@ again and it picks up from the board ([details](docs/reference.md#merging)).
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
   There, `make test` runs every `tests/*_test.sh`, as many at once as the machine has CPUs (`make test JOBS=2` for fewer),
   with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`). The few files whose
-  timing does not hold up beside the others (`SERIAL` in the Makefile) run one at a time after them.
+  timing does not hold up beside the others (`SERIAL` in the Makefile) run one at a time after them. A file that runs past `TEST_FILE_TIMEOUT` seconds (600 under `make test`) is
+  killed and fails as `TIMEOUT <file> after <n>s`, with its last 20 lines of output.
 
 ## License
 

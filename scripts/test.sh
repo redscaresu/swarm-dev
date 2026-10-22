@@ -20,15 +20,19 @@ stop_group() {
 # test.sh --one <run dir> <file> — one file, as above, in a process group of its own, which is
 # recorded in <run dir>/jobs while it runs; its result is <log>.ok or <log>.failed, and it exits 1
 # when it failed, never xargs's 255. A TERM, INT or HUP stops the whole group: the test and whatever
-# it started; so does the test's end, so nothing it left running reaches a later file. The test does
+# it started; so does the test's end, so nothing it left running reaches a later file. A watchdog
+# stops the group the same way once the file has run TEST_FILE_TIMEOUT seconds (default 300; bash 3.2
+# and macOS have no timeout): the job then prints "TIMEOUT <file> after <n>s", and its log is cut to
+# the file's last 20 lines. The test does
 # not see make's JOBS, SERIAL, SLOW or TESTS (make exports a command-line variable to every recipe),
 # nor SHARD, nor HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a
 # test's made-up panes.
 if [[ "${1:-}" == --one ]]; then
-  unset JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
-  run="$2" f="$3" t0=${SECONDS} rc=0 pid=""
+  limit="${TEST_FILE_TIMEOUT:-300}"
+  unset TEST_FILE_TIMEOUT JOBS SERIAL SLOW TESTS SHARD HERDR_SOCKET_PATH
+  run="$2" f="$3" t0=${SECONDS} rc=0 pid="" wd=""
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
-  trap '[[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
+  trap '[[ -z "${wd}" ]] || kill "${wd}" 2>/dev/null; [[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
   : > "${run}/jobs/$$"   # first, so the cleanup can find this job before its test starts
   echo "run  ${f}"
   # Inside the run dir, so it goes with it even if this job is KILLed.
@@ -38,9 +42,23 @@ if [[ "${1:-}" == --one ]]; then
   pid=$!
   set +m
   echo "${pid}" > "${run}/jobs/$$"
+  # The watchdog polls rather than sleeps for the whole limit, so killing it leaves no long sleep behind.
+  (
+    for ((i = limit * 10; i > 0; i--)); do kill -0 "${pid}" 2>/dev/null || exit 0; sleep 0.1; done
+    : > "${log}.timeout"
+    stop_group "${pid}" 2
+  ) > /dev/null 2>&1 &
+  wd=$!
   wait "${pid}" || rc=$?
+  kill "${wd}" 2>/dev/null
   stop_group "${pid}" 2
   rm -rf "${tmp}" "${run}/jobs/$$"
+  if [[ -e "${log}.timeout" ]]; then
+    : > "${log}.failed"
+    tail -n 20 "${log}" > "${log}.tail"; mv "${log}.tail" "${log}"
+    echo "TIMEOUT ${f} after ${limit}s"
+    exit 1
+  fi
   if [[ ${rc} -eq 0 ]]; then : > "${log}.ok"; echo "ok   ${f} $((SECONDS - t0))s"; exit 0; fi
   : > "${log}.failed"
   echo "FAIL ${f} $((SECONDS - t0))s"
