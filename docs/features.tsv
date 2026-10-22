@@ -4,7 +4,7 @@ feature	landed	metric	baseline	uses
 /swarm-dev:swarm	2026-09-29	flow: builders_mean (all)	0.37, max 8 (infrafactory, flow --until 2026-10-16)	event:conduct
 status	2026-10-02	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
 dash	2026-10-11	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	unlogged: a read-only command leaves no events.tsv line
-wait --until-report	2026-10-15	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	unlogged: wait is read-only and logs only its nudges
+wait --until-report	2026-10-15	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	unlogged: wait is read-only and logs only its nudges and resumes
 story	2026-09-29	outcomes: story_merged share of builds	132 of 144 (infrafactory, outcomes to 2026-10-16)	event:story
 merge	2026-09-30	flow: proxy_review_wait_min (all)	14 (infrafactory, flow --until 2026-10-16)	event:merge
 board-pr	2026-10-16	flow: builders_mean (all)	0.37 (infrafactory, flow --until 2026-10-16)	event:board-pr

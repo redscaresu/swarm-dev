@@ -476,7 +476,7 @@ dispatch() {
 
 # READ_ONLY_COMMANDS change nothing, so they are not logged: the readers, the waits conductors run
 # all the time (wait, wait-pr, watch), and the test hooks (_name ...; _pane opens a pane for a layout test only).
-# The one line a read-only command writes is wait's `nudge <name>`, one per nudge it sends.
+# The lines a read-only command writes are wait's `nudge <name>` and `resume <name>`, one per nudge or API-error resume it sends.
 # Every other command is logged (fail closed: a new command is logged until it is named here), and so
 # is tidy --yes; tidy alone only lists. A command that is not one (a typo, --help) is not logged.
 READ_ONLY_COMMANDS="dash status next config policy cost outcomes flow dataset review-yield features lessons findings wait wait-pr watch base _base _role _name _conductor _brief _target _label _trusted _pane _mtime _step-up _step"

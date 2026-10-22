@@ -766,7 +766,7 @@ if [[ "${got}" == idle && $((SECONDS - start)) -ge 4 && ! -e "${dir}/prompts" ]]
 # returns at once on waiting or auth. The no-nudge checks are regression guards: wait never prompts a
 # conductor for an earlier API error on its pane (the api-error stub above); only a last turn that
 # stopped on one is resumed.
-quiet() { [[ ! -e "${dir}/prompts" ]] && ! grep -q nudge "${dir}/.swarm/events.tsv" 2>/dev/null; }
+quiet() { [[ ! -e "${dir}/prompts" ]] && ! grep -qE 'nudge|resume' "${dir}/.swarm/events.tsv" 2>/dev/null; }
 rm -f "${dir}/prompts" "${dir}/.swarm/events.tsv"; start=${SECONDS}
 (sleep 4; echo report > "${dir}/.swarm/conduct-e1.report.md") &
 got="$(SWARM_CONDUCTOR_POLL=1 waitc --until-report conduct-e1 2>/dev/null; echo "exit $?")"

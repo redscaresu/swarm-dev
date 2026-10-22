@@ -229,6 +229,10 @@ touch -t "$(mins_ago 120)" "${wt}/wip.txt"
 check "the same file edited 2 hours ago is no sign of life: wait --stall exits 3, stalled" "exit 3" "$(stallrc)"
 rm "${wt}/wip.txt"
 check "a clean worktree with an old commit is stalled, as before" "exit 3" "$(stallrc)"
+# wait's own `resume a` line is no sign of life: the only recent line, it leaves the builder stalled.
+printf '%s\tresume\ta\tw1:p1\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${p}/.swarm/events.tsv"
+check "a resume line a moment ago is no sign of life: wait --stall exits 3, stalled" "exit 3" "$(stallrc)"
+: > "${p}/.swarm/events.tsv"
 # Its session log (sess-a2, the newer agents.tsv line) written a minute ago is a sign of life too.
 mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
@@ -258,9 +262,24 @@ check "a resume the pane shows only a moment later is one resume, not three, and
 session "${ROOT}/claude.json" sess-a2=idle; api_screen "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; session "${ROOT}/claude.json" sess-a2=busy
 check "an idle pane unchanged since its resume: one resume, then stuck: api error" "stuck: api error|exit 4|1" "${got%|*}|$(prompts)"
-printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' '⏺ Carrying on.' > "${ROOT}/resumed"; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"
 check "a resumed agent whose turn then goes on: wait sends one resume and keeps waiting to the timeout" "busy|exit 1|1" "${got%|*}|$(prompts)"
+# The stub pane stops on an API error once; the resumed turn finishes (the session turns idle, and the
+# story has an open PR). The resume is logged as `resume`, never `nudge`: the API failed, the builder
+# did not stop short.
+api_screen "${ROOT}/screen"; printf '%s\n' '> Your last turn stopped on an API error; carry on where you stopped.' '⏺ Done.' > "${ROOT}/resumed"
+session "${ROOT}/claude.json" sess-a2=busy; : > "${ROOT}/herdr.log"; : > "${p}/.swarm/events.tsv"
+(sleep 3; session "${ROOT}/claude.json.new" sess-a2=idle; mv "${ROOT}/claude.json.new" "${ROOT}/claude.json") &
+got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 20000)"; wait
+check "a stop on an API error, resumed once, then the turn finishes: wait sends one resume and returns idle" "idle|exit 0|1" "${got%|*}|$(prompts)"
+check "that resume is a resume line in events.tsv, and no nudge line" "1|0" \
+  "$(grep -c $'\tresume\ta\t' "${p}/.swarm/events.tsv" || true)|$(grep -c $'\tnudge\ta\t' "${p}/.swarm/events.tsv" || true)"
+# flow's nudge count is outcomes' tells_nudge column, which counts only tell:nudge lines.
+out="$(cd "${p}" && env -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" outcomes --since 2000-01-01 2>&1)"
+check "outcomes' tells_nudge for that run is 0" "0" \
+  "$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "tells_nudge") c = i } NR > 1 && $2 == "a" { rows++; n += $c } END { print rows ? n : "no row for a" }' <<< "${out}")"
+session "${ROOT}/claude.json" sess-a2=busy
 # A tool the agent ran printed an API error (its result, ⎿, ends the turn): no stop, so no resume.
 printf '%s\n' '⏺ Bash(curl -s localhost:8080/health)' '  ⎿  API Error: 500 upstream' '' '> ' > "${ROOT}/screen"; : > "${ROOT}/herdr.log"
 got="$(SWARM_STALL_POLL_MS=1000 waitrc /dev/null a 3000)"

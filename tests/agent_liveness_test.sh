@@ -82,12 +82,12 @@ ERR_NAME=s-err-done status
 check "a retired agent's stop is not logged again" test "$(incidents | grep -c 's-err')" = 2
 ERR_NAME=s-new status
 check "a new agent in a reused pane logs its own stop" test "$(incidents | grep -c 's-new')" = 1
-# s-again stops, and wait resumes it (an ok nudge line). A status before the pane redraws logs nothing
+# s-again stops, and wait resumes it (an ok resume line). A status before the pane redraws logs nothing
 # more; once a read sees the resume taken up, a stop after it, with the same lines above it, is new.
 again=('> Your last turn stopped on an API error; carry on where you stopped.' '⏺ API Error: 529 overloaded')
 printf '%s\n' '⏺ Working.' "${again[@]}" "${again[@]}" > "${ROOT}/pane-w:6"
 status
-printf '%s\tnudge\ts-again\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
+printf '%s\tresume\ts-again\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${P}/.swarm/events.tsv"
 status
 check "a status between a resume and the pane redrawing logs nothing more" test "$(incidents | grep -c 's-again')" = 1
 printf '%s\n' "${again[0]}" >> "${ROOT}/pane-w:6"
@@ -105,10 +105,10 @@ pc() { PROJECT_DIR="${L}" PANE_FILE="$2" bash -c 'source "$1/../bin/lib/agents.s
   turn_ended() { :; }; pane_check "$2" w:1 > /dev/null' _ "${HERE}" "$1"; }
 stops() { grep -c $'^[^\t]*\tincident\t'"$1"$'\t' "${L}/.swarm/events.tsv" || true; }
 ev() { printf '%s\t%s\t%s\tw:me\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >> "${L}/.swarm/events.tsv"; }
-# wait resumes a stopped agent (an ok nudge line) that never takes it up: wait's idle read of the
+# wait resumes a stopped agent (an ok resume line) that never takes it up: wait's idle read of the
 # same pane, with no resumed checksum, logs nothing more.
 printf '%s\n' '⏺ Running.' '⏺ API Error: 500' > "${ROOT}/t-idle"
-pc l-idle "${ROOT}/t-idle"; ev nudge l-idle; pc l-idle "${ROOT}/t-idle"
+pc l-idle "${ROOT}/t-idle"; ev resume l-idle; pc l-idle "${ROOT}/t-idle"
 check "wait's idle read after a resume not taken up logs nothing more" test "$(stops l-idle)" = 1
 # A tell to a long slug is logged under the slug, not the agent's name. The agent replies, then stops
 # again with the same lines above the stop: a new stop.
