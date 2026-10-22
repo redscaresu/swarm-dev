@@ -166,7 +166,8 @@ again and it picks up from the board ([details](docs/reference.md#merging)).
   file's committed status: what swarm.sh sets later (a review, an unblock) is kept in
   `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` and `swarm.sh dash` read both.
 - To update: `! claude plugin marketplace update swarm-dev`, then
-  `! claude plugin update swarm-dev@swarm-dev`, and restart.
+  `! claude plugin update swarm-dev@swarm-dev`, and restart. Agents already running stay on the old version
+  until `swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session.
 - [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
   There, `make test` runs every `tests/*_test.sh`, as many at once as the machine has CPUs (`make test JOBS=2` for fewer),
   with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`). The few files whose

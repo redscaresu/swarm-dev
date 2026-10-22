@@ -315,10 +315,11 @@ launch_file() {
 # shellcheck disable=SC2016 # the agent's zsh expands them
 ZDOT_ENV='__swarm_path="${PATH}"' ZDOT_PROFILE='[[ -z "${__swarm_path}" ]] || export PATH="${__swarm_path}"'
 
-# clean_env <pane> <name> <names> — before an agent starts in <pane>, its shell swaps itself through
+# clean_env <pane> <name> <names> [keep] — before an agent starts in <pane>, its shell swaps itself through
 # env -i for launch_file's wrapper. herdr passes no env and the agent inherits the pane's shell, which
 # holds the user's whole environment. The wrapper is a 0600 file under .swarm/launch, so no value
-# reaches argv, herdr's typed line or the scrollback. story_env has checked <names>.
+# reaches argv, herdr's typed line or the scrollback. story_env has checked <names>. A shell that
+# never takes it closes the pane, unless keep: upgrade's restart, where the pane is the agent's own.
 clean_env() {
   local pane="$1" base="${PROJECT_DIR}/.swarm/launch/$2" zdot="${PROJECT_DIR}/.swarm/zdotdir/$2" n line out try marker typed=""
   # The agent's own ZDOTDIR, made afresh and 0700, so nothing an earlier agent wrote there runs. A
@@ -342,7 +343,7 @@ clean_env() {
   done
   if [[ -z "${typed}" ]] || ! out="$(herdr pane wait-output "${pane}" --match "${marker}" --timeout 30000 2>&1)"; then
     rm -f "${base}.1" "${base}.2"
-    herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
+    [[ -n "${4:-}" ]] || herdr pane close "${pane}" >/dev/null 2>&1 || out="${out} (and pane ${pane} could not be closed: close it by hand)"
     die "$2: the pane's shell did not take the agent's environment: ${out}"
   fi
   rm -f "${base}.1" "${base}.2"   # gone already, unless a shell never ran one
@@ -630,8 +631,16 @@ record_agent() {
   state_lock "${AGENTS_LOG}.lock"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%F)" "$1" "$2" "$3" "$4" "$5" "${6:--}" >> "${AGENTS_LOG}" || rc=$?
   rmdir "${AGENTS_LOG}.lock"
+  # The version it starts on, for upgrade to print; one it cannot write reads as unknown there.
+  # Read first, so a failed read never leaves an empty file in place of the last one.
+  local v
+  v="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json" 2>/dev/null)" || v=""
+  [[ -z "${v}" ]] || { mkdir -p "${VERSIONS_DIR}" && echo "${v}" > "${VERSIONS_DIR}/$2"; } 2>/dev/null || true
   return "${rc}"
 }
+
+# VERSIONS_DIR: the plugin version the agent holding each name started on (record_agent, upgrade).
+VERSIONS_DIR="${PROJECT_DIR}/.swarm/versions"
 
 # EVENTS_LOG: an append-only audit of every command that changes state, one line each (time, command,
 # target, the actor's herdr pane, outcome). Names and paths only, never a brief's or a message's contents;
