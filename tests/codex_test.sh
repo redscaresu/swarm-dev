@@ -73,10 +73,12 @@ gone() {
 }
 # left <case> [pattern] — each case's last check: no stub process (or none matching <pattern>, where
 # the case leaves one on purpose) outlived it. Then every stub process is KILLed, so the next case
-# starts clean and a failure is the case's that left it.
+# starts clean and a failure is the case's that left it; with <pattern>, that the KILL took the
+# case's own orphan too.
 left() {
   check "$1 leaves no ${2:+codex }stub process" "yes" "$(gone 2 "${2:-}")"
   pkill -KILL -f "${BIN}/" 2>/dev/null || true
+  [[ -z "${2:-}" ]] || check "$1 ends with its orphan KILLed" "yes" "$(gone)"
 }
 # markers — codex-review's markers left in the project's state dir, one per line.
 markers() { compgen -G "${P}/.swarm/state/codex-review.*" || true; }
