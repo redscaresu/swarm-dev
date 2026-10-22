@@ -185,7 +185,7 @@ epic_has_after() {
 #                     stories, later stories and epics, draft epics, and PRs awaiting the user's merge
 #   done              nothing open; start the next epic with /epic <title>
 next_step() {
-  local f slug epic story_epic buildable="" waiting="" when held n tag base sha
+  local f slug epic story_epic buildable="" waiting="" when held n tag base sha stop
   # A red main's fix comes first while no one has started it: every merge waits on it. Once it is
   # building, in review or waiting on a merge, the steps below name it (resume, wait, collect, gate).
   # A base gone green another way (a revert, a re-run) is cleared by reconcile, which retires the fix.
@@ -203,11 +203,10 @@ next_step() {
     if [[ -n "${slug}" ]]; then
       if [[ -f "$(conductor_report "${slug}")" ]]; then
         echo "collect ${slug}"; echo "the conductor ${slug} has finished and written its report"
-      elif { [[ "$(session_state "${slug}")" == idle ]] || api_stopped "${slug}" "$(agent_field "${slug}" pane_id)"; } && login_expired "${slug}"; then
-        # As in wait, only an idle session, or a busy one stopped on an API error, is auth: wait returns
-        # it at once, and /swarm-dev:swarm stops there for the user's /login.
+      elif stop="$(conductor_stop "${slug}")" && [[ "${stop}" == auth ]]; then
+        # wait returns an auth: stop at once, and /swarm-dev:swarm stops there for the user's /login.
         echo "wait ${slug}"; echo "auth: the conductor ${slug} stopped on an expired login; run /login, then /swarm-dev:swarm tells it to resume"
-      elif api_stopped "${slug}" "$(agent_field "${slug}" pane_id)"; then
+      elif [[ "${stop}" == stuck ]]; then
         echo "wait ${slug}"; echo "stuck: the conductor ${slug} stopped on an API error; swarm.sh wait --until-report ${slug} resumes it"
       elif epic="$(plannable_epic)" && [[ -n "${epic}" ]]; then
         echo "plan-epic ${epic}"
@@ -283,6 +282,16 @@ running_conductors() {
   herdr agent list 2>/dev/null | SWARM_PANES="$(own_panes)" json "'\n'.join(a['name'] for a in d['result']['agents'] if a.get('name','').startswith('conduct-') and not a['name'].rstrip('0123456789').endswith('-done') and a.get('pane_id') in e.get('SWARM_PANES','').split())" 2>/dev/null || true
 }
 
+# conductor_stop <conductor> — auth when it stopped on an expired login (as in wait, only an idle
+# session, or a busy one stopped on an API error, is auth), stuck when it stopped on an API error, else
+# nothing.
+conductor_stop() {
+  local pane
+  pane="$(agent_field "$1" pane_id)"
+  if { [[ "$(session_state "$1")" == idle ]] || api_stopped "$1" "${pane}"; } && login_expired "$1"; then echo auth
+  elif api_stopped "$1" "${pane}"; then echo stuck; fi
+}
+
 # conductors_queued — queued_lines for each working conductor (running_conductors with no report yet),
 # each line ending in (<conductor>): the conductor the lead sends it to.
 conductors_queued() {
@@ -348,13 +357,13 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
-# next_report — swarm.sh next: next_step's step (with conductors_queued's lines after its why),
-# then idle_lines' for it. Both are worked out first
+# next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
+# conductors_queued's, after its why), then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 next_report() {
-  local tmp step idle queued rest
+  local tmp step idle queued rest started
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -f '${tmp}'" EXIT
@@ -363,6 +372,12 @@ next_report() {
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
   queued="$(conductors_queued)"
+  # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready). A failure
+  # keeps what it printed: its started: lines name conductors that run.
+  if [[ "${step}" == "wait "* ]]; then
+    started="$(conduct_ready)" || started+="${started:+$'\n'}warning: starting conductors for ready work failed (exit $?)"
+    queued="${started}${started:+${queued:+$'\n'}}${queued}"
+  fi
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"

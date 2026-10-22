@@ -294,6 +294,32 @@ deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
 
+Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge
+--board` lands, once it has sent its notes (a conductor's own board merge included), and from
+`swarm.sh next` when its step is `wait <conductor>`. For each active epic with a ready story an agent
+builds (`kind` code, docs or chore) and no conductor running, it runs `swarm.sh conduct <epic>`; for
+such stories with no epic, `swarm.sh conduct --backlog`. A conductor still in its pane counts as
+running. When it has written its report, it prints `no conductor started: <conductor> has reported;
+collect it first`: a new start would delete that report before the lead reads it. A conductor whose
+pane is gone (closed by hand, a herdr restart, a crash) and whose report nobody collected (no `close`
+of it in `events.tsv` since the report, as collect's `swarm.sh close` logs) gets `no conductor started:
+<conductor> is gone, and nobody collected <report>; read it, then delete it`. When another
+project's agent holds the conductor's name, it says so and starts none. A draft, `later` or `split` epic's stories start nothing, and
+neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
+for an epic or the backlog, and it says why, while that conductor's report is newer than every story
+and epic file, and than the state files swarm.sh keeps in `.swarm/board-state` for that epic and its
+ready stories (an `unblock` or a `reset` readies a story there): a new one would stop as the last did.
+Another epic's state writes do not count. Nor does a backlog conductor start while its report
+lists a one-off whose worktree is still there under `not started:` (the stops above). Nothing starts
+while a working conductor has stopped on an expired login or an API error, which would stop a new one
+too, or while herdr cannot list its agents, since what runs is then not known; each prints why.
+Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each start prints `started:
+<conductor> (swarm.sh conduct <arg>)`, which `next` puts after the wait's why, so its first line is
+still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` does. A start that
+fails prints a warning, logs its error as that line's outcome, and changes neither command's exit
+status. The warning says to run the `swarm.sh conduct` yourself, or, when an agent's own board merge
+started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
+
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
 `zsh -f` (no rc file runs) holding only:
@@ -1350,10 +1376,12 @@ merge commit. A story reconcile sent back to ready doesn't count, nor
 does a `fix-main` story, or one readied by an earlier board PR that merged but was not pulled here yet. For each epic with newly ready
 stories, it sends the epic's running conductor one note naming them (`swarm.sh tell conduct-<epic>
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
-builder limits. A conductor that has written its report has finished and counts as not running. When no conductor runs, it prints a `ready now:` line saying `next` will start
-them. It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
+builder limits. A conductor that has written its report has finished and counts as not running.
+When no conductor runs, it prints a `ready now:` line, then starts one (§ The backlog conductor says
+when). It prints a warning, and the merge's exit status stays the same, when reconcile fails (logged
 as a `reconcile` line, as merge logs one), when reconcile did not pull the merge commit, when herdr
-cannot list its agents, or when a note fails. It
+cannot list its agents, or when a note or a start fails. After the first two it starts no conductor
+either, since the board was not pulled. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
 one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
 `touches: [.]`: the fix may change whatever turns the base green) into

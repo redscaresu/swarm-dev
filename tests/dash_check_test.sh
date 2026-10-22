@@ -207,10 +207,10 @@ out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 check "with status failing, --check says status could not be read" unread "alpha: agents and Waiting on you: status could not be read"
 nostatus() { ! grep -qE "^alpha: (agents working|running|PRs waiting for a merge|stories only you or the lead can run|agents waiting on a prompt): " <<< "${out}"; }
 check "with status failing, --check compares none of the fields status owns" nostatus
-check "mutant: next fails" mutant next swarm.sh 's/^    next)   next_report ;;$/    next)   exit 3 ;;/'
+check "mutant: next's step fails" mutant next swarm.sh 's/^    _step)  next_step ;;/    _step)  exit 3 ;;/'
 out="$(env SWARM_PROJECT="${A}" "${M}" dash --check)" && rc=0 || rc=$?
 # shellcheck disable=SC2016 # the script's own $1 and $2
-check "with next failing, --check exits 1 naming next (exit ${rc}: ${out})" \
+check "with next's step failing, --check exits 1 naming next (exit ${rc}: ${out})" \
   bash -c '[[ $1 == 1 ]] && grep -q "^alpha: next: dash shows conduct alpha-core, next says nothing$" <<< "$2"' _ "${rc}" "${out}"
 
 check "mutant: a merge row with checks is never drawn" mutant mergerow lib/dash_render.py 's/add(rows, bang + \[(f"merge {pr_ref(u)} (",/add([], bang + [(f"merge {pr_ref(u)} (",/'
@@ -276,6 +276,26 @@ check "bravo: the waiting epic with a working conductor is drawn ●" grep -qE '
   <<< "$(PATH="${ROOT}/conducting:${PATH}" DASH_W=100 sw "${B}" dash)"
 out="$(PATH="${ROOT}/conducting:${PATH}" sw "${B}" dash --check)" && rc=0 || rc=$?
 check "with the waiting epic's conductor working, dash --check exits 0 (exit ${rc}: ${out})" test "${rc}" -eq 0
+# In a herdr pane, with conduct-alpha-core working (next's step is its wait) and a-extra, a code story
+# with no epic, ready with no conductor: --check reads next's step and starts no conductor, as next
+# would (no herdr agent start, no conduct line logged).
+item "${A}" stories/a-extra.md "Extra" "status: ready" "kind: code"
+mkdir -p "${ROOT}/alphawait"
+cat > "${ROOT}/alphawait/herdr" <<STUB
+#!/bin/sh
+echo "\$*" >> "${ROOT}/herdr-calls"
+case "\$1 \$2" in
+  "agent list") "${ROOT}/bin/herdr" "\$@" | sed 's/"agents":\[/"agents":[{"name":"conduct-alpha-core","agent_status":"working","pane_id":"w1:p1"},/' ;;
+  *) exec "${ROOT}/bin/herdr" "\$@" ;;
+esac
+STUB
+chmod +x "${ROOT}/alphawait/herdr"; : > "${ROOT}/herdr-calls"
+conducts() { awk -F'\t' '$2 == "conduct"' "${A}/.swarm/events.tsv" 2>/dev/null | wc -l | tr -d ' '; }
+before="$(conducts)"
+step="$(PATH="${ROOT}/alphawait:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w9:p9 sw "${A}" _step | sed -n 1p)"
+PATH="${ROOT}/alphawait:${PATH}" HERDR_ENV=1 HERDR_PANE_ID=w9:p9 sw "${A}" dash --check >/dev/null 2>&1 || true
+check "dash --check in a herdr pane, on a conductor's wait ('${step}'), starts no conductor" \
+  test "${step}|$(grep -c '^agent start' "${ROOT}/herdr-calls")|$(conducts)" = "wait conduct-alpha-core|0|${before}"
 
 if [ "${fails}" -gt 0 ]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"

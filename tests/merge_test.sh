@@ -116,10 +116,20 @@ STUB
 printf '#!/bin/sh\nA="%s"\n' "${ROOT}/agents" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 [ ! -e "$A.fail" ] || exit 1
+echo "$*" >> "$A.log"
 case "$1 $2" in
+  # Enough for conduct to start a conductor: its agent joins the list, in pane w:new.
+  "--version ") echo "herdr 0.9.5" ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:new"}}}' ;;
+  "agent start") echo "$3 w:new" >> "$A" ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                      END { print "]}}" }' "$A" ;;
+  "agent read") cat "$A.screen.$3" 2>/dev/null ;;   # a pane's text, when a case writes one
 esac
 STUB
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -172,7 +182,7 @@ merge() {
   local envs=()
   while [[ "${1:-}" == [A-Z]*=* ]]; do envs+=("$1"); shift; done
   rc=0
-  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
+  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_GRACE=0 \
     SWARM_MERGE_CI_SECONDS=5 ${envs[@]+"${envs[@]}"} bash "${SWARM}" merge "$@" > "${ROOT}/out" 2>&1) || rc=$?
 }
 events() { awk -F'\t' '{ print $2 " " $3 " " $5 }' "${P}/.swarm/events.tsv" 2>/dev/null || true; }
@@ -388,7 +398,7 @@ fresh; checks "${FX}/${M}.checks" "$(run e2e completed failure)"; M3=ddddddddddd
 rm -rf "${ROOT}/fxb"; cp -R "${FX}" "${ROOT}/fxb"; echo "${M3}" > "${ROOT}/fxb/oid"; cp "${FX}/${M}.checks" "${ROOT}/fxb/${M3}.checks"
 statuses "${ROOT}/fxb/${M3}.status"; wfruns "${ROOT}/fxb/${M3}.runs" "$(run ci completed success "${M3}")"; item t "status: review" "prs: ${URL2}"
 racer() { # <fixtures> <url> <out>
-  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 \
+  (cd "${P}" && env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=0 SWARM_MERGE_READ_WAIT=0 \
     SWARM_MERGE_CI_GRACE=0 SWARM_MERGE_CI_SECONDS=5 SWARM_LOCK_WAIT=30 STUB_FX="$1" bash "${SWARM}" merge "$2" > "$3" 2>&1) &
 }
 mkdir "${P}/.swarm/fix-main.o-r-main.lock"
@@ -1017,7 +1027,7 @@ check "a timeout whose dequeue fails: names it, and says to do it by hand" \
 # term_merge <text> — merge in the background, TERM it once gh.log holds <text>, and wait for it.
 term_merge() {
   local mpid
-  (cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
+  (cd "${P}" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u SWARM_PROJECT -u SWARM_AGENT PATH="${ROOT}/bin:${PATH}" SWARM_MERGE_POLL=1 \
     SWARM_MERGE_READ_WAIT=0 SWARM_MERGE_CI_SECONDS=60 bash "${SWARM}" merge "${URL}" > "${ROOT}/out" 2>&1) &
   mpid=$!
   for _ in $(seq 100); do grep -qF -- "$1" "${ROOT}/gh.log" && break; sleep 0.1; done
@@ -1195,8 +1205,8 @@ put() { # <path> <front-matter line>... — a board file in that clone, staged
 }
 land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
 pulled() { git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'; }
-bfresh() { # fresh, no story s, the PR the last land's commit, and the merge commit origin's tip (OID), green
-  fresh; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+bfresh() { # [config line]... — fresh, no story s, the PR the last land's commit, and the merge commit origin's tip (OID), green
+  fresh "$@"; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
   git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | python3 -c 'import json, sys; print(json.dumps([{"filename": l.strip(), "status": "modified"} for l in sys.stdin]))' > "${FX}/files"
   git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ' > "${FX}/nfiles"
   checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
@@ -1209,14 +1219,20 @@ put docs/stories/r2.md "status: blocked" "kind: code" "epic: e"; land; pulled
 # The board PR adds r1, readies r2, and adds b1 with no epic, whose backlog conductor is not running.
 put docs/stories/r1.md "status: ready" "kind: code" "epic: e"; put docs/stories/r2.md "status: ready" "kind: code" "epic: e"
 put docs/stories/b1.md "status: ready" "kind: code"; land
-bfresh; merge --board "${URL}"
+bfresh; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
 is "a board merge that readies r1 and r2: exits 0" 0 "${rc}"
 is "a board merge that readies r1 and r2: one note to conduct-e" 1 "$(notes)"
 check "a board merge that readies r1 and r2: the note names both, not r0" \
   grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1 r2. Start them now" "${INBOX}"
 check "a board merge that readies r1 and r2: says it noted conduct-e" said "noted conduct-e"
-check "a board merge that readies a backlog story with no conductor: says next starts it" \
-  said "ready now: b1 (with no epic); no conductor runs for it, so swarm.sh next starts it"
+check "a board merge that readies a backlog story with no conductor: says none runs yet" \
+  said "ready now: b1 (with no epic); no conductor runs for it yet"
+# No conductor holds b1, so the merge starts the backlog's (conduct, against the herdr stub); conduct-e runs already.
+check "a board merge that readies a backlog story, with only an epic conductor running: starts conduct --backlog" \
+  grep -q "^agent start conduct-backlog-proj-[0-9a-f]\{6\} " "${ROOT}/agents.log"
+check "a board merge that readies a backlog story: says it started the backlog conductor" said "(swarm.sh conduct --backlog)"
+check "a board merge that readies stories of an epic whose conductor runs: starts no second one" \
+  bash -c "! grep -q '^agent start conduct-e ' '${ROOT}/agents.log' && ! grep -qF 'swarm.sh conduct e' '${ROOT}/out'"
 # It edits r0, ready already: not newly ready.
 put docs/stories/r0.md "status: ready" "kind: code" "epic: e" "estimate_lines: 2"; land
 bfresh; merge --board "${URL}"
@@ -1234,6 +1250,12 @@ git -C "${ROOT}/up" rm -q docs/stories/q.md; put docs/stories/r5.md "status: rea
 bfresh; merge --board "${URL}"
 check "a board merge whose pull deletes q, in review: reconcile finishes q" logged "^reconcile q ok"
 check "a board merge whose pull deletes q, in review: still notes r5" grep -qF "these stories of epic e are ready now: r5." "${INBOX}"
+# A story of a draft epic is not ready to build: no conductor starts for it.
+put docs/epics/d.md "status: draft"; put docs/stories/d1.md "status: ready" "kind: code" "epic: d"; land
+bfresh; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+is "a board merge that readies a draft epic's story: exits 0" 0 "${rc}"
+check "a board merge that readies a draft epic's story: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "a board merge with the backlog conductor running: starts no second one" bash -c "! grep -qF 'conduct --backlog' '${ROOT}/out'"
 # Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone,
 # though it also edits epic e, active already.
 put docs/stories/r9.md "status: ready" "kind: code" "epic: e"; land
@@ -1255,16 +1277,28 @@ put docs/stories/r11.md "status: ready" "kind: code" "epic: e"; land
 bfresh; checks "${FX}/${OID}.checks" "$(run test completed failure)"; merge --board "${URL}"
 check "a board merge onto a red main: tells no conductor of r11" bash -c "! grep -q 'ready now' '${ROOT}/out' && ! grep -q r11 '${INBOX}'"
 rm -f "${P}/docs/stories/fix-main-${OID:0:7}.md"
-# A PR that only sets epic f active readies f1, ready already: f has no conductor, so next starts it.
+# A PR that only sets epic f active readies f1, ready already: f has no conductor, so the merge says to start one.
 put docs/epics/f.md "status: draft"; put docs/stories/f1.md "status: ready" "kind: code" "epic: f"; land; pulled
 put docs/epics/f.md "status: active"; land
 bfresh; merge --board "${URL}"
-check "a board merge that sets epic f active: says next starts f1" said "ready now: f1 (of epic f); no conductor runs for it, so swarm.sh next starts it"
+check "a board merge that sets epic f active: says f1 is ready with no conductor" said "ready now: f1 (of epic f); no conductor runs for it yet"
+check "a board merge that sets epic f active, outside herdr: says to run conduct f" said "no conductor: run swarm.sh conduct f for its ready stories"
+# A conductor's own board merge (SWARM_AGENT set, merge = agent) starts k1's conductor too, as the lead's would.
+put docs/epics/k.md "status: active"; put docs/stories/k1.md "status: ready" "kind: code" "epic: k"; land
+bfresh "merge = agent"; : > "${ROOT}/agents.log"; merge SWARM_AGENT=conduct-e HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"
+check "a conductor's board merge: starts conduct-k" grep -q '^agent start conduct-k ' "${ROOT}/agents.log"
+check "a conductor's board merge: says it started conduct-k" said "started: conduct-k (swarm.sh conduct k)"
+# conduct-e stopped on an API error: a conductor started for m1 now would stop on it too.
+put docs/epics/m.md "status: active"; put docs/stories/m1.md "status: ready" "kind: code" "epic: m"; land
+bfresh; : > "${ROOT}/agents.log"; printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${ROOT}/agents.screen.w:c"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm "${ROOT}/agents.screen.w:c"
+check "a board merge while a conductor is stopped on an API error: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "a board merge while a conductor is stopped on an API error: says why" said "no conductor started: conduct-e stopped on an API error"
 # o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
 put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
 put docs/stories/o1.md "status: ready" "kind: code"; land
 bfresh; merge --board "${URL}"
-check "a board merge that readies o1, already started: says nothing of o1" bash -c "! grep -q 'ready now: o1' '${ROOT}/out'"
+check "a board merge that readies o1, already started: says nothing of o1" bash -c "! grep -qw o1 '${ROOT}/out' && ! grep -rqw o1 '${P}/.swarm/inbox'"
 rm -rf "${ROOT}/proj-wt"
 # Board PR A, merged and never pulled here, sets epic g active and readies r12; this PR, B, only
 # edits g's and r12's files. What was ready is the board at B's first parent, so B names neither.
@@ -1274,11 +1308,12 @@ put docs/epics/g.md "status: active"; put docs/stories/r12.md "status: ready" "k
 put docs/epics/g.md "status: active" "title: g2"; put docs/stories/r12.md "status: ready" "kind: code" "epic: e" "estimate_lines: 1"; land
 bfresh; merge --board "${URL}"
 check "a board merge after an unpulled one: names neither g1 nor r12" bash -c "! grep -qE 'g1|r12' '${ROOT}/out' && ! grep -q r12 '${INBOX}'"
-# conduct-e has written its report: it has finished, so it gets no note, and next starts r13.
+# conduct-e has written its report: it has finished, so it gets no note, and r13 has no conductor yet.
 put docs/stories/r13.md "status: ready" "kind: code" "epic: e"; land
 bfresh; touch "${P}/.swarm/conduct-e.report.md"; merge --board "${URL}"; rm "${P}/.swarm/conduct-e.report.md"
-check "a board merge whose conductor has reported: says next starts r13" said "ready now: r13 (of epic e); no conductor runs for it, so swarm.sh next starts it"
+check "a board merge whose conductor has reported: says r13 has no conductor yet" said "ready now: r13 (of epic e); no conductor runs for it yet"
 check "a board merge whose conductor has reported: no note names r13" bash -c "! grep -q r13 '${INBOX}'"
+check "a board merge whose conductor has reported: says to collect it first" said "no conductor started: conduct-e has reported; collect it first"
 # r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
 put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
 put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land
@@ -1314,20 +1349,30 @@ bfresh; touch "${ROOT}/agents.fail"; merge --board "${URL}"; rm "${ROOT}/agents.
 check "a board merge while herdr cannot list its agents: says conduct-e was not told" \
   said "warning: herdr cannot list its agents, so conduct-e was not told that r7 are ready"
 check "a board merge while herdr cannot list its agents: no ready now: line" bash -c "! grep -q 'ready now' '${ROOT}/out'"
+check "a board merge outside herdr while herdr cannot list its agents: says what runs is not known" \
+  said "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"
+check "a board merge outside herdr while herdr cannot list its agents: tells no one to run conduct" bash -c "! grep -q 'no conductor: run' '${ROOT}/out'"
 # reconcile cannot fetch (origin gone while CI ran), so exits 0 without pulling: a warning, not silence.
+# Nor does it start a conductor from the unpulled board, though b1 is ready and the backlog's is gone.
+printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 put docs/stories/r6.md "status: ready" "kind: code" "epic: e"; land
-bfresh; echo "git -C '${P}' remote set-url origin '${ROOT}/gone.git'" > "${FX}/on-merge"; merge --board "${URL}"
+bfresh; : > "${ROOT}/agents.log"; echo "git -C '${P}' remote set-url origin '${ROOT}/gone.git'" > "${FX}/on-merge"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
 git -C "${P}" remote set-url origin "${ROOT}/origin.git"
 is "a board merge that reconcile did not pull: exits 0" 0 "${rc}"
 check "a board merge that reconcile did not pull: warns that no conductor was told" \
   said "warning: reconcile did not pull ${OID:0:7} into ${P}, so no conductor was told what ${URL} made ready; run swarm.sh reconcile"
+check "a board merge that reconcile did not pull: starts no conductor" \
+  bash -c "! grep -q '^agent start' '${ROOT}/agents.log' && ! grep -qF 'conduct --backlog' '${ROOT}/out'"
 # reconcile fails (r6 is edited here, and the pull changes it): logged as merge logs it, and a warning.
 pulled; echo edit >> "${P}/docs/stories/r6.md"; put docs/stories/r6.md "status: ready" "kind: code" "epic: e" "estimate_lines: 1"; land
-bfresh; merge --board "${URL}"
+bfresh; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
 is "a board merge whose reconcile fails: exits 0" 0 "${rc}"
 check "a board merge whose reconcile fails: logs its die line under reconcile" logged "^reconcile - reconcile: cannot pull"
 check "a board merge whose reconcile fails: warns to run swarm.sh reconcile" \
   bash -c "grep -q 'warning: reconcile failed after the merge (reconcile: cannot pull' '${ROOT}/out' && grep -q 'run swarm.sh reconcile\$' '${ROOT}/out'"
+check "a board merge whose reconcile fails: starts no conductor" \
+  bash -c "! grep -q '^agent start' '${ROOT}/agents.log' && ! grep -qF 'conduct --backlog' '${ROOT}/out'"
 git -C "${P}" show HEAD:docs/stories/r6.md > "${P}/docs/stories/r6.md"
 put docs/stories/r3.md "status: ready" "kind: code" "epic: e"; land
 rm -rf "${P}/.swarm/inbox"; : > "${P}/.swarm/inbox"   # the note cannot be written
@@ -1335,9 +1380,9 @@ bfresh; merge --board "${URL}"
 is "a board merge whose tell fails: exits 0" 0 "${rc}"
 check "a board merge whose tell fails: warns" said "warning: could not note conduct-e that r3 are ready"
 # Leave P, origin and the clone as the block found them.
-rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
+rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,b1,f1,g1,o1,q,z} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,b1,d1,f1,g1,k1,m1,o1,q,z} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
