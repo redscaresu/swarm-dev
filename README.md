@@ -66,8 +66,7 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 1. Install the plugin (above), then restart Claude Code.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
-3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name: `/swarm` alone
-   completes to another command. The first time, it runs `swarm.sh init`, which adds the board
+3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name, since a shorter one can run a different command. The first time, it runs `swarm.sh init`, which adds the board
    (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
    hook that run `make check`. It also asks once for your rules for builders: commit trailers,
    where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
