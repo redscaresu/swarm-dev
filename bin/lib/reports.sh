@@ -254,8 +254,10 @@ dataset_report() {
 #     the median minutes per head SHA from its first run created to its last updated, red runs
 #     (failure, timed_out or startup_failure) per PR and flakes (a red run, then a green one of the
 #     same workflow and event on that head, a rerun's earlier attempts read from gh api), from gh's
-#     runs of each PR's branch whose head is one of its commits. A gh call that fails or takes over
-#     10 s (tried 3 times, a timeout once) prints `ci health: gh failed on <PR>, so no numbers: <call>: <error>`. Then, per repo, a PR's CI time (its newest
+#     runs of each PR's branch whose head is one of its commits (all over REST, not GraphQL). A PR
+#     a gh call fails on or takes over 10 s for (a reset connection or a 5xx tried 3 times; after an
+#     hourly rate limit, no more calls) is left out, and a line says how many, then one each names
+#     it, the call and gh's error. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from that
 #     attempt's jobs listing less those a rerun carried over, its control characters dropped): its PRs, the median minutes, of the
 #     jobs that were a PR's slowest the one with the highest median minutes and that median, the same

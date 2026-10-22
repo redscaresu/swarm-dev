@@ -9,11 +9,11 @@
 # head not among its commits is left out. d's PR is on GitHub Enterprise, so it is left out. So 3
 # PRs, 4 heads, a median of 7.5 minutes, 4 red runs over 3 PRs and 1 flake. With RERUN=1, a1's two
 # runs are one run whose first attempt failed and whose rerun went green: the same numbers. A gh
-# whose run list fails, or whose pr view takes over 10 seconds, prints the failure line, naming the
-# gh call and its error, and no numbers; ci time keeps the PRs it could read and says how many it
-# could not, and a line for each with the error that dropped it. A call that fails is tried three
-# times: b's run list, failing twice with FLAKY=b, still counts, and with FLAKY=c, c's two failures
-# do not stand in for b's error. With no --since, e
+# whose run list fails, or whose PR read takes over 10 seconds, leaves those PRs out of the row and of
+# ci time, which say how many, with a line for each naming the gh call and its error. A reset
+# connection or a 5xx is tried three times: b's run list, failing twice with FLAKY=b, still counts,
+# and with FLAKY=c, c's two failures do not stand in for b's error; any other error once. Once the
+# hourly rate limit is spent (RATELIMIT=1), no more gh calls. With no --since, e
 # (built today), f (6 days ago, the first day of the last 7, and 8 days ago) and g (9 days ago) are
 # in the window, and the section says so.
 # Then ci time, per repo: a PR's newest head's longest run, from its last attempt's start, and that
@@ -64,12 +64,12 @@ jobs() { # <run id>-<attempt> [<name>[@<run_attempt>] <started HH:MM> <completed
   done
   echo "[{\"jobs\":[${out}]}]" > "${G}/jobs-${id}"
 }
-echo '{"headRefName":"story/a","commits":[{"oid":"a1"}]}' > "${G}/view-1"
-echo '{"headRefName":"story/b","commits":[{"oid":"b1"},{"oid":"b2"}]}' > "${G}/view-2"
-echo '{"headRefName":"story/c","commits":[{"oid":"c1"}]}' > "${G}/view-3"
-echo '{"headRefName":"story/e","commits":[{"oid":"e1"}]}' > "${G}/view-5"
-echo '{"headRefName":"story/f","commits":[{"oid":"f0"},{"oid":"f1"}]}' > "${G}/view-6"
-echo '{"headRefName":"story/g","commits":[{"oid":"g0"},{"oid":"g1"}]}' > "${G}/view-7"
+pr() { # <n> <branch> <sha>... — PR n's REST answers: the PR (its head branch) and its commits, slurped
+  local n="$1" b="$2" c="" s; shift 2
+  for s in "$@"; do c+="${c:+,}{\"sha\":\"${s}\"}"; done
+  echo "{\"head\":{\"ref\":\"${b}\"}}" > "${G}/pull-${n}"; echo "[[${c}]]" > "${G}/commits-${n}"
+}
+pr 1 story/a a1; pr 2 story/b b1 b2; pr 3 story/c c1; pr 5 story/e e1; pr 6 story/f f0 f1; pr 7 story/g g0 g1
 echo "[$(run 11 a1 CI pull_request success 1 10:10 10:16),$(run 10 a1 CI pull_request failure 1 10:00 10:04)]" > "${G}/runs-a"
 echo "[$(run 12 a1 CI pull_request success 2 10:00 10:16 10:10)]" > "${G}/rerun-a"
 echo '{"conclusion":"failure"}' > "${G}/attempt-12-1"
@@ -99,6 +99,8 @@ jobs 71-1 'te\u0007s\nt' 10:01 10:11 build 10:00 10:03
 # a run's jobs or earlier attempt. O/r is o/r: GitHub ignores the case.
 { echo '#!/bin/sh'; echo "G=${G} U=${U}"; cat <<'EOF'; } > "${dir}/bin/gh"
 echo "$*" >> "$G/gh.log"
+# RATELIMIT=1: the hourly limit is spent for every REST call (outcomes' pr list and pr view still answer)
+case "$*" in api*|run*) [ -z "${RATELIMIT:-}" ] || { echo 'gh: API rate limit exceeded for user ID 1. (HTTP 403)' >&2; exit 1; } ;; esac
 case "$*" in "run list -R o/r --branch story/${FLAKY:-} "*) # FLAKY=<story>: its run list fails twice, then answers
   [ "$(cat "$G/flaky-$FLAKY" 2>/dev/null)" = xx ] || { printf x >> "$G/flaky-$FLAKY"; echo 'read: connection reset by peer' >&2; exit 1; } ;;
 esac
@@ -107,9 +109,11 @@ case "$*" in
 "pr list --head story/g"*) printf 'https://github.com/O/r/pull/7\tOPEN\t\t2026-10-01T10:00:00Z\t0\n' ;;
 "pr list --head story/"*) printf '%s/%s\tOPEN\t\t2026-10-01T10:00:00Z\t0\n' "$U" "$(echo "${4##*/}" | tr abcef 12356)" ;;
 "pr view https://github.com/"[oO]"/r/pull/"*" --json createdAt"*) echo 2026-10-01T10:00:00Z ;;
-"pr view https://github.com/"[oO]"/r/pull/"*) [ -z "${SLOW:-}" ] || sleep 12; if [ -n "${BADPR:-}" ]; then echo '{}'; else cat "$G/view-${3##*/}"; fi ;;
+"api repos/"[oO]"/r/pulls/"*) [ -z "${SLOW:-}" ] || sleep 12; if [ -n "${BADPR:-}" ]; then echo '{}'; else cat "$G/pull-${2##*/}"; fi ;;
+"api --paginate --slurp repos/"[oO]"/r/pulls/"*"/commits?per_page=100") cat "$G/commits-$(echo "$4" | cut -d/ -f5)" ;;
 "run list -R o/r --branch story/a "*) if [ -n "${RERUN:-}" ]; then cat "$G/rerun-a"; else cat "$G/runs-a"; fi ;;
 "run list -R o/r --branch story/b "*) [ -z "${FAIL:-}${FAILB:-}" ] || { echo 'HTTP 403: You have exceeded a secondary rate limit.' >&2; exit 1; }
+  [ -z "${BADJSON:-}" ] || { echo 'not json'; exit 0; }
   cat "$G/runs-b" ;;
 "run list -R "[oO]"/r --branch story/"*) [ -z "${FAIL:-}" ] || exit 1; [ -z "${FAILWEEK:-}" ] || [ "${6##*/}" = g ] || exit 1; cat "$G/runs-${6##*/}${FAILATTEMPT:+3}" ;;
 "api --paginate --slurp repos/"[oO]"/r/actions/runs/"*"/attempts/"*"/jobs?per_page=100") cat "$G/jobs-$(echo "$4" | cut -d/ -f6,8 | tr / -)" ;;
@@ -135,30 +139,36 @@ check "a run whose failed first attempt was rerun to green is red once and a fla
 B="gh run list -R o/r --branch story/b --limit 200: HTTP 403: You have exceeded a secondary rate limit."
 C="gh run list -R o/r --branch story/c --limit 200: exit 1"
 N="ci time: gh could not read"
-check "a failing gh prints the failure line, naming the PR, the call and gh's error, and no numbers; ci time keeps a, whose runs it read, and names each PR it left out with its error" "$(FAIL=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed on ${U}/2, so no numbers: ${B}"$'\n'"${T}"$'\no/r\t1\t6.0\ttest\t5.0\t0\t\t\t\t\n'"${N} 2 of 3 PRs (2 of 3 in this window), left out
-ci time: left out ${U}/2: ${B}
-ci time: left out ${U}/3: ${C}"
-check "a gh answer of {} leaves that PR out of ci time, not the section" "$(BADPR=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed on ${U}/1, so no numbers: gh pr view ${U}/1: no branch or commits"$'\n'"${T}"$'\n'"${N} 3 of 3 PRs (3 of 3 in this window), left out
-ci time: left out ${U}/1: gh pr view ${U}/1: no branch or commits
-ci time: left out ${U}/2: gh pr view ${U}/2: no branch or commits
-ci time: left out ${U}/3: gh pr view ${U}/3: no branch or commits"
+left() { # <section> <error, with % for the PR's number> <n>... — the left-out line of each PR n
+  local n; for n in "${@:3}"; do printf '\n%s: left out %s/%s: %s' "$1" "${U}" "${n}" "${2//%/${n}}"; done
+}
+calls() { grep -c "$1" "${G}/gh.log" || true; }
+: > "${G}/gh.log"
+check "a failing gh leaves out the PRs it could not read, from the row too, and names each with its call and gh's error; a's numbers stay" \
+  "$(FAIL=1 flow "${W[@]}" | ci)" "${H}"$'\n1\t1\t16.0\t1.00\t1\n'"ci health: gh could not read 2 of 3 PRs, left out$(left "ci health" "${B}" 2)$(left "ci health" "${C}" 3)"$'\n'"${T}"$'\no/r\t1\t6.0\ttest\t5.0\t0\t\t\t\t\n'"${N} 2 of 3 PRs (2 of 3 in this window), left out$(left "ci time" "${B}" 2)$(left "ci time" "${C}" 3)"
+check "an error that is not a reset connection or a 5xx (here a secondary rate limit) is not tried again" "$(calls 'run list -R o/r --branch story/b ')" 1
+check "a PR answered with no branch is left out" "$(BADPR=1 flow "${W[@]}" | ci)" \
+  "${H}"$'\n0\t0\t\t\t0\n'"ci health: gh could not read 3 of 3 PRs, left out$(left "ci health" "gh api repos/o/r/pulls/%: no branch" 1 2 3)"$'\n'"${T}"$'\n'"${N} 3 of 3 PRs (3 of 3 in this window), left out$(left "ci time" "gh api repos/o/r/pulls/%: no branch" 1 2 3)"
 check "a gh call over 10 seconds is a failure, and ci time has no row" "$(SLOW=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed on ${U}/1, so no numbers: gh pr view ${U}/1: over 10 s"$'\n'"${T}"$'\n'"${N} 3 of 3 PRs (3 of 3 in this window), left out
-ci time: left out ${U}/1: gh pr view ${U}/1: over 10 s
-ci time: left out ${U}/2: gh pr view ${U}/2: over 10 s
-ci time: left out ${U}/3: gh pr view ${U}/3: over 10 s"
-check "ci time keeps the PRs gh could read: a and c, and a line for b with gh's error" "$(FAILB=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed on ${U}/2, so no numbers: ${B}"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\n'"${N} 1 of 3 PRs (1 of 3 in this window), left out
-ci time: left out ${U}/2: ${B}"
+  "${H}"$'\n0\t0\t\t\t0\n'"ci health: gh could not read 3 of 3 PRs, left out$(left "ci health" "gh api repos/o/r/pulls/%: over 10 s" 1 2 3)"$'\n'"${T}"$'\n'"${N} 3 of 3 PRs (3 of 3 in this window), left out$(left "ci time" "gh api repos/o/r/pulls/%: over 10 s" 1 2 3)"
+check "ci time and the row keep the PRs gh could read: a and c, and a line for b with gh's error" "$(FAILB=1 flow "${W[@]}" | ci)" \
+  "${H}"$'\n2\t2\t12.0\t0.50\t1\n'"ci health: gh could not read 1 of 3 PRs, left out$(left "ci health" "${B}" 2)"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\n'"${N} 1 of 3 PRs (1 of 3 in this window), left out$(left "ci time" "${B}" 2)"
 check "and c's run list failing twice before it answers does not stand in for b's error" "$(FAILB=1 FLAKY=c flow "${W[@]}" | ci)" \
-  "ci health: gh failed on ${U}/2, so no numbers: ${B}"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\n'"${N} 1 of 3 PRs (1 of 3 in this window), left out
-ci time: left out ${U}/2: ${B}"
+  "${H}"$'\n2\t2\t12.0\t0.50\t1\n'"ci health: gh could not read 1 of 3 PRs, left out$(left "ci health" "${B}" 2)"$'\n'"${T}"$'\no/r\t2\t7.0\tlint\t7.0\t0\t\t\t\t\n'"${N} 1 of 3 PRs (1 of 3 in this window), left out$(left "ci time" "${B}" 2)"
+: > "${G}/gh.log"
 check "an earlier attempt gh cannot read names that attempt's call, not a later one's that answered" "$(FAILATTEMPT=1 flow "${W[@]}" | ci)" \
-  "ci health: gh failed on ${U}/3, so no numbers: gh api repos/o/r/actions/runs/32/attempts/1: HTTP 502: Bad Gateway"$'\n'"${T}"$'\no/r\t3\t6.0\tlint\t7.0\t0\t\t\t\t'
-check "a run list that fails twice, then answers, still counts b" "$(FLAKY=b flow "${W[@]}" | ci)" \
+  "${H}"$'\n2\t3\t7.0\t2.00\t1\n'"ci health: gh could not read 1 of 3 PRs, left out$(left "ci health" "gh api repos/o/r/actions/runs/32/attempts/1: HTTP 502: Bad Gateway" 3)"$'\n'"${T}"$'\no/r\t3\t6.0\tlint\t7.0\t0\t\t\t\t'
+check "a 5xx is tried three times" "$(calls 'runs/32/attempts/1$')" 3
+check "a run list that fails twice on a reset connection, then answers, still counts b" "$(FLAKY=b flow "${W[@]}" | ci)" \
   "${H}"$'\n3\t4\t7.5\t1.33\t1\n'"${T}"$'\no/r\t3\t6.0\tlint\t7.0\t0\t\t\t\t'
+rm -f "${G}/flaky-b"   # b's run list fails twice again
+check "a try that answers with something not JSON, after two that failed, names that, not their error" "$(FLAKY=b BADJSON=1 flow "${W[@]}" | ci | grep 'ci time: left out')" \
+  "ci time: left out ${U}/2: gh run list -R o/r --branch story/b --limit 200: an answer that is not JSON"
+: > "${G}/gh.log"
+L1="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
+check "once the hourly rate limit is spent, flow makes no more gh calls and names that error for each PR" "$(RATELIMIT=1 flow "${W[@]}" | ci)" \
+  "${H}"$'\n0\t0\t\t\t0\n'"ci health: gh could not read 3 of 3 PRs, left out$(left "ci health" "gh api repos/o/r/pulls/1: ${L1}" 1)$(left "ci health" "gh api repos/o/r/pulls/%: not tried: ${L1}" 2 3)"$'\n'"${T}"$'\n'"${N} 3 of 3 PRs (3 of 3 in this window), left out$(left "ci time" "gh api repos/o/r/pulls/1: ${L1}" 1)$(left "ci time" "gh api repos/o/r/pulls/%: not tried: ${L1}" 2 3)"
+check "one REST call, the first" "$(grep -cE '^(api|run) ' "${G}/gh.log" || true)" 1
 check "with no --since, the PRs of the last 30 days, and a line that says so" "$(flow | ci)" \
   "PRs from the last 30 days, ${start} on; --since sets the start"$'\n'"${H}"$'\n3\t5\t19.0\t0.00\t0\n'"${T}"$'\no/r\t3\t13.0\ttest\t10.0\t0\t\t\t\t'
 now="$(flow --since "${week}" | ci)"

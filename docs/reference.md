@@ -877,14 +877,14 @@ commands still run, and each prints which section now holds its numbers.
 
 The `ci_health` section prints one TSV row, `prs heads ci_min_median red_runs_per_pr flakes`, over
 the github.com PRs of the `outcomes` rows dated in the window (with `--epic`, that epic's); a PR
-elsewhere, such as GitHub Enterprise, is left out. Each PR costs two or more `gh` calls, so without
+elsewhere, such as GitHub Enterprise, is left out. Each PR costs three or more `gh` calls, so without
 `--since` the window is the 30 days up to `--until` (or today), and a line above the row says so. For each PR, `gh` gives its commits and its
 branch's completed workflow runs, and a run counts when its head is one of those commits. `ci_min_median` is the median, over head SHAs, of the minutes from a head's first run
 created to its last run updated. `red_runs_per_pr` is the red runs (a failure, a timeout or a run that could not
 start; a cancelled or skipped run is not red) over the PRs. `flakes` counts each red run followed by a green one of the
 same workflow and event on the same head, so a workflow red on push and green on pull_request is no
 flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
-conclusion from `gh api`. A run whose times do not parse adds no minutes. A `gh` call that fails is tried three times, 1 and then 2 seconds apart, since a reset connection or a secondary rate limit soon passes. When one still fails, or takes over 10 seconds, the section prints `ci health: gh failed on <PR>, so no numbers: <the gh call>: <gh's last line of error>`. The ci time table below it leaves out the PRs gh could not read, says how many, and gives each one a `ci time: left out <PR>: <error>` line.
+conclusion from `gh api`. A run whose times do not parse adds no minutes. It reads each PR over gh's REST API, whose hourly limit is separate from the GraphQL one a swarm's `gh pr` commands spend. A reset connection or a 5xx is tried three times, 1 and then 2 seconds apart. Any other error is not tried again, and after `API rate limit exceeded` the section makes no more `gh` calls. A PR that `gh` cannot read, or whose call takes over 10 seconds, is left out of the row. A line under the row says how many, and a `ci health: left out <PR>: <the gh call>: <gh's last line of error>` line names each one. The ci time table below does the same with `ci time:` lines.
 
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
