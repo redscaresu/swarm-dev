@@ -17,3 +17,4 @@ Needs every other pre-release story of the epic merged. Review README.md and llm
 - The PR body lists each README section reviewed with what changed, and quotes the fresh agent's answer naming swarm.sh init and /swarm-dev:swarm.
 - grep finds no /hld, /plan-hld or HLD step in README.md.
 - after-release-checks (2026-10-22) found `/swarm-dev:swarm` first in prose at line 47 and `swarm.sh init` at line 70. A three-line quick start (install, `swarm.sh init`, `/swarm-dev:swarm`) sits under the intro, above the image, so both appear as text in the first 20 lines.
+- Obsidian is optional, and README says so (user, 2026-10-22): nothing runs it, but `init` writes `Board.base` and the `.obsidian/` lines. README names it under Requirements as optional, or under Watching it, with what it shows (open the board folder as a vault; `Board.base` groups stories by status and epic).
