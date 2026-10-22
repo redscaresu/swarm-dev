@@ -1,4 +1,4 @@
-import datetime, glob, json, os, sys
+import glob, json, os, sys
 from panes import *; from report import *
 
 def own_work(d):
@@ -14,24 +14,24 @@ def own_work(d):
 
 def last_work(path):
     # The epoch of the newest own-work entry, read from the log's end back, or "" with none. One with no
-    # timestamp is dated by the log's mtime.
+    # timestamp, or one with no offset (merge_time), is dated by the log's mtime.
     size = 65536
     with open(path, "rb") as f:
         end = f.seek(0, 2)
         while True:
             f.seek(max(end - size, 0))
-            lines = f.read().decode("utf-8", "replace").splitlines()
+            # Split on newlines alone, as log_lines does: str.splitlines also breaks at U+2028, which
+            # Node's JSON writer leaves raw inside a string.
+            lines = f.read().split(b"\n")
             for l in reversed(lines[1:] if end > size else lines):   # the first may be cut mid-line
                 try:
-                    d = json.loads(l)
+                    d = json.loads(l.decode("utf-8", "replace"))
                 except ValueError:
                     continue
                 if not own_work(d):
                     continue
-                try:
-                    return int(datetime.datetime.fromisoformat(str(d["timestamp"]).replace("Z", "+00:00")).timestamp())
-                except (KeyError, ValueError):
-                    return int(os.path.getmtime(path))
+                t = merge_time(str(d.get("timestamp") or ""))
+                return int(t.timestamp()) if t else int(os.path.getmtime(path))
             if size >= end:
                 return ""
             size *= 4

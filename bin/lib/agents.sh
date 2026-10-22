@@ -932,57 +932,23 @@ session_mtime() {
   python3 "${SWARM_HOME}/bin/lib/session_mtime.py" "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" || true
 }
 
-# longest_child <name> <target> — the command a builder has run longest, as `longest-running: pid
-# <PID>, <N> min: <command cut to 120> (under <its parents, outermost first>)`: of Claude Code's Bash
-# tool shells (`... -c source .../shell-snapshots/...`) under pane <target>'s shell (herdr's
-# shell_pid), the one whose command has run longest, followed down to its leaf, oldest child at each
-# step: the hung `sleep`, not the `make test` above it. Nothing else counts (caffeinate, an MCP or
-# LSP server, a hook). For a codex builder (agents.tsv), whose commands are not traced, `longest-running:
-# none named (a codex builder)`. Nothing when no tool shell runs a command, or herdr gives no shell pid.
+# longest_child <name> <target> — what a builder's foreground Bash tool call runs, from
+# longest_child.py over ps and herdr's process info for pane <target>: `longest-running: pid <PID>,
+# <N> min: <program> (under <its parents>)`, program names only. For a codex builder (agents.tsv),
+# whose commands are not traced, `longest-running: none named (a codex builder)`. Nothing when no
+# tool shell runs a command, or herdr gives no shell pid.
 longest_child() {
   if [[ "$(awk -F'\t' -v n="$1" '$3 == n { h = $4 } END { print h }' "${AGENTS_LOG}" 2>/dev/null)" == codex ]]; then
     echo "longest-running: none named (a codex builder)"; return
   fi
-  ps -A -o pid=,ppid=,etime=,command= 2>/dev/null | python3 -c '
-import json, sys
-try:
-    shell = int(json.loads(sys.argv[1])["result"]["process_info"]["shell_pid"])
-except (ValueError, KeyError, TypeError):
-    sys.exit()
-procs, kids = {}, {}
-for l in sys.stdin:
-    f = l.split(None, 3)
-    if len(f) == 4 and f[0].isdigit() and f[1].isdigit():
-        procs[int(f[0])] = (int(f[1]), f[2], f[3].strip())
-        kids.setdefault(int(f[1]), []).append(int(f[0]))
-def secs(p):   # ps etime: [[dd-]hh:]mm:ss
-    d, _, hms = procs[p][1].rpartition("-")
-    t = [0, 0] + [int(x) for x in hms.split(":")]
-    return int(d or 0) * 86400 + t[-3] * 3600 + t[-2] * 60 + t[-1]
-def under(p):   # p is under the pane shell
-    for _ in procs:
-        if p not in procs:
-            return False
-        p = procs[p][0]
-        if p == shell:
-            return True
-    return False
-oldest = lambda ps: max(ps, key=secs)
-tops = [oldest(kids[t]) for t, v in procs.items() if "/shell-snapshots/" in v[2] and t in kids and under(t)]
-if not tops:
-    sys.exit()
-chain = [oldest(tops)]
-while chain[-1] in kids:
-    chain.append(oldest(kids[chain[-1]]))
-leaf = chain[-1]
-up = " > ".join(procs[p][2][:60] for p in chain[:-1])
-print("longest-running: pid %d, %d min: %s%s" % (leaf, secs(leaf) // 60, procs[leaf][2][:120], " (under %s)" % up if up else ""))
-' "$(herdr pane process-info --pane "$2" 2>/dev/null)" || true
+  ps -A -o pid=,ppid=,etime=,command= 2>/dev/null \
+    | python3 "${SWARM_HOME}/bin/lib/longest_child.py" "$(herdr pane process-info --pane "$2" 2>/dev/null)" || true
 }
 
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
 # stall_minutes (stall.py), counting <since> (epoch: when the wait began), its worktree's last commit
-# or edit (story_work_time) and its session log's mtime (session_mtime) as signs, print how many
+# or edit (story_work_time) and its newest own work across its session log and its subagents' logs
+# (session_mtime) as signs, print how many
 # minutes and succeed. Its PRs are asked for their updatedAt only once the rest already looks
 # stalled, so gh is rarely called.
 agent_stalled() {
@@ -1150,7 +1116,7 @@ settle() {
 # `; longest-running: ...` (longest_child) when it names one, logs that line as an incident
 # and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
-# by the `longest-running: ...` line. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
+# by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
 # An agent whose turn stopped on an API error (settle's "api error", or idle and pane_check's) is sent
@@ -1189,7 +1155,9 @@ wait_agent() {
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
       [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
-        echo "${out}"; [[ -z "${hung}" ]] || echo "${hung}"
+        echo "${out}"
+        if [[ "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
+        elif [[ -n "${hung}" ]]; then echo "${hung}"; fi
         [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || return 1
         return 0
       fi

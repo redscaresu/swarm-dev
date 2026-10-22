@@ -92,12 +92,12 @@ ladder() (
   own_target() { echo w:1; }
   stall_py() { echo a; }
   settle() { echo "stalled: working 40 min with no commit"; }
-  longest_child() { echo "longest-running: pid 400, 45 min: sleep 2700"; }
+  longest_child() { echo "longest-running: pid 400, 45 min: sleep"; }
   ladder_step() { echo "stepped up: a: sonnet -> opus"; return "${LADDER_RC}"; }
   LADDER_RC="$1" wait_agent a 1000 --stall 2>/dev/null; echo "exit $?"
 )
 check "a stall stepped up prints the longest-running line after stepped up" "$(ladder 0)" \
-  "$(printf '%s\n' 'stepped up: a: sonnet -> opus' 'longest-running: pid 400, 45 min: sleep 2700' 'exit 0')"
+  "$(printf '%s\n' 'stepped up: a: sonnet -> opus' 'longest-running: pid 400, 45 min: sleep; read before the step-up closed its pane, so the PID may be gone: check it with ps first' 'exit 0')"
 for cause in stalled paused cleared-on-error impossible; do
   check "a close with cause ${cause} and no PR writes none" "$(sites "${cause}")" ""
 done

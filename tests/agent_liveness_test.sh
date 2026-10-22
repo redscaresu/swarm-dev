@@ -192,9 +192,10 @@ check "flow counts api-error and auto-denied per epic" test "$(sed -n '/^epic	ki
 # own work, a tool call, is 40 minutes old; its session wrote only compaction, summary and
 # task-notice entries after it: no sign of life. ps (stubbed, from PS_TREE) shows its pane's shell
 # (herdr's shell_pid 100) and the agent (200). Under the agent: an MCP server (250) and its worker,
-# caffeinate (270), a hook-started MCP server under sh -c (280), and two Bash tool shells: 300, whose
-# make test runs scripts/test.sh, which runs the hung sleep (400), and a newer one running a sleep
-# (330). Another pane's tool shell runs an older sleep (590).
+# caffeinate (270), a hook-started MCP server under sh -c (280), and two Bash tool shells: 330, a
+# run_in_background server started 90 minutes ago, and the newer 300, the foreground call, whose
+# make test (given a token) runs scripts/test.sh, which runs the hung sleep (400). Another pane's
+# tool shell runs an older sleep (590).
 H="${ROOT}/hung"; HB="${ROOT}/hung-bin"; mkdir -p "${H}/.swarm/state" "${H}/docs/stories" "${HB}" "${ROOT}/projects/p"
 touch "${H}/docs/stories/README.md"; git -C "${H}" init -q
 printf -- '---\nstatus: ready\nkind: code\n---\n\n# s-hung\n' > "${H}/docs/stories/s-hung.md"
@@ -225,8 +226,8 @@ snap='/bin/zsh -c source /Users/u/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/d
 tree=('  100     1  02:00:00 -zsh' '  200   100  02:00:00 claude --session-id sess-hung'
   '  250   200  01:59:30 node mcp-server.js' '  260   250  01:50:00 node worker.js' '  270   200     02:00 caffeinate -i -t 300'
   '  280   200  01:59:50 sh -c start-mcp.sh' '  281   280  01:59:49 node mcp2.js'
-  "  300   200     45:03 ${snap} 'make test'" '  310   300     45:02 make test' '  320   310     45:01 bash scripts/test.sh'
-  '  400   320     45:00 sleep 2700' "  330   200     05:00 ${snap} 'sleep 300'" '  331   330     04:59 sleep 300'
+  "  300   200     45:03 ${snap} 'make test GH_TOKEN=SEKRIT'" '  310   300     45:02 make test GH_TOKEN=SEKRIT' '  320   310     45:01 bash scripts/test.sh'
+  '  400   320     45:00 sleep 2700' "  330   200  01:30:00 ${snap} 'node server.js'" '  331   330  01:29:59 node server.js'
   "  590   999  1-03:00:01 ${snap} 'sleep 9999'" '  591   590  1-03:00:00 sleep 9999')
 export PS_TREE="${ROOT}/ps.tree"; printf '%s\n' "${tree[@]}" > "${PS_TREE}"
 chmod +x "${HB}/"*
@@ -238,13 +239,14 @@ idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(a
   '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
 hung_wait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
   CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait --stall s-hung 3000 2>&1); }
-named='; longest-running: pid 400, 45 min: sleep 2700 \(under make test > bash scripts/test.sh\)$'
+named='; longest-running: pid 400, 45 min: sleep \(under pid 310, 45 min: make > pid 320, 45 min: bash\)$'
 log "$(tool 40)" "${idle[@]}"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
 check "a builder whose newer log entries are only compaction and task notices is stalled?" grep -qE '^stalled: working 4[0-2] min' <<< "${out}"
 check "wait --stall on it exits 3" test "${rc}" = 3
-check "the stalled line names the leaf of the oldest tool shell's chain, under make and test.sh" grep -qE "${named}" <<< "${out}"
+check "the stalled line names the leaf of the newest tool shell's chain, not an older background one" grep -qE "${named}" <<< "${out}"
 check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[0-2] min .*'"${named}" "${H}/.swarm/events.tsv"
+check "no argument (a token) reaches the stalled line or events.tsv" lacks 'SEKRIT|2700' "${out}$(cat "${H}/.swarm/events.tsv")"
 # With no tool shell (caffeinate and MCP servers only), nothing is named.
 printf '%s\n' "${tree[@]:0:7}" > "${PS_TREE}"
 check "caffeinate and MCP servers with no tool shell name nothing" grep -qE '^stalled: working 4[0-2] min with no commit, edit, own work in the session log or PR update$' <<< "$(hung_wait)"
@@ -261,6 +263,18 @@ log "$(tool 40)" "${idle[@]}" "$(tool 5)"
 printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
 check "the same log with a 5-minute-old tool call is no stall" test "${rc}:${out}" = "1:busy"
+# A tool result 5 minutes old whose text holds a raw U+2028 (Node's JSON writer leaves it unescaped)
+# is still one entry, and a sign of life.
+log "$(tool 40)" "${idle[@]}" "{\"type\":\"user\",\"timestamp\":\"$(ago 5)\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":\"a$(printf '\342\200\250')b\"}]}}"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "a tool result holding U+2028 is one entry, and a sign of life" test "${rc}:${out}" = "1:busy"
+# A tool call whose timestamp has no offset is dated by the log's mtime (just now), never read as local
+# time: in UTC+9 that would put it 9 hours back, a stall.
+log "$(tool 40)" "${idle[@]}" "$(tool 1 | sed 's/\.000Z"/"/')"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(TZ=Asia/Tokyo hung_wait)"; then rc=0; else rc=$?; fi
+check "a timestamp with no offset is dated by the log's mtime, not as local time" test "${rc}:${out}" = "1:busy"
 # The main log's own work 40 minutes old, a Task subagent's tool call 5 minutes ago: no stall.
 log "$(tool 40)" "${idle[@]}"
 mkdir -p "${ROOT}/projects/p/sess-hung/subagents"; tool 5 > "${ROOT}/projects/p/sess-hung/subagents/agent-a1.jsonl"

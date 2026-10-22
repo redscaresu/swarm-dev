@@ -955,10 +955,11 @@ Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, ${id
 not converged in the rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
 counts the attempt and clears its worktree, branch and PR. ${one} Start the story again in a later
 wave with \`swarm.sh story --strict <slug>\`, and never choose a model: ${retry}${goal}
-A stalled line that ends \`; longest-running: pid <PID>, <N> min: <command> (under <parents>)\`, or
-a \`longest-running:\` line after \`stepped up:\`, names the command the builder has run longest, the
-leaf of its chain of parents. It may be a server the builder started on purpose. Read the chain, and
-check the PID with \`ps -o pid,ppid,etime,command -p <PID>\` before you stop anything. Stop only a
+A stalled line that ends \`; longest-running: pid <PID>, <N> min: <program> (under <parents>)\`, or
+a \`longest-running:\` line after \`stepped up:\`, names what the builder's foreground Bash call runs,
+the leaf of its chain of parents, by program name only. It may still be wrong (a server the builder
+started on purpose, or gone once a step-up closed the pane). Read the chain, and check the PID with
+\`ps -o pid,ppid,etime,command -p <PID>\` before you stop anything. Stop only a
 hung leaf, by its PID (\`kill <PID>\`, never pkill or killall), then tell the builder what you killed
 and why (\`swarm.sh tell <slug> nudge <file>\` once it is idle), and wait on it again; give up on it
 only when it stalls again. A stepped-up build's next rung works in the same worktree, so a hung
