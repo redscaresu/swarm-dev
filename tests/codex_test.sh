@@ -21,9 +21,10 @@ mkdir -p "${BIN}" "${P}/.claude/swarm"; : > "${P}/.claude/swarm/config"
 printf '#!/bin/sh\nexec perl -e "select undef, undef, undef, shift" "$1" "$0"\n' > "${BIN}/stubsleep"; chmod +x "${BIN}/stubsleep"
 # The same under another name, for a child a case leaves running on purpose, so left can tell it.
 cp "${BIN}/stubsleep" "${BIN}/orphansleep"
-# stubchain <n> — a chain of n sh processes, each waiting on the next, and a perl sleeping at its end.
+# stubchain <n> — a chain of n sh processes, each waiting on the next, and a perl sleeping at its end,
+# which touches chained as it starts.
 # shellcheck disable=SC2016 # the chain's own $1 and $0
-printf '#!/bin/sh\nif [ "$1" -gt 0 ]; then "$0" $(($1 - 1)); else exec perl -e "select undef, undef, undef, 60" "$0"; fi\n' > "${BIN}/stubchain"
+printf '#!/bin/sh\nif [ "$1" -gt 0 ]; then "$0" $(($1 - 1)); else touch "${0%%/*}/chained"; exec perl -e "select undef, undef, undef, 60" "$0"; fi\n' > "${BIN}/stubchain"
 chmod +x "${BIN}/stubchain"
 export PATH="${BIN}:${PATH}"
 fails=0
@@ -100,21 +101,23 @@ check "neither the stub nor its child sleep is left" "yes" "$(gone)"
 check "a timed-out codex-review leaves no marker" "" "$(markers)"
 left "the timeout case"
 
-# --- One that traps TERM and sleeps on is KILLed after the grace, with whatever it started since.
-# Each nap of the limit and the grace adds a little to its length, so the bound has 3 s to spare.
+# --- One that traps TERM and sleeps on is KILLed after the grace, with whatever it started since:
+# never before the limit and the default grace (3 s, GRACE here), and with 3 s to spare after, since
+# each nap of the limit and the grace adds a little to its length.
 stub "trap 'echo TERM ignored' TERM; while :; do \"\${d}/stubsleep\" 60; done"
 review
-check "a codex that ignores TERM is stopped within the limit plus the grace" "fails|yes|yes" \
-  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
+check "a codex that ignores TERM is stopped after the limit plus the default grace, within 3 s more" "fails|yes|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -ge $((LIMIT + GRACE)) && ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
 left "the TERM-trapping timeout case"
 
 # --- One that traps TERM and starts a child every few ms is KILLed with every child it started: its
 # tree is frozen before the KILL, so it cannot start one behind the read, as it could behind a KILL to
 # the children first (reading its children outlasts its next fork). Each child exits after 0.2 s,
-# which keeps the tree small, unless its parent is gone: one the KILL missed sleeps on, to be seen.
-# shellcheck disable=SC2016 # perl's variables and the stub's $0
-stub 'trap : TERM; while :; do perl -e '\''$p = getppid; select undef, undef, undef, 0.2; sleep 60 if getppid != $p'\'' "$0" & sleep 0.02; done'
+# which keeps the tree small, unless its parent is no longer the stub (given as $$, so a child that
+# starts after the stub is KILLed counts too): one the KILL missed sleeps on, to be seen.
+# shellcheck disable=SC2016 # the stub's $$ and $0
+stub 'trap : TERM; while :; do perl -e '\''select undef, undef, undef, 0.2; sleep 60 if getppid != shift'\'' "$$" "$0" & sleep 0.02; done'
 review
 check "a codex that keeps starting children is stopped within the limit plus the grace" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
@@ -123,9 +126,10 @@ left "the forking case"
 # --- One whose TERM trap starts a chain 10 deep in the grace is KILLed to the chain's end: the freeze
 # walks every level of the tree, and the chain's deepest processes are not left as orphans.
 stub "trap '\"\${d}/stubchain\" 10 &' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+rm -f "${BIN}/chained"
 review
-check "a codex whose TERM trap starts a deep chain times out" "fails|yes" \
-  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "codex skipped: timed out" "${out}")"
+check "a codex whose TERM trap starts a deep chain times out, the chain built to its end first" "fails|yes|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/chained" ]] && echo yes || echo "no chained")"
 left "the deep chain case"
 
 # --- The grace is real: with a grace of 6 s, a codex that exits on its own 3 s after TERM is not
@@ -164,7 +168,7 @@ for ((i = 0; i < 10; i++)); do
   now="$(pgrep -g "${spid}" || true)"; [[ "${now}" != "${was}" ]] || break; was="${now}"
 done
 kill -KILL -- "-${spid}"; finish "${spid}"
-check "a KILL to codex-review's process group leaves neither the stub nor its child" "yes|yes" "${up}|$(gone 2)"
+check "a KILL to codex-review's process group, STOPped first (macOS's KILL alone can miss a fork), leaves neither the stub nor its child" "yes|yes" "${up}|$(gone 2)"
 left "the group KILL case"
 
 # --- SWARM_SLEEP_SCALE quickens the polling, never the timeout: at 0.01, a codex that takes 0.3 s
@@ -175,6 +179,15 @@ SWARM_SLEEP_SCALE=0.01 review
 check "at SWARM_SLEEP_SCALE=0.01 a codex inside the limit is not timed out" "exit 0|P2: slow but done" \
   "$([[ ${rc} -eq 0 ]] && echo "exit 0" || echo "exit ${rc}")|${out}"
 left "the SWARM_SLEEP_SCALE case"
+
+# --- SWARM_CODEX_SECONDS and SWARM_CODEX_GRACE that are no whole number of seconds are ignored, never
+# taken into arithmetic that fails.
+# shellcheck disable=SC2016 # the stub's variable
+stub '"${d}/stubsleep" 0.3; echo "P2: still reviewed"'
+LIMIT=2.5 SWARM_CODEX_GRACE=2.5 review
+check "a limit or grace of 2.5 is ignored, and codex still runs" "exit 0|P2: still reviewed" \
+  "$([[ ${rc} -eq 0 ]] && echo "exit 0" || echo "exit ${rc}")|${out}"
+left "the bad override case"
 
 # --- A codex that finishes: its findings and exit come through, run with exactly these args. A
 # marker left by a run that was KILLed (its pid dead) goes at the start.
