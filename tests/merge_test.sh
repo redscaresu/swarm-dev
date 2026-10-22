@@ -45,9 +45,9 @@ case "$1 $2" in
     [ ! -e "${FX}/pr-view.fail" ] || { echo "gh: could not resolve to a PullRequest" >&2; exit 1; }
     left="$(cat "${FX}/readback-left" 2>/dev/null || echo 0)"
     if [ "${left}" -gt 0 ]; then echo $((left - 1)) > "${FX}/readback-left"; echo "gh: HTTP 502" >&2; exit 1; fi
-    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s}\n' \
-      "$(cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
-      "$(cat "${FX}/body" 2>/dev/null || echo null)" ;;
+    printf '{"state":"%s","headRefOid":"%s","baseRefName":"%s","mergeCommit":%s,"changedFiles":%s,"body":%s,"commits":%s}\n' \
+      "$(cat "${FX}/state.${3##*/}" 2>/dev/null || cat "${FX}/state")" "$(cat "${FX}/head")" "$(cat "${FX}/base")" "$(cat "${FX}/mergecommit")" "$(cat "${FX}/nfiles")" \
+      "$(cat "${FX}/body" 2>/dev/null || echo null)" "$(cat "${FX}/commits" 2>/dev/null || echo '[{}]')" ;;
   "pr merge")
     case " $* " in *" --disable-auto "*) exit 0 ;; esac
     want=""; prev=""; for a in "$@"; do [ "${prev}" != --match-head-commit ] || want="${a}"; prev="${a}"; done
@@ -60,6 +60,8 @@ case "$1 $2" in
     [ -e "${FX}/stays-open" ] || echo MERGED > "${FX}/state"
     [ -e "${FX}/no-merge-commit" ] || printf '{"oid":"%s"}' "$(cat "${FX}/oid" 2>/dev/null || echo "${M}")" > "${FX}/mergecommit"
     [ ! -e "${FX}/readback-fails" ] || cp "${FX}/readback-fails" "${FX}/readback-left"
+    # ${FX}/on-merge runs once the PR has merged: another command's work during merge's CI wait.
+    [ ! -e "${FX}/on-merge" ] || sh "${FX}/on-merge"
     # A 5xx after GitHub merged it.
     [ ! -e "${FX}/merge-then-fail" ] || { echo "gh: HTTP 502" >&2; exit 1; } ;;
   "repo view") case "$*" in *nameWithOwner*) cat "${FX}/origin" ;; *) cat "${FX}/repo" ;; esac ;;
@@ -1179,6 +1181,163 @@ is "merge_admin = on, an unknown classic field disabled: exits 0" 0 "${rc}"
 # Branch protection's 404 is unprotected only when GitHub says so; Not Found (no access) refuses.
 fresh "merge_admin = on"; rm "${FX}/branch.404"
 merge "${URL}"; refused "merge_admin = on, branch protection Not Found" "Not Found (HTTP 404)"
+
+# --- A board merge that makes stories ready notes their epic's running conductor (conduct-e, the
+# herdr stub's) at once, through its inbox, once reconcile has pulled the board. origin's main is P's
+# HEAD here; put and land commit board files to it from another clone, as a board PR's merge does,
+# and bfresh makes origin's tip the merge commit, green. The block ends with P, origin and the clone
+# as it found them.
+pre_block="$(git -C "${P}" rev-parse HEAD)"
+git clone -q "${ROOT}/origin.git" "${ROOT}/up"; git -C "${P}" fetch -q origin; git -C "${P}" branch -q -u origin/main
+INBOX="${P}/.swarm/inbox/conduct-e.md"; rm -rf "${P}/.swarm/inbox"
+put() { # <path> <front-matter line>... — a board file in that clone, staged
+  mkdir -p "$(dirname "${ROOT}/up/$1")"; { echo ---; printf '%s\n' "${@:2}"; echo ---; } > "${ROOT}/up/$1"; git -C "${ROOT}/up" add -f "$1"
+}
+land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
+pulled() { git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'; }
+bfresh() { # fresh, no story s, the PR the last land's commit, and the merge commit origin's tip (OID), green
+  fresh; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+  git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | python3 -c 'import json, sys; print(json.dumps([{"filename": l.strip(), "status": "modified"} for l in sys.stdin]))' > "${FX}/files"
+  git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ' > "${FX}/nfiles"
+  checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
+  wfruns "${FX}/${OID}.runs" "$(run ci completed success "${OID}")"
+}
+notes() { grep -c '^From the lead' "${INBOX}" 2>/dev/null || true; }
+# Already pulled: epic e, its story r0 ready and r2 blocked.
+put docs/epics/e.md "status: active"; put docs/stories/r0.md "status: ready" "kind: code" "epic: e"
+put docs/stories/r2.md "status: blocked" "kind: code" "epic: e"; land; pulled
+# The board PR adds r1, readies r2, and adds b1 with no epic, whose backlog conductor is not running.
+put docs/stories/r1.md "status: ready" "kind: code" "epic: e"; put docs/stories/r2.md "status: ready" "kind: code" "epic: e"
+put docs/stories/b1.md "status: ready" "kind: code"; land
+bfresh; merge --board "${URL}"
+is "a board merge that readies r1 and r2: exits 0" 0 "${rc}"
+is "a board merge that readies r1 and r2: one note to conduct-e" 1 "$(notes)"
+check "a board merge that readies r1 and r2: the note names both, not r0" \
+  grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1 r2. Start them now" "${INBOX}"
+check "a board merge that readies r1 and r2: says it noted conduct-e" said "noted conduct-e"
+check "a board merge that readies a backlog story with no conductor: says next starts it" \
+  said "ready now: b1 (with no epic); no conductor runs for it, so swarm.sh next starts it"
+# It edits r0, ready already: not newly ready.
+put docs/stories/r0.md "status: ready" "kind: code" "epic: e" "estimate_lines: 2"; land
+bfresh; merge --board "${URL}"
+is "a board merge that readies nothing: exits 0" 0 "${rc}"
+is "a board merge that readies nothing: no note" 1 "$(notes)"
+check "a board merge that readies nothing: says nothing of ready stories" bash -c "! grep -qE 'ready now|noted' '${ROOT}/out'"
+# A reconcile pulls the board during the CI wait: what was ready is read before the merge.
+put docs/stories/r4.md "status: ready" "kind: code" "epic: e"; land
+bfresh; echo "git -C '${P}' fetch -q && git -C '${P}' merge -q --ff-only '@{upstream}'" > "${FX}/on-merge"; merge --board "${URL}"
+check "a board merge whose board a reconcile pulled during the CI wait: still notes r4" \
+  grep -qF "these stories of epic e are ready now: r4." "${INBOX}"
+# q's PR merged, deleting q.md, and is not reconciled yet: reconcile clears its build before it pulls.
+put docs/stories/q.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/9"; land; pulled
+git -C "${ROOT}/up" rm -q docs/stories/q.md; put docs/stories/r5.md "status: ready" "kind: code" "epic: e"; land
+bfresh; merge --board "${URL}"
+check "a board merge whose pull deletes q, in review: reconcile finishes q" logged "^reconcile q ok"
+check "a board merge whose pull deletes q, in review: still notes r5" grep -qF "these stories of epic e are ready now: r5." "${INBOX}"
+# Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone,
+# though it also edits epic e, active already.
+put docs/stories/r9.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; put docs/epics/e.md "status: active" "title: e10"; land
+bfresh; merge --board "${URL}"
+check "a board merge beside another board PR: the note names its own r10, not r9" grep -qF "these stories of epic e are ready now: r10." "${INBOX}"
+# z's PR closed unmerged: reconcile sends z back to ready, which the PR did not do, so no note names it,
+# though the PR also edits z's file. z has a build's worktree, which reconcile removes.
+put docs/stories/z.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"; land; pulled
+git -C "${P}" worktree add -q -b story/z "${ROOT}/proj-wt/z"
+put docs/stories/r8.md "status: ready" "kind: code" "epic: e"
+put docs/stories/z.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11" "estimate_lines: 3"; land
+bfresh; echo CLOSED > "${FX}/state.11"; merge --board "${URL}"
+check "a board merge whose reconcile reopens z: z is back to ready" said "back to ready: z"
+check "a board merge whose reconcile reopens z: the note names r8 alone" grep -qF "these stories of epic e are ready now: r8." "${INBOX}"
+rm -rf "${ROOT}/proj-wt"; git -C "${P}" worktree prune
+# A red main: no conductor is told to start builds on it, not even of r11, which this PR readies.
+put docs/stories/r11.md "status: ready" "kind: code" "epic: e"; land
+bfresh; checks "${FX}/${OID}.checks" "$(run test completed failure)"; merge --board "${URL}"
+check "a board merge onto a red main: tells no conductor of r11" bash -c "! grep -q 'ready now' '${ROOT}/out' && ! grep -q r11 '${INBOX}'"
+rm -f "${P}/docs/stories/fix-main-${OID:0:7}.md"
+# A PR that only sets epic f active readies f1, ready already: f has no conductor, so next starts it.
+put docs/epics/f.md "status: draft"; put docs/stories/f1.md "status: ready" "kind: code" "epic: f"; land; pulled
+put docs/epics/f.md "status: active"; land
+bfresh; merge --board "${URL}"
+check "a board merge that sets epic f active: says next starts f1" said "ready now: f1 (of epic f); no conductor runs for it, so swarm.sh next starts it"
+# o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
+put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
+put docs/stories/o1.md "status: ready" "kind: code"; land
+bfresh; merge --board "${URL}"
+check "a board merge that readies o1, already started: says nothing of o1" bash -c "! grep -q 'ready now: o1' '${ROOT}/out'"
+rm -rf "${ROOT}/proj-wt"
+# Board PR A, merged and never pulled here, sets epic g active and readies r12; this PR, B, only
+# edits g's and r12's files. What was ready is the board at B's first parent, so B names neither.
+put docs/epics/g.md "status: draft"; put docs/stories/g1.md "status: ready" "kind: code" "epic: g"
+put docs/stories/r12.md "status: blocked" "kind: code" "epic: e"; land; pulled
+put docs/epics/g.md "status: active"; put docs/stories/r12.md "status: ready" "kind: code" "epic: e"; land
+put docs/epics/g.md "status: active" "title: g2"; put docs/stories/r12.md "status: ready" "kind: code" "epic: e" "estimate_lines: 1"; land
+bfresh; merge --board "${URL}"
+check "a board merge after an unpulled one: names neither g1 nor r12" bash -c "! grep -qE 'g1|r12' '${ROOT}/out' && ! grep -q r12 '${INBOX}'"
+# conduct-e has written its report: it has finished, so it gets no note, and next starts r13.
+put docs/stories/r13.md "status: ready" "kind: code" "epic: e"; land
+bfresh; touch "${P}/.swarm/conduct-e.report.md"; merge --board "${URL}"; rm "${P}/.swarm/conduct-e.report.md"
+check "a board merge whose conductor has reported: says next starts r13" said "ready now: r13 (of epic e); no conductor runs for it, so swarm.sh next starts it"
+check "a board merge whose conductor has reported: no note names r13" bash -c "! grep -q r13 '${INBOX}'"
+# r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
+put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
+put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land
+bfresh; merge --board "${URL}"
+check "a board merge that moves ready r15 into active epic e: notes it" grep -qF "these stories of epic e are ready now: r15." "${INBOX}"
+# Through a merge queue, in one push with a later PR (its commit Y, the batch's tip): what was ready
+# is read at the parent of this PR's own merge commit X, not at Y's, where r14 is ready already.
+put docs/stories/r14.md "status: ready" "kind: code" "epic: e"; land; X="$(git -C "${ROOT}/up" rev-parse HEAD)"
+put docs/stories/r0.md "status: ready" "kind: code" "epic: e" "estimate_lines: 4"; land
+bfresh; echo '[{"filename":"docs/stories/r14.md","status":"added"}]' > "${FX}/files"; echo 1 > "${FX}/nfiles"
+echo '{"data":{"repository":{"mergeQueue":{"id":"MQ_1"}}}}' > "${FX}/mq"; checks "${FX}/${G}.checks" "$(run test completed success)"; statuses "${FX}/${G}.status"
+qread "${FX}/queue.1" OPEN true null "${G}" -; qread "${FX}/queue.2" MERGED false null - "${X}"
+printf '{"commit":{"sha":"%s"}}\n' "${OID}" > "${FX}/basehead"; echo '{"status":"ahead"}' > "${FX}/compare"; merge --board "${URL}"
+check "a queued board merge batched with a later PR: notes r14" grep -qF "these stories of epic e are ready now: r14." "${INBOX}"
+# A two-commit PR rebased onto main: the first readies r16, the second edits it. The board before
+# it is two commits back, where r16 did not exist.
+put docs/stories/r16.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r16.md "status: ready" "kind: code" "epic: e" "estimate_lines: 5"; land
+bfresh; echo '{"squashMergeAllowed":false,"mergeCommitAllowed":false,"rebaseMergeAllowed":true}' > "${FX}/repo"; echo '[{},{}]' > "${FX}/commits"
+merge --board "${URL}"
+check "a rebased two-commit board PR: notes r16" grep -qF "these stories of epic e are ready now: r16." "${INBOX}"
+# This PR (P) only edits blocked r17; a later PR readies it, and the pull brings both: P made
+# nothing live, so it names nothing.
+put docs/stories/r17.md "status: blocked" "kind: code" "epic: e"; land; pulled
+put docs/stories/r17.md "status: blocked" "kind: code" "epic: e" "estimate_lines: 6"; land; PC="$(git -C "${ROOT}/up" rev-parse HEAD)"
+put docs/stories/r17.md "status: ready" "kind: code" "epic: e" "estimate_lines: 6"; land
+bfresh; echo "${PC}" > "${FX}/oid"; checks "${FX}/${PC}.checks" "$(run test completed success)"; statuses "${FX}/${PC}.status"
+wfruns "${FX}/${PC}.runs" "$(run ci completed success "${PC}")"; merge --board "${URL}"
+check "a board merge pulled with a later PR that readies r17: names r17 nowhere" bash -c "! grep -q r17 '${ROOT}/out' && ! grep -q r17 '${INBOX}'"
+# herdr cannot list its agents: no ready now: line, which would say no conductor runs.
+put docs/stories/r7.md "status: ready" "kind: code" "epic: e"; land
+bfresh; touch "${ROOT}/agents.fail"; merge --board "${URL}"; rm "${ROOT}/agents.fail"
+check "a board merge while herdr cannot list its agents: says conduct-e was not told" \
+  said "warning: herdr cannot list its agents, so conduct-e was not told that r7 are ready"
+check "a board merge while herdr cannot list its agents: no ready now: line" bash -c "! grep -q 'ready now' '${ROOT}/out'"
+# reconcile cannot fetch (origin gone while CI ran), so exits 0 without pulling: a warning, not silence.
+put docs/stories/r6.md "status: ready" "kind: code" "epic: e"; land
+bfresh; echo "git -C '${P}' remote set-url origin '${ROOT}/gone.git'" > "${FX}/on-merge"; merge --board "${URL}"
+git -C "${P}" remote set-url origin "${ROOT}/origin.git"
+is "a board merge that reconcile did not pull: exits 0" 0 "${rc}"
+check "a board merge that reconcile did not pull: warns that no conductor was told" \
+  said "warning: reconcile did not pull ${OID:0:7} into ${P}, so no conductor was told what ${URL} made ready; run swarm.sh reconcile"
+# reconcile fails (r6 is edited here, and the pull changes it): logged as merge logs it, and a warning.
+pulled; echo edit >> "${P}/docs/stories/r6.md"; put docs/stories/r6.md "status: ready" "kind: code" "epic: e" "estimate_lines: 1"; land
+bfresh; merge --board "${URL}"
+is "a board merge whose reconcile fails: exits 0" 0 "${rc}"
+check "a board merge whose reconcile fails: logs its die line under reconcile" logged "^reconcile - reconcile: cannot pull"
+check "a board merge whose reconcile fails: warns to run swarm.sh reconcile" \
+  bash -c "grep -q 'warning: reconcile failed after the merge (reconcile: cannot pull' '${ROOT}/out' && grep -q 'run swarm.sh reconcile\$' '${ROOT}/out'"
+git -C "${P}" show HEAD:docs/stories/r6.md > "${P}/docs/stories/r6.md"
+put docs/stories/r3.md "status: ready" "kind: code" "epic: e"; land
+rm -rf "${P}/.swarm/inbox"; : > "${P}/.swarm/inbox"   # the note cannot be written
+bfresh; merge --board "${URL}"
+is "a board merge whose tell fails: exits 0" 0 "${rc}"
+check "a board merge whose tell fails: warns" said "warning: could not note conduct-e that r3 are ready"
+# Leave P, origin and the clone as the block found them.
+rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
+git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,b1,f1,g1,o1,q,z} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"
