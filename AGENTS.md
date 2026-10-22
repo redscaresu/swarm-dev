@@ -66,7 +66,7 @@ Useful while it runs:
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story or a green PR that waits on the user.
 - `swarm.sh wait-pr <pr-url>`: wait for a PR's checks; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, or the timeout. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.
 - `swarm.sh review-agent <slug> <pr-url>`: a read-only review agent for one PR, scoped to its story's `touches` and **Done when**.
-- `swarm.sh outcomes` and `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]`: one row per build with its timings, and the project's numbers a section each: `cost`, `features`, `reviewers`, `throughput`, `time_in_state` (with time held ready while a conductor ran) and more.
+- `swarm.sh outcomes` and `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]`: one row per build with its timings, and the project's numbers a section each: `cost`, `features`, `reviewers`, `throughput`, `time_in_state` (with time held ready while a conductor ran, and how long a ready story waited for its build) and more.
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
 - `swarm.sh tell <slug> <kind> <file>`: findings, nudge or resume sends an idle builder a file; `tell conduct-<epic> note <file>` appends it to a conductor's inbox, busy or not.
