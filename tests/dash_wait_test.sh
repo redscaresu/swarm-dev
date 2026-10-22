@@ -176,7 +176,7 @@ check "wait --stall counts from its own start" test "${rc}:$(grep -c stalled <<<
 # the session is busy, and busy is what the stall rule reads.
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
 check "wait --stall returns on a stall with exit code 3" test "${rc}" -eq 3
-check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit, edit, session-log write or PR update$' <<< "${out}"
+check "wait --stall says why" grep -qE '^stalled: working 1(19|20|21) min with no commit, edit, own work in the session log or PR update; longest-running: none named \(.*\)$' <<< "${out}"
 # A nudge is wait's doing, not a sign of life: a fresh `nudge s-three` line leaves the builder stalled.
 printf '%s\tnudge\ts-three\tw1:p1\tok\n' "$(ago 0)" >> "${P}/.swarm/events.tsv"
 if out="$(long_ago --stall s-three 3000)"; then rc=0; else rc=$?; fi
