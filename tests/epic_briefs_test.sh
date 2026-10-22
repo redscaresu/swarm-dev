@@ -189,6 +189,14 @@ clash_brief() {
 }
 check "with merge = human, the conductor builds stories that share a file but no symbol at once, has a conflicted PR's builder merge the base in, and stops review after round 3" \
   "yes|yes|yes|yes|yes|yes|gone" "$(clash_brief "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
+# startable_brief <brief> — the startable rule after a merge and after an inbox note (twice), and no
+# start limited to what unblock printed as ready:.
+startable_brief() {
+  local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"
+  echo "$(grep -oF "run \`swarm.sh unblock --startable f\`, and start each story it prints as \`startable:\` (every ready story of this epic with no build yet, whether or not this unblock readied it) that clashes with no running one, with \`swarm.sh story --strict <slug>\`." <<< "${b}" | wc -l | tr -d ' ')|$(has "After each note you act on, run \`swarm.sh unblock --startable f\`" "${b}")|$(grep -qF "it prints as \`ready:\`" <<< "${b}" && echo yes || echo no)"
+}
+check "with merge = human, the conductor starts every ready story of the epic with no build after a merge and after a note, not only what unblock printed" \
+  "2|yes|no" "$(startable_brief "$(cat "${p}/.swarm/briefs/conduct-f.md")")"
 docs="$(cd "$(dirname "${SWARM}")/../docs" && cat method.md reference.md | tr -s '[:space:]' ' ')"
 check "method.md and reference.md § Building give the clash rule, the merge-base-in rule and the round-3 cap" "2|2|2|2|1" \
   "$(grep -oF "Two stories clash only when their \`touches\` name the same \`file:symbol\` in the same repo, or when either names the bare file of a file the other also names" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "A builder whose PR conflicts with its base merges its base in, resolves it, reruns the tests and pushes; a conflict never sends a story back to \`ready\`" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "Review stops after round 3" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "a real bug (wrong behaviour, data loss, a security hole)" <<< "${docs}" | wc -l | tr -d ' ')|$(grep -oF "logged with \`log-finding --declined <reason> --reviewer <who>\`: \`nit\` for a nit or an edge case, \`out-of-scope\` or \`wrong\` where they apply" <<< "${docs}" | wc -l | tr -d ' ')"
@@ -211,8 +219,10 @@ check "on fix-main the conductor starts the fix-main story at once, ahead of eve
 check "with no fix-main line (a timed-out CI, or no story written) the conductor finds the pair that broke it, opens the fix or lists it" "yes" \
   "$(has "With no \`fix-main:\` line (CI on the base timed out, or merge says it could not write the story), find the PR pair that broke it (this PR and one merged before it, each green alone), open the fix or list it for the lead, and say so in your report." "${brief}")"
 after="${brief#*swarm.sh merge --head}"; after="${after%%Stay inside this epic*}"
-check "after the merge it closes a builder only when reconcile printed build cleared or a held child's parent costs money, and starts the stories unblock readied in this run, unless the wave had a cleared-on-error or a give-up" "2|yes|yes|yes" \
-  "$(grep -oF 'swarm.sh close <slug>' <<< "${after}" | wc -l | tr -d ' ')|$(has "Reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${after}")|$(has "start each story of this epic it prints as \`ready:\` that clashes with no running one, with \`swarm.sh story --strict <slug>\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
+check "after the merge it closes a builder only when reconcile printed build cleared or a held child's parent costs money, and starts every startable story in this run, unless the wave had a cleared-on-error or a give-up" "2|yes|yes|yes" \
+  "$(grep -oF 'swarm.sh close <slug>' <<< "${after}" | wc -l | tr -d ' ')|$(has "Reconcile has closed the builder, so leave it, unless it printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says." "${after}")|$(has "Then, in this run, run \`swarm.sh unblock --startable f\`, and start each story it prints as \`startable:\`" "${brief}")|$(has "After a cleared-on-error close or a give-up, start nothing more in this wave." "${brief}")"
+check "with merge = agent, the conductor starts every ready story of the epic with no build after a merge and after a note, not only what unblock printed" \
+  "2|yes|no" "$(startable_brief "${brief}")"
 check "it reports, and stops, only once no story of the epic is ready or running, never just because nothing is ready" "yes|yes|no" \
   "$(has "Write your report only when no story of this epic that is yours to start is ready and none is running" "${brief}")|$(has "Stop when the epic's **Done when** holds, when no story of this epic that is yours to start is ready and none is running (a fix-main story you started counts as running until its PR merges), or when CI on the base timed out, or is red with no \`fix-main:\` line." "${brief}")|$(grep -qF "nothing ready is left" <<< "${brief}" && echo yes || echo no)"
 check "with merge = agent, the epic conductor's stop and report rules count a fix-main story it started as running until its PR merges" "2" \

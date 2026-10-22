@@ -736,6 +736,18 @@ unblock() {
   done < <(board stories)
 }
 
+# unblock_startable <epic>|backlog — unblock, then a startable: line per story of that epic (backlog: with
+# no epic) that next would build (board_ready: ready, its build not started), whether or not this
+# unblock readied it: a board PR can add a story already ready, and unblock never prints that one.
+unblock_startable() {
+  local want="$1" slug e
+  unblock
+  [[ "${want}" != backlog ]] || want=-
+  while read -r slug e; do
+    [[ "${e}" != "${want}" ]] || echo "startable: ${slug}"
+  done < <(board_ready)
+}
+
 # delete_item <file> — delete a story or epic's file where it is, and its state file (state_drop), so
 # a later item with the slug starts with none: reconcile's, on a board outside the repo.
 delete_item() { state_drop "$1"; rm "$1"; echo "deleted: $1"; }

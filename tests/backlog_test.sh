@@ -66,6 +66,16 @@ item "${b}" stories/s1.md "status: ready" "kind: code" "epic: e"
 item "${b}" stories/o1.md "status: ready" "kind: code"
 brief="${p}/.swarm/briefs/conduct-backlog.md"
 
+# --- unblock --startable: o1 is running (its worktree exists), o2 is ready with no build, and o3, a
+# board PR's, is ready with no build too: unblock readies none of them, so it prints no ready: line.
+mkdir -p "${ROOT}/proj-wt/o1"
+item "${b}" stories/o2.md "status: ready" "kind: code"
+check "unblock --startable --backlog lists the ready story with no epic and no build, not the running one" "startable: o2" \
+  "$(run unblock --startable --backlog)"
+check "unblock --startable <epic> lists only that epic's ready stories with no build" "startable: s1" "$(run unblock --startable e)"
+check "unblock --startable with no scope is refused" "yes" "$(has "--startable takes <epic> or --backlog" "$(run unblock --startable || true)")"
+rm -r "${ROOT}/proj-wt/o1" "${b}/stories/o2.md"
+
 # --- A board with an epic named backlog: conduct --backlog starts nothing.
 item "${b}" epics/backlog.md "status: active"
 out="$(run conduct --backlog || echo "exit $?")"
@@ -99,6 +109,14 @@ check "with merge = human, the backlog brief hands over with swarm.sh review, ne
 check "with merge = human, a refusal naming another one-off in review is reported as not started, not waited on" "yes" \
   "$(has "Report the
 refused story as \`not started: <slug> (waits on <other>'s merge)\`." "${bl}")"
+# startable_bl <brief> — the startable rule after a merge and after an inbox note, and no start limited
+# to what unblock printed as ready:.
+startable_bl() {
+  local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"
+  # shellcheck disable=SC2016 # the backticks are the brief's
+  echo "$(grep -oF 'run `swarm.sh unblock --startable --backlog`, and start each story it prints as `startable:` (every ready story with no epic with no build yet, whether or not this unblock readied it) that clashes with no running one, with `swarm.sh story --strict <slug>`.' <<< "${b}" | wc -l | tr -d ' ')|$(has 'After each note you act on, run `swarm.sh unblock --startable --backlog`' "${b}")|$(hasnt 'it prints as `ready:`' "${b}")"
+}
+check "with merge = human, the backlog conductor starts every ready story with no epic and no build after a merge and after a note" "2|yes|no" "$(startable_bl "${bl}")"
 check "the backlog conductor reports to conduct-backlog.report.md" "yes" "$(has "${p}/.swarm/conduct-backlog.report.md" "${bl}")"
 nx="$(run next)"
 check "with the backlog conductor alive, next waits on it" "wait ${bn}" "${nx%%$'\n'*}"
@@ -134,10 +152,11 @@ check "with merge = agent, the backlog conductor also stops when CI on the base 
   "$(has 'that you may start is left and none is running, or when CI on the base timed out, or is red with no `fix-main:` line.' "${bl}")|$(has 'On `fix-main`, start its builder at once' "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the backlog brief merges with swarm.sh merge --head, starts unblocked stories with no epic, and finishes no epic" "yes|yes|no|no" \
-  "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story with no epic it prints as `ready:`' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
+  "$(has "swarm.sh merge --head <the SHA on the findings file's head: line> <PR URL>" "${bl}")|$(has 'start each story it prints as `startable:` (every ready story with no epic with no build yet' "${bl}")|$(hasnt "of this epic" "${bl}")|$(hasnt "swarm.sh finish <epic>" "${bl}")"
 
 run close "${bn}" >/dev/null
 run conduct e >/dev/null
+check "with merge = agent, the backlog conductor starts every ready story with no epic and no build after a merge and after a note" "2|yes|no" "$(startable_bl "${bl}")"
 # shellcheck disable=SC2016 # the backticks are the brief's
 check "with merge = agent, the epic conductor still finishes the epic" "yes" "$(has '`swarm.sh finish <epic>` only on a board outside the repo' "$(cat "${p}/.swarm/briefs/conduct-e.md")")"
 

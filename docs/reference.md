@@ -1154,9 +1154,12 @@ a story that is still `ready` counts a failed build. Its first `swarm.sh merge` 
 base has a merge queue. Where it prints `merge queue: <base> has one`, the conductor starts `swarm.sh
 merge` for every PR whose latest head passed review as soon as it passes, without waiting for the
 ones before it to merge, so the queue tests them together and merges them in batches. Otherwise it
-runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each, it runs `swarm.sh unblock` and, in the same
-run, starts each story of the epic that unblock printed as `ready:` and that clashes with no
-running one (§ Building, Pick the wave). A build cleared on error or given up on stops that: it starts nothing more in
+runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each merge, and after each inbox note it
+acts on, it runs `swarm.sh unblock --startable <epic>` (`--backlog` for the backlog conductor) and,
+in the same run, starts each story printed as `startable:` that clashes with no running one (§
+Building, Pick the wave). `--startable` runs unblock, then prints `startable: <slug>` for every
+`ready` story in that scope with no worktree yet, whether or not this unblock readied it. A story
+that a board PR adds already `ready` starts the same way. A build cleared on error or given up on stops that: it starts nothing more in
 the wave. It reports once no story of the epic that it may start is ready and none is running. If
 CI on the base times out, it merges nothing more and stops, and says so in its report. If it goes
 red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
