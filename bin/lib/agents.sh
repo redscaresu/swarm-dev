@@ -715,14 +715,14 @@ deliver_prompt() {
 # reply could not be read, the timeout passed, agent_prompt_stalled: the agent did not start within
 # herdr's 5 s, or herdr's error could not be read either); else herdr's error code, when it sent
 # nothing (agent_blocked: the agent was already blocked on a question; agent_not_found, ...).
+# herdr writes one JSON object, its reply on stdout or its error on stderr, so both are read together:
+# no temp file for a TERM to leave behind.
 prompt_once() {
-  local out code err
-  err="$(mktemp)" || err=/dev/null
-  out="$(herdr agent prompt "$1" "$(cat "$2")" --wait --until working --until blocked \
-    --timeout "${PROMPT_TIMEOUT_MS}" 2>"${err}")" || true
-  out="$(json "d.get('result',{}).get('agent',{}).get('agent_status','')" <<< "${out}" 2>/dev/null)" || out=""
-  code="$(json "d['error']['code']" < "${err}" 2>/dev/null)" || code=""
-  [[ "${err}" == /dev/null ]] || rm -f "${err}"
+  local all out code
+  all="$(herdr agent prompt "$1" "$(cat "$2")" --wait --until working --until blocked \
+    --timeout "${PROMPT_TIMEOUT_MS}" 2>&1)" || true
+  out="$(json "d.get('result',{}).get('agent',{}).get('agent_status','')" <<< "${all}" 2>/dev/null)" || out=""
+  code="$(json "d.get('error',{}).get('code','')" <<< "${all}" 2>/dev/null)" || code=""
   case "${out}:${code}" in
     working:*|blocked:*) echo "${out}" ;;
     *:|*:timeout|*:agent_prompt_stalled) echo sent ;;
