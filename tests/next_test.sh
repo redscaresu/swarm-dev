@@ -569,7 +569,7 @@ if [[ "$(sed -n '3,$p' <<< "${out}")" == "also: lead l blocks s t"$'\n'"also: le
 else echo "FAIL the wait's also: lines: ${out}"; fails=$((fails + 1)); fi
 expect_conductor "a working conductor's wait with no blocked dependant" "wait conduct-e1" no e1 "*" \
   "item stories/l.md 'status: ready' 'kind: lead'" \
-  "item stories/s.md 'status: ready' 'kind: code' 'depends_on: [l]'"
+  "item stories/s.md 'status: ready' 'kind: code' 'epic: e1' 'depends_on: [l]'"
 if [[ "${out}" != *"also:"* ]]; then echo "ok   no also: line when no blocked story depends on the lead story"
 else echo "FAIL an also: line with no blocked story depending on the lead story: ${out}"; fails=$((fails + 1)); fi
 
@@ -1098,6 +1098,59 @@ if [[ "${waits}" == yes && "${out}" == *"epic e: could not write its state in "*
   echo "ok   conduct whose epic lock is held leaves the epic later, says why, and exits 0"; else
   echo "FAIL conduct whose epic lock is held: waits on you '${waits}': ${out}"; fails=$((fails + 1)); fi
 rm -rf "${dir}"
+
+# next with an epic's conductor working and a ready story with no epic starts the backlog's conductor
+# (conduct, against a herdr stub that logs each call and lists the agents it started), and still waits
+# on the epic's. While the backlog report is newer than every story and epic, it starts none and says why.
+dir="$(mktemp -d)" || { echo "mktemp -d failed" >&2; exit 1; }
+[ -d "${dir}" ] || { echo "mktemp -d failed" >&2; exit 1; }
+(cd "${dir}" && git init -q && mkdir -p bin .swarm/state && item epics/e1.md 'status: active' \
+  && item stories/s1.md 'status: review' 'kind: code' 'epic: e1' && item stories/b1.md 'status: ready' 'kind: code')
+echo "w:7 conduct-e1" > "${dir}/.swarm/state/tab"; echo "conduct-e1 w:7" > "${dir}/agents"
+printf '#!/bin/sh\nA="%s"\n' "${dir}/agents" > "${dir}/bin/herdr"
+cat >> "${dir}/bin/herdr" <<'STUB'
+echo "$*" >> "$A.log"
+case "$1 $2" in
+  "--version ") echo "herdr 0.9.5" ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:8"}}}' ;;
+  "agent start") echo "$3 w:8" >> "$A" ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+                     END { print "]}}" }' "$A" ;;
+esac
+STUB
+chmod +x "${dir}/bin/herdr"
+nextb() { : > "${dir}/agents.log"; (cd "${dir}" && HERDR_ENV=1 CLAUDE_CONFIG_DIR="${dir}/cc" PATH="${dir}/bin:${PATH}" bash "${SWARM}" next 2>/dev/null); }
+echo report > "${dir}/.swarm/conduct-backlog.report.md"; touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conductor started: no story or epic changed after"* ]] \
+    && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next with the backlog report newer than the board starts no backlog conductor, says why, and waits"; else
+  echo "FAIL next with the backlog report newer than the board: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+rm "${dir}/.swarm/conduct-backlog.report.md"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"started: conduct-backlog-"*"(swarm.sh conduct --backlog)"* ]] \
+    && grep -q '^agent start conduct-backlog-' "${dir}/agents.log"; then
+  echo "ok   next with an epic conductor working and a ready story with no epic starts the backlog conductor and still waits"; else
+  echo "FAIL next with a ready story with no epic and no backlog conductor: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" != *"conduct --backlog"* ]] && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next with the backlog conductor running starts no second one"; else
+  echo "FAIL next with the backlog conductor running: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# A report that lists b1 under not started: while b1's worktree is still there (its build died) stops
+# a new backlog conductor even once the board has changed.
+echo "conduct-e1 w:7" > "${dir}/agents"; mkdir -p "${dir}-wt/b1"
+echo "not started: b1 (build died)" > "${dir}/.swarm/conduct-backlog.report.md"; touch -t 202001010000 "${dir}/.swarm/conduct-backlog.report.md"; touch "${dir}/docs/stories/b1.md"
+out="$(nextb)"
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conductor started: "*" lists b1 under not started: and its worktree is still there"* ]] \
+    && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next with a died build of b1 in the backlog report starts no backlog conductor and says why"; else
+  echo "FAIL next with a died build of b1 in the backlog report: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+rm -rf "${dir}" "${dir}-wt"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

@@ -264,7 +264,7 @@ merge_pr() {
   # background, so set -e holds inside it; it never fails the merge.
   if [[ "${only}" == --board && -n "${oid}" ]]; then
     ( set -e; ready_tell "${url}" "${ready}" ) &
-    wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
+    wait $! || echo "warning: telling or starting conductors for what ${url} made ready failed (exit $?)"
   fi
   if [[ -z "${only}" ]]; then
     # In the background, so set -e holds inside it; its die line is reconcile's, as main would log it.
@@ -289,17 +289,62 @@ board_ready() {
   done < <(board stories)
 }
 
+# conduct_ready — start a conductor, as swarm.sh conduct does, for each group of stories board_ready
+# lists (an active epic's, or with no epic the backlog's) that has none running. fix-main stories are
+# left out: every conductor builds one first, and next names it. It starts no backlog conductor while
+# backlog_stop says why not, and nothing outside herdr: it prints what to run instead. A start that
+# fails is a warning. Its own lines go to stdout, start_conductor's to stderr.
+conduct_ready() {
+  local e name arg ready
+  ready="$(board_ready | awk '$1 !~ /^fix-main-/')"
+  while read -r e <&3; do
+    [[ -n "${e}" ]] || continue
+    if [[ "${e}" == - ]]; then name="$(conductor_name backlog)"; arg=--backlog; else name="$(conductor_name "${e}")"; arg="${e}"; fi
+    [[ -z "$(agent_field "${name}" pane_id)" ]] || continue
+    # shellcheck disable=SC2046 # slugs, [a-z0-9-]
+    if [[ "${e}" == - ]] && backlog_stop $(awk '$2 == "-" { print $1 }' <<< "${ready}"); then continue; fi
+    if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
+    ( set -e; start_conductor "${arg}" ) >&2 &
+    if wait $!; then echo "started: ${name} (swarm.sh conduct ${arg})"; else echo "warning: swarm.sh conduct ${arg} failed (exit $?); run it yourself"; fi
+  done 3< <(awk '{ print $2 }' <<< "${ready}" | sort -u)
+}
+
+# backlog_stop <slug>... — prints why no backlog conductor may start for these ready one-offs and
+# returns 0, as /swarm-dev:swarm's story and resume steps stop (docs/reference.md § The backlog
+# conductor): its report is newer than every story and epic, or lists one whose worktree is still
+# there under not started: (a build that died). Returns 1 when one may start.
+backlog_stop() {
+  local report="${PROJECT_DIR}/.swarm/conduct-backlog.report.md" s
+  [[ -f "${report}" ]] || return 1
+  if [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" \( -name '*.md' -o -type d \) -newer "${report}" 2>/dev/null)" ]]; then
+    echo "no backlog conductor started: no story or epic changed after ${report}, so a new one would stop as the last did; read it"; return 0
+  fi
+  for s in "$@"; do
+    if one_off_started "${s}" && grep -qE "not started: ${s}([ (]|\$)" "${report}"; then
+      echo "no backlog conductor started: ${report} lists ${s} under not started: and its worktree is still there, so its build died; clear it first"; return 0
+    fi
+  done
+  return 1
+}
+
 # ready_tell <url> <before> — once merge --board has landed <url>: run reconcile, which clears any
 # merged build before it pulls the main checkout, then for each epic with stories buildable now that
 # <before> (board_ready's lines, read before the merge) does not list, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now. With no conductor
-# running it says next will. With no upstream nothing is pulled, so nothing is new. A failed
-# reconcile or tell is a warning: the merge has landed either way.
+# running it says so. Then conduct_ready starts the conductors ready work lacks. With no upstream
+# nothing is pulled, so nothing is new and nothing starts. A failed reconcile or tell is a warning, and
+# a reconcile that fails or leaves the checkout behind its upstream tells and starts nothing, since the
+# board is stale: the merge has landed either way.
 ready_tell() {
   local new e name of slugs note
   has_upstream || return 0
   ( set -e; reconcile ) &
   wait $! || { echo "warning: reconcile failed (exit $?), so no conductor was told what $1 made ready"; return 0; }
+  # reconcile can succeed without pulling (a PR in review it could not read, a failed fetch). By now
+  # the upstream holds the merge: CI on it has been waited for.
+  if ! git -C "${PROJECT_DIR}" fetch -q 2>/dev/null || [[ -n "$(git -C "${PROJECT_DIR}" rev-list -1 'HEAD..@{upstream}')" ]]; then
+    echo "warning: the main checkout has not pulled its upstream, so no conductor was told what $1 made ready"; return 0
+  fi
   new="$(comm -13 <(sort <<< "$2") <(board_ready | sort))"
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
@@ -307,7 +352,7 @@ ready_tell() {
     slugs="$(awk -v e="${e}" '$2 == e { print $1 }' <<< "${new}" | paste -sd' ' -)"
     if [[ "${e}" == - ]]; then name="$(conductor_name backlog)"; of="with no epic"; else name="$(conductor_name "${e}")"; of="of epic ${e}"; fi
     if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
-      echo "ready now: ${slugs} (${of}); no conductor runs for it, so swarm.sh next starts it"; continue
+      echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
     fi
     note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
     printf 'The board PR %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \
@@ -316,6 +361,7 @@ ready_tell() {
     wait $! || echo "warning: could not note ${name} that ${slugs} are ready (exit $?); it finds them on its next pass"
     rm -f "${note}"
   done 3< <(awk '{ print $2 }' <<< "${new}" | sort -u)
+  conduct_ready
 }
 
 # run_fail_lines <owner/repo> <run id> <end> — the FAIL lines of a run's failed jobs, ANSI colour and

@@ -116,7 +116,16 @@ STUB
 printf '#!/bin/sh\nA="%s"\n' "${ROOT}/agents" > "${ROOT}/bin/herdr"
 cat >> "${ROOT}/bin/herdr" <<'STUB'
 [ ! -e "$A.fail" ] || exit 1
+echo "$*" >> "$A.log"
 case "$1 $2" in
+  # Enough for conduct to start a conductor: its agent joins the list, in pane w:new.
+  "--version ") echo "herdr 0.9.5" ;;
+  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
+  "workspace create") echo '{"result":{"workspace":{"workspace_id":"w"},"tab":{"tab_id":"t0"}}}' ;;
+  "tab create") echo '{"result":{"root_pane":{"pane_id":"w:new"}}}' ;;
+  "agent start") echo "$3 w:new" >> "$A" ;;
+  "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                      END { print "]}}" }' "$A" ;;
@@ -1198,14 +1207,20 @@ git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'
 # The board PR adds r1, readies r2, and adds b1 with no epic, whose backlog conductor is not running.
 put docs/stories/r1.md "status: ready" "kind: code" "epic: e"; put docs/stories/r2.md "status: ready" "kind: code" "epic: e"
 put docs/stories/b1.md "status: ready" "kind: code"; land
-fresh; rm "${S}"; merge --board "${URL}"
+fresh; rm "${S}"; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
 is "a board merge that readies r1 and r2: exits 0" 0 "${rc}"
 is "a board merge that readies r1 and r2: one note to conduct-e" 1 "$(grep -c '^From the lead' "${INBOX}" 2>/dev/null || true)"
 check "a board merge that readies r1 and r2: the note names both, not r0" \
   grep -qF "The board PR ${URL} just merged, and these stories of epic e are ready now: r1 r2. Start them now" "${INBOX}"
 check "a board merge that readies r1 and r2: says it noted conduct-e" said "noted conduct-e"
 check "a board merge that readies a backlog story with no conductor: says next starts it" \
-  said "ready now: b1 (with no epic); no conductor runs for it, so swarm.sh next starts it"
+  said "ready now: b1 (with no epic); no conductor runs for it yet"
+# No conductor holds b1, so the merge starts the backlog's (conduct, against the herdr stub); conduct-e runs already.
+check "a board merge that readies a backlog story, with only an epic conductor running: starts conduct --backlog" \
+  grep -q "^agent start conduct-backlog-proj-[0-9a-f]\{6\} " "${ROOT}/agents.log"
+check "a board merge that readies a backlog story: says it started the backlog conductor" said "(swarm.sh conduct --backlog)"
+check "a board merge that readies stories of an epic whose conductor runs: starts no second one" \
+  bash -c "! grep -q '^agent start conduct-e ' '${ROOT}/agents.log' && ! grep -qF 'swarm.sh conduct e' '${ROOT}/out'"
 fresh; rm "${S}"; merge --board "${URL}"
 is "a board merge that readies nothing: exits 0" 0 "${rc}"
 is "a board merge that readies nothing: no note" 1 "$(grep -c '^From the lead' "${INBOX}")"
@@ -1222,12 +1237,34 @@ git -C "${ROOT}/up" rm -q docs/stories/q.md; put docs/stories/r5.md "status: rea
 fresh; rm "${S}"; merge --board "${URL}"
 check "a board merge whose pull deletes q, in review: reconcile finishes q" logged "^reconcile q ok"
 check "a board merge whose pull deletes q, in review: still notes r5" grep -qF "these stories of epic e are ready now: r5." "${INBOX}"
+# A story of a draft epic is not ready to build: no conductor starts for it.
+put docs/epics/d.md "status: draft"; put docs/stories/d1.md "status: ready" "kind: code" "epic: d"; land
+fresh; rm "${S}"; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"
+is "a board merge that readies a draft epic's story: exits 0" 0 "${rc}"
+check "a board merge that readies a draft epic's story: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "a board merge with the backlog conductor running: starts no second one" bash -c "! grep -qF 'conduct --backlog' '${ROOT}/out'"
 put docs/stories/r3.md "status: ready" "kind: code" "epic: e"; land
 rm -rf "${P}/.swarm/inbox"; : > "${P}/.swarm/inbox"   # the note cannot be written
 fresh; rm "${S}"; merge --board "${URL}"
 is "a board merge whose tell fails: exits 0" 0 "${rc}"
 check "a board merge whose tell fails: warns" said "warning: could not note conduct-e that r3 are ready"
-rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
+# A reconcile that fails may leave the board unpulled: the merge starts no conductor from it, though
+# b1 is ready and the backlog's is gone.
+rm -f "${P}/.swarm/inbox"; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"; mkdir "${P}/.swarm/reconcile.lock"
+fresh; rm "${S}"; : > "${ROOT}/agents.log"; merge HERDR_ENV=1 HERDR_PANE_ID=w:lead SWARM_RECONCILE_WAIT=1 --board "${URL}"
+rmdir "${P}/.swarm/reconcile.lock"
+is "a board merge whose reconcile fails: exits 0" 0 "${rc}"
+check "a board merge whose reconcile fails: warns" said "warning: reconcile failed"
+check "a board merge whose reconcile fails: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log' && ! grep -qF 'conduct --backlog' '${ROOT}/out'"
+# A fetch that fails once the PR has merged leaves the checkout unpulled: no note and no start either.
+put docs/stories/r6.md "status: ready" "kind: code" "epic: e"; land
+fresh; rm "${S}"; : > "${ROOT}/agents.log"; echo "git -C '${P}' remote set-url origin '${ROOT}/nowhere.git'" > "${FX}/on-merge"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; git -C "${P}" remote set-url origin "${ROOT}/origin.git"
+is "a board merge whose checkout is not pulled: exits 0" 0 "${rc}"
+check "a board merge whose checkout is not pulled: warns" said "warning: the main checkout has not pulled its upstream"
+check "a board merge whose checkout is not pulled: notes nothing of r6" bash -c "! grep -qF 'ready now: r6' '${INBOX}'"
+check "a board merge whose checkout is not pulled: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log' && ! grep -qF 'conduct --backlog' '${ROOT}/out'"
+git -C "${P}" branch -q --unset-upstream; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

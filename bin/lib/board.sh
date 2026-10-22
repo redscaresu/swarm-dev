@@ -348,13 +348,14 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
-# next_report — swarm.sh next: next_step's step (with conductors_queued's lines after its why),
+# next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
+# conductors_queued's, after its why),
 # then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 next_report() {
-  local tmp step idle queued rest
+  local tmp step idle queued rest started
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -f '${tmp}'" EXIT
@@ -363,6 +364,11 @@ next_report() {
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
   queued="$(conductors_queued)"
+  # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready).
+  if [[ "${step}" == "wait "* ]]; then
+    started="$(conduct_ready)" || started="warning: starting conductors for ready work failed (exit $?)"
+    queued="${started}${started:+${queued:+$'\n'}}${queued}"
+  fi
   if [[ -n "${queued}" ]]; then
     rest="$(sed -n '3,$p' <<< "${step}")"
     step="$(sed -n 1,2p <<< "${step}")"$'\n'"${queued}${rest:+$'\n'"${rest}"}"

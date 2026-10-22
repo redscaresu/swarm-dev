@@ -271,6 +271,18 @@ deleting `.swarm/conduct-backlog.report.md`. A fix that touches no story or epic
 that turns CI on the base green, does not clear the stop either: once the cause is fixed, delete
 `.swarm/conduct-backlog.report.md`.
 
+Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge
+--board` lands, once it has sent its notes, and from `swarm.sh next` when its step is `wait
+<conductor>`. For each active epic with a ready story an agent builds (`kind` code, docs or chore)
+and no conductor running, it runs `swarm.sh conduct <epic>`; for such stories with no epic,
+`swarm.sh conduct --backlog`. A draft, `later` or `split` epic's stories start nothing, and neither
+does a `fix-main-*` story, which every running conductor builds first. It starts no backlog
+conductor, and says why, while its report is newer than every story and epic or lists a one-off
+whose worktree is still there under `not started:` (the stops above). Outside herdr it starts nothing and
+prints the `swarm.sh conduct` to run. Each start prints `started: <conductor> (swarm.sh conduct
+<arg>)`, which `next` puts after the wait's why, so its first line is still the step. A start that
+fails prints a warning and changes neither command's exit status.
+
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with
 `zsh -f` (no rc file runs) holding only:
@@ -1247,8 +1259,10 @@ With `--board`, when the main checkout has an upstream, it runs `swarm.sh reconc
 pulls the board. For each epic the pull gave newly ready stories, it sends the epic's running
 conductor one note naming them (`swarm.sh tell conduct-<epic> note`; stories with no epic go to the
 backlog conductor) and asks it to start them now, within its builder limits. When no conductor
-runs, it prints a `ready now:` line saying `next` will start them. A reconcile or note that fails
-prints a warning; the merge's exit status does not change. It
+runs, it prints a `ready now:` line, then starts one (§ The backlog conductor says when). A
+reconcile, note or start that fails prints a warning. A reconcile that fails, or that leaves the main
+checkout behind its upstream, sends no note and starts nothing, since the board was not pulled. The
+merge's exit status does not change either way. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
 one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
 `touches: [.]`: the fix may change whatever turns the base green) into
