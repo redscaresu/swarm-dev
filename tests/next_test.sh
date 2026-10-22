@@ -1118,9 +1118,10 @@ case "$1 $2" in
   "agent start") echo "$3 w:8" >> "$A" ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"working\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
+  "agent list") awk -v s="$(cat "$A.status" 2>/dev/null || echo working)" 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, s, $2 }
                      END { print "]}}" }' "$A" ;;
+  "agent read") cat "$A.screen" 2>/dev/null ;;
 esac
 STUB
 chmod +x "${dir}/bin/herdr"
@@ -1150,6 +1151,13 @@ if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conducto
     && ! grep -q '^agent start' "${dir}/agents.log"; then
   echo "ok   next with a died build of b1 in the backlog report starts no backlog conductor and says why"; else
   echo "FAIL next with a died build of b1 in the backlog report: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# conduct-e1 stopped on an API error: a backlog conductor started now would stop on it too.
+rm -rf "${dir}-wt" "${dir}/.swarm/conduct-backlog.report.md"; echo idle > "${dir}/agents.status"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${dir}/agents.screen"
+out="$(nextb)"
+if [[ "$(sed -n 2p <<< "${out}")" == "stuck: "* && "${out}" != *"conduct --backlog"* ]] && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next on a stuck: wait starts no conductor"; else
+  echo "FAIL next on a stuck: wait: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
 rm -rf "${dir}" "${dir}-wt"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

@@ -348,14 +348,13 @@ idle_lines() {
   printf '%s\n' "${found}" | sed 's/^/  out-of-scope finding: /'
 }
 
-# next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait, then
-# conductors_queued's, after its why),
-# then idle_lines' for it. Both are worked out first
+# next_report — swarm.sh next: next_step's step (with conduct_ready's lines on a wait not auth: or
+# stuck:, then conductors_queued's, after its why), then idle_lines' for it. Both are worked out first
 # and written in one go with SIGPIPE ignored and a write error dropped, so a reader that stops after
 # the step (`next | head -1`, `| grep -q`) leaves next exiting 0 with no warning. next_step runs in
 # this shell into a temp file, never in a $(...), which turns errexit off: a failure in it stops next.
 next_report() {
-  local tmp step idle queued rest started
+  local tmp step idle queued rest started why
   tmp="$(mktemp)" || die "next: cannot make a temp file"
   # shellcheck disable=SC2064 # the path is fixed now
   trap "rm -f '${tmp}'" EXIT
@@ -364,8 +363,10 @@ next_report() {
   # Every working conductor's queued: lines go after the why, here alone: dash and status read
   # next_step every frame, and these cost gh calls.
   queued="$(conductors_queued)"
-  # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready).
-  if [[ "${step}" == "wait "* ]]; then
+  # Ready work no conductor holds gets one now, named after the wait's why (conduct_ready), but not
+  # on an auth: or stuck: wait: a new conductor would stop on the same expired login or API error.
+  why="$(sed -n 2p <<< "${step}")"
+  if [[ "${step}" == "wait "* && "${why}" != auth:* && "${why}" != stuck:* ]]; then
     started="$(conduct_ready)" || started="warning: starting conductors for ready work failed (exit $?)"
     queued="${started}${started:+${queued:+$'\n'}}${queued}"
   fi

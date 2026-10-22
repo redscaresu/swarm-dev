@@ -282,41 +282,48 @@ merge_pr() {
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
 }
 
-# board_ready [--review] — each story next_step would build now (buildable_story) whose build has
-# not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no epic. With
-# --review, each story in review too, worktree or not (reconcile may send one back to ready, which no
-# board PR did), and an "@<epic>" line for each active epic.
+# board_ready [--review|--started] — each story next_step would build now (buildable_story) whose
+# build has not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no
+# epic. With --started, started ones too. With --review, each story in review too, worktree or not
+# (reconcile may send one back to ready, which no board PR did), and an "@<epic>" line for each
+# active epic.
 board_ready() {
-  local f e
+  local f e mode="${1:-}"
   while IFS= read -r f; do
-    if [[ -n "${1:-}" && "$(fm "${f}" status)" == review ]] || { buildable_story "${f}" && ! one_off_started "$(basename "${f}" .md)"; }; then
+    if [[ "${mode}" == --review && "$(fm "${f}" status)" == review ]] \
+      || { buildable_story "${f}" && { [[ "${mode}" == --started ]] || ! one_off_started "$(basename "${f}" .md)"; }; }; then
       e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"
     fi
   done < <(board stories)
-  [[ -n "${1:-}" ]] || return 0
+  [[ "${mode}" == --review ]] || return 0
   while IFS= read -r f; do
     if [[ "$(fm "${f}" status)" == active ]]; then echo "@$(basename "${f}" .md)"; fi
   done < <(board epics)
 }
 
+# group_conductor <epic> — the conductor of board_ready's epic column: - is the backlog's.
+group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conductor_name "$1"; fi; }
+
 # conduct_ready — start a conductor, as swarm.sh conduct does, for each group of buildable stories
-# (buildable_story: an active epic's, or with no epic the backlog's, started one-offs included) that
-# has none running. fix-main stories are left out: every conductor builds one first, and next names
-# it. Nothing starts while herdr cannot list its agents. It starts no backlog conductor while
-# backlog_stop says why not, and nothing outside herdr: it prints what to run instead. A start that
-# fails is a warning naming start_conductor's last line; its other output is dropped, so next's first
-# line stays the step even with stderr merged.
+# (board_ready --started: an active epic's, or with no epic the backlog's) that has none running.
+# Only the lead starts one: an agent (SWARM_AGENT set, as a conductor running merge --board is) starts
+# nothing, so no conductor starts another from its own pane. fix-main stories are left out: every
+# conductor builds one first, and next names it. Inside herdr nothing starts while herdr cannot list
+# its agents. It starts no backlog conductor while backlog_stop says why not, and nothing outside
+# herdr: it prints what to run instead. A start that fails is a warning naming start_conductor's
+# last line; its other output is dropped, so next's first line stays the step even with stderr merged.
 conduct_ready() {
-  local e name arg ready log f
-  ready="$(while IFS= read -r f; do
-    if buildable_story "${f}"; then e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"; fi
-  done < <(board stories) | awk '$1 !~ /^fix-main-/')"
+  local e name arg ready log listed=1
+  [[ -z "${SWARM_AGENT:-}" ]] || return 0
+  ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
-  if ! herdr agent list >/dev/null 2>&1; then echo "warning: herdr cannot list its agents, so no conductor was started for ready work"; return 0; fi
+  herdr agent list >/dev/null 2>&1 || listed=
+  if [[ -z "${listed}" && "${HERDR_ENV:-}" == 1 ]]; then echo "warning: herdr cannot list its agents, so no conductor was started for ready work"; return 0; fi
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
-    if [[ "${e}" == - ]]; then name="$(conductor_name backlog)"; arg=--backlog; else name="$(conductor_name "${e}")"; arg="${e}"; fi
-    [[ -z "$(agent_field "${name}" pane_id)" ]] || continue
+    name="$(group_conductor "${e}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
+    # Outside herdr with no herdr to ask, no conductor can be running.
+    [[ -z "${listed}" || -z "$(agent_field "${name}" pane_id)" ]] || continue
     # shellcheck disable=SC2046 # slugs, [a-z0-9-]
     if [[ "${e}" == - ]] && backlog_stop $(awk '$2 == "-" { print $1 }' <<< "${ready}"); then continue; fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
@@ -358,8 +365,10 @@ backlog_stop() {
 # checkout still without <oid>, a herdr that cannot list its agents, or a failed tell is a warning,
 # and the first two start nothing either: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" new rc why dief e name of slugs note
+  local url="$1" oid="$2" new rc why dief e name of slugs note lead=
   has_upstream || return 0
+  # An agent's merge starts no conductor (conduct_ready): the lead's next does.
+  [[ -z "${SWARM_AGENT:-}" ]] || lead=", and the lead's swarm.sh next starts one"
   # A die file of its own: reconcile's die line must not become the merge's logged outcome.
   dief="$(mktemp "${TMPDIR:-/tmp}/swarm-die.XXXXXX")" || dief=/dev/null
   # shellcheck disable=SC2034 # read in another file
@@ -388,12 +397,12 @@ ready_tell() {
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
     slugs="$(awk -v e="${e}" '$2 == e { print $1 }' <<< "${new}" | paste -sd' ' -)"
-    if [[ "${e}" == - ]]; then name="$(conductor_name backlog)"; of="with no epic"; else name="$(conductor_name "${e}")"; of="of epic ${e}"; fi
+    name="$(group_conductor "${e}")"; of="of epic ${e}"; [[ "${e}" != - ]] || of="with no epic"
     if ! herdr agent list >/dev/null 2>&1; then
       echo "warning: herdr cannot list its agents, so ${name} was not told that ${slugs} are ready"; continue
     fi
     if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
-      echo "ready now: ${slugs} (${of}); no conductor runs for it yet"; continue
+      echo "ready now: ${slugs} (${of}); no conductor runs for it yet${lead}"; continue
     fi
     note="$(mktemp "${TMPDIR:-/tmp}/swarm-note.XXXXXX")"
     printf 'The board PR %s just merged, and these stories %s are ready now: %s. Start them now, within your builder limits, rather than on your next pass.\n' \

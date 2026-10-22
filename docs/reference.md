@@ -273,7 +273,9 @@ that turns CI on the base green, does not clear the stop either: once the cause 
 
 Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge
 --board` lands, once it has sent its notes, and from `swarm.sh next` when its step is `wait
-<conductor>`. For each active epic with a ready story an agent builds (`kind` code, docs or chore)
+<conductor>`, unless the wait's why is `auth:` or `stuck:`: the expired login or API error would stop
+a new conductor as well. Only the lead starts them. A conductor's own `merge --board` starts none and
+says the lead's `swarm.sh next` will. For each active epic with a ready story an agent builds (`kind` code, docs or chore)
 and no conductor running, it runs `swarm.sh conduct <epic>`; for such stories with no epic,
 `swarm.sh conduct --backlog`. A draft, `later` or `split` epic's stories start nothing, and neither
 does a `fix-main-*` story, which every running conductor builds first. It starts no backlog
