@@ -1274,44 +1274,40 @@ wait_conductor() {
 # is_tell_kind <word> — true for a kind tell takes: findings, nudge, resume or note.
 is_tell_kind() { case "$1" in findings|nudge|resume|note) return 0 ;; esac; return 1; }
 
-# NOTE_WAKE_SECS: the least time between two prompts note_wake sends one conductor, so a burst of
-# notes wakes it once.
-NOTE_WAKE_SECS=60
-
-# note_wake <name> <inbox> — prompt the conductor <name> to read <inbox> now when its turn has ended
-# (upgrade_state's idle: idle, or busy only with background jobs), at most once each NOTE_WAKE_SECS
-# (note_wake_claim); its waits can run long before one returns. Sent once, not confirmed, so tell
-# returns at once. One mid-turn reads the inbox when its wait returns, as before. A prompt that fails
-# is warned of and gives its claim back: the note is in the inbox either way.
+# note_wake <name> <inbox> <pane> — prompt the conductor <name> to process <inbox> now, as its brief
+# says, when its turn has ended (upgrade_state's idle: idle, or busy only with background jobs): its
+# waits can run long before one returns. Once per inbox: the first note to find its turn ended claims
+# <inbox>.woke, and the note that starts a new inbox clears it (tell_agent), each under note_lock, so
+# of two notes at once one wins. Sent once, not confirmed, so tell returns at once. None goes to one mid-turn
+# (it reads the inbox when its wait returns), one that wrote its report (nobody reads its inbox), or
+# one paused for upgrade's handover (<inbox>.upgrade, under an hour old). A prompt that fails is warned
+# of and gives the claim back: the note is in the inbox either way.
 note_wake() {
-  local pane f rc=0
-  note_wake_due "$2" || return 0
-  pane="$(agent_field "$1" pane_id)"
-  [[ "$(upgrade_state "$1" "${pane}")" == idle ]] || return 0
-  (note_wake_claim "$2") || return 0
-  f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")" || return 0
-  printf 'From swarm: the lead left you a note in %s. Read your inbox now, act on it, delete it, then go back to your waits.\n' "$2" > "${f}"
-  (deliver_prompt "$1" "${f}" "${pane}" once) || rc=$?
-  rm -f "${f}"
+  local f rc=0
+  [[ ! -f "$(conductor_report "$1")" && -z "$(find "$2.upgrade" -mmin -60 2>/dev/null)" && ! -e "$2.woke" ]] || return 0
+  [[ "$(upgrade_state "$1" "$3")" == idle ]] || return 0
+  note_lock "$2" || return 0
+  (set -C; : > "$2.woke") 2>/dev/null || rc=1
+  rmdir "$2.lock"
+  [[ ${rc} -eq 0 ]] || return 0
+  if f="$(mktemp "${TMPDIR:-/tmp}/swarm-wake.XXXXXX")"; then
+    printf 'From swarm: the lead left you a note in %s. Process your inbox now, as your brief says: if %s is there, read it, act on it and delete it first; then mv the inbox to %s, read that copy, act on it and delete it. Then go back to your waits.\n' "$2" "${2%.md}.reading.md" "${2%.md}.reading.md" > "${f}"
+    (deliver_prompt "$1" "${f}" "$3" once) || rc=$?
+    rm -f "${f}"
+  else rc=1; fi
   [[ ${rc} -eq 0 ]] || { rm -f "$2.woke"; echo "warning: ${1} was not prompted to read its inbox; it reads it after its wait" >&2; }
 }
 
-# note_wake_due <inbox> — succeed when no wake prompt for <inbox> was claimed in the last NOTE_WAKE_SECS.
-note_wake_due() {
-  local last
-  last="$(cat "$1.woke" 2>/dev/null)" || last=0
-  [[ "${last}" =~ ^[0-9]+$ ]] || last=0
-  (( $(date +%s) - last >= NOTE_WAKE_SECS ))
-}
-
-# note_wake_claim <inbox> — claim the next wake prompt for <inbox>: under its lock, so of two notes at
-# once only one sends it, record now in <inbox>.woke when one is due (note_wake_due); fails otherwise.
-note_wake_claim() {
-  local rc=0
-  state_lock "$1.woke.lock"
-  { note_wake_due "$1" && date +%s > "$1.woke"; } 2>/dev/null || rc=1
-  rmdir "$1.woke.lock"
-  return "${rc}"
+# note_lock <inbox> — take <inbox>.lock (mkdir through perl, as state_lock), clearing one a killed tell
+# left over a minute ago; fails after 5 s.
+note_lock() {
+  local i
+  for ((i = 0; i < 50; i++)); do
+    perl -e 'mkdir shift or exit 1' "$1.lock" && return 0
+    find "$1.lock" -maxdepth 0 -mmin +1 -exec rmdir {} \; 2>/dev/null
+    sleep 0.1
+  done
+  return 1
 }
 
 # tell_agent <slug> <kind> <file> — send an agent a file's contents through deliver_prompt (it
@@ -1328,13 +1324,14 @@ note_wake_claim() {
 # which the conductor reads after each wait (conduct_brief), busy or not; one whose turn has ended
 # is also prompted to read it now (note_wake).
 tell_agent() {
-  local kind="$2" f="$3" name msg state since inbox rc
+  local kind="$2" f="$3" name msg state since inbox rc pane locked
   is_tell_kind "${kind}" || die "tell: the kind must be findings, nudge or resume, not '${kind}' (or note, to a conductor) (swarm.sh tell <slug> <kind> <file>)"
   [[ -f "${f}" ]] || die "no such file '${f}'"
   name="$(agent_name "$1")"
   [[ "${kind}" != note || ( "${name}" == conduct-* && ! "${name}" =~ -done[0-9]*$ ) ]] \
     || die "${name}: a note goes only to a conductor (conduct-<epic>); tell a builder findings, nudge or resume"
-  if [[ -z "$(agent_field "${name}" pane_id)" ]]; then
+  pane="$(agent_field "${name}" pane_id)"
+  if [[ -z "${pane}" ]]; then
     [[ -z "$(agent_field "${name}" agent_status any)" ]] || die "${name}: the agent holding this name is not one this project started; it is never told from here"
     die "could not reach ${name}: no agent this project started holds the name; is its pane still open?"
   fi
@@ -1343,14 +1340,20 @@ tell_agent() {
     # Built first, then one append: the conductor's mv between the open and a slow write would
     # take the note into a copy it has already read.
     msg="$(printf 'From the lead (%s):\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cat "${f}")"
+    # A note alone in the inbox once appended started a new one (the conductor moved the last away
+    # to read it, before or during this append), which no wake was sent for (note_wake). Under the
+    # lock no other note writes it. Without the lock the note still lands, and wakes no one.
+    locked=""; ! note_lock "${inbox}" || locked=1
     printf '%s\n\n' "${msg}" >> "${inbox}"
+    [[ $(wc -c < "${inbox}" 2>/dev/null || echo 0) -ne $(printf '%s\n\n' "${msg}" | wc -c) ]] || rm -f "${inbox}.woke"
+    [[ -z "${locked}" ]] || rmdir "${inbox}.lock"
     queued_sent "${f}"   # a queued: line sent is one watch and next send no more
-    note_wake "${name}" "${inbox}"
+    [[ -z "${locked}" ]] || note_wake "${name}" "${inbox}" "${pane}"
     echo "noted ${name}"; return
   fi
   state="$(read_state "${name}")"
   # A turn that stopped on an API error has ended, though open background shells keep its session busy.
-  [[ "${state}" != busy ]] || ! api_stopped "${name}" "$(agent_field "${name}" pane_id)" || state=idle
+  [[ "${state}" != busy ]] || ! api_stopped "${name}" "${pane}" || state=idle
   case "${state}" in
     idle|herdr:idle|herdr:done) ;;
     busy|herdr:working) die "${name} is still working; run \`swarm.sh wait $1\` in the background, then tell it" ;;
