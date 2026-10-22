@@ -129,17 +129,54 @@ left() { # <slug> — which of its worktree, local story/<slug> and origin's are
 attempts() { fmv "$1" attempts 2>/dev/null || true; }
 U="https://github.com/o/proj/pull"
 echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\",\"headRefOid\":\"feed1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
-# A bare close of a builder whose PR is open closes the builder alone: no PR closed, the branch and
-# worktree kept, nothing counted, and the PR named.
+# A bare close of a builder whose PR is open closes the builder alone and puts the story in review
+# with the PR, logged as a review: no PR closed, the branch and worktree kept, nothing counted.
 item o1 "status: ready" "kind: code"; started o1 w:p1
 close o1
 is "close o1, its PR open: its pane closes, no PR is closed, attempts: unset, its build kept, the PR named" \
   "closed|0||worktree branch origin|1" \
-  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept: o1 stays in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
+  "$([[ -e "${P}/.swarm/state/o1" ]] && echo open || echo closed)|$(grep -c '^pr close' "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(grep -c "^kept: o1 is in review with its PR ${U}/1, .*swarm.sh close o1 --drop" "${ROOT}/close.out")"
+is "and o1 is in review with prs: its PR, logged as a review" "review|${U}/1|1" \
+  "$(fmv o1 status)|$(fmv o1 prs)|$(grep -c $'\treview\to1\tw:me\tok ('"${U}"'/1)$' "${P}/.swarm/events.tsv")"
 # Its builder closed, the build kept: close o1 --drop still finds the open PR, and clears it all away.
 close o1 --drop
-is "close o1 --drop after the bare close closes its PR, counts the attempt and clears its build" "1|1|" \
-  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at o1" "${ROOT}/gh.log")|$(attempts o1)|$(left o1)"
+is "close o1 --drop after the bare close closes its PR, counts the attempt, clears its build, and o1 is ready again with no prs:" "1|1||ready|" \
+  "$(grep -c "^pr close ${U}/1 --comment .*attempt 1 at o1" "${ROOT}/gh.log")|$(attempts o1)|$(left o1)|$(fmv o1 status)|$(fmv o1 prs)"
+# With a cause, the kept line's --drop names it. Once the kept PR merges, reconcile finishes the story.
+item o2 "status: ready" "kind: code"; started o2 w:p17; close o2 stalled
+is "close o2 stalled keeps the PR and names the cause in its --drop" "1|review" \
+  "$(grep -c "swarm.sh close o2 stalled --drop closes the PR" "${ROOT}/close.out")|$(fmv o2 status)"
+echo "${U}/1 MERGED" > "${ROOT}/pr-states"
+(cd "${P}" && PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" reconcile >"${ROOT}/close.out" 2>&1) || true
+is "when o2's kept PR merges, reconcile finishes o2 and clears its build" "gone|" \
+  "$([[ -f "${P}/docs/stories/o2.md" && "$(fmv o2 status)" != done ]] && echo "$(fmv o2 status)" || echo gone)|$(left o2)"
+: > "${ROOT}/pr-states"
+# paused, cleared-on-error and impossible would hand the story on and close the PR: refused while it
+# is open, before anything closes.
+item o3 "status: ready" "kind: code" "attempts: 1"; started o3 w:p18
+rc=0; (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close o3 paused >"${ROOT}/close.out" 2>&1) || rc=$?
+is "close o3 paused with its PR open is refused, naming --drop; its pane, build and story stay" "1|1|open|worktree branch origin|code|ready" \
+  "${rc}|$(grep -c 'run swarm.sh close o3 paused --drop for that' "${ROOT}/close.out")|$([[ -e "${P}/.swarm/state/o3" ]] && echo open || echo closed)|$(left o3)|$(fmv o3 kind)|$(fmv o3 status)"
+is "and main logs the refusal, not close:paused ok" "0|1" \
+  "$(grep -c $'\tclose:paused\to3\tw:me\tok$' "${P}/.swarm/events.tsv")|$(grep -c $'\tclose:paused\to3\tw:me\tclose: o3\'s PR ' "${P}/.swarm/events.tsv")"
+# A pane that cannot be closed keeps the story as it was, and says so.
+touch "${ROOT}/paneclosefail"; close o3; rm "${ROOT}/paneclosefail"
+is "with its pane not closing, close o3 prints not closed: and leaves o3 ready" "1|ready" \
+  "$(grep -c "^not closed: o3's pane is still open" "${ROOT}/close.out")|$(fmv o3 status)"
+# --drop with no local branch still names origin's head, read before it is deleted.
+item o4 "status: ready" "kind: code"; started o4 w:p21
+osha="$(git -C "${ROOT}/origin.git" rev-parse story/o4)"
+git -C "${ROOT}/proj-wt/o4" checkout -q --detach && git -C "${P}" branch -q -D story/o4
+close o4 --drop
+is "close o4 --drop with no local branch prints origin's story/o4 with its head" "1|0" \
+  "$(grep -c "^dropped: story/o4 on origin, head ${osha}$" "${ROOT}/close.out")|$(grep -c "^dropped: story/o4 in " "${ROOT}/close.out")"
+# impossible while a PR merged is refused, --drop or not, naming the merge.
+echo "[{\"number\":3,\"state\":\"MERGED\",\"url\":\"${U}/3\"}]" > "${ROOT}/prs.json"
+item o5 "status: ready" "kind: code"; started o5 w:p22
+rc=0; (cd "${P}" && HERDR_ENV=1 HERDR_PANE_ID=w:me PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" close o5 impossible --drop >"${ROOT}/close.out" 2>&1) || rc=$?
+is "close o5 impossible --drop with a merged PR is refused, naming the merge; its build stays" "1|1|worktree branch origin" \
+  "${rc}|$(grep -c 'a PR on story/o5 merged or is merging' "${ROOT}/close.out")|$(left o5)"
+echo "[{\"number\":1,\"state\":\"OPEN\",\"url\":\"${U}/1\",\"headRefOid\":\"feed1\"},{\"number\":2,\"state\":\"CLOSED\",\"url\":\"${U}/2\"}]" > "${ROOT}/prs.json"
 : > "${ROOT}/gh.log"
 item s1 "status: ready" "kind: code"; started s1 w:p1
 sha="$(git -C "${P}" rev-parse story/s1)"

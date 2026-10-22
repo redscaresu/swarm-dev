@@ -90,7 +90,7 @@ Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swa
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
 | a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
-| an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR; add `--drop` to close the PR and build the story again) |
+| an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it (`swarm.sh close <agent>` keeps its open PR and puts the story in review with it; add `--drop` to close the PR and build the story again) |
 
 ## Watching it
 
