@@ -290,17 +290,29 @@ board_ready() {
 }
 
 # ready_tell <url> <before> — once merge --board has landed <url>: pull the main checkout
-# (pull_board_repo, under reconcile's lock, as reconcile pulls it), then for each epic with stories
+# (pull_board_repo, under reconcile's lock, as reconcile pulls it; reconcile itself when the pull
+# changes an item in review, whose build it clears first), then for each epic with stories
 # buildable now that <before> (board_ready's lines, read before the merge) does not list, send its running conductor (the backlog's, for stories with no epic) one note
 # naming them, to start them now. With no conductor running it says next will. A failed pull or
 # tell is a warning: the merge has landed either way.
 ready_tell() {
-  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" new e name of slugs note
+  local lock="${PROJECT_DIR}/.swarm/reconcile.lock" new e name of slugs note f incoming review=""
   has_upstream || return 0
-  # shellcheck disable=SC2064 # the path is fixed now
-  ( SWARM_LOCK_WAIT="${SWARM_RECONCILE_WAIT:-${RECONCILE_LOCK_WAIT}}" state_lock "${lock}"
-    trap "rmdir '${lock}' 2>/dev/null || true" EXIT
-    pull_board_repo || { echo "warning: cannot pull ${PROJECT_DIR}: ${PULL_WHY}"; exit 1; } ) &
+  git -C "${PROJECT_DIR}" fetch -q || { echo "warning: cannot fetch ${PROJECT_DIR}, so no conductor was told what $1 made ready"; return 0; }
+  # A merged story PR not reconciled yet may delete its file: reconcile clears its build before it pulls.
+  incoming="$(git -C "${PROJECT_DIR}" diff --name-only --no-renames HEAD '@{upstream}')"
+  while IFS= read -r f; do
+    if [[ "$(fm "${f}" status)" == review ]] && grep -qxF -- "${f#"${PROJECT_DIR}"/}" <<< "${incoming}"; then review+=" $(basename "${f}" .md)"; fi
+  done < <(board stories; board epics)
+  if [[ -n "${review}" ]]; then
+    echo "reconcile first: the pull changes${review}, in review"
+    ( set -e; reconcile ) &
+  else
+    # shellcheck disable=SC2064 # the path is fixed now
+    ( SWARM_LOCK_WAIT="${SWARM_RECONCILE_WAIT:-${RECONCILE_LOCK_WAIT}}" state_lock "${lock}"
+      trap "rmdir '${lock}' 2>/dev/null || true" EXIT
+      pull_board_repo || { echo "warning: cannot pull ${PROJECT_DIR}: ${PULL_WHY}"; exit 1; } ) &
+  fi
   wait $! || { echo "warning: the board was not pulled, so no conductor was told what $1 made ready"; return 0; }
   new="$(comm -13 <(sort <<< "$2") <(board_ready | sort))"
   # On fd 3: herdr and the tell below must not read the list.

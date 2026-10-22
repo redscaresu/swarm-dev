@@ -1215,6 +1215,14 @@ put docs/stories/r4.md "status: ready" "kind: code" "epic: e"; land
 fresh; rm "${S}"; echo "git -C '${P}' fetch -q && git -C '${P}' merge -q --ff-only '@{upstream}'" > "${FX}/on-merge"; merge --board "${URL}"
 check "a board merge whose board a reconcile pulled during the CI wait: still notes r4" \
   grep -qF "these stories of epic e are ready now: r4." "${INBOX}"
+# q's PR merged, deleting q.md, and is not reconciled yet: reconcile runs first, so its build is cleared.
+put docs/stories/q.md "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/9"; land
+git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'
+git -C "${ROOT}/up" rm -q docs/stories/q.md; put docs/stories/r5.md "status: ready" "kind: code" "epic: e"; land
+fresh; rm "${S}"; merge --board "${URL}"
+check "a board merge whose pull deletes q, in review: says it reconciles first" said "reconcile first: the pull changes q, in review"
+check "a board merge whose pull deletes q, in review: reconcile finishes q" logged "^reconcile q ok"
+check "a board merge whose pull deletes q, in review: still notes r5" grep -qF "these stories of epic e are ready now: r5." "${INBOX}"
 put docs/stories/r3.md "status: ready" "kind: code" "epic: e"; land
 rm -rf "${P}/.swarm/inbox"; : > "${P}/.swarm/inbox"   # the note cannot be written
 fresh; rm "${S}"; merge --board "${URL}"
