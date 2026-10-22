@@ -271,6 +271,12 @@ mutation_rule() {
   printf '%s' "For a code change, prove each new or changed test can fail: back up the file you fixed with cp, break the fix, see the test fail, then restore it with cp (never git checkout, which drops uncommitted work), and paste each test's FAIL line (the line the run printed, with FAIL and the test's name) into the PR body."
 }
 
+# load_rule <slug> — a builder's cap on load it starts on purpose: 4 CPUs, gone when the check ends.
+load_rule() {
+  local slug="$1"
+  printf '%s' "If you load the machine on purpose (stress loops, parallel test repeats, containers), use at most 4 CPUs in all, across everything you run at once (\`docker run --cpus 4\`, or that many loops). Cap your test runner's parallelism at 4 (its jobs or workers setting) too; it counts toward the same 4. Start each load process itself, with no wrapper that forks, record each \`\$!\`, and give it a marker in its command line (an argument \`${slug}-load\`), or wrap each in \`timeout <seconds>\`. Never start load with run_in_background, which outlives the step so its trap never fires, unless it is wrapped in \`timeout <seconds>\` no longer than the check and you kill it when the check ends. Remove leftovers from an earlier step first (\`docker rm -f \$(docker ps -aq --filter label=swarm=${slug})\`). Name and label every container (\`--name ${slug}-load-<n> --label swarm=${slug}\`), and remove them by that label in the trap, or use \`--rm\` and still remove them by name: killing the \`docker run\` client leaves the container running. Stop and remove what you started as soon as the check ends, with a trap that kills each recorded PID on EXIT, INT and TERM, and never leave it running between steps. Before you end any turn, check that none of it is still running, orphaned children too, which a load script that forks and exits leaves behind (\`ps -p <pids>\`, \`pgrep -f ${slug}-load\`, killing what it finds by PID, \`docker ps --filter label=swarm=${slug}\`). Say in the PR how you loaded the machine."
+}
+
 # reply_sentence — what a builder replies, and when: the brief's rule on finishing, and what its goal
 # condition waits for. One sentence, so the two cannot drift.
 reply_sentence() {
@@ -390,7 +396,7 @@ committing; fix real findings, decline nits with a reason, converge on one clean
 loop in the PR body. $(codex_rule) If \`gh pr view --json mergeable\` says
 CONFLICTING, merge origin/${base} into your branch, resolve it (keep both sides of any list), re-run
 the tests and push: a conflicted PR runs no checks and waits forever. $(wait_pr_rule "on exit 1 fix the red check; on a conflict, do as above." "say so in your reply") $(mutation_rule) Record it
-in the PR body. $(reply_sentence)
+in the PR body. $(load_rule "${slug}") $(reply_sentence)
 EOF
   check=""; [[ -n "${epic}" && -f "${BOARD}/epics/${epic}.md" ]] && check="$(fm "${BOARD}/epics/${epic}.md" check)"
   [[ -z "${check}" ]] || printf '%s\n' "Before you open the PR, also run the epic's check from the worktree root, and make it pass: \`${check}\`"
