@@ -195,8 +195,8 @@ def git_fetch(root, *args):
     said = [l.strip() for l in got.stderr.splitlines() if l.strip()]
     return "" if got.returncode == 0 else said[-1] if said else f"exit {got.returncode}"
 
-def gh(*args, seconds=GH_SECONDS):
-    # Its JSON, or None when gh fails, takes over seconds or answers something else; ERROR[0] says
+def gh(*args, seconds=GH_SECONDS, parse=json.loads):
+    # Its JSON (or what parse makes of its output), or None when gh fails, takes over seconds or answers something else; ERROR[0] says
     # which call and why. A reset connection or a 5xx is tried again, 1 s then 2 s later (times
     # SWARM_SLEEP_SCALE); any other error is not (a secondary rate limit asks for a minute or more),
     # and once the hourly rate limit is spent, every later call fails at once with that error.
@@ -209,7 +209,7 @@ def gh(*args, seconds=GH_SECONDS):
             got = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=seconds)
             if got.returncode == 0:
                 ERROR[0] = f"{call}: an answer it could not read"   # when its caller finds no list or object
-                return json.loads(got.stdout)
+                return parse(got.stdout)
             said = [l.strip() for l in got.stderr.splitlines() if l.strip()]
             ERROR[0] = f"{call}: {said[-1]}" if said else f"{call}: exit {got.returncode}"
             LIMIT[0] = said[-1] if said and SPENT.search(said[-1]) else ""

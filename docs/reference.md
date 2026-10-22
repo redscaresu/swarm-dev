@@ -895,6 +895,27 @@ same workflow and event on the same head, so a workflow red on push and green on
 flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
 conclusion from `gh api`. A run whose times do not parse adds no minutes. It reads each PR over gh's REST API, whose hourly limit is separate from the GraphQL one a swarm's `gh pr` commands spend. A reset connection or a 5xx is tried three times, 1 and then 2 seconds apart. Any other error is not tried again, and after `API rate limit exceeded` the section makes no more `gh` calls. A PR that `gh` cannot read, or whose call takes over 10 seconds, is left out of the row. A line under the row says how many, and a `ci health: left out <PR>: <the gh call>: <gh's last line of error>` line names each one. The ci time table below does the same with `ci time:` lines.
 
+After the ci time table, so its reads never starve that table, a `test_file flaky_runs last_seen example_run` table names the test files that
+fail and then pass on the same commit, worst first. It lists the runs created in the window, one
+`gh api` call over GitHub's UTC days, in the repos of the window's PRs (one `gh` could not read
+too) and in the project's origin, so runs on main and on the lead's own PRs count too. With `--epic`, it reads only that epic's
+PRs' runs. A flaky run is the one `flakes` counts: a red attempt that a green one on the same head,
+workflow and event follows, in the same run or a later one. For each one, `gh run view --log-failed`
+gives its red attempts' failed steps, and each of `scripts/test.sh`'s own lines for a failed file,
+right after the log's `<job> <step> <timestamp>` prefix
+(`FAIL tests/<file> <n>s`, `FAIL tests/<file>: its job ended without a result` or `TIMEOUT
+tests/<file> after <n>s`) counts that file once for the run; a test's output that quotes, indents or diffs such a line
+does not. `last_seen` is the day the file's latest flaky run was created,
+and `example_run` links that run's attempt. It reuses the attempts the row already read, reads the
+newest runs first, makes at most 100 `gh` invocations (not REST requests: the listing pages up to 10,
+a log download takes several, and a 5xx is tried up to 3 times), and stops at `API rate limit
+exceeded`, keeping what it read; a `flaky tests: stopped at` line names the repos it did not list
+and how many runs it left. Lines starting `flaky tests:` also say when GitHub listed fewer runs than the window has (it
+lists at most 1000), name each run or log `gh` could not read, count flaky runs whose logs have no
+such line among those whose logs were read (`go test` or `pytest` output, say), and print `none in
+the <n> runs read` (each run once) when every listing was read in full, nothing stopped, and
+nothing was flaky.
+
 The `cost` section shows where the tokens went: tokens and estimated cost per role for the agents
 started in the window, with a `lead` row for your own sessions (by their first timestamp's local
 day). With `--epic` it still counts every agent in the window, and says so.
@@ -1404,8 +1425,13 @@ which it reads when its wait returns. upgrade waits for the file and for the con
 (it stops waiting at once if the conductor's session is gone), then reads the agents again, so a builder the conductor started meanwhile is moved too. Then, in
 rounds, it restarts every builder that Claude Code reports idle, or whose turn stopped on an API
 error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
-it to check. A busy builder is never interrupted and waits for a
-later round. One whose session is gone or unknown is named at once and not restarted. A restart
+it to check. Claude Code also reports `busy` for a session whose turn is over but whose background
+shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
+read from its log too: when its last assistant entry has ended its turn, with no tool call waiting
+for a result and no user entry after it (a prompt, a scheduled one included, or a tool result), it counts as idle and is restarted, its
+background commands, subagents and monitors stopped (it is told to start them again). A subagent's own entries in the main log are not the session's turn. A turn still in progress, one
+waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
+busy, are never interrupted and wait for a later round. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
@@ -1413,7 +1439,7 @@ claude exits. It then starts claude again in the same pane: a fresh allowlisted 
 agent list`), and gives herdr that command, as a first start does, so a herdr restart keeps its
 guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
-since its brief names the old one, and that the restart stopped its background commands (a
+since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
 restarted and which were left: restarted and told to carry on, or, if it was already on the new
 version or its restart failed before its claude exited, only told to carry on.
@@ -1481,7 +1507,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `gh_calls` (gh runs per hour by agent role and by subcommand, GraphQL and REST apart, with the paginated and watching runs that spend many requests, and each hour's share of the 5000, from the gh shim's `.swarm/gh-calls.tsv`), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
 
 ## Cleanup, escalation and session logs
 

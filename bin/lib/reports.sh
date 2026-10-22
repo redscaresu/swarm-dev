@@ -279,7 +279,13 @@ dataset_report() {
 #     runs of each PR's branch whose head is one of its commits (all over REST, not GraphQL). A PR
 #     a gh call fails on or takes over 10 s for (a reset connection or a 5xx tried 3 times; after an
 #     hourly rate limit, no more calls) is left out, and a line says how many, then one each names
-#     it, the call and gh's error. Then, per repo, a PR's CI time (its newest
+#     it, the call and gh's error. Last (after the CI time table below, so its reads never starve it), TSV test_file flaky_runs last_seen example_run, when any: the
+#     test.sh FAIL or TIMEOUT tests/<file> lines of each flaky run's red attempts (a red attempt a green one on
+#     the same head, workflow and event follows, as flakes counts them), from gh run view --log-failed,
+#     a file once per run, worst first, over the runs created in the window in the repos of the window's PRs
+#     and the project's origin (one gh api call each; with --epic, its PRs' runs), at most 100 gh
+#     invocations (not REST requests) and none past the hourly rate limit, with flaky tests: lines for what was cut, left out or unparsed,
+#     or that none was flaky. Then, per repo, a PR's CI time (its newest
 #     head's longest run, from its last attempt's start, and that run's slowest job, from that
 #     attempt's jobs listing less those a rerun carried over, its control characters dropped): its PRs, the median minutes, of the
 #     jobs that were a PR's slowest the one with the highest median minutes and that median, the same
