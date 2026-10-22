@@ -1243,14 +1243,12 @@ commit needs no check run of its own when no workflow is expected on it, but the
 before calling main green, for checks other apps post just after the push. A failed read is a
 missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
-With `--board` it instead pulls the main checkout, under reconcile's lock. When the pull changes or
-deletes a story or epic in `review`, it runs `swarm.sh reconcile` instead, which clears that build
-before it pulls. For each epic the pull
-gave newly ready stories, it sends the epic's running conductor one note naming them
-(`swarm.sh tell conduct-<epic> note`; stories with no epic go to the backlog conductor) and asks it
-to start them now, within its builder limits. When no conductor runs, it prints a `ready now:` line
-saying `next` will start them. A pull or note that fails prints a warning; the merge's exit status
-does not change. It
+With `--board`, when the main checkout has an upstream, it runs `swarm.sh reconcile` too, which
+pulls the board. For each epic the pull gave newly ready stories, it sends the epic's running
+conductor one note naming them (`swarm.sh tell conduct-<epic> note`; stories with no epic go to the
+backlog conductor) and asks it to start them now, within its builder limits. When no conductor
+runs, it prints a `ready now:` line saying `next` will start them. A reconcile or note that fails
+prints a warning; the merge's exit status does not change. It
 exits non-zero, naming the check, when main is red or the wait runs out. On a red main it writes the
 one-off story `fix-main-<short sha>` (`kind: code`, ready, no epic, the merged story's `repo:`,
 `touches: [.]`: the fix may change whatever turns the base green) into
