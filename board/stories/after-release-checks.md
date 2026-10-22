@@ -2,7 +2,7 @@
 kind: lead
 status: blocked
 epic: safer-faster-swarm
-depends_on: [release-final, flow-epic-totals, model-fit-table, subagent-cost, tests-fast, split-slow-tests, ci-board-fast-path, dash-check, agent-entry-points]
+depends_on: [release-epic-close, flow-epic-totals, model-fit-table, subagent-cost, tests-fast, split-slow-tests, ci-board-fast-path, dash-check, agent-entry-points]
 touches: [board/stories/sonnet-share-on.md:phase 2 (only if over 10%)]
 after: safer-faster-swarm
 easy: false
