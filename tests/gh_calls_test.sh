@@ -146,12 +146,14 @@ before="$(wc -l < "${P}/.swarm/gh-calls.tsv")"
 (cd "${P}" && PATH="${dir}/stub:${PATH}" env -u HERDR_ENV SWARM_PROJECT="${Q}" SWARM_FLOW_SECTIONS=gh_calls bash "${REPO}/bin/swarm.sh" flow --since 2026-10-01 > /dev/null)
 check "a command for another project logs its gh calls there, not in the cwd's" "$(wc -l < "${P}/.swarm/gh-calls.tsv")|$(cut -f3 "${Q}/.swarm/gh-calls.tsv" | sort -u)" "${before}|swarm.sh flow"
 
-# dash's guard on gh: the shim on PATH alone is not a gh.
+# dash's guard on gh: the shim on PATH alone is not a gh. Folders of the test's own, as a runner's
+# /usr/bin may hold a gh (gh_installed runs on builtins alone).
+mkdir -p "${dir}/empty"
 # shellcheck disable=SC2034 # SWARM_HOME is dash.sh's
 gh_on() ( SWARM_HOME="${REPO}"
   # shellcheck source=bin/lib/dash.sh
   source "${REPO}/bin/lib/dash.sh"; PATH="$1"; if gh_installed; then echo yes; else echo no; fi )
-check "dash looks past gh-shim for a gh: none behind it, one behind it" "$(gh_on "${REPO}/bin/gh-shim:/usr/bin:/bin")|$(gh_on "${REPO}/bin/gh-shim:${dir}/stub:/usr/bin:/bin")" "no|yes"
+check "dash looks past gh-shim for a gh: none behind it, one behind it" "$(gh_on "${REPO}/bin/gh-shim:${dir}/empty")|$(gh_on "${REPO}/bin/gh-shim:${dir}/empty:${dir}/stub")" "no|yes"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"
