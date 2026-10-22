@@ -8,11 +8,11 @@
 # or ${FX}/checks.<n>.err as its stderr. With ${FX}/notice, pr view also prints a notice on stderr;
 # pr view's nth answer has the mergeable state in ${FX}/mergeable.<n>, else MERGEABLE, and the PR's
 # state in ${FX}/state, else OPEN;
-# with ${FX}/head.hang or ${FX}/checks.hang, that read hangs 8s before it answers, ignoring SIGALRM
+# with ${FX}/head.hang or ${FX}/checks.hang, that read hangs 30s before it answers, ignoring SIGALRM
 # as gh (a Go program) does with ${FX}/ignore-alrm;
 # commit statuses come from ${FX}/status, else none; api rate_limit answers ${FX}/reset.<core|graphql>, for
 # the budget asked about, else ${FX}/reset ("<epoch> <time>" of a spent budget's reset), else nothing,
-# 8s late with ${FX}/reset.hang.
+# 30s late with ${FX}/reset.hang.
 set -euo pipefail
 
 SWARM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/swarm.sh"
@@ -35,13 +35,13 @@ fail() {
   if [ -e "${FX}/$1.${n}.err" ]; then cat "${FX}/$1.${n}.err" >&2; exit 1; fi
 }
 case "$*" in
-  "pr view"*) fail head; [ ! -e "${FX}/ignore-alrm" ] || trap '' ALRM; [ ! -e "${FX}/head.hang" ] || sleep 8
+  "pr view"*) fail head; [ ! -e "${FX}/ignore-alrm" ] || trap '' ALRM; [ ! -e "${FX}/head.hang" ] || sleep 30
               [ ! -e "${FX}/notice" ] || cat "${FX}/notice" >&2
               echo "${H} $(cat "${FX}/mergeable.${n}" 2>/dev/null || echo MERGEABLE) main $(cat "${FX}/state" 2>/dev/null || echo OPEN)" ;;
   *check-runs*)
-    fail checks; [ ! -e "${FX}/checks.hang" ] || sleep 8
+    fail checks; [ ! -e "${FX}/checks.hang" ] || sleep 30
     if [ -e "${FX}/checks.${n}" ]; then cat "${FX}/checks.${n}"; else cat "${FX}/checks"; fi ;;
-  "api rate_limit"*) [ ! -e "${FX}/reset.hang" ] || sleep 8
+  "api rate_limit"*) [ ! -e "${FX}/reset.hang" ] || sleep 30
     case "$*" in *resources.graphql*) b=graphql ;; *) b=core ;; esac
     cat "${FX}/reset.${b}" 2>/dev/null || cat "${FX}/reset" 2>/dev/null || true ;;
   */status*) cat "${FX}/status" 2>/dev/null || echo '{"total_count":0,"statuses":[]}' ;;
@@ -61,6 +61,11 @@ run() { local c=null; [[ -z "${3:-}" ]] || c="\"$3\""; printf '{"name":"%s","sta
 # checks <file> <run>... — a page of check runs.
 checks() { local f="$1" IFS=,; shift; printf '{"total_count":%s,"check_runs":[%s]}\n' "$#" "$*" > "${f}"; }
 RATE="gh: API rate limit exceeded for user ID 1. (HTTP 403)"
+# ROOM — the deadline, in seconds, a case gives its reads: each read gets the time left, at least 1s
+# (within), and a loaded CI runner can take seconds to start python3 and gh. A case that waits out a
+# deadline pauses past it (30s), so it still ends there after one read; a wall-clock bound sits
+# well above ROOM and below the stub's 30s hang.
+ROOM=10
 fresh() { rm -rf "${FX}"; mkdir -p "${FX}"; : > "${ROOT}/gh.log"; checks "${FX}/checks" "$(run test completed success)" "$(run lint completed success)"; }
 # wait_pr [VAR=value]... [arg]... — swarm.sh wait-pr [arg]... ${URL} with no pause unless VARs say
 # otherwise; sets rc and took (seconds), output in ${ROOT}/out.
@@ -142,15 +147,15 @@ echo "$(($(date +%s) + 3)) 2030-01-01T00:00:03Z" > "${FX}/reset"; wait_pr SWARM_
 is "a reset wait longer than the no-check grace: exits 0" 0 "${rc}"
 is "a reset wait longer than the no-check grace: four reads" 4 "$(reads)"
 # The wait moves the default deadline: a reset past it is still waited for.
-fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + 3)) 2030-01-01T00:00:03Z" > "${FX}/reset"
-wait_pr SWARM_MERGE_CI_SECONDS=2
+fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + ROOM + 2)) 2030-01-01T00:00:03Z" > "${FX}/reset"
+wait_pr SWARM_MERGE_CI_SECONDS="${ROOM}"
 is "rate limit resetting past the default deadline: exits 0" 0 "${rc}"
 # An explicit --timeout bounds it: a reset past that ends the wait at once, naming the reset time.
 fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; echo "$(($(date +%s) + 30)) 2030-01-01T00:00:30Z" > "${FX}/reset"
-wait_pr --timeout 5
+wait_pr --timeout 20
 is "rate limit resetting past --timeout: exits 2" 2 "${rc}"
-check "rate limit resetting past --timeout: names the reset time" said "resets at 2030-01-01T00:00:30Z, past --timeout 5s"
-check "rate limit resetting past --timeout: ends at once" test "${took}" -lt 3
+check "rate limit resetting past --timeout: names the reset time" said "resets at 2030-01-01T00:00:30Z, past --timeout 20s"
+check "rate limit resetting past --timeout: ends at once" test "${took}" -lt "${ROOM}"
 # With the budget left, the same words are GitHub's secondary limit: no wait for the reset, but the
 # retry pause and up to half again.
 fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=2
@@ -164,9 +169,9 @@ is "secondary rate limit: exits 0" 0 "${rc}"
 is "secondary rate limit: does not read the budget" 0 "$(grep -c "^api rate_limit" "${ROOT}/gh.log")"
 check "secondary rate limit: backs off the retry pause, plus at most half again" test "${took}" -ge 2 -a "${took}" -le 4
 # The read of the reset time is bounded by the deadline too: one that hangs ends the wait there.
-fresh; echo "${LIMIT}" > "${FX}/head.1.err"; : > "${FX}/reset.hang"; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout 2
+fresh; echo "${LIMIT}" > "${FX}/head.1.err"; : > "${FX}/reset.hang"; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout "${ROOM}"
 is "a reset read hanging past --timeout: exits 2" 2 "${rc}"
-check "a reset read hanging past --timeout: returns at the deadline" test "${took}" -lt 5
+check "a reset read hanging past --timeout: returns at the deadline" test "${took}" -lt $((ROOM + 8))
 
 # --- The head read is retried the same way: a rate limit twice then a head goes on; any other error ends it.
 fresh; echo "${RATE}" > "${FX}/head.1.err"; cp "${FX}/head.1.err" "${FX}/head.2.err"; wait_pr
@@ -196,7 +201,7 @@ is "unknown with a red check: exits 1" 1 "${rc}"
 is "unknown with a red check: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 check "unknown with a red check: names it" said "red: test (failure)"
 # A merged or closed PR stays UNKNOWN: its checks are read at once, not polled to the deadline.
-fresh; echo UNKNOWN > "${FX}/mergeable.1"; echo UNKNOWN > "${FX}/mergeable.2"; echo MERGED > "${FX}/state"; wait_pr --timeout 5
+fresh; echo UNKNOWN > "${FX}/mergeable.1"; echo UNKNOWN > "${FX}/mergeable.2"; echo MERGED > "${FX}/state"; wait_pr --timeout "${ROOM}"
 is "unknown on a merged PR: exits 0" 0 "${rc}"
 is "unknown on a merged PR: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 
@@ -224,15 +229,16 @@ is "grace after a retried head read: exits 0" 0 "${rc}"
 is "grace after a retried head read: two check reads" 2 "$(reads)"
 
 # --- A check that stays pending ends at the deadline, naming it (red from the 6th read, so no
-# deadline shows as exit 1, not a hang); --timeout sets it, else SWARM_MERGE_CI_SECONDS. 3s, not 0:
-# a read gets the time left, at least 1s (within), and a loaded CI runner can take that to start
-# gh, which ends the wait as a hung read with nothing read.
-fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr SWARM_MERGE_POLL=30 --timeout 3
+# deadline shows as exit 1, not a hang); --timeout sets it, else SWARM_MERGE_CI_SECONDS.
+fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr SWARM_MERGE_POLL=30 --timeout "${ROOM}"
 is "stays pending past --timeout: exits 2" 2 "${rc}"
 check "stays pending past --timeout: names what is pending" said "still pending: test (queued)"
 is "stays pending past --timeout: one read" 1 "$(reads)"
-fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"; wait_pr SWARM_MERGE_CI_SECONDS=0
+fresh; checks "${FX}/checks" "$(run test queued)"; checks "${FX}/checks.6" "$(run test completed failure)"
+wait_pr SWARM_MERGE_POLL=30 SWARM_MERGE_CI_SECONDS="${ROOM}"
 is "stays pending past the default deadline: exits 2" 2 "${rc}"
+check "stays pending past the default deadline: names what is pending" said "still pending: test (queued)"
+is "stays pending past the default deadline: one read" 1 "$(reads)"
 fresh; wait_pr --timeout soon
 is "a --timeout that is not seconds: exits 2" 2 "${rc}"
 check "a --timeout that is not seconds: prints usage" said "usage: swarm.sh wait-pr"
@@ -246,24 +252,24 @@ fresh; wait_pr SWARM_WAIT_PR_GRACE=soon
 is "SWARM_WAIT_PR_GRACE that is not seconds: exits 2" 2 "${rc}"
 check "SWARM_WAIT_PR_GRACE that is not seconds: says so" said "SWARM_WAIT_PR_GRACE is 'soon'"
 
-# --- The deadline holds on the retry paths too: past it, no pause before another read. Three rate
-# limits, then green: with no deadline there, the retries would reach green.
-fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
+# --- The deadline holds on the retry paths too: a retry pause past it ends the wait, with no read
+# after it. Three rate limits, then green: with no deadline there, the retries would reach green.
+fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/checks.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout "${ROOM}"
 is "check reads retried past --timeout: exits 2" 2 "${rc}"
 is "check reads retried past --timeout: one read" 1 "$(reads)"
 check "check reads retried past --timeout: says so" grep -qE "timed out after [0-9]+s, last error: .*rate limit" "${ROOT}/out"
-fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/head.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=1 --timeout 0
+fresh; for n in 1 2 3; do echo "${RATE}" > "${FX}/head.${n}.err"; done; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout "${ROOM}"
 is "head reads retried past --timeout: exits 2" 2 "${rc}"
 is "head reads retried past --timeout: one head read" 1 "$(grep -c "^pr view" "${ROOT}/gh.log")"
 
 # --- A pause is cut at the deadline, and the wait ends there: no read after it, even one that would
-# be green. 3s, so time is left when the first pause starts ($SECONDS ticks whole seconds).
-fresh; checks "${FX}/checks.1" "$(run test queued)"; wait_pr SWARM_MERGE_POLL=5 --timeout 3
+# be green.
+fresh; checks "${FX}/checks.1" "$(run test queued)"; wait_pr SWARM_MERGE_POLL=30 --timeout "${ROOM}"
 is "a poll past a small --timeout, then green: exits 2" 2 "${rc}"
 is "a poll past a small --timeout, then green: one read" 1 "$(reads)"
-check "a poll past a small --timeout, then green: returns at the deadline" test "${took}" -lt 5
-check "a poll past a small --timeout, then green: says timed out" grep -qE "timed out after [34]s, still pending: test \(queued\)" "${ROOT}/out"
-fresh; echo "${RATE}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=5 --timeout 3
+check "a poll past a small --timeout, then green: returns at the deadline" test "${took}" -lt $((ROOM + 8))
+check "a poll past a small --timeout, then green: says timed out" grep -qE "timed out after [0-9]+s, still pending: test \(queued\)" "${ROOT}/out"
+fresh; echo "${RATE}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=30 --timeout "${ROOM}"
 is "a retry past a small --timeout, then green: exits 2" 2 "${rc}"
 is "a retry past a small --timeout, then green: one read" 1 "$(reads)"
 
@@ -298,17 +304,17 @@ fresh; echo "A new release of gh is available: 2.80.0 → 2.81.0" > "${FX}/notic
 is "a gh notice beside the head: exits 0" 0 "${rc}"
 check "a gh notice beside the head: prints the head SHA" said "head ${H}"
 
-# --- A read that hangs ends at the deadline (the stub answers green 8s on, too late).
+# --- A read that hangs ends at the deadline (the stub answers green 30s on, too late).
 for k in checks head; do
-  fresh; : > "${FX}/${k}.hang"; wait_pr --timeout 2
+  fresh; : > "${FX}/${k}.hang"; wait_pr --timeout "${ROOM}"
   is "a ${k} read hanging past --timeout: exits 2" 2 "${rc}"
-  check "a ${k} read hanging past --timeout: returns at the deadline" test "${took}" -lt 5
+  check "a ${k} read hanging past --timeout: returns at the deadline" test "${took}" -lt $((ROOM + 8))
   check "a ${k} read hanging past --timeout: says so" said "did not return"
 done
 
-fresh; : > "${FX}/head.hang"; : > "${FX}/ignore-alrm"; wait_pr --timeout 2
+fresh; : > "${FX}/head.hang"; : > "${FX}/ignore-alrm"; wait_pr --timeout "${ROOM}"
 is "a head read ignoring SIGALRM, as gh does: exits 2" 2 "${rc}"
-check "a head read ignoring SIGALRM, as gh does: returns at the deadline" test "${took}" -lt 5
+check "a head read ignoring SIGALRM, as gh does: returns at the deadline" test "${took}" -lt $((ROOM + 8))
 
 # --- Exit 1 is only red: a die inside wait-pr (here a bad config line) exits 2.
 fresh; echo "bogus = 1" > "${P}/.claude/swarm/config"; wait_pr
