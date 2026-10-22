@@ -18,7 +18,7 @@ claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swar
 
 Then, in your project inside [herdr](https://herdr.dev), start `claude` and run:
 
-1. `/swarm-dev:swarm` sets up the board the first time (`swarm.sh init`).
+1. `/swarm-dev:swarm` runs `swarm.sh init` the first time, which sets up the board.
 2. `/swarm-dev:epic Add rate limiting to the API` writes the first piece of work with you.
 3. `/swarm-dev:swarm` again plans it, builds it, and stops each time it needs you.
 
@@ -28,7 +28,7 @@ Then, in your project inside [herdr](https://herdr.dev), start `claude` and run:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swarm-flow-dark.png">
-  <img alt="How the swarm builds an epic: /swarm-dev:epic, /swarm-dev:swarm, /plan-epic, your approval, the board, conductor, builders, review agent, merge" src="docs/assets/swarm-flow-light.png">
+  <img alt="How the swarm builds an epic: swarm.sh init, /swarm-dev:epic, /swarm-dev:swarm, /plan-epic, your approval, the board, conductor, builders, review agent, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
 1. **Write the work.** `/swarm-dev:epic <title>` opens a co-author agent in its own pane. Together
@@ -55,11 +55,15 @@ marked **You:**. The board is plain Markdown in your repo, so a run can stop any
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) 2.1.145 or later
-- [herdr](https://herdr.dev) 0.9.2 or later, the terminal multiplexer every agent runs in
-- the [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), both logged in
-- `git`, `python3` and `bash`
-- a GitHub repo, with a `make check` target that runs your tests
+| Needs | Version | What for |
+|---|---|---|
+| [Claude Code](https://claude.com/claude-code) | 2.1.145+ | runs every agent |
+| [herdr](https://herdr.dev) | 0.9.2+ | the terminal multiplexer: one pane per agent |
+| [GitHub CLI](https://cli.github.com) | logged in | PRs, CI checks, merges |
+| [codex CLI](https://github.com/openai/codex) | logged in | the second reviewer, a different model family |
+| `git`, `python3`, `bash` | any recent | the `swarm.sh` scripts |
+| a GitHub repo | with `make check` | CI and the pre-commit hook run it |
+| [Obsidian](https://obsidian.md) | optional | browse the board: open the board folder as a vault, and `Board.base` shows stories by status and epic |
 
 ## Getting started
 
