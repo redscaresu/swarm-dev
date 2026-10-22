@@ -2,7 +2,7 @@
 kind: code
 status: ready
 depends_on: []
-touches: [bin/lib/agents.sh:deliver_prompt, tests/agents_test.sh]
+touches: [bin/lib/agents.sh:deliver_prompt, tests/agent_liveness_test.sh]
 easy: true
 estimate_lines: 60
 ---
@@ -14,4 +14,4 @@ On 2026-10-22, `swarm.sh conduct --backlog` failed with `the brief was not taken
 When the status reply is empty or can't be read, check the agent's status on its own first. If it is working or blocked, return success. Send the brief again only if the agent is idle at an empty prompt. The final failure names the last status it read and the reason it gave up.
 
 **Done when:**
-- tests/agents_test.sh, with a stub herdr: a prompt reply that can't be read, from an agent whose own status reads working, returns 0 and sends one prompt. An agent idle on both reads gets two prompts, then the failure. A reply of working on the first try sends one.
+- tests/agent_liveness_test.sh, with a stub herdr: a prompt reply that can't be read, from an agent whose own status reads working, returns 0 and sends one prompt. An agent idle on both reads gets two prompts, then the failure. A reply of working on the first try sends one.
