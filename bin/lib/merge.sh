@@ -218,7 +218,7 @@ merge_pr() {
   [[ "${queue}" != yes || "${only}" != --release ]] \
     || merge_fail "--release: ${base} requires a merge queue, which a release must not join (a PR queued behind it could share its tag) and which only --admin merges past, with merge_admin = off; merge ${url} yourself once the queue is empty"
   # What is ready before the merge, for ready_tell: a reconcile during the CI wait may pull the board.
-  [[ "${only}" != --board ]] || ready="$(board_ready)"
+  [[ "${only}" != --board ]] || ready="$(board_ready --review)"
   if [[ "${queue}" == yes ]]; then
     # The conductor's brief keys on this line: every PR goes through the queue at once.
     echo "merge queue: ${base} has one, so #${n} goes through it"
@@ -282,18 +282,21 @@ merge_pr() {
   [[ -z "${QUEUE_BAD}" ]] || die "merge: ${QUEUE_BAD}"
 }
 
-# board_ready — each story next_step would build now (buildable_story) whose build has not started
-# (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no epic.
+# board_ready [--review] — each story next_step would build now (buildable_story) whose build has
+# not started (one_off_started: its worktree exists), as "<slug> <epic>" lines, - for no epic. With
+# --review, each story in review too: reconcile may send one back to ready, which no board PR did.
 board_ready() {
   local f e
   while IFS= read -r f; do
-    if buildable_story "${f}" && ! one_off_started "$(basename "${f}" .md)"; then e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"; fi
+    if { [[ -n "${1:-}" && "$(fm "${f}" status)" == review ]] || buildable_story "${f}"; } && ! one_off_started "$(basename "${f}" .md)"; then
+      e="$(fm "${f}" epic)"; echo "$(basename "${f}" .md) ${e:--}"
+    fi
   done < <(board stories)
 }
 
 # ready_tell <url> <oid> <files> <before> — once merge --board has landed <url> at the merge commit
 # <oid>: run reconcile, which clears any merged build before it pulls the main checkout. New are the
-# stories buildable now (board_ready) that <before> (its lines before the merge) does not list and
+# stories buildable now (board_ready) that <before> (its --review lines before the merge) does not list and
 # whose file, or whose epic's, is among <files>, the paths <url> changes: not one reconcile sent back to ready, a
 # fix-main story merge wrote, nor one another board PR merged beside it readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,

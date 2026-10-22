@@ -1239,9 +1239,10 @@ put docs/stories/r9.md "status: ready" "kind: code" "epic: e"; land
 put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; land
 bfresh; merge --board "${URL}"
 check "a board merge beside another board PR: the note names its own r10, not r9" grep -qF "these stories of epic e are ready now: r10." "${INBOX}"
-# z's PR closed unmerged: reconcile sends z back to ready, which the pull did not do, so no note names it.
+# z's PR closed unmerged: reconcile sends z back to ready, which the PR did not do, so no note names it,
+# though the PR also edits z's epic.
 item z "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"
-put docs/stories/r8.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r8.md "status: ready" "kind: code" "epic: e"; put docs/epics/e.md "status: active" "title: e"; land
 bfresh; echo CLOSED > "${FX}/state.11"; merge --board "${URL}"
 check "a board merge whose reconcile reopens z: z is back to ready" said "back to ready: z"
 check "a board merge whose reconcile reopens z: the note names r8 alone" grep -qF "these stories of epic e are ready now: r8." "${INBOX}"
