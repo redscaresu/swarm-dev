@@ -1313,6 +1313,7 @@ put docs/stories/r13.md "status: ready" "kind: code" "epic: e"; land
 bfresh; touch "${P}/.swarm/conduct-e.report.md"; merge --board "${URL}"; rm "${P}/.swarm/conduct-e.report.md"
 check "a board merge whose conductor has reported: says r13 has no conductor yet" said "ready now: r13 (of epic e); no conductor runs for it yet"
 check "a board merge whose conductor has reported: no note names r13" bash -c "! grep -q r13 '${INBOX}'"
+check "a board merge whose conductor has reported: says to collect it first" said "no conductor started: conduct-e has reported; collect it first"
 # r15, ready in draft epic h, moves to epic e: it was not buildable before, so it is new.
 put docs/epics/h.md "status: draft"; put docs/stories/r15.md "status: ready" "kind: code" "epic: h"; land; pulled
 put docs/stories/r15.md "status: ready" "kind: code" "epic: e"; land

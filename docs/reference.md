@@ -275,8 +275,10 @@ Conductors also start on their own, the backlog's and an epic's alike: after `sw
 --board` lands, once it has sent its notes (a conductor's own board merge included), and from
 `swarm.sh next` when its step is `wait <conductor>`. For each active epic with a ready story an agent
 builds (`kind` code, docs or chore) and no conductor running, it runs `swarm.sh conduct <epic>`; for
-such stories with no epic, `swarm.sh conduct --backlog`. A conductor that has written its report has
-finished and counts as not running. A draft, `later` or `split` epic's stories start nothing, and
+such stories with no epic, `swarm.sh conduct --backlog`. A conductor still in its pane counts as
+running. When it has written its report, it prints `no conductor started: <conductor> has reported;
+collect it first`: a new start would delete that report before the lead reads it. When another
+project's agent holds the conductor's name, it says so and starts none. A draft, `later` or `split` epic's stories start nothing, and
 neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
 for an epic or the backlog, and it says why, while that conductor's report is newer than every story
 and epic: a new one would stop as the last did. Nor does a backlog conductor start while its report

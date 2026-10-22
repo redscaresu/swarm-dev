@@ -1171,14 +1171,25 @@ if [[ "${out}" == *"no conductor for epic e2 started: no story or epic changed a
     && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then
   echo "ok   next with an epic's report newer than the board starts no conductor for it, and says why"; else
   echo "FAIL next with an epic's report newer than the board: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
-# conduct-e2 is still in its pane, but its report says it has finished, and s2 changed since: next
-# starts a new one, which fails here (herdr shows the old one working). The backlog's start, in the
-# same run, still prints its started: line above the warnings.
-rm "${dir}"/.swarm/state/conduct-backlog-*; printf 'conduct-e1 w:7\nconduct-e2 w:10 working\n' > "${dir}/agents"; echo "w:10 conduct-e2" >> "${dir}/.swarm/state/tab"; touch "${dir}/docs/stories/s2.md"
+# conduct-e2 is still in its pane and has written its report, which the lead has not collected: no
+# conductor starts over it, though s2 changed since. conduct-e5's name is held by another project's
+# agent (a pane this project never opened). e4's start fails (its parent: is not a slug); the
+# backlog's, in the same run, still prints its started: line above the warnings.
+(cd "${dir}" && item epics/e4.md 'status: active' 'parent: Not_A_Slug' && item stories/s4.md 'status: ready' 'kind: code' 'epic: e4' \
+  && item epics/e5.md 'status: active' && item stories/s5.md 'status: ready' 'kind: code' 'epic: e5')
+rm "${dir}"/.swarm/state/conduct-backlog-*; printf 'conduct-e1 w:7\nconduct-e2 w:10 working\nconduct-e5 w:99\n' > "${dir}/agents"
+echo "w:10 conduct-e2" >> "${dir}/.swarm/state/tab"; touch "${dir}/docs/stories/s2.md"
 out="$(nextb)"
-if [[ "${out}" == *"started: conduct-backlog-"*"warning: swarm.sh conduct e2 failed"*"warning: starting conductors for ready work failed"* ]]; then
-  echo "ok   next with a reported conductor in its pane starts a new one, and a failed start keeps the started: lines"; else
-  echo "FAIL next with a reported conductor in its pane, one start failing: '${out}'"; fails=$((fails + 1)); fi
+if [[ "${out}" == *"no conductor started: conduct-e2 has reported; collect it first"* ]] && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log" \
+    && [[ -f "${dir}/.swarm/conduct-e2.report.md" ]]; then
+  echo "ok   next with a reported conductor in its pane starts none over its report, and says to collect it"; else
+  echo "FAIL next with a reported conductor in its pane: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+if [[ "${out}" == *"no conductor started: another project's agent holds the name conduct-e5"* ]] && ! grep -q '^agent start conduct-e5 ' "${dir}/agents.log"; then
+  echo "ok   next with a conductor's name held by another project's agent starts none, and says so"; else
+  echo "FAIL next with a conductor's name held by another project's agent: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+if [[ "${out}" == *"started: conduct-backlog-"*"warning: swarm.sh conduct e4 failed"*"warning: starting conductors for ready work failed"* ]]; then
+  echo "ok   next with one start failing keeps the started: lines of the others"; else
+  echo "FAIL next with one start failing: '${out}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}" "${dir}-wt"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }

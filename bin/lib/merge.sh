@@ -306,16 +306,18 @@ board_ready() {
 group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conductor_name "$1"; fi; }
 
 # conduct_ready — start a conductor, as swarm.sh conduct does, for each group of buildable stories
-# (board_ready --started: an active epic's, or with no epic the backlog's) whose conductor is not
-# running: none in herdr, or one that has written its report and so has finished. fix-main stories are
-# left out: every conductor builds one first, and next names it. Nothing starts while herdr cannot list
+# (board_ready --started: an active epic's, or with no epic the backlog's) whose conductor
+# (group_conductor) is not in herdr. One still in its pane is skipped, and named when it has written its
+# report: that report is the lead's to collect, and a start would delete it. One whose name another
+# project's agent holds is skipped and named. fix-main stories are left out: every conductor builds
+# one first, and next names it. Nothing starts while herdr cannot list
 # its agents, since what runs is not known, nor while a working conductor stopped on an expired login
 # or an API error (conductor_stop), which would stop a new one too. No conductor starts for a group
 # while conduct_stop says why not, and none outside herdr: it prints what to run instead. A start that
 # fails is a warning naming start_conductor's last line, and conduct_ready then returns 1; its other
 # output is dropped, so next's first line stays the step even with stderr merged.
 conduct_ready() {
-  local e epic name arg ready log c rc=0
+  local e name arg ready log c rc=0
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
   if ! herdr agent list >/dev/null 2>&1; then
@@ -331,11 +333,16 @@ conduct_ready() {
   done 3<<< "$(running_conductors)"
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
-    epic="${e}"; arg="${e}"; [[ "${e}" != - ]] || { epic=backlog; arg=--backlog; }
-    name="$(conductor_name "${epic}")"
-    [[ -z "$(agent_field "${name}" pane_id)" || -f "${PROJECT_DIR}/.swarm/conduct-${epic}.report.md" ]] || continue
+    name="$(group_conductor "${e}")"; arg="${e}"; [[ "${e}" != - ]] || arg=--backlog
+    if [[ -n "$(agent_field "${name}" pane_id)" ]]; then
+      if [[ -f "$(conductor_report "${name}")" ]]; then echo "no conductor started: ${name} has reported; collect it first"; fi
+      continue
+    fi
+    if [[ -n "$(agent_field "${name}" agent_status any)" ]]; then
+      echo "no conductor started: another project's agent holds the name ${name}"; continue
+    fi
     # shellcheck disable=SC2046 # slugs, [a-z0-9-]
-    if conduct_stop "${epic}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"); then continue; fi
+    if conduct_stop "${e}" $(awk -v e="${e}" '$2 == e { print $1 }' <<< "${ready}"); then continue; fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
     log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
     ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
@@ -346,19 +353,21 @@ conduct_ready() {
   return "${rc}"
 }
 
-# conduct_stop <epic>|backlog <slug>... — prints why no conductor may start for these ready stories
-# and returns 0, as /swarm-dev:swarm's story and resume steps stop (docs/reference.md § The backlog
-# conductor): its report is newer than every story and epic, so a new one would stop as the last did;
-# or, for the backlog, the report lists one whose worktree is still there under not started: (a build
-# that died). Returns 1 when one may start.
+# conduct_stop <epic> <slug>... — prints why no conductor may start for these ready stories of <epic>
+# (board_ready's column: - for the backlog) and returns 0, as /swarm-dev:swarm's story and resume
+# steps stop (docs/reference.md § The backlog conductor): its conductor's report (conductor_report) is
+# newer than every story and epic, so a new one would stop as the last did; or, for the backlog, the
+# report lists one whose worktree is still there under not started: (a build that died). Returns 1
+# when one may start.
 conduct_stop() {
-  local report="${PROJECT_DIR}/.swarm/conduct-$1.report.md" what="conductor for epic $1" s
-  [[ "$1" != backlog ]] || what="backlog conductor"
+  local report what="conductor for epic $1" s
+  report="$(conductor_report "$(group_conductor "$1")")"
+  [[ "$1" != - ]] || what="backlog conductor"
   [[ -f "${report}" ]] || return 1
   if [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" \( -name '*.md' -o -type d \) -newer "${report}" 2>/dev/null)" ]]; then
     echo "no ${what} started: no story or epic changed after ${report}, so a new one would stop as the last did; read it"; return 0
   fi
-  [[ "$1" == backlog ]] || return 1
+  [[ "$1" == - ]] || return 1
   shift
   for s in "$@"; do
     if one_off_started "${s}" && grep -qE "not started: ${s}([ (]|\$)" "${report}"; then
