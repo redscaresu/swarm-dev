@@ -145,7 +145,10 @@ touch "${P}/docs/stories/README.md"   # init's marker: dash dies without it
 echo "more" >> "${P}/docs/stories/s-three.md"; echo "more" >> "${P}/docs/stories/s-two.md"
 
 widest() { python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().splitlines()))'; }
-snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
+# gh-calls.tsv is gh-shim's log of dash's own gh calls, made before the snapshot so the folder's entry holds.
+: >> "${P}/.swarm/gh-calls.tsv"
+# shellcheck disable=SC2010 # names swarm.sh wrote, filtered for the one file dash may write
+snapshot() { (cd "${P}" && find docs .swarm -type f ! -name gh-calls.tsv -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm | grep -v -e gh-calls.tsv -e '^total ') ; }
 before="$(snapshot)"
 
 fresh; out="$(cd "${P}" || exit 1; env -u HERDR_ENV COLUMNS=160 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash --ladder 2>&1 || true)"

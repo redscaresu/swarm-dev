@@ -148,7 +148,10 @@ check "a committed board shows no drift line" lacks "board:" "${clean}"
 check "with no agent open and nothing held, the frame has no running-now box" lacks "running now" "${clean}"
 echo "more" >> "${P}/docs/stories/s-three.md"; echo "more" >> "${P}/docs/stories/s-two.md"
 
-snapshot() { (cd "${P}" && find docs .swarm -type f -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm) ; }
+# gh-calls.tsv is gh-shim's log of dash's own gh calls, made before the snapshot so the folder's entry holds.
+: >> "${P}/.swarm/gh-calls.tsv"
+# shellcheck disable=SC2010 # names swarm.sh wrote, filtered for the one file dash may write
+snapshot() { (cd "${P}" && find docs .swarm -type f ! -name gh-calls.tsv -print0 | sort -z | xargs -0 cksum; ls -laR docs .swarm | grep -v -e gh-calls.tsv -e '^total ') ; }
 before="$(snapshot)"
 
 fresh; out="$(cd "${P}" || exit 1; HERDR_ENV=1 PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" dash 2>&1 || true)"

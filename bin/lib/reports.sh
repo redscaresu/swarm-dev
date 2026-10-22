@@ -312,6 +312,10 @@ dataset_report() {
 #     agents.tsv line of a `role:<role>` or `agent:<name>`, or a findings.tsv row of a
 #     `reviewer:<who>`. An `unlogged: <why>` feature (a read-only command leaves no events line)
 #     shows `-` and is judged on its metric alone.
+#   gh_calls: TSV hour api role calls share, bin/gh-shim's .swarm/gh-calls.tsv lines per local hour in
+#     the window and budget (graphql or rest), an all row and one per caller's agents.tsv role (swarm.sh
+#     <command> and an unknown caller as they are), most first, with the share of 5000; then, after a
+#     blank line, the same per subcommand. --epic does not narrow it.
 #   incidents: TSV day kind incidents, the incident lines in events.tsv per local day in the window
 #     and kind (the outcome before its first colon), whatever the kind; --epic does not narrow it.
 #   lead_queue: TSV day items median_min max_min open, per local day an item entered the lead's queue
@@ -356,7 +360,8 @@ dataset_report() {
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%.
 # A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
-# the PR heads merge_ins fetches and the trees and blobs its git merge-tree writes into each repo.
+# its gh calls' lines in .swarm/gh-calls.tsv (bin/gh-shim's log), the PR heads merge_ins fetches and the
+# trees and blobs its git merge-tree writes into each repo.
 # SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {

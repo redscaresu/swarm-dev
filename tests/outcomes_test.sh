@@ -128,7 +128,7 @@ else echo "ok   a bad --since is refused"; fi
 # close's copy of a session log (written by archive_session, through its _archive test hook) stands in
 # once Claude Code deletes the log: s3 (the long slug's newest build) and s2 (docs-story's).
 run() { (cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT CLAUDE_PROJECTS_DIR="${dir}/projects" bash "${SWARM}" "$@"); }
-snap() { (cd "${P}/.swarm" && find . | sort && find . -type f -exec cksum {} + | sort); }
+snap() { (cd "${P}/.swarm" && find . | sort && find . -type f ! -name gh-calls.tsv -exec cksum {} + | sort); }   # gh-calls.tsv: gh-shim logs its gh calls
 run _archive "${CUT}"; run _archive docs-story
 check "the live log is a sign of life" "$(run _mtime docs-story | grep -c '^[0-9][0-9]*$')" 1
 TS=2026-10-02T08:00:00Z session s2 docs-story claude-sonnet-5-5 0 2000000 https://github.com/o/r/pull/8 > "${dir}/projects/p/s2.jsonl"

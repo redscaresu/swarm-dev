@@ -160,6 +160,13 @@ else
 fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
 
+# Every gh call this command makes, and every agent it starts (launch_file passes PATH and SWARM_*
+# on), goes through bin/gh-shim, which logs it to .swarm/gh-calls.tsv for flow's gh_calls section:
+# this command's own with `swarm.sh <command>` as the caller, an agent's with its name.
+GH_CALLER="${1:-}"
+export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_CALLER="swarm.sh ${GH_CALLER//[^a-z-]/}"
+[[ ":${PATH}:" == *":${SWARM_HOME}/bin/gh-shim:"* ]] || export PATH="${SWARM_HOME}/bin/gh-shim:${PATH}"
+
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
 CFG_board_dir=docs
 CFG_repos_dir=""        # empty: the project dir's parent
