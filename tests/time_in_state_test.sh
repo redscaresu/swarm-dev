@@ -86,8 +86,8 @@ fails=0
 check() { # <name> <output> <exact expected output>
   if [[ "$2" == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1"; diff <(echo "$3") <(echo "$2") || true; fails=$((fails + 1)); fi
 }
-check "the five phases, then rework and held, are the last columns of outcomes" "$(head -1 <<< "${out}" | awk -F'\t' -v OFS='\t' '{ print $(NF-6), $(NF-5), $(NF-4), $(NF-3), $(NF-2), $(NF-1), $NF }')" \
-  $'building_min\tci_min\treview_wait_min\tfixing_min\tmerge_wait_min\trework\theld_min'
+check "the five phases, then rework, held and ready_wait, are the last columns of outcomes" "$(head -1 <<< "${out}" | awk -F'\t' -v OFS='\t' '{ print $(NF-7), $(NF-6), $(NF-5), $(NF-4), $(NF-3), $(NF-2), $(NF-1), $NF }')" \
+  $'building_min\tci_min\treview_wait_min\tfixing_min\tmerge_wait_min\trework\theld_min\tready_wait_min'
 # The abandoned build has no merge; the retry: fixing 11:35 to 11:40 and 11:55 to 12:10, review wait
 # 11:40 to 11:45, CI 11:45 to 11:55 and 12:15 to 12:20, merge wait 12:10 to 12:15 and 12:20 to 12:30.
 check "each build's minutes split by precedence, summing to its start-to-merge minutes" "$(cols)" "$(printf '%s\n' \
@@ -162,6 +162,11 @@ board_commit ready 07:30
 check "a story readied by a board commit is held from that commit, not from its add" "$(first_held)" 90
 board_commit blocked 08:00
 check "a story blocked by a board commit after its last ready signal has no known ready time" "$(first_held)" ""
+# Readied again at 11:00 (as reconcile does when a PR closes unmerged), after its 09:00 build started:
+# a ready signal came before the start, so its wait stays unknown, as held does, not a measured 0.
+board_commit ready 11:00
+check "a story ready, then blocked, before its build stays unknown though readied again after the start" \
+  "$(outcomes | awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } { print "[" $at["ready_wait_min"] "]"; exit }')" "[]"
 cp "${dir}/tis.md" "${P}/docs/stories/tis.md"
 cp "${dir}/events.full" "${E}"
 
@@ -169,14 +174,18 @@ flow() { # [epic [since]] — the time_in_state section alone, as flow runs it, 
   SWARM_ROWS="${out}" python3 "${ROOT}/bin/lib/flow_report.py" "${2:-0000-00-00}" 9999-12-30 "${1:-}" x x x x x x x "" x time_in_state
 }
 check "flow's epic line counts the PR once and the story's held time, in hours and shares, largest first, a tie in column order" "$(flow)" "$(printf '%s\n' \
-  "## time_in_state" $'epic\tprs\thours\tlargest_first' $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%' $'all\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%')"
+  "## time_in_state" $'epic\tprs\thours\tlargest_first\tready_wait_median\tready_wait_p90' $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240' $'all\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240')"
 # The rebuild, dated 10-01, is the PR's first build: --since 2026-10-02 leaves the PR out, rather
 # than counting the retry's 55 minutes for it.
 check "a PR counts by its first build, in the window only when that build is" "$(flow "" 2026-10-02 | tail -1)" \
-  $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%'
+  $'all\t0\t0\tbuilding:0h/0% ci:0h/0% review_wait:0h/0% fixing:0h/0% merge_wait:0h/0% held:0h/0%\t\t'
 # Another story of e1 that waited 3 h too but whose PR never merged: its held is not the merged PRs'.
 other="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["slug"] = "other"; print }' <<< "${out}")"
-check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%'
-check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%'
+check "held counts only the stories of the PRs the phases count" "$(out="${out}"$'\n'"${other}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
+# A step-up rung of tis at 13:00 keeps attempts 1 and its own held_min (60) and ready_wait_min (480):
+# held and ready_wait both still come from tis's earliest build.
+rung="$(awk -F'\t' -v OFS='\t' 'NR == 1 { for (i = 1; i <= NF; i++) at[$i] = i; next } $at["started"] ~ /T09:00/ { $at["started"] = "'"${D}"'13:00:00Z"; $at["held_min"] = 60; $at["ready_wait_min"] = 480; print }' <<< "${out}")"
+check "held and ready_wait count a stepped-up story by its earliest build, not its rung" "$(out="${out}"$'\n'"${rung}" flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
+check "--epic prints that epic's line alone" "$(flow e1 | tail -1)" $'e1\t1\t4.7\theld:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%\t240\t240'
 
 if [[ "${fails}" -eq 0 ]]; then echo "all passed"; else echo "${fails} failed"; exit 1; fi

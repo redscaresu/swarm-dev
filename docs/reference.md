@@ -590,7 +590,7 @@ or close a pane, so `dash` asks herdr for the agents even outside a herdr pane.
 
 
 The builder's brief is the story file plus the standing rules (never merge, no real cloud, the
-codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green), the epic's `check:` command when it has one
+codex loop through `swarm.sh codex-review <base>`, reply with the PR URL when CI is green, and keep any load it starts on purpose within 4 CPUs in all and remove it when the check ends), the epic's `check:` command when it has one
 (the builder runs it before opening the PR), then the project's own rules from
 `.claude/swarm/brief.md`, plus the tagged rule lines (`<!-- lesson: <kind> -->`) of the project's
 `AGENTS.md`, `CLAUDE.md` and `.claude/CLAUDE.md`, since a builder in another repo's worktree reads
@@ -848,7 +848,12 @@ report, whichever comes first. The report's time is its file's (`.swarm/conduct-
 until the next `conduct` removes the file; that `conduct` logs it first as a `report <epic>` line in
 events.tsv, `ok (<UTC time>)`. A build that started after its run ended, or with no run, held 0.
 `held_min` is empty when the build has no `started` or the story has no ready time by then, and on a
-retry, whose own wait is not counted. A story the lead holds after an escalation (`kind: lead` with
+retry, whose own wait is not counted. After it, `ready_wait_min`, also on a first build alone, is the
+whole wait from that ready time to the build's start, with or without a conductor running. A story
+with no ready signal before its build started (it was readied only after) waited 0. Otherwise it is
+empty where `held_min` is for want of a ready time. A step-up rung keeps attempts at 1, so it carries
+its own `held_min` and `ready_wait_min`, timed to its own start; `flow`'s `time_in_state` counts each
+story once, by its earliest build. A story the lead holds after an escalation (`kind: lead` with
 `escalated_from:`) shows the kind it was built as. New columns only ever go on the end, so
 `flow`, which reads them by name, and anything that cuts columns by position keep
 working. The slug comes
@@ -1042,15 +1047,18 @@ come when a review ends, so the two columns are never averaged together. `stacke
 counts the `stacked` events for the epic's slugs, or all of them on the `all` row. The project
 row comes last, so an epic named `all` still gets its own row above it.
 
-The `time_in_state` section prints TSV `epic prs hours largest_first`, one row per epic and a last
+The `time_in_state` section prints TSV `epic prs hours largest_first ready_wait_median ready_wait_p90`, one row per epic and a last
 `all` row. With `--epic` it prints that epic's row alone. The five phases are summed over the
 `outcomes` rows dated in the window that have the phase columns (their PR merged). Each PR counts
 once, by its build that started first, since a retried PR repeats its phases on every build, and is
 in the window only when that build's date is. `held` is over the same PRs: the `held_min` of each of
-their stories, once. `hours` is all six together, and `largest_first` gives each as
+their stories, once, from its earliest build. `hours` is all six together, and `largest_first` gives each as
 `<state>:<hours>h/<share>%`, the largest first, where the share is of `hours`. So
 `held:3h/64% review_wait:0.6h/12% fixing:0.4h/9% ci:0.2h/5% merge_wait:0.2h/5% building:0.2h/4%`
-says the epic's stories spent most of their time waiting to start.
+says the epic's stories spent most of their time waiting to start. The last two columns,
+`ready_wait_median` and `ready_wait_p90`, are the median and 90th percentile (nearest rank) of
+`ready_wait_min` in minutes, over the stories whose first build is dated in the window, merged or
+not. They are empty when there is none, and an epic with only such builds still gets a row.
 
 The `features` section asks whether each feature is worth keeping. It reads the project's own
 `docs/features.tsv`, or the file `SWARM_FEATURES` names. With neither, it prints one line saying
@@ -1421,8 +1429,13 @@ which it reads when its wait returns. upgrade waits for the file and for the con
 (it stops waiting at once if the conductor's session is gone), then reads the agents again, so a builder the conductor started meanwhile is moved too. Then, in
 rounds, it restarts every builder that Claude Code reports idle, or whose turn stopped on an API
 error, reading the session herdr has in the pane now (a `/clear` moves it); herdr's wait only wakes
-it to check. A busy builder is never interrupted and waits for a
-later round. One whose session is gone or unknown is named at once and not restarted. A restart
+it to check. Claude Code also reports `busy` for a session whose turn is over but whose background
+shells (a `make test`, a `wait-pr`, a conductor's `watch`) still run, so a session reported busy is
+read from its log too: when its last assistant entry has ended its turn, with no tool call waiting
+for a result and no user entry after it (a prompt, a scheduled one included, or a tool result), it counts as idle and is restarted, its
+background commands, subagents and monitors stopped (it is told to start them again). A subagent's own entries in the main log are not the session's turn. A turn still in progress, one
+waiting on a tool call's result, one waiting on a prompt, and one whose log cannot be read stay
+busy, are never interrupted and wait for a later round. One whose session is gone or unknown is named at once and not restarted. A restart
 sends ctrl+c twice at once (Claude Code exits only on a second press right after the first) until
 claude exits. It then starts claude again in the same pane: a fresh allowlisted environment whose
 `PATH` starts at the new version's `bin/` (an older plugin root's is dropped), and `claude --resume
@@ -1430,7 +1443,7 @@ claude exits. It then starts claude again in the same pane: a fresh allowlisted 
 agent list`), and gives herdr that command, as a first start does, so a herdr restart keeps its
 guards. If process-info cannot be read, the agent is left as it is. A resumed session keeps its
 context, so only the plugin root changes. Each restarted agent is told the new `swarm.sh` path,
-since its brief names the old one, and that the restart stopped its background commands (a
+since its brief names the old one, and that the restart stopped its background commands, subagents and monitors (a
 `wait-pr`, a `codex-review`), to start again. The conductor goes last, told which builders were
 restarted and which were left: restarted and told to carry on, or, if it was already on the new
 version or its restart failed before its claude exited, only told to carry on.
@@ -1498,7 +1511,7 @@ exist. With `merge = human` it waits on your merge.
 | `swarm.sh intervene <kind> "<one line>"` | Log a time a person had to step in: `lead-hand` (the lead acted by hand where a command should have) or `user-caught` (the user found a problem first). It writes one `incident` line, which `flow`'s `incidents` section and dash's interventions light count. |
 | `swarm.sh outcomes` | One row per build: model, cost and tokens by type, review rounds and other tells, its epic, whether its PR and its story merged and when, findings fixed and declined by reviewer, when it started, why it was last closed, its escalation steps, and minutes from start to PR and from PR to merge. Once a story is finished (its file is off the board, every PR is merged or closed, and every check on them has finished), its PRs are read from gh once and kept in `.swarm/outcomes-prs.tsv`. `flow` and dash's ci line then read them from there instead of asking GraphQL on every run; `dataset` reads them there too, but still lists each merged story's PRs with gh itself. The cache is keyed by the story's newest build, so a rebuild reads gh again. A cache that cannot be written is said on stderr and the report still prints. |
 | `swarm.sh dataset` | Write `.swarm/dataset.jsonl`, one JSON line per merged story. Each line holds the story as the board PR merged it (text, kind, risk, touches, `depends_on`, `estimate_lines`, `easy` and the planner's model), and what happened: diff lines and files of its newest merged PR (the story and epic files left out), builds, findings rounds, fixed findings, rework within 7 days on any of its PRs (`outcomes`' rework column, which flow's `model_fit` reads too; null when `outcomes` could not judge one of its PRs, or one merged in the last 7 days), cost, minutes from start to merge, every model that built it and each escalation with its trigger. `was_easy` is true when the story merged on its first build with at most one findings round, no rework and a diff under 100 lines (`was_easy_rule: 1`), and null when an unknown diff or rework is all that could decide it. Nothing from the environment or the transcripts goes in. A story whose repo cannot be found, or whose PRs `gh` cannot read, is skipped and keeps its line from the last run, and so does any story the run does not read, so the file never loses a story. When `gh` itself is down (`gh auth status` fails) or the logs cannot be read, it stops and leaves the file as it was. |
-| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first). |
+| `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]` | The project's numbers, a section each: `ci_health` (median CI minutes per PR head, red runs per PR and flakes, and the test files that failed in a rerun that went green), `cost` (where the tokens went, with a row for the lead's own sessions), `epic_totals` (each epic's cost, start-to-PR and PR-to-merge minutes, and the share of its PRs that needed main merged in, beside the 55% baseline), `features` (each feature in `docs/features.tsv` against its metric and baseline, with the ones nobody uses or measures flagged for deletion), `incidents` (incident lines per day and kind, then API-error and auto-mode stops per epic), `lead_queue` (per day, the median and longest wait on the lead, and what still waits), `merge_ins` (why PRs merged main in: a conflict, a clean merge while behind, or neither, with the files conflicts hit most), `merges` (the stories finished per day, which dash's speedometer shows), `model_fit` (cost against results per model and story class, and builder subagents' share of build cost), `reviewers` (findings each reviewer raised per kind, fixed or declined, the split critic's fixes beside the split-gaps it missed per split, and review rounds per PR; `--epic` counts only that epic's PRs and lists them), `throughput` (builders at once, stories per chain, review wait and stacked starts, per epic) and `time_in_state` (hours per epic in each state: held ready before a build, building, CI, review wait, fixing and merge wait, with each one's share, largest first, then the median and p90 minutes from a story going ready to its build starting). |
 
 ## Cleanup, escalation and session logs
 
