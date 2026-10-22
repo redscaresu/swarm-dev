@@ -3,175 +3,137 @@
 [![CI](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml/badge.svg)](https://github.com/redscaresu/swarm-dev/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/redscaresu/swarm-dev/badge)](https://scorecard.dev/viewer/?uri=github.com/redscaresu/swarm-dev)
 
-swarm-dev runs a team of Claude Code agents that build software while you watch. You agree a design
-with one agent. Others split it into one-PR stories, try to break the plan, and build the stories in
-parallel, each in its own terminal pane and git worktree. Every PR is reviewed before it merges, and
-the run stops whenever a decision is yours.
+swarm-dev is a Claude Code plugin that runs a team of agents to build software while you watch.
+You agree a piece of work with one agent. Others split it into stories of one pull request each,
+try to break that plan, then build the stories in parallel, each in its own terminal pane and git
+worktree. Every PR is reviewed before it merges, and the run stops whenever a decision is yours.
 
 ![swarm.sh dash --watch on a demo project: what needs you and the epics on the left, recent work on the right](docs/assets/dash.gif)
+
+## Quick start
+
+```bash
+claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
+```
+
+Then, in your project inside [herdr](https://herdr.dev), start `claude` and run:
+
+1. `/swarm-dev:swarm` sets up the board the first time (`swarm.sh init`).
+2. `/swarm-dev:epic Add rate limiting to the API` writes the first piece of work with you.
+3. `/swarm-dev:swarm` again plans it, builds it, and stops each time it needs you.
+
+[Getting started](#getting-started) has the details and what to check first.
 
 ## How it works
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/swarm-flow-dark.png">
-  <img alt="How the swarm builds a design: /epic, /swarm-dev:swarm, /plan-epic, the board, conductor, builders, review, merge" src="docs/assets/swarm-flow-light.png">
+  <img alt="How the swarm builds an epic: /swarm-dev:epic, /swarm-dev:swarm, /plan-epic, your approval, the board, conductor, builders, review agent, merge" src="docs/assets/swarm-flow-light.png">
 </picture>
 
-1. **Design.** You write a draft epic with a co-author agent (`/epic`): the problem with its
-   evidence, goals that can be checked, non-goals and constraints. A reviewer agent attacks it, and
-   nothing plans it until you agree it.
-2. **Plan.** Once you agree the epic, planning agents (`/plan-epic`) split it into stories of one
-   PR each, and skeptic agents try to break the plan. You approve it.
-3. **Build.** A conductor agent starts one builder per story. Each PR gets its own review agent
-   as soon as it is green, and the builder fixes what it finds. A green PR left without a review
-   for 30 minutes (`queue_minutes`) is flagged to the lead, who passes it to the conductor. With
-   `goal = N` in the config (it ships off), each builder also gets a `/goal` condition: every item
-   under its story's **Done when** holds, with N more turns to get there
-   ([details](docs/reference.md#settings)).
-4. **Merge.** Green, reviewed PRs wait for you to merge, or the conductor merges them if you set
-   `merge = agent`. Anything marked `costs: money` always waits for you. If main goes red after a
-   merge, `swarm.sh merge` writes a `fix-main-<sha>` story holding the failed tests' FAIL lines,
-   and the swarm builds that fix before anything else merges. In a swarm project, a
-   plugin hook refuses careless raw merges (`gh pr merge` and GitHub's merge API) in every Claude
-   session, so merges go through `swarm.sh merge`. Where the base has a GitHub merge queue,
-   `swarm.sh merge` goes through it, and the conductor enqueues each reviewed PR without waiting
-   for the one before it to merge ([details](docs/reference.md#merging)). The hook also refuses a `cd` followed by `;`, a
-   `git checkout` that would drop uncommitted changes, and an agent's `git checkout`, `stash` or
-   `reset --hard` in the main checkout, its `pkill` or `killall`, and its `gh pr checks` loops.
-   An agent that herdr brings back after a restart keeps these guards.
-   `swarm.sh merge --release` refuses a version bump while `bin/`, `commands/` or `hooks/` changed
-   since the last tag and README.md, AGENTS.md and `docs/` did not. The lead lands a docs PR
-   first, or, when nothing a user sees changed, writes `Docs: none — <why>` in the release PR body
-   ([details](docs/reference.md#merging)).
+1. **Write the work.** `/swarm-dev:epic <title>` opens a co-author agent in its own pane. Together
+   you write the epic: the problem and its evidence, goals that can be checked (**Done when**), what
+   is out of scope, and your part. A reviewer agent attacks the draft. Nothing is planned until you
+   agree it.
+2. **Plan.** `/swarm-dev:swarm` splits the agreed epic into stories of one PR each. A survey agent
+   reads the code, a lead agent writes the stories, and skeptic agents, codex and a critic try to
+   refute them. You approve the result, which is then written to the board. An epic too large for
+   one run is split into smaller epics first.
+3. **Build.** A conductor agent starts one builder per story. Each builder works in its own git
+   worktree and opens a PR. Once CI is green, a review agent and codex review it, and the builder
+   fixes what they find. A story that fails twice is rebuilt once on Fable, the most capable model,
+   then handed to the lead.
+4. **Merge.** By default a green, reviewed PR waits for you, or for you to ask the lead to merge it.
+   With `merge = agent`, the conductor merges it, except a story marked `costs: money`, which always
+   waits for you. If main goes red after a merge, the swarm writes a story to fix it and builds that
+   first.
 
-Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and handles
-the stories no agent may do: real cloud, credentials and anything hard to undo. Your steps in those
-are marked **You:**. When `swarm.sh next` names a step the lead has not started, a plugin hook
-sends it back once before its turn ends, to start the step or tell you why it can't. Everything
-lives in plain Markdown files (the board), so a run can stop anywhere and the next
+Your own Claude session is the lead. It runs `/swarm-dev:swarm`, watches the agents, and does the
+stories no agent may: real cloud, credentials and anything hard to undo. Your steps in those are
+marked **You:**. The board is plain Markdown in your repo, so a run can stop anywhere and the next
 `/swarm-dev:swarm` picks up where it left off.
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) 2.1.145 or later (2.1.269 or later with `goal` on)
+- [Claude Code](https://claude.com/claude-code) 2.1.145 or later
 - [herdr](https://herdr.dev) 0.9.2 or later, the terminal multiplexer every agent runs in
 - the [GitHub CLI](https://cli.github.com) and the [codex CLI](https://github.com/openai/codex), both logged in
 - `git`, `python3` and `bash`
+- a GitHub repo, with a `make check` target that runs your tests
 
 ## Getting started
 
-1. Install the plugin, then restart Claude Code:
-
-   ```bash
-   claude plugin marketplace add redscaresu/swarm-dev && claude plugin install swarm-dev@swarm-dev
-   ```
-
+1. Install the plugin (above), then restart Claude Code.
 2. In your project's root, run `claude` once and accept "do you trust this folder?". Agents can't
    start in an untrusted folder.
-3. Inside herdr, run `claude`, then `/swarm-dev:swarm` (type the whole name; the short form
-   completes to another command). The first time, it sets up the board with `swarm.sh init` (which also
-   writes a CI workflow and a pre-commit hook that run `make check`; CI skips a board-only PR)
-   and asks once for your rules for builders: commit trailers, where credentials live, commands that
-   must never run. Commit the `.claude/swarm/brief.md` it writes.
-4. Run `/epic Add rate limiting to the API`, agree the epic, then run `/swarm-dev:swarm` again.
-   Run it each time it stops for you.
+3. Inside herdr, run `claude`, then `/swarm-dev:swarm`. Type the whole name: `/swarm` alone
+   completes to another command. The first time, it runs `swarm.sh init`, which adds the board
+   (`docs/epics/` and `docs/stories/`), `.claude/swarm/config`, and a CI workflow and pre-commit
+   hook that run `make check`. It also asks once for your rules for builders: commit trailers,
+   where credentials live, and commands that must never run. Commit the `.claude/swarm/brief.md`
+   it writes.
+4. Run `/swarm-dev:epic <title>`, agree the epic, then run `/swarm-dev:swarm` again. Run it each
+   time it stops for you.
 
 Your agent can also answer "how do I use swarm-dev?" and "why did /swarm-dev:swarm stop?".
-
-| Command | What it does |
-|---|---|
-| `/epic <title>` | Write a draft epic with a co-author agent; it is planned once you agree it. |
-| `/swarm-dev:swarm` | Run everything after the design, stopping when a decision is yours. |
-| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, merges per day over 14 days with gauges for the merge rate and running agents, and a count of ready stories nobody has started ([details](docs/dash.md)). `--check` compares each of its figures with the command that owns it. |
-| `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
-| `swarm.sh wait-pr [--timeout <seconds>] <PR URL>` | Wait for a PR's checks: exits 0 green, 1 red, 2 when gh fails, the PR conflicts with its base, no checks appear, or one is still pending at the timeout (30 minutes by default). |
-
-The other commands are tools the lead runs; they are listed in
-[reference.md § Commands](docs/reference.md#commands). Settings go in `.claude/swarm/config`
-([all settings](docs/method.md#configuring-a-project)).
 
 ## When `/swarm-dev:swarm` stops for you
 
 | You see | Do |
 |---|---|
 | a draft epic | finish it with the co-author, then agree it |
-| proposed epics or stories | approve them, or say what to change |
+| proposed stories | approve them, or say what to change |
 | a `lead` story | say go, and do its **You:** steps |
 | a PR waiting for you | merge it, ask the lead to, or close it to send the story back |
-| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it (a `later` epic whose dependencies are done gets its stories planned first, for you to approve) |
+| a `blocked` or `later` item | nothing, or set it `ready` / `active` to start it |
 | an agent's login expired | run `/login`, then tell `/swarm-dev:swarm` it's done |
-| an agent on `usage-limit` | nothing: `wait` chose "Wait here, then continue automatically", and it carries on when the limit resets |
-| an agent stuck (`stuck: api error` after three resumes, or `stuck: no output` for `stall_minutes`) | read its pane (`herdr agent read <agent>`), then type into it or close it |
+| an agent stuck | read its pane (`herdr agent read <agent>`), then type into it or close it |
+
+## Watching it
+
+| Command | What it shows |
+|---|---|
+| `swarm.sh dash --watch` | The live dashboard above: what needs you, what is running, and merges per day ([details](docs/dash.md)). |
+| `swarm.sh status` | Agents that need a look, what waits on you, and what runs next. |
+| `swarm.sh flow` | Cost, CI health, where stories spent their time, and how each model did. |
+
+The other commands are ones the lead runs; [reference.md § Commands](docs/reference.md#commands)
+lists them all.
 
 ## Cost and safety
 
-Every agent is a full Claude Code session on your own logins. On infrafactory, from 2026-10-09 to
-2026-10-16, a story's build averaged $5.75, and the whole swarm cost $1211.60 for 137 merged PRs
-(about $9 each, planning and review included), at list prices from `swarm.sh flow` and `outcomes`.
-The `cost` section of `swarm.sh flow` shows where your own tokens went, its `ci_health`
-section shows how long CI takes per push, how often it goes red and how often it flakes, and its
-`incidents` section counts, per day, the waits that timed out, the logins that expired, the
-builders that stopped with no PR, the board pulls that an uncommitted edit stopped, each time a
-person had to step in (`swarm.sh intervene lead-hand|user-caught "<one line>"`, which the lead logs;
-dash shows the 7-day count beside the speedometer), then the agents that stopped on an API error or
-an auto mode denial, per epic. `ci_health` also gives each repo's median CI time per PR and its
-slowest job, beside the same figures for the window before; dash shows this week's against last
-week's on one line. When gh cannot read a PR, it names the gh call and gh's error. Its
-`lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
-item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
-money waits on you, so only those count. Its `model_fit` section sets cost against results for each
-model and kind of story, so you can see where a cheaper model holds up before you move more work to
-it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
-conductor ran but before their build started, building, CI, waiting for review, fixing findings or
-waiting for a merge, in hours and as a share of the whole. `swarm.sh dataset` writes `.swarm/dataset.jsonl`, one
-line per merged story, so you can compare what the planner predicted (easy or not, and the size
-estimate) with what the build took.
+Every agent is a full Claude Code session on your own logins, so a run spends real tokens. On one
+project a story's build averaged $5.75, or about $9 per merged PR with planning and review
+included, at list prices. `swarm.sh flow` shows where your own tokens went.
 
-Agents never touch real cloud or credentials: that work is a `lead` story, done in your session
-while you watch. A `lead` story whose `after:` names its own epic waits for that epic and does not
-hold it open: once its code stories are built, `next`, `status` and `dash` count the epic as done
-without it. Agents start with a short list of environment variables, and a token you exported
-reaches a builder only when its story names it under `env:`. That includes a login kept in the
-environment (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`). Agents with no story
-of their own, such as planners and review agents, never get one, so log in through `claude`,
-`codex login` and `gh auth login` instead ([reference.md](docs/reference.md#building)). By default no agent merges. A story that fails twice is rebuilt once on Fable, the
-most capable model, and then comes to the lead. Failed attempts clean up after themselves. The
-details are in [reference.md](docs/reference.md#cleanup-escalation-and-session-logs). With
-`escalate_ladder = sonnet,opus,fable` in the config (it ships off), `swarm.sh step-up <slug> <trigger>`
-hands a build that is struggling to the next model up, on the same branch, without counting a failed
-attempt. swarm.sh runs it itself when a builder stops with no PR, stalls, gets a third round of
-findings or has CI fail on two heads ([reference.md](docs/reference.md#the-escalation-ladder)).
-`swarm.sh close` never closes a tab that still holds a working builder or one whose PR is open. It
-names each one it kept, and `--all` closes them too.
+- No agent touches real cloud or credentials. That work is a `lead` story, done in your session
+  while you watch.
+- Agents start with a short list of environment variables. A token you exported reaches a builder
+  only when its story names it under `env:`.
+- In a swarm project, a plugin hook guards every Claude session. It refuses raw PR merges (merges
+  go through `swarm.sh merge`), a `git checkout` that would drop changes, and an agent's `pkill`.
+- Nothing merges until you say so, unless you set `merge = agent`.
 
-If herdr stops (`herdr server stop`) or restarts, it reopens each agent's pane and resumes its
-session with the flags it started with, so the agent keeps its model, its guards and its short list
-of environment variables. A resumed session waits at its prompt. An agent started by swarm-dev
-0.23.0 or earlier has no such command and comes back without its guards. Run `/swarm-dev:swarm`
-again and it picks up from the board ([details](docs/reference.md#merging)).
+Settings live in `.claude/swarm/config`; [reference.md § Settings](docs/reference.md#settings)
+lists them all.
+
+## Updating
+
+```bash
+claude plugin marketplace update swarm-dev && claude plugin update swarm-dev@swarm-dev
+```
+
+Restart Claude Code afterwards. Agents already running stay on the old version until
+`swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session.
 
 ## More
 
-- [The method](docs/method.md): the short guide to how planning, building and merging work.
+- [The method](docs/method.md): how planning, building and merging work, in short.
 - [Reference](docs/reference.md): every rule, setting, command and log.
-- On Foundry, Bedrock or Vertex, agents get the provider and model selection (`CLAUDE_CODE_USE_BEDROCK`,
-  `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
-  `AWS_REGION`, `AWS_PROFILE`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`) from the session that
-  runs swarm.sh, so a `claude()` wrapper in `~/.zshrc` that exports them still picks the provider.
-  Exported credentials do not reach agents. Log in through the provider's own tools instead
-  (`aws sso login` or a profile in `~/.aws`, `gcloud auth application-default login`), and put any
-  other settings under `env` in `~/.claude/settings.json`.
-
-- [Obsidian](https://obsidian.md) can show the board as a vault, grouped by status. It shows each
-  file's committed status: what swarm.sh sets later (a review, an unblock) is kept in
-  `.swarm/board-state` instead, so `git status` stays clean. `swarm.sh status` and `swarm.sh dash` read both.
-- To update: `! claude plugin marketplace update swarm-dev`, then
-  `! claude plugin update swarm-dev@swarm-dev`, and restart. Agents already running stay on the old version
-  until `swarm.sh upgrade <epic>` restarts them on the new one, each resuming its own session.
-- [`SECURITY.md`](SECURITY.md) for security, [`AGENTS.md`](AGENTS.md) for working on swarm-dev itself.
-  There, `make test` runs every `tests/*_test.sh`, as many at once as the machine has CPUs (`make test JOBS=2` for fewer),
-  with swarm.sh's fixed waits cut to a hundredth (`SWARM_SLEEP_SCALE=0.01`). The few files whose
-  timing does not hold up beside the others (`SERIAL` in the Makefile) run one at a time after them.
+- [AGENTS.md](AGENTS.md) for working on swarm-dev itself, and [SECURITY.md](SECURITY.md) for
+  reporting a vulnerability.
+- On Bedrock, Vertex or Foundry, agents take the provider and model settings from your session;
+  see [reference.md § Building](docs/reference.md#building).
 
 ## License
 

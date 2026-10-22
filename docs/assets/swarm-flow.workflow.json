@@ -48,9 +48,8 @@
   ],
   "mainPath": [
     "init",
-    "hld",
+    "epic",
     "swarm",
-    "planhld",
     "planepic",
     "approve",
     "board",
@@ -60,11 +59,11 @@
   ],
   "nodes": [
     {
-      "id": "hld",
+      "id": "epic",
       "lane": "you",
       "col": 0,
       "type": "external",
-      "label": "/hld",
+      "label": "/swarm-dev:epic",
       "sublabel": "write it with a co-author",
       "width": 140
     },
@@ -74,7 +73,7 @@
       "col": 2,
       "type": "security",
       "label": "Approve",
-      "sublabel": "the epics, then the stories",
+      "sublabel": "the stories",
       "width": 140
     },
     {
@@ -110,25 +109,16 @@
       "col": 3,
       "type": "database",
       "label": "The board",
-      "sublabel": "docs/: hld, epics, stories",
-      "width": 140
-    },
-    {
-      "id": "planhld",
-      "lane": "plan",
-      "col": 1,
-      "type": "messagebus",
-      "label": "/plan-hld",
-      "sublabel": "the HLD into epics",
+      "sublabel": "docs/: epics, stories",
       "width": 140
     },
     {
       "id": "planepic",
       "lane": "plan",
-      "col": 2,
+      "col": 1,
       "type": "messagebus",
       "label": "/plan-epic",
-      "sublabel": "lead, skeptics, critic",
+      "sublabel": "stories + skeptics",
       "width": 140
     },
     {
@@ -155,7 +145,7 @@
       "col": 5,
       "type": "security",
       "label": "Review agent",
-      "sublabel": "one per PR",
+      "sublabel": "with codex, one per PR",
       "width": 140
     },
     {
@@ -188,8 +178,8 @@
   ],
   "edges": [
     {
-      "id": "hld-agreed",
-      "from": "hld",
+      "id": "epic-agreed",
+      "from": "epic",
       "to": "swarm",
       "label": "agreed",
       "variant": "emphasis"
@@ -197,13 +187,8 @@
     {
       "id": "swarm-plan",
       "from": "swarm",
-      "to": "planhld"
-    },
-    {
-      "id": "epics",
-      "from": "planhld",
       "to": "planepic",
-      "label": "epics"
+      "label": "plans it"
     },
     {
       "id": "stories",
@@ -270,9 +255,9 @@
       "variant": "dashed"
     },
     {
-      "id": "init-hld",
+      "id": "init-epic",
       "from": "init",
-      "to": "hld",
+      "to": "epic",
       "label": "board ready"
     },
     {

@@ -42,7 +42,7 @@ If `swarm.sh` is missing, the user runs `claude plugin marketplace add redscares
 `claude plugin install swarm-dev@swarm-dev`, then restarts Claude Code.
 
 **Set the project up** if `<board>/stories/README.md` does not exist, where `<board>` is what
-`swarm.sh config board_dir` prints (`docs` by default, so `docs/stories/README.md`): run `swarm.sh init` and follow the README's § Getting started, step 3. Keep links as
+`swarm.sh config board_dir` prints (`docs` by default, so `docs/stories/README.md`): run `swarm.sh init` and follow the root README.md's § Getting started from step 3. Keep links as
 markdown links, never `[[wikilinks]]`. Ask the user for the contents of `.claude/swarm/brief.md`
 (their commit trailers, where credentials live, commands that must not run); do not invent them.
 
@@ -62,19 +62,19 @@ Useful while it runs:
 - `swarm.sh dash [--watch [seconds]]`, and `swarm.sh dash --project <dir>` (repeatable): the board, agents, running-now box, merges-per-day speedometer, model ladder and recent events on one read-only screen; each `--project` draws another project.
 - `swarm.sh tidy [--yes]`: close empty panes and retired agents' panes; lists them first.
 - `swarm.sh next`: the next step, without doing it. It prints `release` when `main` has changes since the last `v<version>` tag, and `idle:` lines for capacity nothing uses (`dash` shows them too).
-- `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic; `swarm.sh watch [--backlog]` returns when a story PR needs the lead.
+- `swarm.sh conduct <epic>|--backlog`: a fresh conductor for one epic, or for the ready stories with no epic; `swarm.sh watch [--epic <slug>|--backlog] [repo...]` returns when a story PR needs the lead.
 - `swarm.sh wait --lead`: returns when the lead's queue gains a held or escalated story or a green PR that waits on the user.
 - `swarm.sh wait-pr <pr-url>`: wait for a PR's checks; exit 0 green, 1 red, 2 on a gh error, a conflict with the base, or the timeout. Every CI wait goes through it; the guard refuses a hand-written `gh pr checks` loop.
 - `swarm.sh review-agent <slug> <pr-url>`: a read-only review agent for one PR, scoped to its story's `touches` and **Done when**.
-- `swarm.sh outcomes` and `swarm.sh flow [--since YYYY-MM-DD] [--epic <slug>]`: one row per build with its timings, and the project's numbers a section each: `cost`, `features`, `reviewers`, `throughput`, `time_in_state` (with time held ready while a conductor ran) and more.
+- `swarm.sh outcomes` and `swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]`: one row per build with its timings, and the project's numbers a section each: `cost`, `features`, `reviewers`, `throughput`, `time_in_state` (with time held ready while a conductor ran) and more.
 - `swarm.sh dataset`: write `.swarm/dataset.jsonl`, one JSON line per merged story, its plan beside what the build took.
 - `swarm.sh policy <role>`: model and effort for a role.
 - `swarm.sh tell <slug> <kind> <file>`: findings, nudge or resume sends an idle builder a file; `tell conduct-<epic> note <file>` appends it to a conductor's inbox, busy or not.
 - `swarm.sh merge [--board|--release] <pr-url>`: merge a green PR in review with its head pinned, wait for CI on main, then reconcile; `--release` merges the lead's version-bump PR. Where the base has a merge queue it enqueues the PR. When CI on main goes red on a commit it merged, it prints `fix-main:` and writes a `fix-main-<sha>` story, which `next` names first. With `merge_admin = on` it passes `--admin` once its own checks pass. In a swarm project the plugin's guard hook refuses any other merge.
-- `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`.
+- `swarm.sh step-up <slug> <trigger>`: hand a struggling build to the next model in `escalate_ladder` (off by default), on the same branch, without counting an attempt. With the ladder set, swarm.sh runs it itself on `no-pr`, `stalled`, `findings-3` and `ci-red-2`. `step-up --resume <slug>` starts a rung whose start failed.
 - `swarm.sh intervene lead-hand|user-caught "<one line>"`: log a time a person had to step in; `flow` and `dash` count them.
 - `swarm.sh dash --check`: compare each figure dash shows with the command that owns it.
-- `swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr> <text>`: the outer loop. Log findings by kind, with the reason for a declined one and who raised it (codex, fallback, code-review, ci, conductor, lead, skeptic, critic, or escaped). `outcomes`' recurring block lists kinds fixed on 3+ PRs, and `/swarm-dev:swarm` files a `checks:` story for each.
+- `swarm.sh log-finding [--declined <reason> | --filed] [--reviewer <who>] <kind> <pr> <text>`: the outer loop. Log findings by kind, with the reason for a declined one and who raised it (codex, fallback, code-review, ci, conductor, lead, skeptic, critic, split-critic, or escaped). `outcomes`' recurring block lists kinds fixed on 3+ PRs, and `/swarm-dev:swarm` files a `checks:` story for each.
 - `herdr agent read <name> --source recent-unwrapped`: what an agent is doing.
 
 **Rules that are not negotiable:**
@@ -94,7 +94,7 @@ Useful while it runs:
   agent. List them for the user.
 - One conductor per epic. Two stories clash only when their `touches` name the same `file:symbol`,
   or either names the bare file; clashing stories in two epics get a `depends_on`. Only the lead
-  edits the shared files `AGENTS.md` names.
+  edits the shared files the project's `AGENTS.md` names.
 - A question for the user is a `kind: lead` story with a **You:** step, not a line in chat.
 
 ## Working on this repository
@@ -104,9 +104,14 @@ bin/swarm.sh          the entry point: usage, settings, the model policy, the co
 bin/lib/*.sh          the commands by group (agents, board, build, dash, lifecycle, merge, reports)
 bin/lib/*.py          the Python helpers the commands run
 commands/             /epic, /plan-epic, /swarm (Markdown the plugin loads)
-hooks/                merge-guard.sh: the PreToolUse guard on merges and commands that lose work
+hooks/                hooks.json; merge-guard.sh (the guard on merges and commands that lose work), agent-state.sh
+                      (an agent's state for herdr) and lead-stop.sh (the lead's turn ends only when next allows)
+scripts/              test.sh (the make test runner), pre-commit, board-only.sh
 tests/                *_test.sh, run by make test; doc_check_test.sh checks the docs name only what swarm.sh has
 docs/method.md        the method; change it when behaviour changes
+docs/reference.md     every rule, setting, command and log
+board/                this repo's own board (board_dir = board); docs/ holds user docs only
+skills/swarm-dev/     the plugin skill that answers "how do I use swarm-dev?"
 templates/docs/       what a project copies: the board formats and Obsidian views
 .claude-plugin/       plugin and marketplace manifests
 ```
@@ -117,7 +122,7 @@ Before you open a PR:
 make hooks                                  # once: the gitleaks pre-commit hook
 shellcheck bin/swarm.sh bin/lib/*.sh scripts/pre-commit scripts/demo-dash.sh scripts/board-only.sh scripts/test.sh tests/*.sh
 python3 -m py_compile bin/lib/*.py
-make test                                   # every tests/*_test.sh in parallel, swarm.sh's sleeps cut by SWARM_SLEEP_SCALE
+make test                                   # every tests/*_test.sh: in parallel, SLOW files first, SERIAL ones alone
 claude plugin validate .
 ```
 
@@ -132,7 +137,7 @@ never `[[wikilinks]]`.
 
 `bin/swarm.sh` and `bin/lib/*.sh` must run on macOS's bash 3.2: no `mapfile`, no associative arrays. Pin every GitHub
 Action to a commit SHA, with `persist-credentials: false` and read-only permissions; zizmor fails
-the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`.
+the PR otherwise. CI (shellcheck, test, plugin-validate, gitleaks, zizmor) is required on `main`; `test` passes when its 8 `test-shard` jobs do (`SHARD=i/N` runs one locally).
 When `swarm.sh next` prints `release` (`main` has changes since the last `v<version>` tag), the lead cuts a
 release through `/swarm-dev:swarm`'s release arm and `swarm.sh merge --release`: a PR that bumps `version` in
 `.claude-plugin/plugin.json` and nothing else. `claude plugin update` fetches nothing while the version is
