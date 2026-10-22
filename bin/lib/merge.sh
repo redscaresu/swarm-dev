@@ -314,10 +314,11 @@ group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conduc
 # its agents, since what runs is not known, nor while a working conductor stopped on an expired login
 # or an API error (conductor_stop), which would stop a new one too. No conductor starts for a group
 # while conduct_stop says why not, and none outside herdr: it prints what to run instead. A start that
-# fails is a warning naming start_conductor's last line, and conduct_ready then returns 1; its other
+# fails is a warning naming start_conductor's last line, and conduct_ready then returns 1. Each start
+# logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
 conduct_ready() {
-  local e name arg ready log c rc=0
+  local e name arg ready log c why rc=0
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
   if ! herdr agent list >/dev/null 2>&1; then
@@ -344,8 +345,14 @@ conduct_ready() {
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
     log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
     ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
-    if wait $!; then echo "started: ${name} (swarm.sh conduct ${arg})"
-    else echo "warning: swarm.sh conduct ${arg} failed (exit $?: $(tail -1 "${log}")); run it yourself"; rc=1; fi
+    # Logged as a dispatched swarm.sh conduct logs it, with its die line on a failure: outcomes builds
+    # its conductor runs from these lines.
+    if wait $!; then
+      record_event conduct "${arg}"; echo "started: ${name} (swarm.sh conduct ${arg})"
+    else
+      c=$?; why="$(tail -1 "${log}")"; record_event conduct "${arg}" "${why#swarm: }"
+      echo "warning: swarm.sh conduct ${arg} failed (exit ${c}: ${why}); run it yourself"; rc=1
+    fi
     rm -f "${log}"
   done 3< <(awk '{ print $2 }' <<< "${ready}" | sort -u)
   return "${rc}"

@@ -12,7 +12,7 @@ Start the epic `$ARGUMENTS`. Requires herdr (`HERDR_ENV=1`); if not inside herdr
    (`grep -l '^status: draft$' docs/epics/*.md`, never the README).
    - One draft: resume it (step 1, with its title from the file's `# ` heading).
    - Several: list them with their titles and ask which; do not guess.
-   - None: there is no epic in progress. Run `swarm.sh next` and tell the user where the chain
+   - None: there is no epic in progress. Run `swarm.sh _step` (next's step, which starts no conductor) and tell the user where the chain
      stands (for example "`conduct policy-correctness`: a ready story in an active epic") and that
      `/swarm-dev:swarm` continues it. Offer to start a new epic if they give a title. Then stop.
 

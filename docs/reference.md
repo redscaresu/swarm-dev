@@ -287,7 +287,9 @@ while a working conductor has stopped on an expired login or an API error, which
 too, or while herdr cannot list its agents, since what runs is then not known; each prints why.
 Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each start prints `started:
 <conductor> (swarm.sh conduct <arg>)`, which `next` puts after the wait's why, so its first line is
-still the step. A start that fails prints a warning and changes neither command's exit status.
+still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` does. A start that
+fails prints a warning, logs its error as that line's outcome, and changes neither command's exit
+status. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with

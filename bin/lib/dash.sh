@@ -283,7 +283,8 @@ dash_check() {
   dash_agree "agents waiting on a prompt" "$(sed -n 's/^│ [^ ]* answer \([^ :]*\)[: ].*/\1/p' <<< "${boxes}" | dash_words)" \
     status "$(sed -n 's/^  \([^ ]*\)  *WAITING .*/\1/p' <<< "${st}" | dash_words)"
 
-  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" next 2>/dev/null | sed -n 1p || true)"
+  # _step: next's step without the conductors next starts.
+  want="$(SWARM_PROJECT="${PROJECT_DIR}" "${sw}" _step 2>/dev/null | sed -n 1p || true)"
   got="$(dash_first '.*  next \(.*[^ ]\)  *[0-9][0-9:]*$' "$(sed -n 1p <<< "${frame}")")"
   dash_agree next "$(dash_cut "${got}" "${want}")" next "${want}"
 

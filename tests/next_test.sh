@@ -1178,7 +1178,7 @@ if [[ "${out}" == *"no conductor for epic e2 started: no story or epic changed a
 (cd "${dir}" && item epics/e4.md 'status: active' 'parent: Not_A_Slug' && item stories/s4.md 'status: ready' 'kind: code' 'epic: e4' \
   && item epics/e5.md 'status: active' && item stories/s5.md 'status: ready' 'kind: code' 'epic: e5')
 rm "${dir}"/.swarm/state/conduct-backlog-*; printf 'conduct-e1 w:7\nconduct-e2 w:10 working\nconduct-e5 w:99\n' > "${dir}/agents"
-echo "w:10 conduct-e2" >> "${dir}/.swarm/state/tab"; touch "${dir}/docs/stories/s2.md"
+echo "w:10 conduct-e2" >> "${dir}/.swarm/state/tab"; touch "${dir}/docs/stories/s2.md"; rm -f "${dir}/.swarm/events.tsv"
 out="$(nextb)"
 if [[ "${out}" == *"no conductor started: conduct-e2 has reported; collect it first"* ]] && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log" \
     && [[ -f "${dir}/.swarm/conduct-e2.report.md" ]]; then
@@ -1190,6 +1190,11 @@ if [[ "${out}" == *"no conductor started: another project's agent holds the name
 if [[ "${out}" == *"started: conduct-backlog-"*"warning: swarm.sh conduct e4 failed"*"warning: starting conductors for ready work failed"* ]]; then
   echo "ok   next with one start failing keeps the started: lines of the others"; else
   echo "FAIL next with one start failing: '${out}'"; fails=$((fails + 1)); fi
+# Each start is logged as a dispatched swarm.sh conduct logs it: ok, or its die line.
+ev="$(awk -F'\t' '$2 == "conduct" { print $3 " " $5 }' "${dir}/.swarm/events.tsv" 2>/dev/null)"
+if grep -qx -- "--backlog ok" <<< "${ev}" && grep -qx "e4 e4: bad parent 'Not_A_Slug'" <<< "${ev}"; then
+  echo "ok   next logs each conductor start, ok or its die line, in events.tsv"; else
+  echo "FAIL next's conductor starts in events.tsv: '${ev}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}" "${dir}-wt"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
