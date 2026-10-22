@@ -33,7 +33,7 @@ codex_says 1 "${LIMIT_MSG}" > "${BIN}/codex"
 # herdr: logs every call. Tab t:<n> holds pane w:<n>. agent start records "<name> <pane> <session>"
 # (failing with startfail, taking 20 s with slowstart); a tab create with panefail opens none; agent prompt writes the findings file the brief names and marks the agent
 # done, unless silent (it stays busy) or idle (it goes idle with no file; with late, it writes the
-# file 3 s later, as a background call of its own would), and with promptfail leaves the agent idle (herdr's agent_prompt_stalled, and agent get reads idle with herdr 0.9.5's null completion_seq), so the brief is never taken up; a
+# file 3 s later, as a background call of its own would), and with promptfail leaves the agent idle (herdr's agent_prompt_stalled, and agent get reads idle with no completion_seq, as herdr 0.9.5 gives it), so the brief is never taken up; a
 # pane or tab close drops its agent. agent list and wait report it idle once done.
 cat > "${BIN}/herdr" <<EOF
 #!/bin/sh
@@ -70,7 +70,7 @@ case "$1 $2" in
                     touch "$H/done/$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")"; "$H/sessions"
                   fi
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
-  "agent get")    [ -e "$H/promptfail" ] && echo '{"result":{"agent":{"agent_status":"idle","completion_seq":null}}}' ;;
+  "agent get")    [ -e "$H/promptfail" ] && echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent wait")   echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent list")   awk -v d="$H/done" 'BEGIN { printf "{\"result\":{\"agents\":[" }
                     { s = system("test -e " d "/" $1) == 0 ? "idle" : "working"
