@@ -1245,8 +1245,8 @@ missed poll, and three in a row end the wait as an error. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
 With `--board`, when the main checkout has an upstream, it runs `swarm.sh reconcile` too, which
 pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
-has not started building, and has a file that the pulled commits changed. A story reconcile sent
-back to ready doesn't count, and neither does a `fix-main` story. For each epic with newly ready
+has not started building, and has a file the board PR itself changes. A story reconcile sent back
+to ready doesn't count, nor does a `fix-main` story or one another board PR merged beside it readied. For each epic with newly ready
 stories, it sends the epic's running conductor one note naming them (`swarm.sh tell conduct-<epic>
 note`; stories with no epic go to the backlog conductor) and asks it to start them now, within its
 builder limits. When no conductor runs, it prints a `ready now:` line saying `next` will start

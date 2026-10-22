@@ -1195,8 +1195,10 @@ put() { # <path> <front-matter line>... — a board file in that clone, staged
 }
 land() { git -C "${ROOT}/up" -c user.name=t -c user.email=t@t commit -q -m land; git -C "${ROOT}/up" push -q origin HEAD:main; }
 pulled() { git -C "${P}" fetch -q; git -C "${P}" merge -q --ff-only '@{upstream}'; }
-bfresh() { # fresh, no story s, and the merge commit origin's tip (OID) with a green check and run
+bfresh() { # fresh, no story s, the PR the last land's commit, and the merge commit origin's tip (OID), green
   fresh; rm "${S}"; OID="$(git -C "${ROOT}/up" rev-parse HEAD)"; echo "${OID}" > "${FX}/oid"
+  git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | python3 -c 'import json, sys; print(json.dumps([{"filename": l.strip(), "status": "modified"} for l in sys.stdin]))' > "${FX}/files"
+  git -C "${ROOT}/up" diff --name-only HEAD~1 HEAD | wc -l | tr -d ' ' > "${FX}/nfiles"
   checks "${FX}/${OID}.checks" "$(run test completed success)"; statuses "${FX}/${OID}.status"
   wfruns "${FX}/${OID}.runs" "$(run ci completed success "${OID}")"
 }
@@ -1232,6 +1234,11 @@ git -C "${ROOT}/up" rm -q docs/stories/q.md; put docs/stories/r5.md "status: rea
 bfresh; merge --board "${URL}"
 check "a board merge whose pull deletes q, in review: reconcile finishes q" logged "^reconcile q ok"
 check "a board merge whose pull deletes q, in review: still notes r5" grep -qF "these stories of epic e are ready now: r5." "${INBOX}"
+# Two board PRs merge one after the other before either pulls: this one (r10's) names r10 alone.
+put docs/stories/r9.md "status: ready" "kind: code" "epic: e"; land
+put docs/stories/r10.md "status: ready" "kind: code" "epic: e"; land
+bfresh; merge --board "${URL}"
+check "a board merge beside another board PR: the note names its own r10, not r9" grep -qF "these stories of epic e are ready now: r10." "${INBOX}"
 # z's PR closed unmerged: reconcile sends z back to ready, which the pull did not do, so no note names it.
 item z "status: review" "kind: code" "epic: e" "prs: https://github.com/o/r/pull/11"
 put docs/stories/r8.md "status: ready" "kind: code" "epic: e"; land
@@ -1279,7 +1286,7 @@ check "a board merge whose tell fails: warns" said "warning: could not note cond
 # Leave P, origin and the clone as the block found them.
 rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,b1,o1,q} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,b1,o1,q} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

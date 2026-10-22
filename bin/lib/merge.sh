@@ -126,7 +126,7 @@ merge_fail() { record_event merge "${MERGE_TARGET}" "$1"; die "merge: $1"; }
 # merge ran but the PR never read as merged, else merge ok, main-ci ok|red|timeout|error (a red one
 # then fix_main's main-red, an ok one main-green when it clears a red main), then reconcile's own. Fails on anything but a green main.
 merge_pr() {
-  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue ready="" was=""
+  local only="" clash="" whose want="" url repo n info state head base changed f="" any="" p rel origin own method oid why rc=0 rrc ran=1 admin queue ready="" files=""
   while [[ $# -gt 1 ]]; do
     case "$1" in
       --board|--release) [[ -z "${only}" || "${only}" == "$1" ]] || clash=1; only="$1"; shift ;;
@@ -178,6 +178,7 @@ merge_pr() {
     rel="${BOARD#"${PROJECT_DIR}"/}"
     # A renamed file's old path counts too: renaming bin/x to the board is not a board-only change.
     info="$(ci_gate files "${repo}" "${n}" "${changed}")" || merge_fail "${only}: cannot list every file ${url} changes: ${info}"
+    files="${info}"
     while IFS= read -r p; do
       if [[ "${only}" == --board ]]; then
         [[ "${p}" == "${rel}/"* ]] || merge_fail "--board: ${url} changes ${p}, outside ${rel}/"
@@ -215,9 +216,8 @@ merge_pr() {
   # and a base that requires one takes no direct merge but --admin's, which merge_admin = off rules out.
   [[ "${queue}" != yes || "${only}" != --release ]] \
     || merge_fail "--release: ${base} requires a merge queue, which a release must not join (a PR queued behind it could share its tag) and which only --admin merges past, with merge_admin = off; merge ${url} yourself once the queue is empty"
-  # What is ready before the merge, and the commit it is read at, for ready_tell: a reconcile during
-  # the CI wait may pull the board.
-  [[ "${only}" != --board ]] || { ready="$(board_ready)"; was="$(git -C "${PROJECT_DIR}" rev-parse -q --verify HEAD || true)"; }
+  # What is ready before the merge, for ready_tell: a reconcile during the CI wait may pull the board.
+  [[ "${only}" != --board ]] || ready="$(board_ready)"
   if [[ "${queue}" == yes ]]; then
     # The conductor's brief keys on this line: every PR goes through the queue at once.
     echo "merge queue: ${base} has one, so #${n} goes through it"
@@ -264,7 +264,7 @@ merge_pr() {
   # A board PR can make stories ready: their conductor hears now, not on its next pass. In the
   # background, so set -e holds inside it; it never fails the merge.
   if [[ "${only}" == --board && -n "${oid}" ]]; then
-    ( set -e; ready_tell "${url}" "${oid}" "${was}" "${ready}" ) &
+    ( set -e; ready_tell "${url}" "${oid}" "${files}" "${ready}" ) &
     wait $! || echo "warning: telling conductors what ${url} made ready failed (exit $?)"
   fi
   if [[ -z "${only}" ]]; then
@@ -290,17 +290,17 @@ board_ready() {
   done < <(board stories)
 }
 
-# ready_tell <url> <oid> <was> <before> — once merge --board has landed <url> at the merge commit
+# ready_tell <url> <oid> <files> <before> — once merge --board has landed <url> at the merge commit
 # <oid>: run reconcile, which clears any merged build before it pulls the main checkout. New are the
-# stories buildable now (board_ready) that <before> (its lines at <was>, the HEAD before the merge)
-# does not list and whose file the commits since <was> changed: not one reconcile sent back to ready,
-# nor a fix-main story merge wrote. For each epic with new stories, send its running conductor (the
+# stories buildable now (board_ready) that <before> (its lines before the merge) does not list and
+# whose file is among <files>, the paths <url> changes: not one reconcile sent back to ready, a
+# fix-main story merge wrote, nor one another board PR merged beside it readied. For each epic with new stories, send its running conductor (the
 # backlog's, for stories with no epic) one note naming them, to start them now; with none running,
 # say next will. With no upstream nothing is pulled, so nothing is new. A failed reconcile (logged
 # as merge logs one), a checkout still without <oid>, a herdr that cannot list its agents, or a
 # failed tell is a warning: the merge has landed either way.
 ready_tell() {
-  local url="$1" oid="$2" was="$3" new changed rc why e name of slugs note
+  local url="$1" oid="$2" new rc why e name of slugs note
   has_upstream || return 0
   # shellcheck disable=SC2034 # read in another file
   ( DIE_LEVEL="${BASH_SUBSHELL}"; set -e; reconcile ) &
@@ -315,9 +315,10 @@ ready_tell() {
     echo "warning: reconcile did not pull ${oid:0:7} into ${PROJECT_DIR}, so no conductor was told what ${url} made ready; run swarm.sh reconcile"
     return 0
   }
-  changed="$(git -C "${PROJECT_DIR}" diff --name-only --no-renames "${was}" HEAD -- "${BOARD}/stories")"
-  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | CHANGED="${changed}" awk 'BEGIN { n = split(ENVIRON["CHANGED"], c, "\n")
-    for (i = 1; i <= n; i++) { f = c[i]; sub(/.*\//, "", f); sub(/\.md$/, "", f); ch[f] = 1 } } $1 in ch')"
+  new="$(comm -13 <(sort <<< "$4") <(board_ready | sort) | CHANGED="$3" DIR="${BOARD#"${PROJECT_DIR}"/}/stories/" awk '
+    BEGIN { n = split(ENVIRON["CHANGED"], c, "\n"); d = ENVIRON["DIR"]
+      for (i = 1; i <= n; i++) if (index(c[i], d) == 1) { f = substr(c[i], length(d) + 1); sub(/\.md$/, "", f); ch[f] = 1 } }
+    $1 in ch')"
   # On fd 3: herdr and the tell below must not read the list.
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
