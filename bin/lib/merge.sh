@@ -293,9 +293,10 @@ board_ready() {
 # lists (an active epic's, or with no epic the backlog's) that has none running. fix-main stories are
 # left out: every conductor builds one first, and next names it. It starts no backlog conductor while
 # backlog_stop says why not, and nothing outside herdr: it prints what to run instead. A start that
-# fails is a warning. Its own lines go to stdout, start_conductor's to stderr.
+# fails is a warning naming start_conductor's last line; its other output is dropped, so next's first
+# line stays the step even with stderr merged.
 conduct_ready() {
-  local e name arg ready
+  local e name arg ready log
   ready="$(board_ready | awk '$1 !~ /^fix-main-/')"
   while read -r e <&3; do
     [[ -n "${e}" ]] || continue
@@ -304,8 +305,11 @@ conduct_ready() {
     # shellcheck disable=SC2046 # slugs, [a-z0-9-]
     if [[ "${e}" == - ]] && backlog_stop $(awk '$2 == "-" { print $1 }' <<< "${ready}"); then continue; fi
     if [[ "${HERDR_ENV:-}" != 1 ]]; then echo "no conductor: run swarm.sh conduct ${arg} for its ready stories"; continue; fi
-    ( set -e; start_conductor "${arg}" ) >&2 &
-    if wait $!; then echo "started: ${name} (swarm.sh conduct ${arg})"; else echo "warning: swarm.sh conduct ${arg} failed (exit $?); run it yourself"; fi
+    log="$(mktemp "${TMPDIR:-/tmp}/swarm-conduct.XXXXXX")"
+    ( set -e; start_conductor "${arg}" ) > "${log}" 2>&1 &
+    if wait $!; then echo "started: ${name} (swarm.sh conduct ${arg})"
+    else echo "warning: swarm.sh conduct ${arg} failed (exit $?: $(tail -1 "${log}")); run it yourself"; fi
+    rm -f "${log}"
   done 3< <(awk '{ print $2 }' <<< "${ready}" | sort -u)
 }
 

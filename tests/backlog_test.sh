@@ -106,6 +106,7 @@ echo reported > "${p}/.swarm/conduct-backlog.report.md"; TZ=UTC touch -t 2026100
 nx="$(run next)"
 check "once the backlog conductor has reported, next collects it" "collect ${bn}" "${nx%%$'\n'*}"
 run close "${bn}" >/dev/null
+run close conduct-e >/dev/null   # next started it: e has a ready story and no conductor
 
 # --- The epic conductor's brief: the same review paragraph, and no 'or verify'.
 run conduct e >/dev/null
