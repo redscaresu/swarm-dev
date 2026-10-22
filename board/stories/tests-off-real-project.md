@@ -3,7 +3,7 @@ kind: code
 status: ready
 epic: safer-faster-swarm
 depends_on: []
-touches: [scripts/test.sh, bin/lib/dash.sh:slow refresh spawn, tests/test_runner_test.sh]
+touches: [scripts/test.sh, bin/lib/dash.sh:slow refresh spawn, tests/test_runner_test.sh (new)]
 easy: true
 estimate_lines: 80
 ---
