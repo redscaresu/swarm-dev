@@ -893,7 +893,7 @@ same workflow and event on the same head, so a workflow red on push and green on
 flake. `gh run list` shows only a rerun's last attempt, so the section reads each earlier attempt's
 conclusion from `gh api`. A run whose times do not parse adds no minutes. It reads each PR over gh's REST API, whose hourly limit is separate from the GraphQL one a swarm's `gh pr` commands spend. A reset connection or a 5xx is tried three times, 1 and then 2 seconds apart. Any other error is not tried again, and after `API rate limit exceeded` the section makes no more `gh` calls. A PR that `gh` cannot read, or whose call takes over 10 seconds, is left out of the row. A line under the row says how many, and a `ci health: left out <PR>: <the gh call>: <gh's last line of error>` line names each one. The ci time table below does the same with `ci time:` lines.
 
-Under the row, a `test_file flaky_runs last_seen example_run` table names the test files that
+After the ci time table, so its reads never starve that table, a `test_file flaky_runs last_seen example_run` table names the test files that
 fail and then pass on the same commit, worst first. It lists the runs created in the window, one
 `gh api` call over GitHub's UTC days, in the repos of the window's PRs (one `gh` could not read
 too) and in the project's origin, so runs on main and on the lead's own PRs count too. With `--epic`, it reads only that epic's

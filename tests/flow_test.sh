@@ -258,13 +258,14 @@ merge ins: left out '"${U}"$'/15: '"$(g rev-parse --short=12 story/m15)"$': git 
 # once each), then by the newest d, f, a and e. Run 30's log also has a check that quotes a FAIL
 # tests/z_test.sh line, and an indented and a diffed FAIL tests/y_test.sh line, none test.sh's own. t3's PR (#3, epic e1) is a retry on t1's branch,
 # so under --epic runs 10 and 11 are its too, counted once. t4's and t5's PRs (#4, #5, epic e2) share
-# t4's branch and its one green run 40. A project u, its origin o/z, has u1's PR #9 on o/r, built
-# 10-06, when o/r's run 90 is a rerun.
+# t4's branch and its one green run 40; t6's PR (#6, epic e3) gh cannot read, beside t7's (#7, e3) on
+# t4's branch. A project u, its origin o/z, has u1's PR #9 on o/r, built 10-06, its CI run 91 5
+# minutes (test 4), when o/r's run 90 is a rerun.
 T="${dir}/t"; TG="${dir}/tgh"; mkdir -p "${T}/.swarm" "${T}/docs/stories" "${TG}/bin"; git -C "${T}" init -q
 git -C "${T}" remote add origin https://github.com/o/r.git
-for s in t1:e1 t3:e1 t4:e2 t5:e2; do printf -- '---\nkind: code\nstatus: ready\nepic: %s\n---\n' "${s#*:}" > "${T}/docs/stories/${s%:*}.md"; done
+for s in t1:e1 t3:e1 t4:e2 t5:e2 t6:e3 t7:e3; do printf -- '---\nkind: code\nstatus: ready\nepic: %s\n---\n' "${s#*:}" > "${T}/docs/stories/${s%:*}.md"; done
 printf -- '---\nkind: code\nstatus: ready\n---\n' > "${T}/docs/stories/t2.md"
-printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' t1 t2 t3 t4 t5 > "${T}/.swarm/agents.tsv"
+printf '2026-10-01\tcode\t%s\tclaude\topus\thigh\t-\n' t1 t2 t3 t4 t5 t6 t7 > "${T}/.swarm/agents.tsv"
 U="${dir}/u"; mkdir -p "${U}/.swarm" "${U}/docs/stories"; git -C "${U}" init -q; git -C "${U}" remote add origin https://github.com/o/z.git
 printf -- '---\nkind: code\nstatus: ready\n---\n' > "${U}/docs/stories/u1.md"; printf '2026-10-06\tcode\tu1\tclaude\topus\thigh\t-\n' > "${U}/.swarm/agents.tsv"
 trun() { # <id> <head> <workflow> <event> <conclusion> <attempt> <created> — a run, as gh run list gives it
@@ -279,9 +280,10 @@ listing() { # <created> <total_count> <run>... — GitHub's runs for that create
   local IFS=,; echo "[{\"total_count\":${n},\"workflow_runs\":[$*]}]" > "${TG}/runs-${c}"
 }
 for n in 1 2 4 9; do echo "{\"head\":{\"ref\":\"story/$([ "${n}" = 9 ] && echo u1 || echo "t${n}")\"}}" > "${TG}/pull-${n}"; done
-cp "${TG}/pull-1" "${TG}/pull-3"; cp "${TG}/pull-4" "${TG}/pull-5"
-for n in 4 5 9; do echo '[[{"sha":"c4"}]]' > "${TG}/commits-${n}"; done
-echo "[$(trun 40 c4 CI pull_request success 1 2026-10-01T10:00:00Z)]" > "${TG}/runs-story-t4"; echo '[]' > "${TG}/runs-story-u1"
+cp "${TG}/pull-1" "${TG}/pull-3"; cp "${TG}/pull-4" "${TG}/pull-5"; cp "${TG}/pull-4" "${TG}/pull-7"
+for n in 4 5 7 9; do echo '[[{"sha":"c4"}]]' > "${TG}/commits-${n}"; done
+echo "[$(trun 40 c4 CI pull_request success 1 2026-10-01T10:00:00Z)]" > "${TG}/runs-story-t4"; echo '[{"databaseId":91,"headSha":"c4","workflowName":"CI","event":"pull_request","status":"completed","conclusion":"success","attempt":1,"createdAt":"2026-10-06T10:00:00Z","startedAt":"2026-10-06T10:00:00Z","updatedAt":"2026-10-06T10:05:00Z"}]' > "${TG}/runs-story-u1"
+echo '[{"jobs":[{"name":"test","run_attempt":1,"started_at":"2026-10-06T10:00:00Z","completed_at":"2026-10-06T10:04:00Z"}]}]' > "${TG}/jobs-91-1"
 echo '[[{"sha":"a1"}]]' > "${TG}/commits-1"; cp "${TG}/commits-1" "${TG}/commits-3"; echo '[[{"sha":"b1"}]]' > "${TG}/commits-2"
 echo "[$(trun 11 a1 CI pull_request failure 2 2026-10-01T09:00:00Z),$(trun 10 a1 CI pull_request success 2 2026-10-01T10:00:00Z)]" > "${TG}/runs-story-t1"
 echo '[]' > "${TG}/runs-story-t2"
@@ -322,6 +324,8 @@ case "$*" in
   "pr list --head story/u1"*) printf 'https://github.com/o/r/pull/9\tMERGED\t2026-10-06T12:00:00Z\t2026-10-06T10:00:00Z\t0\n' ;;
   "api repos/o/r/pulls/9") [ "${LIMITED:-}" != pulls ] || { echo "$RL" >&2; exit 1; }
     [ "${LIMITED:-}" != pull404 ] || { echo 'HTTP 404: Not Found' >&2; exit 1; }; cat "$G/pull-9" ;;
+  "api --paginate --slurp repos/o/r/actions/runs/91/attempts/1/jobs?per_page=100") cat "$G/jobs-91-1" ;;
+  "run view 90 "*) [ "${LIMITED:-}" != log90 ] || { echo "$RL" >&2; exit 1; }; echo 'HTTP 404: Not Found' >&2; exit 1 ;;
   "api --paginate --slurp repos/o/z/actions/runs?created="*) [ "${LIMITED:-}" != listing ] || { echo "$RL" >&2; exit 1; }; echo '[]' ;;
   "pr list --head story/t"*) printf 'https://github.com/o/r/pull/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t0\n' "${4#story/t}" ;;
   "pr view "*) echo 2026-10-01T10:00:00Z ;;
@@ -359,6 +363,7 @@ tests/a_test.sh\t1\t2026-10-01\t'"${L}"$'/10/attempts/1
 tests/e_test.sh\t1\t2026-10-01\t'"${L}"$'/11/attempts/1'
 check "ci_health: with --epic and no flaky run, none in the runs read, a run two PRs share once" "$(flaky --since 2026-10-01 --until 2026-10-03 --epic e2)" \
   "flaky tests: none in the 1 runs read"
+check "ci_health: with --epic and a PR gh cannot read, no none line" "$(flaky --since 2026-10-01 --until 2026-10-03 --epic e3)" ""
 check "ci_health: with no PR in the window, the project's origin is still read" "$(flaky --since 2026-10-02 --until 2026-10-03)" "${FH}"$'
 tests/d_test.sh\t1\t2026-10-02\t'"${L}"$'/30/attempts/2
 tests/c_test.sh\t1\t2026-10-02\t'"${L}"$'/30/attempts/1'
@@ -379,6 +384,11 @@ check "ci_health: a listing cut short leaves no none line" "$(flaky --since 2026
   "flaky tests: gh listed 1 of the 5 runs of o/r created 2026-10-08..2026-10-08, the newest; the rest are left out"
 check "ci_health: the repo of a PR gh could not read is still listed" "$(FP="${U}" LIMITED=pull404 flaky --since 2026-10-06 --until 2026-10-06)" \
   "flaky tests: could not read ${L}/90/attempts/1: gh run view 90 -R o/r --attempt 1 --log-failed: HTTP 404: Not Found"
+# shellcheck disable=SC2016 # awk's own $0
+check "ci_health: the flaky tests read after ci time, so a rate limit they hit leaves its table whole" \
+  "$(cd "${U}" && env -u HERDR_ENV -u SWARM_PROJECT LIMITED=log90 SWARM_FLOW_SECTIONS=ci_health CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${TG}/bin:${PATH}" \
+    bash "${SWARM}" flow --since 2026-10-06 --until 2026-10-06 2>&1 | awk '/^## / { f = $0 == "## ci_health"; next } f' | grep -E '^(o/r'$'\t''|ci time:|flaky tests: stopped)')" \
+  $'o/r\t1\t5.0\ttest\t4.0\t0\t\t\t\t\nflaky tests: stopped at gh\'s rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): 1 of 1 runs that may be flaky not read in full'
 check "ci_health: a rate limit while listing a later repo keeps the earlier repo's runs, and says which repo it did not list" \
   "$(FP="${U}" LIMITED=listing flaky --since 2026-10-06 --until 2026-10-06)" \
   "flaky tests: stopped at gh's rate limit (gh: API rate limit exceeded for user ID 1. (HTTP 403)): the runs of o/z not listed; 1 of 1 runs that may be flaky not read in full"
