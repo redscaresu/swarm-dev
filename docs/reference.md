@@ -912,8 +912,8 @@ numbers in sections, one per `bin/lib/flow_<name>.py` in name order, each under 
 the others. `flow` writes nothing but its own gh calls' lines in `.swarm/gh-calls.tsv` and its cache (below), except that `merge_ins` may fetch a PR's head into its repo, and its `git merge-tree` writes the trees and blobs of each re-merge into the repo's object store. For one release, the old `cost`, `features` and `review-yield`
 commands still run, and each prints which section now holds its numbers.
 
-GitHub history that is finished never changes, so `flow` reads it from `gh` once and keeps it in
-`.swarm/gh-cache/<owner>--<repo>/` (`bin/lib/gh_cache.py`), one JSON file per record: a closed or
+GitHub history that is finished never changes, so `flow` (and dash's ci refresh, which runs it) reads it from `gh`
+once and keeps it in `.swarm/gh-cache/<owner>--<repo>/` (`bin/lib/gh_cache.py`), one JSON file per record: a closed or
 merged PR, its commits and its runs (once none of them is still running), a completed run's jobs and
 earlier attempts, the `FAIL` and `TIMEOUT` lines of a red attempt's log (never the whole log), a
 PR's `createdAt` and branch, the merged PRs `rework` searches, and the repo's completed runs that
