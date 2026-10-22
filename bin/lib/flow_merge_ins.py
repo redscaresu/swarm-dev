@@ -10,10 +10,10 @@
 # PR changes against the base (a hand fix; a difference elsewhere is another merge strategy); behind
 # when they merge clean and the base had commits the branch lacked; neither when it had none. unread
 # counts the rest: a PR gh could not read, the merge-ins main_merges counted that gh does not list, a
-# sha or commit git cannot read, a git command that fails, and a one-parent "merge" (a squash, a
-# rebase); a `merge ins: left out <url>: <why>` line names each. TSV cause merge_ins prs, then, after
-# a blank line, file conflicts: the three files conflicts hit most; or none conflicted, or none read
-# when it read no merge-in.
+# sha or commit git cannot read, a merge-in whose git log, merge-tree, diff or merge-base fails, and a
+# one-parent "merge" (a squash, a rebase); a `merge ins: left out <url>: <why>` line names each. TSV
+# cause merge_ins prs, then, after a blank line, file conflicts: the three files conflicts hit most; or
+# none conflicted, or none read when it read no merge-in.
 import collections, datetime, os, re
 from report import *
 
@@ -44,7 +44,8 @@ def base_merge(headline, base):
     return name.removeprefix("'").removesuffix("'").removeprefix("origin/") == base
 
 def names(got):
-    return sorted(f for f in got.stdout.split("\0") if f)
+    # The paths a -z --name-only git call printed, or None when it failed (an empty list is no paths).
+    return None if got.returncode else sorted(f for f in got.stdout.split("\0") if f)
 
 def merge_ins(repo, n):
     # The shas of PR n's merge-ins and "", or None and why gh's answer cannot be read.
@@ -92,11 +93,13 @@ def cause(root, oid):
         # git merged it clean and the commit differs. On a path the PR changes against the base, the
         # builder changed the result before committing; elsewhere it is another strategy's clean merge.
         diff = ("diff", "--name-only", "--no-renames", "-z", "--end-of-options")
-        from_clean, from_base = (git(root, *diff, side, tree) for side in (clean, base))
-        for got in (from_clean, from_base):
-            if got.returncode:   # an empty list from a failed diff would read as no hand fix
+        fixed = None
+        for side in (clean, base):   # the first failure stops it: a timed-out diff costs one limit
+            got = git(root, *diff, side, tree)
+            paths = names(got)
+            if paths is None:
                 return "unread", [], f"{oid[:12]}: git diff: {said(got)}"
-        fixed = set(names(from_clean)) & set(names(from_base))
+            fixed = set(paths) if fixed is None else fixed & set(paths)
         if fixed:
             return "conflict", sorted(fixed), ""
     ancestor = git(root, "merge-base", "--is-ancestor", "--end-of-options", base, ours)
