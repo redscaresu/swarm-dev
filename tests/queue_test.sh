@@ -96,6 +96,9 @@ green() {
 watchrun() {
   local pid
   : > "${ROOT}/gh.log"
+  # A new file each run: a watch the last run killed can leave a gh call in flight, whose error would
+  # land in a reused file (that check's failed list, as "printf: Broken pipe").
+  rm -f "${ROOT}/watch.out"
   (cd "${p}" && exec env -u HERDR_ENV -u SWARM_PROJECT PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" watch --epic e1 > "${ROOT}/watch.out" 2>&1) &
   pid=$!
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do kill -0 "${pid}" 2>/dev/null || break; sleep 0.5; done
