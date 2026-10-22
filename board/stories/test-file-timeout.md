@@ -3,7 +3,7 @@ kind: code
 status: ready
 epic: safer-faster-swarm
 depends_on: []
-touches: [scripts/test.sh, tests/test_runner_test.sh]
+touches: [scripts/test.sh, tests/test_shard_test.sh]
 estimate_lines: 60
 easy: true
 ---

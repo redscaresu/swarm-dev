@@ -3,7 +3,7 @@ kind: code
 status: ready
 epic: safer-faster-swarm
 depends_on: []
-touches: [bin/lib/session_mtime.py, bin/lib/agents.sh, tests/stall_test.sh]
+touches: [bin/lib/session_mtime.py, bin/lib/agents.sh, tests/agent_liveness_test.sh]
 estimate_lines: 150
 easy: false
 ---
@@ -17,6 +17,6 @@ Two changes:
 - When `wait` finds a builder stalled, it lists the builder's longest-running child process (under its pane's shell: PID, minutes running, the command cut to 120 characters) in the `stalled?` line and in an `incident` line in events.tsv. The conductor then kills that PID. The conductor's brief says so: kill by PID, never pkill, then tell the builder what was killed and why.
 
 **Done when:**
-- A stall test with a session .jsonl whose last own-work entry is 40 minutes old and whose newer entries are only compaction and task-notice entries reports `stalled?`. The same log with a 5-minute-old tool call does not.
+- A test in tests/agent_liveness_test.sh with a session .jsonl whose last own-work entry is 40 minutes old and whose newer entries are only compaction and task-notice entries reports `stalled?`. The same log with a 5-minute-old tool call does not.
 - A test whose stub process tree holds a `sleep` started 45 minutes ago (faked through the ps stub) prints its PID, its minutes and `sleep` in the stalled line and the incident line.
 - `make test` passes, and docs/reference.md's `stall_minutes` entry says what counts as a sign of life.
