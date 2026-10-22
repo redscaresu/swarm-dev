@@ -1607,79 +1607,131 @@ wait_lead() {
 # UPGRADE_WAIT_MS: how long upgrade waits in all, for the handovers and for its agents to go idle.
 UPGRADE_WAIT_MS="${SWARM_UPGRADE_WAIT_MS:-1800000}"
 
-# upgrade_agents [<epic>] — after `claude plugin update`, restart <epic>'s Claude agents (its
-# conductor, builders and review agents; with no epic, every one this project started) on this
-# swarm.sh's version, each in its own pane with --resume, so it keeps its context. Each conductor
-# whose env: names check out first writes a handover and ends its turn (upgrade_handover). Then, in
+# upgrade_agents [<epic>|backlog] — after `claude plugin update`, restart <epic>'s Claude agents (its
+# conductor, builders and review agents; backlog's, the stories with no epic; with neither, every
+# one this project started) on this swarm.sh's version, each in its own pane with --resume, so it
+# keeps its context. Each conductor to restart, and one already on this version whose builders will
+# restart, first has its env: names checked, then writes a handover and ends its turn
+# (upgrade_handover). The agents are read again then, so builders it started meanwhile count. In
 # rounds until UPGRADE_WAIT_MS has passed in all, every idle builder is restarted (upgrade_one) and
-# told the new swarm.sh path (upgrade_told); a busy one is never interrupted, and waits for the next
-# round. The conductors go last. One still busy at the end, or one already on this version, is left
-# as it is, and so is every builder when a conductor wrote no handover. Worktrees are never touched.
-# Fails when any agent was left on its old version, so a second run picks it up.
+# told the new swarm.sh path (upgrade_told); a busy one is never interrupted and waits for the next
+# round; one whose session is gone or unknown is named at once. The conductors go last: restarted,
+# or, already on this version, told to carry on. One still busy at the end, or one already on this
+# version, is left as it is, and so is every builder when a conductor wrote no handover. Worktrees
+# are never touched. Fails when any agent was left on its old version, so a second run picks it up.
 upgrade_agents() {
-  local epic="${1:-}" new end want="" f slug name role pane e hand names rc=0 held="" builders="" conductors="" ready="" next
-  [[ -z "${epic}" || ( "${epic}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/epics/${epic}.md" ) ]] || die "upgrade: no epic ${BOARD}/epics/${epic}.md"
+  local epic="${1:-}" new end want list name pane role cur e hand names st rc=0 held="" builders next ready=""
+  [[ "${epic}" != --backlog ]] || epic=backlog
+  [[ -z "${epic}" || "${epic}" == backlog || ( "${epic}" =~ ^[a-z0-9-]+$ && -f "${BOARD}/epics/${epic}.md" ) ]] \
+    || die "upgrade: no epic ${BOARD}/epics/${epic}.md (backlog moves the stories with no epic)"
   require_herdr_version
   new="$(plugin_version < "${SWARM_HOME}/.claude-plugin/plugin.json")"
   end=$(($(now_ms) + UPGRADE_WAIT_MS))
-  if [[ -n "${epic}" ]]; then
-    want=" $(conductor_name "${epic}") "
-    while IFS= read -r f; do
-      [[ "$(fm "${f}" epic)" == "${epic}" ]] || continue
-      slug="$(basename "${f}" .md)"; want+="$(agent_name "${slug}") $(agent_name "review-${slug}") "
-    done < <(board stories)
-  fi
-  # Each Claude agent agents.tsv has (its last role), herdr holds in a pane recorded here, and not this one.
-  while read -r name role; do
-    [[ -z "${want}" || "${want}" == *" ${name} "* ]] || continue
-    pane="$(agent_field "${name}" pane_id)"
-    [[ -n "${pane}" && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
-    if [[ "$(agent_version "${name}")" == "${new}" ]]; then echo "${name}: already on ${new}"; continue; fi
-    if [[ "${role}" == conduct ]]; then conductors+="${name} ${pane}"$'\n'; else builders+="${name} ${pane} ${role}"$'\n'; fi
-  done < <(awk -F'\t' 'NF == 7 && $4 == "claude" { r[$3] = $2; if (!($3 in o)) o[$3] = n++ }
-    END { for (k in r) print o[k], k, r[k] }' "${AGENTS_LOG}" 2>/dev/null | sort -n | cut -d' ' -f2-)
+  want="$(upgrade_want "${epic}")"
+  list="$(upgrade_list "${want}" "${new}")"
+  builders="$(awk -F'\t' '$3 != "conduct" && $4 == "old"' <<< "${list}")"
+  while IFS=$'\t' read -r name pane role cur; do
+    [[ -n "${name}" && "${cur}" == new && ( "${role}" != conduct || -z "${builders}" ) ]] || continue
+    echo "${name}: already on ${new}"
+  done <<< "${list}"
   # Handovers first, so no conductor acts on a builder mid-restart; its env: names before the request,
   # so a conductor that ends its turn for upgrade can always be restarted. One with no handover stays as it is.
-  while read -r name pane; do
-    [[ -n "${name}" ]] || continue
-    e="$(conduct_epic "${name}")"
-    if ! names="$(upgrade_env "${name}" conduct "${e}")"; then
+  while IFS=$'\t' read -r name pane role cur; do
+    [[ -n "${name}" && "${role}" == conduct && ( "${cur}" == old || -n "${builders}" ) ]] || continue
+    e="$(conduct_epic "${name}" </dev/null)"
+    if ! names="$(upgrade_env "${name}" conduct "${e}" </dev/null)"; then
       echo "${name}: ${names}; asked for no handover, left on $(agent_version "${name}")"; rc=1; held=1
-    elif hand="$(upgrade_handover "${name}" "${pane}" "${e}" "${new}" "${end}")"; then
-      ready+="${name}"$'\t'"${pane}"$'\t'"${e}"$'\t'"${hand}"$'\t'"${names}"$'\n'   # tabs: the path may hold spaces
+    elif hand="$(upgrade_handover "${name}" "${pane}" "${e}" "${new}" "${end}" </dev/null)"; then
+      ready+="${name}"$'\t'"${pane}"$'\t'"${e}"$'\t'"${hand}"$'\t'"${cur}"$'\t'"${names}"$'\n'   # tabs: the path may hold spaces
     else echo "${name}: no handover by the end of the wait, told to carry on as before, left on $(agent_version "${name}")"; rc=1; held=1; fi
-  done <<< "${conductors}"
-  # Each in a subshell, so a die stops that agent alone; its env: names first, before anything is sent.
+  done <<< "${list}"
   # ponytail: one missing handover holds every builder, any epic's; hold only that epic's if a run
   # without <epic> over several conductors needs it.
-  [[ -z "${held}" ]] || { while read -r name pane role; do
-    [[ -z "${name}" ]] || echo "${name}: its conductor wrote no handover, left on $(agent_version "${name}")"
-  done <<< "${builders}"; builders=""; }
+  if [[ -n "${held}" ]]; then
+    while IFS=$'\t' read -r name pane role cur; do
+      [[ -z "${name}" ]] || echo "${name}: its conductor wrote no handover, left on $(agent_version "${name}")"
+    done <<< "${builders}"
+    builders=""
+  else
+    builders="$(upgrade_list "${want}" "${new}" | awk -F'\t' '$3 != "conduct" && $4 == "old"')"   # with any the conductor started
+  fi
+  # Each in a subshell, so a die stops that agent alone; its env: names first, before anything is sent.
   while [[ -n "${builders}" ]]; do
     next=""
-    while read -r name pane role; do
+    while IFS=$'\t' read -r name pane role cur; do
       [[ -n "${name}" ]] || continue
-      if ! upgrade_is_idle "${name}"; then next+="${name} ${pane} ${role}"$'\n'; continue; fi
-      ( names="$(upgrade_env "${name}" "${role}")" || die "${name}: ${names}; left on its old version"
-        upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
-        upgrade_told "${name}" "${pane}" "${new}" ) || rc=1
+      st="$(upgrade_state "${name}" "${pane}")"
+      case "${st}" in
+        idle) ( names="$(upgrade_env "${name}" "${role}")" || die "${name}: ${names}; left on its old version"
+                upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
+                upgrade_told "${name}" "${pane}" "${new}" ) </dev/null || rc=1 ;;
+        busy) next+="${name}"$'\t'"${pane}"$'\t'"${role}"$'\t'"${cur}"$'\n' ;;
+        *) echo "${name}: its Claude session is ${st}, so it is not restarted; left on $(agent_version "${name}")"; rc=1 ;;
+      esac
     done <<< "${builders}"
     builders="${next}"
     [[ -n "${builders}" ]] || break
     if (($(now_ms) >= end)); then
-      while read -r name pane role; do
+      while IFS=$'\t' read -r name pane role cur; do
         [[ -z "${name}" ]] || echo "${name}: still busy at the end of the wait, left on $(agent_version "${name}")"
       done <<< "${builders}"
       rc=1; break
     fi
     nap 5
   done
-  while IFS=$'\t' read -r name pane e hand names; do
+  while IFS=$'\t' read -r name pane e hand cur names; do
     [[ -n "${name}" ]] || continue
+    if [[ "${cur}" == new ]]; then
+      if upgrade_say "${name}" "${pane}" "swarm.sh upgrade has restarted your builders on swarm-dev ${new}. Your handover is ${hand}. Carry on where you stopped." </dev/null; then
+        echo "${name}: already on ${new}, told to carry on"
+      else echo "${name}: could not be told to carry on; tell it by hand"; rc=1; fi
+      continue
+    fi
     ( upgrade_one "${name}" "${pane}" "${names}" "${new}" "${end}"
-      upgrade_told "${name}" "${pane}" "${new}" "${hand}" ) || rc=1
+      upgrade_told "${name}" "${pane}" "${new}" "${hand}" ) </dev/null || rc=1
   done <<< "${ready}"
   [[ ${rc} -eq 0 ]] || echo "Run swarm.sh upgrade${epic:+ ${epic}} again once the agents named above are idle."
+  return "${rc}"
+}
+
+# upgrade_want <epic>|backlog — the agent names upgrade moves, space-separated with a space each side:
+# the conductor and, for each story of <epic> (backlog: with no epic), its builder and review agent.
+# Empty with no argument: every agent.
+upgrade_want() {
+  local f e="$1" want
+  [[ -n "$1" ]] || return 0
+  [[ "${e}" != backlog ]] || e=""
+  want=" $(conductor_name "$1") "
+  while IFS= read -r f; do
+    [[ "$(fm "${f}" epic)" == "${e}" ]] || continue
+    f="$(basename "${f}" .md)"; want+="$(agent_name "${f}") $(agent_name "review-${f}") "
+  done < <(board stories)
+  echo "${want}"
+}
+
+# upgrade_list <want> <version> — each agent named in <want> (upgrade_want; empty: any) whose newest
+# agents.tsv line is a Claude one, that herdr holds in a pane recorded here, and not this one, in
+# start order: name, pane, role and old or new (already on <version>), tab-separated.
+upgrade_list() {
+  local name role kind pane
+  while read -r name role kind; do
+    [[ "${kind}" == claude && ( -z "$1" || "$1" == *" ${name} "* ) ]] || continue
+    pane="$(agent_field "${name}" pane_id </dev/null)"
+    [[ -n "${pane}" && "${pane}" != "${HERDR_PANE_ID:-}" ]] || continue
+    printf '%s\t%s\t%s\t%s\n' "${name}" "${pane}" "${role}" "$(if [[ "$(agent_version "${name}")" == "$2" ]]; then echo new; else echo old; fi)"
+  done < <(awk -F'\t' 'NF == 7 { r[$3] = $2; k[$3] = $4; if (!($3 in o)) o[$3] = n++ }
+    END { for (x in r) print o[x], x, r[x], k[x] }' "${AGENTS_LOG}" 2>/dev/null | sort -n | cut -d' ' -f2-)
+}
+
+# upgrade_say <conductor> <pane> <text> — send a conductor <text>: a prompt when it is idle
+# (upgrade_state), else a note in its inbox, which it reads after its wait.
+upgrade_say() {
+  local f rc=0
+  f="$(mktemp "${TMPDIR:-/tmp}/swarm-upgrade.XXXXXX")" || return 1
+  printf '%s\n' "$3" > "${f}"
+  if [[ "$(upgrade_state "$1" "$2")" == idle ]]; then (deliver_prompt "$1" "${f}" "$2") >&2 || rc=$?
+  else (tell_agent "$1" note "${f}") >/dev/null || rc=$?; fi
+  rm -f "${f}"
   return "${rc}"
 }
 
@@ -1721,44 +1773,43 @@ upgrade_env() {
   done < <(board stories)
 }
 
-# upgrade_handover <conductor> <pane> <epic> <version> <end-ms> — ask the conductor to write its
-# handover to .swarm/handover-<epic>-<date>[-n].md and end its turn (a prompt when it is idle,
-# read_state, else a note in its inbox, read after its wait), and print that file once it is written
-# and the conductor is idle. At <end-ms> without both, a note in its inbox withdraws the request (it
-# carries on as before) and it fails.
+# upgrade_handover <conductor> <pane> <epic> <version> <end-ms> — ask the conductor (upgrade_say) to
+# write its handover to .swarm/handover-<epic>-<date>[-n].md and end its turn, and print that file
+# once it is written and the conductor is idle. At <end-ms> without both, or when it is gone, the
+# request is withdrawn (upgrade_say: it carries on as before) and it fails.
 upgrade_handover() {
-  local day file n=1 msg
+  local day file n=1
   day="$(date +%F)"; file="${PROJECT_DIR}/.swarm/handover-$3-${day}.md"
   while [[ -e "${file}" ]]; do n=$((n + 1)); file="${PROJECT_DIR}/.swarm/handover-$3-${day}-${n}.md"; done
-  msg="$(mktemp "${TMPDIR:-/tmp}/swarm-upgrade.XXXXXX")" || return 1
-  printf '%s\n' "swarm.sh upgrade is moving this epic's agents to swarm-dev $4, restarting each with --resume, so it keeps its context. Write a handover to ${file}: each open PR with its review round, what its builder still owes, and any findings you have not sent. Then end your turn: start nothing and run no wait or watch. upgrade restarts you and tells you to carry on." > "${msg}"
-  case "$(read_state "$1")" in
-    idle|herdr:idle|herdr:done) (deliver_prompt "$1" "${msg}" "$2") >&2 ;;
-    *) (tell_agent "$1" note "${msg}") >/dev/null ;;
-  esac || { rm -f "${msg}"; return 1; }
+  upgrade_say "$1" "$2" "swarm.sh upgrade is moving this epic's agents to swarm-dev $4, restarting each with --resume, so it keeps its context. Write a handover to ${file}: each open PR with its review round, what its builder still owes, and any findings you have not sent. Then end your turn: start nothing and run no wait or watch until upgrade tells you to carry on." || return 1
   while [[ ! -s "${file}" ]] && (($(now_ms) < $5)); do nap 5; done
-  if [[ -s "${file}" ]] && upgrade_idle "$1" "$2" "$5"; then rm -f "${msg}"; echo "${file}"; return 0; fi
-  printf '%s\n' "swarm.sh upgrade gave up waiting for your handover: ignore its request, and carry on as before, on the version you run." > "${msg}"
-  (tell_agent "$1" note "${msg}") >/dev/null || true
-  rm -f "${msg}"
+  if [[ -s "${file}" ]] && upgrade_idle "$1" "$2" "$5"; then echo "${file}"; return 0; fi
+  upgrade_say "$1" "$2" "swarm.sh upgrade gave up waiting for your handover: ignore its request, and carry on as before, on the version you run." || true
   return 1
 }
+
+# UPGRADE_HINT: what upgrade_one's EXIT trap prints once the agent's claude has exited, set then.
+UPGRADE_HINT=""
 
 # upgrade_one <name> <pane> <env-names> <version> <end-ms> — once <name> is idle (upgrade_idle, by
 # <end-ms>), write this version's resume command (resume_file), send ctrl+c twice at once (claude
 # exits only on a second within a moment) until claude has left its pane, then start it there again,
 # through clean_env with this version's bin first on PATH: --resume of herdr's session for the pane,
 # with the flags its claude ran with (herdr pane process-info). Any failure once claude has exited
-# says how to resume the session by hand. Run in a subshell: a die stops only this agent.
+# keeps the pane and says how to resume the session by hand, in its folder. Run in a subshell: a die
+# stops only this agent.
 upgrade_one() {
-  local name="$1" pane="$2" old session a out why rc flags=() resume=() try
+  local name="$1" pane="$2" old session a out cwd why rc flags=() resume=() try
   old="$(agent_version "${name}")"
-  upgrade_idle "${name}" "${pane}" "$5" || die "${name}: still busy at the end of the wait, left on ${old}"
+  upgrade_idle "${name}" "${pane}" "$5" && rc=0 || rc=$?
+  [[ ${rc} -ne 2 ]] || die "${name}: its Claude session is gone or unknown, so it is not restarted; left on ${old}"
+  [[ ${rc} -eq 0 ]] || die "${name}: still busy at the end of the wait, left on ${old}"
   session="$(session_for_pane "${pane}")"
   [[ -n "${session}" ]] || die "${name}: herdr gives no session for it, so it cannot be resumed; left on ${old}"
   out="$(herdr pane process-info --pane "${pane}" 2>/dev/null | claude_flags)" && rc=0 || rc=$?
   [[ ${rc} -ne 3 ]] || die "${name}: a flag of its claude holds a control character, which herdr refuses in a resume command; left on ${old}"
   [[ ${rc} -eq 0 ]] || die "${name}: no claude in pane ${pane} (herdr pane process-info), left on ${old}"
+  cwd="${out%%$'\n'*}"; out="${out#"${cwd}"}"; out="${out#$'\n'}"
   if [[ -n "${out}" ]]; then while IFS= read -r a; do flags+=("${a}"); done <<< "${out}"; fi
   resume=(python3 -I "${RESUME_DIR}/${session}.py" claude --resume "${session}" ${flags[@]+"${flags[@]}"})
   why="$(resume_refusal "${resume[@]}")" && die "${name}: herdr would refuse its resume command (${why}), left on ${old}"
@@ -1770,38 +1821,50 @@ upgrade_one() {
     herdr pane process-info --pane "${pane}" 2>/dev/null | claude_flags >/dev/null || break
     [[ ${try} -lt 3 ]] || die "${name}: claude did not exit on ctrl+c, left on ${old}"
   done
-  # shellcheck disable=SC2064 # expand now: the session and pane are this agent's
-  trap "echo 'swarm: ${name}: its claude has exited and was not started again; claude --resume ${session}, from its folder, brings the session back' >&2" EXIT
+  UPGRADE_HINT="${name}: its claude has exited and was not started again; in pane ${pane}, claude --resume ${session}, run in ${cwd}, brings the session back"
+  trap 'echo "swarm: ${UPGRADE_HINT}" >&2' EXIT
   local -x SWARM_RESUME="${RESUME_DIR}/${session}.argv"
-  PATH="${a}" clean_env "${pane}" "${name}" "$3"   # the agent's PATH; herdr below still runs from the lead's
+  PATH="${a}" clean_env "${pane}" "${name}" "$3" keep   # the agent's PATH; herdr below still runs from the lead's
   out="$(herdr agent start "${name}" --kind claude --pane "${pane}" --timeout 60000 -- --resume "${session}" ${flags[@]+"${flags[@]}"} 2>&1)" \
     || die "${name}: herdr could not start it again (${out})"
   trap - EXIT
 }
 
-# upgrade_is_idle <name> — true when <name> is idle as read_state reads it (Claude Code's own state).
-upgrade_is_idle() { case "$(read_state "$1")" in idle|herdr:idle|herdr:done) return 0 ;; esac; return 1; }
+# upgrade_state <name> <pane> — idle, busy, or gone or unknown for a session that will not come back
+# on its own, as read_state reads it (Claude Code's own state); a turn stopped on an API error is idle,
+# as tell reads it (api_stopped), and one waiting on a prompt busy.
+upgrade_state() {
+  local s
+  s="$(read_state "$1" </dev/null)"
+  case "${s}" in
+    idle|herdr:idle|herdr:done) echo idle ;;
+    gone|unknown|herdr:unknown) echo "${s#herdr:}" ;;
+    busy|herdr:working) if api_stopped "$1" "$2" </dev/null; then echo idle; else echo busy; fi ;;
+    *) echo busy ;;
+  esac
+}
 
-# upgrade_idle <name> <pane> <end-ms> — succeed once <name> is idle (upgrade_is_idle; herdr's wait is
+# upgrade_idle <name> <pane> <end-ms> — succeed once <name> is idle (upgrade_state; herdr's wait is
 # only the wake-up, as for settle); a busy one is waited on at least once, and fails when it is
-# still busy at <end-ms>.
+# still busy at <end-ms>; exits 2 at once when its session is gone or unknown.
 upgrade_idle() {
-  local left
+  local left st
   while :; do
-    ! upgrade_is_idle "$1" || return 0
+    st="$(upgrade_state "$1" "$2")"
+    case "${st}" in idle) return 0 ;; busy) ;; *) return 2 ;; esac
     left=$(($3 - $(now_ms))); ((left > 0)) || left=1
-    herdr agent wait "$2" --until idle --until "done" --timeout "${left}" >/dev/null 2>&1 || true
+    herdr agent wait "$2" --until idle --until "done" --timeout "${left}" </dev/null >/dev/null 2>&1 || true
     nap 1
-    ! upgrade_is_idle "$1" || return 0
+    [[ "$(upgrade_state "$1" "$2")" != idle ]] || return 0
     (($(now_ms) < $3)) || return 1
   done
 }
 
-# claude_flags — from herdr pane process-info on stdin, the arguments of the pane's claude (argv[0]
+# claude_flags — from herdr pane process-info on stdin, the folder of the pane's claude (argv[0]
 # claude, or an npm install's node running its claude link or @anthropic-ai/claude-code/cli.js as
-# argv[1]), but its --session-id or
-# --resume and their value, one a line; fails when no claude runs there, or exits 3 when an argument
-# holds a control character, which a line cannot carry and herdr refuses anyway.
+# argv[1]) on the first line, then its arguments but its --session-id or --resume and their value,
+# one a line; fails when no claude runs there, or exits 3 when an argument or the folder holds a
+# control character, which a line cannot carry and herdr refuses anyway.
 claude_flags() {
   python3 -I -c '
 import json, os, sys
@@ -1810,7 +1873,7 @@ for p in json.load(sys.stdin)["result"]["process_info"].get("foreground_processe
     if a and os.path.basename(a[0]) == "claude": rest = a[1:]
     elif len(a) > 1 and (os.path.basename(a[1]) == "claude" or a[1].endswith("/@anthropic-ai/claude-code/cli.js")): rest = a[2:]
     else: continue
-    out, skip = [], False
+    out, skip = [p.get("cwd") or "its folder"], False
     for x in rest:
         if skip: skip = False
         elif x in ("--session-id", "--resume"): skip = True
