@@ -96,6 +96,8 @@ ladder() (
   ladder_step() { echo "stepped up: a: sonnet -> opus"; return "${LADDER_RC}"; }
   LADDER_RC="$1" wait_agent a 1000 --stall 2>/dev/null; echo "exit $?"
 )
+check "another step-up still running prints the longest-running line as read" "$(ladder 5)" \
+  "$(printf '%s\n' 'stepping up: a: another step-up of it is running; wait on its builder again' 'longest-running: pid 400, 45 min: sleep' 'exit 0')"
 check "a stall stepped up prints the longest-running line after stepped up" "$(ladder 0)" \
   "$(printf '%s\n' 'stepped up: a: sonnet -> opus' 'longest-running: pid 400, 45 min: sleep; read before the step-up closed its pane, so the PID may be gone: check it with ps first' 'exit 0')"
 for cause in stalled paused cleared-on-error impossible; do

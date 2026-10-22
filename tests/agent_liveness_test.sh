@@ -218,9 +218,13 @@ case "$1 $2" in
   *) exit 1 ;;
 esac
 STUB
+# ps -o pid=,comm= prints ${PS_TREE}.comm when the test wrote one, else each command's first word.
 cat > "${HB}/ps" <<'STUB'
 #!/bin/sh
-cat "${PS_TREE}"
+case "$*" in
+  *comm=*) if [ -f "${PS_TREE}.comm" ]; then cat "${PS_TREE}.comm"; else awk '{ print $1, $4 }' "${PS_TREE}"; fi ;;
+  *) cat "${PS_TREE}" ;;
+esac
 STUB
 snap='/bin/zsh -c source /Users/u/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && eval'
 tree=('  100     1  02:00:00 -zsh' '  200   100  02:00:00 claude --session-id sess-hung'
@@ -239,17 +243,35 @@ idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(a
   '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
 hung_wait() { (cd "${H}" || exit 1; env -u HERDR_SOCKET_PATH HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
   CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait --stall s-hung 3000 2>&1); }
-named='; longest-running: pid 400, 45 min: sleep \(under pid 310, 45 min: make > pid 320, 45 min: bash\)$'
+# Its last own work, a tool call 40 minutes ago, came after every tool shell started: none is the
+# foreground call, so the builder is hung outside Bash (an MCP call, a subagent, the API) and the old
+# background server is not named.
 log "$(tool 40)" "${idle[@]}"
 if out="$(hung_wait)"; then rc=0; else rc=$?; fi
 check "a builder whose newer log entries are only compaction and task notices is stalled?" grep -qE '^stalled: working 4[0-2] min' <<< "${out}"
 check "wait --stall on it exits 3" test "${rc}" = 3
-check "the stalled line names the leaf of the newest tool shell's chain, not an older background one" grep -qE "${named}" <<< "${out}"
-check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[0-2] min .*'"${named}" "${H}/.swarm/events.tsv"
+check "with no tool shell started since its last own work, nothing is named, and it says why" \
+  grep -qE '; longest-running: none named \(no foreground Bash call: every tool shell running a command started before its last own work\)$' <<< "${out}"
+# Its last own work 46 minutes ago, the tool call that started shell 300 a moment later: the sleep
+# under make and test.sh is named, by program name and never by argument.
+named='; longest-running: pid 400, 45 min: sleep \(under pid 310, 45 min: make > pid 320, 45 min: bash\)$'
+log "$(tool 46)" "${idle[@]}"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "the stalled line names the leaf of the foreground tool shell's chain" grep -qE "${named}" <<< "${out}"
+check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[6-8] min .*'"${named}" "${H}/.swarm/events.tsv"
 check "no argument (a token) reaches the stalled line or events.tsv" lacks 'SEKRIT|2700' "${out}$(cat "${H}/.swarm/events.tsv")"
-# With no tool shell (caffeinate and MCP servers only), nothing is named.
+# With no own work in the log at all, the newest tool shell is the foreground one, not the older
+# background server.
+log "${idle[@]}"
+check "with no own work on record, the newest tool shell's leaf is named" grep -qE "${named}" <<< "$(hung_wait)"
+# ps's comm, not the command's first word, names a program whose path holds a space.
+log "$(tool 46)" "${idle[@]}"
+{ awk '{ print $1, $4 }' "${PS_TREE}" | grep -v '^400 '; echo '400 /Applications/Visual Studio Code.app/Contents/MacOS/Electron'; } > "${PS_TREE}.comm"
+check "a program whose path holds a space is named by ps's comm" grep -qE '; longest-running: pid 400, 45 min: Electron \(under' <<< "$(hung_wait)"
+rm "${PS_TREE}.comm"
+# With no tool shell (caffeinate and MCP servers only), nothing is named, and it says why.
 printf '%s\n' "${tree[@]:0:7}" > "${PS_TREE}"
-check "caffeinate and MCP servers with no tool shell name nothing" grep -qE '^stalled: working 4[0-2] min with no commit, edit, own work in the session log or PR update$' <<< "$(hung_wait)"
+check "caffeinate and MCP servers with no tool shell name nothing" grep -qE '; longest-running: none named \(no Bash tool call is running a command\)$' <<< "$(hung_wait)"
 # A codex builder (its agents.tsv line, no session): node runs the native codex binary, which runs
 # the command. Its stalled line says no command is named.
 printf '%s\n' "${tree[@]:0:1}" '  200   100  02:00:00 node /opt/homebrew/bin/codex' \

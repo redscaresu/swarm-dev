@@ -57,8 +57,8 @@
 #   last_seen(events) -> {target: epoch} of each target's newest sign_time line, read once.
 #   stall_age(seen, slug, name, signs, now) -> minutes before now (default: the clock) of the newest
 #     of: seen[slug] or seen[name] (started, findings sent ...) and each of signs: epoch seconds (a
-#     worktree's last commit or edit, an agent's session log write, the time a wait began) or ISO
-#     times (a PR's updatedAt). None when there is no sign at all.
+#     worktree's last commit or edit, an agent's newest own work in its session log or its subagents'
+#     logs, the time a wait began) or ISO times (a PR's updatedAt). None when there is no sign at all.
 #   A working builder whose stall_age reaches stall_minutes is stalled?.
 
 # own_panes — the herdr panes this project opened (next_pane records "<pane> [name]" per tab in
@@ -933,16 +933,18 @@ session_mtime() {
 }
 
 # longest_child <name> <target> — what a builder's foreground Bash tool call runs, from
-# longest_child.py over ps and herdr's process info for pane <target>: `longest-running: pid <PID>,
-# <N> min: <program> (under <its parents>)`, program names only. For a codex builder (agents.tsv),
-# whose commands are not traced, `longest-running: none named (a codex builder)`. Nothing when no
-# tool shell runs a command, or herdr gives no shell pid.
+# longest_child.py over ps, herdr's process info for pane <target> and its last own work
+# (session_mtime): `longest-running: pid <PID>, <N> min: <program> (under <its parents>)`, program
+# names only, or `longest-running: none named (<why>)`: a codex builder (agents.tsv), whose commands
+# are not traced, no Bash tool call running a command, none started since its last own work, or a
+# process list that could not be read.
 longest_child() {
+  local out
   if [[ "$(awk -F'\t' -v n="$1" '$3 == n { h = $4 } END { print h }' "${AGENTS_LOG}" 2>/dev/null)" == codex ]]; then
     echo "longest-running: none named (a codex builder)"; return
   fi
-  ps -A -o pid=,ppid=,etime=,command= 2>/dev/null \
-    | python3 "${SWARM_HOME}/bin/lib/longest_child.py" "$(herdr pane process-info --pane "$2" 2>/dev/null)" || true
+  out="$(python3 "${SWARM_HOME}/bin/lib/longest_child.py" "$(herdr pane process-info --pane "$2" 2>/dev/null)" "$(session_mtime "$1")")" || true
+  echo "${out:-longest-running: none named (its processes could not be read)}"
 }
 
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
@@ -1113,7 +1115,7 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
-# `; longest-running: ...` (longest_child) when it names one, logs that line as an incident
+# `; longest-running: ...` (longest_child, which says why when it names none), logs that line as an incident
 # and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
 # by the `longest-running: ...` line, which says the step-up closed the pane the PID was read in. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
@@ -1153,11 +1155,12 @@ wait_agent() {
       record_event incident "${name}" "${status}"
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
       # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
+      # Another step-up still running (STEP_UP_BUSY) closed no pane yet: the line is printed as it was read.
       [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"
       if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
         echo "${out}"
-        if [[ "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
-        elif [[ -n "${hung}" ]]; then echo "${hung}"; fi
+        if [[ ${rc} != "${STEP_UP_BUSY}" && "${hung}" == "longest-running: pid "* ]]; then echo "${hung}; read before the step-up closed its pane, so the PID may be gone: check it with ps first"
+        else echo "${hung}"; fi
         [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || return 1
         return 0
       fi

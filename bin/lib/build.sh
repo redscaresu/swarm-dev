@@ -910,7 +910,9 @@ the \`reason\` of the last \`goal_status\` entry with \`met:true\`. Act on the c
 - impossible: the reply starts \`IMPOSSIBLE:\`.
   Run \`swarm.sh close <slug> impossible\`, which makes the story \`kind: lead\`, and list it for the lead.
 - stalled: \`wait --stall\` returned stalled.$([[ -z "${CFG_escalate_ladder:-}" ]] || echo " (With escalate_ladder set, a stall it steps up prints \`stepped up:\` instead: wait on the builder again, and close nothing.)")
-  Run \`swarm.sh close <slug> stalled\` and start the story again in a later wave.
+  When its line names a hung command (\`longest-running: pid ...\`), stop it as the give-up rule
+  below says and wait on the builder again. When nothing is named, or it stalls again after that,
+  close it: Run \`swarm.sh close <slug> stalled\` and start the story again in a later wave.
 - bound: the reply is not there, and the met entry's reason says the stop-after clause applied.
   Run \`swarm.sh close <slug> bound\` and start the story again in a later wave.
 - paused: the goal is still set, with no met entry since, and the builder is idle.
@@ -951,19 +953,20 @@ its close and whether the story is started again."
 (\`attempts: 2\`), do not start it again: report it to the lead."
   fi
   cat <<EOF
-Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled, ${idle}or when review has
-not converged in the rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
+Give up on a builder when \`swarm.sh wait --stall <slug>\` returns stalled with no hung command to
+stop (below), or stalls again after you stopped one, ${idle}or when review has not converged in the
+rounds you allow. Run ${close}: on a code, docs or chore story still \`ready\` it
 counts the attempt and clears its worktree, branch and PR. ${one} Start the story again in a later
 wave with \`swarm.sh story --strict <slug>\`, and never choose a model: ${retry}${goal}
-A stalled line that ends \`; longest-running: pid <PID>, <N> min: <program> (under <parents>)\`, or
-a \`longest-running:\` line after \`stepped up:\`, names what the builder's foreground Bash call runs,
-the leaf of its chain of parents, by program name only. It may still be wrong (a server the builder
-started on purpose, or gone once a step-up closed the pane). Read the chain, and check the PID with
-\`ps -o pid,ppid,etime,command -p <PID>\` before you stop anything. Stop only a
-hung leaf, by its PID (\`kill <PID>\`, never pkill or killall), then tell the builder what you killed
-and why (\`swarm.sh tell <slug> nudge <file>\` once it is idle), and wait on it again; give up on it
-only when it stalls again. A stepped-up build's next rung works in the same worktree, so a hung
-command there is still yours to stop.
+A stalled line ends \`; longest-running: ...\`, and after \`stepped up:\` the same text is a line of
+its own. \`pid <PID>, <N> min: <program> (under <parents>)\` names what the builder's foreground Bash
+call runs, the leaf of its chain of parents, by program name only. It may still be wrong (a server
+the builder started on purpose, or gone once a step-up closed the pane). Read the chain, and check
+the PID with \`ps -o pid,ppid,etime,command -p <PID>\` before you stop anything. Stop only a hung
+leaf, by its PID (\`kill <PID>\`, never pkill or killall), then tell the builder what you killed and
+why (\`swarm.sh tell <slug> nudge <file>\` once it is idle), and wait on it again instead of closing.
+\`none named (<why>)\` leaves nothing to stop. A stepped-up build's next rung works in the same
+worktree, so a hung command there is still yours to stop.
 A story that comes back \`kind: lead\` with \`escalated_from:\` is the lead's to decide: report it
 to the lead, and do not count it as waiting on the user.
 
