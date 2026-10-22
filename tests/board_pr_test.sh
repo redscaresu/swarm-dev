@@ -289,7 +289,9 @@ refused "a name with .." "not a name" "${before}"
 
 # --- /plan-epic's large-epic path: the board PR that splits big (scope-big, big at status: split) opens
 # only once the split critic wrote .swarm/big/split-critic.json; a medium epic's board PR needs none.
+# The worktree's start is backdated, so a critic answer written in the same second still counts as newer.
 rm -f "${ROOT}/prs"; bpr start scope-big; SB="${ROOT}/proj-wt/_board-scope-big/board/epics"; mkdir -p "${SB}"
+touch -t 202101010000 "${ROOT}/proj-wt/_board-scope-big/.git"
 printf -- '---\nstatus: split\ndepends_on: []\n---\n\n# big\n' > "${SB}/big.md"
 printf -- '---\nstatus: active\nparent: big\ndepends_on: []\n---\n\n# big-a\n' > "${SB}/big-a.md"
 before="$(snap)"; reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
@@ -298,9 +300,16 @@ check "a split's board PR with no split-critic.json: no gh call" test ! -s "${RO
 mkdir -p "${P}/.swarm/big"; echo '{"verdict": "fine"}' > "${P}/.swarm/big/split-critic.json"
 reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
 refused "a split's board PR whose split-critic.json has no findings list" "start the split critic first" "${before}"
+# One an abandoned draft left (older than this worktree) is refused too.
+echo '{"findings": []}' > "${P}/.swarm/big/split-critic.json"; touch -t 202001010000 "${P}/.swarm/big/split-critic.json"
+reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
+refused "a split's board PR whose split-critic.json is older than its worktree" "older than this board PR's worktree" "${before}"
 echo '{"findings": [{"kind": "split-gap", "why": "w", "fix": "f"}]}' > "${P}/.swarm/big/split-critic.json"
 reset_log; bpr open scope-big "Split big" "${ROOT}/body.md"
 is "a split's board PR opens once the split critic answered" "0 ${URL}" "${rc} $(cat "${ROOT}/out")"
+is "the split's board PR is recorded for flow, with its day" "$(date +%F)	${URL}" "$(cat "${P}/.swarm/big/split-pr")"
+echo "2026-01-01	${URL}" > "${P}/.swarm/big/split-pr"; bpr open scope-big "Split big" "${ROOT}/body.md"
+is "a second open of the split's PR keeps its first day" "2026-01-01	${URL}" "$(cat "${P}/.swarm/big/split-pr")"
 bpr start scope-med; mkdir -p "${ROOT}/proj-wt/_board-scope-med/board/epics"
 printf -- '---\nstatus: active\n---\n\n# med\n' > "${ROOT}/proj-wt/_board-scope-med/board/epics/med.md"
 echo story > "${ROOT}/proj-wt/_board-scope-med/board/stories/med-a.md"

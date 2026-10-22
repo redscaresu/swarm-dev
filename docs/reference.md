@@ -26,8 +26,9 @@ outside the repo is edited where it is, and `board-pr` refuses it.
   `done`, then `start` again. A PR counts as the branch's when its head came after the branch was
   started (the first entry in its reflog), so one from an earlier use of the name does not.
   `open scope-<epic>` also refuses when the worktree leaves `<epic>` at `status: split` (a large
-  epic split into child epics) and `.swarm/<epic>/split-critic.json` holds no `{findings:[...]}`:
-  the split critic answers before the board PR opens.
+  epic split into child epics) and `.swarm/<epic>/split-critic.json` holds no `{findings:[...]}`, or
+  is older than the worktree (an abandoned draft's): the split critic answers before the board PR
+  opens. Once it opens, `.swarm/<epic>/split-pr` records its day and URL for `flow`.
 - `done <name>` removes `board/<name>` on origin, then the worktree and the branch here, once the PR
   on the branch's tip (the local one, or origin's when there is none here) has merged or closed. A
   PR left by an earlier use of the name does not count. With no PR it removes an abandoned start:
@@ -1019,11 +1020,14 @@ can check what was covered.
 
 When a large epic was split, a block between the two is TSV `split critic_fixed critic_declined
 escaped_split_gaps`, one row per split's board PR: the split critic's fixed and declined findings
-beside the `split-gap`s logged `--reviewer escaped` against that PR, the gaps it missed. A split is
-dated by its first row (the critic's, logged as the board PR opens), so it is in the window when
-that day is, and every escaped split-gap counts against it whatever its own day. With `--epic`, `gh`
-reads each split PR's branch (`board/scope-<epic>`), and the block keeps the splits of that epic or
-of its `parent:`. The split critic's tokens have their own `split-critic` row in `cost`.
+beside the `split-gap`s logged `--reviewer escaped` against that PR, the gaps it missed. Every
+split `board-pr open` recorded in `.swarm/<epic>/split-pr` has a row, a clean one (the critic found
+nothing) as `0 0 0`, dated by the day it opened; a split with no record is dated by its first row.
+A split is in the window when that day is, and every escaped split-gap counts against it whatever
+its own day. `--epic` keeps the splits of that epic or of its `parent:` (read from the board, or
+from its last version in the board's git history once the child is gone). The record names a
+split's epic; for one with no record `gh` reads the PR's branch (`board/scope-<epic>`), and when gh
+fails a note says how many splits it could not place. The split critic's tokens have their own `split-critic` row in `cost`.
 
 ## The outer loop
 

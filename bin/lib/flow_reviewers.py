@@ -1,7 +1,7 @@
 # Reviewers, a flow section (flow_report.py gives its globals): findings raised, fixed and declined per
 # reviewer and kind, and the reworked PRs among those it raised them on, then the split critic's yield
 # per split, review rounds per PR, and with --epic the PRs counted.
-import collections, os, re, subprocess
+import collections, glob, os, re, subprocess
 from report import *
 rows = [r for r in rows if r["pr"] and (not epic or r["epic"] == epic)]
 urls = {pr_key(r["pr"]): r["pr"] for r in reversed(rows)}   # the first URL each PR was written as
@@ -32,42 +32,67 @@ for who in sorted({w for w, _ in c if w is not None}):
 print("\n".join(line(None, k) for k in kinds(None) + [None]))
 # Per split (a large epic's board PR): the split critic's fixed and declined findings beside the
 # split-gaps it missed, which a child's plan or a build found later (escaped rows of kind split-gap).
-# A split is dated by its first row, the critic's as the board PR opens (an escaped gap's when the
-# critic found nothing), and every escaped gap counts against it whatever its own day.
+# board-pr open records each split's board PR in .swarm/<epic>/split-pr (its day and URL), so a clean
+# split shows too, and its epic is known here. A split with no record (its .swarm lost) is dated by its
+# first row, and gh names its epic. Every escaped gap counts against its split whatever its own day.
 splits = {}
+for path in glob.glob(os.path.join(glob.escape(os.path.dirname(os.path.abspath(findings))), "*", "split-pr")):
+    try:
+        day, url = open(path, errors="ignore").read().split()[:2]
+    except (OSError, ValueError):
+        continue
+    splits[pr_key(url)] = {"pr": url, "day": day, "epic": os.path.basename(os.path.dirname(path)), "n": collections.Counter()}
 for day, kind, pr, _, outcome, reviewer in finding_rows(findings, ("fixed", "declined", "escaped")):
     if reviewer == "split-critic" or kind == "split-gap" and outcome == "escaped":
-        s = splits.setdefault(pr_key(pr), {"pr": pr, "day": day, "n": collections.Counter()})
-        s["day"] = min(s["day"], day)
+        s = splits.setdefault(pr_key(pr), {"pr": pr, "day": day, "epic": None, "n": collections.Counter()})
+        s["day"] = s["day"] if s["epic"] is not None else min(s["day"], day)
         s["n"][outcome] += 1
 
 def split_epic(pr):
-    # The epic a split's board PR split: board-pr names its branch board/scope-<epic>. "" when gh cannot say.
+    # The epic a split's board PR split: board-pr names its branch board/scope-<epic>. None when gh fails.
     repo, _, n = pr_key(pr).partition("#")
     try:
         got = subprocess.run(["gh", "pr", "view", n, "-R", repo, "--json", "headRefName", "--jq", ".headRefName"],
                              capture_output=True, text=True, timeout=GH_SECONDS)
     except (OSError, subprocess.TimeoutExpired):
-        return ""
-    head = got.stdout.strip() if got.returncode == 0 else ""
-    return head[len("board/scope-"):] if head.startswith("board/scope-") else ""
+        return None
+    head = got.stdout.strip()
+    return None if got.returncode else head[len("board/scope-"):] if head.startswith("board/scope-") else ""
+
+def board_git(*a):
+    try:
+        r = subprocess.run(["git", "-C", os.environ.get("SWARM_BOARD", ""), *a], capture_output=True, text=True)
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
 
 def parent_of(slug):
-    # A child epic's parent: from its front matter on the board, or "" once it is gone.
-    try:
-        text = open(os.path.join(os.environ.get("SWARM_BOARD", ""), "epics", slug + ".md"), errors="ignore").read()
-    except OSError:
-        return ""
+    # A child epic's parent: from its front matter on the board, or, once it is gone (a child that
+    # finished), from its last version in the board's git history; "" when neither has it.
+    f = os.path.join(os.environ.get("SWARM_BOARD", ""), "epics", slug + ".md")
+    if os.path.isfile(f):
+        text = open(f, errors="ignore").read()
+    else:
+        c = (board_git("log", "--diff-filter=D", "-1", "--format=%H", "--", f"./epics/{slug}.md") or "").strip()
+        text = (board_git("show", f"{c}^:./epics/{slug}.md") if c else None) or ""
     m = re.search(r"(?m)^parent:\s*[\"']?([a-z0-9-]+)", text.split("\n---", 1)[0] if text.startswith("---") else "")
     return m.group(1) if m else ""
 
 # With --epic, the splits of that epic or of its parent.
 wanted = {epic, parent_of(epic)} - {""} if epic else set()
-shown = [s for s in splits.values() if since <= s["day"] <= until and (not epic or split_epic(s["pr"]) in wanted)]
+shown, unknown = [], 0
+for s in splits.values():
+    if since <= s["day"] <= until and epic:
+        s["epic"] = s["epic"] if s["epic"] is not None else split_epic(s["pr"])
+        unknown += s["epic"] is None
+    if since <= s["day"] <= until and (not epic or s["epic"] in wanted):
+        shown.append(s)
 if shown:
     print("\nsplit\tcritic_fixed\tcritic_declined\tescaped_split_gaps")
     for s in sorted(shown, key=lambda s: s["pr"]):
         print(f"{s['pr']}\t{s['n']['fixed']}\t{s['n']['declined']}\t{s['n']['escaped']}")
+if unknown:
+    print(f"\nsplit: gh could not name the epic of {unknown} split board PR(s) with no .swarm/<epic>/split-pr, so --epic may leave splits out.")
 rounds = collections.Counter()
 for r in rows:
     if since <= r["date"] <= until:

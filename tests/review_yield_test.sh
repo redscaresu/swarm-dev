@@ -18,8 +18,9 @@ git -C "${P}" init -q
 for s in a b; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${P}/docs/stories/${s}.md"; done
 # gh answers from prs/<head with / as _>: its `url<TAB>state<TAB>mergedAt` lines, newest first.
 # shellcheck disable=SC2016 # the stub's own shell expands these
-# pr view <n> prints heads/<n>, its head branch (a split's board PR's is board/scope-<epic>).
-printf '#!/bin/sh\n[ "$1 $2" = "pr view" ] && { cat "%s/heads/$3" 2>/dev/null; exit 0; }\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" "${dir}" > "${dir}/bin/gh"
+# pr view <n> prints heads/<n>, its head branch (a split's board PR's is board/scope-<epic>), and
+# fails while ghfail exists.
+printf '#!/bin/sh\n[ "$1 $2" = "pr view" ] && { [ ! -e "%s/ghfail" ] && cat "%s/heads/$3" 2>/dev/null; exit; }\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" "${dir}" "${dir}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
 printf '%s\tOPEN\t\n' "${U}/1" > "${dir}/prs/story_a"
 printf '%s\tOPEN\t\n' "${U}/2" > "${dir}/prs/story_b"
@@ -103,7 +104,22 @@ SPLIT="$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gap
 check "--epic big (the parent) prints the split line" "$(yield_of "${P}" --epic big | grep -A1 $'^split\t')" "${SPLIT}"
 check "--epic big-a (a child) prints its parent's split line" "$(yield_of "${P}" --epic big-a | grep -A1 $'^split\t')" "${SPLIT}"
 check "--epic other prints no split" "$(yield_of "${P}" --epic other | grep -c $'^split\t' || true)" "0"
-rm -rf "${dir}/heads" "${P}/docs/epics"
+# A child that finished (its file deleted from the board) still names its parent, from git history.
+git -C "${P}" add docs/epics/big-a.md && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm child
+git -C "${P}" rm -q docs/epics/big-a.md && git -C "${P}" -c user.name=t -c user.email=t@t commit -qm finished
+check "--epic big-a after its file is deleted still prints its parent's split line" "$(yield_of "${P}" --epic big-a | grep -A1 $'^split\t')" "${SPLIT}"
+# When gh fails, a split with no split-pr record is left out of --epic, and a note says so.
+touch "${dir}/ghfail"
+check "--epic big when gh fails: no split line, and a note that gh could not name the epic" \
+  "$(yield_of "${P}" --epic big | grep -c $'^split\t' || true) $(yield_of "${P}" --epic big | grep -c '^split: gh could not name the epic of 1 split board PR' || true)" "0 1"
+# A split board-pr open recorded (.swarm/<epic>/split-pr) shows even when the critic found nothing,
+# dated by that day, and --epic finds it there with no gh.
+mkdir -p "${P}/.swarm/clean"; printf '2026-10-03\t%s\n' "${U}/10" > "${P}/.swarm/clean/split-pr"
+check "a clean split shows with 0 fixed, 0 declined, 0 escaped" "$(yield_of "${P}" | grep -F "${U}/10")" "${U}/10	0	0	0"
+check "--epic clean finds the recorded split with gh failing" "$(yield_of "${P}" --epic clean | grep -A1 $'^split\t')" \
+  "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' "${U}/10	0	0	0")"
+check "--since 2026-10-04 leaves out the clean split dated 2026-10-03" "$(yield_of "${P}" --since 2026-10-04 | grep -cF "${U}/10" || true)" "0"
+rm -rf "${dir}/heads" "${dir}/ghfail" "${P}/docs/epics" "${P}/.swarm/clean"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \

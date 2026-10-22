@@ -37,7 +37,7 @@ origin_has() {
 # no PR, when the branch has no commit past the base. It checks everything before removing anything. main logs each as board-pr:<step> <name>, with a refusal's
 # reason.
 board_pr() {
-  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why
+  local step="${1:-}" name="${2:-}" wt b base dir real url rel files f msg prs tip rtip why split=""
   [[ "${step}" == start || "${step}" == open || "${step}" == "done" ]] \
     || die "usage: swarm.sh board-pr start <name> | open <name> \"<title>\" <body-file> | done <name>"
   [[ "${name}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "board-pr: '${name}' is not a name (a-z, 0-9 and -)"
@@ -72,11 +72,16 @@ board_pr() {
       [[ -n "${files}" ]] || die "board-pr: ${wt} changes nothing"
       while IFS= read -r f; do [[ "${f}" == "${rel}"* ]] || die "board-pr: ${f} is outside ${rel}"; done <<< "${files}"
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
-      # answer (commands/plan-epic.md step 0); any other board PR starts no critic.
+      # answer (commands/plan-epic.md step 0), written since this worktree started: an older one is an
+      # abandoned draft's. Not since the children: the lead edits them after, to fix its findings. Any
+      # other board PR starts no critic.
       f="${wt}/${rel}epics/${name#scope-}.md"
       if [[ "${name}" == scope-?* && -f "${f}" && "$(fm "${f}" status)" == split ]]; then
-        [[ "$(json "isinstance(d.get('findings'), list)" 2>/dev/null < "${PROJECT_DIR}/.swarm/${name#scope-}/split-critic.json")" == True ]] \
+        split="${PROJECT_DIR}/.swarm/${name#scope-}"
+        [[ "$(json "isinstance(d.get('findings'), list)" 2>/dev/null < "${split}/split-critic.json")" == True ]] \
           || die "board-pr: ${name#scope-} is split, but .swarm/${name#scope-}/split-critic.json holds no {findings:[...]}; start the split critic first"
+        [[ "${split}/split-critic.json" -nt "${wt}/.git" ]] \
+          || die "board-pr: ${name#scope-} is split, but .swarm/${name#scope-}/split-critic.json is older than this board PR's worktree (an earlier draft's); start the split critic again"
       fi
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)"
       prs="$(gh pr list -R "${url}" --head "${b}" --state all --json state,url,headRefOid)" || die "board-pr: gh cannot list the PRs on ${b}"
@@ -101,7 +106,13 @@ board_pr() {
       git -C "${wt}" push -q -u origin "${b}" || die "board-pr: cannot push ${b}"
       [[ -n "${url}" ]] || url="$(gh pr create -R "$(git -C "${PROJECT_DIR}" remote get-url origin)" --base "${base}" --head "${b}" --title "$3" --body-file "$4")" \
         || die "board-pr: gh pr create failed for ${b}"
-      echo "${url##*$'\n'}" ;;
+      url="${url##*$'\n'}"
+      # A split's board PR, its day and URL, so flow's split block shows every split, a clean one too.
+      # A second open of the same PR keeps the first day.
+      if [[ -n "${split}" ]] && ! grep -qsF "${url}" "${split}/split-pr"; then
+        printf '%s\t%s\n' "$(date +%F)" "${url}" > "${split}/split-pr"
+      fi
+      echo "${url}" ;;
     done)
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)" || die "board-pr: ${PROJECT_DIR} has no origin"
       tip="$(git -C "${PROJECT_DIR}" rev-parse -q --verify "refs/heads/${b}" || true)"
