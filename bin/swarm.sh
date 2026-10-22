@@ -500,11 +500,15 @@ CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it i
 
 # tree_pids <pid> — a process and everything under it, children first.
 tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
+# freeze_tree <pid> — STOP a process, then everything under it, parents first, and print them all: each
+# is stopped before its children are read, so none can start another after the read. A KILL to
+# children first would let a parent that loops (a stub's while, codex's own) start a child no read saw.
+freeze_tree() { local c; kill -STOP "$1" 2>/dev/null; echo "$1"; for c in $(pgrep -P "$1" 2>/dev/null); do freeze_tree "${c}"; done; }
 
-# stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then KILL each
-# process left and whatever is under it by then (a TERM trap can start more). The tree is read before
-# the TERM, since a child whose parent dies leaves it. Stderr is off, so bash prints no "Terminated"
-# line for the job.
+# stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then freeze
+# each process left and whatever is under it by then (a TERM trap can start more), and KILL them. The
+# tree is read before the TERM, since a child whose parent dies leaves it. Stderr is off, so bash
+# prints no "Terminated" line for the job.
 stop_codex() {
   local pids p
   pids="$(tree_pids "$1")"
@@ -512,7 +516,7 @@ stop_codex() {
   {
     kill -TERM ${pids}
     poll_while "${CODEX_GRACE}" kill -0 ${pids}
-    for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
+    kill -KILL $(for p in ${pids}; do freeze_tree "${p}"; done)
     wait "$1"
   } 2>/dev/null || true
 }

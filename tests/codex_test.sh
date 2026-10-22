@@ -66,6 +66,12 @@ gone() {
   for ((i = 0; i < ${1:-2} * 5; i++)); do pgrep -f "${BIN}/" >/dev/null || { echo yes; return; }; sleep 0.2; done
   echo "no: $(pgrep -fl "${BIN}/" | tr '\n' ' ')"
 }
+# left <case> — each case's last check: no stub process outlived it. One that did is KILLed, so the
+# next case starts clean and the failure is the case's that left it.
+left() {
+  check "$1 leaves no stub process" "yes" "$(gone)"
+  pkill -KILL -f "${BIN}/" 2>/dev/null || true
+}
 # markers — codex-review's markers left in the project's state dir, one per line.
 markers() { compgen -G "${P}/.swarm/state/codex-review.*" || true; }
 last_event() { awk -F'\t' '$2 == "codex-review" { o = $3 "|" $5 } END { print o }' "${P}/.swarm/events.tsv"; }
@@ -78,6 +84,7 @@ check "a codex past the limit fails within 10 s, saying it was skipped" "fails|y
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le 10 ]] && echo yes || echo "no, ${took}s")|$(has "codex skipped: timed out" "${out}")"
 check "neither the stub nor its child sleep is left" "yes" "$(gone)"
 check "a timed-out codex-review leaves no marker" "" "$(markers)"
+left "the timeout case"
 
 # --- One that traps TERM and sleeps on is KILLed after the grace, with whatever it started since.
 # Each nap of the limit and the grace adds a little to its length, so the bound has 3 s to spare.
@@ -86,6 +93,7 @@ review
 check "a codex that ignores TERM is stopped within the limit plus the grace" "fails|yes|yes" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$([[ ${took} -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(gone)"
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
+left "the TERM-trapping timeout case"
 
 # --- The grace is real, and never shorter than CODEX_GRACE: a codex that exits on its own 2.5 s
 # after TERM is not KILLed.
@@ -93,6 +101,7 @@ stub "trap 'sleep 2.5; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${
 review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
+left "the grace case"
 
 # --- An interrupted codex-review stops codex as its timeout does (TERM, the grace, then KILL), and
 # exits only once it has.
@@ -105,6 +114,7 @@ sleep 1; kill -TERM "${spid}"; finish "${spid}"
 check "an interrupted codex-review leaves no marker" "" "$(markers)"
 check "codex-review sent TERM exits with neither a TERM-trapping stub nor its child left" "yes|yes" "${up}|$(gone 1)"
 check "events.tsv's codex-review line says it was interrupted" "main|interrupted" "$(last_event)"
+left "the interrupt case"
 
 # --- codex stays in the caller's process group, so a harness that KILLs that group (no trap runs)
 # takes codex with it. codex-review runs here as a session and group leader of its own.
@@ -114,6 +124,7 @@ rm -f "${BIN}/ready"
 spid=$!; up="$(started)"
 kill -KILL -- "-${spid}"; finish "${spid}"
 check "a KILL to codex-review's process group leaves neither the stub nor its child" "yes|yes" "${up}|$(gone 2)"
+left "the group KILL case"
 
 # --- SWARM_SLEEP_SCALE quickens the polling, never the timeout: at 0.01, a codex that takes 0.3 s
 # under the 2 s limit still finishes.
@@ -122,6 +133,7 @@ stub '"${d}/stubsleep" 0.3; echo "P2: slow but done"'
 SWARM_SLEEP_SCALE=0.01 review
 check "at SWARM_SLEEP_SCALE=0.01 a codex inside the limit is not timed out" "exit 0|P2: slow but done" \
   "$([[ ${rc} -eq 0 ]] && echo "exit 0" || echo "exit ${rc}")|${out}"
+left "the SWARM_SLEEP_SCALE case"
 
 # --- A codex that finishes: its findings and exit come through, run with exactly these args. A
 # marker left by a run that was KILLed (its pid dead) goes at the start.
@@ -136,6 +148,7 @@ rm "${P}/.swarm/state/codex-review.123.tmp"
 check "a codex that finishes passes its exit and findings through" "0|yes" "${rc}|$(has "P1: x.sh:3 drops the error" "${out}")"
 check "codex runs as exec review --base origin/main, with no prompt" "[exec][review][--base][origin/main]" "$(cat "${BIN}/args")"
 check "codex reads /dev/null, never the caller's stdin" "" "$(cat "${BIN}/stdin")"
+left "a finished codex case"
 
 # --- With SWARM_STORY, codex gets a prompt holding the story's touches, Done when and From review,
 # and no --base. A markdown heading ends the Done when items, as a bold line does.
@@ -157,6 +170,7 @@ check "a markdown heading ends the Done when items" "no|no" \
 printf '%s\n' '---' 'touches: [x.sh]' '---' '**Done when:** the inline item holds.' > "${P}/docs/stories/s2.md"
 STORY=s2 review
 check "the story prompt keeps a Done when written on its heading line" "yes" "$(has "the inline item holds." "$(cat "${BIN}/args")")"
+left "SWARM_STORY's prompt case"
 
 # --- A SWARM_STORY that names no story, names a story with no Done when item, or is no slug fails,
 # naming why, before codex starts.
@@ -168,10 +182,12 @@ for c in "missing|${P}/docs/stories/missing.md" "s3|has no **Done when** with an
   check "SWARM_STORY=${c%%|*} fails naming why, and codex never runs" "fails|yes|no" \
     "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "${c#*|}" "${out}")|$([[ -e "${BIN}/args" ]] && echo yes || echo no)"
 done
+left "a bad SWARM_STORY case"
 
 # --- A caller's own SWARM_STORY never reaches the unscoped runs above: review drops it.
 SWARM_STORY=s1 review
 check "review drops a caller's SWARM_STORY" "[exec][review][--base][origin/main]" "$(cat "${BIN}/args")"
+left "a caller's SWARM_STORY case"
 
 # --- A usage limit is codex's own exit, never taken for a timeout.
 stub 'echo "You have hit your usage limit."; exit 1'
@@ -179,6 +195,7 @@ review
 check "a usage limit exits as codex did, and the log says failed, not skipped" "1|yes|main|failed (exit 1)" \
   "${rc}|$(has "usage limit" "${out}")|$(last_event)"
 check "a codex that fails leaves no marker" "" "$(markers)"
+left "the usage limit case"
 
 # --- A child of codex left holding its output does not hold codex-review: tee gets the grace after
 # codex exits, then is stopped, and what codex printed comes through.
@@ -188,6 +205,7 @@ review
 check "a codex whose child keeps its output open returns within the grace, its findings through" "0|yes|yes" \
   "${rc}|$([[ ${took} -le $((GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "P2: y.sh:1 leaks" "${out}")"
 pkill -KILL -f "${BIN}/" || true
+left "a child holding the output case"
 
 # --- On the timeout too, tee is stopped: a grandchild of codex that left its tree (so stop_codex
 # misses it) and holds codex's output cannot keep codex-review's stdout open. Read through a pipe,
@@ -201,6 +219,7 @@ spid=$!; finish "${spid}"
 check "a timed-out codex whose grandchild holds its output still ends codex-review's stdout within the grace" "yes|yes" \
   "$([[ $((SECONDS - t0)) -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(has "codex skipped: timed out" "$(cat "${ROOT}/out")")"
 pkill -KILL -f "${BIN}/" || true
+left "a grandchild holding the output case"
 
 # --- codex's log and fifo are in a directory of the run's own, mode 700, gone once it ends.
 mkdir -p "${ROOT}/tmp"
@@ -209,6 +228,7 @@ stub 'ls -ld "${TMPDIR}"/swarm-codex.* | cut -c1-10; ls "${TMPDIR}"/swarm-codex.
 TMPDIR="${ROOT}/tmp" review
 check "codex's log and fifo are in a private directory (drwx------), removed when the run ends" "yes|yes|" \
   "$(has "drwx------" "${out}")|$(has "fifo log" "${out}")|$(compgen -G "${ROOT}/tmp/swarm-codex.*" || true)"
+left "the private directory case"
 
 # --- A run that fails before codex starts (here mktemp, with no TMPDIR to write in) leaves no marker.
 stub 'exit 0'
@@ -217,6 +237,7 @@ stub 'exit 0'
 spid=$!; finish "${spid}"
 check "a codex-review whose temp file cannot be made fails and leaves no marker" "fails|" \
   "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(markers)"
+left "a failed mktemp case"
 
 if [[ ${fails} -gt 0 ]]; then echo "${fails} failed"; exit 1; fi
 echo "all passed"
