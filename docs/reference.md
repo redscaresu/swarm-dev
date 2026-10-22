@@ -281,7 +281,8 @@ collect it first`: a new start would delete that report before the lead reads it
 project's agent holds the conductor's name, it says so and starts none. A draft, `later` or `split` epic's stories start nothing, and
 neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
 for an epic or the backlog, and it says why, while that conductor's report is newer than every story
-and epic: a new one would stop as the last did. Nor does a backlog conductor start while its report
+and epic, and than every change swarm.sh keeps for them in `.swarm/board-state` (an `unblock` or a
+`reset` readies a story there): a new one would stop as the last did. Nor does a backlog conductor start while its report
 lists a one-off whose worktree is still there under `not started:` (the stops above). Nothing starts
 while a working conductor has stopped on an expired login or an API error, which would stop a new one
 too, or while herdr cannot list its agents, since what runs is then not known; each prints why.
@@ -289,7 +290,8 @@ Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each s
 <conductor> (swarm.sh conduct <arg>)`, which `next` puts after the wait's why, so its first line is
 still the step, and logs a `conduct` line in `events.tsv` as `swarm.sh conduct` does. A start that
 fails prints a warning, logs its error as that line's outcome, and changes neither command's exit
-status. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
+status. The warning says to run the `swarm.sh conduct` yourself, or, when an agent's own board merge
+started it with only that agent's environment, that the lead's `swarm.sh next` starts it. `dash --check` and `/epic` read next's step with `swarm.sh _step`, which starts nothing.
 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with

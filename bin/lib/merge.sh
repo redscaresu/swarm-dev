@@ -318,7 +318,7 @@ group_conductor() { if [[ "$1" == - ]]; then conductor_name backlog; else conduc
 # logs a conduct line, ok or its die line, as swarm.sh conduct does; start_conductor's other
 # output is dropped, so next's first line stays the step even with stderr merged.
 conduct_ready() {
-  local e name arg ready log c why rc=0
+  local e name arg ready log c why todo rc=0
   ready="$(board_ready --started | awk '$1 !~ /^fix-main-/')"
   [[ -n "${ready}" ]] || return 0
   if ! herdr agent list >/dev/null 2>&1; then
@@ -351,7 +351,10 @@ conduct_ready() {
       record_event conduct "${arg}"; echo "started: ${name} (swarm.sh conduct ${arg})"
     else
       c=$?; why="$(tail -1 "${log}")"; record_event conduct "${arg}" "${why#swarm: }"
-      echo "warning: swarm.sh conduct ${arg} failed (exit ${c}: ${why}); run it yourself"; rc=1
+      # An agent (a conductor's own board merge) has only its allowlisted env, which may be why: the
+      # lead's next starts it.
+      todo="run it yourself"; [[ -z "${SWARM_AGENT:-}" ]] || todo="the lead's swarm.sh next starts it"
+      echo "warning: swarm.sh conduct ${arg} failed (exit ${c}: ${why}); ${todo}"; rc=1
     fi
     rm -f "${log}"
   done 3< <(awk '{ print $2 }' <<< "${ready}" | sort -u)
@@ -361,7 +364,7 @@ conduct_ready() {
 # conduct_stop <epic> <slug>... — prints why no conductor may start for these ready stories of <epic>
 # (board_ready's column: - for the backlog) and returns 0, as /swarm-dev:swarm's story and resume
 # steps stop (docs/reference.md § The backlog conductor): its conductor's report (conductor_report) is
-# newer than every story and epic, so a new one would stop as the last did; or, for the backlog, the
+# newer than every story and epic, and every state file swarm.sh keeps for them (BOARD_STATE_DIR), so a new one would stop as the last did; or, for the backlog, the
 # report lists one whose worktree is still there under not started: (a build that died). Returns 1
 # when one may start.
 conduct_stop() {
@@ -369,7 +372,8 @@ conduct_stop() {
   report="$(conductor_report "$(group_conductor "$1")")"
   [[ "$1" != - ]] || what="backlog conductor"
   [[ -f "${report}" ]] || return 1
-  if [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" \( -name '*.md' -o -type d \) -newer "${report}" 2>/dev/null)" ]]; then
+  # The state files too: unblock and reset ready a story there, never in its file.
+  if [[ -z "$(find "${BOARD}/stories" "${BOARD}/epics" "${BOARD_STATE_DIR}/stories" "${BOARD_STATE_DIR}/epics" -newer "${report}" 2>/dev/null)" ]]; then
     echo "no ${what} started: no story or epic changed after ${report}, so a new one would stop as the last did; read it"; return 0
   fi
   [[ "$1" == - ]] || return 1
