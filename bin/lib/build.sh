@@ -181,12 +181,12 @@ EOF
   fi
 }
 
-# startable_rule <epic>|backlog — after a merge or an inbox note, start every ready story in scope with
-# no build, not only the ones this unblock readied: a board PR can add one already ready.
+# startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
+# in scope with no build, not only the ones this unblock readied: a board PR can add one already ready.
 startable_rule() {
   local arg="$1" scope="of this epic"
   [[ "$1" != backlog ]] || { arg=--backlog; scope="with no epic"; }
-  printf '%s' "run \`swarm.sh unblock --startable ${arg}\`, and start each story it prints as \`startable:\` (every ready story ${scope} with no build yet, whether or not this unblock readied it) that clashes with no running one, with \`swarm.sh story --strict <slug>\`. It leaves out a story with \`attempts:\` (a failed build): start that one again only as the give-up rule says."
+  printf '%s' "run \`swarm.sh unblock --startable ${arg}\`, and start each story it prints as \`startable:\` (every ready story ${scope} with no build yet, whether or not this unblock readied it) that clashes with no running one, with \`swarm.sh story --strict <slug>\`. Skip a story you closed in this run, one the give-up rule says not to start again, and one a \`not held:\` line left \`ready\` for the lead."
 }
 
 # costs_wait_rule — with merge = agent, a story --strict refusal that ends (costs money) (touches_overlap):
@@ -852,9 +852,10 @@ The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
 cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
 it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a new file),
-read the moved copy, act on it, and delete it. After each note you act on, $(startable_rule "${epic}")
-Do all this once more just before you write your report, so a note left after your last wait is not lost.
-If that last pass starts a builder, do not write the report: go back to waiting.
+read the moved copy, act on it, and delete it. Do this before that wait's \`swarm.sh unblock --startable\`
+run (above), so one run starts what the notes made ready too. Do all this once more just before you
+write your report, so a note left after your last wait is not lost. If that last pass read a note,
+then $(startable_rule "${epic}") If that starts a builder, do not write the report: go back to waiting.
 EOF
   # shellcheck disable=SC2154 # assigned in another file
   [[ -z "${CFG_escalate_ladder:-}" ]] || cat <<EOF
@@ -1003,10 +1004,11 @@ stacked_rule() {
   local mine="a story with \`epic: $1\`"
   [[ "$1" != backlog ]] || mine="a story with no \`epic:\`"
   cat <<EOF
-After each \`swarm.sh wait\` or \`swarm.sh watch\` returns, and after a builder opens a PR,
-$(startable_rule "$1") Then run \`swarm.sh status\` and read its Stacked lines. Unblock's \`ready:\`
-lines and the Stacked lines cover the whole board: act only on a line whose <child> is yours
-(${mine}), and leave the rest to their own conductor.
+After each \`swarm.sh wait\` or \`swarm.sh watch\` returns (after its inbox pass, below), and after a
+builder opens a PR, $(startable_rule "$1") Yours is ${mine}; a ready story whose worktree exists has
+started: never run \`swarm.sh story\` for it. Then run \`swarm.sh status\` and read its Stacked lines.
+Unblock's \`ready:\` lines and the Stacked lines cover the whole board: act only on a line whose
+<child> is yours, and leave the rest to their own conductor.
 - \`<child>: merge <ref>\`: write a file saying to merge <ref> into its branch, re-run the tests and
   push, and send it with \`swarm.sh tell <child> nudge <file>\` (not findings: those count review rounds). On a line that ends \`(no builder)\`,
   first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with

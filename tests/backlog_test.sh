@@ -66,19 +66,29 @@ item "${b}" stories/s1.md "status: ready" "kind: code" "epic: e"
 item "${b}" stories/o1.md "status: ready" "kind: code"
 brief="${p}/.swarm/briefs/conduct-backlog.md"
 
-# --- unblock --startable: o1 is running (its worktree exists), o2 is ready with no build, as a board PR
-# adds one (unblock readies none of them, so it prints no ready: line), and o3 was given up on (close
-# counted attempts: and cleared its worktree), which the give-up rule retries, not startable.
+# --- unblock --startable: o1 is running (its worktree exists) and o2 is ready with no build, as a board
+# PR adds one: unblock readies neither, so it prints no ready: line.
 mkdir -p "${ROOT}/proj-wt/o1"
 item "${b}" stories/o2.md "status: ready" "kind: code"
-item "${b}" stories/o3.md "status: ready" "kind: code" "attempts: 1"
-check "unblock --startable --backlog lists the ready story with no epic and no build, not the running or given-up one" "startable: o2" \
+check "unblock --startable --backlog lists the ready story with no epic and no build, not the running one" "startable: o2" \
   "$(run unblock --startable --backlog)"
 check "unblock --startable <epic> lists only that epic's ready stories with no build" "startable: s1" "$(run unblock --startable e)"
 check "unblock --startable with no scope is refused" "yes" "$(has "--startable takes <epic> or --backlog" "$(run unblock --startable || true)")"
-check "unblock --startable refuses an unknown epic, and a bare backlog is not --backlog" "yes|yes" \
-  "$(has "no epic ${b}/epics/nope.md" "$(run unblock --startable nope || true)")|$(has "no epic ${b}/epics/backlog.md" "$(run unblock --startable backlog || true)")"
-rm -r "${ROOT}/proj-wt/o1" "${b}/stories/o2.md" "${b}/stories/o3.md"
+check "unblock --startable of an epic whose file is gone (finished) prints nothing and exits 0; a bare backlog is that, not --backlog" "|0|" \
+  "$(run unblock --startable gone)|$(run unblock --startable gone >/dev/null; echo $?)|$(run unblock --startable backlog)"
+check "unblock --startable refuses a third argument and a slug that is not [a-z0-9-]" "yes|yes" \
+  "$(has "--startable takes <epic> or --backlog" "$(run unblock --startable e --backlog || true)")|$(has "--startable takes <epic> or --backlog" "$(run unblock --startable ../e || true)")"
+rm -r "${ROOT}/proj-wt/o1" "${b}/stories/o2.md"
+# A board PR merged on GitHub: the upstream gains a ready story; --startable fast-forwards quietly first.
+g() { git -c user.name=t -c user.email=t@t "$@"; }
+git init -q --bare "${ROOT}/up.git"; g clone -q "${ROOT}/up.git" "${ROOT}/up"
+mkdir -p "${ROOT}/up/.claude/swarm" "${ROOT}/up/docs/stories"; : > "${ROOT}/up/.claude/swarm/config"
+g -C "${ROOT}/up" add -A; g -C "${ROOT}/up" commit -qm init; g -C "${ROOT}/up" push -q origin HEAD
+g clone -q "${ROOT}/up.git" "${ROOT}/ff"
+item "${ROOT}/up/docs" stories/n1.md "status: ready" "kind: code"
+g -C "${ROOT}/up" add -A; g -C "${ROOT}/up" commit -qm "board PR"; g -C "${ROOT}/up" push -q origin HEAD
+check "unblock --startable fast-forwards the main checkout first, so a story a board PR merged on GitHub is listed, and prints nothing else" "startable: n1|yes" \
+  "$(cd "${ROOT}/ff" && env -u SWARM_PROJECT HERDR_ENV=1 HERDR_WORKSPACE_ID=w PATH="${ROOT}/bin:${PATH}" bash "${SWARM}" unblock --startable --backlog 2>/dev/null)|$([[ -f "${ROOT}/ff/docs/stories/n1.md" ]] && echo yes || echo no)"
 
 # --- A board with an epic named backlog: conduct --backlog starts nothing.
 item "${b}" epics/backlog.md "status: active"
@@ -118,7 +128,7 @@ refused story as \`not started: <slug> (waits on <other>'s merge)\`." "${bl}")"
 startable_bl() {
   local b; b="$(tr -s '[:space:]' ' ' <<< "$1")"
   # shellcheck disable=SC2016 # the backticks are the brief's
-  echo "$(grep -oF 'run `swarm.sh unblock --startable --backlog`, and start each story it prints as `startable:` (every ready story with no epic with no build yet, whether or not this unblock readied it) that clashes with no running one, with `swarm.sh story --strict <slug>`. It leaves out a story with `attempts:` (a failed build): start that one again only as the give-up rule says.' <<< "${b}" | wc -l | tr -d ' ')|$(has 'After each note you act on, run `swarm.sh unblock --startable --backlog`' "${b}")|$(grep -qE 'start what it readies|it prints as `ready:`|starts? (only )?(the )?stories (its own )?unblock readie' <<< "${b}" && echo limited || echo no)"
+  echo "$(grep -oF 'run `swarm.sh unblock --startable --backlog`, and start each story it prints as `startable:` (every ready story with no epic with no build yet, whether or not this unblock readied it) that clashes with no running one, with `swarm.sh story --strict <slug>`. Skip a story you closed in this run, one the give-up rule says not to start again, and one a `not held:` line left `ready` for the lead.' <<< "${b}" | wc -l | tr -d ' ')|$(has 'If that last pass read a note, then run `swarm.sh unblock --startable --backlog`' "${b}")|$(grep -qE 'start what it readies|it prints as `ready:`|starts? (only )?(the )?stories (its own )?unblock readie' <<< "${b}" && echo limited || echo no)"
 }
 check "with merge = human, the backlog conductor starts every ready story with no epic and no build after a merge and after a note" "3|yes|no" "$(startable_bl "${bl}")"
 check "the backlog conductor reports to conduct-backlog.report.md" "yes" "$(has "${p}/.swarm/conduct-backlog.report.md" "${bl}")"

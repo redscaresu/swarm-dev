@@ -1183,16 +1183,18 @@ a story that is still `ready` counts a failed build. Its first `swarm.sh merge` 
 base has a merge queue. Where it prints `merge queue: <base> has one`, the conductor starts `swarm.sh
 merge` for every PR whose latest head passed review as soon as it passes, without waiting for the
 ones before it to merge, so the queue tests them together and merges them in batches. Otherwise it
-runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each merge, each inbox note it acts on, and
-each wait, it runs `swarm.sh unblock --startable <epic>` (`--backlog` for the backlog conductor) and,
+runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each merge, and after each wait once it has
+read its inbox, it runs `swarm.sh unblock --startable <epic>` (`--backlog` for the backlog conductor) and,
 in the same run, starts each story printed as `startable:` that clashes with no running one (§
-Building, Pick the wave). `--startable` first runs reconcile when the main checkout is behind its upstream,
-then unblock, then prints `startable: <slug>` for every `ready` story in that scope with no worktree
+Building, Pick the wave). `--startable` first fast-forwards the main checkout when it is behind its upstream,
+quietly (reconcile stays merge's job), then runs unblock, then prints `startable: <slug>` for every `ready` story in that scope with no worktree
 yet, whether or not this unblock readied it. A story that a board PR adds already `ready` starts the
 same way. A build cleared on error or given up on stops that: it starts nothing more in
-the wave. `--startable` leaves out a story with `attempts:`: the conductor retries a failed build only in a
-later wave, as its give-up rule says. If the last inbox pass before its report starts a builder, it goes
-back to waiting instead of reporting. It reports once no story of the epic that it may start is ready and none is running. If
+the wave. Once the epic's file is gone (its last story's PR deletes it), `--startable` prints nothing. The
+conductor skips a story it closed in this run, one its give-up rule says not to start again, and one
+a `not held:` line left `ready` for the lead. If the last inbox pass before its report reads a note,
+it runs `--startable` once more, and if that starts a builder, it goes back to waiting instead of
+reporting. It reports once no story of the epic that it may start is ready and none is running. If
 CI on the base times out, it merges nothing more and stops, and says so in its report. If it goes
 red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
 its builder at once, ahead of every other story, and merges nothing else until that fix lands. It stops only when what is left needs the lead: a story only

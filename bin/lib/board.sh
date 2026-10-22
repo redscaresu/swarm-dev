@@ -736,21 +736,21 @@ unblock() {
   done < <(board stories)
 }
 
-# unblock_startable <epic>|--backlog — reconcile first when the main checkout is behind its upstream
-# (a board PR merged on GitHub may add a ready story), unblock, then a startable: line per story of that
-# epic (--backlog: with no epic) that next would build (board_ready: ready, its build not started),
-# whether or not this unblock readied it: a board PR can add a story already ready, and unblock never
-# prints that one. A story with attempts: (a failed build) is left out: the give-up rule retries it.
+# unblock_startable <epic>|--backlog — fast-forward the main checkout when it is behind its upstream (a
+# board PR merged on GitHub may add a ready story; reconcile stays merge's), unblock, then a startable:
+# line per story of that epic (--backlog: with no epic) that next would build (board_ready: ready, its
+# build not started), whether or not this unblock readied it: unblock never prints a story a board PR
+# added already ready. An epic whose file is gone has finished: nothing is startable.
 unblock_startable() {
   local want="$1" slug e
-  if [[ "${want}" == --backlog ]]; then want=-
-  else [[ -f "${BOARD}/epics/${want}.md" ]] || die "unblock: no epic ${BOARD}/epics/${want}.md"; fi
-  if behind_upstream; then
-    ( reconcile ) || echo "warning: reconcile failed, so the board may be behind its upstream; listing it as it is" >&2
+  if behind_upstream && ! git -C "${PROJECT_DIR}" merge -q --ff-only '@{upstream}' >/dev/null 2>&1; then
+    echo "warning: cannot fast-forward ${PROJECT_DIR}, so the board may be behind its upstream" >&2
   fi
+  if [[ "${want}" == --backlog ]]; then want=-
+  else [[ -f "${BOARD}/epics/${want}.md" ]] || return 0; fi
   unblock
   while read -r slug e; do
-    [[ "${e}" == "${want}" && -z "$(fm "${BOARD}/stories/${slug}.md" attempts)" ]] || continue
+    [[ "${e}" == "${want}" ]] || continue
     echo "startable: ${slug}"
   done < <(board_ready)
 }
