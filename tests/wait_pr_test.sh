@@ -146,7 +146,7 @@ is "transient errors either side of a reset wait: six reads" 6 "$(reads)"
 # The grace for a head with no check runs pauses with the reset wait: a wait longer than the grace,
 # then a read still with none, goes on.
 fresh; checks "${FX}/checks.1"; echo "${LIMIT}" > "${FX}/checks.2.err"; checks "${FX}/checks.3"
-echo "$(($(date +%s) + 3)) 2030-01-01T00:00:03Z" > "${FX}/reset"; wait_pr SWARM_WAIT_PR_GRACE=2
+echo "$(($(date +%s) + LATE)) 2030-01-01T00:00:18Z" > "${FX}/reset"; wait_pr SWARM_WAIT_PR_GRACE="${ROOM}"
 is "a reset wait longer than the no-check grace: exits 0" 0 "${rc}"
 is "a reset wait longer than the no-check grace: four reads" 4 "$(reads)"
 # The wait moves the default deadline: a reset past it is still waited for.
@@ -160,17 +160,19 @@ is "rate limit resetting past --timeout: exits 2" 2 "${rc}"
 check "rate limit resetting past --timeout: names the reset time" said "resets at 2030-01-01T00:01:00Z, past --timeout ${HANG}s"
 check "rate limit resetting past --timeout: ends at once" test "${took}" -lt "${LATE}"
 # With the budget left, the same words are GitHub's secondary limit: no wait for the reset, but the
-# retry pause and up to half again (2-3s), ending within SLACK of it.
-fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY=2
+# retry pause and up to half again, ending within SLACK of it. RETRY is 2 * SLACK, so twice the retry
+# pause is past that.
+RETRY=$((2 * SLACK))
+fresh; echo "${LIMIT}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY="${RETRY}"
 is "rate limit with the budget left: exits 0" 0 "${rc}"
-check "rate limit with the budget left: backs off the retry pause, plus at most half again" test "${took}" -ge 2 -a "${took}" -lt $((3 + SLACK))
+check "rate limit with the budget left: backs off the retry pause, plus at most half again" test "${took}" -ge "${RETRY}" -a "${took}" -lt $((RETRY * 3 / 2 + SLACK))
 check "rate limit with the budget left: is retried, with no reset wait" said "retrying after"
 # A secondary limit in its own words is retried the same way, with no read of the budget.
 fresh; echo "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)" > "${FX}/checks.1.err"
-echo "$(($(date +%s) + HANG)) 2030-01-01T00:00:30Z" > "${FX}/reset"; wait_pr SWARM_WAIT_PR_RETRY=2
+echo "$(($(date +%s) + 2 * HANG)) 2030-01-01T00:01:00Z" > "${FX}/reset"; wait_pr SWARM_WAIT_PR_RETRY="${RETRY}"
 is "secondary rate limit: exits 0" 0 "${rc}"
 is "secondary rate limit: does not read the budget" 0 "$(grep -c "^api rate_limit" "${ROOT}/gh.log")"
-check "secondary rate limit: backs off the retry pause, plus at most half again" test "${took}" -ge 2 -a "${took}" -lt $((3 + SLACK))
+check "secondary rate limit: backs off the retry pause, plus at most half again" test "${took}" -ge "${RETRY}" -a "${took}" -lt $((RETRY * 3 / 2 + SLACK))
 # The read of the reset time is bounded by the deadline too: one that hangs ends the wait there.
 fresh; echo "${LIMIT}" > "${FX}/head.1.err"; : > "${FX}/reset.hang"; wait_pr SWARM_WAIT_PR_RETRY="${PAUSE}" --timeout "${ROOM}"
 is "a reset read hanging past --timeout: exits 2" 2 "${rc}"
@@ -225,9 +227,9 @@ wait_pr SWARM_WAIT_PR_GRACE=0
 is "no check runs beside a pending status past the grace: exits 2" 2 "${rc}"
 check "no check runs beside a pending status past the grace: says so" said "no check runs on ${H:0:7}"
 
-# --- The grace starts at the first read that finds no check runs: a head read retried for 2s first
-# leaves a 1s grace whole.
-fresh; echo "${RATE}" > "${FX}/head.1.err"; checks "${FX}/checks.1"; wait_pr SWARM_WAIT_PR_RETRY=2 SWARM_WAIT_PR_GRACE=1
+# --- The grace starts at the first read that finds no check runs: a head read retried for LATE
+# seconds first leaves a ROOM grace whole.
+fresh; echo "${RATE}" > "${FX}/head.1.err"; checks "${FX}/checks.1"; wait_pr SWARM_WAIT_PR_RETRY="${LATE}" SWARM_WAIT_PR_GRACE="${ROOM}"
 is "grace after a retried head read: exits 0" 0 "${rc}"
 is "grace after a retried head read: two check reads" 2 "$(reads)"
 
@@ -282,7 +284,8 @@ fresh; checks "${FX}/checks.1" "$(run test queued)"; wait_pr SWARM_MERGE_POLL="$
 is "a poll past a small --timeout, then green: exits 2" 2 "${rc}"
 is "a poll past a small --timeout, then green: one read" 1 "$(reads)"
 at_deadline "a poll past a small --timeout, then green"
-check "a poll past a small --timeout, then green: says timed out" grep -qE "timed out after [0-9]+s, still pending: test \(queued\)" "${ROOT}/out"
+n="$(sed -nE 's/.*timed out after ([0-9]+)s, still pending: test \(queued\)$/\1/p' "${ROOT}/out")"
+check "a poll past a small --timeout, then green: says timed out at the deadline" test "${n:-0}" -ge $((ROOM - 1)) -a "${n:-0}" -lt "${LATE}"
 fresh; echo "${RATE}" > "${FX}/checks.1.err"; wait_pr SWARM_WAIT_PR_RETRY="${PAUSE}" --timeout "${ROOM}"
 is "a retry past a small --timeout, then green: exits 2" 2 "${rc}"
 at_deadline "a retry past a small --timeout, then green"
