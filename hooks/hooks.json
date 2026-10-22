@@ -45,7 +45,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/lead-stop.sh\"",
-            "timeout": 30
+            "timeout": 60
           }
         ]
       }
