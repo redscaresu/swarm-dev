@@ -497,22 +497,43 @@ kill_tree() {
 }
 
 CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it is KILLed
+# SWARM_CODEX_GRACE overrides it, for tests, when it is a whole number of seconds; anything else is ignored.
+[[ ! "${SWARM_CODEX_GRACE:-}" =~ ^[1-9][0-9]*$ ]] || CODEX_GRACE="${SWARM_CODEX_GRACE}"
 
 # tree_pids <pid> — a process and everything under it, children first.
 tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
+# frozen <pid>... — STOP each process and everything under it, and print them all, children first. Each
+# pass STOPs the pids it found, then reads the process table once for their children: a parent is
+# stopped before the read, so one that loops (a stub's while, codex's own) cannot start a child behind
+# it, as it could behind a KILL to its children. Passes go on until a read finds no new child, one per
+# level of the tree, but at most FREEZE_PASSES (a process that forks on would hold codex-review for
+# good); what the last pass found is KILLed unstopped. kill(2) returns once the STOP is pending, so a
+# process on another CPU may fork before it stops. A pid the STOP fails on, one that died in the grace,
+# is dropped. Children first, so no stopped child is orphaned (a group of its own gets HUP and CONT then) before its own KILL.
+FREEZE_PASSES=20   # ponytail: a tree deeper than this loses what is under its last level; raise it if codex ever nests deeper
+frozen() {
+  local out="" new="$*" got p i
+  for ((i = 0; i < FREEZE_PASSES && ${#new} > 0; i++)); do
+    got=""
+    for p in ${new}; do kill -STOP "${p}" 2>/dev/null && got="${got} ${p}"; done
+    out="${got} ${out}"
+    new="$(ps -Ao pid=,ppid= | awk -v have=" ${out} " 'index(have, " " $2 " ") && !index(have, " " $1 " ") { print $1 }')"
+  done
+  echo "${new} ${out}"
+}
 
-# stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then KILL each
-# process left and whatever is under it by then (a TERM trap can start more). The tree is read before
-# the TERM, since a child whose parent dies leaves it. Stderr is off, so bash prints no "Terminated"
-# line for the job.
+# stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then freeze
+# each process left and whatever is under it by then (a TERM trap can start more) and KILL them. The
+# tree is read before the TERM, since a child whose parent dies leaves it. Stderr is off, so bash
+# prints no "Terminated" line for the job.
 stop_codex() {
-  local pids p
+  local pids
   pids="$(tree_pids "$1")"
   # shellcheck disable=SC2046,SC2086 # one pid per word
   {
     kill -TERM ${pids}
     poll_while "${CODEX_GRACE}" kill -0 ${pids}
-    for p in ${pids}; do kill -KILL $(tree_pids "${p}"); done
+    kill -KILL $(frozen ${pids})
     wait "$1"
   } 2>/dev/null || true
 }
@@ -540,8 +561,9 @@ codex_story_prompt() {
 # codex_review <base> — codex's review of the cwd against origin/<base>: no prompt (codex refuses one
 # beside --base) and stdin from /dev/null, so it never waits on input. With SWARM_STORY=<slug>, a
 # prompt instead of --base (codex_story_prompt), so codex reviews against that story. codex stays in
-# the caller's process group, so a harness that kills that group kills codex too. stop_codex stops it
-# after codex_minutes (SWARM_CODEX_SECONDS overrides it, for tests), or when this command is sent
+# the caller's process group, so a harness that kills that group kills codex too (on macOS a KILL to the
+# group can miss a child forked while it is sent: STOP the group first). stop_codex stops it
+# after codex_minutes (SWARM_CODEX_SECONDS, a whole number of seconds, overrides it, for tests), or when this command is sent
 # TERM or HUP, which main_signal sends it on an interrupt and then waits out. The timeout dies, so
 # events.tsv's line says so; otherwise it exits as codex did. codex's output, stderr merged into
 # stdout, streams through tee into a temp file; tee gets CODEX_GRACE seconds after codex exits, since a
@@ -561,7 +583,8 @@ codex_review() {
       || die "SWARM_STORY=${SWARM_STORY}: ${story} has no **Done when** with an item under it"
     args=("${prompt}")
   fi
-  left="${SWARM_CODEX_SECONDS:-$((CFG_codex_minutes * 60))}"
+  left=$((CFG_codex_minutes * 60))
+  [[ ! "${SWARM_CODEX_SECONDS:-}" =~ ^[1-9][0-9]*$ ]] || left="${SWARM_CODEX_SECONDS}"
   # The marker dash shows the run by: main's pid (alive for the whole run; bash 3.2 has no BASHPID),
   # holding start epoch, base and cwd, removed on any exit but a KILL. A dead pid's marker goes here.
   mkdir -p "${STATE_DIR}"
