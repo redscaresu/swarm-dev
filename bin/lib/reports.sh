@@ -5,12 +5,13 @@
 FINDINGS_LOG_NAME="findings.tsv"
 # Who can raise a finding (log-finding --reviewer); ci is a PR review bot, check-run notes or
 # code-scanning alerts (swarm.sh findings). fallback is the agent codex-review starts in codex's place
-# on a usage limit (fallback_reviewer). skeptic and critic are the plan reviewers, logging on a
-# board PR; escaped is a defect a later fix found in merged work, logged against the original PR. A
-# row logged without --reviewer says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
+# on a usage limit (fallback_reviewer). skeptic and critic are the plan reviewers, and split-critic
+# the check on a large epic's split into child epics, all logging on a board PR; escaped is a defect
+# a later fix found in merged work, logged against the original PR. A row logged without --reviewer
+# says unknown. The reports read this list as SWARM_FINDING_REVIEWERS.
 # A new reviewer a conductor logs also needs its line in finding_rule's mapping and in the story arm
 # of commands/swarm.md, which tell whoever logs a finding which value names which reviewer.
-FINDING_REVIEWERS="codex fallback code-review ci conductor lead skeptic critic escaped"
+FINDING_REVIEWERS="codex fallback code-review ci conductor lead skeptic critic split-critic escaped"
 # Why a finding was declined (log-finding --declined <reason>).
 FINDING_REASONS="out-of-scope nit wrong"
 
@@ -361,7 +362,7 @@ flow_sections() {
     stories+="${slug}"$'\t'"$(sed -n 's/^estimate_lines: *//p' <<< "${text}" | head -1)"
     stories+=$'\t'"$(sed -n 's/^touches: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr '\t' ' ')"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_BOARD="${BOARD}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }
