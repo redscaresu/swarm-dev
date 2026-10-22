@@ -677,14 +677,15 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # still drop a prompt sent at once, leaving it idle at an empty prompt while every later
 # `wait` returned immediately. So the submission waits until herdr sees the agent working
 # (or blocked on a question), and fails loudly rather than reporting success. When herdr sent the
-# prompt but named no status it reached (prompt_once's sent), the agent's own status decides
-# (settled_status): working or blocked took it, idle or done gets it once more, and an agent herdr
-# gives no status for is never sent it twice. A prompt herdr did not send is sent once more, except
-# to an agent blocked on a question.
+# prompt, or its reply could not be read, but named no status the agent reached, the agent's own
+# status decides (settled_status): working or blocked took it; idle or done took it too when its
+# state changed since the prompt (took_it), else it gets the prompt once more; an agent herdr gives
+# no status for is never sent it twice. A prompt herdr did not send is sent once more; agent_blocked
+# after one that was sent means the agent is blocked on a question about it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
-  local name="$1" prompt_file="$2" target="${3:-}" reply status try
+  local name="$1" prompt_file="$2" target="${3:-}" reply status seq before try sent=0
   [[ -n "${target}" ]] || target="$(own_target "${name}")"
   if [[ "${4:-}" == once ]]; then
     herdr agent prompt "${target}" "$(cat "${prompt_file}")" >/dev/null 2>&1 \
@@ -692,58 +693,89 @@ deliver_prompt() {
     return
   fi
   for try in 1 2; do
+    read -r _ before <<< "$(agent_info "${target}")"; before="${before#-}"
     reply="$(prompt_once "${target}" "${prompt_file}")"
     case "${reply}" in
       working|blocked) return 0 ;;
-      agent_blocked) die "${name}: herdr sent it nothing: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
-      sent) ;;
+      sent|unread) sent=$((sent + 1)) ;;
+      agent_blocked) [[ ${sent} -eq 0 ]] || return 0
+        die "${name}: herdr sent it nothing: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
       *) if [[ ${try} -eq 1 ]]; then nap 5; continue; fi
-         die "${name}: herdr could not send it the brief after 2 attempts (${reply}); see herdr agent read ${name}" ;;
+         if [[ ${sent} -eq 0 ]]; then die "${name}: herdr could not send it the brief after 2 attempts (${reply}); see herdr agent read ${name}"; fi
+         die "${name}: herdr sent it the brief once, and could not send it again (${reply}); see herdr agent read ${name}" ;;
     esac
-    status="$(settled_status "${target}")"
+    read -r status seq <<< "$(settled_status "${target}")"; status="${status#-}"; seq="${seq#-}"
     case "${status}" in
       working|blocked) return 0 ;;
-      idle|done) ;;
-      *) die "${name}: herdr took the brief but gave no status for it${status:+ (it reads ${status})}, so it was not sent again; it may have it: see herdr agent read ${name}" ;;
+      idle|done) ! took_it "${before}" "${status}" "${seq}" || return 0 ;;
+      *) die "${name}: $(no_status_why "${reply}") gave no status for it${status:+ (it reads ${status})}, so it was not sent again; it may have it: see herdr agent read ${name}" ;;
     esac
   done
-  die "${name}: the brief was not taken up after 2 attempts: herdr reads it ${status}; see herdr agent read ${name}"
+  die "${name}: the brief was not taken up: herdr sent it $(times "${sent}"), and reads it ${status} with no change since; see herdr agent read ${name}"
+}
+
+# times <n> — once or twice.
+times() { if [[ "$1" -eq 1 ]]; then echo once; else echo twice; fi; }
+
+# no_status_why <reply> — the start of deliver_prompt's message when herdr gives no status after the
+# prompt: herdr took it (sent), or its reply could not be read (unread), so it may not have.
+no_status_why() {
+  if [[ "$1" == unread ]]; then echo "herdr's reply to the brief could not be read, and herdr"; else echo "herdr took the brief but"; fi
+}
+
+# took_it <seq-before> <status> <seq-after> — whether an agent idle or done after a prompt took it:
+# its state changed since the prompt (herdr's state_change_seq moved), so it took the prompt and
+# finished; unchanged, it never moved. With no seq on either side, only done counts: a short message
+# may be done already, and an idle agent gets it once more.
+took_it() {
+  if [[ -z "$1" || -z "$3" ]]; then [[ "$2" == "done" ]]; return; fi
+  [[ "$1" != "$3" ]]
 }
 
 # prompt_once <target> <prompt-file> — submit the prompt once, wait for it to be taken up, and print
 # what came of it: working or blocked; sent, when herdr sent it but named no status it reached (the
-# reply could not be read, the timeout passed, agent_prompt_stalled: the agent did not start within
-# herdr's 5 s, or herdr's error could not be read either); else herdr's error code, when it sent
-# nothing (agent_blocked: the agent was already blocked on a question; agent_not_found, ...).
+# reply could not be read, the timeout passed, or agent_prompt_stalled: the agent did not start within
+# herdr's 5 s); unread, when herdr failed with no error it could read (it may be down: whether it sent
+# anything is unknown); else herdr's error code, when it sent nothing (agent_blocked: the agent was
+# already blocked on a question; agent_not_found, ...).
 # herdr writes one JSON object, its reply on stdout or its error on stderr, so both are read together:
 # no temp file for a TERM to leave behind.
 prompt_once() {
-  local all out code
+  local all out code rc=0
   all="$(herdr agent prompt "$1" "$(cat "$2")" --wait --until working --until blocked \
-    --timeout "${PROMPT_TIMEOUT_MS}" 2>&1)" || true
+    --timeout "${PROMPT_TIMEOUT_MS}" 2>&1)" || rc=$?
   out="$(json "d.get('result',{}).get('agent',{}).get('agent_status','')" <<< "${all}" 2>/dev/null)" || out=""
   code="$(json "d.get('error',{}).get('code','')" <<< "${all}" 2>/dev/null)" || code=""
   case "${out}:${code}" in
     working:*|blocked:*) echo "${out}" ;;
-    *:|*:timeout|*:agent_prompt_stalled) echo sent ;;
+    *:timeout|*:agent_prompt_stalled) echo sent ;;
+    *:) if [[ ${rc} -eq 0 ]]; then echo sent; else echo unread; fi ;;
     *) echo "${code}" ;;
   esac
+}
+
+# agent_info <target> — "<status> <state_change_seq>" from herdr agent get, either one - when herdr
+# gives none (so read keeps them apart).
+agent_info() {
+  local s seq
+  read -r s seq <<< "$(herdr agent get "$1" 2>/dev/null | json "'%s %s' % (d['result']['agent'].get('agent_status') or '-', d['result']['agent'].get('state_change_seq', '-'))" 2>/dev/null)"
+  echo "${s:--} ${seq:--}"
 }
 
 # OWN_READS: how many times settled_status reads an agent's own status, 5 s apart, while herdr names none.
 OWN_READS=3
 
-# settled_status <target> — the agent's own status (herdr agent get), read until herdr names one
-# (working, blocked, idle or done), at most OWN_READS times; else what the last read gave (unknown,
-# or nothing when herdr did not answer).
+# settled_status <target> — agent_info, read until herdr names a status (working, blocked, idle or
+# done), at most OWN_READS times; else what the last read gave (unknown, or nothing when herdr did
+# not answer).
 settled_status() {
-  local s="" i
+  local s="" seq="" i
   for ((i = 1; i <= OWN_READS; i++)); do
     nap 5
-    s="$(herdr agent get "$1" 2>/dev/null | json "d.get('result',{}).get('agent',{}).get('agent_status','')" 2>/dev/null)" || s=""
+    read -r s seq <<< "$(agent_info "$1")"
     case "${s}" in working|blocked|idle|done) break ;; esac
   done
-  echo "${s}"
+  echo "${s:--} ${seq:--}"
 }
 
 # IDLE_NUDGES: how many times one `wait` re-prompts a builder that went idle before its story has a
