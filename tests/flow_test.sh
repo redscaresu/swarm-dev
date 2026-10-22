@@ -141,7 +141,8 @@ done
 # differs from git's clean merge only on x, a path it leaves as main has it: another strategy's merge,
 # behind. gh's answer for m11's PR (#11) has no base branch. The project's origin is github.com/o/r, which
 # git reads from s.git. m12 (#12, epic e11) is a story of s2, whose origin is not: its missing merge-in is
-# not fetched. m13 (#13, epic e10) is m2's clean merge-in again.
+# not fetched. m13 (#13, epic e10) is m2's clean merge-in again. m14's (#14, epic e12) merge-in names a
+# tree git does not have, so its diffs against git's clean merge fail: unread, not a clean merge.
 S="${dir}/s"; mkdir -p "${S}/.swarm" "${S}/docs/stories" "${dir}/sbin"
 g() { git -C "${S}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 g2() { git -C "${dir}/s2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
@@ -165,16 +166,20 @@ g2 checkout -qb story/m6 origin/main~1; echo six > "${dir}/s2/six"; g2 add six; 
 g2 merge -q -m "Merge remote-tracking branch 'origin/main' into story/m6" origin/main; g2 push -q origin story/m6:refs/pull/6/head
 g2 checkout -qb story/m7 origin/main~1; echo seven > "${dir}/s2/f"; g2 commit -qam seven
 g2 merge -q origin/main > /dev/null || true; echo 7m > "${dir}/s2/f"; g2 commit -qam "Merge branch 'main' into story/m7"
+g branch -f story/m14 "$(printf 'tree %s\nparent %s\nparent %s\nauthor t <t@t> 0 +0000\ncommitter t <t@t> 0 +0000\n\n%s\n' \
+  1111111111111111111111111111111111111111 "$(g rev-parse story/m2^1)" "$(g rev-parse main)" "Merge branch 'main' into story/m14" |
+  g hash-object -t commit -w --literally --stdin)"
 for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
 printf -- '---\nkind: code\nstatus: ready\nepic: e9\nrepo: s2\n---\n' > "${S}/docs/stories/m7.md"
 printf -- '---\nkind: code\nstatus: ready\nepic: e11\nrepo: s2\n---\n' > "${S}/docs/stories/m12.md"
 printf -- '---\nkind: code\nstatus: ready\nepic: e10\n---\n' > "${S}/docs/stories/m13.md"
-printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 > "${S}/.swarm/agents.tsv"
+printf -- '---\nkind: code\nstatus: ready\nepic: e12\n---\n' > "${S}/docs/stories/m14.md"
+printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 > "${S}/.swarm/agents.tsv"
 commits() { # <PR> <git function> <merge-in>: gh api's commits of the PR, its merge-in's parent and then its merge-in, whose message has a body
   printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s\\n\\nbody"}}]]' \
     "$("$2" rev-parse "$3^1")" "$("$2" rev-parse "$3")" "$("$2" log -1 --format=%s "$3")" > "${dir}/sbin/$1"
 }
-for n in 1 2 3 5 9 10; do commits "${n}" g "story/m${n}"; done
+for n in 1 2 3 5 9 10 14; do commits "${n}" g "story/m${n}"; done
 commits 6 g2 story/m6; commits 7 g2 story/m7; cp "${dir}/sbin/2" "${dir}/sbin/13"
 printf '[[{"sha":"fedcba9876543210fedcba9876543210fedcba98","commit":{"message":"Merge origin/main into story/m12"}}]]' > "${dir}/sbin/12"
 printf '[[{"sha":"0123456789abcdef0123456789abcdef01234567","commit":{"message":"Merge origin/main into story/m8"}},{"sha":"--output=x","commit":{"message":"Merge origin/main into story/m8"}}]]' > "${dir}/sbin/8"
@@ -222,6 +227,13 @@ neither\t0\t0
 unread\t1\t1
 none read
 merge ins: left out '"${U}"$'/12: fedcba987654: not in '"$(cd "${dir}/s2" && pwd -P)"$': its origin is not github.com/o/r'
+check "merge_ins: a git diff that fails leaves its merge-in unread, naming the error, not a clean merge" "$(mi --since 2026-10-01 --epic e12)" $'cause\tmerge_ins\tprs
+conflict\t0\t0
+behind\t0\t0
+neither\t0\t0
+unread\t1\t1
+none read
+merge ins: left out '"${U}"$'/14: '"$(g rev-parse --short=12 story/m14)"$': git diff: fatal: bad object 1111111111111111111111111111111111111111'
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

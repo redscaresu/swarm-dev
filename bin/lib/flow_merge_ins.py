@@ -10,9 +10,10 @@
 # PR changes against the base (a hand fix; a difference elsewhere is another merge strategy); behind
 # when they merge clean and the base had commits the branch lacked; neither when it had none. unread
 # counts the rest: a PR gh could not read, the merge-ins main_merges counted that gh does not list, a
-# sha or commit git cannot read, and a one-parent "merge" (a squash, a rebase); a `merge ins: left out
-# <url>: <why>` line names each. TSV cause merge_ins prs, then, after a blank line, file conflicts: the
-# three files conflicts hit most; or none conflicted, or none read when it read no merge-in.
+# sha or commit git cannot read, a git command that fails, and a one-parent "merge" (a squash, a
+# rebase); a `merge ins: left out <url>: <why>` line names each. TSV cause merge_ins prs, then, after
+# a blank line, file conflicts: the three files conflicts hit most; or none conflicted, or none read
+# when it read no merge-in.
 import collections, datetime, os, re
 from report import *
 
@@ -91,7 +92,11 @@ def cause(root, oid):
         # git merged it clean and the commit differs. On a path the PR changes against the base, the
         # builder changed the result before committing; elsewhere it is another strategy's clean merge.
         diff = ("diff", "--name-only", "--no-renames", "-z", "--end-of-options")
-        fixed = set(names(git(root, *diff, clean, tree))) & set(names(git(root, *diff, base, tree)))
+        from_clean, from_base = (git(root, *diff, side, tree) for side in (clean, base))
+        for got in (from_clean, from_base):
+            if got.returncode:   # an empty list from a failed diff would read as no hand fix
+                return "unread", [], f"{oid[:12]}: git diff: {said(got)}"
+        fixed = set(names(from_clean)) & set(names(from_base))
         if fixed:
             return "conflict", sorted(fixed), ""
     ancestor = git(root, "merge-base", "--is-ancestor", "--end-of-options", base, ours)
