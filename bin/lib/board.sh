@@ -736,15 +736,22 @@ unblock() {
   done < <(board stories)
 }
 
-# unblock_startable <epic>|backlog — unblock, then a startable: line per story of that epic (backlog: with
-# no epic) that next would build (board_ready: ready, its build not started), whether or not this
-# unblock readied it: a board PR can add a story already ready, and unblock never prints that one.
+# unblock_startable <epic>|--backlog — reconcile first when the main checkout is behind its upstream
+# (a board PR merged on GitHub may add a ready story), unblock, then a startable: line per story of that
+# epic (--backlog: with no epic) that next would build (board_ready: ready, its build not started),
+# whether or not this unblock readied it: a board PR can add a story already ready, and unblock never
+# prints that one. A story with attempts: (a failed build) is left out: the give-up rule retries it.
 unblock_startable() {
   local want="$1" slug e
+  if [[ "${want}" == --backlog ]]; then want=-
+  else [[ -f "${BOARD}/epics/${want}.md" ]] || die "unblock: no epic ${BOARD}/epics/${want}.md"; fi
+  if behind_upstream; then
+    ( reconcile ) || echo "warning: reconcile failed, so the board may be behind its upstream; listing it as it is" >&2
+  fi
   unblock
-  [[ "${want}" != backlog ]] || want=-
   while read -r slug e; do
-    [[ "${e}" != "${want}" ]] || echo "startable: ${slug}"
+    [[ "${e}" == "${want}" && -z "$(fm "${BOARD}/stories/${slug}.md" attempts)" ]] || continue
+    echo "startable: ${slug}"
   done < <(board_ready)
 }
 

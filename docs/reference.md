@@ -543,8 +543,8 @@ merge, the child takes the base), and `<child>: lost story/<p>` when the parent'
 (as a dropped parent's has), or its branch is gone while its PR is open or, still on the board, it
 has no PR. A gh or git call that fails, or a git that cannot tell, gives a `could not check` line.
 Inside herdr, a line ends `(no builder)` when the child has no builder open. After each wait, watch
-and new PR, the conductor runs `unblock`, starts what it readies, and runs `status`, acting only on
-its own stories: its epic's, or for the backlog conductor those with no epic. It tells each child
+and new PR, the conductor runs `unblock --startable`, starts each story it prints as `startable:`
+(§ Merging), and runs `status`, acting only on its own stories: its epic's, or for the backlog conductor those with no epic. It tells each child
 with a merge line to merge that ref, re-run the tests and push, first starting a builder in the
 child's worktree when the line says `(no builder)`, and reviews the new head, since a review from
 before the merge is stale. A merge line stays until the child pushes, so the conductor sends each
@@ -1175,13 +1175,16 @@ a story that is still `ready` counts a failed build. Its first `swarm.sh merge` 
 base has a merge queue. Where it prints `merge queue: <base> has one`, the conductor starts `swarm.sh
 merge` for every PR whose latest head passed review as soon as it passes, without waiting for the
 ones before it to merge, so the queue tests them together and merges them in batches. Otherwise it
-runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each merge, and after each inbox note it
-acts on, it runs `swarm.sh unblock --startable <epic>` (`--backlog` for the backlog conductor) and,
+runs one `swarm.sh merge` at a time, and starts the next only once the last has exited. After each merge, each inbox note it acts on, and
+each wait, it runs `swarm.sh unblock --startable <epic>` (`--backlog` for the backlog conductor) and,
 in the same run, starts each story printed as `startable:` that clashes with no running one (§
-Building, Pick the wave). `--startable` runs unblock, then prints `startable: <slug>` for every
-`ready` story in that scope with no worktree yet, whether or not this unblock readied it. A story
-that a board PR adds already `ready` starts the same way. A build cleared on error or given up on stops that: it starts nothing more in
-the wave. It reports once no story of the epic that it may start is ready and none is running. If
+Building, Pick the wave). `--startable` first runs reconcile when the main checkout is behind its upstream,
+then unblock, then prints `startable: <slug>` for every `ready` story in that scope with no worktree
+yet, whether or not this unblock readied it. A story that a board PR adds already `ready` starts the
+same way. A build cleared on error or given up on stops that: it starts nothing more in
+the wave. `--startable` leaves out a story with `attempts:`: the conductor retries a failed build only in a
+later wave, as its give-up rule says. If the last inbox pass before its report starts a builder, it goes
+back to waiting instead of reporting. It reports once no story of the epic that it may start is ready and none is running. If
 CI on the base times out, it merges nothing more and stops, and says so in its report. If it goes
 red, `swarm.sh merge` prints `fix-main:` and writes the fix-main story (below): the conductor starts
 its builder at once, ahead of every other story, and merges nothing else until that fix lands. It stops only when what is left needs the lead: a story only
