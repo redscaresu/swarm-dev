@@ -21,9 +21,10 @@ stop_group() {
 # recorded in <run dir>/jobs while it runs; its result is <log>.ok or <log>.failed, and it exits 1
 # when it failed, never xargs's 255. A TERM, INT or HUP stops the whole group: the test and whatever
 # it started; so does the test's end, so nothing it left running reaches a later file. The test does
-# not see make's JOBS, SERIAL or TESTS (make exports a command-line variable to every recipe).
+# not see make's JOBS, SERIAL or TESTS (make exports a command-line variable to every recipe), nor
+# HERDR_SOCKET_PATH: run from a herdr pane, a wait would ask the real herdr about a test's made-up panes.
 if [[ "${1:-}" == --one ]]; then
-  unset JOBS SERIAL TESTS
+  unset JOBS SERIAL TESTS HERDR_SOCKET_PATH
   run="$2" f="$3" t0=${SECONDS} rc=0 pid=""
   log="${run}/logs/$(printf '%s' "${f}" | tr '/' '_')"
   trap '[[ -z "${pid}" ]] || stop_group "${pid}" 2; rm -rf "${tmp:-}" "${run}/jobs/$$"; exit 1' TERM INT HUP
