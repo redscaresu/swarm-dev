@@ -129,6 +129,7 @@ case "$1 $2" in
   "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
                      { printf "%s{\"name\":\"%s\",\"agent_status\":\"idle\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, $2 }
                      END { print "]}}" }' "$A" ;;
+  "agent read") cat "$A.screen.$3" 2>/dev/null ;;   # a pane's text, when a case writes one
 esac
 STUB
 chmod +x "${ROOT}/bin/gh" "${ROOT}/bin/herdr"
@@ -1282,13 +1283,17 @@ put docs/epics/f.md "status: active"; land
 bfresh; merge --board "${URL}"
 check "a board merge that sets epic f active: says f1 is ready with no conductor" said "ready now: f1 (of epic f); no conductor runs for it yet"
 check "a board merge that sets epic f active, outside herdr: says to run conduct f" said "no conductor: run swarm.sh conduct f for its ready stories"
-# A conductor's own board merge (SWARM_AGENT set, merge = agent) starts no conductor from its pane, though k1, b1 and
-# f1 have none: the lead's next starts them.
+# A conductor's own board merge (SWARM_AGENT set, merge = agent) starts k1's conductor too, as the lead's would.
 put docs/epics/k.md "status: active"; put docs/stories/k1.md "status: ready" "kind: code" "epic: k"; land
 bfresh "merge = agent"; : > "${ROOT}/agents.log"; merge SWARM_AGENT=conduct-e HERDR_ENV=1 HERDR_PANE_ID=w:c --board "${URL}"
-check "a conductor's board merge: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log' && ! grep -q 'started:' '${ROOT}/out'"
-check "a conductor's board merge: says the lead starts k1's" \
-  said "ready now: k1 (of epic k); no conductor runs for it yet, and the lead's swarm.sh next starts one"
+check "a conductor's board merge: starts conduct-k" grep -q '^agent start conduct-k ' "${ROOT}/agents.log"
+check "a conductor's board merge: says it started conduct-k" said "started: conduct-k (swarm.sh conduct k)"
+# conduct-e stopped on an API error: a conductor started for m1 now would stop on it too.
+put docs/epics/m.md "status: active"; put docs/stories/m1.md "status: ready" "kind: code" "epic: m"; land
+bfresh; : > "${ROOT}/agents.log"; printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${ROOT}/agents.screen.w:c"
+merge HERDR_ENV=1 HERDR_PANE_ID=w:lead --board "${URL}"; rm "${ROOT}/agents.screen.w:c"
+check "a board merge while a conductor is stopped on an API error: starts no conductor" bash -c "! grep -q '^agent start' '${ROOT}/agents.log'"
+check "a board merge while a conductor is stopped on an API error: says why" said "no conductor started: conduct-e stopped on an API error"
 # o1, with no epic, was blocked and has a worktree (its build started): readied, it is not new.
 put docs/stories/o1.md "status: blocked" "kind: code"; land; pulled; mkdir -p "${ROOT}/proj-wt/o1"
 put docs/stories/o1.md "status: ready" "kind: code"; land
@@ -1343,8 +1348,9 @@ bfresh; touch "${ROOT}/agents.fail"; merge --board "${URL}"; rm "${ROOT}/agents.
 check "a board merge while herdr cannot list its agents: says conduct-e was not told" \
   said "warning: herdr cannot list its agents, so conduct-e was not told that r7 are ready"
 check "a board merge while herdr cannot list its agents: no ready now: line" bash -c "! grep -q 'ready now' '${ROOT}/out'"
-check "a board merge outside herdr while herdr cannot list its agents: says to run conduct f" \
-  said "no conductor: run swarm.sh conduct f for its ready stories"
+check "a board merge outside herdr while herdr cannot list its agents: says what runs is not known" \
+  said "warning: herdr cannot list its agents, so which conductors run is not known; none was started for ready work"
+check "a board merge outside herdr while herdr cannot list its agents: tells no one to run conduct" bash -c "! grep -q 'no conductor: run' '${ROOT}/out'"
 # reconcile cannot fetch (origin gone while CI ran), so exits 0 without pulling: a warning, not silence.
 # Nor does it start a conductor from the unpulled board, though b1 is ready and the backlog's is gone.
 printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
@@ -1375,7 +1381,7 @@ check "a board merge whose tell fails: warns" said "warning: could not note cond
 # Leave P, origin and the clone as the block found them.
 rm -f "${P}/.swarm/inbox"; git -C "${P}" branch -q --unset-upstream; printf 'conduct-e w:c\nt w:b\n' > "${ROOT}/agents"
 git -C "${P}" reset -q --hard "${pre_block}"; git -C "${P}" push -q -f origin "${pre_block}:refs/heads/main"
-rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,b1,d1,f1,g1,k1,o1,q,z} "${P}/docs/epics/e.md"
+rm -rf "${ROOT}/up" "${P}/.swarm/board-state"/stories/{r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17,b1,d1,f1,g1,k1,m1,o1,q,z} "${P}/docs/epics/e.md"
 
 # --- The docs say to merge with it.
 check "commands/swarm.md merges with swarm.sh merge" grep -q 'swarm.sh merge' "${REPO}/commands/swarm.md"

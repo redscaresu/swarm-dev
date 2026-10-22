@@ -272,18 +272,20 @@ that turns CI on the base green, does not clear the stop either: once the cause 
 `.swarm/conduct-backlog.report.md`.
 
 Conductors also start on their own, the backlog's and an epic's alike: after `swarm.sh merge
---board` lands, once it has sent its notes, and from `swarm.sh next` when its step is `wait
-<conductor>`, unless the wait's why is `auth:` or `stuck:`: the expired login or API error would stop
-a new conductor as well. Only the lead starts them. A conductor's own `merge --board` starts none and
-says the lead's `swarm.sh next` will. For each active epic with a ready story an agent builds (`kind` code, docs or chore)
-and no conductor running, it runs `swarm.sh conduct <epic>`; for such stories with no epic,
-`swarm.sh conduct --backlog`. A draft, `later` or `split` epic's stories start nothing, and neither
-does a `fix-main-*` story, which every running conductor builds first. It starts no backlog
-conductor, and says why, while its report is newer than every story and epic or lists a one-off
-whose worktree is still there under `not started:` (the stops above). Outside herdr it starts nothing and
-prints the `swarm.sh conduct` to run. Each start prints `started: <conductor> (swarm.sh conduct
-<arg>)`, which `next` puts after the wait's why, so its first line is still the step. A start that
-fails prints a warning and changes neither command's exit status.
+--board` lands, once it has sent its notes (a conductor's own board merge included), and from
+`swarm.sh next` when its step is `wait <conductor>`. For each active epic with a ready story an agent
+builds (`kind` code, docs or chore) and no conductor running, it runs `swarm.sh conduct <epic>`; for
+such stories with no epic, `swarm.sh conduct --backlog`. A conductor that has written its report has
+finished and counts as not running. A draft, `later` or `split` epic's stories start nothing, and
+neither does a `fix-main-*` story, which every running conductor builds first. No conductor starts
+for an epic or the backlog, and it says why, while that conductor's report is newer than every story
+and epic: a new one would stop as the last did. Nor does a backlog conductor start while its report
+lists a one-off whose worktree is still there under `not started:` (the stops above). Nothing starts
+while a working conductor has stopped on an expired login or an API error, which would stop a new one
+too, or while herdr cannot list its agents, since what runs is then not known; each prints why.
+Outside herdr it starts nothing and prints the `swarm.sh conduct` to run. Each start prints `started:
+<conductor> (swarm.sh conduct <arg>)`, which `next` puts after the wait's why, so its first line is
+still the step. A start that fails prints a warning and changes neither command's exit status.
 
 **The agents' environment.** herdr starts each agent in a pane's shell, which holds everything you
 exported. Before the agent starts, swarm.sh has that shell replace itself, through `env -i`, with

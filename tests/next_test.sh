@@ -1118,10 +1118,10 @@ case "$1 $2" in
   "agent start") echo "$3 w:8" >> "$A" ;;
   "agent prompt") echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
-  "agent list") awk -v s="$(cat "$A.status" 2>/dev/null || echo working)" 'BEGIN { printf "{\"result\":{\"agents\":[" }
-                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, s, $2 }
+  "agent list") awk 'BEGIN { printf "{\"result\":{\"agents\":[" }
+                     { printf "%s{\"name\":\"%s\",\"agent_status\":\"%s\",\"pane_id\":\"%s\"}", (NR > 1 ? "," : ""), $1, ($3 == "" ? "working" : $3), $2 }
                      END { print "]}}" }' "$A" ;;
-  "agent read") cat "$A.screen" 2>/dev/null ;;
+  "agent read") cat "$A.screen.$3" 2>/dev/null ;;
 esac
 STUB
 chmod +x "${dir}/bin/herdr"
@@ -1151,13 +1151,34 @@ if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no backlog conducto
     && ! grep -q '^agent start' "${dir}/agents.log"; then
   echo "ok   next with a died build of b1 in the backlog report starts no backlog conductor and says why"; else
   echo "FAIL next with a died build of b1 in the backlog report: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
-# conduct-e1 stopped on an API error: a backlog conductor started now would stop on it too.
-rm -rf "${dir}-wt" "${dir}/.swarm/conduct-backlog.report.md"; echo idle > "${dir}/agents.status"
-printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${dir}/agents.screen"
+# conduct-e1 works, but conduct-e3, also this project's, stopped on an API error: a backlog conductor
+# started now would stop on it too.
+rm -rf "${dir}-wt" "${dir}/.swarm/conduct-backlog.report.md"; echo "w:9 conduct-e3" >> "${dir}/.swarm/state/tab"
+printf 'conduct-e1 w:7\nconduct-e3 w:9 idle\n' > "${dir}/agents"
+printf '%s\n' '⏺ API Error: Connection dropped (ECONNRESET)' > "${dir}/agents.screen.w:9"
 out="$(nextb)"
-if [[ "$(sed -n 2p <<< "${out}")" == "stuck: "* && "${out}" != *"conduct --backlog"* ]] && ! grep -q '^agent start' "${dir}/agents.log"; then
-  echo "ok   next on a stuck: wait starts no conductor"; else
-  echo "FAIL next on a stuck: wait: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+if [[ "${out%%$'\n'*}" == "wait conduct-e1" && "${out}" == *"no conductor started: conduct-e3 stopped on an API error"* ]] \
+    && ! grep -q '^agent start' "${dir}/agents.log"; then
+  echo "ok   next while another conductor is stopped on an API error starts no conductor"; else
+  echo "FAIL next while another conductor is stopped on an API error: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# Epic e2's conductor has reported and gone, and no story or epic changed since: a new one would stop
+# as it did. The backlog's starts (its earlier tab forgotten: the stub opens only new tabs).
+rm "${dir}/agents.screen.w:9" "${dir}"/.swarm/state/conduct-backlog-*; echo "conduct-e1 w:7" > "${dir}/agents"
+(cd "${dir}" && item epics/e2.md 'status: active' && item stories/s2.md 'status: ready' 'kind: code' 'epic: e2')
+touch -t 202001010000 "${dir}"/docs/stories/* "${dir}"/docs/epics/* "${dir}/docs/stories" "${dir}/docs/epics"; echo report > "${dir}/.swarm/conduct-e2.report.md"
+out="$(nextb)"
+if [[ "${out}" == *"no conductor for epic e2 started: no story or epic changed after"* && "${out}" == *"started: conduct-backlog-"* ]] \
+    && ! grep -q '^agent start conduct-e2 ' "${dir}/agents.log"; then
+  echo "ok   next with an epic's report newer than the board starts no conductor for it, and says why"; else
+  echo "FAIL next with an epic's report newer than the board: '${out}', herdr: $(grep '^agent start' "${dir}/agents.log")"; fails=$((fails + 1)); fi
+# conduct-e2 is still in its pane, but its report says it has finished, and s2 changed since: next
+# starts a new one, which fails here (herdr shows the old one working). The backlog's start, in the
+# same run, still prints its started: line above the warnings.
+rm "${dir}"/.swarm/state/conduct-backlog-*; printf 'conduct-e1 w:7\nconduct-e2 w:10 working\n' > "${dir}/agents"; echo "w:10 conduct-e2" >> "${dir}/.swarm/state/tab"; touch "${dir}/docs/stories/s2.md"
+out="$(nextb)"
+if [[ "${out}" == *"started: conduct-backlog-"*"warning: swarm.sh conduct e2 failed"*"warning: starting conductors for ready work failed"* ]]; then
+  echo "ok   next with a reported conductor in its pane starts a new one, and a failed start keeps the started: lines"; else
+  echo "FAIL next with a reported conductor in its pane, one start failing: '${out}'"; fails=$((fails + 1)); fi
 rm -rf "${dir}" "${dir}-wt"
 
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
