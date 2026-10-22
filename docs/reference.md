@@ -660,7 +660,9 @@ or names a story with no **Done when** item, codex-review fails before codex sta
 codex-review stops codex the same way and exits only once it is gone. While it runs it keeps a marker,
 `.swarm/state/codex-review.<pid>` (start time, base, worktree), which the dash reads for its codex
 row. It removes its marker when it exits, and on start removes any marker whose process has died. codex stays in the caller's
-process group, so a harness that kills that group kills codex too. Every brief says to run it in the
+process group, so a harness that kills that group kills codex too. On macOS a KILL to the group can
+miss a child that codex forks while the KILL is sent, so a harness that must leave nothing STOPs the
+group first. Every brief says to run it in the
 background (Bash `run_in_background`) and wait for it: Claude Code stops a foreground Bash call at 2
 minutes by default and 10 at most, before the limit could apply. Whoever runs it waits for it to
 exit and acts on what it prints last, since a usage limit printed early may be followed by a
