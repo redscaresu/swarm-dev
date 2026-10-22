@@ -130,5 +130,49 @@ for gone in decisions export; do
   check "${gone} is gone: it exits non-zero printing the usage" "${code} $(grep -c 'swarm.sh flow' <<< "${out}")" "2 1"
 done
 
+# merge_ins: a fourth project whose own repo holds the PRs' merge-ins. Story m1 (PR #1) changed f and
+# so did main, so its merge-in conflicts on f; m2 (#2) changed only b, so it merged in clean while
+# behind; m3 (#3) branched from main's tip and its merge-in (made by hand) brought nothing. gh cannot
+# read m4's PR (#4), so its 2 merge-ins are unread.
+S="${dir}/s"; mkdir -p "${S}/.swarm" "${S}/docs/stories" "${dir}/sbin"
+g() { git -C "${S}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
+g init -q -b main; echo a > "${S}/f"; g add f; g commit -qm base
+g checkout -qb story/m1; echo c > "${S}/f"; g commit -qam c
+g checkout -qb story/m2 main; echo b > "${S}/b"; g add b; g commit -qm b
+g checkout -q main; echo m > "${S}/f"; g commit -qam m
+g checkout -qb story/m3; echo n > "${S}/n"; g add n; g commit -qm n
+g checkout -q story/m1; g merge -q main > /dev/null || true; echo cm > "${S}/f"; g commit -qam "Merge branch 'main' into story/m1"
+g checkout -q story/m2; g merge -q -m "Merge remote-tracking branch 'origin/main' into story/m2" main
+g branch -f story/m3 "$(g commit-tree 'story/m3^{tree}' -p story/m3 -p main -m 'Merge origin/main into story/m3')"
+for n in 1 2 3 4; do printf -- '---\nkind: code\nstatus: ready\nepic: e9\n---\n' > "${S}/docs/stories/m${n}.md"; done
+printf '2026-10-01\tcode\tm%s\tclaude\topus\thigh\t-\n' 1 2 3 4 > "${S}/.swarm/agents.tsv"
+# gh api's commits of PR #n: story/m<n>'s parent, then its merge-in, whose message has a body.
+for n in 1 2 3; do
+  printf '[[{"sha":"%s","commit":{"message":"c"}},{"sha":"%s","commit":{"message":"%s\\n\\nbody"}}]]' \
+    "$(g rev-parse "story/m${n}^1")" "$(g rev-parse "story/m${n}")" "$(g log -1 --format=%s "story/m${n}")" > "${dir}/sbin/${n}"
+done
+cat > "${dir}/sbin/gh" <<EOF
+#!/bin/sh
+n="\${4#story/m}"; n="\${n#repos/o/r/pulls/}"; n="\${n%%/*}"
+case "\$1 \$2 \$3 \$4" in
+  "pr list --head story/m4") printf '${U}/4\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t2\n' ;;
+  "pr list --head story/m"[123]) printf '${U}/%s\tMERGED\t2026-10-01T12:00:00Z\t2026-10-01T10:00:00Z\t1\n' "\$n" ;;
+  "api --paginate --slurp repos/o/r/pulls/"[123]) echo '[{"base":{"ref":"main"}}]' ;;
+  "api --paginate --slurp repos/o/r/pulls/"[123]/commits*) cat "${dir}/sbin/\$n" ;;
+  "api "*) exit 1 ;;
+esac
+EOF
+chmod +x "${dir}/sbin/gh"
+# shellcheck disable=SC2016 # awk's own $0
+check "merge_ins: a conflicting merge-in names its file, a clean one behind, one that brought nothing, and a PR gh cannot read" \
+  "$(cd "${S}" && env -u HERDR_ENV -u SWARM_PROJECT SWARM_FLOW_SECTIONS=merge_ins CLAUDE_PROJECTS_DIR="${dir}/projects" PATH="${dir}/sbin:${PATH}" \
+    bash "${SWARM}" flow --epic e9 2>&1 | awk '/^## / { f = $0 == "## merge_ins"; next } f && NF')" $'cause\tmerge_ins\tprs
+conflict\t1\t1
+behind\t1\t1
+neither\t1\t1
+unread\t2\t1
+file\tconflicts
+f\t1'
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

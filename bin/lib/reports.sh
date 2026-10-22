@@ -300,6 +300,11 @@ dataset_report() {
 #     midnight after --until (or now), where an item still waiting is listed under open as kind:slug. One with no
 #     leaving line counts only while its story or epic is on the board in review, held or escalated.
 #     --epic does not narrow it.
+#   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their base
+#     in: each merge-in (a PR commit gh's REST API lists whose headline merges the base in, by outcomes'
+#     main_merges rule) re-merged from its parents with git merge-tree in the project's repo, as conflict,
+#     behind (clean, and the base had commits the branch lacked) or neither; unread for a PR gh cannot
+#     read or a commit the repo lacks. Then, after a blank line, TSV file conflicts: the top three files.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
