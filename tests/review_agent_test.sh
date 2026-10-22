@@ -40,7 +40,8 @@ case "$1 $2" in
   "agent start")  [ -e "$H/startfail" ] && { echo '{"error":{"code":"start_failed"}}' >&2; exit 1; }
                   echo "$3 $(echo "$*" | sed 's/.*--pane \([^ ]*\).*/\1/') $(echo "$*" | sed -n 's/.*--session-id \([^ ]*\).*/\1/p')" >> "$H/agents"
                   "$H/sessions" ;;
-  "agent prompt") # With quick, the agent writes its findings file while its brief is still being delivered.
+  "agent prompt") [ -e "$H/promptfail" ] && { echo '{"error":{"code":"server_unavailable"}}' >&2; exit 1; }
+                  # With quick, the agent writes its findings file while its brief is still being delivered.
                   [ -e "$H/quick" ] && echo "head: NEW-REVIEW" > "$(echo "$4" | grep -o '/[^ ]*/\.swarm/reviews/[a-z0-9-]*\.md' | head -1)"
                   echo '{"result":{"agent":{"agent_status":"working"}}}' ;;
   "agent wait")   name=$(awk -v p="$3" '$2 == p { print $1 }' "$H/agents")
@@ -212,6 +213,14 @@ echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s6.md"; touch "${ROOT}/startfail"
 check "when herdr cannot start review-s6, review-agent fails and s6's last findings file is put back" "1|head: OLD-REVIEW|no" \
   "$(set +e; run review-agent s6 "${PR}" >/dev/null; echo "$?")|$(cat "${p}/.swarm/reviews/s6.md")|$([[ -e "${p}/.swarm/reviews/s6.md.prev" ]] && echo yes || echo no)"
 rm "${ROOT}/startfail"
+# A start that fails once its agent's pane exists (the brief unclear): the agent runs, so the last
+# review stays aside and its wait holds for a new one.
+sed "s/s4/s8/g" "${b}/stories/s4.md" > "${b}/stories/s8.md"
+"${GIT[@]}" -C "${ROOT}/svc" worktree add -q -b story/s8 "${ROOT}/svc-wt/s8" origin/main
+echo "head: OLD-REVIEW" > "${p}/.swarm/reviews/s8.md"; touch "${ROOT}/promptfail"
+check "when review-s8's start fails with its pane open, review-agent exits 0, says it runs, and the old findings stay aside" "0|yes|no|head: OLD-REVIEW|${HEAD_SHA}" \
+  "$(set +e; o="$(run review-agent s8 "${PR}")"; echo "$?|$(has "the agent is running" "${o}")")|$([[ -e "${p}/.swarm/reviews/s8.md" ]] && echo yes || echo no)|$(cat "${p}/.swarm/reviews/s8.md.prev")|$(cat "${p}/.swarm/reviews/s8.head" 2>/dev/null)"
+rm "${ROOT}/promptfail"
 
 # --- An agent that writes its findings before review-agent returns keeps them: only the last
 # review's file is removed.

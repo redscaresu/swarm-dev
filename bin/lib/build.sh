@@ -533,8 +533,9 @@ build_story() {
 # names that commit. Refused, starting nothing and touching no file, when
 # the board has a story named review-<slug> (its builder would hold the same agent name), or when
 # review-<slug> cannot start (still working). Its earlier findings file goes once the agent has
-# started (kept aside until then), so the conductor reads only this head's. Once started, the head
-# goes in .swarm/reviews/<slug>.head, which review_on_head reads.
+# started (kept aside until then, and left aside when the start fails but the agent runs), so the
+# conductor reads only this head's. Once started, the head goes in .swarm/reviews/<slug>.head,
+# which review_on_head reads.
 review_agent() {
   local slug="$1" pr="$2" story="${BOARD}/stories/$1.md" src wt base prompt out epic head at
   [[ "${slug}" =~ ^[a-z0-9-]+$ ]] || die "review-agent: bad slug '${slug}' (swarm.sh review-agent <slug> <PR URL>)"
@@ -568,13 +569,18 @@ review_agent() {
   # The story's tab: its epic's, or a one-off's own.
   epic="$(fm "${story}" epic)"
   # The last review's file is moved aside before the brief goes (a quick agent's new file must not be
-  # the one removed), put back when the start fails, and dropped once it has started.
+  # the one removed), put back when the start fails with no agent, and dropped once it has started.
+  # A failed start whose agent runs anyway (its brief maybe taken) keeps it aside, so wait
+  # review-<slug> cannot end on a review of an earlier head.
   [[ ! -f "${out}" ]] || mv "${out}" "${out}.prev"
-  if ! (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"); then
+  if (start_agent "${epic:-${slug}}" "review-${slug}" "${wt}" review "${prompt}"); then
+    rm -f "${out}.prev"
+  elif [[ -n "$(agent_field "$(agent_name "review-${slug}")" pane_id)" ]]; then
+    echo "review-agent: review-${slug}'s start was unclear, but the agent is running; the last review is kept aside in ${out}.prev: wait for it with swarm.sh wait review-${slug}, and see herdr agent read $(agent_name "review-${slug}")"
+  else
     [[ ! -f "${out}.prev" ]] || mv "${out}.prev" "${out}"
     die "review-agent: review-${slug} did not start; ${out} is as it was"
   fi
-  rm -f "${out}.prev"
   echo "${head}" > "${out%.md}.head"
 }
 
