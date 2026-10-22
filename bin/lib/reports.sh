@@ -300,6 +300,15 @@ dataset_report() {
 #     midnight after --until (or now), where an item still waiting is listed under open as kind:slug. One with no
 #     leaving line counts only while its story or epic is on the board in review, held or escalated.
 #     --epic does not narrow it.
+#   merge_ins: TSV cause merge_ins prs, why the PRs epic_totals counts under main_merged merged their
+#     base in (without --since, the 30 days up to --until or today): each merge-in (a PR commit gh's
+#     REST API lists whose headline merges the base in, by outcomes' main_merges rule) re-merged from
+#     its parents with git merge-tree in its story's repo, fetching refs/pull/<n>/head once when it is
+#     not there, as conflict (a conflict, or a tree that is not git's clean merge), behind (clean, and
+#     the base had commits the branch lacked) or neither; unread for a PR gh cannot read, a merge-in gh
+#     does not list, a commit git cannot find, or a one-parent "merge", each named on a `merge ins: left
+#     out` line. Then, after a blank line, TSV file conflicts: the top three files, or `none
+#     conflicted`.
 #   reviewers: what review yields, for tuning the reviewers. Block 1 (TSV reviewer kind raised fixed
 #     declined decline_rate rework): findings.tsv rows dated in the window, per reviewer (its `all` row, then
 #     its kinds by declined, most first), per kind across reviewers (`all <kind>`), and last `all
@@ -325,7 +334,8 @@ dataset_report() {
 #     phase minutes (a merged PR), each PR once by its first build; with --epic, that epic's row alone:
 #     its PRs, the hours in all six states (the five phases, and held: each of those PRs' stories'
 #     held_min once), and each state largest first as <state>:<hours>h/<share of those hours>%.
-# A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing.
+# A new section is a new flow_<name>.py; neither this nor flow_report.py changes. It writes nothing but
+# the PR heads merge_ins fetches and the trees and blobs its git merge-tree writes into each repo.
 # SWARM_FLOW_SECTIONS (section names, space-separated) runs those alone: dash's ci line runs ci_health.
 FLOW_USAGE="usage: swarm.sh flow [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--epic <slug>]"
 flow_report() {
@@ -354,8 +364,10 @@ flow_report() {
 # flow_sections <since> <until> <epic> <outcomes rows> <lead session> [section...] — run flow_report.py
 # over the window, with each windowed slug's depends_on, and its estimate_lines and touches (read with
 # story_text, so merged stories count); <lead session> (empty for none) is the calling session, counted as lead.
+# SWARM_REPO_DIRS gives each windowed slug's repo, as repo_dir resolves its repo: (or `!<why>` when it
+# cannot), for merge_ins.
 flow_sections() {
-  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" stories="" slug text own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
+  local since="$1" until="$2" epic="$3" rows="$4" lead="$5" deps="" stories="" repos="" dir slug text own="${CLAUDE_PROJECTS}/${PROJECT_DIR//[^A-Za-z0-9]/-}"
   shift 5
   while IFS= read -r slug; do
     [[ "${slug}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || continue
@@ -363,8 +375,10 @@ flow_sections() {
     deps+="${slug}"$'\t'"$(sed -n 's/^depends_on: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr ',' ' ' | tr -d "\"'")"$'\n'
     stories+="${slug}"$'\t'"$(sed -n 's/^estimate_lines: *//p' <<< "${text}" | head -1)"
     stories+=$'\t'"$(sed -n 's/^touches: *\[\(.*\)\]$/\1/p' <<< "${text}" | head -1 | tr '\t' ' ')"$'\n'
+    dir="$(repo_dir "$(sed -n 's/^repo: *//p' <<< "${text}" | head -1)")" || dir="!${dir}"
+    repos+="${slug}"$'\t'"${dir//[$'\t\n']/ }"$'\n'
   done <<< "$(awk -F'\t' -v s="${since}" -v u="${until}" 'NR > 1 && $1 >= s && $1 <= u { print $2 }' <<< "${rows}" | sort -u)"
-  SWARM_BOARD="${BOARD}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
+  SWARM_BOARD="${BOARD}" SWARM_FINDING_REVIEWERS="${FINDING_REVIEWERS}" SWARM_ROWS="${rows}" SWARM_DEPS="${deps}" SWARM_STORIES="${stories}" SWARM_REPO_DIRS="${repos}" python3 "${SWARM_HOME}/bin/lib/flow_report.py" \
     "${since}" "${until}" "${epic}" "${AGENTS_LOG}" "${EVENTS_LOG}" "${PROJECT_DIR}/.swarm/${FINDINGS_LOG_NAME}" \
     "${SWARM_FEATURES:-${PROJECT_DIR}/docs/features.tsv}" "${BUILDER_ROLES}" "${CLAUDE_PROJECTS}" "${SESSIONS_DIR}" "${lead}" "${own}" "$@"
 }

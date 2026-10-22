@@ -119,9 +119,11 @@ slowest job, beside the same figures for the window before; dash shows this week
 week's on one line. When gh cannot read a PR, it names the gh call and gh's error. Its
 `lead_queue` section shows, per day, the median and longest time a held, escalated or ready-to-merge
 item waited on the lead, and names any still waiting. With `merge = agent`, only a PR that costs
-money waits on you, so only those count. Its `model_fit` section sets cost against results for each
-model and kind of story, so you can see where a cheaper model holds up before you move more work to
-it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
+money waits on you, so only those count. Its `merge_ins` section says why PRs had main merged in:
+a conflict or a hand fix to the merge (with the files they hit most), a clean merge while the branch
+was behind, or neither. An `unread` row counts the merge-ins it could not read and a line names the
+reason for each. Its `model_fit` section sets cost against results for each model and kind of story,
+so you can see where a cheaper model holds up before you move more work to it. Its `time_in_state` section shows where each epic's stories spent their time: held ready while a
 conductor ran but before their build started, building, CI, waiting for review, fixing findings or
 waiting for a merge, in hours and as a share of the whole. `swarm.sh dataset` writes `.swarm/dataset.jsonl`, one
 line per merged story, so you can compare what the planner predicted (easy or not, and the size
