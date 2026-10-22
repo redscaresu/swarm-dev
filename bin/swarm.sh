@@ -24,7 +24,7 @@
 #   swarm.sh dash [--watch [seconds]] [--ladder] [--tree] [--check] [--project <dir>]...  a read-only dashboard: what needs you, epics with their agents and PRs, recent events; --watch redraws in place, q quits, t tree, l ladder; each --project draws that project's frame, one after another; --check compares each figure with the command that owns it (status, flow, next, events.tsv) and exits 1 naming each one that differs
 #   swarm.sh upgrade [<epic>|backlog]                       after claude plugin update: the epic's (backlog: the stories with no epic) conductor writes a handover (.swarm/handover-<epic>-<date>.md) and ends its turn, then each of its Claude agents (every one this project started, with no epic), once idle, is restarted in its pane with --resume on this version (its PATH's swarm.sh this one's); one still busy after SWARM_UPGRADE_WAIT_MS (30 minutes) in all is named and left on its old version; worktrees are never touched; prints each agent's old and new version
 #   swarm.sh tidy [--yes]                                   list, and with --yes close, empty panes and retired agents' panes
-#   swarm.sh unblock                                        mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again
+#   swarm.sh unblock [--startable <epic>|--backlog]         mark ready every blocked story whose depends_on are all finished, or, while it has no worktree or story/<slug> branch, finished or stories in its repo with open PRs: it starts stacked on those (with a build already there it prints not stacked:); a child review held (held_by:) only once they all finish, to merge the base in and be reviewed again; --startable: then print startable: <slug> for each ready story of that epic (--backlog: with no epic) whose build has not started, readied now or before, as reconcile last left the board (it never pulls), with (stacked on <parents>) or (its PR <url> was closed unmerged) when that applies; nothing once the epic's file is gone
 #   swarm.sh finish <slug>                                  take a merged story or epic off the board (delete its file)
 #   swarm.sh reset <slug> <reason>                          put an escalated story back as it was: its kind, no attempts:, no lead's block; for a held story (held_for:), lift the hold and keep attempts:
 #   swarm.sh drop <slug> <reason>                           take an escalated story off the board; the lead commits that in a board PR
@@ -159,6 +159,22 @@ else
   PROJECT_DIR="$(find_project)"
 fi
 CONFIG_FILE="${PROJECT_DIR}/.claude/swarm/config"
+
+# Every gh call this command makes, and every agent it starts (launch_file passes PATH and SWARM_*
+# on), goes through bin/gh-shim, which logs it to this project's .swarm/gh-calls.tsv for flow's
+# gh_calls section, with the agent that ran it (SWARM_GH_CALLER, which launch_file sets) and, for
+# this command's own calls, `swarm.sh <command>` as its via: the outermost command's, so what a
+# command runs through another swarm.sh (dash --check's status, merge's wait) counts as the command
+# that caused it. launch_file drops the via, so an agent's own swarm.sh starts afresh. A dash
+# --project runs swarm.sh again for each project, so each one's calls land in its own log.
+GH_VIA="${1:-}"
+export SWARM_GH_LOG="${PROJECT_DIR}/.swarm/gh-calls.tsv" SWARM_GH_VIA="${SWARM_GH_VIA:-swarm.sh ${GH_VIA//[^a-z-]/}}"
+# First, not just present: a folder with a gh before it would take swarm.sh's calls past the shim.
+GH_SHIM="${SWARM_HOME}/bin/gh-shim"
+if [[ "${PATH}" != "${GH_SHIM}" && "${PATH}" != "${GH_SHIM}:"* ]]; then
+  GH_PATH=":${PATH}:"; GH_PATH="${GH_PATH//:${GH_SHIM}:/:}"; GH_PATH="${GH_PATH#:}"; GH_PATH="${GH_PATH%:}"
+  export PATH="${GH_SHIM}${GH_PATH:+:${GH_PATH}}"
+fi
 
 # Settings, with their defaults. CFG_<key> is the value, SRC_<key> where it came from.
 CFG_board_dir=docs
@@ -424,7 +440,10 @@ dispatch() {
     step-up|_step-up) require_herdr; [[ "${cmd}" != _step-up ]] || STEP_UP_AUTO=1
             if [[ "${1:-}" == --resume ]]; then step_up_resume "${2:-}"; else step_up "${1:-}" "${2:-}" "${3:-}"; fi ;;
     tell)   require_herdr; tell_agent "${1:?slug}" "${2:-}" "${3:-}" ;;
-    unblock) unblock ;;
+    unblock) if [[ "${1:-}" == --startable ]]; then
+               [[ $# -eq 2 && ( "$2" == --backlog || "$2" =~ ^[a-z0-9-]+$ ) ]] || die "unblock: --startable takes <epic> or --backlog"
+               unblock_startable "$2"
+             else [[ -z "${1:-}" ]] || die "unblock: unknown argument '$1'"; unblock; fi ;;
     next)   next_report ;;
     status) status_report "${1:-}" ;;
     dash)   dash "$@" ;;

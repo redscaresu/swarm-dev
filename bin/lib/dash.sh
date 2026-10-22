@@ -171,7 +171,7 @@ dash_slow() {
       printf 'cost\t%s\n' "$( (cost_report "${day}") 2>/dev/null | sed -n 's/^| \*\*total\*\* |.* \([0-9][0-9.]*\) |$/\1/p' || true)"
       dash_finished
       # shellcheck disable=SC2086 # one URL per word
-      if command -v gh >/dev/null 2>&1; then
+      if gh_installed; then
         SWARM_CI_CACHE="${TMPDIR:-/tmp}/swarm-dash-ci-$(id -u)/${key}" SWARM_CI_PROJECT="${PROJECT_DIR}" SWARM_PAIRS="${pairs}" python3 "${SWARM_HOME}/bin/lib/dash_slow.py" ${urls}
       fi
     } > "${cache}.$$" 2>/dev/null && mv -f "${cache}.$$" "${cache}"
@@ -458,6 +458,15 @@ dash_watch() {
       [[ ${winch} == 0 ]] || { last=""; break; }
     done
   done
+}
+
+# gh_installed — true when a gh other than bin/gh-shim's is on PATH: the shim is always there (swarm.sh
+# puts it first), and with no real gh behind it every call it makes fails with 127.
+gh_installed() {
+  local d dirs
+  IFS=: read -r -a dirs <<< "${PATH}"
+  for d in ${dirs[@]+"${dirs[@]}"}; do [[ "${d%/}" == */gh-shim || ! -x "${d}/gh" || -d "${d}/gh" ]] || return 0; done
+  return 1
 }
 
 # dash_installed [<install>] — this plugin's entry in installed_plugins.json as its install
