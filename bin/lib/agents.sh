@@ -924,53 +924,60 @@ stall_py() {
 
 # session_mtime <name> — the epoch of the newest entry in <name>'s Claude session log (its agents.tsv
 # session id, report.py's session_log) that is its own work: an assistant message, a tool call or a
-# tool result. A compaction, summary or background-task notice, which a hung session still writes, is
-# no sign of life. Empty when it has none. Never close's copy (SESSIONS_DIR): an archive says nothing
+# tool result, in the log or its Task subagents' logs (<session>/subagents/*.jsonl). A compaction,
+# summary or background-task notice, which a hung session still writes, is no sign of life. Empty when
+# it has none. Never close's copy (SESSIONS_DIR): an archive says nothing
 # about a live agent.
 session_mtime() {
   python3 "${SWARM_HOME}/bin/lib/session_mtime.py" "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" || true
 }
 
-# longest_child <target> — the longest-running command the agent in pane <target> runs, as `pid <PID>,
-# <N> min: <command cut to 120 characters>`: a process under one of the agent's shells (the Bash
-# tool's sh, bash or zsh), or one the agent runs itself (a shell that exec'd its command) that is no
-# shell and started a minute or more after it (not a helper started with it, such as an MCP server).
-# The agent is a child of the pane's shell (herdr's shell_pid). Nothing when there is none, or herdr
-# gives no shell pid.
+# longest_child <name> <target> — the command a builder has run longest, as `longest-running: pid
+# <PID>, <N> min: <command cut to 120> (under <its parents, outermost first>)`: of Claude Code's Bash
+# tool shells (`... -c source .../shell-snapshots/...`) under pane <target>'s shell (herdr's
+# shell_pid), the one whose command has run longest, followed down to its leaf, oldest child at each
+# step: the hung `sleep`, not the `make test` above it. Nothing else counts (caffeinate, an MCP or
+# LSP server, a hook). For a codex builder (agents.tsv), whose commands are not traced, `longest-running:
+# none named (a codex builder)`. Nothing when no tool shell runs a command, or herdr gives no shell pid.
 longest_child() {
+  if [[ "$(awk -F'\t' -v n="$1" '$3 == n { h = $4 } END { print h }' "${AGENTS_LOG}" 2>/dev/null)" == codex ]]; then
+    echo "longest-running: none named (a codex builder)"; return
+  fi
   ps -A -o pid=,ppid=,etime=,command= 2>/dev/null | python3 -c '
-import json, os, sys
+import json, sys
 try:
     shell = int(json.loads(sys.argv[1])["result"]["process_info"]["shell_pid"])
 except (ValueError, KeyError, TypeError):
     sys.exit()
-procs = {}
+procs, kids = {}, {}
 for l in sys.stdin:
     f = l.split(None, 3)
     if len(f) == 4 and f[0].isdigit() and f[1].isdigit():
         procs[int(f[0])] = (int(f[1]), f[2], f[3].strip())
-def secs(e):   # ps etime: [[dd-]hh:]mm:ss
-    d, _, hms = e.rpartition("-")
+        kids.setdefault(int(f[1]), []).append(int(f[0]))
+def secs(p):   # ps etime: [[dd-]hh:]mm:ss
+    d, _, hms = procs[p][1].rpartition("-")
     t = [0, 0] + [int(x) for x in hms.split(":")]
     return int(d or 0) * 86400 + t[-3] * 3600 + t[-2] * 60 + t[-1]
-def is_shell(cmd):
-    return os.path.basename(cmd.split()[0]).lstrip("-") in ("sh", "bash", "zsh", "dash")
-def up(p):   # p'"'"'s ancestors, nearest first, to the agent (the shell'"'"'s child); [] when not under it
-    a = []
-    while p in procs and len(a) <= len(procs):
-        if procs[p][0] == shell:
-            return a
-        p = procs[p][0]; a.append(p)
-    return []
-best = None
-for p, (_, e, cmd) in procs.items():
-    a = up(p)
-    if (len(a) >= 2 and is_shell(procs[a[-2]][2])) or (len(a) == 1 and not is_shell(cmd) and secs(procs[a[0]][1]) - secs(e) >= 60):
-        if best is None or secs(e) > best[1]:
-            best = (p, secs(e), cmd)
-if best:
-    print("pid %d, %d min: %s" % (best[0], best[1] // 60, best[2][:120]))
-' "$(herdr pane process-info --pane "$1" 2>/dev/null)" || true
+def under(p):   # p is under the pane shell
+    for _ in procs:
+        if p not in procs:
+            return False
+        p = procs[p][0]
+        if p == shell:
+            return True
+    return False
+oldest = lambda ps: max(ps, key=secs)
+tops = [oldest(kids[t]) for t, v in procs.items() if "/shell-snapshots/" in v[2] and t in kids and under(t)]
+if not tops:
+    sys.exit()
+chain = [oldest(tops)]
+while chain[-1] in kids:
+    chain.append(oldest(kids[chain[-1]]))
+leaf = chain[-1]
+up = " > ".join(procs[p][2][:60] for p in chain[:-1])
+print("longest-running: pid %d, %d min: %s%s" % (leaf, secs(leaf) // 60, procs[leaf][2][:120], " (under %s)" % up if up else ""))
+' "$(herdr pane process-info --pane "$2" 2>/dev/null)" || true
 }
 
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
@@ -1052,7 +1059,7 @@ herdr_wait() {
     [[ ${rc} -eq 1 ]] || { why="$(cat "${err}")"; left=$((end - $(now_ms))); break; }
     left=$((left - STALL_POLL_MS))
     if [[ -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, session-log write or PR update"; return
+      rm -f "${err}"; echo "stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; return
     fi
     pane_check "${name}" "${target}"
     if pane_quiet "${name}" "${target}"; then rm -f "${err}"; echo "${state}"; return; fi
@@ -1121,7 +1128,7 @@ settle() {
     [[ "${state}" != busy ]] || pane_check "${name}" "${target}" "${resumed_sum:-}"
     if [[ "${state}" == busy && "${pane_kind}" == api-error ]]; then state="api error"; break; fi
     if [[ "${state}" == busy && -n "${since}" ]] && min="$(agent_stalled "${name}" "${since}")"; then
-      state="stalled: working ${min} min with no commit, edit, session-log write or PR update"; break
+      state="stalled: working ${min} min with no commit, edit, own work in the session log or PR update"; break
     fi
     if [[ "${state}" == busy ]] && pane_quiet "${name}" "${target}"; then break; fi
     t0="$(now_ms)"
@@ -1140,9 +1147,10 @@ settle() {
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
 # for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
-# `; longest-running: <longest_child>` when the builder runs a command, logs that line as an incident
+# `; longest-running: ...` (longest_child) when it names one, logs that line as an incident
 # and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
-# step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
+# step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1, each followed
+# by the `longest-running: ...` line. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
 # An agent whose turn stopped on an API error (settle's "api error", or idle and pane_check's) is sent
@@ -1167,20 +1175,24 @@ settle() {
 # (login_incident).
 wait_agent() {
   local name="$1" timeout="$2" stall="${3:-}" status nudges=0 resumes=0 target since="" rc wake="" reason t0 lim limited="" deadline out
-  local answered="" resumed_sum="" pane_kind pane_at
+  local answered="" resumed_sum="" pane_kind pane_at hung
   deadline=$(($(now_ms) + timeout))
   [[ -z "${stall}" ]] || since="${SWARM_WAIT_STARTED:-$(date +%s)}"
   target="$(own_target "${name}")" || return 1
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then
-      out="$(longest_child "${target}")"
-      [[ -z "${out}" ]] || status="${status}; longest-running: ${out}"
+      hung="$(longest_child "${name}" "${target}")"
+      [[ -z "${hung}" ]] || status="${status}; ${hung}"
       record_event incident "${name}" "${status}"
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
-      [[ ${rc} != 0 ]] || { echo "${out}"; return 0; }
-      [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || { echo "${out}"; return 1; }
-      [[ ${rc} != "${STEP_UP_BUSY}" ]] || { echo "stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"; return 0; }
+      # Stepped up, the next rung builds in the same worktree: the hung command is still the conductor's to stop.
+      [[ ${rc} == "${STEP_UP_BUSY}" ]] && out="stepping up: $(stall_py story "${name}"): another step-up of it is running; wait on its builder again"
+      if [[ ${rc} == 0 || ${rc} == "${STEP_UP_PARTWAY}" || ${rc} == "${STEP_UP_BUSY}" ]]; then
+        echo "${out}"; [[ -z "${hung}" ]] || echo "${hung}"
+        [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || return 1
+        return 0
+      fi
       echo "${status}"; return "${WAIT_STALLED}"
     fi
     if [[ "${status}" == stuck:* ]]; then echo "${status}"; return "${WAIT_STUCK}"; fi
@@ -1242,14 +1254,14 @@ wait_agent() {
 }
 
 # login_incident <name> — log a login incident for <name>, once per expired login: not when its last
-# incident in events.tsv (an api-error or auto-denied one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
+# incident in events.tsv (an api-error, auto-denied or stalled one aside) is one already and no ok tell that sends a prompt (findings, nudge, resume,
 # or a bare tell from before kinds) nor a start of <name> (story, agent, conduct, review-agent) came
 # after it. Targets are matched through agent_name (an), as a tell logs the raw slug; a conduct
 # --backlog through conductor_name (b).
 login_incident() {
   awk -F'\t' -v n="$1" -v b="$(conductor_name backlog)" '
     function an(x) { x = tolower(x); gsub(/[^a-z0-9_-]/, "-", x); if (x !~ /^[a-z]/) x = "s" x; return substr(x, 1, 32) }
-    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied):/ { login = $5 ~ /^login:/ }
+    $2 == "incident" && $3 == n && $5 !~ /^(api-error|auto-denied|stalled):/ { login = $5 ~ /^login:/ }
     $5 == "ok" && ($2 ~ /^tell(:(findings|nudge|resume))?$/ || $2 == "story" || $2 == "agent") && an($3) == n { login = 0 }
     $5 == "ok" && ($2 == "conduct" || $2 == "review-agent") && ($3 == "--backlog" && $2 == "conduct" ? b : an(($2 == "conduct" ? "conduct-" : "review-") $3)) == n { login = 0 }
     END { exit login ? 0 : 1 }' "${EVENTS_LOG}" 2>/dev/null \

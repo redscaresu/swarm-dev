@@ -59,6 +59,8 @@ sites() (
       wait_agent a 1000; record_event tell:note a; record_event tell:resume a "tell: a is busy"; wait_agent a 1000 ;;
     login-restart) settle() { echo idle; }; login_expired() { return 0; }
       wait_agent a 1000; record_event story a; wait_agent a 1000 ;;
+    login-stalled) settle() { echo idle; }; login_expired() { return 0; }
+      wait_agent a 1000; record_event incident a "stalled: working 40 min; longest-running: pid 1, 40 min: sleep 9"; wait_agent a 1000 ;;
     stalled|paused|cleared-on-error|impossible) close_agent a "$1" ;;
     open-pr) stub_prs='[{"state":"OPEN"}]'; close_agent a ;;
   esac >/dev/null 2>&1 || true
@@ -77,6 +79,25 @@ check "a resume for a slug over 32 characters ends its agent's login episode" "$
   "$(printf '%s\n' $'incident\tstory-with-a-name-longer-than-32\tlogin: Login expired' $'incident\tstory-with-a-name-longer-than-32\tlogin: Login expired')"
 check "a note or a failed tell does not end a login episode" "$(sites login-no-prompt)" $'incident\ta\tlogin: Login expired'
 check "the agent's start line ends a login episode" "$(sites login-restart)" "${login2}"
+check "a stalled incident between two waits does not end a login episode" "$(sites login-stalled)" \
+  "$(printf '%s\n' $'incident\ta\tlogin: Login expired' $'incident\ta\tstalled: working 40 min; longest-running: pid 1, 40 min: sleep 9')"
+# With escalate_ladder set, a stall stepped up prints step-up's line, then the longest-running one.
+ladder() (
+  PROJECT_DIR="${ROOT}/p-ladder"; SWARM_HOME="${REPO}"; BOARD="${PROJECT_DIR}/board"; CFG_goal=off
+  mkdir -p "${PROJECT_DIR}"
+  # shellcheck source=bin/lib/agents.sh
+  source "${REPO}/bin/lib/agents.sh"
+  # shellcheck source=bin/lib/lifecycle.sh
+  source "${REPO}/bin/lib/lifecycle.sh"
+  own_target() { echo w:1; }
+  stall_py() { echo a; }
+  settle() { echo "stalled: working 40 min with no commit"; }
+  longest_child() { echo "longest-running: pid 400, 45 min: sleep 2700"; }
+  ladder_step() { echo "stepped up: a: sonnet -> opus"; return "${LADDER_RC}"; }
+  LADDER_RC="$1" wait_agent a 1000 --stall 2>/dev/null; echo "exit $?"
+)
+check "a stall stepped up prints the longest-running line after stepped up" "$(ladder 0)" \
+  "$(printf '%s\n' 'stepped up: a: sonnet -> opus' 'longest-running: pid 400, 45 min: sleep 2700' 'exit 0')"
 for cause in stalled paused cleared-on-error impossible; do
   check "a close with cause ${cause} and no PR writes none" "$(sites "${cause}")" ""
 done

@@ -1,4 +1,4 @@
-import datetime, json, os, sys
+import datetime, glob, json, os, sys
 from panes import *; from report import *
 
 def own_work(d):
@@ -36,9 +36,20 @@ def last_work(path):
                 return ""
             size *= 4
 
+def newest(paths):
+    # The newest own work across the session log and its Task subagents' logs (subagents/*.jsonl in
+    # the folder named after the session, as outcomes_rows.py reads them), or "".
+    best = ""
+    for p in paths:
+        try:
+            t = last_work(p)
+        except OSError:   # removed since the glob: no sign
+            continue
+        if t != "" and (best == "" or t > best):
+            best = t
+    return best
+
 sid = session_id(sys.argv[1], sys.argv[2])
 path = session_log(sys.argv[3], sid) if sid else ""
-try:
-    print(last_work(path) if path else "")
-except OSError:   # removed since the glob: no sign
-    print("")
+side = glob.glob(os.path.join(glob.escape(path[:-len(".jsonl")]), "subagents", "*.jsonl")) if path else []
+print(newest([path] + side) if path else "")
