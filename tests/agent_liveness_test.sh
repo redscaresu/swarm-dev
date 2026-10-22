@@ -188,5 +188,64 @@ out="$(cd "${F}" || exit 1; env -u HERDR_ENV -u SWARM_PROJECT TZ=UTC PATH="${ROO
 check "flow counts api-error and auto-denied per epic" test "$(sed -n '/^epic	kind	stops$/,/^$/p' <<< "${out}" | sed '/^$/d')" = "$(printf '%s\n' \
   $'epic\tkind\tstops' $'-\tapi-error\t1' $'e1\tapi-error\t1' $'e1\tauto-denied\t2' $'e2\tapi-error\t1')"
 
+# wait --stall on s-hung, a busy builder whose story started 2 hours ago with nothing since. Its last
+# own work, a tool call, is 40 minutes old; its session wrote only compaction, summary and
+# task-notice entries after it: no sign of life. ps (stubbed, from PS_TREE) shows its pane's shell
+# (herdr's shell_pid 100), the agent (200), an MCP server started with it (250) and that server's
+# worker (260), caffeinate (270), the Bash tool's zsh (300) and the sleep it runs (400, 45 minutes),
+# and another pane's older sleep (500).
+H="${ROOT}/hung"; HB="${ROOT}/hung-bin"; mkdir -p "${H}/.swarm/state" "${H}/docs/stories" "${HB}" "${ROOT}/projects/p"
+touch "${H}/docs/stories/README.md"; git -C "${H}" init -q
+printf -- '---\nstatus: ready\nkind: code\n---\n\n# s-hung\n' > "${H}/docs/stories/s-hung.md"
+printf 'w:7 s-hung\n' > "${H}/.swarm/state/s-hung"
+printf '2026-10-22\tcode\ts-hung\tclaude\topus\thigh\tsess-hung\n' > "${H}/.swarm/agents.tsv"
+ago() { python3 -c 'import datetime, sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(sys.argv[1]))).strftime("%Y-%m-%dT%H:%M:%S.000Z"))' "$1"; }
+printf '%s\tstory\ts-hung\tw:me\tok\n' "$(ago 120 | cut -c1-19)Z" > "${H}/.swarm/events.tsv"
+printf '[{"sessionId":"sess-hung","status":"busy"}]' > "${ROOT}/hung.json"
+cp "${HERE}/claude_stub.sh" "${HB}/claude"
+cat > "${HB}/herdr" <<'STUB'
+#!/bin/sh
+case "$1 $2" in
+  "agent list") echo '{"result":{"agents":[{"name":"s-hung","agent_status":"working","pane_id":"w:7"}]}}' ;;
+  "pane list") echo '{"result":{"panes":[{"pane_id":"w:7"}]}}' ;;
+  "pane process-info") [ "$4" = w:7 ] && echo '{"result":{"process_info":{"pane_id":"w:7","shell_pid":100}}}' ;;
+  "agent read") echo '⏺ Running the tests.' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"done"}}}' ;;
+  *) exit 1 ;;
+esac
+STUB
+cat > "${HB}/ps" <<'STUB'
+#!/bin/sh
+cat "${PS_TREE}"
+STUB
+tree=('  100     1  02:00:00 -zsh' '  200   100  02:00:00 claude --session-id sess-hung'
+  '  250   200  01:59:30 node mcp-server.js' '  260   250  01:50:00 node worker.js' '  270   200     02:00 caffeinate -i -t 300'
+  '  300   200     45:01 /bin/zsh -c source snapshot.sh && eval sleep 2700' '  400   300     45:00 sleep 2700'
+  '  500   999  1-03:00:00 sleep 9999')
+export PS_TREE="${ROOT}/ps.tree"; printf '%s\n' "${tree[@]}" > "${PS_TREE}"
+chmod +x "${HB}/"*
+log() { printf '%s\n' "$@" > "${ROOT}/projects/p/sess-hung.jsonl"; }
+tool() { printf '{"type":"assistant","timestamp":"%s","message":{"model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Bash"}]}}' "$(ago "$1")"; }
+idle=("{\"type\":\"system\",\"subtype\":\"compact_boundary\",\"timestamp\":\"$(ago 12)\"}"
+  "{\"type\":\"user\",\"isCompactSummary\":true,\"timestamp\":\"$(ago 11)\",\"message\":{\"role\":\"user\",\"content\":\"This session is being continued.\"}}"
+  "{\"type\":\"user\",\"timestamp\":\"$(ago 2)\",\"message\":{\"role\":\"user\",\"content\":\"<task-notification><task-id>b1</task-id></task-notification>\"}}"
+  '{"type":"summary","summary":"Compacted while idle","leafUuid":"x"}')
+hung_wait() { (cd "${H}" || exit 1; HERDR_ENV=1 HERDR_PANE_ID=w:me SWARM_STALL_POLL_MS=1000 SWARM_WAIT_STARTED=$(( $(date +%s) - 7200 )) \
+  CLAUDE_PROJECTS_DIR="${ROOT}/projects" CLAUDE_STUB_AGENTS="${ROOT}/hung.json" PATH="${HB}:${PATH}" bash "${SWARM}" wait --stall s-hung 3000 2>&1); }
+log "$(tool 40)" "${idle[@]}"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "a builder whose newer log entries are only compaction and task notices is stalled?" grep -qE '^stalled: working 4[0-2] min' <<< "${out}"
+check "wait --stall on it exits 3" test "${rc}" = 3
+check "the stalled line names its longest-running command" grep -qE '; longest-running: pid 400, 45 min: sleep 2700$' <<< "${out}"
+check "the incident line names it too" grep -qE $'\tincident\ts-hung\tw:me\tstalled: working 4[0-2] min .*; longest-running: pid 400, 45 min: sleep 2700$' "${H}/.swarm/events.tsv"
+# A tool shell that exec'd its command (codex's zsh -lc does) leaves the sleep the agent's own child.
+printf '%s\n' "${tree[@]:0:5}" '  400   200     45:00 sleep 2700' "${tree[7]}" > "${PS_TREE}"
+check "a command its shell exec'd is named too" grep -qE '; longest-running: pid 400, 45 min: sleep 2700$' <<< "$(hung_wait)"
+# Its pane changed a minute ago (the record's checksum is not the pane's now), so it is not stuck either.
+log "$(tool 40)" "${idle[@]}" "$(tool 5)"
+printf 'other\t%s\n' "$(date +%s)" > "${H}/.swarm/panes/s-hung"
+if out="$(hung_wait)"; then rc=0; else rc=$?; fi
+check "the same log with a 5-minute-old tool call is no stall" test "${rc}:${out}" = "1:busy"
+
 [[ ${fails} -eq 0 ]] || { echo "${fails} failed"; exit 1; }
 echo "all passed"

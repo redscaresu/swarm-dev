@@ -922,11 +922,55 @@ stall_py() {
   SWARM_STORY_ROWS="${rows}" python3 "${SWARM_HOME}/bin/lib/stall_py.py" "${EVENTS_LOG}" "$@"
 }
 
-# session_mtime <name> — the epoch mtime of <name>'s Claude session log (its agents.tsv session id,
-# report.py's session_log), which the session writes on every turn and tool call; empty when it has none.
-# Never close's copy (SESSIONS_DIR): an archive says nothing about a live agent.
+# session_mtime <name> — the epoch of the newest entry in <name>'s Claude session log (its agents.tsv
+# session id, report.py's session_log) that is its own work: an assistant message, a tool call or a
+# tool result. A compaction, summary or background-task notice, which a hung session still writes, is
+# no sign of life. Empty when it has none. Never close's copy (SESSIONS_DIR): an archive says nothing
+# about a live agent.
 session_mtime() {
   python3 "${SWARM_HOME}/bin/lib/session_mtime.py" "${AGENTS_LOG}" "$1" "${CLAUDE_PROJECTS}" || true
+}
+
+# longest_child <target> — the longest-running command the agent in pane <target> runs, as `pid <PID>,
+# <N> min: <command cut to 120 characters>`: a process under one of the agent's shells (the Bash
+# tool's sh, bash or zsh), or one the agent runs itself (a shell that exec'd its command) that is no
+# shell and started a minute or more after it (not a helper started with it, such as an MCP server).
+# The agent is a child of the pane's shell (herdr's shell_pid). Nothing when there is none, or herdr
+# gives no shell pid.
+longest_child() {
+  ps -A -o pid=,ppid=,etime=,command= 2>/dev/null | python3 -c '
+import json, os, sys
+try:
+    shell = int(json.loads(sys.argv[1])["result"]["process_info"]["shell_pid"])
+except (ValueError, KeyError, TypeError):
+    sys.exit()
+procs = {}
+for l in sys.stdin:
+    f = l.split(None, 3)
+    if len(f) == 4 and f[0].isdigit() and f[1].isdigit():
+        procs[int(f[0])] = (int(f[1]), f[2], f[3].strip())
+def secs(e):   # ps etime: [[dd-]hh:]mm:ss
+    d, _, hms = e.rpartition("-")
+    t = [0, 0] + [int(x) for x in hms.split(":")]
+    return int(d or 0) * 86400 + t[-3] * 3600 + t[-2] * 60 + t[-1]
+def is_shell(cmd):
+    return os.path.basename(cmd.split()[0]).lstrip("-") in ("sh", "bash", "zsh", "dash")
+def up(p):   # p'"'"'s ancestors, nearest first, to the agent (the shell'"'"'s child); [] when not under it
+    a = []
+    while p in procs and len(a) <= len(procs):
+        if procs[p][0] == shell:
+            return a
+        p = procs[p][0]; a.append(p)
+    return []
+best = None
+for p, (_, e, cmd) in procs.items():
+    a = up(p)
+    if (len(a) >= 2 and is_shell(procs[a[-2]][2])) or (len(a) == 1 and not is_shell(cmd) and secs(procs[a[0]][1]) - secs(e) >= 60):
+        if best is None or secs(e) > best[1]:
+            best = (p, secs(e), cmd)
+if best:
+    print("pid %d, %d min: %s" % (best[0], best[1] // 60, best[2][:120]))
+' "$(herdr pane process-info --pane "$1" 2>/dev/null)" || true
 }
 
 # agent_stalled <name> <since> — when <name> is a story's builder that has shown no sign of life for
@@ -1095,8 +1139,9 @@ settle() {
 # nudged: a nudge would bury the reply and goal entry the conductor reads the cause from, so wait
 # returns idle. A nudge herdr could not
 # deliver is neither logged nor counted: wait stops nudging and returns the idle state. With --stall, a builder that shows no sign of life
-# for stall_minutes after the wait began also ends it: it prints "stalled: ..." and returns
-# WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
+# for stall_minutes after the wait began also ends it: it prints "stalled: ...", ending in
+# `; longest-running: <longest_child>` when the builder runs a command, logs that line as an incident
+# and returns WAIT_STALLED; with escalate_ladder set it steps the build up instead (ladder_step stalled) and prints
 # step-up's `stepped up: ...` and returns 0, or its `step-up failed: ...` and returns 1. Any wait returns WAIT_STUCK with "stuck: no output ..." on a busy agent's pane quiet
 # for stall_minutes (settle), without a nudge. SWARM_WAIT_STARTED (epoch) overrides when
 # the wait began, for tests.
@@ -1129,6 +1174,9 @@ wait_agent() {
   while :; do
     t0="$(now_ms)"; rc=0; status="$(settle "${target}" "${name}" "${timeout}" "${since}" "${wake}")" || rc=$?
     if [[ "${status}" == stalled:* ]]; then
+      out="$(longest_child "${target}")"
+      [[ -z "${out}" ]] || status="${status}; longest-running: ${out}"
+      record_event incident "${name}" "${status}"
       rc=0; out="$(ladder_step "$(stall_py story "${name}")" stalled)" || rc=$?
       [[ ${rc} != 0 ]] || { echo "${out}"; return 0; }
       [[ ${rc} != "${STEP_UP_PARTWAY}" ]] || { echo "${out}"; return 1; }

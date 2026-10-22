@@ -233,8 +233,10 @@ check "a clean worktree with an old commit is stalled, as before" "exit 3" "$(st
 printf '%s\tresume\ta\tw1:p1\tok\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${p}/.swarm/events.tsv"
 check "a resume line a moment ago is no sign of life: wait --stall exits 3, stalled" "exit 3" "$(stallrc)"
 : > "${p}/.swarm/events.tsv"
-# Its session log (sess-a2, the newer agents.tsv line) written a minute ago is a sign of life too.
-mkdir -p "${CLAUDE_PROJECTS_DIR}/p"; echo '{}' > "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
+# Its session log (sess-a2, the newer agents.tsv line) is a sign of life too: a tool call just written,
+# with no timestamp, dated by the log's mtime.
+mkdir -p "${CLAUDE_PROJECTS_DIR}/p"
+echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}' > "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 check "a busy builder whose session log was written a minute ago is not stalled" "exit 1" "$(stallrc)"
 rm "${CLAUDE_PROJECTS_DIR}/p/sess-a2.jsonl"
 rm -rf "${wt}" "${b}/stories/a.md"; : > "${p}/.claude/swarm/config"
