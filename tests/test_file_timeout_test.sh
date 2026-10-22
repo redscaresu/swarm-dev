@@ -54,6 +54,12 @@ check "SWARM_SLEEP_SCALE defaults to 0.01" "$(cat "${ROOT}/scale.seen")" 0.01
 SWARM_SLEEP_SCALE=0.5 bash "${REPO}/scripts/test.sh" "${ROOT}/scale_test.sh" > /dev/null 2>&1
 check "a SWARM_SLEEP_SCALE that is set is kept" "$(cat "${ROOT}/scale.seen")" 0.5
 
+# A test never sees the swarm names that point at the caller's real project, and starts no ci refresh.
+# shellcheck disable=SC2016 # the fixture's own shell expands it
+printf '#!/usr/bin/env bash\necho "${SWARM_PROJECT-unset} ${SWARM_AGENT-unset} ${SWARM_GH_LOG-unset} ${SWARM_NO_CI_REFRESH-unset}" > "%s/env.seen"\n' "${ROOT}" > "${ROOT}/env_test.sh"
+SWARM_PROJECT=/real SWARM_AGENT=builder SWARM_GH_LOG=/real/.swarm/gh-calls.tsv bash "${REPO}/scripts/test.sh" "${ROOT}/env_test.sh" > /dev/null 2>&1
+check "SWARM_PROJECT, SWARM_AGENT and SWARM_GH_LOG are unset, SWARM_NO_CI_REFRESH set" "$(cat "${ROOT}/env.seen")" "unset unset unset 1"
+
 check "--list runs nothing, so a bad TEST_FILE_TIMEOUT does not stop it" "$(TEST_FILE_TIMEOUT=abc bash "${REPO}/scripts/test.sh" --list "${ROOT}/quick_test.sh" 2>&1; echo "rc=$?")" "${ROOT}/quick_test.sh
 rc=0"
 for bad in 0 1.5 abc 10m; do

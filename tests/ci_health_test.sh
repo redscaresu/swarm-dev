@@ -185,7 +185,7 @@ printf '#!/bin/sh\nexit 1\n' > "${dir}/bin/herdr"; chmod +x "${dir}/bin/herdr"
 cp "$(dirname "${BASH_SOURCE[0]}")/claude_stub.sh" "${dir}/bin/claude"
 dash() { # dash's ci line, if it shows one; then its one-minute cache goes, so the next dash reads the ci cache again
   local out
-  out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
+  out="$(cd "${P}" && env -u HERDR_ENV -u SWARM_PROJECT -u SWARM_NO_CI_REFRESH PATH="${dir}/bin:${PATH}" TMPDIR="${dir}/tmp" CLAUDE_PROJECTS_DIR="${dir}/projects" \
     COLUMNS=200 bash "${SWARM}" dash 2>&1)" || true
   rm -f "${dir}"/tmp/swarm-dash-3-*
   grep -oE "ci [0-9].*(vs last week|h old)" <<< "${out}" || true
