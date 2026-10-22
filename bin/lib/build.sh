@@ -129,11 +129,11 @@ denylist, docs-misstate-code, fails-open); reuse one that
 already lists when it fits.
 EOF
 }
-# conduct_merge_rule [backlog] — how a conductor hands over or merges a reviewed PR: an epic's, or
+# conduct_merge_rule <epic>|backlog — how a conductor hands over or merges a reviewed PR: an epic's, or
 # with backlog the backlog conductor's, whose stories have no epic to review or finish.
 conduct_merge_rule() {
   local scope="of this epic" epic_end="" backlog=""
-  [[ "${1:-}" != backlog ]] || { backlog=1; scope="with no epic"; }
+  [[ "$1" != backlog ]] || { backlog=1; scope="with no epic"; }
   if [[ "${CFG_merge}" == human ]]; then
     [[ -n "${backlog}" ]] || epic_end=" When every story left
 in the epic is in review and the epic's **Done when** will hold once they merge, run
@@ -143,8 +143,7 @@ so review it (and run \`swarm.sh review <slug> <PR URL>\` once it passes) first.
     cat <<EOF
 Never merge a PR, by any route: not \`gh pr merge\`, not \`gh api\`, not the web page. A human merges.
 When a story's PR is green and reviewed, run \`swarm.sh review <slug> <PR URL>\` and
-\`swarm.sh close <slug>\`. Then run \`swarm.sh unblock\`, and start each story ${scope} it prints as
-\`ready:\` that clashes with no running one, with \`swarm.sh story --strict <slug>\`.
+\`swarm.sh close <slug>\`. Then $(startable_rule "$1")
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again with its build kept: close its builder with a bare
 \`swarm.sh close <slug>\`, which counts nothing for a blocked story and keeps its build, and go on.
@@ -172,8 +171,7 @@ leave the PR for the user and list it.
 $(pin_rule) $(pinned_merge_rule '<slug> <PR URL>') Reconcile has closed the builder, so leave it, unless it
 printed \`build cleared: <slug>\`: then run \`swarm.sh close <slug>\` as it says.
 
-Then run \`swarm.sh unblock\`, and in this run start each story ${scope} it prints as \`ready:\`
-that clashes with no running one, with \`swarm.sh story --strict <slug>\`.
+Then, in this run, $(startable_rule "$1")
 $(stacked_start_rule) When \`swarm.sh review\` holds a stacked story instead (\`held: <slug> waits for <p>
 to merge\`), the story is blocked again and nothing merges: leave its builder open, unless that line
 says \`(costs money)\`. The user merges that parent, maybe days later, so close its builder with a
@@ -184,6 +182,14 @@ cleared-on-error close or a give-up, start nothing more in this wave. Write your
 story ${scope} that is yours to start is ready and none is running $(fix_running), or $(base_stop).${epic_end}
 EOF
   fi
+}
+
+# startable_rule <epic>|backlog — after a merge, and after each wait's inbox pass, start every ready story
+# in scope with no build, not only the ones this unblock readied: a board PR can add one already ready.
+startable_rule() {
+  local arg="$1" which="story of this epic"
+  [[ "$1" != backlog ]] || { arg=--backlog; which="backlog story"; }
+  printf '%s' "run \`swarm.sh unblock --startable ${arg}\`, and start each story it prints as \`startable:\` (every ready ${which} whose build has not started, whether or not this unblock readied it) that clashes with no running one, with \`swarm.sh story --strict <slug>\`. It reads the board as reconcile last left it, and never pulls. Skip a story you closed in this wave (the give-up rule starts it again in a later one), one the give-up rule says not to start again, and one a \`not held:\` line left \`ready\` for the lead. Never start a line that ends \`(its PR <url> was closed unmerged)\`: list it in your report for the lead."
 }
 
 # costs_wait_rule — with merge = agent, a story --strict refusal that ends (costs money) (touches_overlap):
@@ -849,8 +855,10 @@ The lead may leave you notes while you work, in ${inbox}.md. After each
 \`swarm.sh wait\` or \`swarm.sh watch\` returns: if ${inbox}.reading.md is there (a read
 cut off before its delete), read it, act on it and delete it first. Then, if the inbox exists, \`mv\`
 it to ${inbox}.reading.md (atomic, so a note the lead adds meanwhile starts a new file),
-read the moved copy, act on it, and delete it. Do all this once more just before you write your report,
-so a note left after your last wait is not lost.
+read the moved copy, act on it, and delete it. Do this before that wait's \`swarm.sh unblock --startable\`
+run (above), so one run starts what the notes made ready too. Do all this once more just before you
+write your report, so a note left after your last wait is not lost. If that last pass read a note,
+then $(startable_rule "${epic}") If that starts a builder, do not write the report: go back to waiting.
 EOF
   # shellcheck disable=SC2154 # assigned in another file
   [[ -z "${CFG_escalate_ladder:-}" ]] || cat <<EOF
@@ -993,17 +1001,17 @@ EOF
 goal_rule_if_on() { [[ "${CFG_goal}" == off ]] || printf '\n\n%s' "$(goal_rule)"; }
 
 # stacked_rule <epic>|backlog — how a conductor keeps its own stacked builds on their parents:
-# unblock after each wait, watch and new PR, then act on status's Stacked lines (stacked_lines),
+# unblock --startable after each wait, watch and new PR, then act on status's Stacked lines (stacked_lines),
 # which cover the whole board, for its own stories only.
 stacked_rule() {
   local mine="a story with \`epic: $1\`"
   [[ "$1" != backlog ]] || mine="a story with no \`epic:\`"
   cat <<EOF
-After each \`swarm.sh wait\` or \`swarm.sh watch\` returns, and after a builder opens a PR, run
-\`swarm.sh unblock\` and start what it readies that is yours (${mine}; a ready story whose
-worktree exists has started: never run \`swarm.sh story\` for it), then run \`swarm.sh status\` and
-read its Stacked lines. Both cover the whole board: act only on a line whose <child> is yours, and
-leave the rest to their own conductor.
+After each \`swarm.sh wait\` or \`swarm.sh watch\` returns (after its inbox pass, below), and after a
+builder opens a PR, $(startable_rule "$1") Yours is ${mine}; a ready story whose worktree exists has
+started: never run \`swarm.sh story\` for it. Then run \`swarm.sh status\` and read its Stacked lines.
+Unblock's \`ready:\` lines and the Stacked lines cover the whole board: act only on a line whose
+<child> is yours, and leave the rest to their own conductor.
 - \`<child>: merge <ref>\`: write a file saying to merge <ref> into its branch, re-run the tests and
   push, and send it with \`swarm.sh tell <child> nudge <file>\` (not findings: those count review rounds). On a line that ends \`(no builder)\`,
   first start a builder in the child's worktree (\`<repo>-wt/<child>\` beside its repo) with
@@ -1063,7 +1071,7 @@ $(green_rule)
 
 $(review_rule)
 
-$(conduct_merge_rule)
+$(conduct_merge_rule "${epic}")
 EOF
 }
 
