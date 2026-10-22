@@ -60,16 +60,22 @@ started() {
   for ((i = 0; i < 50; i++)); do [[ -e "${BIN}/ready" ]] && { echo yes; return; }; sleep 0.2; done
   echo "no stub started"
 }
-# gone [seconds] — "yes" once no stub process is left, polled for up to <seconds> (2).
+# gone [seconds] [pattern] — "yes" once no process matching <pattern> (${BIN}/: any stub process) is
+# left, polled for up to <seconds> (2). A pgrep that cannot read the process list (exit 2 or 3, as in a
+# sandbox) is a failure, never "none left".
 gone() {
-  local i
-  for ((i = 0; i < ${1:-2} * 5; i++)); do pgrep -f "${BIN}/" >/dev/null || { echo yes; return; }; sleep 0.2; done
-  echo "no: $(pgrep -fl "${BIN}/" | tr '\n' ' ')"
+  local i rc
+  for ((i = 0; i < ${1:-2} * 5; i++)); do
+    rc=0; pgrep -f "${2:-${BIN}/}" >/dev/null || rc=$?
+    case "${rc}" in 0) sleep 0.2 ;; 1) echo yes; return ;; *) echo "no: pgrep failed (exit ${rc})"; return ;; esac
+  done
+  echo "no: $(pgrep -fl "${2:-${BIN}/}" | tr '\n' ' ')"
 }
-# left <case> — each case's last check: no stub process outlived it. One that did is KILLed, so the
-# next case starts clean and the failure is the case's that left it.
+# left <case> [pattern] — each case's last check: no stub process (or none matching <pattern>, where
+# the case leaves one on purpose) outlived it. Then every stub process is KILLed, so the next case
+# starts clean and a failure is the case's that left it.
 left() {
-  check "$1 leaves no stub process" "yes" "$(gone)"
+  check "$1 leaves no ${2:+codex }stub process" "yes" "$(gone 2 "${2:-}")"
   pkill -KILL -f "${BIN}/" 2>/dev/null || true
 }
 # markers — codex-review's markers left in the project's state dir, one per line.
@@ -95,9 +101,20 @@ check "a codex that ignores TERM is stopped within the limit plus the grace" "fa
 check "events.tsv's codex-review line says it timed out" "main|codex skipped: timed out after 10 min" "$(last_event)"
 left "the TERM-trapping timeout case"
 
-# --- The grace is real, and never shorter than CODEX_GRACE: a codex that exits on its own 2.5 s
-# after TERM is not KILLed.
-stub "trap 'sleep 2.5; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
+# --- One that traps TERM and starts a child every few ms is KILLed with every child it started: its
+# tree is frozen before the KILL, so it cannot start one behind the read, as it could behind a KILL to
+# the children first (reading ~15 children outlasts its next fork). Each child exits after 0.5 s,
+# which keeps the tree small, unless its parent is gone: one the KILL missed sleeps on, to be seen.
+# shellcheck disable=SC2016 # perl's variables and the stub's $0
+stub 'trap : TERM; while :; do perl -e '\''$p = getppid; select undef, undef, undef, 0.5; sleep 60 if getppid != $p'\'' "$0" & sleep 0.02; done'
+review
+check "a codex that keeps starting children times out" "fails|yes" \
+  "$([[ ${rc} -ne 0 ]] && echo fails || echo "exit 0")|$(has "codex skipped: timed out" "${out}")"
+left "the forking case"
+
+# --- The grace is real: a codex that exits on its own 1.5 s after TERM is not KILLed. CODEX_GRACE
+# is 3 s, and the 1.5 s to spare is for a loaded machine, where the trap starts late.
+stub "trap 'sleep 1.5; touch \"\${d}/graceful\"; exit 0' TERM; while :; do \"\${d}/stubsleep\" 60; done"
 review
 check "a codex that exits within the grace after TERM finishes its trap, unKILLed" "yes|yes" \
   "$(has "codex skipped: timed out" "${out}")|$([[ -e "${BIN}/graceful" ]] && echo yes || echo no)"
@@ -204,8 +221,8 @@ stub '"${d}/stubsleep" 60 & echo "P2: y.sh:1 leaks"; exit 0'
 review
 check "a codex whose child keeps its output open returns within the grace, its findings through" "0|yes|yes" \
   "${rc}|$([[ ${took} -le $((GRACE + 3)) ]] && echo yes || echo "no, ${took}s")|$(has "P2: y.sh:1 leaks" "${out}")"
-pkill -KILL -f "${BIN}/" || true
-left "a child holding the output case"
+# Its sleep is the case's own orphan, left on purpose: only the stub itself must be gone.
+left "a child holding the output case" "${BIN}/codex"
 
 # --- On the timeout too, tee is stopped: a grandchild of codex that left its tree (so stop_codex
 # misses it) and holds codex's output cannot keep codex-review's stdout open. Read through a pipe,
@@ -218,8 +235,8 @@ t0=${SECONDS}
 spid=$!; finish "${spid}"
 check "a timed-out codex whose grandchild holds its output still ends codex-review's stdout within the grace" "yes|yes" \
   "$([[ $((SECONDS - t0)) -le $((LIMIT + GRACE + 3)) ]] && echo yes || echo "no, $((SECONDS - t0))s")|$(has "codex skipped: timed out" "$(cat "${ROOT}/out")")"
-pkill -KILL -f "${BIN}/" || true
-left "a grandchild holding the output case"
+# Its grandchild sleep left the tree on purpose: only the stub and what stayed under it must be gone.
+left "a grandchild holding the output case" "${BIN}/codex"
 
 # --- codex's log and fifo are in a directory of the run's own, mode 700, gone once it ends.
 mkdir -p "${ROOT}/tmp"

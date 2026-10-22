@@ -500,23 +500,31 @@ CODEX_GRACE=3   # seconds a TERMed codex has to exit before what is left of it i
 
 # tree_pids <pid> — a process and everything under it, children first.
 tree_pids() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do tree_pids "${c}"; done; echo "$1"; }
-# freeze_tree <pid> — STOP a process, then everything under it, parents first, and print them all: each
-# is stopped before its children are read, so none can start another after the read. A KILL to
-# children first would let a parent that loops (a stub's while, codex's own) start a child no read saw.
-freeze_tree() { local c; kill -STOP "$1" 2>/dev/null; echo "$1"; for c in $(pgrep -P "$1" 2>/dev/null); do freeze_tree "${c}"; done; }
+# freeze_tree <pid> — STOP a process, then everything under it, and print them all, children first:
+# each is sent STOP before its children are read, so a parent that loops (a stub's while, codex's own)
+# cannot start one behind the read, as it could behind a KILL to its children.
+freeze_tree() { local c; kill -STOP "$1" 2>/dev/null; for c in $(pgrep -P "$1" 2>/dev/null); do freeze_tree "${c}"; done; echo "$1"; }
+# frozen <pid>... — freeze_tree each, read again until a read finds what the last did: kill(2) returns
+# once the STOP is pending, so a process on another CPU may fork before it stops. Children first, so
+# no stopped child is left orphaned (a group of its own gets HUP and CONT then) before its KILL.
+frozen() {
+  local was="" now p
+  while now="$(for p in "$@"; do freeze_tree "${p}"; done)"; [[ "${now}" != "${was}" ]]; do was="${now}"; done
+  echo "${now}"
+}
 
 # stop_codex <pid> — TERM codex and everything under it, give it CODEX_GRACE seconds, then freeze
 # each process left and whatever is under it by then (a TERM trap can start more), and KILL them. The
 # tree is read before the TERM, since a child whose parent dies leaves it. Stderr is off, so bash
 # prints no "Terminated" line for the job.
 stop_codex() {
-  local pids p
+  local pids
   pids="$(tree_pids "$1")"
   # shellcheck disable=SC2046,SC2086 # one pid per word
   {
     kill -TERM ${pids}
     poll_while "${CODEX_GRACE}" kill -0 ${pids}
-    kill -KILL $(for p in ${pids}; do freeze_tree "${p}"; done)
+    kill -KILL $(frozen ${pids})
     wait "$1"
   } 2>/dev/null || true
 }
