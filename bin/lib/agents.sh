@@ -679,9 +679,8 @@ PROMPT_TIMEOUT_MS="${SWARM_PROMPT_TIMEOUT_MS:-60000}"
 # (or blocked on a question), and fails loudly rather than reporting success. It reports the
 # prompt taken only on evidence (herdr's reply, or prompt_settle: working, blocked, or a turn
 # finished since), and sends it again only on evidence it was not: herdr rejected it before sending
-# (agent_not_found), or prompt_settle found the agent idle with no turn finished since. Anything
-# else (no read before the prompt, no status, an agent still done from an earlier turn) fails
-# saying it may or may not have it.
+# (agent_not_found), or prompt_settle found the agent idle or done with no turn finished since.
+# Anything else (no read before the prompt, no status) fails saying it may or may not have it.
 # With once, it is sent a single time and the caller confirms it: a /goal sent again would reset
 # a goal that set, and whether it set is in the session log, not in herdr's status.
 deliver_prompt() {
@@ -695,14 +694,15 @@ deliver_prompt() {
   for try in 1 2; do
     if [[ $((sent + unread)) -eq 0 ]]; then   # the baseline: completion_seq before anything went out
       read -r status before <<< "$(agent_info "${target}")"
-      case "${status}" in -|unknown) before="?" ;; esac
+      case "${status}" in -|unknown) before="?" ;; esac   # before is ? too when herdr has no completion_seq
     fi
     reply="$(prompt_once "${target}" "${prompt_file}")"
     case "${reply}" in
       working|blocked) return 0 ;;
       sent) sent=$((sent + 1)) ;;
       unread) unread=$((unread + 1)) ;;
-      agent_blocked) [[ $((sent + unread)) -eq 0 ]] || return 0   # blocked on a question about the last one
+      agent_blocked) [[ ${sent} -eq 0 ]] || return 0   # blocked on a question about the one herdr sent
+        [[ ${unread} -eq 0 ]] || die "${name}: it may or may not have the brief: $(sent_note 0 "${unread}"), then herdr refused the next: it is blocked on a question (agent_blocked); it was not sent again, see herdr agent read ${name}"
         die "${name}: herdr did not send it the brief: it is blocked on a question (agent_blocked); answer it, see herdr agent read ${name}" ;;
       *) if [[ ${try} -eq 1 ]]; then nap 5; continue; fi
          [[ $((sent + unread)) -gt 0 ]] || die "${name}: herdr could not send it the brief after 2 tries (${reply}); see herdr agent read ${name}"
@@ -711,11 +711,11 @@ deliver_prompt() {
     verdict="$(prompt_settle "${target}" "${before}")"
     case "${verdict}" in
       taken) return 0 ;;
-      idle) ;;
+      again\ *) status="${verdict#again }" ;;
       *) die "${name}: it may or may not have the brief: $(sent_note "${sent}" "${unread}"), then ${verdict#unsure }; it was not sent again, see herdr agent read ${name}" ;;
     esac
   done
-  die "${name}: the brief was not taken up: $(sent_note "${sent}" "${unread}"), and herdr reads it idle with no turn finished since; see herdr agent read ${name}"
+  die "${name}: the brief was not taken up: $(sent_note "${sent}" "${unread}"), and herdr reads it ${status} with no turn finished since; see herdr agent read ${name}"
 }
 
 # count_word <n> — once or twice.
@@ -767,10 +767,11 @@ print("%s:%s" % ((a.get("agent") or {}).get("agent_status") or "", e.get("code")
 }
 
 # agent_info <target> — "<status> <completion_seq>" from herdr agent get, either one - when herdr gives
-# none (so read keeps them apart).
+# none (so read keeps them apart); completion_seq is ? when herdr has no such field (one older than
+# 0.9.5), so it is never taken for a known null.
 agent_info() {
   local s seq
-  read -r s seq <<< "$(herdr agent get "$1" 2>/dev/null | json "'%s %s' % (d['result']['agent'].get('agent_status') or '-', '-' if d['result']['agent'].get('completion_seq') is None else d['result']['agent']['completion_seq'])" 2>/dev/null)"
+  read -r s seq <<< "$(herdr agent get "$1" 2>/dev/null | json "(lambda a: '%s %s' % (a.get('agent_status') or '-', '?' if 'completion_seq' not in a else '-' if a['completion_seq'] is None else a['completion_seq']))(d['result']['agent'])" 2>/dev/null)"
   echo "${s:--} ${seq:--}"
 }
 
@@ -781,22 +782,22 @@ SETTLE_READS=12
 # prompt_settle <target> <completion-before> — after a prompt that went out (or may have) with no
 # status in herdr's reply, read the agent (agent_info) until it shows it took it, and print what came
 # of it.
-# <completion-before> is completion_seq before the prompt: - for null, ? when that read failed. herdr
-# 0.9.5 sets completion_seq when a turn completes (done) and nulls it while working. taken: working,
-# blocked, or completion_seq moved from a known baseline (a turn finished since). idle: the last read
-# idle, completion_seq the same known one: it never took it. Else "unsure <why>": no status, no
-# baseline, or an agent still done from an earlier turn.
+# <completion-before> is completion_seq before the prompt: - for null, ? when that read failed or herdr
+# has no such field. herdr 0.9.5 sets completion_seq when a turn completes (done) and nulls it while
+# working. taken: working, blocked, or completion_seq moved from a known baseline (a turn finished
+# since). "again <status>": the last read idle, or done, with the same known completion_seq: no turn
+# ran, so it never took it. Else "unsure <why>": no status, no baseline, or anything else.
 prompt_settle() {
   local s="-" c i
   for ((i = 1; i <= SETTLE_READS; i++)); do
     nap 5
     read -r s c <<< "$(agent_info "$1")"
     case "${s}" in working|blocked) echo taken; return ;; esac
-    if [[ "$2" != "?" && "${c}" != - && "${c}" != "$2" ]]; then echo taken; return; fi
+    if [[ "$2" != "?" && "${c}" != - && "${c}" != "?" && "${c}" != "$2" ]]; then echo taken; return; fi
   done
-  if [[ "$2" != "?" && "${s}" == idle && "${c}" == "$2" ]]; then echo idle
+  if [[ "$2" != "?" && "${c}" == "$2" ]] && [[ "${s}" == idle || ( "${s}" == "done" && "${c}" != - ) ]]; then echo "again ${s}"
   elif [[ "${s}" == - ]]; then echo "unsure herdr gave no status for it"
-  elif [[ "$2" == "?" ]]; then echo "unsure herdr reads it ${s}, with no read before the prompt to compare it with"
+  elif [[ "$2" == "?" || "${c}" == "?" ]]; then echo "unsure herdr reads it ${s}, with nothing from before the prompt to compare it with"
   else echo "unsure herdr reads it ${s} with no turn finished since"; fi
 }
 
