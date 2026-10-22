@@ -74,8 +74,8 @@ board_pr() {
       # A large epic's split (scope-<epic> leaves <epic> at status: split) waits for its split critic's
       # answer (commands/plan-epic.md step 0); any other board PR starts no critic.
       f="${wt}/${rel}epics/${name#scope-}.md"
-      if [[ "${name}" == scope-?* && -f "${f}" ]] && awk '/^---$/ && ++n == 2 { exit } n == 1' "${f}" | grep -qE '^status: *split *$'; then
-        [[ "$(json "isinstance(d.get('findings'), list)" < "${PROJECT_DIR}/.swarm/${name#scope-}/split-critic.json" 2>/dev/null)" == True ]] \
+      if [[ "${name}" == scope-?* && -f "${f}" && "$(fm "${f}" status)" == split ]]; then
+        [[ "$(json "isinstance(d.get('findings'), list)" 2>/dev/null < "${PROJECT_DIR}/.swarm/${name#scope-}/split-critic.json")" == True ]] \
           || die "board-pr: ${name#scope-} is split, but .swarm/${name#scope-}/split-critic.json holds no {findings:[...]}; start the split critic first"
       fi
       url="$(git -C "${PROJECT_DIR}" remote get-url origin)"

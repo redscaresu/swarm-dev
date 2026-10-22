@@ -18,7 +18,8 @@ git -C "${P}" init -q
 for s in a b; do printf -- '---\nkind: code\nstatus: ready\n---\n' > "${P}/docs/stories/${s}.md"; done
 # gh answers from prs/<head with / as _>: its `url<TAB>state<TAB>mergedAt` lines, newest first.
 # shellcheck disable=SC2016 # the stub's own shell expands these
-printf '#!/bin/sh\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" > "${dir}/bin/gh"
+# pr view <n> prints heads/<n>, its head branch (a split's board PR's is board/scope-<epic>).
+printf '#!/bin/sh\n[ "$1 $2" = "pr view" ] && { cat "%s/heads/$3" 2>/dev/null; exit 0; }\n[ "$1 $2 $3" = "pr list --head" ] || exit 1\ncat "%s/prs/$(echo "$4" | tr / _)" 2>/dev/null\nexit 0\n' "${dir}" "${dir}" > "${dir}/bin/gh"
 chmod +x "${dir}/bin/gh"
 printf '%s\tOPEN\t\n' "${U}/1" > "${dir}/prs/story_a"
 printf '%s\tOPEN\t\n' "${U}/2" > "${dir}/prs/story_b"
@@ -90,8 +91,19 @@ check "the split critic's fixed finding is a reviewers row" \
   "$(grep -E $'^split-critic\t' <<< "${out}")" "$(printf '%s\n' $'split-critic\tall\t1\t1\t0\t0%\t0' $'split-critic\tsplit-order\t1\t1\t0\t0%\t0')"
 check "the split block sets the critic's fix beside the escaped split-gap" \
   "$(grep -A1 $'^split\t' <<< "${out}")" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
-check "--since 2026-10-04 keeps only the escaped split-gap in the split block" \
-  "$(yield_of "${P}" --since 2026-10-04 | grep -A1 $'^split\t')" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t0\t0\t1')"
+# A split is dated by its critic's rows (2026-10-03); every escaped gap counts against it, whatever its day.
+check "--until 2026-10-03 keeps the split and still counts its later escaped split-gap" \
+  "$(yield_of "${P}" --until 2026-10-03 | grep -A1 $'^split\t')" "$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
+check "--since 2026-10-04 leaves out the split made before it, its later escaped gap too" \
+  "$(yield_of "${P}" --since 2026-10-04 | grep -c $'^split\t' || true)" "0"
+# --epic: gh names #9's head board/scope-big, so the split is big's, and its child big-a's by its parent:.
+mkdir -p "${dir}/heads" "${P}/docs/epics"; echo board/scope-big > "${dir}/heads/9"
+printf -- '---\nstatus: active\nparent: big\n---\n' > "${P}/docs/epics/big-a.md"
+SPLIT="$(printf '%s\n' $'split\tcritic_fixed\tcritic_declined\tescaped_split_gaps' $'o/r#9\t1\t0\t1')"
+check "--epic big (the parent) prints the split line" "$(yield_of "${P}" --epic big | grep -A1 $'^split\t')" "${SPLIT}"
+check "--epic big-a (a child) prints its parent's split line" "$(yield_of "${P}" --epic big-a | grep -A1 $'^split\t')" "${SPLIT}"
+check "--epic other prints no split" "$(yield_of "${P}" --epic other | grep -c $'^split\t' || true)" "0"
+rm -rf "${dir}/heads" "${P}/docs/epics"
 cp "${dir}/findings.bak" "${P}/.swarm/findings.tsv"
 check "--since 2026-10-01 drops the 2026-09-30 row from every count it was in" \
   "$(yield_of "${P}" --since 2026-10-01)" "$(printf '%s\n' "${H1}" \

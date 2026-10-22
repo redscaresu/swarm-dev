@@ -48,7 +48,9 @@ large=$(printf '%s' "$step0" | grep -oE 'A large epic.*A medium epic' || true)
 has split-critic-step 'start one `split-critic` agent, role `critic` \(read-only\), on the parent and the drafted children' "$large"
 has split-critic-asks 'every parent \*\*Done when\*\* item maps to exactly one child.*`depends_on` order.*too big for one full plan' "$large"
 has split-critic-output '`\.swarm/\$1/split-critic\.json` `\{findings:\[\{kind, why, fix\}\]\}`' "$large"
-has split-critic-before-pr 'split-critic.*open the board PR' "$large"
+# Before the board PR: the critic starts first, and nothing before it opens the PR.
+has split-critic-then-pr 'start one `split-critic` agent.*open the board PR' "$large"
+hasnt split-critic-before-pr '[Oo]pen the board PR' "${large%%start one \`split-critic\` agent*}"
 has log-split-critic 'log-finding --reviewer split-critic <kind> <board PR URL>.*log-finding --declined <reason> --reviewer split-critic <kind> <board PR URL>' "$large"
 has log-split-gap 'log-finding --reviewer escaped split-gap <split.s board PR URL>' "$large"
 hasnt medium-no-split-critic 'split-critic' "$(awk '/^\*\*1\. /{on=1} on' "$F")"

@@ -9,7 +9,7 @@ if os.path.exists(log):
         if len(f) == 7:
             named.add(f[6])
             if since <= f[0] <= until:
-                agents.append({"role": "split-critic" if f[2] == "split-critic" else f[1], "kind": f[3], "session": f[6]})
+                agents.append({"role": "split-critic" if f[1:3] == ["critic", "split-critic"] else f[1], "kind": f[3], "session": f[6]})
 
 def started(path):
     # The first timestamp's local day, as since and agents.tsv's dates are, or "".

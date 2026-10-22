@@ -120,10 +120,14 @@ same "with --since, a lead session with no timestamp is left out" "$(cost --sinc
 # /plan-epic's split critic is a critic agent named split-critic: its tokens get a row of their own.
 usage m9 claude-opus-5-5 0 0 0 1000000 > "${C}/p/s-split.jsonl"
 usage m10 claude-opus-5-5 0 0 0 2000000 > "${C}/p/s-critic.jsonl"
-printf '%s\n' $'2026-09-29\tcritic\tsplit-critic\tclaude\topus\thigh\ts-split' $'2026-09-29\tcritic\tcritic\tclaude\topus\thigh\ts-critic' >> "${R}/.swarm/agents.tsv"
+# A builder whose story's slug is split-critic (this feature's own) is a builder, not the split critic.
+usage m11 claude-opus-5-5 0 0 0 4000000 > "${C}/p/s-builder.jsonl"
+printf '%s\n' $'2026-09-29\tcritic\tsplit-critic\tclaude\topus\thigh\ts-split' $'2026-09-29\tcritic\tcritic\tclaude\topus\thigh\ts-critic' \
+  $'2026-09-29\tcode\tsplit-critic\tclaude\topus\thigh\ts-builder' >> "${R}/.swarm/agents.tsv"
 out="$(cost --since 2026-09-15)"
 check "the split critic has its own row" "| split-critic | 1 | claude-opus-5-5 | 0k | 0k | 0k | 1.0M | 20.00 |"
 check "the plan critic keeps the critic row" "| critic | 1 | claude-opus-5-5 | 0k | 0k | 0k | 2.0M | 40.00 |"
+check "a builder named split-critic counts under its own role" "| code | 2 | claude-opus-5-5 | 0k | 0k | 0k | 5.0M | 100.00 |"
 
 [[ ${fails} -eq 0 ]] || { echo "${out}"; echo "${fails} failed"; exit 1; }
 echo "all passed"
