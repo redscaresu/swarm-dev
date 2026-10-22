@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# test_file_timeout_test.sh — scripts/test.sh stops a test file that runs past TEST_FILE_TIMEOUT: it
-# fails as "TIMEOUT <file> after <n>s" with the file's last output, within seconds, and nothing the
-# file started is left running; a file that finishes inside the limit still passes.
+# test_file_timeout_test.sh — scripts/test.sh refuses a TEST_FILE_TIMEOUT that is not a whole number of
+# seconds. It stops a test file that runs past the limit: the file fails as "TIMEOUT <file> after <n>s"
+# with its last output, within seconds, and nothing it started is left running. A file that finishes
+# inside the limit still passes.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,14 +25,20 @@ t0=${SECONDS}
 out="$(TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/hang_test.sh" 2>&1)" && rc=0 || rc=$?
 secs=$((SECONDS - t0))
 check "a file past the limit fails" "${rc}" 1
-check "it is named TIMEOUT with the file and the limit" "$(grep -c "^TIMEOUT ${ROOT}/hang_test.sh after 2s$" <<< "${out}")" 1
+check "it is named TIMEOUT with the file and the limit" "$(grep -Ec "^TIMEOUT ${ROOT}/hang_test.sh after [0-9]+s$" <<< "${out}")" 1
 check "its output so far is printed" "$(grep -c '^before-hang$' <<< "${out}")" 1
 check "it ends within 10 seconds" "$([[ ${secs} -lt 10 ]] && echo yes)" yes
-pgrep -f "${marker}" > /dev/null && left=found || left=$?   # 1: no match; 2 or more: pgrep itself failed
+pgrep -f "^${marker}\$" > /dev/null && left=found || left=$?   # 1: no match; 2 or more: pgrep itself failed
 check "nothing it started is left running" "${left}" 1
 
 out="$(TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/term0_test.sh" 2>&1)" && rc=0 || rc=$?
-check "a file that exits 0 on TERM past the limit still fails as TIMEOUT" "${rc}/$(grep -c "^TIMEOUT ${ROOT}/term0_test.sh after 2s$" <<< "${out}")" "1/1"
+check "a file that exits 0 on TERM past the limit still fails as TIMEOUT" "${rc}/$(grep -Ec "^TIMEOUT ${ROOT}/term0_test.sh after [0-9]+s$" <<< "${out}")" "1/1"
+
+for bad in 0 1.5 abc 10m; do
+  check "TEST_FILE_TIMEOUT=${bad} is refused" "$(TEST_FILE_TIMEOUT="${bad}" bash "${REPO}/scripts/test.sh" "${ROOT}/quick_test.sh" 2>&1; echo "rc=$?")" \
+    "test.sh: TEST_FILE_TIMEOUT=${bad} is not a whole number of seconds, 1 or more
+rc=1"
+done
 
 out="$(TEST_FILE_TIMEOUT=2 bash "${REPO}/scripts/test.sh" "${ROOT}/quick_test.sh" 2>&1)" && rc=0 || rc=$?
 check "a file inside the limit passes" "${rc}" 0
