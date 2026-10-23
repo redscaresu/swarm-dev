@@ -790,7 +790,7 @@ else; a PR that `gh pr merge` ran on but that never reads as merged is one `merg
 or `error <why>` (a red one followed by `main-red`, target the merge commit, outcome its repo, base and checks;
 an ok one that clears a red main of that repo and base by `main-green`, outcome its repo, base and
 the red commit it clears, and a `fix-main` line,
-outcome `retired: <why>`, for each unstarted fix-main story that retires), then reconcile's lines. Through a merge queue (§ Merging) it is the same `merge ok`,
+outcome `retired: <why>`, for each unstarted fix-main story that retires), then reconcile's lines. Before an ok `main-ci` comes a `flake` line for each run whose rerun went green, outcome `<jobs> <run URL>: <FAIL lines>`. Through a merge queue (§ Merging) it is the same `merge ok`,
 `main-ci` and reconcile lines, or a single line: `merge dequeued (<reason>): <checks>`, `merge closed while
 queued`, `merge the head is <sha>, not <sha>, the head that was checked; ...`, `merge gh pr merge
 --auto failed: <error>`, `merge could not read whether <base> has a merge queue: <error>`, or `merge
@@ -1364,7 +1364,18 @@ commit, so run it in the background: each workflow whose `on: push` filters cove
 files the PR changes must have a run on that commit, and every run and check there must pass. The
 commit needs no check run of its own when no workflow is expected on it, but then it waits a minute
 before calling main green, for checks other apps post just after the push. A failed read is a
-missed poll, and three in a row end the wait as an error. Without
+missed poll, and three in a row end the wait as an error. When the base requires status checks (its
+rulesets and branch protection, read once per merge) and each has a run on the merge commit, only
+those decide: a red check or workflow run
+it does not require prints `warning: <check> is red on <base>, which does not require it` and leaves
+main green, and once every required check has finished green nothing else is waited on. Until
+each required check has a run there, or when the rules cannot be read or require nothing, every
+check counts. A red whose every check is a GitHub
+Actions job gets one rerun: once those runs have finished, merge reruns their failed jobs (`gh run
+rerun --failed`) and waits again, for the full time. If the rerun goes green, merge prints `flaky:
+<jobs> (<the FAIL lines of the attempt that failed>), green on rerun` and logs a `flake` line; if it
+goes red again, merge writes the fix-main story, which says the rerun failed too. A red that is not an Actions job, or a rerun GitHub refuses,
+writes the story at once. Without
 `--board` or `--release` it then runs `swarm.sh reconcile`, also after a red main, since the PR has merged.
 With `--board`, on a green main and when the main checkout has an upstream, it runs `swarm.sh
 reconcile` too, which pulls the board. A story counts as newly ready when it was not buildable before the merge, is now,
