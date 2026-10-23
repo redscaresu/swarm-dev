@@ -312,8 +312,9 @@ count it:
   swarm did (held stories or a slow CI run they found by asking).
 
 Never skip an approval to keep the loop going, never merge red, never merge at all when `merge`
-is `human` unless the user asks you to merge a PR, `swarm.sh grants <PR URL>` lists `merge` for it,
-or it is a release PR it lists `release` for, and then only with `swarm.sh merge <PR URL>`
-(not `gh pr merge`, not `gh api`, not the web page). A `costs: money` PR, or one stacked on one,
+is `human` unless the user asks you to merge a PR, or `swarm.sh grants <PR URL>` lists `merge` for
+it, and then only with `swarm.sh merge <PR URL>` (not `gh pr merge`, not `gh api`, not the web
+page). A release PR is the user's too, unless `swarm.sh merge --release`'s release check finds that an
+HLD granting `release` covers every story merged since the last tag. A `costs: money` PR, or one stacked on one,
 is the user's to merge whatever the grant says. Never give a `lead` story to an agent.
 Stopping is safe: the next `/swarm-dev:swarm` reads the board and continues.

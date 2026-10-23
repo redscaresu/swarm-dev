@@ -570,9 +570,13 @@ pr_stories() {
 GRANTS="epics stories merge release"
 
 # hld_grants <hld file> — the grants in its front matter's grants: (get_fm, as a slug_list), one per
-# line; none for an absent line. Any other value dies with the file and line, as a bad config does.
+# line; none for an absent line. Any other value, or a YAML block list, dies with the file and line,
+# as a bad config does.
 hld_grants() {
   local g list n
+  n="$(awk '/^---$/ && ++c == 2 { exit } c == 1 && index($0, "grants:") == 1 { g = NR; next }
+    g && NR == g + 1 && /^[[:space:]]*-/ { print g; exit }' "$1")"
+  [[ -z "${n}" ]] || die "$1:${n}: grants must be a one-line [..] list"
   read -r -a list <<< "$(slug_list "$(get_fm "$1" grants)")" || true
   for g in ${list[@]+"${list[@]}"}; do
     [[ " ${GRANTS} " == *" ${g} "* ]] && { echo "${g}"; continue; }
@@ -609,7 +613,8 @@ one_hld() { local u; u="$(sort -u)"; [[ -z "${u}" || "${u}" == *$'\n'* ]] || ech
 # lists it (pr_stories) and, for a PR in the project's repo, over the epics/*.md and stories/*.md it
 # touches, each as the board has it (a file the PR deletes too) and as the PR's head has it, read in a
 # copy of the board's epics with the head's over them; the HLDs always the board's. A PR in the
-# project's repo that touches the board's hld/ is under none: only the user changes an HLD.
+# project's repo that touches the board's hld/ or .claude/swarm/config is under none: only the user
+# changes those. A PR no story lists that touches any other board file is under none too.
 pr_hld() (
   local s url repo n info="" head="" pre p q view="" err
   url="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
@@ -630,6 +635,7 @@ pr_hld() (
       head="${info% *}"
       info="$(ci_gate files "${repo}" "${n}" "${info#* }")" || die "grants: cannot list every file ${url} changes: ${info}"
       [[ $'\n'"${info}" != *$'\n'"${pre}hld/"* ]] || return 0   # loose-match: ok a whole line's prefix, the board's hld/
+      [[ $'\n'"${info}"$'\n' != *$'\n.claude/swarm/config\n'* ]] || return 0
     fi
   fi
   view="$(mktemp -d)"; mkdir "${view}/epics" "${view}/stories"
@@ -650,7 +656,7 @@ pr_hld() (
     while [[ -n "${head}" ]] && IFS= read -r p; do
       [[ "${p}" == "${pre}"* ]] || continue   # loose-match: ok pre is empty or ends in /
       p="${p#"${pre}"}"
-      [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || continue
+      [[ "${p}" =~ ^(epics|stories)/[^/]+\.md$ ]] || { [[ -n "${s}" ]] || echo; continue; }
       [[ ! -f "${BOARD}/${p}" ]] || printf '%s\n' "$(item_hld "${BOARD}/${p}")"
       [[ ! -f "${view}/${p}" ]] || printf '%s\n' "$(item_hld "${view}/${p}" "${view}/epics")"
       [[ -f "${BOARD}/${p}" || -f "${view}/${p}" ]] || echo   # in neither: under none
